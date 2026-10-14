@@ -33,6 +33,7 @@ from .core import (
     PackageIdentity,
     Scope,
     compare_package_versions,
+    is_package_directory_name,
     is_version_directory_name,
     log_info,
     log_warning,
@@ -67,7 +68,7 @@ def resolve_input_path(raw_path: Path) -> Tuple[PackageIdentity, bool]:
     # instead of being dereferenced before package layout classification.
     candidate = Path(os.path.abspath(os.fspath(Path(raw_path).expanduser())))
 
-    if is_version_directory_name(candidate.name):
+    if is_package_directory_name(candidate.name):
         if not candidate.is_dir():
             raise ValueError(f"Version directory does not exist: {candidate}")
         package_root = candidate.parent
@@ -94,7 +95,7 @@ def resolve_input_path(raw_path: Path) -> Tuple[PackageIdentity, bool]:
     # An uninstalled package root is still usable when it holds exactly one
     # version directory; install will create ``current`` later.
     versions = sorted(
-        child for child in candidate.iterdir() if child.is_dir() and is_version_directory_name(child.name)
+        child for child in candidate.iterdir() if child.is_dir() and is_package_directory_name(child.name)
     )
     if not versions:
         raise ValueError(

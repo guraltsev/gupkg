@@ -66,7 +66,12 @@ def check_update(context: dict[str, Any]) -> dict[str, str] | None:
         raise RuntimeError("System Informer release has no valid tag or release ID")
     version = match.group("version")
     archive_version = ".".join(version.split(".")[:3])
-    filename = f"systeminformer-{archive_version}-release-bin.zip"
+    # Upstream renamed its ZIP from ``<x.y.z>-release-bin.zip`` to
+    # ``<full tag>-bin.zip``; accept either so older releases still resolve.
+    filenames = (
+        f"systeminformer-{version}-bin.zip",
+        f"systeminformer-{archive_version}-release-bin.zip",
+    )
 
     # A healthy installation of the same upstream tag requires no update.
     current = context.get("current", {})
@@ -83,12 +88,12 @@ def check_update(context: dict[str, Any]) -> dict[str, str] | None:
         for asset in assets
         if isinstance(asset, dict)
         and asset.get("state") == "uploaded"
-        and asset.get("name") == filename
+        and asset.get("name") in filenames
     ]
     if len(matches) != 1:
         raise RuntimeError(
             "System Informer release must contain exactly one uploaded asset named "
-            f"{filename!r}; found {len(matches)}"
+            f"one of {filenames!r}; found {len(matches)}"
         )
     url = matches[0].get("browser_download_url")
     if not isinstance(url, str):
@@ -98,5 +103,5 @@ def check_update(context: dict[str, Any]) -> dict[str, str] | None:
         "candidateId": f"systeminformer:{release_id}",
         "version": version,
         "url": url,
-        "fileName": filename,
+        "fileName": matches[0]["name"],
     }

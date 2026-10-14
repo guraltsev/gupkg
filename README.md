@@ -56,8 +56,9 @@ package on a Python package index. Pick the route that fits:
   `gupkg-bootstrap.cmd` from this repository, put them in one folder, and run
 
   ```bat
-  gupkg-bootstrap.cmd                  :: for you, no elevation needed
-  gupkg-bootstrap.cmd -Scope system    :: for all users, from an elevated shell
+  gupkg-bootstrap.cmd                  :: auto: all users if elevated, otherwise just you
+  gupkg-bootstrap.cmd -Scope user      :: force per-user, even from an elevated shell
+  gupkg-bootstrap.cmd -Scope system    :: force all users (needs an elevated shell)
   ```
 
   It downloads gupkg, places it at `<root>\gupkg\v<version>` (default root
@@ -173,7 +174,10 @@ and disposable work files rather than application files.
 Version directories must be named `v<upstream-version>` or
 `v<upstream-version>.l<local-version>`. For example, `v1.2.3` has upstream
 version `1.2.3` and local revision `0`, while `v1.2.3.l1` has local revision
-`1`. New package definitions and update releases always use the plain version
+`1`. The digit after `v` is required, so a package root such as `volta` is never
+mistaken for a version directory. The one non-version directory is
+`pkg.bootstrap`, a package's update template; promoting it creates the first
+real version directory. New package definitions and update releases always use the plain version
 name; gupkg never creates a `.lN` collision directory.
 The package name is the package-root directory name. A name ending in
 `-portable` is portable-only by convention.
@@ -737,7 +741,7 @@ def install_step(context):
 Versions beginning with `bootstrap` are templates rather than active payloads.
 Installing one with a Git or module update configuration downloads and
 activates the first immutable version, leaving the template itself without an `App`.
-A Git bootstrap commonly uses `vbootstrap-git` with `payload.mode = "git"`.
+A Git bootstrap is a `pkg.bootstrap` template with `payload.mode = "git"`.
 
 ## Configuration, validation, and migration
 

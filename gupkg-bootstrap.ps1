@@ -15,8 +15,9 @@
     when none is installed.
 
 .PARAMETER Scope
-    user (default): per-user, no elevation. system: all users, needs an
-    elevated PowerShell.
+    auto (default): system when the shell is elevated, otherwise user.
+    user: per-user, no elevation. system: all users, needs an elevated
+    PowerShell.
 
 .PARAMETER Source
     A ZIP archive (https:// URL or local path) or a folder containing gupkg.
@@ -51,8 +52,8 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('user', 'system')]
-    [string]$Scope = 'user',
+    [ValidateSet('auto', 'user', 'system')]
+    [string]$Scope = 'auto',
     [string]$Source = 'https://github.com/guraltsev/pkg/archive/refs/tags/stable.zip',
     [string]$Sha256,
     [string]$Root,
@@ -82,15 +83,22 @@ function Find-GupkgFolder([string]$Folder) {
 $work = Join-Path ([IO.Path]::GetTempPath()) ("gupkg-bootstrap-" + [Guid]::NewGuid().ToString('N'))
 try {
     # 1. Decide where gupkg goes, and refuse early when the scope cannot work.
-    if ($Scope -eq 'system') {
-        $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
-        if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-            throw "System scope needs an elevated PowerShell. Re-run as Administrator, or use -Scope user."
-        }
+    $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+    $isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if ($Scope -eq 'auto') {
+        $Scope = if ($isAdmin) { 'system' } else { 'user' }
+        $why = if ($isAdmin) { 'detected: elevated shell' } else { 'detected: non-elevated shell' }
+    } else {
+        $why = 'requested with -Scope'
+    }
+    if ($Scope -eq 'system' -and -not $isAdmin) {
+        throw "System scope needs an elevated PowerShell. Re-run as Administrator, or use -Scope user."
     }
     if (-not $Root) {
         $Root = if ($Scope -eq 'system') { Join-Path ($env:SystemDrive + '\') 'opt' } else { Join-Path $env:USERPROFILE 'opt' }
     }
+    $scopeNote = if ($Scope -eq 'system') { 'all users' } else { 'current user only' }
+    Step "Install scope: $Scope ($scopeNote; $why); package root: $Root"
     New-Item -ItemType Directory -Force -Path $work | Out-Null
 
     # 2. Get the archive (or folder) and verify it before unpacking anything.

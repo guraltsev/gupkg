@@ -18,7 +18,7 @@ from gupkg.core import PackageIdentity
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PACKAGE = ROOT / "pkgs" / "ffmpeg" / "vbootstrap"
+PACKAGE = ROOT / "pkgs" / "ffmpeg" / "pkg.bootstrap"
 CHECKER = PACKAGE / "pkg.local" / "check_update.py"
 
 

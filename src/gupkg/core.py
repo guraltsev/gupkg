@@ -34,8 +34,15 @@ EXIT_USER_ERROR = 2
 EXIT_MUTATION_ERROR = 3
 EXIT_INTERNAL_ERROR = 4
 
-# Version directory names: ``v<upstream>`` with an optional ``.l<local>``.
-VERSION_DIR_NAME_RE = re.compile(r"^v(.+?)(?:\.l(\d+))?$")
+# Version directory names: ``v`` followed by a digit-led upstream version and an
+# optional ``.l<local>``, so a package root such as ``volta`` is never mistaken
+# for a version directory.
+VERSION_DIR_NAME_RE = re.compile(r"^v(\d.*?)(?:\.l(\d+))?$")
+
+# The one directory name that holds a package's update template. It is not a
+# version: promoting it creates the first real version directory.
+BOOTSTRAP_DIR_NAME = "pkg.bootstrap"
+BOOTSTRAP_VERSION = "bootstrap"
 
 class ConfigValidationError(ValueError):
     """Raised when ``pkg.toml`` content is structurally invalid.
@@ -176,18 +183,24 @@ class PackageIdentity:
         ------
         ValueError
             Raised when ``version_path`` does not follow the
-            ``v<upstream>`` or ``v<upstream>.l<local>`` naming convention.
+            ``v<upstream>`` or ``v<upstream>.l<local>`` naming convention and
+            is not the ``pkg.bootstrap`` template directory.
 
         """
-        match = VERSION_DIR_NAME_RE.match(version_path.name)
-        if not match:
-            raise ValueError(
-                f"Invalid version directory name: {version_path.name}. Expected format: v<upstream> or v<upstream>.l<local>"
-            )
+        if version_path.name == BOOTSTRAP_DIR_NAME:
+            upstream, local_version = BOOTSTRAP_VERSION, 0
+        else:
+            match = VERSION_DIR_NAME_RE.match(version_path.name)
+            if not match:
+                raise ValueError(
+                    f"Invalid version directory name: {version_path.name}. "
+                    f"Expected format: v<digit>... or v<digit>....l<local>, or {BOOTSTRAP_DIR_NAME}"
+                )
+            upstream, local_version = match.group(1), int(match.group(2) or 0)
         return cls(
             name=package_root.name,
-            version=match.group(1),
-            local_version=int(match.group(2) or 0),
+            version=upstream,
+            local_version=local_version,
             version_string=version_path.name,
             package_root=package_root,
             version_path=version_path,
@@ -293,6 +306,23 @@ def is_version_directory_name(name: str) -> bool:
 
     """
     return VERSION_DIR_NAME_RE.match(name) is not None
+
+
+def is_package_directory_name(name: str) -> bool:
+    """Return whether a directory name is a version directory or the template.
+
+    Parameters
+    ----------
+    name : str
+        Directory name to validate.
+
+    Returns
+    -------
+    bool
+        ``True`` for ``v<digit>...`` version directories and ``pkg.bootstrap``.
+
+    """
+    return name == BOOTSTRAP_DIR_NAME or is_version_directory_name(name)
 
 
 def split_package_version(version: str) -> Tuple[str, int]:

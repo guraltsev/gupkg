@@ -75,16 +75,16 @@ their `ActionResult` rather than printing them; the CLI and TUIs render them. Ch
 unpack hooks are imported from `pkg.local/` as trusted
 in-process Python extensions; they are never executed as shell commands.
 
-Git payloads, including bootstrap `vbootstrap-git` packages, create a new
+Git payloads, including bootstrap `pkg.bootstrap` packages, create a new
 timestamped version directory. The update model has no mutable in-place mode
 and no automatic update policy.
 
-Installing a normal Git-backed `vbootstrap-git` template enters the update coordinator
+Installing a normal Git-backed `pkg.bootstrap` template enters the update coordinator
 before origin population or junction management. The resolved commit is staged
-directly into the timestamped version, so `vbootstrap-git` never becomes an installed
+directly into the timestamped version, so `pkg.bootstrap` never becomes an installed
 payload.
 
-The same coordinator accepts a `vbootstrap` template backed by a trusted
+The same coordinator accepts a `pkg.bootstrap` template backed by a trusted
 module check and ZIP or module payload. Release discovery remains
 package-specific while bootstrap staging stays generic.
 

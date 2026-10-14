@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from functools import cmp_to_key
 from pathlib import Path
 
-from .core import compare_package_versions, is_version_directory_name
+from .core import compare_package_versions, is_package_directory_name
 
 
 @dataclass(frozen=True)
@@ -90,7 +90,7 @@ def discover_collection(root: Path, *, max_depth: int = 8) -> Inventory:
                     for version in child.iterdir()
                     if version.is_dir()
                     and not version.is_symlink()
-                    and is_version_directory_name(version.name)
+                    and is_package_directory_name(version.name)
                     and (version / "pkg.toml").is_file()
                 ]
                 marker = child / "gupkg-dir.toml"

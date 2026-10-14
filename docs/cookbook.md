@@ -17,7 +17,7 @@ Commands assume `gupkg` is on `PATH`; in scheduled tasks use its full path.
 
 ## Install a program from GitHub Releases
 
-Create `C:\opt\<name>\vbootstrap\pkg.toml` describing the release asset, then
+Create `C:\opt\<name>\pkg.bootstrap\pkg.toml` describing the release asset, then
 run `gupkg install C:\opt\<name>`. The full walkthrough is in
 [Getting started](getting_started.md). The repository's [`pkgs/`](../pkgs)
 folder has ready-made definitions: copy a folder, run `gupkg install`.

@@ -13,7 +13,7 @@ installed `gupkg` should discover packages in separate user and system roots.
 
 | Need | Entry point |
 | --- | --- |
-| Install gupkg itself and set up manager mode | `gupkg-bootstrap.cmd [-Scope user|system]` |
+| Install gupkg itself and set up manager mode | `gupkg-bootstrap.cmd [-Scope auto|user|system]` |
 | Create the manager configuration | `gupkg manager init` |
 | Install or repair one package | `gupkg install [PATH]`, `gupkg config-fix [PATH]` |
 | Inspect or update one package | `gupkg config-check [PATH]`, `gupkg update [PATH]` |
@@ -34,8 +34,9 @@ bypasses the script execution policy for one run) is the supported entry point.
 It runs on stock Windows PowerShell 5.1:
 
 ```bat
-gupkg-bootstrap.cmd                      :: user scope, no elevation
-gupkg-bootstrap.cmd -Scope system        :: all users, elevated shell required
+gupkg-bootstrap.cmd                      :: auto: system scope if elevated, otherwise user
+gupkg-bootstrap.cmd -Scope user          :: force per-user, even when elevated
+gupkg-bootstrap.cmd -Scope system        :: force all users, elevated shell required
 gupkg-bootstrap.cmd -Source \\server\share\gupkg-0.12.0.zip -Sha256 <digest>
 ```
 

@@ -328,7 +328,7 @@ class GupkgCliBehaviorTests(unittest.TestCase):
         self.assertIn("Unknown key 'allow_automatic_update' in update", output)
 
     def test_bootstrap_git_install_creates_populated_timestamped_version(self) -> None:
-        """Installing bootstrap-git promotes its origin into an immutable version."""
+        """Installing a Git pkg.bootstrap promotes its origin into an immutable version."""
         module = load_gupkg_module()
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -349,14 +349,14 @@ class GupkgCliBehaviorTests(unittest.TestCase):
             self.run_git(upstream, "commit", "-m", "initial")
 
             package_root = root / "ImmutableGitApp"
-            version_dir = package_root / "vbootstrap-git.l2"
+            version_dir = package_root / "pkg.bootstrap"
             version_dir.mkdir(parents=True)
             self.write_config(
                 version_dir,
                 f"""
                 name = "ImmutableGitApp"
-                version = "bootstrap-git"
-                localVersion = 2
+                version = "bootstrap"
+                localVersion = 0
 
                 [origin]
                 mode = "git"
@@ -385,7 +385,7 @@ class GupkgCliBehaviorTests(unittest.TestCase):
             self.assertFalse((version_dir / "App").exists())
 
             # Installing the bootstrap template must stage and install a new
-            # immutable version rather than activating bootstrap-git itself.
+            # immutable version rather than activating pkg.bootstrap itself.
             with mock.patch.dict(os.environ, self.user_env(tmpdir), clear=False):
                 with mock.patch.object(
                     module, "update_current_junction_if_needed", return_value=True
@@ -590,7 +590,7 @@ class GupkgCliBehaviorTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             package_root = Path(tmpdir) / "ModuleBootstrap"
-            version_dir = package_root / "vbootstrap"
+            version_dir = package_root / "pkg.bootstrap"
             local_dir = version_dir / "pkg.local"
             local_dir.mkdir(parents=True)
             self.write_config(
@@ -665,7 +665,7 @@ class GupkgCliBehaviorTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             package_root = Path(tmpdir) / "SteppedBootstrap"
-            version_dir = package_root / "vbootstrap"
+            version_dir = package_root / "pkg.bootstrap"
             local_dir = version_dir / "pkg.local"
             local_dir.mkdir(parents=True)
             self.write_config(
@@ -730,7 +730,7 @@ class GupkgCliBehaviorTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             package_root = Path(tmpdir) / "ExecutableBootstrap"
-            version_dir = package_root / "vbootstrap"
+            version_dir = package_root / "pkg.bootstrap"
             local_dir = version_dir / "pkg.local"
             local_dir.mkdir(parents=True)
             self.write_config(
@@ -797,7 +797,7 @@ class GupkgCliBehaviorTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             package_root = Path(tmpdir) / "GithubBootstrap"
-            version_dir = package_root / "vbootstrap"
+            version_dir = package_root / "pkg.bootstrap"
             version_dir.mkdir(parents=True)
             archive = self.zip_bytes(
                 {
@@ -1038,7 +1038,7 @@ class GupkgCliBehaviorTests(unittest.TestCase):
         module = load_gupkg_module()
         with tempfile.TemporaryDirectory() as tmpdir:
             package_root = Path(tmpdir) / "AmbiguousApp"
-            (package_root / "vbootstrap").mkdir(parents=True)
+            (package_root / "pkg.bootstrap").mkdir(parents=True)
             (package_root / "v2.0.0").mkdir()
 
             with pushd(package_root):

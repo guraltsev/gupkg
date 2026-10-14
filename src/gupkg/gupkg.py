@@ -402,7 +402,6 @@ def install_downloaded_update(
             for path in identity.package_root.iterdir()
             if path.is_dir()
             and is_version_directory_name(path.name)
-            and not path.name.startswith("vbootstrap")
             and compare_package_versions(path.name, version_path.name) > 0
         ),
         key=lambda name: name.casefold(),

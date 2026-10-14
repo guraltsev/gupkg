@@ -21,7 +21,7 @@ HOOK_PATH = (
     ROOT
     / "pkgs"
     / "systeminformer"
-    / "vbootstrap"
+    / "pkg.bootstrap"
     / "pkg.local"
     / "check_update.py"
 )
@@ -29,7 +29,7 @@ INSTALL_STEP_PATH = (
     ROOT
     / "pkgs"
     / "systeminformer"
-    / "vbootstrap"
+    / "pkg.bootstrap"
     / "pkg.local"
     / "remove_settings.py"
 )
