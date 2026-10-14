@@ -20,6 +20,7 @@ assetName = "volta-${version}-windows.zip"
 [update.payload]
 mode = "module"
 module = "pkg.local/unpack_app.py"
+ignore_checksum = true
 
 [[path]]
 value = "$App"
