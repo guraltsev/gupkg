@@ -1,0 +1,21 @@
+name = "rapidee"
+version = "bootstrap"
+localVersion = 0
+only_portable = false
+description = "Rapid Environment Editor for Windows environment variables."
+homepage = "https://www.rapidee.com/"
+
+[update]
+
+[update.check]
+mode = "module"
+
+[update.payload]
+mode = "zip"
+# The publisher provides no checksum for this release asset.
+ignore_checksum = true
+
+[[shortcut]]
+name = "Rapid Environment Editor"
+targetPath = "$App\\RapidEE.exe"
+description = "Environment variable editor"

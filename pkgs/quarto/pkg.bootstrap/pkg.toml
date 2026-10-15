@@ -1,0 +1,25 @@
+name = "quarto"
+version = "bootstrap"
+localVersion = 0
+only_portable = false
+description = "Open-source scientific and technical publishing system."
+homepage = "https://quarto.org/"
+
+[origin]
+url = "https://github.com/quarto-dev/quarto-cli"
+
+[update]
+
+[update.check]
+mode = "github"
+assetName = "quarto-${version}-win.zip"
+
+[update.payload]
+mode = "zip"
+
+[[path]]
+value = "$App\\bin"
+
+[[bin]]
+name = "quarto"
+target = "$App\\bin\\quarto.exe"

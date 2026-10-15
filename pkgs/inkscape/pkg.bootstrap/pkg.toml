@@ -1,0 +1,23 @@
+name = "inkscape"
+version = "bootstrap"
+localVersion = 0
+only_portable = false
+description = "Vector graphics editor for illustrations, logos, and diagrams."
+homepage = "https://inkscape.org/"
+
+[update]
+
+[update.check]
+mode = "module"
+
+[update.payload]
+mode = "module"
+
+[[shortcut]]
+name = "Inkscape"
+targetPath = "$App\\bin\\inkscape.exe"
+description = "Vector graphics editor"
+
+[[bin]]
+name = "inkscape"
+target = "$App\\bin\\inkscape.com"

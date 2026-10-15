@@ -1,0 +1,25 @@
+name = "openhardwaremonitor"
+version = "bootstrap"
+localVersion = 0
+only_portable = false
+description = "Hardware temperature, fan, and voltage monitor (legacy project)."
+homepage = "https://openhardwaremonitor.org/"
+
+[update]
+
+[update.check]
+mode = "module"
+
+[update.payload]
+mode = "zip"
+# The publisher provides no checksum for this release asset.
+ignore_checksum = true
+
+[[update.payload.extract]]
+src = "OpenHardwareMonitor/"
+dest = ""
+
+[[shortcut]]
+name = "Open Hardware Monitor"
+targetPath = "$App\\OpenHardwareMonitor.exe"
+description = "Hardware monitor"

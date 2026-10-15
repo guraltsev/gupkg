@@ -1,0 +1,25 @@
+name = "keypirinha"
+version = "bootstrap"
+localVersion = 0
+only_portable = false
+description = "Keyboard-driven launcher and command palette."
+homepage = "https://keypirinha.com/"
+
+[origin]
+url = "https://github.com/Keypirinha/Keypirinha"
+
+[update]
+
+[update.check]
+mode = "github"
+assetName = "keypirinha-${version}-x64-portable.7z"
+
+[update.payload]
+mode = "module"
+# The publisher provides no checksum for this release asset.
+ignore_checksum = true
+
+[[shortcut]]
+name = "Keypirinha"
+targetPath = "$App\\keypirinha.exe"
+description = "Launcher"

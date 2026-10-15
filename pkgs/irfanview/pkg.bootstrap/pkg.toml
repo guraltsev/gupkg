@@ -1,0 +1,21 @@
+name = "irfanview"
+version = "bootstrap"
+localVersion = 0
+only_portable = false
+description = "Fast, compact image viewer and converter."
+homepage = "https://www.irfanview.com/"
+
+[update]
+
+[update.check]
+mode = "module"
+
+[update.payload]
+mode = "zip"
+# The publisher provides no checksum for this release asset.
+ignore_checksum = true
+
+[[shortcut]]
+name = "IrfanView"
+targetPath = "$App\\i_view64.exe"
+description = "Image viewer"

@@ -1,0 +1,31 @@
+name = "windowsterminal"
+version = "bootstrap"
+localVersion = 0
+only_portable = false
+description = "Modern terminal application for command-line tools and shells."
+homepage = "https://github.com/microsoft/terminal"
+
+[origin]
+url = "https://github.com/microsoft/terminal"
+
+[update]
+
+[update.check]
+mode = "github"
+assetName = "Microsoft.WindowsTerminal_${version}_x64.zip"
+
+[update.payload]
+mode = "zip"
+
+[[update.payload.extract]]
+src = "terminal-*/"
+dest = ""
+
+[[shortcut]]
+name = "Windows Terminal"
+targetPath = "$App\\WindowsTerminal.exe"
+description = "Windows Terminal"
+
+[[bin]]
+name = "wt"
+target = "$App\\wt.exe"

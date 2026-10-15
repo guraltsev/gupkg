@@ -1,0 +1,21 @@
+name = "winscp"
+version = "bootstrap"
+localVersion = 0
+only_portable = false
+description = "Free SFTP, SCP, FTP, and WebDAV client."
+homepage = "https://winscp.net/"
+
+[update]
+
+[update.check]
+mode = "module"
+
+[update.payload]
+mode = "zip"
+# The publisher provides no checksum for this release asset.
+ignore_checksum = true
+
+[[shortcut]]
+name = "WinSCP"
+targetPath = "$App\\WinSCP.exe"
+description = "SFTP and FTP client"

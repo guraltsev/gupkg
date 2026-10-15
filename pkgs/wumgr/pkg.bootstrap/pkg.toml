@@ -1,0 +1,21 @@
+name = "wumgr"
+version = "bootstrap"
+localVersion = 0
+only_portable = false
+description = "Windows Update manager that controls update installation."
+homepage = "https://github.com/DavidXanatos/wumgr"
+
+[update]
+
+[update.check]
+mode = "module"
+
+[update.payload]
+mode = "zip"
+# The publisher provides no checksum for this release asset.
+ignore_checksum = true
+
+[[shortcut]]
+name = "Tools\\WuMgr"
+targetPath = "$App\\wumgr.exe"
+description = "Windows Update manager"

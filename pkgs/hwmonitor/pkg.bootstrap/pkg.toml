@@ -1,0 +1,21 @@
+name = "hwmonitor"
+version = "bootstrap"
+localVersion = 0
+only_portable = false
+description = "Hardware voltage, temperature, and fan monitor."
+homepage = "https://www.cpuid.com/softwares/hwmonitor.html"
+
+[update]
+
+[update.check]
+mode = "module"
+
+[update.payload]
+mode = "zip"
+# The publisher provides no checksum for this release asset.
+ignore_checksum = true
+
+[[shortcut]]
+name = "HWMonitor"
+targetPath = "$App\\HWMonitor_x64.exe"
+description = "Hardware monitor"

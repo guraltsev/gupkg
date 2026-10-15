@@ -1,0 +1,23 @@
+name = "sharex"
+version = "bootstrap"
+localVersion = 0
+only_portable = false
+description = "Screen capture, recording, and file-sharing tool."
+homepage = "https://getsharex.com/"
+
+[origin]
+url = "https://github.com/ShareX/ShareX"
+
+[update]
+
+[update.check]
+mode = "github"
+assetName = "ShareX-${version}-portable-x64.zip"
+
+[update.payload]
+mode = "zip"
+
+[[shortcut]]
+name = "ShareX"
+targetPath = "$App\\ShareX.exe"
+description = "Screen capture and sharing"
