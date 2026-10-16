@@ -1,0 +1,34 @@
+name = "komorebi"
+version = "bootstrap"
+localVersion = 0
+only_portable = false
+description = "Tiling window manager for Windows."
+homepage = "https://github.com/LGUG2Z/komorebi"
+
+[origin]
+url = "https://github.com/LGUG2Z/komorebi"
+
+[update]
+
+[update.check]
+mode = "github"
+assetName = "komorebi-${version}-x86_64-pc-windows-msvc.zip"
+
+[update.payload]
+mode = "zip"
+
+[[path]]
+value = "$App"
+
+[[shortcut]]
+name = "komorebi GUI"
+targetPath = "$App\\komorebi-gui.exe"
+description = "komorebi configuration GUI"
+
+[[bin]]
+name = "komorebic"
+target = "$App\\komorebic.exe"
+
+[[bin]]
+name = "komorebi"
+target = "$App\\komorebi.exe"

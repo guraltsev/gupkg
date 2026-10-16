@@ -1,0 +1,24 @@
+name = "Shutter Encoder"
+version = "bootstrap"
+localVersion = 0
+only_portable = false
+description = "Video, audio, and image conversion tool built on FFmpeg."
+homepage = "https://www.shutterencoder.com/"
+
+[update]
+
+[update.check]
+mode = "module"
+
+# The ZIP wraps everything in a "Shutter Encoder" folder.
+[update.payload]
+mode = "zip"
+extractSubdir = "Shutter Encoder"
+# The publisher provides no checksum for the download.
+ignore_checksum = true
+
+[[shortcut]]
+name = "Shutter Encoder"
+targetPath = "$App\\Shutter Encoder.exe"
+workingDirectory = "$App"
+description = "Video and audio converter"

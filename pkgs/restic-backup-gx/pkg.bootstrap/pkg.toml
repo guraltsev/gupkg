@@ -1,0 +1,24 @@
+name = "restic-backup-gx"
+version = "bootstrap"
+localVersion = 0
+only_portable = false
+description = "A desktop application for your personal backups, powered by restic."
+homepage = "https://restic.cryptic.link/"
+
+[update]
+
+[update.check]
+mode = "module"
+
+# The release is a single executable named after its version; the module
+# stores it as restic-backup-gx.exe so the shortcut path stays stable.
+[update.payload]
+mode = "module"
+ignore_checksum = true
+
+[[shortcut]]
+name = "restic-backup-gx"
+targetPath = "$App\\restic-backup-gx.exe"
+workingDirectory = "$App"
+iconLocation = "$App\\restic-backup-gx.exe,0"
+description = "GUI for Restic"

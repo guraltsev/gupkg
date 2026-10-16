@@ -1,0 +1,23 @@
+name = "Gimp"
+version = "bootstrap"
+localVersion = 0
+only_portable = false
+description = "GNU Image Manipulation Program, a raster graphics editor."
+homepage = "https://www.gimp.org/"
+
+[update]
+
+[update.check]
+mode = "module"
+
+# The official download is an Inno Setup installer, which 7-Zip cannot
+# unpack. The module runs it silently into the staged App directory.
+[update.payload]
+mode = "module"
+ignore_checksum = false
+
+[[shortcut]]
+name = "Gimp"
+targetPath = "$App\\bin\\gimp-3.exe"
+workingDirectory = "%USERPROFILE%"
+description = "Graphics manipulation"

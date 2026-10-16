@@ -1,0 +1,38 @@
+name = "perl"
+version = "bootstrap"
+localVersion = 0
+only_portable = false
+description = "Strawberry Perl portable distribution with a bundled C toolchain."
+homepage = "https://strawberryperl.com/"
+
+[origin]
+url = "https://github.com/StrawberryPerl/Perl-Dist-Strawberry"
+
+[update]
+
+[update.check]
+mode = "module"
+
+[update.payload]
+mode = "zip"
+ignore_checksum = false
+
+[[path]]
+value = "$App\\perl\\bin"
+
+[[path]]
+value = "$App\\perl\\site\\bin"
+
+[[path]]
+value = "$App\\c\\bin"
+
+[[shortcut]]
+name = "Perl shell"
+targetPath = "$App\\portableshell.exe"
+workingDirectory = "%USERPROFILE%"
+iconLocation = "$App\\win32\\strawberry.ico,0"
+description = "Strawberry Perl portable shell"
+
+[[bin]]
+name = "perl"
+target = "$App\\perl\\bin\\perl.exe"

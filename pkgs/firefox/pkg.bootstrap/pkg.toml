@@ -1,0 +1,33 @@
+name = "firefox"
+version = "bootstrap"
+localVersion = 0
+only_portable = false
+description = "Mozilla Firefox web browser, unpacked from the official 64-bit installer."
+homepage = "https://www.mozilla.org/firefox/"
+
+[update]
+
+[update.check]
+mode = "module"
+
+[update.payload]
+mode = "module"
+ignore_checksum = false
+
+[[shortcut]]
+name = "Firefox"
+targetPath = "$App\\firefox.exe"
+workingDirectory = "%USERPROFILE%"
+description = "Mozilla Firefox web browser"
+
+[[shortcut]]
+name = "Firefox profile manager"
+targetPath = "$App\\firefox.exe"
+arguments = "-ProfileManager"
+workingDirectory = "%USERPROFILE%"
+description = "Mozilla Firefox profile manager"
+
+[[bin]]
+name = "firefox"
+target = "$App\\firefox.exe"
+type = "gui"

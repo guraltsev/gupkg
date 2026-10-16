@@ -1,0 +1,28 @@
+name = "wox"
+version = "bootstrap"
+localVersion = 0
+only_portable = false
+description = "Fast desktop launcher for opening apps, finding files, running system actions, and building workflows with plugins."
+homepage = "https://wox-launcher.github.io/Wox/"
+
+[origin]
+url = "https://github.com/Wox-launcher/Wox"
+
+[update]
+
+[update.check]
+mode = "github"
+assetName = "wox-windows-amd64.exe"
+
+# The release asset is a single executable, stored in App as wox.exe.
+[update.payload]
+mode = "zip"
+
+[[update.payload.rename]]
+src = "wox-windows-amd64.exe"
+dest = "wox.exe"
+
+[[shortcut]]
+name = "Wox"
+targetPath = "$App\\wox.exe"
+description = "Application launcher"

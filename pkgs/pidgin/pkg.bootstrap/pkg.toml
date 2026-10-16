@@ -1,0 +1,22 @@
+name = "pidgin"
+version = "bootstrap"
+localVersion = 0
+only_portable = false
+description = "Pidgin multi-protocol instant messaging client, unpacked from the offline installer."
+homepage = "https://pidgin.im/"
+
+[update]
+
+[update.check]
+mode = "module"
+
+[update.payload]
+mode = "module"
+# SourceForge publishes no checksum next to the installer.
+ignore_checksum = true
+
+[[shortcut]]
+name = "Pidgin"
+targetPath = "$App\\pidgin.exe"
+workingDirectory = "$App"
+description = "Pidgin instant messenger"

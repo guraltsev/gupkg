@@ -1,0 +1,22 @@
+name = "WinDebloatTools"
+version = "bootstrap"
+localVersion = 0
+only_portable = false
+description = "Scripts that debloat and tune Windows; the project publishes no releases, so the main branch is tracked."
+homepage = "https://github.com/LeDragoX/Win-Debloat-Tools"
+
+[origin]
+mode = "git"
+url = "https://github.com/LeDragoX/Win-Debloat-Tools.git"
+
+[update]
+
+[update.payload]
+mode = "git"
+
+[[shortcut]]
+name = "Win Debloat Tools"
+targetPath = "powershell.exe"
+arguments = "-NoProfile -ExecutionPolicy Bypass -File \"$App\\WinDebloatTools.ps1\""
+workingDirectory = "$App"
+description = "Windows debloat and tuning scripts (run elevated)"

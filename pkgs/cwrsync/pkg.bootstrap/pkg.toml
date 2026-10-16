@@ -1,0 +1,23 @@
+name = "CWRsync"
+version = "bootstrap"
+localVersion = 0
+only_portable = false
+description = "Barebone rsync client for Windows from itefix, bundling rsync and ssh."
+homepage = "https://itefix.net/cwrsync"
+
+[update]
+
+[update.check]
+mode = "module"
+
+[update.payload]
+mode = "zip"
+# itefix publishes no checksum file for the free client.
+ignore_checksum = true
+
+[[path]]
+value = "$App\\bin"
+
+[[bin]]
+name = "rsync"
+target = "$App\\bin\\rsync.exe"
