@@ -1,9 +1,15 @@
 name = "gupkg"
-version = "0.12.0"
+version = "0.12.1"
 localVersion = 0
 description = "The standalone gupkg package manager runtime"
 homepage = "https://github.com/guraltsev/pkg"
 
+
+[[shortcut]]
+name = "gupkg manager"
+targetPath = "%COMSPEC%"
+arguments = '/d /s /c ""$VersionRoot\gupkg\gupkg.cmd" manager tui"'
+description = "Run gupkg in manager mode"
 
 [[bin]]
 name = "gupkg"
