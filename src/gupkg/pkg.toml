@@ -11,7 +11,7 @@ Value = "$VersionRoot\\gupkg"
 [[shortcut]]
 name = "gupkg manager"
 targetPath = "%COMSPEC%"
-arguments = '/d /s /c ""$VersionRoot\gupkg\gupkg.cmd" manager tui"'
+arguments = '/d /s /c ""$VersionRoot\gupkg\gupkg.cmd" manager tui || pause"'
 description = "Run gupkg in manager mode"
 
 [[bin]]
