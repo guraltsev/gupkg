@@ -92,6 +92,49 @@ function Find-GupkgFolder([string]$Folder) {
     return $found.FullName
 }
 
+function Install-BundledRuntime([string]$PackageDir) {
+    # Elevated gupkg runs use only a bundled Python and never install anything,
+    # so a system-scope install provisions the runtime here, from verified
+    # downloads: the embeddable CPython (pinned SHA-256, the same as gupkg.cmd
+    # uses) and the hash-pinned wheels listed in gupkg-deps.lock.
+    $pythonUrl = 'https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip'
+    $pythonSha = '4ACBED6DD1C744B0376E3B1CF57CE906F9DC9E95E68824584C8099A63025A3C3'
+    $lock = Join-Path $PackageDir 'gupkg-deps.lock'
+    if (-not (Test-Path -LiteralPath $lock)) { throw "Missing dependency lock: $lock" }
+    $stage = Join-Path $work 'runtime'
+    New-Item -ItemType Directory -Force -Path $stage | Out-Null
+
+    Step 'Downloading embedded Python 3.12.10'
+    $zip = Join-Path $work 'python-embed.zip'
+    Invoke-WebRequest -UseBasicParsing -Uri $pythonUrl -OutFile $zip
+    if ((Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash -ne $pythonSha) { throw 'Downloaded Python archive failed SHA-256 verification.' }
+    Expand-Archive -LiteralPath $zip -DestinationPath $stage -Force
+    $pth = "python312.zip`n.`n..`nLib/site-packages`n`nimport site`n"
+    [IO.File]::WriteAllText((Join-Path $stage 'python312._pth'), $pth, [Text.Encoding]::ASCII)
+
+    # The embeddable Python has no pip. Fetch the wheel the lock pins (matched by
+    # its hash, not by name), unpack it, and let it install the locked set.
+    $pin = [regex]::Match((Get-Content -LiteralPath $lock -Raw), '(?m)^pip==(\S+)\s+--hash=sha256:([0-9a-f]{64})')
+    if (-not $pin.Success) { throw "$lock does not pin pip." }
+    $meta = Invoke-RestMethod -UseBasicParsing -Uri "https://pypi.org/pypi/pip/$($pin.Groups[1].Value)/json"
+    $wheel = $meta.urls | Where-Object { $_.packagetype -eq 'bdist_wheel' -and $_.digests.sha256 -eq $pin.Groups[2].Value } | Select-Object -First 1
+    if (-not $wheel) { throw 'PyPI lists no pip wheel with the locked hash.' }
+    $pipZip = Join-Path $work 'pip.zip'
+    Invoke-WebRequest -UseBasicParsing -Uri $wheel.url -OutFile $pipZip
+    if ((Get-FileHash -Algorithm SHA256 -LiteralPath $pipZip).Hash.ToLower() -ne $pin.Groups[2].Value) { throw 'Downloaded pip wheel failed SHA-256 verification.' }
+    $sitePackages = Join-Path $stage 'Lib\site-packages'
+    Expand-Archive -LiteralPath $pipZip -DestinationPath $sitePackages -Force
+
+    Step 'Installing locked dependencies (hashes required, wheels only)'
+    & (Join-Path $stage 'python.exe') -I -m pip install --isolated --disable-pip-version-check --no-input --no-warn-script-location --upgrade --target $sitePackages --require-hashes --only-binary=:all: --no-deps -r $lock | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Installing the locked dependencies failed (pip exit $LASTEXITCODE)." }
+    Remove-Item -LiteralPath (Join-Path $sitePackages 'bin') -Recurse -Force -ErrorAction SilentlyContinue
+
+    $destination = Join-Path $PackageDir 'python'
+    if (Test-Path -LiteralPath $destination) { Remove-Item -LiteralPath $destination -Recurse -Force }
+    Copy-Item -LiteralPath $stage -Destination $destination -Recurse
+}
+
 $work = Join-Path ([IO.Path]::GetTempPath()) ("gupkg-bootstrap-" + [Guid]::NewGuid().ToString('N'))
 try {
     # 1. Decide where gupkg goes, and refuse early when the scope cannot work.
@@ -157,17 +200,25 @@ try {
         New-Item -ItemType Directory -Force -Path (Split-Path $target) | Out-Null
         Copy-Item -LiteralPath $payload -Destination $target -Recurse
     }
+    # A system-scope install runs elevated, which needs the bundled runtime.
+    $packageDir = Join-Path $target 'gupkg'
+    if ($Scope -eq 'system' -and -not (Test-Path -LiteralPath (Join-Path $packageDir 'python\python.exe'))) {
+        Install-BundledRuntime $packageDir
+    }
     # A system-scope install is run elevated, and elevated runs execute only code
     # that non-administrators cannot modify. Restrict the gupkg package folder
     # (so every later version folder inherits it) to SYSTEM and Administrators
     # with write access plus Users with read and execute access, make
-    # Administrators the owner, and stop if that cannot be done.
+    # Administrators the owner, and stop if that cannot be done. Do not add /T to
+    # the inheritance/grant command: it strips the inherited entries from files
+    # and leaves them with no access list at all (even Administrators are denied).
+    # Children pick the new entries up through inheritance instead.
     if ($Scope -eq 'system') {
         $guarded = Split-Path $target
         Step "Restricting $guarded to administrators (read-only for other users)"
         & icacls.exe $guarded /setowner '*S-1-5-32-544' /T /C /Q | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "Could not set the owner of $guarded (icacls exit $LASTEXITCODE)." }
-        & icacls.exe $guarded /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX' /T /C /Q | Out-Null
+        & icacls.exe $guarded /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX' /C /Q | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "Could not restrict $guarded (icacls exit $LASTEXITCODE)." }
     }
     $launcher = Join-Path $target 'gupkg.cmd'

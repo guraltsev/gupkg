@@ -248,7 +248,7 @@ def _untrusted_message(directory: Path, problem: str) -> str:
         f"Refusing to run elevated: {directory} is not admin-only because {problem}. "
         "Elevated runs require an install location that only Administrators and SYSTEM "
         f"can modify. From an elevated prompt, restrict it with: {fix} "
-        "(add /T to apply it to existing files), or reinstall gupkg under such a location."
+        "(children inherit it; do not add /T), or reinstall gupkg under such a location."
     )
 
 

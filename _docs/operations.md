@@ -11,17 +11,17 @@ Use package-local mode when you already have a package directory and want to
 install or repair that one package. Use manager mode when one centrally
 installed `gupkg` should discover packages in separate user and system roots.
 
-| Need | Entry point |
-| --- | --- |
-| Install gupkg itself and set up manager mode | `gupkg-bootstrap.cmd [-Scope auto|user|system]` |
-| Create the manager configuration | `gupkg manager init` |
-| Install or repair one package | `gupkg install [PATH]`, `gupkg config-fix [PATH]` |
-| Inspect or update one package | `gupkg config-check [PATH]`, `gupkg update [PATH]` |
-| Inspect all managed packages | `gupkg manager list`, `gupkg manager doctor` |
-| Check or apply managed updates | `gupkg manager update [--check-only|--download-only]` |
-| Find packages in the registry | `gupkg manager registry sync`, `gupkg manager search` |
-| Install a registry selector | `gupkg --scope user|system manager install SELECTOR` |
-| Open an interactive interface | `gupkg tui [PATH]`, `gupkg manager tui` |
+| Need                                         | Entry point                                           |
+| -------------------------------------------- | :---------------------------------------------------- |
+| Install gupkg itself and set up manager mode | `gupkg-bootstrap.cmd [-Scope auto|user|system]`       |
+| Create the manager configuration             | `gupkg manager init`                                  |
+| Install or repair one package                | `gupkg install [PATH]`, `gupkg config-fix [PATH]`     |
+| Inspect or update one package                | `gupkg config-check [PATH]`, `gupkg update [PATH]`    |
+| Inspect all managed packages                 | `gupkg manager list`, `gupkg manager doctor`          |
+| Check or apply managed updates               | `gupkg manager update [--check-only|--download-only]` |
+| Find packages in the registry                | `gupkg manager registry sync`, `gupkg manager search` |
+| Install a registry selector                  | `gupkg --scope user|system manager install SELECTOR`  |
+| Open an interactive interface                | `gupkg tui [PATH]`, `gupkg manager tui`               |
 
 Every invocation names its command explicitly. Package paths are optional only
 when the current directory resolves as a package. Manager selection never
