@@ -10,6 +10,7 @@ row.
 
 | Version | Commit | Date | Notes |
 |---|---|---|---|
+| 0.13.7 | `be4c45399bd39f52307961da8d3cf28f3c3661f4` | 2026-10-17 | Fresh-clone tests, maintenance scripts, registry tag publishing, registry cache trust |
 | 0.13.6 | `5f31a7e8c59dd6b64168b58765a1a39803a30f2e` | 2026-10-17 | Elevated runs refuse a registry cache that is not admin-only |
 | 0.13.5 | `24f750ffc9823d91cb139f7ecca495f7dbb2cb08` | 2026-10-16 | Manager configuration is read only from the gupkg folder (no APPDATA or GUPKG_HOME); elevated runs require it admin-only |
 | 0.13.4 | `e49a797a7cc92e6e9b40896a27c87ba3c47f6ea7` | 2026-10-16 | Fix HTTPS verification failures on github.com with the bundled Python 3.12 |
