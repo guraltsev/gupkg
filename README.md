@@ -52,8 +52,11 @@ package contacts its source.
 `gupkg` is a self-contained tool that is deployed as a folder; it is not distributed as a
 package on a Python package index. Pick the route that fits:
 
-- **Bootstrap script (recommended).** Download `gupkg-bootstrap.ps1` and
-  `gupkg-bootstrap.cmd` from this repository, put them in one folder, and run
+- **Bootstrap script (recommended).** Download `gupkg-bootstrap.cmd` from this
+  repository and run it. If `gupkg-bootstrap.ps1` is not beside it, the command
+  shows the address and asks before downloading the script from the official
+  repository (set `GUPKG_BOOTSTRAP_YES=1` to skip the question, or
+  `GUPKG_BOOTSTRAP_URL` to use another address):
 
   ```bat
   gupkg-bootstrap.cmd                  :: auto: all users if elevated, otherwise just you

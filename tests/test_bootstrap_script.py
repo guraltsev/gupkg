@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shutil
 import subprocess
 import zipfile
 from pathlib import Path
@@ -93,3 +94,69 @@ def test_missing_source_is_reported_plainly(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "Source not found" in result.stderr
+
+
+def _lone_cmd(tmp_path: Path) -> Path:
+    """Copy only gupkg-bootstrap.cmd into an empty folder, as a user who downloaded just that file."""
+    folder = tmp_path / "download"
+    folder.mkdir()
+    shutil.copy2(BOOTSTRAP, folder / "gupkg-bootstrap.cmd")
+    return folder / "gupkg-bootstrap.cmd"
+
+
+def _fake_remote_script(tmp_path: Path) -> str:
+    """Write a stand-in gupkg-bootstrap.ps1 that echoes its arguments, and return its file URL."""
+    script = tmp_path / "remote" / "gupkg-bootstrap.ps1"
+    script.parent.mkdir()
+    script.write_text("param([string]$Marker)\nWrite-Output \"ran with marker $Marker\"\n", encoding="utf-8")
+    return script.as_uri()
+
+
+def test_missing_script_is_downloaded_after_confirmation_and_then_run(tmp_path: Path) -> None:
+    """Answering yes downloads the script next to the .cmd, runs it with the same arguments, and keeps it."""
+    launcher = _lone_cmd(tmp_path)
+    environment = {**os.environ, "GUPKG_BOOTSTRAP_URL": _fake_remote_script(tmp_path)}
+    environment.pop("GUPKG_BOOTSTRAP_YES", None)
+
+    result = subprocess.run([str(launcher), "-Marker", "abc"], input="y\n", capture_output=True, text=True, env=environment, timeout=100)
+
+    assert result.returncode == 0, result.stderr
+    assert "was not found next to this file" in result.stdout
+    assert "ran with marker abc" in result.stdout
+    assert (launcher.parent / "gupkg-bootstrap.ps1").is_file()
+
+
+def test_declining_the_download_runs_nothing_and_saves_nothing(tmp_path: Path) -> None:
+    """Answering no cancels with an error and leaves the folder without the script."""
+    launcher = _lone_cmd(tmp_path)
+    environment = {**os.environ, "GUPKG_BOOTSTRAP_URL": _fake_remote_script(tmp_path)}
+    environment.pop("GUPKG_BOOTSTRAP_YES", None)
+
+    result = subprocess.run([str(launcher)], input="n\n", capture_output=True, text=True, env=environment, timeout=100)
+
+    assert result.returncode == 1
+    assert "Cancelled" in result.stderr
+    assert not (launcher.parent / "gupkg-bootstrap.ps1").exists()
+
+
+def test_yes_variable_downloads_without_asking(tmp_path: Path) -> None:
+    """GUPKG_BOOTSTRAP_YES=1 skips the question, so unattended runs work."""
+    launcher = _lone_cmd(tmp_path)
+    environment = {**os.environ, "GUPKG_BOOTSTRAP_URL": _fake_remote_script(tmp_path), "GUPKG_BOOTSTRAP_YES": "1"}
+
+    result = subprocess.run([str(launcher), "-Marker", "z"], capture_output=True, text=True, env=environment, timeout=100, stdin=subprocess.DEVNULL)
+
+    assert result.returncode == 0, result.stderr
+    assert "ran with marker z" in result.stdout
+
+
+def test_failed_download_leaves_no_partial_file(tmp_path: Path) -> None:
+    """An unreachable address reports the failure and does not leave a half-written script."""
+    launcher = _lone_cmd(tmp_path)
+    environment = {**os.environ, "GUPKG_BOOTSTRAP_URL": (tmp_path / "missing.ps1").as_uri(), "GUPKG_BOOTSTRAP_YES": "1"}
+
+    result = subprocess.run([str(launcher)], capture_output=True, text=True, env=environment, timeout=100, stdin=subprocess.DEVNULL)
+
+    assert result.returncode == 1
+    assert "Could not download" in result.stderr
+    assert list(launcher.parent.glob("gupkg-bootstrap.ps1*")) == []
