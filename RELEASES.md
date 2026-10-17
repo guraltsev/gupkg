@@ -10,6 +10,7 @@ row.
 
 | Version | Commit | Date | Notes |
 |---|---|---|---|
+| 0.13.8 | `a33d83a593666ebb4e5c67675645af70f984580f` | 2026-10-17 | Fix elevated manager init (registry cache location, no leftover invalid config) |
 | 0.13.7 | `be4c45399bd39f52307961da8d3cf28f3c3661f4` | 2026-10-17 | Fresh-clone tests, maintenance scripts, registry tag publishing, registry cache trust |
 | 0.13.6 | `5f31a7e8c59dd6b64168b58765a1a39803a30f2e` | 2026-10-17 | Elevated runs refuse a registry cache that is not admin-only |
 | 0.13.5 | `24f750ffc9823d91cb139f7ecca495f7dbb2cb08` | 2026-10-16 | Manager configuration is read only from the gupkg folder (no APPDATA or GUPKG_HOME); elevated runs require it admin-only |
