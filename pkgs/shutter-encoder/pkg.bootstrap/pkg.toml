@@ -1,4 +1,4 @@
-name = "Shutter Encoder"
+name = "shutter-encoder"
 version = "bootstrap"
 localVersion = 0
 only_portable = false

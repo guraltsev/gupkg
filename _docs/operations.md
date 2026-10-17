@@ -297,3 +297,12 @@ package code. The test suite covers manager schema/discovery, registry parsing
 and cache behavior, standalone assembly, payload variables, and the existing
 package/update workflows. The Windows-specific cases in
 `tests\manual_smoke.md` still require a real Windows environment.
+
+## Package launchers
+
+Every package in `pkgs/` ships the same lightweight `gupkg.cmd` (a copy of
+`src\gupkg.cmd`). It runs a gupkg installed beside it (`gupkg\gupkg.exe`, then
+`gupkg\gupkg.cmd`) and otherwise the first `gupkg.exe` on `PATH`, so
+`gupkg.cmd update` works from any installed package folder. After changing
+`src\gupkg.cmd`, run `python tools\sync_package_launchers.py` to refresh the
+copies (`--check` only reports differences); a test fails when one is stale.
