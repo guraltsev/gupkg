@@ -1,6 +1,6 @@
 """Synchronize and query the official, read-only ``pkgs/`` registry tree.
 
-The registry is a ZIP archive (by default GitHub's archive of the ``stable``
+The registry is a ZIP archive (by default GitHub's archive of the ``registry``
 tag) that contains a ``pkgs`` folder. It is fetched with the Python standard
 library, so neither Git nor any extra tool is needed, and the unpacked tree is
 validated before it becomes visible to callers. It never imports or executes
@@ -52,8 +52,9 @@ from .elevation import UntrustedLocationError, elevated_mode, require_trusted_di
 from .origin import validate_origin_health, validate_update_health
 
 
-# Default registry archive: the ``stable`` tag of the official package repository.
-OFFICIAL_SOURCE = "https://github.com/guraltsev/pkg/archive/refs/tags/stable.zip"
+# Default registry archive: the ``registry`` tag of the official package repository,
+# which moves independently of gupkg releases (see tools/publish_registry.py).
+OFFICIAL_SOURCE = "https://github.com/guraltsev/pkg/archive/refs/tags/registry.zip"
 
 
 @dataclass(frozen=True)

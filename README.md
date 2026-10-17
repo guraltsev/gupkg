@@ -270,14 +270,15 @@ user = '%USERPROFILE%\bin'
 # Optional. These are the defaults; change them to move the cache or use a mirror.
 [registry]
 cache = '%LOCALAPPDATA%\gupkg\registry'
-source = "https://github.com/guraltsev/pkg/archive/refs/tags/stable.zip"
+source = "https://github.com/guraltsev/pkg/archive/refs/tags/registry.zip"
 ```
 
 Both package roots are required collection roots and must be distinct and
 non-nesting. The bin roots must also be distinct. The `[registry]` table is
 optional: `cache` (default `%LOCALAPPDATA%\gupkg\registry`) is where the
 downloaded catalogue is kept and must not be inside either package root, and
-`source` (default: the `stable` tag of the official repository) is the URL of a
+`source` (default: the `registry` tag of the official repository, which is
+moved independently of gupkg releases) is the URL of a
 ZIP archive containing a `pkgs` folder; it may be an `https://` mirror or a
 `file:` URL on a share. The older `channel` key is accepted and ignored.
 `gupkg manager init` writes this file for you. Relative paths resolve against the manager

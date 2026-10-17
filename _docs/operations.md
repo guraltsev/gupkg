@@ -42,7 +42,7 @@ gupkg-bootstrap.cmd -Source \\server\share\gupkg-0.12.0.zip -Sha256 <digest>
 
 What it does, in order: choose the root (`%USERPROFILE%\opt` or `C:\opt`, or
 `-Root`); fetch the archive from `-Source` (a URL, ZIP, or folder; default: the
-`stable` tag of the official repository) and verify `-Sha256` when given;
+newest release in `RELEASES.md` of the official repository) and verify `-Sha256` when given;
 place it at `<root>\gupkg\v<version>`, reusing a matching folder unless
 `-Force`; run `gupkg install` on it, which creates the `current` junction, the
 `gupkg` and `gupkg-tui` commands, and the PATH entry; and run
@@ -119,14 +119,15 @@ user = '%USERPROFILE%\bin'
 # Optional. These are the defaults; change them to move the cache or use a mirror.
 [registry]
 cache = '%LOCALAPPDATA%\gupkg\registry'
-source = "https://github.com/guraltsev/pkg/archive/refs/tags/stable.zip"
+source = "https://github.com/guraltsev/pkg/archive/refs/tags/registry.zip"
 ```
 
 `packages.system` and `packages.user` are required, distinct, non-nesting
 collection roots. The two `bin` directories must also be distinct. The whole
 `[registry]` table is optional: `cache` defaults to
 `%LOCALAPPDATA%\gupkg\registry` and must be outside both package roots, and
-`source` defaults to the official `stable` archive. `source` may be any
+`source` defaults to the official `registry` archive (an older `stable` URL in
+an existing file keeps working but stops receiving updates). `source` may be any
 `https://` or `file:` URL of a ZIP archive that contains a `pkgs` folder, so a
 mirror or a network share works. The obsolete `channel = "stable"` line is
 accepted and ignored. Existing configured paths must be
@@ -154,7 +155,7 @@ any location.
 
 ## Registry workflow
 
-The official stable registry is the `pkgs` folder of the `stable` tag of
+The official registry is the `pkgs` folder of the `registry` tag of
 `github.com/guraltsev/pkg`, fetched as a plain ZIP archive over HTTPS (or from
 the `[registry] source` you configure) using Python's standard library; neither
 Git nor any other tool is required. Registry data is treated as untrusted
@@ -297,6 +298,21 @@ package code. The test suite covers manager schema/discovery, registry parsing
 and cache behavior, standalone assembly, payload variables, and the existing
 package/update workflows. The Windows-specific cases in
 `tests\manual_smoke.md` still require a real Windows environment.
+
+## Publishing the registry
+
+The registry is versioned separately from gupkg: package changes need no gupkg
+version bump or release. Commit and push the change to `pkgs`, then run:
+
+```bat
+python tools\publish_registry.py
+git push <remote> +registry
+```
+
+The tool refuses a dirty tree, an unpushed `HEAD`, a package without the current
+`gupkg.cmd`, or a tree that fails registry validation, and otherwise moves the
+`registry` tag to `HEAD`. Users get the new packages on their next
+`gupkg manager registry sync`.
 
 ## Package launchers
 
