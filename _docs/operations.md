@@ -119,7 +119,7 @@ user = '%USERPROFILE%\bin'
 # Optional. These are the defaults; change them to move the cache or use a mirror.
 [registry]
 cache = 'C:\opt\gupkg\current\App\registry'
-source = "https://github.com/guraltsev/pkg/archive/refs/tags/registry.zip"
+source = "https://github.com/guraltsev/gupkg-registry.git"
 ```
 
 `packages.system` and `packages.user` are required, distinct, non-nesting
