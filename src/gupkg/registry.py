@@ -48,6 +48,7 @@ from .core import (
     write_text_atomic,
 )
 from .downloads import download_response, file_sha256
+from .elevation import UntrustedLocationError, elevated_mode, require_trusted_directory
 from .origin import validate_origin_health, validate_update_health
 
 
@@ -83,8 +84,37 @@ class RegistryState:
         return candidate if candidate.is_dir() else None
 
 
+def require_trusted_cache(cache_root: Path) -> None:
+    """Refuse a registry cache that an elevated run cannot trust.
+
+    The cache supplies package templates, download addresses and hashes that an
+    elevated install would act on, so under elevation its folder (or, before it
+    exists, the nearest existing parent) must be writable by administrators only.
+
+    Raises
+    ------
+    ConfigValidationError
+        If the run is elevated and the location is not admin-only.
+    """
+    if not elevated_mode():
+        return
+
+    # A cache that does not exist yet will be created inside its nearest parent.
+    probe = Path(cache_root).absolute()
+    while not probe.exists() and probe.parent != probe:
+        probe = probe.parent
+    try:
+        require_trusted_directory(probe)
+    except UntrustedLocationError as exc:
+        raise ConfigValidationError(
+            f"Refusing the registry cache {cache_root} for an elevated run: {exc} "
+            "Set [registry] cache in gupkg-config.toml to a folder only administrators can modify."
+        ) from exc
+
+
 def registry_status(cache_root: Path) -> RegistryState:
     """Read cache state without contacting Git or creating directories."""
+    require_trusted_cache(cache_root)
     state_path = Path(cache_root) / "official" / "state.toml"
     if not state_path.is_file():
         return RegistryState(Path(cache_root))

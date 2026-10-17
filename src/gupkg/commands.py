@@ -785,7 +785,10 @@ def registry_sync_outcome(config: ManagerConfig, output: TextIO | None = None) -
 
 def registry_status_outcome(config: ManagerConfig) -> Outcome:
     """Report the active cached registry revision without any download."""
-    state = registry_status(config.registry_cache)
+    try:
+        state = registry_status(config.registry_cache)
+    except ConfigValidationError as exc:
+        return failure("manager.registry.status", str(exc))
     return Outcome(
         "manager.registry.status",
         ActionResult(True, status="current"),
@@ -805,7 +808,11 @@ def _ensure_registry(
 
     Returns a failure outcome when no usable cache is available, else ``None``.
     """
-    if registry_status(config.registry_cache).tree_path is not None:
+    try:
+        cached = registry_status(config.registry_cache).tree_path is not None
+    except ConfigValidationError as exc:
+        return failure(command, str(exc))
+    if cached:
         return None
     if offline:
         return failure(command, "--offline requires a usable cached registry tree")

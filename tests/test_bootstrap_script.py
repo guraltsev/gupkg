@@ -31,7 +31,7 @@ def archive(tmp_path_factory: pytest.TempPathFactory) -> Path:
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zipped:
         for file in src.rglob("*"):
             relative = file.relative_to(src)
-            if file.is_file() and "__pycache__" not in relative.parts and relative.parts[:1] != ("python",):
+            if file.is_file() and "__pycache__" not in relative.parts and relative.parts[:2] != ("gupkg", "python"):
                 zipped.write(file, Path("pkg-stable") / "src" / relative)
         zipped.writestr("pkg-stable/pkgs/other/readme.txt", "not part of gupkg")
     return path

@@ -35,6 +35,7 @@ from dataclasses import dataclass, field
 from functools import cmp_to_key
 from pathlib import Path
 
+from .elevation import elevated_mode
 from .collection import DiscoveredPackage, Inventory, discover_collection
 from .configuration import read_runtime_config
 from .core import (
@@ -358,13 +359,18 @@ def default_manager_config(path: Path | None = None) -> ManagerConfig:
     if len(system_drive) == 2 and system_drive[1] == ":":
         system_drive += "\\"
     user_profile = Path(environment["USERPROFILE"])
+    config_path = Path(path) if path is not None else Path(__file__).resolve().parent / "gupkg-config.toml"
+
+    # An elevated initialization keeps the registry cache beside the (admin-only)
+    # configuration, because an elevated run trusts what the cache holds.
+    registry_cache = config_path.parent / "registry" if elevated_mode() else default_registry_cache()
     return ManagerConfig(
-        path=Path(path) if path is not None else Path(__file__).resolve().parent / "gupkg-config.toml",
+        path=config_path,
         system_root=Path(system_drive) / "opt",
         user_root=user_profile / "opt",
         system_bin=Path(system_drive) / "bin",
         user_bin=user_profile / "bin",
-        registry_cache=default_registry_cache(),
+        registry_cache=registry_cache,
     )
 
 
