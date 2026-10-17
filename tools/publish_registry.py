@@ -1,23 +1,26 @@
-"""Publish the package registry by moving the ``registry`` tag to ``HEAD``.
+"""Publish the package registry by recording a new row in ``REGISTRY.md``.
 
-The registry (the ``pkgs`` folder) is versioned independently of gupkg itself:
-users sync the archive of the ``registry`` tag, so package changes reach them
-without a gupkg release or version bump. The script refuses to move the tag
-unless the working tree is clean, ``HEAD`` is already pushed, every package seed
-carries the current ``gupkg.cmd`` launcher, and the whole tree validates. It
-moves the tag locally and prints the push command; nothing is published until
-you push.
+The registry (the ``pkgs`` folder) is versioned independently of gupkg itself.
+Users sync the commit named by the newest row of ``REGISTRY.md`` on ``main``,
+so package changes reach them without a gupkg release or version bump. The
+script refuses to publish unless the working tree is clean, ``HEAD`` is already
+pushed, every package seed carries the current ``gupkg.cmd`` launcher, and the
+whole tree validates. It records ``HEAD`` as the new revision and commits the
+row; nothing is published until you push.
 """
 
 from __future__ import annotations
 
 import argparse
+import re
 import subprocess
 import sys
+from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-TAG = "registry"
+INDEX = ROOT / "REGISTRY.md"
+SEPARATOR = "|---|---|---|---|"
 
 sys.path.insert(0, str(ROOT / "src"))
 
@@ -29,9 +32,9 @@ def _git(*arguments: str) -> str:
 
 
 def main() -> int:
-    """Check the registry and move the tag; return the process status."""
+    """Check the registry and record a new revision; return the process status."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--remote", help="remote to print the push command for (default: the first one)")
+    parser.add_argument("notes", help="one-line description of what changed")
     args = parser.parse_args()
 
     # Only a committed, already-published tree may become the public registry.
@@ -57,11 +60,20 @@ def main() -> int:
             "Run tools/sync_package_launchers.py and commit."
         )
 
+    # Number the revision after the newest row, and refuse to list a commit twice.
+    text = INDEX.read_text(encoding="utf-8")
     commit = _git("rev-parse", "HEAD")
-    _git("tag", "-f", TAG, commit)
-    remote = args.remote or (_git("remote").splitlines() or ["origin"])[0]
-    print(f"Registry tag '{TAG}' now at {commit} ({len(packages)} packages).")
-    print(f"Publish with:  git push {remote} +{TAG}")
+    rows = re.findall(r"(?m)^\|\s*(\d+)\s*\|\s*`?([0-9a-f]{40})`?\s*\|", text)
+    if rows and rows[0][1] == commit:
+        raise SystemExit("HEAD is already the newest registry revision.")
+    revision = max((int(number) for number, _ in rows), default=0) + 1
+    row = f"| {revision} | `{commit}` | {date.today().isoformat()} | {args.notes} |"
+    INDEX.write_text(text.replace(SEPARATOR, f"{SEPARATOR}\n{row}", 1), encoding="utf-8")
+    _git("add", "REGISTRY.md")
+    _git("commit", "-m", f"Registry revision {revision}")
+    remote = (_git("remote").splitlines() or ["origin"])[0]
+    print(f"Registry revision {revision} at {commit} ({len(packages)} packages).")
+    print(f"Publish with:  git push {remote} main")
     return 0
 
 

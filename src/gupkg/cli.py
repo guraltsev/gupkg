@@ -255,7 +255,7 @@ def _build_parser() -> tuple[argparse.ArgumentParser, argparse.ArgumentParser]:
     )
     registry = manager_commands.add_parser("registry", help="refresh or inspect the registry cache")
     registry_commands = registry.add_subparsers(dest="registry_command", required=True, metavar="<action>")
-    registry_commands.add_parser("sync", help="download the latest stable registry")
+    registry_commands.add_parser("sync", help="download the latest registry")
     registry_commands.add_parser("status", help="show the cached registry revision")
     search = manager_commands.add_parser("search", help="find registry packages by name")
     search.add_argument("query", nargs="?", help="substring to match (default: list everything)")

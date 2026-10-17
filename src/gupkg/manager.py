@@ -242,11 +242,7 @@ def load_manager_config(path: Path) -> ManagerConfig:
     _exact_table_keys(raw["packages"], {"system", "user"}, "[packages]")
     _exact_table_keys(raw["bin"], {"system", "user"}, "[bin]")
     registry = raw.get("registry", {})
-    # ``channel`` is accepted for configurations written before ``source``
-    # existed; "stable" was its only value and it no longer has any effect.
-    _exact_table_keys(registry, set(), "[registry]", optional={"cache", "source", "channel"})
-    if registry.get("channel", "stable") != "stable":
-        raise ConfigValidationError("[registry].channel is obsolete; use [registry].source instead")
+    _exact_table_keys(registry, set(), "[registry]", optional={"cache", "source"})
     shims = raw.get("shims", {"linkage": "dynamic"})
     _exact_table_keys(shims, {"linkage"}, "[shims]")
     self_table = raw.get("self", {})

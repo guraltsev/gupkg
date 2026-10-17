@@ -168,7 +168,7 @@ def _manager(tmp_path: Path) -> tuple[Path, Path, Path]:
         'mode = "manager"\nschema_version = 2\n\n'
         f"[packages]\nsystem = '{tmp_path / 'system'}'\nuser = '{user_root}'\n\n"
         f"[bin]\nsystem = '{tmp_path / 'system-bin'}'\nuser = '{user_bin}'\n\n"
-        f"[registry]\ncache = '{tmp_path / 'cache'}'\nchannel = 'stable'\n",
+        f"[registry]\ncache = '{tmp_path / 'cache'}'\n",
         encoding="utf-8",
     )
     return config, user_root, user_bin

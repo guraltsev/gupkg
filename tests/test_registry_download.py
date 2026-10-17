@@ -19,10 +19,10 @@ import pytest
 from gupkg import cli
 from gupkg.core import ConfigValidationError
 from gupkg.manager import load_manager_config
-from gupkg.registry import registry_status, search_registry, sync_registry
+from gupkg.registry import OFFICIAL_SOURCE, registry_status, search_registry, sync_registry
 
 
-def _registry_zip(path: Path, *, comment: str = "", wrapper: str = "pkg-stable") -> Path:
+def _registry_zip(path: Path, *, comment: str = "", wrapper: str = "pkg-registry") -> Path:
     """Write a GitHub-style archive with one valid package seed under ``pkgs``."""
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr(
@@ -53,7 +53,7 @@ def test_registry_table_is_optional_and_cache_and_source_are_configurable(
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
     default = load_manager_config(_manager_config(tmp_path))
     assert default.registry_cache == tmp_path / "local" / "gupkg" / "registry"
-    assert default.registry_source.startswith("https://github.com/")
+    assert default.registry_source == OFFICIAL_SOURCE
 
     custom = load_manager_config(
         _manager_config(tmp_path, f"\n[registry]\ncache = 'cache'\nsource = 'https://mirror.example/pkgs.zip'\n")

@@ -43,7 +43,7 @@ def test_manager_v2_resolves_independent_roots_bins_and_cache(tmp_path: Path, mo
         'mode = "manager"\nschema_version = 2\n\n'
         '[packages]\nsystem = "system"\nuser = "%USERPROFILE%/opt"\n\n'
         '[bin]\nsystem = "system-bin"\nuser = "user-bin"\n\n'
-        '[registry]\ncache = "cache"\nchannel = "stable"\n',
+        '[registry]\ncache = "cache"\n',
         encoding="utf-8",
     )
 
@@ -63,7 +63,7 @@ def test_manager_shim_linkage_defaults_to_dynamic_and_accepts_static(tmp_path: P
         'mode = "manager"\nschema_version = 2\n\n'
         '[packages]\nsystem = "system"\nuser = "user"\n\n'
         '[bin]\nsystem = "system-bin"\nuser = "user-bin"\n\n'
-        '[registry]\ncache = "cache"\nchannel = "stable"\n',
+        '[registry]\ncache = "cache"\n',
         encoding="utf-8",
     )
     assert load_manager_config(config_path).shim_linkage == "dynamic"
@@ -189,7 +189,7 @@ def test_manager_bare_install_token_is_resolved_as_registry_selector(
         'mode = "manager"\nschema_version = 2\n\n'
         f"[packages]\nsystem = '{system}'\nuser = '{user}'\n\n"
         f"[bin]\nsystem = '{tmp_path / 'system-bin'}'\nuser = '{tmp_path / 'user-bin'}'\n\n"
-            f"[registry]\ncache = '{cache}'\nchannel = 'stable'\n\n"
+            f"[registry]\ncache = '{cache}'\n\n"
             "[shims]\nlinkage = 'dynamic'\n",
         encoding="utf-8",
     )

@@ -46,7 +46,7 @@ def test_manager_browser_filters_and_handoff_keep_scope_visible(
         'mode = "manager"\nschema_version = 2\n[packages]\n'
         f"system = '{system}'\nuser = '{user}'\n"
         f"[bin]\nsystem = '{manager_dir / 'bin-system'}'\nuser = '{manager_dir / 'bin-user'}'\n"
-        f"[registry]\ncache = '{manager_dir / 'cache'}'\nchannel = 'stable'\n",
+        f"[registry]\ncache = '{manager_dir / 'cache'}'\n",
         encoding="utf-8",
     )
     config = load_manager_config(config_path)
@@ -131,7 +131,7 @@ def test_manager_tui_discovers_package_directory_config_when_handed_off_from_pac
         'mode = "manager"\nschema_version = 2\n[packages]\n'
         f"system = '{system}'\nuser = '{user}'\n"
         f"[bin]\nsystem = '{manager_dir / 'bin-system'}'\nuser = '{manager_dir / 'bin-user'}'\n"
-        f"[registry]\ncache = '{manager_dir / 'cache'}'\nchannel = 'stable'\n",
+        f"[registry]\ncache = '{manager_dir / 'cache'}'\n",
         encoding="utf-8",
     )
     monkeypatch.setenv("APPDATA", str(appdata))
@@ -211,7 +211,7 @@ def test_manager_tui_persists_the_selected_shim_linkage(
         'mode = "manager"\nschema_version = 2\n[packages]\n'
         f"system = '{system}'\nuser = '{user}'\n"
         f"[bin]\nsystem = '{manager_dir / 'bin-system'}'\nuser = '{manager_dir / 'bin-user'}'\n"
-        f"[registry]\ncache = '{manager_dir / 'cache'}'\nchannel = 'stable'\n",
+        f"[registry]\ncache = '{manager_dir / 'cache'}'\n",
         encoding="utf-8",
     )
     captured = []
@@ -256,7 +256,7 @@ def test_tui_outside_package_directory_opens_manager_mode(
         'mode = "manager"\nschema_version = 2\n[packages]\n'
         f"system = '{system}'\nuser = '{user}'\n"
         f"[bin]\nsystem = '{manager_dir / 'bin-system'}'\nuser = '{manager_dir / 'bin-user'}'\n"
-        f"[registry]\ncache = '{manager_dir / 'cache'}'\nchannel = 'stable'\n",
+        f"[registry]\ncache = '{manager_dir / 'cache'}'\n",
         encoding="utf-8",
     )
     monkeypatch.setattr("gupkg.manager_tui.run_manager_tui", capture_manager)

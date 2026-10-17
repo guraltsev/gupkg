@@ -25,15 +25,15 @@ pytestmark = pytest.mark.skipif(os.name != "nt", reason="the bootstrap script ta
 
 @pytest.fixture(scope="module")
 def archive(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """A GitHub-style repository archive (``pkg-stable/src/...``) built from this checkout."""
+    """A GitHub-style repository archive (``pkg-registry/src/...``) built from this checkout."""
     path = tmp_path_factory.mktemp("bootstrap") / "repo.zip"
     src = REPO / "src"
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zipped:
         for file in src.rglob("*"):
             relative = file.relative_to(src)
             if file.is_file() and "__pycache__" not in relative.parts and relative.parts[:2] != ("gupkg", "python"):
-                zipped.write(file, Path("pkg-stable") / "src" / relative)
-        zipped.writestr("pkg-stable/pkgs/other/readme.txt", "not part of gupkg")
+                zipped.write(file, Path("pkg-registry") / "src" / relative)
+        zipped.writestr("pkg-registry/pkgs/other/readme.txt", "not part of gupkg")
     return path
 
 

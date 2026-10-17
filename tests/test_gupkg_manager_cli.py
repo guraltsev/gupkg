@@ -32,7 +32,7 @@ def _config(directory: Path, system: Path, user: Path) -> Path:
         f"[packages]\nsystem = '{system}'\nuser = '{user}'\n\n"
         f"[bin]\nsystem = '{directory / 'system-bin'}'\n"
         f"user = '{directory / 'user-bin'}'\n\n"
-        f"[registry]\ncache = '{directory / 'registry'}'\nchannel = 'stable'\n\n"
+        f"[registry]\ncache = '{directory / 'registry'}'\n\n"
         "[shims]\nlinkage = 'dynamic'\n",
         encoding="utf-8",
     )

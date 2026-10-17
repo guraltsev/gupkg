@@ -119,18 +119,16 @@ user = '%USERPROFILE%\bin'
 # Optional. These are the defaults; change them to move the cache or use a mirror.
 [registry]
 cache = '%LOCALAPPDATA%\gupkg\registry'
-source = "https://github.com/guraltsev/pkg/archive/refs/tags/registry.zip"
+source = "https://raw.githubusercontent.com/guraltsev/pkg/main/REGISTRY.md"
 ```
 
 `packages.system` and `packages.user` are required, distinct, non-nesting
 collection roots. The two `bin` directories must also be distinct. The whole
 `[registry]` table is optional: `cache` defaults to
 `%LOCALAPPDATA%\gupkg\registry` and must be outside both package roots, and
-`source` defaults to the official `registry` archive (an older `stable` URL in
-an existing file keeps working but stops receiving updates). `source` may be any
+`source` defaults to the official revision index. It may instead be any
 `https://` or `file:` URL of a ZIP archive that contains a `pkgs` folder, so a
-mirror or a network share works. The obsolete `channel = "stable"` line is
-accepted and ignored. Existing configured paths must be
+mirror or a network share works. Existing configured paths must be
 directories; loading the configuration does not create roots. Relative paths
 are resolved relative to the configuration file, `%NAME%` references use the
 case-insensitive process environment, and a leading `~` means the current
@@ -155,7 +153,8 @@ any location.
 
 ## Registry workflow
 
-The official registry is the `pkgs` folder of the `registry` tag of
+The official registry is the `pkgs` folder of the newest revision listed in
+`REGISTRY.md` on the `main` branch of
 `github.com/guraltsev/pkg`, fetched as a plain ZIP archive over HTTPS (or from
 the `[registry] source` you configure) using Python's standard library; neither
 Git nor any other tool is required. Registry data is treated as untrusted
@@ -302,17 +301,21 @@ package/update workflows. The Windows-specific cases in
 ## Publishing the registry
 
 The registry is versioned separately from gupkg: package changes need no gupkg
-version bump or release. Commit and push the change to `pkgs`, then run:
+version bump or release, and no Git tags are involved. `gupkg manager registry
+sync` reads `REGISTRY.md` from `main` (as `gupkg update` reads `RELEASES.md`),
+takes the commit in its newest row, and downloads that commit's source archive.
+To publish, commit and push the change to `pkgs`, then run:
 
 ```bat
-python tools\publish_registry.py
-git push <remote> +registry
+python tools\publish_registry.py "one-line notes"
+git push <remote> main
 ```
 
 The tool refuses a dirty tree, an unpushed `HEAD`, a package without the current
-`gupkg.cmd`, or a tree that fails registry validation, and otherwise moves the
-`registry` tag to `HEAD`. Users get the new packages on their next
-`gupkg manager registry sync`.
+`gupkg.cmd`, or a tree that fails registry validation, and otherwise records
+`HEAD` as the next numbered revision and commits the row. Users get the new
+packages on their next sync. Moving `main` alone changes nothing for them until
+a row is added.
 
 ## Package launchers
 

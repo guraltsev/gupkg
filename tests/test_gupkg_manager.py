@@ -27,7 +27,7 @@ def _write_config(path: Path, system: str, user: str, *, extra: str = "", schema
         "[bin]\n"
         f"system = '{path.parent / 'system-bin'}'\nuser = '{path.parent / 'user-bin'}'\n\n"
         "[registry]\n"
-        f"cache = '{path.parent / 'registry-cache'}'\nchannel = 'stable'\n\n"
+        f"cache = '{path.parent / 'registry-cache'}'\n\n"
         "[shims]\nlinkage = 'dynamic'\n",
         encoding="utf-8",
     )

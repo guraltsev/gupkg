@@ -52,9 +52,10 @@ from .elevation import UntrustedLocationError, elevated_mode, require_trusted_di
 from .origin import validate_origin_health, validate_update_health
 
 
-# Default registry archive: the ``registry`` tag of the official package repository,
-# which moves independently of gupkg releases (see tools/publish_registry.py).
-OFFICIAL_SOURCE = "https://github.com/guraltsev/pkg/archive/refs/tags/registry.zip"
+# Default registry source: the revision index in the ``main`` branch of the official
+# package repository. Its newest row names the commit to download, and it is
+# numbered independently of gupkg releases (see tools/publish_registry.py).
+OFFICIAL_SOURCE = "https://raw.githubusercontent.com/guraltsev/pkg/main/REGISTRY.md"
 
 
 @dataclass(frozen=True)
@@ -247,7 +248,9 @@ def sync_registry(
         Registry cache directory from the manager configuration.
     source : str, default=OFFICIAL_SOURCE
         ``http(s)://`` or ``file:`` URL of a ZIP archive containing a ``pkgs``
-        folder (a GitHub "archive" link, a mirror, or a file share).
+        folder (a GitHub "archive" link, a mirror, or a file share), or the
+        ``raw.githubusercontent.com`` URL of a ``.md`` revision index whose
+        newest row names the commit to download.
     offline : bool, default=False
         Validate and report the existing cache without any download.
 
@@ -275,7 +278,7 @@ def sync_registry(
         with tempfile.TemporaryDirectory(prefix="sync-", dir=str(work_parent)) as work_name:
             work = Path(work_name)
             archive_path = work / "registry.zip"
-            _download(source, archive_path)
+            _download(resolve_archive_source(source), archive_path)
             revision = _archive_revision(archive_path)
 
             # An archive that is already the active revision needs no rebuild;
@@ -313,6 +316,48 @@ def sync_registry(
         )
     finally:
         shutil.rmtree(work_parent, ignore_errors=True)
+
+
+def resolve_archive_source(source: str) -> str:
+    """Return the ZIP archive URL that *source* designates.
+
+    Parameters
+    ----------
+    source : str
+        A ZIP archive URL (returned unchanged) or the ``raw.githubusercontent.com``
+        URL of a ``.md`` revision index. The newest row of an index is its first
+        table row; its 40-hex commit selects the repository's source archive.
+
+    Returns
+    -------
+    str
+        URL of the archive to download.
+
+    Raises
+    ------
+    ConfigValidationError
+        If an index cannot be read, lists no revision, or is not hosted on
+        ``raw.githubusercontent.com`` (the only host whose archive links are known).
+    """
+    parsed = urllib.parse.urlparse(source)
+    if not parsed.path.lower().endswith(".md"):
+        return source
+
+    # The commit of a revision, not a branch or tag, is what gets downloaded, so
+    # moving ``main`` never changes the registry until a new row is published.
+    parts = [part for part in parsed.path.split("/") if part]
+    if parsed.scheme.lower() != "https" or parsed.netloc.lower() != "raw.githubusercontent.com" or len(parts) < 4:
+        raise ConfigValidationError(
+            "A registry revision index must be an https://raw.githubusercontent.com/<owner>/<repo>/<branch>/<file>.md URL: "
+            f"{source}"
+        )
+    log_info(f"Reading registry revisions: {source}")
+    with urllib.request.urlopen(source, timeout=30) as response:
+        text = response.read(1024 * 1024).decode("utf-8", errors="replace")
+    row = re.search(r"(?m)^\|\s*\d+\s*\|\s*`?([0-9a-f]{40})`?\s*\|", text)
+    if row is None:
+        raise ConfigValidationError(f"The registry revision index lists no revision: {source}")
+    return f"https://github.com/{parts[0]}/{parts[1]}/archive/{row.group(1)}.zip"
 
 
 def _download(source: str, destination: Path) -> None:
