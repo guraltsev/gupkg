@@ -541,6 +541,11 @@ def _discover_update(
     """Contact the configured source and persist timing and candidate state."""
     state = load_update_state(paths["state"])
     state["lastAttemptedCheck"] = datetime.now(timezone.utc).isoformat()
+
+    # Say what is being contacted before the (possibly slow) network call.
+    check = config["update"]["check"]
+    source = check.get("url") or check.get("ref") or check.get("module") or check.get("channel")
+    log_info(f"Checking for updates ({check['mode']}{': ' + str(source) if source else ''})...")
     try:
         # A Git bootstrap has no checkout to compare, so its origin ref is
         # always the candidate to promote.

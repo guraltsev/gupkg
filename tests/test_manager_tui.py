@@ -262,3 +262,173 @@ def test_tui_outside_package_directory_opens_manager_mode(
     monkeypatch.setattr("gupkg.manager_tui.run_manager_tui", capture_manager)
     assert cli.main(["manager", "tui"]) == 0
     assert selected and selected[0][0][0].path == manager_dir / "gupkg-config.toml"
+
+
+def _manager(tmp_path: Path, selectors: tuple[str, ...]):
+    """Create a real manager config with *selectors* as user packages and return its inventory."""
+    manager_dir = tmp_path / "manager"
+    system = tmp_path / "system"
+    user = tmp_path / "user"
+    for directory in (manager_dir, system, user):
+        directory.mkdir()
+    for selector in selectors:
+        _package(user, selector)
+    config_path = manager_dir / "gupkg-config.toml"
+    config_path.write_text(
+        'mode = "manager"\nschema_version = 2\n[packages]\n'
+        f"system = '{system}'\nuser = '{user}'\n"
+        f"[bin]\nsystem = '{manager_dir / 'bin-system'}'\nuser = '{manager_dir / 'bin-user'}'\n"
+        f"[registry]\ncache = '{manager_dir / 'cache'}'\n",
+        encoding="utf-8",
+    )
+    config = load_manager_config(config_path)
+    return config, discover_manager(config), user
+
+
+def _capture_app(monkeypatch: pytest.MonkeyPatch) -> list:
+    """Make ``App.run`` record the app instead of running it."""
+    from textual.app import App
+
+    captured: list = []
+    monkeypatch.setattr(App, "run", lambda app, *args, **kwargs: captured.append(app))
+    return captured
+
+
+async def _wait_until(pilot, condition, *, seconds: float = 5.0) -> None:
+    """Pause the Textual driver until *condition()* holds, failing after *seconds*."""
+    for _ in range(int(seconds / 0.05)):
+        if condition():
+            return
+        await pilot.pause(0.05)
+    raise AssertionError("condition not reached")
+
+
+def _blocking_checks(monkeypatch: pytest.MonkeyPatch):
+    """Replace the per-target check with one that blocks until released; return its controls."""
+    import threading
+
+    from gupkg import commands
+    from gupkg.core import ActionResult
+
+    started: list[str] = []
+    release = threading.Event()
+
+    def check(target, **_kwargs):
+        started.append(target.target_id)
+        if len(started) == 1:
+            release.wait(5)
+        target.update_status = "available" if len(started) == 1 else "current"
+        target.candidate_version = "2.0.0" if len(started) == 1 else None
+        return ActionResult(True, status=target.update_status)
+
+    monkeypatch.setattr(commands, "manager_update_target", check)
+    return started, release
+
+
+def test_refresh_reports_progress_and_each_result_while_checking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refresh names the target being checked and lists each result as soon as its check finishes."""
+    config, inventory, _ = _manager(tmp_path, ("alpha", "beta"))
+    started, release = _blocking_checks(monkeypatch)
+    app = _capture_app(monkeypatch)
+    assert run_manager_tui(config, inventory) == 0
+
+    async def drive() -> None:
+        async with app[0].run_test(size=(70, 12)) as pilot:
+            await pilot.press("down", "enter")
+            status = lambda: str(app[0].screen.query_one("#refresh-status").render())  # noqa: E731
+            text = lambda: str(app[0].screen.query_one("#output-text").render())  # noqa: E731
+            await _wait_until(pilot, lambda: status() == "Checking 1 of 2: user:alpha")
+            assert text() == ""
+            release.set()
+            await _wait_until(pilot, lambda: "user:alpha: Update Available 2.0.0" in text())
+            await _wait_until(pilot, lambda: status().startswith("Refresh complete"))
+            assert status() == "Refresh complete: 1 available, 1 current, 0 errors."
+            assert "user:beta: Update Current" in text()
+
+    asyncio.run(drive())
+
+
+def test_escape_during_refresh_stops_before_the_next_target_and_keeps_results(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Escape lets the running check finish, skips the rest, and keeps the finished result."""
+    config, inventory, _ = _manager(tmp_path, ("alpha", "beta"))
+    started, release = _blocking_checks(monkeypatch)
+    app = _capture_app(monkeypatch)
+    assert run_manager_tui(config, inventory) == 0
+
+    async def drive() -> None:
+        async with app[0].run_test(size=(70, 12)) as pilot:
+            await pilot.press("down", "enter")
+            status = lambda: str(app[0].screen.query_one("#refresh-status").render())  # noqa: E731
+            await _wait_until(pilot, lambda: status() == "Checking 1 of 2: user:alpha")
+            await pilot.press("escape")
+            release.set()
+            await _wait_until(pilot, lambda: status() == "Cancelled after 1 of 2.")
+            assert started == ["user:alpha"]
+            assert "user:alpha: Update Available 2.0.0" in str(app[0].screen.query_one("#output-text").render())
+            await pilot.press("escape")
+            assert type(app[0].screen).__name__ == "HomeScreen"
+
+    asyncio.run(drive())
+
+
+def test_saved_update_status_survives_opening_a_package_and_returning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After a package check in the package interface, the reopened browser shows it at the same place."""
+    from textual.app import App
+
+    import gupkg.tui
+
+    config, inventory, user = _manager(tmp_path, ("alpha", "beta"))
+    opened: list[str] = []
+
+    def fake_package_tui(path: str, *, forced_scope=None):
+        # The package interface records a check result exactly as a real check does.
+        opened.append(path)
+        state = Path(path) / ".gupkg" / "state" / "update.toml"
+        state.parent.mkdir(parents=True)
+        state.write_text(
+            'lastSuccessfulCheck = "2026-10-17T14:02:00+00:00"\n'
+            'lastStatus = "available"\nlastCandidateVersion = "1.5.0"\n',
+            encoding="utf-8",
+        )
+        return 0
+
+    monkeypatch.setattr(gupkg.tui, "run_tui", fake_package_tui)
+    launches: list[str] = []
+
+    def run_app(app, *args, **kwargs):
+        launches.append("run")
+
+        async def drive() -> None:
+            async with app.run_test(size=(80, 12)) as pilot:
+                if len(launches) == 1:
+                    # Browse, filter to User, select beta, open its operations.
+                    await pilot.press("enter", "enter", "down", "down", "down", "enter", "enter")
+                    await pilot.pause(0.2)
+                    return
+                browser = app.screen
+                assert type(browser).__name__ == "BrowserScreen"
+                options = browser.query_one("#package-options")
+                assert browser.scope_filter == "User"
+                assert options.highlighted is not None
+                assert "beta" in str(options.get_option_at_index(options.highlighted))
+                labels = [str(options.get_option_at_index(i)) for i in range(options.option_count)]
+                assert any("beta" in label and "Update Available 1.5.0" in label for label in labels)
+                await pilot.press("escape")
+                assert type(app.screen).__name__ == "HomeScreen"
+                app.exit()
+
+        asyncio.run(drive())
+        return app.return_value
+
+    monkeypatch.setattr(App, "run", run_app)
+
+    run_manager_tui(config, inventory)
+
+    assert opened == [str(user / "beta")]
+    assert len(launches) == 2

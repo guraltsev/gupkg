@@ -74,6 +74,15 @@ instructions when the list behavior is conventional.
 Prefer words to status glyphs: use `on` and `off`, `User` and `System`, or
 `unavailable`, rather than checkbox art. Color may reinforce meaning, but it
 must never be the only signal: write `Warning:` even when the line is colored.
+Use a small fixed palette of Textual theme colors: `$error` for errors and
+failures, `$warning` for warnings, `$success` for completed work and an
+available update, and `dim` for settled or neutral state (current, unchecked,
+not installed). Do not color decoration or anything else. `tui_widgets.py`
+holds the shared styling (`style_line`, `update_style`).
+
+Console output follows the same roles through `core.colorize`: errors red,
+warnings yellow. Colors appear only on an interactive console, never when
+output is redirected, and `NO_COLOR` turns them off.
 
 The test is simple: a copied, unstyled, monochrome rendering should still make
 the hierarchy and every important state clear.
@@ -110,6 +119,17 @@ between settings or in place of list rows. That view contains only:
 1. a command summary;
 2. a short textual running or completion status; and
 3. scrollable output.
+
+Build the output with the shared `OutputView` (`tui_widgets.py`). It follows new
+lines until the user scrolls up, resumes when they return to the bottom, takes
+focus so the keyboard scrolls it, and renders text literally. Show any text that
+comes from a package, the network, or a hook with `markup=False`; Textual
+markup would drop or reject bracketed text such as `[update.check]`.
+
+Live progress that replaces itself (a download percentage, `Checking 3 of 12`)
+belongs on the status line, not in the output. Only lasting lines enter the
+output. Operations signal replaceable progress with a trailing carriage return,
+which `commands.LineStream` delivers through `on_transient`.
 
 Do not add a button bar or footer; returning to the originating list is enough.
 

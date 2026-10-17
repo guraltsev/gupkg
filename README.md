@@ -311,6 +311,11 @@ checksum, and dependency auto-install settings. Execution remains scrollable
 with per-target states and final totals, then refreshes inventory. Elevation
 occurs before any mixed-scope mutation; declining it leaves packages unchanged.
 Later safe targets continue after a failure.
+`Refresh update status` and the planning step show `Checking i of N` with one
+result line per package; Escape stops after the current check. Update results
+are saved in each package's `.gupkg/state/update.toml`, so the manager shows
+them (with the check time in Details) after opening a package or in a new
+session.
 To recover, fix the failed target and safely rerun the same check/confirm flow;
 successful targets are revalidated and remain current. This migration changes
 only orchestration: package content, version directories, `current`, and

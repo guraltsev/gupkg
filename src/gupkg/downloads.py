@@ -9,14 +9,18 @@ verified with the streaming ``file_sha256(...)`` digest.
 from __future__ import annotations
 
 import hashlib
+import time
 from pathlib import Path
 from typing import Any
 
-from .core import log_info
+from .core import log_info, log_progress
 
 
-# Transfer and progress-report granularity for every download.
+# Hashing granularity, and the transfer granularity of every download.
 _CHUNK_SIZE = 1024 * 1024
+_TRANSFER_CHUNK_SIZE = 64 * 1024
+# Minimum seconds between intermediate progress reports.
+_REPORT_INTERVAL = 0.2
 
 
 def download_response(response: Any, destination: Path, *, label: str) -> int:
@@ -38,16 +42,17 @@ def download_response(response: Any, destination: Path, *, label: str) -> int:
     """
     total = _content_length(response)
 
-    def report(received: int) -> None:
-        """Log one progress line in the known-size or unknown-size form."""
+    def report(received: int, *, final: bool = False) -> None:
+        """Show one progress line in the known-size or unknown-size form."""
         if total is None:
-            log_info(f"{label}: {_format_bytes(received)} received")
+            text = f"{label}: {_format_bytes(received)} received"
         else:
             percentage = min(received / total * 100, 100) if total else 100
-            log_info(
+            text = (
                 f"{label}: {_format_bytes(received)} / {_format_bytes(total)} "
                 f"({percentage:.0f}%)"
             )
+        log_progress(text, final=final)
 
     if total is None:
         log_info(f"{label}: total size unknown")
@@ -55,19 +60,19 @@ def download_response(response: Any, destination: Path, *, label: str) -> int:
         log_info(f"{label}: total size {_format_bytes(total)}")
         report(0)
 
-    # Report roughly once per mebibyte and always once at the end, so even a
-    # small or size-less download shows its final byte count.
+    # Report by elapsed time, not by size, so slow and fast connections both
+    # update smoothly; the final report is always committed as a lasting line.
     received = 0
-    last_reported: int | None = None
+    last_report = time.monotonic()
     with open(destination, "wb") as file_handle:
-        while chunk := response.read(_CHUNK_SIZE):
+        while chunk := response.read(_TRANSFER_CHUNK_SIZE):
             file_handle.write(chunk)
             received += len(chunk)
-            if received // _CHUNK_SIZE > (last_reported or 0) // _CHUNK_SIZE:
+            now = time.monotonic()
+            if now - last_report >= _REPORT_INTERVAL:
                 report(received)
-                last_reported = received
-    if last_reported != received:
-        report(received)
+                last_report = now
+    report(received, final=True)
     return received
 
 

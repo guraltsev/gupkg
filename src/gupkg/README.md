@@ -34,7 +34,8 @@ domains used by the `gupkg.cli` command boundary and package workflows:
 
 `gupkg/cli.py` owns only command parsing and display; all behaviour lives in `commands.py`; `gupkg/gupkg.py` exposes the
 high-level install, health-check, and update workflows; `tui.py` and
-`manager_tui.py` are the interactive front ends. Workflows return their errors
+`manager_tui.py` are the interactive front ends, sharing the widgets in
+`tui_widgets.py`. Workflows return their errors
 in an `ActionResult` instead of printing them, so each front end reports every
 error exactly once.
 These runtime modules are internal implementation details and are not a

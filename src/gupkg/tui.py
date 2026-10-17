@@ -59,6 +59,10 @@ def run_tui(
     from textual.widgets import Input, Label, OptionList, Static
     from textual.widgets.option_list import Option
 
+    from textual.content import Content
+
+    from .tui_widgets import OutputView
+
     actions = (
         ("install", "Install"),
         ("update-check", "Update: check for an available update (read-only)"),
@@ -129,8 +133,8 @@ def run_tui(
         def compose(self) -> ComposeResult:
             """Compose the package summary and action list."""
             yield Label(self.title, id="package-title")
-            yield Static(self.description, id="description")
-            yield Static(self.warning, id="metadata-warning")
+            yield Static(self.description, markup=False, id="description")
+            yield Static(self.warning, markup=False, id="metadata-warning")
             yield OptionList(*self._options(), id="main-options")
 
         def _options(self) -> list[Option]:
@@ -213,8 +217,8 @@ def run_tui(
         def compose(self) -> ComposeResult:
             """Compose the summary and one borderless list."""
             yield Label(self.title, id="package-title")
-            yield Static(self.description, id="description")
-            yield Static(self.warning, id="metadata-warning")
+            yield Static(self.description, markup=False, id="description")
+            yield Static(self.warning, markup=False, id="metadata-warning")
             yield OptionList(*self._options(), id="command-options")
 
         def on_mount(self) -> None:
@@ -337,38 +341,52 @@ def run_tui(
 
         def compose(self) -> ComposeResult:
             """Compose the command summary and plain output."""
-            yield Label(self.request.command_line() if self.request else "gupkg")
-            yield Static("Running..." if self.request else "", id="status")
-            with VerticalScroll():
-                yield Static(self.text, id="output")
+            yield Label(self.request.command_line() if self.request else "gupkg", markup=False)
+            yield Static("Running..." if self.request else "", markup=False, id="status")
+            yield OutputView(id="output")
 
         def on_mount(self) -> None:
-            """Start the operation after its result view is visible."""
+            """Show any static text, focus the output, and start the operation."""
+            view = self.query_one(OutputView)
+            view.set_lines([self.text] if self.text else [])
+            view.focus()
             if self.request is not None:
                 self.run_worker(self._run, thread=True, exclusive=True)
 
         def _run(self) -> None:
             """Run the operation on a worker thread, streaming its progress lines."""
             outcome = commands.run_package_command(
-                self.request, output=commands.LineStream(self._progress)
+                self.request,
+                output=commands.LineStream(self._progress, on_transient=self._transient),
             )
             self.app.call_from_thread(self._finish, outcome)
 
         def _progress(self, line: str) -> None:
-            """Append one progress line to the visible output (from the worker thread)."""
+            """Append one committed line to the visible output (from the worker thread)."""
             self.lines.append(line)
-            self.app.call_from_thread(self.query_one("#output", Static).update, "\n".join(self.lines))
+            self.app.call_from_thread(self._show_lines)
+
+        def _transient(self, text: str) -> None:
+            """Show live progress text on the status line (from the worker thread)."""
+            self.app.call_from_thread(self.query_one("#status", Static).update, f"Running: {text}")
+
+        def _show_lines(self) -> None:
+            """Redraw the output and return the status line to its idle text."""
+            self.query_one(OutputView).set_lines(self.lines)
+            self.query_one("#status", Static).update("Running...")
 
         def _finish(self, outcome: Outcome) -> None:
             """Show the final outcome and record its exit status."""
             text, problems = format_human(outcome)
-            self.query_one("#output", Static).update("\n".join(self.lines + [text + problems]).strip())
+            self.query_one(OutputView).set_lines(["\n".join(self.lines + [text + problems]).strip()])
             self.app.result_code = outcome.result.exit_code
-            self.query_one("#status", Static).update(
+            succeeded = outcome.result.exit_code == 0
+            self.query_one("#status", Static).update(Content.styled(
                 "Completed successfully. Review the result below for the next step."
-                if outcome.result.exit_code == 0
-                else f"Failed with exit code {outcome.result.exit_code}. Review the output below."
-            )
+                if succeeded
+                else f"Failed with exit code {outcome.result.exit_code}. Review the output below.",
+                "$success" if succeeded else "$error",
+            ))
 
         def action_back(self) -> None:
             """Return to the action list after viewing output."""
@@ -392,7 +410,7 @@ def run_tui(
         def compose(self) -> ComposeResult:
             """Compose the plain, scrollable full-description view."""
             with VerticalScroll():
-                yield Static(self.description)
+                yield Static(self.description, markup=False)
 
         def action_back(self) -> None:
             """Return to the package summary."""

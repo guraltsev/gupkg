@@ -118,3 +118,106 @@ def test_manager_selected_system_scope_stays_locked(
     run_tui(str(version), forced_scope=Scope.MACHINE)
 
     assert [(r.command, r.scope) for r in operations] == [("install", Scope.MACHINE)]
+
+
+def _drive_sized(monkeypatch: pytest.MonkeyPatch, size: tuple[int, int], steps) -> None:
+    """Like ``_drive`` but with a small terminal so output overflows the screen."""
+    from textual.app import App
+
+    def run_app(app, *args, **kwargs):
+        async def drive() -> None:
+            async with app.run_test(size=size) as pilot:
+                await steps(app, pilot)
+
+        asyncio.run(drive())
+
+    monkeypatch.setattr(App, "run", run_app)
+
+
+async def _wait_until(pilot, condition, *, seconds: float = 5.0) -> None:
+    """Pause the Textual driver until *condition()* holds, failing after *seconds*."""
+    for _ in range(int(seconds / 0.05)):
+        if condition():
+            return
+        await pilot.pause(0.05)
+    raise AssertionError("condition not reached")
+
+
+def test_long_output_follows_new_lines_and_shows_the_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Output taller than the screen stays scrolled to its end, including the final failure text."""
+    version = _package_version(tmp_path)
+
+    def run(request, *, output=None):
+        for number in range(50):
+            output.write(f"progress line {number}\n")
+        return Outcome(request.command, ActionResult(False, errors=["the final failure"], exit_code=7))
+
+    monkeypatch.setattr(commands, "run_package_command", run)
+
+    async def steps(app, pilot) -> None:
+        await pilot.press("enter", "enter")
+        await _wait_until(pilot, lambda: "Failed with exit code 7" in str(app.screen.query_one("#status").render()))
+        await pilot.pause(0.3)
+        view = app.screen.query_one("#output")
+        assert view.is_vertical_scroll_end
+        assert view.max_scroll_y > 0
+        assert "the final failure" in str(view.query_one("#output-text").render())
+
+    _drive_sized(monkeypatch, (60, 8), steps)
+    run_tui(str(version))
+
+
+def test_output_with_markup_characters_is_shown_literally(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bracketed text from a package is displayed as written and never breaks the screen."""
+    version = _package_version(tmp_path)
+
+    def run(request, *, output=None):
+        output.write("ERROR: [bold] hook [/x] failed [update.check]\n")
+        return Outcome(request.command, ActionResult(True, exit_code=0))
+
+    monkeypatch.setattr(commands, "run_package_command", run)
+
+    async def steps(app, pilot) -> None:
+        await pilot.press("enter", "enter")
+        await _wait_until(pilot, lambda: "Completed successfully" in str(app.screen.query_one("#status").render()))
+        assert "ERROR: [bold] hook [/x] failed [update.check]" in str(
+            app.screen.query_one("#output-text").render()
+        )
+
+    _drive_sized(monkeypatch, (80, 8), steps)
+    run_tui(str(version))
+
+
+def test_transient_progress_appears_on_the_status_line_not_in_the_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Live download progress replaces itself on the status line and only the final line joins the output."""
+    import threading
+
+    version = _package_version(tmp_path)
+    release = threading.Event()
+
+    def run(request, *, output=None):
+        output.write("Downloading update: 1.0 MiB / 2.0 MiB (50%)\r")
+        release.wait(5)
+        output.write("Downloading update: 2.0 MiB / 2.0 MiB (100%)\r\n")
+        return Outcome(request.command, ActionResult(True, exit_code=0))
+
+    monkeypatch.setattr(commands, "run_package_command", run)
+
+    async def steps(app, pilot) -> None:
+        await pilot.press("enter", "enter")
+        status = lambda: str(app.screen.query_one("#status").render())  # noqa: E731
+        text = lambda: str(app.screen.query_one("#output-text").render())  # noqa: E731
+        await _wait_until(pilot, lambda: "Running: Downloading update: 1.0 MiB / 2.0 MiB (50%)" in status())
+        assert "50%" not in text()
+        release.set()
+        await _wait_until(pilot, lambda: "(100%)" in text())
+        assert text().count("(100%)") == 1
+
+    _drive_sized(monkeypatch, (80, 8), steps)
+    run_tui(str(version))

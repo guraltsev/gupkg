@@ -134,3 +134,84 @@ def test_manager_inventory_distinguishes_missing_and_broken_current(tmp_path: Pa
 
     assert targets[0].installation_status == "broken"
     assert targets[1].installation_status == "not-installed"
+
+
+def _saved_update_state(root: Path, selector: str, body: str) -> Path:
+    """Write the package-root update state file that update checks leave behind."""
+    path = root / selector / ".gupkg" / "state" / "update.toml"
+    path.parent.mkdir(parents=True)
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
+def test_discovery_restores_a_saved_available_update(tmp_path: Path) -> None:
+    """A saved check with a newer candidate is listed as available with its check time."""
+    system, user = tmp_path / "system", tmp_path / "user"
+    system.mkdir()
+    user.mkdir()
+    _manifest(user, "tool", "v1.0.0.l1")
+    _saved_update_state(
+        user, "tool",
+        'schemaVersion = 1\nlastSuccessfulCheck = "2026-10-17T14:02:00+00:00"\n'
+        'lastStatus = "available"\nlastCandidateVersion = "1.1.0"\n',
+    )
+    config_path = tmp_path / "gupkg-config.toml"
+    _write_config(config_path, "system", "user")
+
+    [target] = discover_manager(load_manager_config(config_path)).targets
+
+    assert target.update_status == "available"
+    assert target.candidate_version == "1.1.0"
+    assert target.checked_at == "2026-10-17T14:02:00+00:00"
+
+
+def test_discovery_shows_current_once_the_saved_candidate_is_installed(tmp_path: Path) -> None:
+    """A saved available update that is no newer than the active version shows as current."""
+    system, user = tmp_path / "system", tmp_path / "user"
+    system.mkdir()
+    user.mkdir()
+    _manifest(user, "tool", "v1.0.0.l1")
+    _saved_update_state(
+        user, "tool",
+        'lastSuccessfulCheck = "2026-10-17T14:02:00+00:00"\n'
+        'lastStatus = "available"\nlastCandidateVersion = "1.0.0"\n',
+    )
+    config_path = tmp_path / "gupkg-config.toml"
+    _write_config(config_path, "system", "user")
+
+    [target] = discover_manager(load_manager_config(config_path)).targets
+
+    assert target.update_status == "current"
+    assert target.candidate_version is None
+
+
+def test_discovery_reports_a_failed_last_check_as_error(tmp_path: Path) -> None:
+    """A saved state whose last attempt failed is listed with the error status."""
+    system, user = tmp_path / "system", tmp_path / "user"
+    system.mkdir()
+    user.mkdir()
+    _manifest(user, "tool", "v1.0.0.l1")
+    _saved_update_state(user, "tool", 'lastStatus = "current"\nlastError = "offline"\n')
+    config_path = tmp_path / "gupkg-config.toml"
+    _write_config(config_path, "system", "user")
+
+    [target] = discover_manager(load_manager_config(config_path)).targets
+
+    assert target.update_status == "error"
+
+
+def test_discovery_leaves_a_corrupt_update_state_in_place_and_reports_unchecked(tmp_path: Path) -> None:
+    """A corrupt saved state is treated as unchecked and is not renamed by discovery."""
+    system, user = tmp_path / "system", tmp_path / "user"
+    system.mkdir()
+    user.mkdir()
+    _manifest(user, "tool", "v1.0.0.l1")
+    state = _saved_update_state(user, "tool", "this is [not toml")
+    config_path = tmp_path / "gupkg-config.toml"
+    _write_config(config_path, "system", "user")
+
+    [target] = discover_manager(load_manager_config(config_path)).targets
+
+    assert target.update_status == "unchecked"
+    assert state.read_text(encoding="utf-8") == "this is [not toml"
+    assert list(state.parent.iterdir()) == [state]

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 
 from . import commands
@@ -65,6 +66,10 @@ def run_manager_tui(
     from textual.widgets import Input, Label, OptionList, Static
     from textual.widgets.option_list import Option
 
+    from textual.content import Content
+
+    from .tui_widgets import OutputView, update_style
+
     # Package-mode handoff does not pass manager objects, so look for the
     # standard configuration before presenting the initialization screen.
     if config is None and inventory is None:
@@ -74,14 +79,28 @@ def run_manager_tui(
             config = None
     current_inventory = inventory or (commands.discover_manager(config) if config is not None else None)
 
-    def target_label(target: ManagedTarget) -> str:
-        """Render all important target dimensions without color dependence."""
-        installed = f" {target.installed_version}" if target.installed_version else ""
-        installation = target.installation_status.replace("-", " ").title()
+    # Where the user left the browser when opening a package, so the next
+    # manager app can reopen it there.  ``active`` is set only by that handoff.
+    resume: dict[str, object] = {}
+
+    def update_text(target: ManagedTarget) -> str:
+        """Render a target's update status and candidate version."""
         update = target.update_status.replace("-", " ").title()
         if target.candidate_version:
             update += f" {target.candidate_version}"
-        return f"{target.package.selector}  {scope_name(target.scope)}  {installation}{installed}  Update {update}"
+        return update
+
+    def target_label(target: ManagedTarget) -> Content:
+        """Render all important target dimensions; color only reinforces the words."""
+        installed = f" {target.installed_version}" if target.installed_version else ""
+        installation = target.installation_status.replace("-", " ").title()
+        installation_style = {"broken": "$error", "not-installed": "dim"}.get(target.installation_status, "")
+        return Content.assemble(
+            f"{target.package.selector}  {scope_name(target.scope)}  ",
+            (f"{installation}{installed}", installation_style),
+            "  Update ",
+            (update_text(target), update_style(target.update_status)),
+        )
 
     def refresh_inventory() -> None:
         """Rebuild the local inventory so screens never show stale versions."""
@@ -278,6 +297,7 @@ def run_manager_tui(
             if incomplete:
                 yield Static(
                     "Warning: " + "; ".join(f"{scope_name(s.scope)} root incomplete" for s in incomplete),
+                    markup=False,
                     id="manager-warning",
                 )
             yield Label(f"Manager: {config.path}", id="manager-title")
@@ -325,10 +345,14 @@ def run_manager_tui(
         _scope_filters = {"All": {Scope.USER, Scope.MACHINE}, "User": {Scope.USER}, "System": {Scope.MACHINE}}
         _status_filters = ("All", "Installed", "Uninstalled", "Updatable", "Unhealthy")
 
-        def __init__(self) -> None:
+        def __init__(
+            self, scope_filter: str = "All", status_filter: str = "All", target_id: str | None = None
+        ) -> None:
+            """Start with the given filters and, if still visible, highlight *target_id*."""
             super().__init__()
-            self.scope_filter = "All"
-            self.status_filter = "All"
+            self.scope_filter = scope_filter if scope_filter in self._scope_filters else "All"
+            self.status_filter = status_filter if status_filter in self._status_filters else "All"
+            self.target_id = target_id
 
         def compose(self) -> ComposeResult:
             """Compose filter rows and target rows in one natural list."""
@@ -348,8 +372,14 @@ def run_manager_tui(
             ]
 
         def on_mount(self) -> None:
-            """Focus the list so it is immediately usable."""
-            self.query_one("#package-options", OptionList).focus()
+            """Focus the list and restore the highlight of a resumed target."""
+            options = self.query_one("#package-options", OptionList)
+            options.focus()
+            index = next(
+                (i for i, o in enumerate(options.options) if self.target_id and o.id == self.target_id), None
+            )
+            if index is not None:
+                options.highlighted = index
 
         def _cycle(self, selected_id: str) -> None:
             """Advance one filter to its next value and redraw."""
@@ -374,7 +404,8 @@ def run_manager_tui(
                 self._cycle(selected)
             elif isinstance(selected, str):
                 target = next(t for t in current_inventory.targets if t.target_id == selected)
-                self.app.push_screen(DetailsScreen(target))
+                self.target_id = selected
+                self.app.push_screen(DetailsScreen(target, self))
 
         def action_back(self) -> None:
             """Return to the manager home."""
@@ -385,9 +416,11 @@ def run_manager_tui(
 
         BINDINGS = [("escape", "back", "Back")]
 
-        def __init__(self, target: ManagedTarget) -> None:
+        def __init__(self, target: ManagedTarget, browser: BrowserScreen) -> None:
+            """Store the target and the browser to reopen after its operations."""
             super().__init__()
             self.target = target
+            self.browser = browser
 
         def compose(self) -> ComposeResult:
             """Compose target identity, paths, status, and actions."""
@@ -398,15 +431,30 @@ def run_manager_tui(
                     str(target.package.root / target.local_version)
                 ).description
             with VerticalScroll():
-                yield Label(target.target_id)
+                yield Label(target.target_id, markup=False)
+                update = update_text(target)
+                if target.checked_at:
+                    update += f" (checked {self._checked_text(target.checked_at)})"
                 yield Static(
                     f"Selector: {target.package.selector}\nScope: {scope_name(target.scope)} (locked)\n"
                     f"Path: {target.package.root}\nDescription: {description or '(no description)'}\n"
                     f"Installation: {target.installation_status}\nInstalled version: {target.installed_version or 'none'}\n"
                     f"Local version: {target.local_version or 'none'}\nHealth: {target.health_status}\n"
-                    f"Update: {target.update_status}\nDiagnostics: {chr(10).join(target.diagnostics) or 'None'}"
+                    f"Update: {update}\nDiagnostics: {chr(10).join(target.diagnostics) or 'None'}",
+                    markup=False,
                 )
                 yield OptionList(Option("Open package operations", id="open"), id="detail-actions")
+
+        @staticmethod
+        def _checked_text(checked_at: str) -> str:
+            """Render a stored UTC check time as local ``YYYY-MM-DD HH:MM``."""
+            try:
+                moment = datetime.fromisoformat(checked_at)
+            except ValueError:
+                return checked_at
+            if moment.tzinfo is not None:
+                moment = moment.astimezone()
+            return f"{moment:%Y-%m-%d %H:%M}"
 
         def on_mount(self) -> None:
             """Focus the operation handoff."""
@@ -415,6 +463,12 @@ def run_manager_tui(
         def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
             """Return the selected target to the manager runner."""
             if event.option.id == "open":
+                resume.update(
+                    active=True,
+                    scope_filter=self.browser.scope_filter,
+                    status_filter=self.browser.status_filter,
+                    target_id=self.target.target_id,
+                )
                 self.app.exit(self.target)
 
         def action_back(self) -> None:
@@ -426,29 +480,78 @@ def run_manager_tui(
 
         BINDINGS = [("escape", "back", "Back")]
 
+        def __init__(self) -> None:
+            """Prepare cancellation and result bookkeeping."""
+            super().__init__()
+            self.cancel_requested = False
+            self.running = True
+            self.lines: list[str | Content] = []
+            self.counts: dict[str, int] = {}
+
         def compose(self) -> ComposeResult:
             """Compose a visible progress view before checks begin."""
             yield Label("Refresh update status")
-            yield Static("Checking packages...", id="refresh-status")
-            with VerticalScroll():
-                yield Static("", id="refresh-output")
+            yield Static("Checking packages...", markup=False, id="refresh-status")
+            yield OutputView(id="refresh-output")
 
         def on_mount(self) -> None:
             """Start checks only after the progress view is visible."""
-            self.run_worker(self._refresh(), exclusive=True)
+            self.query_one(OutputView).focus()
+            self.run_worker(self._refresh, thread=True, exclusive=True)
 
-        async def _refresh(self) -> None:
-            """Perform provider work off the Textual event loop."""
-            results = await asyncio.to_thread(commands.refresh_update_status, current_inventory)
-            output = "\n".join(f"{t.target_id}: {t.update_status}" for t in current_inventory.targets)
-            self.query_one("#refresh-output", Static).update(output or "No packages discovered.")
-            self.query_one("#refresh-status", Static).update(
-                "Refresh complete." if all(r.ok for r in results) else "Refresh complete with errors."
+        def _refresh(self) -> None:
+            """Check targets one at a time on a worker thread, streaming progress."""
+            results = commands.refresh_update_status(
+                current_inventory,
+                on_progress=self._progress,
+                cancel_requested=lambda: self.cancel_requested,
             )
+            self.app.call_from_thread(self._finish, len(results))
+
+        def _progress(self, index: int, total: int, target: ManagedTarget, result) -> None:
+            """Report the start and end of one check (from the worker thread)."""
+            if result is None:
+                self.app.call_from_thread(
+                    self.query_one("#refresh-status", Static).update,
+                    f"Checking {index} of {total}: {target.target_id}",
+                )
+                return
+            self.counts[target.update_status] = self.counts.get(target.update_status, 0) + 1
+            self.lines.append(Content.assemble(
+                f"{target.target_id}: Update ",
+                (update_text(target), update_style(target.update_status)),
+            ))
+            if not result.ok and result.errors:
+                self.lines.append(f"  Error: {result.errors[0]}")
+            self.app.call_from_thread(self.query_one(OutputView).set_lines, self.lines)
+
+        def _finish(self, checked: int) -> None:
+            """Summarize the completed or cancelled refresh."""
+            self.running = False
+            total = len(current_inventory.targets)
+            if not total:
+                text = "No packages discovered."
+                self.query_one(OutputView).set_lines([text])
+            elif checked < total:
+                text = f"Cancelled after {checked} of {total}."
+            else:
+                errors = self.counts.get("error", 0)
+                parts = [f"{self.counts.get('available', 0)} available", f"{self.counts.get('current', 0)} current"]
+                if self.counts.get("not-configured"):
+                    parts.append(f"{self.counts['not-configured']} not configured")
+                parts.append(f"{errors} {'error' if errors == 1 else 'errors'}")
+                text = f"Refresh complete: {', '.join(parts)}."
+            self.query_one("#refresh-status", Static).update(text)
 
         def action_back(self) -> None:
-            """Return after reviewing refresh results."""
-            self.app.pop_screen()
+            """Stop a running refresh after the current check; otherwise return."""
+            if self.running:
+                # The loop observes the flag before the next target; a check
+                # already in flight cannot be interrupted.
+                self.cancel_requested = True
+                self.query_one("#refresh-status", Static).update("Cancelling after the current check...")
+            else:
+                self.app.pop_screen()
 
     class UpgradePlanScreen(Screen):
         """Plan updates without changing package files."""
@@ -458,21 +561,37 @@ def run_manager_tui(
         def compose(self) -> ComposeResult:
             """Compose the screen's widgets."""
             yield Label("Update all: plan")
-            yield Static("Checking installed packages...", id="plan-status")
-            with VerticalScroll(id="plan-output"):
-                yield Static("")
+            yield Static("Checking installed packages...", markup=False, id="plan-status")
+            yield OutputView(id="plan-output")
 
         def on_mount(self) -> None:
             # Show the result view before provider work starts, keeping the
             # terminal usable while checks run.
-            """Start the screen's work or focus its list once it is visible."""
-            self.run_worker(self._plan(), exclusive=True)
+            """Start the checks on a worker thread once the view is visible."""
+            self.query_one(OutputView).focus()
+            self.run_worker(self._plan, thread=True, exclusive=True)
 
-        async def _plan(self) -> None:
-            plan: UpgradePlan = await asyncio.to_thread(commands.plan_updates, current_inventory, "auto")
-            self.query_one("#plan-output Static", Static).update("\n".join(commands.plan_summary_lines(plan)))
+        def _plan(self) -> None:
+            """Check every installed target on a worker thread, streaming progress."""
+            plan: UpgradePlan = commands.plan_updates(
+                current_inventory, "auto", on_progress=self._progress
+            )
+            self.app.call_from_thread(self._finish, plan)
+
+        def _progress(self, index: int, total: int, target: ManagedTarget, result) -> None:
+            """Report the start of one check (from the worker thread)."""
+            if result is None:
+                self.app.call_from_thread(
+                    self.query_one("#plan-status", Static).update,
+                    f"Checking {index} of {total}: {target.target_id}",
+                )
+
+        def _finish(self, plan: UpgradePlan) -> None:
+            """Show the plan and open its confirmation unless the user left."""
+            self.query_one(OutputView).set_lines(commands.plan_summary_lines(plan))
             self.query_one("#plan-status", Static).update("Plan complete.")
-            self.app.push_screen(ConfirmScreen(plan))
+            if self.app.screen is self:
+                self.app.push_screen(ConfirmScreen(plan))
 
         def action_back(self) -> None:
             """Leave this screen without running anything further."""
@@ -538,17 +657,21 @@ def run_manager_tui(
         def compose(self) -> ComposeResult:
             """Compose the screen's widgets."""
             yield Label("Update all: execution")
-            yield Static("Preparing...", id="execution-status")
-            with VerticalScroll(id="execution-output"):
-                yield Static("", id="execution-lines")
+            yield Static("Preparing...", markup=False, id="execution-status")
+            yield OutputView(id="execution-output")
 
         def on_mount(self) -> None:
             """Start the screen's work or focus its list once it is visible."""
+            self.query_one(OutputView).focus()
             self.run_worker(self._execute(), exclusive=True)
 
         async def _execute(self) -> None:
-            lines = self.query_one("#execution-lines", Static)
+            view = self.query_one(OutputView)
             status = self.query_one("#execution-status", Static)
+
+            def show(text: str) -> None:
+                """Replace the output with *text*, one display line per line."""
+                view.set_lines(text.split("\n"))
 
             # Elevation is resolved before any mixed-scope mutation; declining
             # it leaves every package unchanged.
@@ -560,7 +683,7 @@ def run_manager_tui(
                     no_checksum=self.no_checksum,
                 )
                 refresh_inventory()
-                lines.update(
+                show(
                     "Administrator elevation accepted; the elevated batch was started."
                     if accepted
                     else "Administrator elevation was declined or could not be started; no package was changed."
@@ -581,7 +704,7 @@ def run_manager_tui(
                 on_progress=lambda target_id, state: states.__setitem__(target_id, state),
             ))
             while not execution.done():
-                lines.update("\n".join(f"{name}: {state}" for name, state in states.items()) or "Starting...")
+                show("\n".join(f"{name}: {state}" for name, state in states.items()) or "Starting...")
                 await asyncio.sleep(0.1)
             await execution
 
@@ -594,7 +717,7 @@ def run_manager_tui(
                 if entry.target.target_id not in states
             ]
             report.append(commands.execution_summary_line(self.plan))
-            lines.update("\n".join(report))
+            show("\n".join(report))
             status.update("Execution finished.")
 
         def action_back(self) -> None:
@@ -615,7 +738,7 @@ def run_manager_tui(
             """Compose diagnostics as a plain scrollable result view."""
             yield Label("Doctor")
             with VerticalScroll():
-                yield Static("\n".join(commands.diagnostic_lines(config, current_inventory)))
+                yield Static("\n".join(commands.diagnostic_lines(config, current_inventory)), markup=False)
 
         def action_back(self) -> None:
             """Return to the manager home."""
@@ -635,7 +758,7 @@ def run_manager_tui(
             """Compose a plain scrollable output view."""
             yield Label(self.title_text)
             with VerticalScroll():
-                yield Static(self.text)
+                yield Static(self.text, markup=False)
 
         def action_back(self) -> None:
             """Return to the previous manager screen."""
@@ -659,6 +782,15 @@ def run_manager_tui(
         def on_mount(self) -> None:
             """Start at the manager home screen and show any advisory notices."""
             self.push_screen(HomeScreen() if config is not None else MissingConfigScreen())
+
+            # Returning from a package operation reopens the browser where the
+            # user left it; Escape still leads back to the home screen.
+            if config is not None and resume.pop("active", False):
+                self.push_screen(BrowserScreen(
+                    str(resume.get("scope_filter", "All")),
+                    str(resume.get("status_filter", "All")),
+                    str(resume["target_id"]) if resume.get("target_id") else None,
+                ))
             for notice in notices:
                 self.notify(notice, severity="warning", timeout=20)
 

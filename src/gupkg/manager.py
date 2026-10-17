@@ -31,6 +31,7 @@ import json
 import os
 import re
 import urllib.parse
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from functools import cmp_to_key
 from pathlib import Path
@@ -111,6 +112,7 @@ class ManagedTarget:
     update_status: str = "unchecked"
     candidate_version: str | None = None
     diagnostics: list[str] = field(default_factory=list)
+    checked_at: str | None = None
 
 
 @dataclass
@@ -481,20 +483,61 @@ def _managed_target(scope: Scope, package: DiscoveredPackage, complete: bool) ->
         except Exception as exc:
             diagnostics.append(f"Invalid manifest {manifest.path}: {exc}")
     health = "incomplete" if not complete else ("unhealthy" if diagnostics else "healthy")
+    installed_version = current.version_path.name if current.version_path else None
+    local_version = max(
+        (manifest.version_path.name for manifest in package.manifests),
+        key=cmp_to_key(compare_package_versions),
+        default=None,
+    )
+
+    # Restore the last recorded update check so statuses survive a rescan.
+    status, candidate, checked_at = _saved_update_status(package.root, installed_version or local_version)
     return ManagedTarget(
         f"{scope.value}:{package.selector}",
         scope,
         package,
         current.status,
-        current.version_path.name if current.version_path else None,
-        max(
-            (manifest.version_path.name for manifest in package.manifests),
-            key=cmp_to_key(compare_package_versions),
-            default=None,
-        ),
+        installed_version,
+        local_version,
         health,
+        update_status=status,
+        candidate_version=candidate,
         diagnostics=diagnostics,
+        checked_at=checked_at,
     )
+
+
+def _saved_update_status(package_root: Path, active: str | None) -> tuple[str, str | None, str | None]:
+    """Read a package's last recorded update check without modifying any file.
+
+    Returns
+    -------
+    tuple of (str, str or None, str or None)
+        ``(update_status, candidate_version, checked_at)``. A missing or
+        unreadable state file gives ``unchecked``; a failed last attempt gives
+        ``error``; an ``available`` result whose candidate is no newer than the
+        active version (it was installed after the check) gives ``current``.
+    """
+    from .updates import update_paths
+
+    # Discovery is read-only: a corrupt state file is left for the update
+    # workflow, which owns (and renames) it.
+    try:
+        state = read_toml_file(update_paths(package_root)["state"])
+    except Exception:
+        return "unchecked", None, None
+    checked_at = state.get("lastSuccessfulCheck") or state.get("lastAttemptedCheck")
+    if state.get("lastError"):
+        return "error", None, checked_at
+    status = state.get("lastStatus")
+    if status in {"current", "not-configured"}:
+        return status, None, checked_at
+    candidate = state.get("lastCandidateVersion")
+    if status != "available" or not candidate:
+        return "unchecked", None, None
+    if active and compare_package_versions(active, candidate) >= 0:
+        return "current", None, checked_at
+    return "available", candidate, checked_at
 
 
 def scope_name(scope: Scope) -> str:
@@ -681,6 +724,7 @@ def manager_update_target(target: ManagedTarget, *, allow_dependencies: bool = F
 
         state = load_update_state(update_paths(target.package.root)["state"])
         target.candidate_version = state.get("lastCandidateVersion")
+    target.checked_at = datetime.now(timezone.utc).isoformat()
     target.diagnostics.extend(result.errors)
     return result
 

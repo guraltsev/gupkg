@@ -17,6 +17,8 @@ from __future__ import annotations
 import logging
 import os
 import re
+import shutil
+import sys
 import tempfile
 import tomllib
 from dataclasses import dataclass, field
@@ -241,6 +243,59 @@ class ExpansionMode(Enum):
     SCRIPT = "script"
 
 
+# ANSI foreground codes for the few roles that carry meaning in console output.
+_ANSI_ROLES = {"error": "31", "warning": "33", "success": "32", "dim": "2"}
+_vt_enabled: dict[int, bool] = {}
+
+
+def supports_color(stream: Any) -> bool:
+    """Return whether *stream* is a console that should receive ANSI colors.
+
+    Colors are off for redirected output, ``NO_COLOR``, and ``TERM=dumb``. On
+    Windows the console's virtual-terminal mode is switched on first, because a
+    legacy console would otherwise print the escape codes as visible text.
+    """
+    isatty = getattr(stream, "isatty", None)
+    if not (isatty and isatty()) or os.environ.get("NO_COLOR") or os.environ.get("TERM") == "dumb":
+        return False
+    if os.name != "nt":
+        return True
+    try:
+        key = stream.fileno()
+    except (OSError, ValueError, AttributeError):
+        return False
+    if key not in _vt_enabled:
+        _vt_enabled[key] = _enable_virtual_terminal(key)
+    return _vt_enabled[key]
+
+
+def _enable_virtual_terminal(fileno: int) -> bool:
+    """Turn on ANSI processing for a Windows console handle; report success."""
+    import ctypes
+    import msvcrt
+
+    try:
+        kernel32 = ctypes.windll.kernel32
+        handle = msvcrt.get_osfhandle(fileno)
+        mode = ctypes.c_uint32()
+        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            return False
+        return bool(kernel32.SetConsoleMode(handle, mode.value | 0x0004))
+    except (OSError, AttributeError):
+        return False
+
+
+def colorize(text: str, role: str, stream: Any = None) -> str:
+    """Wrap *text* in the ANSI color for *role* when *stream* (default stdout) supports it.
+
+    Roles are ``error``, ``warning``, ``success``, and ``dim``; the text is
+    returned unchanged for redirected output.
+    """
+    if not supports_color(stream if stream is not None else sys.stdout):
+        return text
+    return f"\x1b[{_ANSI_ROLES[role]}m{text}\x1b[0m"
+
+
 class _DynamicStdoutHandler(logging.Handler):
     """Logging handler that writes to the current stdout stream.
 
@@ -250,9 +305,11 @@ class _DynamicStdoutHandler(logging.Handler):
     """
 
     def emit(self, record: logging.LogRecord) -> None:
-        """Render and flush one log record to stdout."""
+        """Render and flush one log record to stdout, colored by severity on a console."""
         try:
-            print(self.format(record), flush=True)
+            role = "error" if record.levelno >= logging.ERROR else "warning" if record.levelno >= logging.WARNING else None
+            text = self.format(record)
+            print(colorize(text, role) if role else text, flush=True)
         except Exception:
             self.handleError(record)
 
@@ -274,6 +331,41 @@ _LOGGER.addHandler(_stdout_handler)
 def log_info(message: str) -> None:
     """Emit one informational line to stdout."""
     _LOGGER.info(message)
+
+
+def log_progress(message: str, *, final: bool = False) -> None:
+    """Show one progress line that later progress replaces.
+
+    On a live stream (an interactive console, or a stream that declares
+    ``accepts_transient``), intermediate messages overwrite one line and the
+    final message is committed with a newline. On any other stream (a
+    redirected file, a pipe, test capture), intermediate messages are dropped
+    and only the final message is written, as an ordinary line.
+    """
+    global _progress_width
+
+    # The stream is looked up per call so ``redirect_stdout`` keeps working.
+    stream = sys.stdout
+    isatty = getattr(stream, "isatty", None)
+    live = bool(getattr(stream, "accepts_transient", False)) or bool(isatty and isatty())
+    if not live:
+        if final:
+            log_info(message)
+        return
+
+    # A wrapped line cannot be overwritten with a carriage return, so
+    # intermediate text is cut to fit. Spaces (not ANSI erase codes) clear the
+    # remainder of a longer previous line on legacy Windows consoles.
+    if not final:
+        message = message[: max(shutil.get_terminal_size().columns - 1, 1)]
+    padded = message.ljust(_progress_width)
+    stream.write(padded + ("\n" if final else "\r"))
+    stream.flush()
+    _progress_width = 0 if final else len(message)
+
+
+# Width of the last transient progress line, so a shorter one can blank it.
+_progress_width = 0
 
 
 def log_warning(message: str) -> None:

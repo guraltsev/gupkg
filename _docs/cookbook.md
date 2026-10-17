@@ -9,7 +9,8 @@ Commands assume `gupkg` is on `PATH`; in scheduled tasks use its full path.
   something, `3` a change to the system failed, `4` internal error. Scripts can
   rely on these alone.
 - **`--format toml`:** prints exactly one TOML document on stdout (progress text
-  is suppressed) with `ok`, `changed`, `status`, `exit_code`, `warnings`, and
+  is suppressed; on a console a download shows one progress line that updates
+  in place, and when redirected only its total-size and final lines) with `ok`, `changed`, `status`, `exit_code`, `warnings`, and
   `errors`, plus per-package `[[target]]` tables for `manager` commands. Place
   global options such as `--format` and `--scope` *before* the command.
 - **Safe to repeat:** `install`, `update`, and `manager update` can be rerun at

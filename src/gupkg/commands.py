@@ -54,6 +54,7 @@ from .core import (
 from .layout import inspect_current, resolve_input_path
 from .legacy_to_gupkg_toml import pick_legacy_metadata_files
 from .manager import (
+    ManagedTarget,
     ManagerConfig,
     ManagerInventory,
     UpgradePlan,
@@ -181,29 +182,54 @@ class LineStream(io.TextIOBase):
 
     Pass it as the ``output`` of an operation to show progress live (for
     example in a TUI) instead of discarding or buffering it.
+
+    Parameters
+    ----------
+    on_line : callable
+        Receives every committed line, without its line ending.
+    on_transient : callable, optional
+        Receives text terminated by a carriage return, which a terminal would
+        overwrite with later text. When given, the stream declares
+        ``accepts_transient`` so progress reporters send intermediate updates;
+        a following newline commits the latest transient text as a line.
     """
 
-    def __init__(self, on_line: Callable[[str], None]) -> None:
+    def __init__(
+        self,
+        on_line: Callable[[str], None],
+        on_transient: Callable[[str], None] | None = None,
+    ) -> None:
         self._on_line = on_line
+        self._on_transient = on_transient
+        self.accepts_transient = on_transient is not None
         self._pending = ""
+        self._transient = ""
 
     def writable(self) -> bool:
         """Report that the stream accepts text."""
         return True
 
     def write(self, text: str) -> int:
-        """Buffer *text* and emit every complete line."""
-        self._pending += text
-        while "\n" in self._pending:
-            line, self._pending = self._pending.split("\n", 1)
-            self._on_line(line.rstrip("\r"))
+        """Buffer *text*; emit each complete line and each transient update."""
+        for char in text:
+            if char == "\r":
+                if self._pending:
+                    self._transient = self._pending
+                    self._pending = ""
+                    if self._on_transient is not None:
+                        self._on_transient(self._transient)
+            elif char == "\n":
+                self._on_line(self._pending or self._transient)
+                self._pending = self._transient = ""
+            else:
+                self._pending += char
         return len(text)
 
     def flush(self) -> None:
         """Emit any trailing partial line."""
         if self._pending:
-            self._on_line(self._pending.rstrip("\r"))
-            self._pending = ""
+            self._on_line(self._pending)
+            self._pending = self._transient = ""
 
 
 def resolve_package(
@@ -532,6 +558,7 @@ def target_record(target: Any, result: ActionResult | None = None) -> dict[str, 
         "installation": target.installation_status,
         "installed_version": target.installed_version,
         "health": target.health_status,
+        "checked_at": target.checked_at,
         "status": target.update_status if result is None else (result.status or ("ok" if result.ok else "failed")),
         "changed": False if result is None else result.changed,
         "exit_code": 0 if result is None else result.exit_code,
@@ -570,12 +597,32 @@ def diagnostic_lines(config: ManagerConfig, inventory: ManagerInventory) -> list
     return lines
 
 
-def refresh_update_status(inventory: ManagerInventory) -> list[ActionResult]:
+def refresh_update_status(
+    inventory: ManagerInventory,
+    *,
+    on_progress: Callable[[int, int, ManagedTarget, ActionResult | None], None] | None = None,
+    cancel_requested: Callable[[], bool] = lambda: False,
+) -> list[ActionResult]:
     """Check every target's update source one at a time and record its status.
 
     Checks run sequentially because each one captures process-wide output.
+    ``on_progress(index, total, target, None)`` is called before each check and
+    ``on_progress(index, total, target, result)`` after it, with a 1-based
+    index. When ``cancel_requested()`` becomes true the loop stops before the
+    next target; results already obtained are returned.
     """
-    return [manager_update_target(target) for target in inventory.targets]
+    results: list[ActionResult] = []
+    total = len(inventory.targets)
+    for index, target in enumerate(inventory.targets, start=1):
+        if cancel_requested():
+            break
+        if on_progress is not None:
+            on_progress(index, total, target, None)
+        result = manager_update_target(target)
+        results.append(result)
+        if on_progress is not None:
+            on_progress(index, total, target, result)
+    return results
 
 
 def needs_elevation(plan: UpgradePlan) -> bool:
@@ -622,13 +669,42 @@ def list_outcome(
     )
 
 
-def plan_updates(inventory: ManagerInventory, scope: str, *, allow_hook_dependency_install: bool = False) -> UpgradePlan:
-    """Check every selected installed target and plan updates; nothing is downloaded."""
-    return plan_upgrade_all(
-        inventory,
-        selected_scopes(scope),
-        lambda target: manager_update_target(target, allow_dependencies=allow_hook_dependency_install),
-    )
+def plan_updates(
+    inventory: ManagerInventory,
+    scope: str,
+    *,
+    allow_hook_dependency_install: bool = False,
+    on_progress: Callable[[int, int, ManagedTarget, ActionResult | None], None] | None = None,
+) -> UpgradePlan:
+    """Check every selected installed target and plan updates; nothing is downloaded.
+
+    ``on_progress`` has the signature described in :func:`refresh_update_status`
+    and is called only for targets that are actually checked.
+    """
+    scopes = selected_scopes(scope)
+    complete = all(item.complete for item in inventory.scopes if item.scope in scopes)
+    checkable = [
+        target for target in inventory.targets
+        if complete
+        and target.scope in scopes
+        and target.installation_status == "installed"
+        and target.health_status == "healthy"
+    ]
+    total = len(checkable)
+    done = 0
+
+    def check(target: ManagedTarget) -> ActionResult:
+        """Check one target, reporting progress around the call."""
+        nonlocal done
+        done += 1
+        if on_progress is not None:
+            on_progress(done, total, target, None)
+        result = manager_update_target(target, allow_dependencies=allow_hook_dependency_install)
+        if on_progress is not None:
+            on_progress(done, total, target, result)
+        return result
+
+    return plan_upgrade_all(inventory, scopes, check)
 
 
 def has_eligible_updates(plan: UpgradePlan) -> bool:

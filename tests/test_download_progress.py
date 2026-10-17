@@ -98,3 +98,49 @@ def test_human_cli_streams_progress_while_toml_keeps_stdout_parseable(
     toml_output = capsys.readouterr().out
     assert "Downloading update" not in toml_output
     assert "output_schema = 1" in toml_output
+
+
+def test_redirected_download_prints_total_and_one_final_line(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A download to a non-live stream prints its total size and one final 100 percent line.
+
+    Output does not grow with the size of the download.
+    """
+    from gupkg.downloads import download_response
+
+    content = b"x" * (300 * 1024)
+    download_response(
+        _Response(content, content_length=len(content)), tmp_path / "payload", label="Downloading update"
+    )
+
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == "Downloading update: total size 300.0 KiB"
+    assert len(lines) == 2
+    assert "(100%)" in lines[1]
+    assert (tmp_path / "payload").read_bytes() == content
+
+
+def test_download_into_a_live_line_stream_reports_transient_progress_then_one_final_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A live stream receives intermediate progress as transient text and one committed 100 percent line."""
+    import contextlib
+
+    from gupkg import downloads
+    from gupkg.commands import LineStream
+    from gupkg.downloads import download_response
+
+    # Make every chunk count as "enough time passed" so progress is intermediate.
+    monkeypatch.setattr(downloads, "_REPORT_INTERVAL", 0.0)
+    lines: list[str] = []
+    transients: list[str] = []
+    content = b"x" * (256 * 1024)
+    with contextlib.redirect_stdout(LineStream(lines.append, on_transient=transients.append)):
+        download_response(
+            _Response(content, content_length=len(content)), tmp_path / "payload", label="Downloading update"
+        )
+
+    assert transients
+    assert lines[0] == "Downloading update: total size 256.0 KiB"
+    assert [line for line in lines if "(100%)" in line] == [lines[-1]]

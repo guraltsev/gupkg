@@ -35,6 +35,7 @@ from .core import (
     EXIT_USER_ERROR,
     ActionResult,
     ConfigValidationError,
+    colorize,
     Scope,
 )
 from .outcome import Outcome, failure, format_human, format_toml
@@ -492,7 +493,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         text, problems = format_human(outcome)
         print(text, end="")
-        print(problems, end="", file=sys.stderr)
+        for line in problems.splitlines():
+            print(colorize(line, "error" if line.startswith("ERROR:") else "warning", sys.stderr), file=sys.stderr)
     if args.pause:
         print("Press any key to continue...", file=sys.stderr)
         wait_for_keypress()

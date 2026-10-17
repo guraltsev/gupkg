@@ -53,7 +53,18 @@ already in progress. Mixed-scope elevation is resolved before invoking the
 executor. Per-target activation passes the manager installation context, so
 wrappers land in the configured `[bin]` directories rather than the scope
 defaults. Update checks capture process-wide stdout and therefore run one at a
-time. Manual Windows coverage for UAC, missing roots, duplicate selectors,
+time. Long work runs in thread workers and reports through callbacks
+(`on_progress`, `cancel_requested`) so the screen can show `Checking i of N`
+and one result line per target; the same callback shape serves refresh and
+planning. Replaceable progress uses `core.log_progress`: it overwrites one line
+on a console or a `LineStream` with `on_transient`, and writes only the final
+line when output is redirected, so logs and `--format toml` stay small.
+Manager discovery restores each target's last update status from the
+package-owned `.gupkg/state/update.toml`; it reads that file without modifying
+it (the update workflow owns renaming a corrupt file) and shows `current` when
+a saved candidate is no newer than the active version. Opening a package from
+the browser exits the manager app, so the manager records the browser filters
+and highlight and reopens the browser there on return. Manual Windows coverage for UAC, missing roots, duplicate selectors,
 partial failures, and terminal dimensions lives in `tests/manual_smoke.md`.
 
 Manager schema v2 adds separate package roots, wrapper/bin roots, and a

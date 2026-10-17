@@ -66,3 +66,29 @@ Standalone and registry checks:
    does not replace it.
 7. Confirm that a v1 manager config is rejected with a migration diagnostic;
    schema migration is an explicit administrative task outside the runtime CLI.
+
+## Progress, scrolling, and saved update status (issue 015)
+
+These steps need a real console because they depend on `\r` handling in
+`conhost` and Windows Terminal. Use a package whose update is a download of
+several MiB.
+
+1. In a console, run `gupkg update --download-only <package>`. Confirm one
+   progress line updates in place and ends at `(100%)`. Repeat with output
+   redirected to a file: only the `total size` line and the final `(100%)`
+   line are written.
+2. Repeat step 1 in both `conhost` and Windows Terminal, with a narrow window,
+   and confirm the progress line never wraps onto a second line.
+3. In `gupkg tui`, run the same update. Confirm progress changes on the
+   `Running: ...` status line and the output view gains one final `(100%)` line.
+4. Make output longer than the window (for example a verbose hook). Confirm the
+   view follows new lines, scrolling up stops following, scrolling back to the
+   bottom resumes it, and PgUp/PgDn/Home/End work without a mouse.
+5. In `gupkg manager`, choose `Refresh update status`. Confirm
+   `Checking i of N: <target>` and one result line per target appear during the
+   check, and Escape stops after the current target. Repeat for `Update all`.
+6. Refresh, open a package from the browser, run `Update: check`, and return.
+   Confirm statuses are kept, the browser reopens with the same filters and
+   highlight, and a package updated meanwhile shows `Current`.
+7. Quit and start a new `gupkg manager` session. Confirm the saved statuses
+   are shown and the Details screen shows the check time.
