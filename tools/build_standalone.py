@@ -72,7 +72,7 @@ def main() -> int:
     parser.add_argument("--source", type=Path, default=Path("src/gupkg"))
     parser.add_argument("--manifest", type=Path, default=Path("src/gupkg/pkg.toml"))
     parser.add_argument("--version")
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--output", type=Path, help="default: dist/gupkg-<version>.zip")
     parser.add_argument("--deps-lock", type=Path, help="default: gupkg-deps.lock inside --source")
     parser.add_argument("--skip-deps", action="store_true", help="do not install locked dependencies")
     args = parser.parse_args()
@@ -83,6 +83,8 @@ def main() -> int:
         raise SystemExit(
             f"--version {args.version!r} does not match the runtime version {release_version!r}"
         )
+    if args.output is None:
+        args.output = Path("dist") / f"gupkg-{release_version}.zip"
     manifest_data = tomllib.loads(args.manifest.read_text(encoding="utf-8"))
     if manifest_data.get("version") != release_version:
         raise SystemExit(
