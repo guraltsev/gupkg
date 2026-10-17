@@ -304,8 +304,8 @@ tags the released commit `v<version>`. Nothing is published until you push.
 Before publishing registry or standalone changes, run:
 
 ```bat
-python tools\validate_registry.py pkgs
-python -m pytest -q
+scripts\validate-registry.cmd
+scripts\test.cmd
 ```
 
 The registry validator checks every manifest and selector without importing
@@ -341,5 +341,5 @@ Every package in `pkgs/` ships the same lightweight `gupkg.cmd` (a copy of
 `src\gupkg.cmd`). It runs a gupkg installed beside it (`gupkg\gupkg.exe`, then
 `gupkg\gupkg.cmd`) and otherwise the first `gupkg.exe` on `PATH`, so
 `gupkg.cmd update` works from any installed package folder. After changing
-`src\gupkg.cmd`, run `python tools\sync_package_launchers.py` to refresh the
+`src\gupkg.cmd`, run `scripts\sync-package-launchers.cmd` to refresh the
 copies (`--check` only reports differences); a test fails when one is stale.
