@@ -27,6 +27,7 @@ import argparse
 import importlib.util
 import os
 from pathlib import Path
+import ssl
 import subprocess
 import sys
 import types
@@ -137,7 +138,10 @@ def _ensure_pip(runtime_directory: Path) -> None:
     pip_target.mkdir(parents=True, exist_ok=True)
     installer_path = runtime_directory / "get-pip.py"
     try:
-        with urlopen("https://bootstrap.pypa.io/get-pip.py") as response:
+        # Accept chains that end at a trusted intermediate, as CPython 3.13 does.
+        context = ssl.create_default_context()
+        context.verify_flags |= getattr(ssl, "VERIFY_X509_PARTIAL_CHAIN", 0)
+        with urlopen("https://bootstrap.pypa.io/get-pip.py", context=context) as response:
             installer_path.write_bytes(response.read())
         environment = os.environ.copy()
         environment["GUPKG_BOOTSTRAPPING_PIP"] = "1"

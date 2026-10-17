@@ -469,6 +469,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         ``0`` for success, ``2`` for a user or configuration error, ``3`` for
         a mutation failure, and ``4`` for an unexpected internal error.
     """
+    # Older bundled interpreters otherwise reject sites whose issuing
+    # intermediate, but not newest root, is in the Windows certificate store.
+    from .tls import enable_partial_chain_verification
+
+    enable_partial_chain_verification()
     parser, manager_parser = _build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
     if args.command == "manager" and args.manager_command is None:
