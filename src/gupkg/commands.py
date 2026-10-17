@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import Any, Callable, TextIO
 
 from . import gupkg as package_workflows
-from .elevation import UntrustedLocationError, elevated_mode, require_trusted_directory
+from .elevation import UntrustedLocationError, elevated_mode, require_trusted_directory, restrict_to_administrators
 from .configfix import fix_package_config, has_legacy_metadata
 from .configuration import check_metadata_consistency
 from .core import (
@@ -436,8 +436,19 @@ def load_manager(explicit: Path | None = None) -> ManagerConfig:
 
 
 def save_manager_config(config: ManagerConfig) -> ManagerConfig:
-    """Write *config* atomically and return it re-read through full validation."""
-    write_text_atomic(config.path, manager_config_text(config))
+    """Validate *config*, then write it atomically and return it re-read.
+
+    The text is checked in a scratch file beside the target first, so a
+    configuration that fails validation never replaces or creates the real file.
+    """
+    text = manager_config_text(config)
+    scratch = config.path.with_name(config.path.name + ".check")
+    write_text_atomic(scratch, text)
+    try:
+        load_manager_config(scratch)
+    finally:
+        scratch.unlink(missing_ok=True)
+    write_text_atomic(config.path, text)
     return load_manager_config(config.path)
 
 
@@ -479,6 +490,16 @@ def init_manager(
             folder.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
             warnings.append(f"Could not create {folder}: {exc}")
+
+    # An elevated run trusts the registry cache, so a cache folder created here is
+    # restricted to administrators right away (an existing folder is left alone).
+    cache_existed = saved.registry_cache.exists()
+    try:
+        saved.registry_cache.mkdir(parents=True, exist_ok=True)
+        if elevated_mode() and not cache_existed:
+            restrict_to_administrators(saved.registry_cache)
+    except OSError as exc:
+        warnings.append(f"Could not prepare the registry cache {saved.registry_cache}: {exc}")
     return saved, warnings
 
 

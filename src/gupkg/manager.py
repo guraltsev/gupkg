@@ -357,9 +357,14 @@ def default_manager_config(path: Path | None = None) -> ManagerConfig:
     user_profile = Path(environment["USERPROFILE"])
     config_path = Path(path) if path is not None else Path(__file__).resolve().parent / "gupkg-config.toml"
 
-    # An elevated initialization keeps the registry cache beside the (admin-only)
-    # configuration, because an elevated run trusts what the cache holds.
-    registry_cache = config_path.parent / "registry" if elevated_mode() else default_registry_cache()
+    # An elevated run trusts what the cache holds, so an elevated initialization
+    # keeps it under ProgramData (restricted to administrators when created). It
+    # cannot sit beside the configuration, which lives inside the system package root.
+    if elevated_mode():
+        program_data = os.environ.get("ProgramData") or str(Path(os.environ.get("SYSTEMDRIVE", "C:") + "/ProgramData"))
+        registry_cache = Path(program_data) / "gupkg" / "registry"
+    else:
+        registry_cache = default_registry_cache()
     return ManagerConfig(
         path=config_path,
         system_root=Path(system_drive) / "opt",

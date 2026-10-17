@@ -233,6 +233,33 @@ def find_untrusted_principal(security: DirectorySecurity, rights: int, where: st
     return None
 
 
+def restrict_to_administrators(directory: Path) -> None:
+    """Make *directory* modifiable by Administrators and SYSTEM only (Users may read).
+
+    Parameters
+    ----------
+    directory : Path
+        Existing folder, normally one the caller just created. Children inherit
+        the restriction; existing children are not rewritten.
+
+    Raises
+    ------
+    OSError
+        If ``icacls`` fails or is missing.
+    """
+    import subprocess
+
+    # Use the system copy of icacls so an elevated run never searches PATH.
+    icacls = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "icacls.exe"
+    for arguments in (
+        ["/setowner", "*S-1-5-32-544", "/C", "/Q"],
+        ["/inheritance:r", "/grant:r", "*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F", "*S-1-5-32-545:(OI)(CI)RX", "/C", "/Q"],
+    ):
+        result = subprocess.run([str(icacls), str(directory), *arguments], capture_output=True, text=True, check=False)
+        if result.returncode != 0:
+            raise OSError(f"Could not restrict {directory} to administrators: {result.stderr.strip() or result.stdout.strip()}")
+
+
 def _principal_name(sid: str) -> str:
     """Return a readable name for a SID."""
     return _SID_NAMES.get(sid, TRUSTED_SIDS.get(sid, sid))

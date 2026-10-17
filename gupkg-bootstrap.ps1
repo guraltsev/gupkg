@@ -245,12 +245,12 @@ try {
 
     # 5. Create the default manager configuration, unless one already exists.
     if (-not $SkipManagerInit) {
-        Step 'Setting up manager mode (configuration is stored in the gupkg folder)'
-        & $launcher manager init
-        if ($LASTEXITCODE -eq 2) {
+        if (Test-Path -LiteralPath $newConfig) {
             Step 'A manager configuration already exists; leaving it unchanged'
-        } elseif ($LASTEXITCODE -ne 0) {
-            throw "gupkg manager init failed (exit $LASTEXITCODE)."
+        } else {
+            Step 'Setting up manager mode (configuration is stored in the gupkg folder)'
+            & $launcher manager init
+            if ($LASTEXITCODE -ne 0) { throw "gupkg manager init failed (exit $LASTEXITCODE)." }
         }
     }
     Step 'Done. Open a NEW terminal, then try:  gupkg --help'
