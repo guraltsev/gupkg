@@ -300,17 +300,23 @@ package/update workflows. The Windows-specific cases in
 ## Publishing the registry
 
 The registry is versioned separately from gupkg: package changes need no gupkg
-version bump or release. Commit and push the change to `pkgs`, then run:
+version bump or release. `gupkg manager registry sync` downloads the archive of
+the `registry` tag. Commit and push the change to `pkgs`, then run:
 
 ```bat
 python tools\publish_registry.py
-git push <remote> +registry
 ```
 
-The tool refuses a dirty tree, an unpushed `HEAD`, a package without the current
-`gupkg.cmd`, or a tree that fails registry validation, and otherwise moves the
-`registry` tag to `HEAD`. Users get the new packages on their next
-`gupkg manager registry sync`.
+The tool checks the committed revision (not the working tree): it must already
+be on a remote branch, every package must carry the current `gupkg.cmd`, and the
+whole tree must pass registry validation. If everything passes it moves the
+`registry` tag and pushes it, replacing the old tag. Options:
+
+- `--target REV` publishes the revision `REV` instead of `HEAD` (to publish or
+  roll back to any pushed commit);
+- `--force` moves and pushes the tag even if a check fails (the problems are
+  still printed as warnings);
+- `--remote NAME` pushes to a remote other than the first one.
 
 ## Package launchers
 
