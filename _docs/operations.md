@@ -278,8 +278,6 @@ They use the repository's `.venv` if present, otherwise the bundled runtime in
 | `test.cmd [pytest args]` | Run the test suite. |
 | `bump.cmd <version>` | Set the version in `_version.py` and both `pkg.toml` files and commit. |
 | `release.cmd "notes" [--no-push]` | Test, add the `RELEASES.md` row, tag, and push branch and tag. |
-| `validate-registry.cmd [path]` | Validate the `gupkg-registry` checkout and list its packages. |
-| `sync-package-launchers.cmd [--check]` | Copy `src\gupkg.cmd` into every package of the registry checkout. |
 | `build-standalone.cmd [output.zip]` | Build the release bundle in `dist\` with the pinned, verified Python. |
 
 ## Releasing gupkg itself
@@ -306,15 +304,14 @@ tags the released commit `v<version>`. Nothing is published until you push.
 
 ## Release and validation checks
 
-Before publishing registry or standalone changes, run:
+Before releasing gupkg or a standalone bundle, run:
 
 ```bat
-scripts\validate-registry.cmd
 scripts\test.cmd
 ```
 
-The registry validator checks every manifest and selector without importing
-package code. The test suite covers manager schema/discovery, registry parsing
+(Registry changes are checked in the registry repository; see below.) The test
+suite covers manager schema/discovery, registry parsing
 and cache behavior, standalone assembly, payload variables, and the existing
 package/update workflows. The Windows-specific cases in
 `tests\manual_smoke.md` still require a real Windows environment.
@@ -324,16 +321,13 @@ package/update workflows. The Windows-specific cases in
 The packages live in their own repository, `gupkg-registry`, checked out beside
 this one as `gupkg-registry\` (ignored by this repository). Changing a package
 needs no gupkg version bump or release: commit and push in that repository and
-the next `gupkg manager registry sync` picks it up. Tests that read package
-content use that checkout (or the folder named by `GUPKG_REGISTRY_ROOT`) and are
-skipped when there is none. `scripts\validate-registry.cmd` validates the
-checkout before pushing.
+the next `gupkg manager registry sync` picks it up.
 
-## Package launchers
+Everything that checks package consistency lives in that repository, not here:
+its tests (manifests, per-package update hooks, and that every package ships the
+same lightweight `gupkg.cmd` as `src\gupkg.cmd`), `_scripts\test.cmd`,
+`_scripts\validate.cmd`, and `_scripts\sync-launchers.cmd` for refreshing the
+launcher copies after `src\gupkg.cmd` changes. They use this repository's code,
+found beside the registry checkout or in `GUPKG_REPO`. Top-level folders whose
+names start with `_` or `.` are repository furniture and never packages.
 
-Every package in the registry ships the same lightweight `gupkg.cmd` (a copy of
-`src\gupkg.cmd`). It runs a gupkg installed beside it (`gupkg\gupkg.exe`, then
-`gupkg\gupkg.cmd`) and otherwise the first `gupkg.exe` on `PATH`, so
-`gupkg.cmd update` works from any installed package folder. After changing
-`src\gupkg.cmd`, run `scripts\sync-package-launchers.cmd` to refresh the
-copies (`--check` only reports differences); a test fails when one is stale.

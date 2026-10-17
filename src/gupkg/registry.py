@@ -148,7 +148,7 @@ def validate_registry_tree(pkgs_root: Path) -> list[RegistryPackage]:
     ----------
     pkgs_root : Path
         Registry root: one flat child directory per package selector. Top-level
-        files and dot-named entries are ignored.
+        files and entries starting with "." or "_" are ignored.
 
     Returns
     -------
@@ -168,9 +168,9 @@ def validate_registry_tree(pkgs_root: Path) -> list[RegistryPackage]:
     seen: dict[str, str] = {}
     for selector_path in sorted(pkgs_root.iterdir(), key=lambda item: (item.name.casefold(), item.name)):
         _reject_reparse(selector_path, "registry selector")
-        # Top-level files (README, LICENSE) and dot entries (.git, .github) are
-        # repository furniture, not packages.
-        if selector_path.name.startswith(".") or not selector_path.is_dir():
+        # Top-level files (README, LICENSE) and entries starting with "." or "_"
+        # (.git, .github, _tests, _tools) are repository furniture, not packages.
+        if selector_path.name.startswith((".", "_")) or not selector_path.is_dir():
             continue
         selector = selector_path.name
         key = selector.casefold()
@@ -305,7 +305,12 @@ def sync_registry(
 
             # Copy the packages (never Git metadata), validate fully, then publish.
             pkgs = work / "pkgs"
-            shutil.copytree(registry, pkgs, ignore=shutil.ignore_patterns(".git"))
+            def furniture(directory: str, names: list[str]) -> list[str]:
+                """Leave out Git metadata and top-level repository furniture (names starting with "_")."""
+                top_level = Path(directory) == registry
+                return [name for name in names if name == ".git" or (top_level and name.startswith("_"))]
+
+            shutil.copytree(registry, pkgs, ignore=furniture)
             if not validate_registry_tree(pkgs):
                 raise ConfigValidationError("The registry contains no packages")
             target = registry_root / "trees" / revision
