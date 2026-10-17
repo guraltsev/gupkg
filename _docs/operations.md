@@ -325,9 +325,11 @@ the next `gupkg manager registry sync` picks it up.
 
 Everything that checks package consistency lives in that repository, not here:
 its tests (manifests, per-package update hooks, and that every package ships the
-same lightweight `gupkg.cmd` as `src\gupkg.cmd`), `_scripts\test.cmd`,
+same `gupkg-tui.cmd` as `src\package-tui.cmd`), `_scripts\test.cmd`,
 `_scripts\validate.cmd`, and `_scripts\sync-launchers.cmd` for refreshing the
-launcher copies after `src\gupkg.cmd` changes. They use this repository's code,
+launcher copies after `src\package-tui.cmd` changes. `gupkg-tui.cmd` opens gupkg's
+text interface for its package (a gupkg beside it, else `gupkg.exe` on `PATH`), so
+installing a package needs no command line. They use this repository's code,
 found beside the registry checkout or in `GUPKG_REPO`. Top-level folders whose
 names start with `_` or `.` are repository furniture and never packages.
 
