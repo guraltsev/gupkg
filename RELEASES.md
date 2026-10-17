@@ -10,6 +10,7 @@ row.
 
 | Version | Commit | Date | Notes |
 |---|---|---|---|
+| 0.14.1 | `dee0b5c3167318213127ca583fbfb023dce14a8c` | 2026-10-17 | Point all URLs at the renamed gupkg repository |
 | 0.14.0 | `e464847ea04620efe42e3ddee189fbadd96e24be` | 2026-10-17 | notes |
 | 0.13.8 | `a33d83a593666ebb4e5c67675645af70f984580f` | 2026-10-17 | Fix elevated manager init (registry cache location, no leftover invalid config) |
 | 0.13.7 | `be4c45399bd39f52307961da8d3cf28f3c3661f4` | 2026-10-17 | Fresh-clone tests, maintenance scripts, registry tag publishing, registry cache trust |
