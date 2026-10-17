@@ -20,6 +20,6 @@ extractSubdir = "npbackup-gui"
 
 [[shortcut]]
 name = "NPbackup"
-targetPath = "$App\npbackup-gui.exe"
+targetPath = "$App\\npbackup-gui.exe"
 workingDirectory = "$App"
 description = "Backup system based on restic"
