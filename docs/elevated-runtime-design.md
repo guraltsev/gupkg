@@ -320,3 +320,11 @@ Following `_docs/tests.md`:
 - **Lockfile provenance.** The shipped `gupkg-deps.lock` was resolved from PyPI
   for CPython 3.12 on Windows (amd64). Review it as you would any dependency
   change.
+- **Manager configuration.** `gupkg-config.toml` decides package roots,
+  executable folders and the registry source, so it is read only from the gupkg
+  package folder (or an explicit `--config`); `%APPDATA%`, `GUPKG_HOME` and the
+  working directory are no longer searched. An elevated run additionally
+  requires the configuration's folder to pass the trusted-location check.
+  Known remaining gap: the registry cache defaults to `%LOCALAPPDATA%\gupkgegistry`,
+  which an elevated `manager install` trusts; point `[registry] cache` at an
+  admin-only folder for elevated registry use.

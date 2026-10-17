@@ -161,10 +161,8 @@ def discover_manager_config(
     explicit: Path | None = None,
     *,
     module_directory: Path | None = None,
-    gupkg_home: str | None = None,
-    appdata: str | None = None,
 ) -> Path | None:
-    """Select a manager file from the fixed, non-working-directory locations.
+    """Select the manager file: ``--config`` or the one beside the gupkg package.
 
     Parameters
     ----------
@@ -172,45 +170,32 @@ def discover_manager_config(
         ``--config`` value; returned as-is when given.
     module_directory : Path, optional
         Directory of the installed ``gupkg`` package; defaults to this one.
-    gupkg_home, appdata : str, optional
-        Overrides for ``GUPKG_HOME`` and ``APPDATA``.
 
     Returns
     -------
     Path or None
-        The first existing candidate from :func:`manager_config_candidates`.
+        The explicit path, or the configuration file in the package directory
+        when it exists.
     """
     if explicit is not None:
         return Path(explicit).expanduser()
-    for candidate in manager_config_candidates(
-        module_directory=module_directory, gupkg_home=gupkg_home, appdata=appdata
-    ):
+    for candidate in manager_config_candidates(module_directory=module_directory):
         if candidate.is_file():
             return candidate
     return None
 
 
-def manager_config_candidates(
-    *,
-    module_directory: Path | None = None,
-    gupkg_home: str | None = None,
-    appdata: str | None = None,
-) -> list[Path]:
-    """Return the ordered fixed locations searched for ``gupkg-config.toml``.
+def manager_config_candidates(*, module_directory: Path | None = None) -> list[Path]:
+    """Return the only location searched for ``gupkg-config.toml``.
 
-    The search order is the installed package directory, ``GUPKG_HOME``, and
-    ``%APPDATA%\\gupkg``; unset variables are skipped and the working directory
-    is never searched.
+    The configuration decides package roots, executable directories, and the
+    registry source, and an elevated run acts on all of them, so it is read only
+    from the installed package directory (admin-only for a system install). The
+    working directory, ``GUPKG_HOME``, and per-user folders such as
+    ``%APPDATA%`` are never searched.
     """
     directory = Path(module_directory) if module_directory else Path(__file__).resolve().parent
-    candidates = [directory / "gupkg-config.toml"]
-    home = gupkg_home if gupkg_home is not None else os.environ.get("GUPKG_HOME")
-    if home:
-        candidates.append(Path(home) / "gupkg-config.toml")
-    roaming = appdata if appdata is not None else os.environ.get("APPDATA")
-    if roaming:
-        candidates.append(Path(roaming) / "gupkg" / "gupkg-config.toml")
-    return candidates
+    return [directory / "gupkg-config.toml"]
 
 
 def load_manager_config(path: Path) -> ManagerConfig:
@@ -350,7 +335,7 @@ def default_manager_config(path: Path | None = None) -> ManagerConfig:
     ----------
     path : Path, optional
         Destination for the configuration file; defaults to
-        ``%APPDATA%\\gupkg\\gupkg-config.toml``.
+        ``gupkg-config.toml`` in the gupkg package directory.
 
     Returns
     -------
@@ -364,9 +349,7 @@ def default_manager_config(path: Path | None = None) -> ManagerConfig:
         If the Windows environment does not identify the required default
         locations.
     """
-    environment = {name: os.environ.get(name) for name in ("APPDATA", "USERPROFILE", "LOCALAPPDATA", "SYSTEMDRIVE")}
-    if path is None and not environment["APPDATA"]:
-        raise ValueError("APPDATA is not set; cannot initialize manager mode")
+    environment = {name: os.environ.get(name) for name in ("USERPROFILE", "LOCALAPPDATA", "SYSTEMDRIVE")}
     if not all(environment[name] for name in ("USERPROFILE", "LOCALAPPDATA", "SYSTEMDRIVE")):
         raise ValueError(
             "USERPROFILE, LOCALAPPDATA, and SYSTEMDRIVE are required to initialize manager mode"
@@ -376,7 +359,7 @@ def default_manager_config(path: Path | None = None) -> ManagerConfig:
         system_drive += "\\"
     user_profile = Path(environment["USERPROFILE"])
     return ManagerConfig(
-        path=Path(path) if path is not None else Path(environment["APPDATA"]) / "gupkg" / "gupkg-config.toml",
+        path=Path(path) if path is not None else Path(__file__).resolve().parent / "gupkg-config.toml",
         system_root=Path(system_drive) / "opt",
         user_root=user_profile / "opt",
         system_bin=Path(system_drive) / "bin",

@@ -114,6 +114,9 @@ def test_manager_init_creates_a_working_configuration_and_its_folders(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """``manager init`` writes a loadable configuration, creates its folders, and refuses to overwrite."""
+    package_dir = tmp_path / "gupkg-package"
+    package_dir.mkdir()
+    monkeypatch.setattr("gupkg.manager.__file__", str(package_dir / "manager.py"))
     for name, folder in (("APPDATA", "roaming"), ("USERPROFILE", "profile"), ("LOCALAPPDATA", "local"), ("SYSTEMDRIVE", "drive")):
         monkeypatch.setenv(name, str(tmp_path / folder))
 
@@ -122,7 +125,7 @@ def test_manager_init_creates_a_working_configuration_and_its_folders(
         code = cli.main(["--format", "toml", "manager", "init"])
     document = tomllib.loads(output.getvalue())
 
-    config = load_manager_config(tmp_path / "roaming" / "gupkg" / "gupkg-config.toml")
+    config = load_manager_config(package_dir / "gupkg-config.toml")
     assert code == 0 and document["status"] == "created"
     assert config.user_root.is_dir() and config.user_bin.is_dir()
     assert not tomllib.loads(config.path.read_text(encoding="utf-8")).get("registry", {}).get("channel")

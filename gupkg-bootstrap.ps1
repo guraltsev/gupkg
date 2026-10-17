@@ -6,7 +6,7 @@
     Downloads (or copies) a gupkg archive, optionally verifies its SHA-256,
     places it at <Root>\gupkg\v<version>, and runs "gupkg install" on it so the
     'current' junction, the gupkg / gupkg-tui commands, and PATH are created.
-    It then runs "gupkg manager init" to write a default gupkg-config.toml and
+    It then runs "gupkg manager init" to write a default gupkg-config.toml (in the gupkg folder, admin-only for a system install) and
     create the package folders. Every step is safe to repeat: an existing
     version folder is reused, and install re-applies the Windows integration.
 
@@ -228,6 +228,16 @@ try {
         return
     }
 
+    # The manager configuration lives in the gupkg folder of each version (never in
+    # a user-writable place). Carry the active version's file into a new version
+    # before the junction moves.
+    $newConfig = Join-Path $target 'gupkg\gupkg-config.toml'
+    $activeConfig = Join-Path (Join-Path (Split-Path $target) 'current') 'gupkg\gupkg-config.toml'
+    if (-not (Test-Path -LiteralPath $newConfig) -and (Test-Path -LiteralPath $activeConfig)) {
+        Step 'Keeping the manager configuration of the active version'
+        Copy-Item -LiteralPath $activeConfig -Destination $newConfig
+    }
+
     # 4. Activate: current junction, gupkg / gupkg-tui commands, PATH.
     Step 'Running gupkg install'
     & $launcher --scope $Scope install $target
@@ -235,7 +245,7 @@ try {
 
     # 5. Create the default manager configuration, unless one already exists.
     if (-not $SkipManagerInit) {
-        Step 'Setting up manager mode'
+        Step 'Setting up manager mode (configuration is stored in the gupkg folder)'
         & $launcher manager init
         if ($LASTEXITCODE -eq 2) {
             Step 'A manager configuration already exists; leaving it unchanged'

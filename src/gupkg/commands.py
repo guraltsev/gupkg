@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any, Callable, TextIO
 
 from . import gupkg as package_workflows
+from .elevation import UntrustedLocationError, elevated_mode, require_trusted_directory
 from .configfix import fix_package_config, has_legacy_metadata
 from .configuration import check_metadata_consistency
 from .core import (
@@ -422,6 +423,15 @@ def load_manager(explicit: Path | None = None) -> ManagerConfig:
             f"No manager configuration found; searched: {searched}. "
             "Create one with 'gupkg manager init'."
         )
+
+    # The configuration names the roots, executables, and registry source an
+    # elevated run will act on, so an elevated run reads it only from a
+    # directory that non-administrators cannot modify.
+    if elevated_mode():
+        try:
+            require_trusted_directory(Path(selected).resolve().parent)
+        except UntrustedLocationError as exc:
+            raise ConfigValidationError(f"Refusing the manager configuration {selected}: {exc}") from exc
     return load_manager_config(selected)
 
 
@@ -439,7 +449,7 @@ def init_manager(
     Parameters
     ----------
     path : Path, optional
-        Configuration file to create; default ``%APPDATA%\\gupkg\\gupkg-config.toml``.
+        Configuration file to create; default ``gupkg-config.toml`` in the gupkg package directory.
     config : ManagerConfig, optional
         Reviewed or edited settings to write; the defaults when omitted.
     force : bool, default=False

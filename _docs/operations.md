@@ -83,16 +83,19 @@ may use `GUPKG_PYTHON`, `gupkg.python`, a local `python\python.exe`, Python on
 
 ## Manager configuration
 
-Manager mode is enabled by a v2 `gupkg-config.toml`. The discovery order is:
+Manager mode is enabled by a v2 `gupkg-config.toml`. It is read from:
 
-1. an explicit `--config PATH`;
-2. the file beside the imported `gupkg.cli` module;
-3. `%GUPKG_HOME%\gupkg-config.toml`;
-4. `%APPDATA%\gupkg\gupkg-config.toml`.
+1. an explicit `--config PATH`; or
+2. the file beside the imported `gupkg.cli` module (the gupkg package folder).
 
-The first existing candidate wins. An invalid higher-priority candidate is an
-error and never falls through. The current directory and its parents are
-never searched; a missing candidate is reported with every searched path.
+The configuration chooses package roots, executable folders and the registry
+source, and an elevated run acts on all of them, so nothing user-writable is
+searched: not the current directory or its parents, not `%GUPKG_HOME%`, and not
+`%APPDATA%`. An elevated run also refuses any configuration (including one given
+with `--config`) whose folder is not admin-only. `gupkg manager init` writes the
+file into the package folder, and `gupkg update` carries it into the new
+version. A configuration left in `%APPDATA%\gupkg` by an older version is
+ignored; review it and copy it into the package folder if you still want it.
 
 The `gupkg-tui` launcher is a convenience wrapper for the package `tui`
 command; it does not select manager mode implicitly. Use `gupkg manager tui`

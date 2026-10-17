@@ -203,8 +203,8 @@ def _build_parser() -> tuple[argparse.ArgumentParser, argparse.ArgumentParser]:
     )
     manager.add_argument(
         "--config", type=Path,
-        help="manager configuration file (default: search next to gupkg, "
-        "%%GUPKG_HOME%%, then %%APPDATA%%\\gupkg)",
+        help="manager configuration file (default: gupkg-config.toml in the gupkg "
+        "package directory; an elevated run accepts only admin-only locations)",
     )
     manager.add_argument(
         "--max-depth", type=int, default=8,

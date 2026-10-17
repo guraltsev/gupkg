@@ -83,6 +83,9 @@ def test_unconfigured_manager_starts_with_one_init_action(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Unconfigured manager mode shows a visible header and only initialization."""
+    package_dir = tmp_path / "gupkg-package"
+    package_dir.mkdir(exist_ok=True)
+    monkeypatch.setattr("gupkg.manager.__file__", str(package_dir / "manager.py"))
     appdata = tmp_path / "AppData" / "Roaming"
     userprofile = tmp_path / "UserProfile"
     localappdata = tmp_path / "AppData" / "Local"
@@ -112,13 +115,14 @@ def test_unconfigured_manager_starts_with_one_init_action(
     asyncio.run(drive())
 
 
-def test_manager_tui_discovers_roaming_config_when_handed_off_from_package(
+def test_manager_tui_discovers_package_directory_config_when_handed_off_from_package(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Manager handoff discovers an existing roaming configuration before initialization."""
+    """Manager handoff discovers the configuration in the gupkg package directory before initialization."""
     appdata = tmp_path / "AppData" / "Roaming"
-    manager_dir = appdata / "gupkg"
+    manager_dir = tmp_path / "gupkg-package"
     manager_dir.mkdir(parents=True)
+    monkeypatch.setattr("gupkg.manager.__file__", str(manager_dir / "manager.py"))
     system = tmp_path / "system"
     user = tmp_path / "user"
     system.mkdir()
@@ -154,6 +158,9 @@ def test_manager_init_proceeds_with_displayed_defaults(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The default-first initialization menu writes a valid config and opens the manager home."""
+    package_dir = tmp_path / "gupkg-package"
+    package_dir.mkdir(exist_ok=True)
+    monkeypatch.setattr("gupkg.manager.__file__", str(package_dir / "manager.py"))
     appdata = tmp_path / "AppData" / "Roaming"
     userprofile = tmp_path / "UserProfile"
     localappdata = tmp_path / "AppData" / "Local"
@@ -172,7 +179,7 @@ def test_manager_init_proceeds_with_displayed_defaults(
     monkeypatch.setattr(App, "run", capture_run)
     assert run_manager_tui() == 0
     app = captured[0]
-    config_path = appdata / "gupkg" / "gupkg-config.toml"
+    config_path = package_dir / "gupkg-config.toml"
 
     async def drive() -> None:
         async with app.run_test(size=(80, 18)) as pilot:
@@ -233,13 +240,14 @@ def test_tui_outside_package_directory_opens_manager_mode(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("APPDATA", str(tmp_path / "AppData"))
     selected = []
+    manager_dir = tmp_path / "gupkg-package"
+    manager_dir.mkdir()
+    monkeypatch.setattr("gupkg.manager.__file__", str(manager_dir / "manager.py"))
 
     def capture_manager(*args, **kwargs):
         selected.append((args, kwargs))
         return 0
 
-    manager_dir = tmp_path / "AppData" / "gupkg"
-    manager_dir.mkdir(parents=True)
     system = tmp_path / "system"
     user = tmp_path / "user"
     system.mkdir()
