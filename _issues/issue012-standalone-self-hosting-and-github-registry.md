@@ -844,7 +844,7 @@ an actionable error rather than being overwritten.
 ### Publication
 
 The official source is the GitHub repository already associated with this
-project, `https://github.com/guraltsev/pkg`. The registry is the repository's
+project, `https://github.com/guraltsev/gupkg`. The registry is the repository's
 `pkgs/` subtree at the commit selected by the published stable Git tag. No
 separate registry archive, signed index, or release asset is published.
 

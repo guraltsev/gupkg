@@ -72,13 +72,13 @@ function Step([string]$Message) { Write-Host "[gupkg] $Message" }
 
 function Get-LatestReleaseSource {
     # RELEASES.md lists releases newest first: | version | `commit` | date | notes |
-    $url = 'https://raw.githubusercontent.com/guraltsev/pkg/main/RELEASES.md'
+    $url = 'https://raw.githubusercontent.com/guraltsev/gupkg/main/RELEASES.md'
     Step "Reading $url"
     $text = (Invoke-WebRequest -UseBasicParsing -Uri $url).Content
     $found = [regex]::Match($text, '(?m)^\|\s*(\d+(?:\.\d+)*)\s*\|\s*`?([0-9a-fA-F]{40})`?\s*\|')
     if (-not $found.Success) { throw "RELEASES.md lists no release." }
     Step "Latest release: $($found.Groups[1].Value) ($($found.Groups[2].Value.Substring(0, 7)))"
-    return "https://github.com/guraltsev/pkg/archive/$($found.Groups[2].Value).zip"
+    return "https://github.com/guraltsev/gupkg/archive/$($found.Groups[2].Value).zip"
 }
 
 function Find-GupkgFolder([string]$Folder) {

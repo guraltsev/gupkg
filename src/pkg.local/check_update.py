@@ -28,8 +28,8 @@ from typing import Any
 
 PKG_MODULE_API = 1
 
-_REPOSITORY = "https://github.com/guraltsev/pkg"
-_RELEASES_URL = "https://raw.githubusercontent.com/guraltsev/pkg/main/RELEASES.md"
+_REPOSITORY = "https://github.com/guraltsev/gupkg"
+_RELEASES_URL = "https://raw.githubusercontent.com/guraltsev/gupkg/main/RELEASES.md"
 _ROW = re.compile(
     r"^\|\s*(?P<version>\d+(?:\.\d+)*)\s*\|\s*`?(?P<commit>[0-9a-fA-F]{40})`?\s*\|"
 )
