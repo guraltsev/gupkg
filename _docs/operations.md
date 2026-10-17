@@ -261,6 +261,22 @@ Non-elevated runs keep installing the newest dependencies into
 different lock, run `repair-deps` once. The design is in
 `docs/elevated-runtime-design.md`.
 
+## Maintenance scripts
+
+Every routine job has a script in `scripts\`, so no Python needs to be typed.
+They use the repository's `.venv` if present, otherwise the bundled runtime in
+`src\gupkg\python`.
+
+| Script | What it does |
+|---|---|
+| `test.cmd [pytest args]` | Run the test suite. |
+| `bump.cmd <version>` | Set the version in `_version.py` and both `pkg.toml` files and commit. |
+| `release.cmd "notes" [--no-push]` | Test, add the `RELEASES.md` row, tag, and push branch and tag. |
+| `publish-registry.cmd [--target REV] [--force]` | Check the registry and move and push the `registry` tag. |
+| `validate-registry.cmd` | Validate the `pkgs` tree and list its packages. |
+| `sync-package-launchers.cmd [--check]` | Copy `src\gupkg.cmd` into every package. |
+| `build-standalone.cmd [output.zip]` | Build the release bundle in `dist\` with the pinned, verified Python. |
+
 ## Releasing gupkg itself
 
 `RELEASES.md` is the release registry: a table of version, full commit hash,
@@ -270,14 +286,15 @@ archive as a new `v<version>` folder, and `gupkg-bootstrap.ps1` installs the
 newest row on a fresh machine. The archive's embedded commit must equal the
 listed one.
 
-To release:
+To release (from a clean, committed tree):
 
 ```bat
-:: 1. bump src\gupkg\_version.py and both pkg.toml files, run the tests, commit
-python tools\release.py "one-line notes"
-git push origin main v<version>
+scripts\bump.cmd 0.14.0
+scripts\release.cmd "one-line notes"
 ```
 
+`scripts\release.cmd` runs the tests, records the release, and pushes the branch
+and the `v<version>` tag to the first Git remote (`--no-push` skips the push).
 `tools\release.py` refuses a dirty tree, mismatched versions, or a version that
 is already listed. It records `HEAD` as the release, commits the new row, and
 tags the released commit `v<version>`. Nothing is published until you push.
@@ -304,7 +321,7 @@ version bump or release. `gupkg manager registry sync` downloads the archive of
 the `registry` tag. Commit and push the change to `pkgs`, then run:
 
 ```bat
-python tools\publish_registry.py
+scripts\publish-registry.cmd
 ```
 
 The tool checks the committed revision (not the working tree): it must already

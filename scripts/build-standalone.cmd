@@ -4,6 +4,8 @@ rem Downloads the pinned embeddable Python once (SHA-256 verified, kept in dist\
 rem locked dependencies into it, and writes dist\gupkg-<version>.zip unless an output path is given.
 setlocal EnableExtensions
 call "%~dp0_python.cmd" || exit /b %ERRORLEVEL%
+rem The bundle build needs pip, which the committed runtime provides (a plain venv may not).
+if exist "%REPO_ROOT%\src\gupkg\python\python.exe" set "PY="%REPO_ROOT%\src\gupkg\python\python.exe""
 pushd "%REPO_ROOT%"
 
 set "PY_VERSION_URL=https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip"
@@ -15,8 +17,8 @@ if not exist "%RUNTIME%" (
     echo [build] Downloading embedded Python 3.12.10...
     "%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -Command "$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -UseBasicParsing -Uri $env:PY_VERSION_URL -OutFile $env:RUNTIME" || (popd & exit /b 1)
 )
-for /f "delims=" %%H in ('"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -Command "(Get-FileHash -Algorithm SHA256 -LiteralPath $env:RUNTIME).Hash"') do set "ACTUAL=%%H"
-if /I not "%ACTUAL%"=="%PY_SHA256%" (
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -Command "if ((Get-FileHash -Algorithm SHA256 -LiteralPath $env:RUNTIME).Hash -ne $env:PY_SHA256) { exit 1 }"
+if errorlevel 1 (
     >&2 echo [build] The downloaded runtime failed SHA-256 verification; deleting it.
     del "%RUNTIME%"
     popd & exit /b 1
