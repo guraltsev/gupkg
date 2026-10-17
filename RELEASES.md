@@ -10,6 +10,7 @@ row.
 
 | Version | Commit | Date | Notes |
 |---|---|---|---|
+| 0.15.0 | `2081044d69fadf60e6a94c94b468022d1ae345d1` | 2026-10-17 | TUI progress and scrolling fixes, streamed update checks, saved update status, colors |
 | 0.14.1 | `dee0b5c3167318213127ca583fbfb023dce14a8c` | 2026-10-17 | Point all URLs at the renamed gupkg repository |
 | 0.14.0 | `e464847ea04620efe42e3ddee189fbadd96e24be` | 2026-10-17 | notes |
 | 0.13.8 | `a33d83a593666ebb4e5c67675645af70f984580f` | 2026-10-17 | Fix elevated manager init (registry cache location, no leftover invalid config) |
