@@ -1,12 +1,9 @@
 name = "gupkg"
-version = "0.13.2"
+version = "0.13.3"
 localVersion = 0
 description = "The standalone gupkg package manager runtime"
 homepage = "https://github.com/guraltsev/pkg"
 
-
-[origin]
-url = "https://github.com/guraltsev/pkg"
 
 [update]
 
