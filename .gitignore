@@ -170,3 +170,11 @@ cython_debug/
 
 # The launcher downloads this private CPython runtime on first use when needed.
 src/python/
+
+# The bundled runtime is committed in full (see _docs/operations.md): extension
+# modules (.pyd) and the Lib directory would otherwise match the rules above.
+!src/gupkg/python/
+!src/gupkg/python/**/*.pyd
+!src/gupkg/python/Lib/
+!src/gupkg/python/Lib/**
+src/gupkg/python/**/__pycache__/
