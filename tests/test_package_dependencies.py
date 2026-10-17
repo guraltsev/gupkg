@@ -35,6 +35,24 @@ def test_missing_runtime_dependency_is_installed_automatically() -> None:
         sys.modules.pop(dependency, None)
 
 
+def test_damaged_textual_install_is_repaired_even_when_top_level_imports() -> None:
+    """A top-level ``textual`` that lacks ``textual.app`` is reinstalled, not trusted."""
+    probes: list[str] = []
+
+    def importable(name: str) -> bool:
+        probes.append(name)
+        return name == "textual"
+
+    with (
+        mock.patch("gupkg.dependencies._module_is_importable", side_effect=importable),
+        mock.patch("gupkg.dependencies.install_missing_dependency") as installer,
+    ):
+        ensure_dependency("textual")
+
+    assert probes == ["textual.app"]
+    installer.assert_called_once_with("textual", probe="textual.app")
+
+
 def test_missing_hook_dependency_is_reported_without_installing() -> None:
     """A package-local hook reports an unavailable import by default."""
     dependency = "gupkg_test_dependency"

@@ -170,3 +170,6 @@ cython_debug/
 
 # The launcher downloads this private CPython runtime on first use when needed.
 src/python/
+
+# Bundled embeddable Python for source checkouts (see tools/build_standalone.py)
+src/gupkg/python/

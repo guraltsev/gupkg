@@ -17,13 +17,14 @@
 .PARAMETER Scope
     auto (default): system when the shell is elevated, otherwise user.
     user: per-user, no elevation. system: all users, needs an elevated
-    PowerShell.
+    PowerShell; the gupkg package folder is then restricted so that only
+    Administrators and SYSTEM can modify it, as elevated gupkg runs require.
 
 .PARAMETER Source
     A ZIP archive (https:// URL or local path) or a folder containing gupkg.
     Accepts a release bundle produced by tools\build_standalone.py or a
-    repository archive that contains src\gupkg. Defaults to the 'stable' tag
-    of the official repository.
+    repository archive that contains src\gupkg. By default the newest release
+    in RELEASES.md of the official repository is installed.
 
 .PARAMETER Sha256
     Expected SHA-256 of the archive. Strongly recommended for anything but the
@@ -54,7 +55,7 @@
 param(
     [ValidateSet('auto', 'user', 'system')]
     [string]$Scope = 'auto',
-    [string]$Source = 'https://github.com/guraltsev/pkg/archive/refs/tags/stable.zip',
+    [string]$Source,
     [string]$Sha256,
     [string]$Root,
     [switch]$SkipInstall,
@@ -68,6 +69,17 @@ $ProgressPreference = 'SilentlyContinue'
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
 function Step([string]$Message) { Write-Host "[gupkg] $Message" }
+
+function Get-LatestReleaseSource {
+    # RELEASES.md lists releases newest first: | version | `commit` | date | notes |
+    $url = 'https://raw.githubusercontent.com/guraltsev/pkg/main/RELEASES.md'
+    Step "Reading $url"
+    $text = (Invoke-WebRequest -UseBasicParsing -Uri $url).Content
+    $found = [regex]::Match($text, '(?m)^\|\s*(\d+(?:\.\d+)*)\s*\|\s*`?([0-9a-fA-F]{40})`?\s*\|')
+    if (-not $found.Success) { throw "RELEASES.md lists no release." }
+    Step "Latest release: $($found.Groups[1].Value) ($($found.Groups[2].Value.Substring(0, 7)))"
+    return "https://github.com/guraltsev/pkg/archive/$($found.Groups[2].Value).zip"
+}
 
 function Find-GupkgFolder([string]$Folder) {
     # A gupkg folder holds pkg.toml and gupkg\cli.py; choose the shallowest.
@@ -100,6 +112,7 @@ try {
     $scopeNote = if ($Scope -eq 'system') { 'all users' } else { 'current user only' }
     Step "Install scope: $Scope ($scopeNote; $why); package root: $Root"
     New-Item -ItemType Directory -Force -Path $work | Out-Null
+    if (-not $Source) { $Source = Get-LatestReleaseSource }
 
     # 2. Get the archive (or folder) and verify it before unpacking anything.
     if (Test-Path -LiteralPath $Source -PathType Container) {
@@ -143,6 +156,19 @@ try {
         Step "Installing gupkg $version to $target"
         New-Item -ItemType Directory -Force -Path (Split-Path $target) | Out-Null
         Copy-Item -LiteralPath $payload -Destination $target -Recurse
+    }
+    # A system-scope install is run elevated, and elevated runs execute only code
+    # that non-administrators cannot modify. Restrict the gupkg package folder
+    # (so every later version folder inherits it) to SYSTEM and Administrators
+    # with write access plus Users with read and execute access, make
+    # Administrators the owner, and stop if that cannot be done.
+    if ($Scope -eq 'system') {
+        $guarded = Split-Path $target
+        Step "Restricting $guarded to administrators (read-only for other users)"
+        & icacls.exe $guarded /setowner '*S-1-5-32-544' /T /C /Q | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Could not set the owner of $guarded (icacls exit $LASTEXITCODE)." }
+        & icacls.exe $guarded /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX' /T /C /Q | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Could not restrict $guarded (icacls exit $LASTEXITCODE)." }
     }
     $launcher = Join-Path $target 'gupkg.cmd'
     if (-not (Test-Path -LiteralPath $launcher)) { throw "Missing launcher: $launcher" }

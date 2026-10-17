@@ -32,8 +32,8 @@ def load_bootstrap_module() -> types.ModuleType:
 
 
 def load_dependencies_module() -> types.ModuleType:
-    """Load the dependency installer under an isolated name for each test."""
-    spec = importlib.util.spec_from_file_location("dependencies_under_test", DEPENDENCIES)
+    """Load the dependency installer under an isolated name inside the gupkg package."""
+    spec = importlib.util.spec_from_file_location("gupkg._dependencies_under_test", DEPENDENCIES)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

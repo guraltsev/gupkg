@@ -31,6 +31,8 @@ gupkg manager self status       :: is gupkg's own installation healthy?
 | Message | What it means and what to do |
 | --- | --- |
 | `Machine scope requires administrator privileges` | Open an elevated terminal, or use `--scope user`. |
+| `Refusing to run elevated: ... is not admin-only` | Run the `icacls` command in the message from an elevated prompt, or install gupkg under an admin-only folder (see "Elevated runs" in the operations guide). |
+| `Dependency 'textual' is missing or damaged` (elevated run) | From an elevated prompt run `gupkg manager self repair-deps`. |
 | `only_portable packages cannot be installed system-wide` | The package stores settings in its own folder (`-portable` in the name). Use `--scope user`. |
 | `Origin population failed: ...` | `App` was empty and the download or script failed; the reason follows. Fix and rerun `install`; nothing half-installed is left. |
 | `[origin].checksum did not match downloaded file` | The download is corrupt or the file changed upstream. Retry; if upstream really changed, update the checksum. `--no-checksum` skips verification with a warning (avoid). |

@@ -38,6 +38,7 @@ from .manager import ManagedTarget, ManagerConfig, ManagerInventory, UpgradePlan
 def run_manager_tui(
     config: ManagerConfig | None = None,
     inventory: ManagerInventory | None = None,
+    notices: tuple[str, ...] = (),
 ) -> int:
     """Run the manager browser and open selected targets in package operations.
 
@@ -50,6 +51,8 @@ def run_manager_tui(
     inventory : ManagerInventory, optional
         Initial inventory, normally supplied by the dispatcher to avoid a
         duplicate scan before the home screen appears.
+    notices : tuple of str, optional
+        Advisory lines shown as warning notifications when the browser opens.
 
     Returns
     -------
@@ -654,8 +657,10 @@ def run_manager_tui(
             yield Label("MANAGER MODE", id="manager-mode-header")
 
         def on_mount(self) -> None:
-            """Start at the manager home screen."""
+            """Start at the manager home screen and show any advisory notices."""
             self.push_screen(HomeScreen() if config is not None else MissingConfigScreen())
+            for notice in notices:
+                self.notify(notice, severity="warning", timeout=20)
 
         def action_quit(self) -> None:
             """Exit from any manager screen."""

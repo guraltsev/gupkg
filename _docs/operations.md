@@ -222,6 +222,64 @@ Manager update planning is non-mutating. Use `gupkg --scope auto manager update
 and a later safe rerun revalidates already-current packages. Declining mixed
 scope elevation must leave user packages unchanged.
 
+## Elevated runs
+
+An elevated (Administrator) `gupkg` executes only code that non-administrators
+cannot modify. `gupkg.cmd` detects elevation and then:
+
+- runs only the bundled `python\python.exe`, in isolated mode (`-I -s -B`), and
+  ignores `GUPKG_PYTHON`, `gupkg.python`, `python`, `py`, and `PYTHONPATH`;
+- verifies that the package folder, the runtime and every directory on the
+  import path are writable by Administrators and SYSTEM only, and refuses
+  otherwise, printing the offending principal and an `icacls` command;
+- never runs `pip` implicitly and never downloads a runtime.
+
+`gupkg-bootstrap.ps1 -Scope system` installs under `%SystemDrive%\opt` and
+restricts `opt\gupkg` accordingly. For any other location, run the printed
+`icacls` command from an elevated prompt. A folder created under the root of
+`C:` is writable by Authenticated Users until it is restricted.
+
+Runtime dependencies are pinned with hashes in `gupkg\gupkg-deps.lock` and ship
+inside the release bundle. From an elevated prompt:
+
+```bat
+gupkg manager self repair-deps          :: reinstall exactly what the lock pins
+gupkg manager self update-deps          :: resolve newer releases, show the plan, ask
+gupkg manager self update-deps --yes    :: apply without asking (required in scripts)
+```
+
+Both install wheels only into a staging folder, verify hashes, import the
+result in a child process, and only then swap it into
+`python\Lib\site-packages`; a failure leaves the live folder and the lock
+unchanged. Elevated runs and `manager self status` warn when a pinned
+dependency has a newer stable release; disable that with `dependency_update_check = false`
+under `[self]` in `gupkg-config.toml`, or `GUPKG_NO_DEPENDENCY_UPDATE_CHECK=1`.
+Non-elevated runs keep installing the newest dependencies into
+`%LOCALAPPDATA%\gupkg`. After `gupkg update` installs a version with a
+different lock, run `repair-deps` once. The design is in
+`docs/elevated-runtime-design.md`.
+
+## Releasing gupkg itself
+
+`RELEASES.md` is the release registry: a table of version, full commit hash,
+date, and notes, newest first. gupkg's own `pkg.local/check_update.py` reads it
+from `main`, so `gupkg update` on the gupkg package installs the commit's source
+archive as a new `v<version>` folder, and `gupkg-bootstrap.ps1` installs the
+newest row on a fresh machine. The archive's embedded commit must equal the
+listed one.
+
+To release:
+
+```bat
+:: 1. bump src\gupkg\_version.py and both pkg.toml files, run the tests, commit
+python tools\release.py "one-line notes"
+git push origin main v<version>
+```
+
+`tools\release.py` refuses a dirty tree, mismatched versions, or a version that
+is already listed. It records `HEAD` as the release, commits the new row, and
+tags the released commit `v<version>`. Nothing is published until you push.
+
 ## Release and validation checks
 
 Before publishing registry or standalone changes, run:

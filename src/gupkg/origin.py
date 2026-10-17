@@ -35,6 +35,7 @@ from typing import Any, Dict, List, Optional
 
 from .core import PackageIdentity, StepResult, log_info, log_warning
 from .downloads import download_response, file_sha256
+from .windows import system_tool
 
 
 def app_has_payload(identity: PackageIdentity) -> bool:
@@ -206,9 +207,9 @@ def populate_app_from_script_origin(
     log_info(f"Running origin script: {origin['script']}")
     extension = script_path.suffix.lower()
     if extension == ".ps1":
-        command = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script_path)]
+        command = [system_tool("powershell"), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script_path)]
     elif extension in {".cmd", ".bat"}:
-        command = ["cmd.exe", "/c", str(script_path)]
+        command = [system_tool("cmd"), "/c", str(script_path)]
     else:
         command = [str(script_path)]
     completed = subprocess.run(

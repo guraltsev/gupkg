@@ -8,6 +8,11 @@ interpreter installs into ``%LOCALAPPDATA%\\gupkg\\embedded\\site-packages``;
 the bundled embeddable CPython installs into its adjacent
 ``python\\Lib\\site-packages`` directory. Each directory is added to the current
 process before pip is invoked.
+
+An elevated run never installs anything. It imports dependencies only from the
+bundled ``python\\Lib\\site-packages`` directory, after confirming that the
+directory is writable by administrators alone, and reports the repair command
+(``gupkg manager self repair-deps``) when a dependency is missing or damaged.
 """
 
 from __future__ import annotations
@@ -21,6 +26,17 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from .elevation import elevated_mode, is_elevated, require_trusted_directory
+
+__all__ = [
+    "MissingLocalDependencyError",
+    "ensure_dependency",
+    "ensure_runtime_dependencies",
+    "install_missing_dependency",
+    "is_elevated",
+    "run_with_missing_dependencies",
+]
+
 
 class MissingLocalDependencyError(RuntimeError):
     """Report a package-local dependency that gupkg deliberately did not install."""
@@ -28,6 +44,10 @@ class MissingLocalDependencyError(RuntimeError):
 
 # Keep each optional gupkg feature's trusted dependencies explicit and auditable.
 _RUNTIME_DEPENDENCIES = {"tui": ("textual",)}
+
+# A bare top-level import can succeed for an empty or damaged package directory
+# (it becomes a namespace package), so these imports prove the install is usable.
+_IMPORT_PROBES = {"textual": "textual.app"}
 
 
 def ensure_runtime_dependencies(feature: str) -> None:
@@ -105,31 +125,53 @@ def ensure_dependency(module_name: str) -> None:
     RuntimeError
         If the isolated dependency environment cannot install the dependency.
     """
-    if not _module_is_importable(module_name):
+    probe = _IMPORT_PROBES.get(module_name, module_name)
+
+    # An elevated run uses only the admin-only bundled directory and never
+    # installs, so it takes a separate path that fails with a repair command.
+    if elevated_mode():
+        _use_trusted_dependency(module_name, probe)
+        return
+    if _module_is_importable(probe):
+        return
+    if probe == module_name:
         install_missing_dependency(module_name)
+    else:
+        install_missing_dependency(module_name, probe=probe)
 
 
-def install_missing_dependency(module_name: str) -> None:
+def install_missing_dependency(module_name: str, probe: str | None = None) -> None:
     """Install one importable dependency into gupkg's per-user environment.
 
     Parameters
     ----------
     module_name : str
         Top-level import name reported by Python.
+    probe : str, optional
+        Import that must succeed for the installation to count as usable;
+        defaults to *module_name*. Installation upgrades in place so a damaged
+        existing copy is replaced rather than skipped by pip.
 
     Raises
     ------
     RuntimeError
-        If virtual-environment creation or dependency installation fails.
+        If dependency installation fails, or the run is elevated (elevated
+        runs never install implicitly).
     """
+    if elevated_mode():
+        raise RuntimeError(
+            f"Elevated runs never install dependencies implicitly ({module_name!r} is missing). "
+            "Run from an elevated prompt: gupkg manager self repair-deps"
+        )
     distribution = _distribution_name(module_name)
     site_packages = _dependency_site_packages()
+    probe = probe or module_name
 
     # Keep system and bundled interpreters isolated, without modifying the
     # system interpreter or writing bundled dependencies outside its package.
     site_packages.mkdir(parents=True, exist_ok=True)
     site.addsitedir(str(site_packages))
-    if _module_is_importable(module_name):
+    if _module_is_importable(probe):
         return
 
     # Target the owned directory directly instead of changing the selected
@@ -139,6 +181,7 @@ def install_missing_dependency(module_name: str) -> None:
         "-m",
         "pip",
         "install",
+        "--upgrade",
         "--target",
         str(site_packages),
         distribution,
@@ -153,15 +196,36 @@ def install_missing_dependency(module_name: str) -> None:
 
     site.addsitedir(str(site_packages))
     importlib.invalidate_caches()
-    if not _module_is_importable(module_name):
+    if not _module_is_importable(probe):
         raise RuntimeError(
-            f"Installed {distribution!r}, but Python still cannot import {module_name!r}"
+            f"Installed {distribution!r}, but Python still cannot import {probe!r}"
+        )
+
+
+def _use_trusted_dependency(module_name: str, probe: str) -> None:
+    """Make a locked dependency importable from the admin-only bundled directory."""
+    site_packages = _dependency_site_packages()
+
+    # Never import from a directory that non-administrators can modify.
+    if site_packages.exists():
+        require_trusted_directory(site_packages)
+
+    # Append the directory as a plain path entry: unlike ``site.addsitedir`` it
+    # cannot execute ``.pth`` files, and it never shadows the standard library.
+    if str(site_packages) not in sys.path:
+        sys.path.append(str(site_packages))
+        importlib.invalidate_caches()
+    if not _module_is_importable(probe):
+        raise RuntimeError(
+            f"Dependency {_distribution_name(module_name)!r} is missing or damaged: "
+            f"cannot import {probe!r} from {site_packages}. "
+            "Run from an elevated prompt: gupkg manager self repair-deps"
         )
 
 
 def _dependency_site_packages() -> Path:
-    """Return the per-user package directory for the active interpreter kind."""
-    if os.environ.get("GUPKG_BUNDLED_RUNTIME") == "1":
+    """Return the package directory for the active interpreter kind."""
+    if elevated_mode() or os.environ.get("GUPKG_BUNDLED_RUNTIME") == "1":
         # The marker is set by the local bootstrap. Derive the target from this
         # module rather than from sys.executable or a caller-provided path.
         return Path(__file__).resolve().parent / "python" / "Lib" / "site-packages"
@@ -178,7 +242,7 @@ def _module_is_importable(module_name: str) -> bool:
     """Return whether the current process can import one module name."""
     try:
         __import__(module_name)
-    except ModuleNotFoundError:
+    except ImportError:
         return False
     return True
 

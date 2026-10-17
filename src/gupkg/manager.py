@@ -65,6 +65,7 @@ class ManagerConfig:
     registry_source: str = OFFICIAL_SOURCE
     shim_linkage: str = "dynamic"
     schema_version: int = 2
+    dependency_update_check: bool = True
 
     def root(self, scope: Scope) -> Path:
         """Return the configured package root that owns *scope*."""
@@ -246,7 +247,7 @@ def load_manager_config(path: Path) -> ManagerConfig:
             "schema_version must be the integer 2; older manager configurations "
             "must be explicitly migrated"
         )
-    _exact_table_keys(raw, {"mode", "schema_version", "packages", "bin"}, "manager configuration", optional={"registry", "shims"})
+    _exact_table_keys(raw, {"mode", "schema_version", "packages", "bin"}, "manager configuration", optional={"registry", "shims", "self"})
     if raw["mode"] != "manager":
         raise ConfigValidationError("mode must be exactly 'manager'")
 
@@ -262,6 +263,10 @@ def load_manager_config(path: Path) -> ManagerConfig:
         raise ConfigValidationError("[registry].channel is obsolete; use [registry].source instead")
     shims = raw.get("shims", {"linkage": "dynamic"})
     _exact_table_keys(shims, {"linkage"}, "[shims]")
+    self_table = raw.get("self", {})
+    _exact_table_keys(self_table, set(), "[self]", optional={"dependency_update_check"})
+    if not isinstance(self_table.get("dependency_update_check", True), bool):
+        raise ConfigValidationError("[self].dependency_update_check must be true or false")
     roots = {name: _expand_manager_path(value, path.parent, f"packages.{name}") for name, value in raw["packages"].items()}
     bins = {name: _expand_manager_path(value, path.parent, f"bin.{name}") for name, value in raw["bin"].items()}
     cache = (
@@ -294,6 +299,7 @@ def load_manager_config(path: Path) -> ManagerConfig:
         registry_cache=cache,
         registry_source=source,
         shim_linkage=shims["linkage"],
+        dependency_update_check=self_table.get("dependency_update_check", True),
     )
 
 
@@ -317,6 +323,8 @@ def manager_config_text(config: ManagerConfig) -> str:
         """Render a Windows path as a TOML literal string."""
         return "'" + str(value).replace("\\", "/").replace("'", "''") + "'"
 
+    # The optional [self] table is written only when the advisory check is off.
+    self_section = "" if config.dependency_update_check else "\n[self]\ndependency_update_check = false\n"
     return (
         'mode = "manager"\n'
         "schema_version = 2\n\n"
@@ -331,6 +339,7 @@ def manager_config_text(config: ManagerConfig) -> str:
         f"source = {json.dumps(config.registry_source)}\n\n"
         "[shims]\n"
         f'linkage = "{config.shim_linkage}"\n'
+        + self_section
     )
 
 

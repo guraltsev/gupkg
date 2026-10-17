@@ -943,6 +943,73 @@ def self_outcome(
     return outcome
 
 
+def dependency_outcome(
+    action: str,
+    *,
+    assume_yes: bool = False,
+    interactive: bool = True,
+    output: TextIO | None = None,
+) -> Outcome:
+    """Reinstall (``repair-deps``) or update (``update-deps``) the locked runtime dependencies.
+
+    Parameters
+    ----------
+    action : {"repair-deps", "update-deps"}
+        Which dependency command to run.
+    assume_yes : bool, default=False
+        Apply an update plan without asking.
+    interactive : bool, default=True
+        Whether a confirmation question can be asked; when ``False`` an update
+        plan requires *assume_yes*.
+    output : TextIO, optional
+        Stream that receives progress text.
+    """
+    from .elevation import UntrustedLocationError
+    from .locked_deps import NotElevatedError, repair_deps, update_deps
+
+    command = f"manager.self.{action}"
+
+    def confirm(lines: list[str]) -> bool:
+        """Show the plan and decide whether to apply it."""
+        for line in lines:
+            print(line)
+        if assume_yes:
+            return True
+        if not interactive:
+            raise ConfigValidationError(f"{command} requires --yes in non-interactive mode")
+        return input("Apply these changes? [y/N] ").strip().casefold() in {"y", "yes"}
+
+    def operation() -> ActionResult:
+        """Run the dependency command and translate its failures to exit codes."""
+        try:
+            if action == "repair-deps":
+                repair_deps()
+                return ActionResult(ok=True, changed=True)
+            applied = update_deps(confirm=confirm)
+        except NotElevatedError as exc:
+            return ActionResult(ok=False, errors=[str(exc)], exit_code=EXIT_USER_ERROR)
+        except (UntrustedLocationError, RuntimeError) as exc:
+            return ActionResult(ok=False, errors=[str(exc)], exit_code=EXIT_MUTATION_ERROR)
+        return ActionResult(ok=True, changed=bool(applied))
+
+    return run_guarded(command, operation, output)
+
+
+def dependency_notices_for(config: ManagerConfig | None = None) -> tuple[str, ...]:
+    """Return advisory lines about newer pinned dependencies, only for elevated runs.
+
+    Non-elevated runs install the newest releases rather than the pinned ones,
+    so a pin warning would be misleading there.
+    """
+    from .dependency_notices import dependency_notices
+    from .elevation import elevated_mode
+
+    if not elevated_mode():
+        return ()
+    enabled = True if config is None else config.dependency_update_check
+    return tuple(dependency_notices(enabled=enabled))
+
+
 def _self_record(report: dict[str, Any], *, operation: str | None = None) -> dict[str, Any]:
     """Serialize standalone runtime and shim diagnostics."""
     self_data: dict[str, Any] = {"operation": operation}
@@ -974,6 +1041,8 @@ __all__ = [
     "PackageSummary",
     "automatic_scope",
     "decline_updates",
+    "dependency_notices_for",
+    "dependency_outcome",
     "describe_package",
     "diagnostic_lines",
     "filter_targets",

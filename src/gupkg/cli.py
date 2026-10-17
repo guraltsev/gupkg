@@ -267,6 +267,15 @@ def _build_parser() -> tuple[argparse.ArgumentParser, argparse.ArgumentParser]:
     self_commands.add_parser("status", help="report runtime and command-shim health")
     for name, text in (("repair", "reinstall gupkg's shims and PATH entries"), ("update", "same as repair")):
         shim_linkage(self_commands.add_parser(name, help=text), None)
+    self_commands.add_parser(
+        "repair-deps",
+        help="(elevated) reinstall exactly the hash-pinned runtime dependencies from gupkg-deps.lock",
+    )
+    update_deps = self_commands.add_parser(
+        "update-deps",
+        help="(elevated) show newer dependency releases and install them after confirmation",
+    )
+    update_deps.add_argument("--yes", action="store_true", help="apply the plan without asking")
     return parser, manager
 
 
@@ -319,7 +328,8 @@ def _dispatch(args: argparse.Namespace) -> Outcome:
         if error is not None:
             return error
         ensure_runtime_dependencies("tui")
-        code = run_tui(str(directory))
+        notices = commands.dependency_notices_for()
+        code = run_tui(str(directory), notices=notices) if notices else run_tui(str(directory))
         return _interactive("tui", code)
 
     request = commands.PackageRequest(
@@ -347,6 +357,16 @@ def _dispatch_manager(args: argparse.Namespace) -> Outcome:
         return failure("manager", "--max-depth must be at least 1")
     if sub == "init":
         return commands.manager_init_outcome(args.config, force=args.force)
+
+    # Dependency maintenance needs only the elevated, trusted runtime, so a
+    # missing manager configuration cannot block repairing a damaged install.
+    if sub == "self" and args.self_command in {"repair-deps", "update-deps"}:
+        return commands.dependency_outcome(
+            args.self_command,
+            assume_yes=getattr(args, "yes", False),
+            interactive=sys.stdin.isatty() and args.format != "toml",
+            output=_progress_stream(args),
+        )
     try:
         config = commands.load_manager(args.config)
     except (ConfigValidationError, OSError, ValueError) as exc:
@@ -368,6 +388,9 @@ def _dispatch_manager(args: argparse.Namespace) -> Outcome:
     if sub == "search":
         return commands.registry_search_outcome(config, args.query or "", offline=args.offline, output=progress)
     if sub == "self":
+        if args.self_command == "status":
+            for notice in commands.dependency_notices_for(config):
+                print(notice, file=sys.stderr)
         return commands.self_outcome(
             config, args.self_command, scope=scope, shim_linkage=getattr(args, "shim_linkage", None), output=progress
         )
@@ -381,6 +404,9 @@ def _dispatch_manager(args: argparse.Namespace) -> Outcome:
         from .manager_tui import run_manager_tui
 
         ensure_runtime_dependencies("tui")
+        notices = commands.dependency_notices_for(config)
+        if notices:
+            return _interactive("manager.tui", run_manager_tui(config, inventory, notices=notices))
         return _interactive("manager.tui", run_manager_tui(config, inventory))
     if sub == "update":
         return _manager_update(args, config, inventory)

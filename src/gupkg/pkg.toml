@@ -1,5 +1,5 @@
 name = "gupkg"
-version = "0.12.1"
+version = "0.13.0"
 localVersion = 0
 description = "The standalone gupkg package manager runtime"
 homepage = "https://github.com/guraltsev/pkg"
@@ -7,6 +7,18 @@ homepage = "https://github.com/guraltsev/pkg"
 [[environment]]
 Name = "GUPKG_HOME"
 Value = "$VersionRoot\\gupkg"
+
+[origin]
+url = "https://github.com/guraltsev/pkg"
+
+[update]
+
+[update.check]
+mode = "module"
+
+[update.payload]
+mode = "module"
+ignore_checksum = true
 
 [[shortcut]]
 name = "gupkg manager"

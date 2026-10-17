@@ -25,6 +25,35 @@ else:
     winreg = None  # type: ignore[assignment]
 
 
+def system_tool(name: str) -> str:
+    """Return the absolute path of a Windows system tool.
+
+    Parameters
+    ----------
+    name : {"powershell", "cmd"}
+        Tool to locate under ``%SystemRoot%``.
+
+    Returns
+    -------
+    str
+        Absolute path when the tool exists under ``%SystemRoot%``. Otherwise the
+        bare name is returned for an ordinary run, and ``OSError`` is raised in
+        an elevated run, which never searches ``PATH``.
+    """
+    relative = {
+        "powershell": Path("System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+        "cmd": Path("System32", "cmd.exe"),
+    }[name]
+    root = os.environ.get("SystemRoot") or os.environ.get("windir")
+    if root and (Path(root) / relative).is_file():
+        return str(Path(root) / relative)
+    from .elevation import elevated_mode
+
+    if elevated_mode():
+        raise OSError(f"Cannot find {name} under %SystemRoot%; elevated runs do not search PATH")
+    return name
+
+
 def require_winreg() -> Any:
     """Return the :mod:`winreg` module or raise a platform error.
 
@@ -127,7 +156,7 @@ $Shortcut.Save()
 """
     result = _run_hidden(
         [
-            "powershell",
+            system_tool("powershell"),
             "-NoProfile",
             "-NonInteractive",
             "-Command",
@@ -170,7 +199,7 @@ def create_junction(source: Path, target: Path) -> None:
                 f"{source} already exists and is not a junction; refusing to overwrite."
             )
 
-    result = _run_hidden(["cmd", "/c", "mklink", "/J", str(source), str(target)])
+    result = _run_hidden([system_tool("cmd"), "/c", "mklink", "/J", str(source), str(target)])
     if result.returncode != 0:
         error_text = (result.stderr or result.stdout or "mklink /J failed").strip()
         raise RuntimeError(error_text)
@@ -469,10 +498,15 @@ def relaunch_elevated(arguments: list[str]) -> bool:
     try:
         import ctypes
 
-        executable = os.sys.executable
-        params = subprocess.list2cmdline(["-m", "gupkg", *arguments])
+        # Go through the package launcher, never "python -m gupkg": the launcher
+        # starts the bundled interpreter in isolated mode, so the elevated
+        # process cannot import from the current directory or user variables.
+        launcher = Path(__file__).resolve().parent / "gupkg.cmd"
+        if not launcher.is_file():
+            return False
+        params = f'/d /s /c ""{launcher}" {subprocess.list2cmdline(arguments)}"'
         result = ctypes.windll.shell32.ShellExecuteW(
-            None, "runas", executable, params, os.getcwd(), 1
+            None, "runas", system_tool("cmd"), params, str(launcher.parent), 1
         )
         return result > 32
     except Exception:

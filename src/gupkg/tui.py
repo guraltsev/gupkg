@@ -30,7 +30,9 @@ from .core import Scope
 from .outcome import Outcome, format_human
 
 
-def run_tui(package_path: str = "", *, forced_scope: Scope | None = None) -> int:
+def run_tui(
+    package_path: str = "", *, forced_scope: Scope | None = None, notices: tuple[str, ...] = ()
+) -> int:
     """Run the interactive Textual interface.
 
     Parameters
@@ -41,6 +43,9 @@ def run_tui(package_path: str = "", *, forced_scope: Scope | None = None) -> int
         Manager-selected scope that is displayed and locked for this package
         operation.  When omitted, package-local automatic scope selection is
         unchanged.
+    notices : tuple of str, optional
+        Advisory lines (for example, a newer pinned dependency) shown as
+        warning notifications when the interface opens.
 
     Returns
     -------
@@ -423,8 +428,10 @@ def run_tui(package_path: str = "", *, forced_scope: Scope | None = None) -> int
             self.result_code = 0
 
         def on_mount(self) -> None:
-            """Start at the action list."""
+            """Start at the action list and show any advisory notices."""
             self.push_screen(HomeScreen(self.initial_path))
+            for notice in notices:
+                self.notify(notice, severity="warning", timeout=20)
 
         def action_back(self) -> None:
             """Return one screen when the current screen does not handle Back."""
