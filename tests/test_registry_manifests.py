@@ -11,6 +11,10 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
+from tests.registry_location import REGISTRY_ROOT, requires_registry
+
+pytestmark = requires_registry
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -30,7 +34,7 @@ def _control_characters(value: object, where: str = ""):
 def test_no_registry_manifest_value_contains_a_control_character() -> None:
     """Escaped-backslash mistakes such as \"$App\npbackup.exe\" are caught before release."""
     problems = []
-    for manifest in sorted((ROOT / "pkgs").glob("*/*/pkg.toml")):
+    for manifest in sorted(REGISTRY_ROOT.glob("*/*/pkg.toml")):
         data = tomllib.loads(manifest.read_text(encoding="utf-8"))
         problems += [
             f"{manifest.parent.parent.name}{where}: {text!r}" for where, text in _control_characters(data)

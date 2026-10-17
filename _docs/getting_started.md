@@ -88,7 +88,7 @@ target = "$App\\pandoc.exe"
 machine-specific path. Other things a `pkg.toml` can declare are Start Menu
 shortcuts (`[[shortcut]]`) and environment variables (`[[environment]]`); see the
 [`pkg.toml` reference](../README.md#pkgtoml-reference). Many ready-made files
-live in the repository's [`pkgs/`](../pkgs) folder, so you can often start by
+live in the [`gupkg-registry`](https://github.com/guraltsev/gupkg-registry) repository, so you can often start by
 copying one.
 
 ## 3. Check the file

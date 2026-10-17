@@ -179,9 +179,9 @@ def test_manager_bare_install_token_is_resolved_as_registry_selector(
     cache = tmp_path / "cache"
     for directory in (manager_dir, system, user):
         directory.mkdir()
-    _identity(cache / "official" / "trees" / "a" / "pkgs", selector="tool")
-    (cache / "official" / "state.toml").parent.mkdir(parents=True, exist_ok=True)
-    (cache / "official" / "state.toml").write_text(
+    _identity(cache / "gupkg-registry" / "trees" / "a" / "pkgs", selector="tool")
+    (cache / "gupkg-registry" / "state.toml").parent.mkdir(parents=True, exist_ok=True)
+    (cache / "gupkg-registry" / "state.toml").write_text(
         'revision = "a"\nsource = "fixture"\nsynchronized_at = "now"\nlast_failure = ""\n',
         encoding="utf-8",
     )

@@ -15,6 +15,10 @@ import tomllib
 from pathlib import Path
 from unittest import mock
 
+from tests.registry_location import REGISTRY_ROOT, requires_registry
+
+pytestmark = requires_registry
+
 ROOT = Path(__file__).resolve().parents[1]
 
 from gupkg import extractors
@@ -22,7 +26,7 @@ from gupkg.configuration import normalize_runtime_config
 from gupkg.core import PackageIdentity
 
 
-PACKAGE = ROOT / "pkgs" / "7zip" / "pkg.bootstrap"
+PACKAGE = REGISTRY_ROOT / "7zip" / "pkg.bootstrap"
 CHECKER = PACKAGE / "pkg.local" / "check_update.py"
 UNPACKER = PACKAGE / "pkg.local" / "unpack_app.py"
 

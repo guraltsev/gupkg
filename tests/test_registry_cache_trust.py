@@ -67,19 +67,21 @@ def test_registry_status_command_reports_the_refusal_as_an_error(tmp_path: Path,
     assert "Refusing the registry cache" in document["errors"][0]
 
 
-def test_elevated_initialization_keeps_the_cache_outside_the_user_profile_and_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """An elevated `manager init` defaults the cache to ProgramData, which also keeps it outside the package roots."""
-    for name, folder in (("USERPROFILE", "profile"), ("LOCALAPPDATA", "local"), ("SYSTEMDRIVE", "drive"), ("ProgramData", "programdata")):
+def test_default_registry_cache_lives_in_the_gupkg_version_app_folder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The default cache is App\\registry beside the running gupkg version, elevated or not."""
+    for name, folder in (("USERPROFILE", "profile"), ("LOCALAPPDATA", "local"), ("SYSTEMDRIVE", "drive")):
         monkeypatch.setenv(name, str(tmp_path / folder))
-    target = tmp_path / "package" / "gupkg-config.toml"
+    version = tmp_path / "opt" / "gupkg" / "v1.0.0"
+    (version / "gupkg").mkdir(parents=True)
+    monkeypatch.setattr("gupkg.manager.__file__", str(version / "gupkg" / "manager.py"))
+    target = version / "gupkg" / "gupkg-config.toml"
 
     with mock.patch.object(elevation, "is_elevated", return_value=True):
         elevated = manager.default_manager_config(target)
     with mock.patch.object(elevation, "is_elevated", return_value=False):
         ordinary = manager.default_manager_config(target)
 
-    assert elevated.registry_cache == tmp_path / "programdata" / "gupkg" / "registry"
-    assert ordinary.registry_cache == tmp_path / "local" / "gupkg" / "registry"
+    assert elevated.registry_cache == ordinary.registry_cache == version / "App" / "registry"
 
 
 def _init_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, program_data: Path) -> Path:
@@ -93,31 +95,26 @@ def _init_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, program_d
     return package_dir / "gupkg-config.toml"
 
 
-def test_elevated_init_creates_and_restricts_a_new_registry_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """An elevated `manager init` creates the cache and restricts it to administrators once."""
-    config_path = _init_environment(monkeypatch, tmp_path, tmp_path / "programdata")
-    restricted: list[list[str]] = []
+def test_init_accepts_a_cache_inside_the_system_root_when_it_is_in_a_package_app_folder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The gupkg version's own App\\registry may sit under the system package root."""
+    config_path = _init_environment(monkeypatch, tmp_path, tmp_path / "unused")
+    version = tmp_path / "drive" / "opt" / "gupkg" / "v1.0.0"
+    (version / "gupkg").mkdir(parents=True)
+    monkeypatch.setattr("gupkg.manager.__file__", str(version / "gupkg" / "manager.py"))
+    output = io.StringIO()
 
-    def fake_run(command, **kwargs):
-        restricted.append([str(part) for part in command])
-        return mock.Mock(returncode=0, stdout="", stderr="")
+    with mock.patch.object(elevation, "is_elevated", return_value=False), redirect_stdout(output):
+        code = cli.main(["--format", "toml", "manager", "--config", str(config_path), "init"])
 
-    with (
-        mock.patch.object(elevation, "is_elevated", return_value=True),
-        mock.patch("subprocess.run", fake_run),
-        redirect_stdout(io.StringIO()),
-    ):
-        code = cli.main(["manager", "init"])
-
-    cache = tmp_path / "programdata" / "gupkg" / "registry"
-    assert code == 0 and config_path.is_file() and cache.is_dir()
-    assert restricted and all(str(cache) in call for call in restricted)
-    assert any("*S-1-5-32-544:(OI)(CI)F" in part for call in restricted for part in call)
+    assert code == 0, output.getvalue()
+    assert manager.load_manager_config(config_path).registry_cache == version / "App" / "registry"
 
 
 def test_failed_init_leaves_no_configuration_behind(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """An invalid default (cache inside a package root) is reported and no config file is written."""
-    config_path = _init_environment(monkeypatch, tmp_path, tmp_path / "drive" / "opt" / "inside-the-root")
+    """A cache inside a package root (outside any App folder) is reported and no config file is written."""
+    config_path = _init_environment(monkeypatch, tmp_path, tmp_path / "unused")
+    inside_root = tmp_path / "drive" / "opt" / "cache"
+    monkeypatch.setattr("gupkg.manager.default_registry_cache", lambda: inside_root)
     output = io.StringIO()
 
     with mock.patch.object(elevation, "is_elevated", return_value=True), redirect_stdout(output):

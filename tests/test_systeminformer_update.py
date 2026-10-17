@@ -16,18 +16,20 @@ import unittest
 from unittest import mock
 
 
+from tests.registry_location import REGISTRY_ROOT, requires_registry
+
+pytestmark = requires_registry
+
 ROOT = Path(__file__).resolve().parents[1]
 HOOK_PATH = (
-    ROOT
-    / "pkgs"
+    REGISTRY_ROOT
     / "systeminformer"
     / "pkg.bootstrap"
     / "pkg.local"
     / "check_update.py"
 )
 INSTALL_STEP_PATH = (
-    ROOT
-    / "pkgs"
+    REGISTRY_ROOT
     / "systeminformer"
     / "pkg.bootstrap"
     / "pkg.local"

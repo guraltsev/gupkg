@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import Any, Callable, TextIO
 
 from . import gupkg as package_workflows
-from .elevation import UntrustedLocationError, elevated_mode, require_trusted_directory, restrict_to_administrators
+from .elevation import UntrustedLocationError, elevated_mode, require_trusted_directory
 from .configfix import fix_package_config, has_legacy_metadata
 from .configuration import check_metadata_consistency
 from .core import (
@@ -490,16 +490,6 @@ def init_manager(
             folder.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
             warnings.append(f"Could not create {folder}: {exc}")
-
-    # An elevated run trusts the registry cache, so a cache folder created here is
-    # restricted to administrators right away (an existing folder is left alone).
-    cache_existed = saved.registry_cache.exists()
-    try:
-        saved.registry_cache.mkdir(parents=True, exist_ok=True)
-        if elevated_mode() and not cache_existed:
-            restrict_to_administrators(saved.registry_cache)
-    except OSError as exc:
-        warnings.append(f"Could not prepare the registry cache {saved.registry_cache}: {exc}")
     return saved, warnings
 
 

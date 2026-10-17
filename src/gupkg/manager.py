@@ -265,8 +265,14 @@ def load_manager_config(path: Path) -> ManagerConfig:
         raise ConfigValidationError("Configured system and user roots must be distinct and non-nested")
     if bins["system"] == bins["user"]:
         raise ConfigValidationError("Configured system and user bin directories must be distinct")
-    if _same_or_nested(cache, roots["system"]) or _same_or_nested(cache, roots["user"]):
-        raise ConfigValidationError("Registry cache must be outside both package roots")
+    # The cache may not be mistaken for a package, so it stays outside the roots,
+    # except inside the ``App`` folder of a package version (collections never
+    # look inside a package).
+    for root in (roots["system"], roots["user"]):
+        if _same_or_nested(cache, root) and not _inside_package_app(cache, root):
+            raise ConfigValidationError(
+                "Registry cache must be outside both package roots (or inside a package version's App folder)"
+            )
     if shims["linkage"] not in {"dynamic", "static"}:
         raise ConfigValidationError("[shims].linkage must be exactly 'dynamic' or 'static'")
     for field_name, value in (("bin.system", bins["system"]), ("bin.user", bins["user"]), ("registry.cache", cache)):
@@ -357,14 +363,7 @@ def default_manager_config(path: Path | None = None) -> ManagerConfig:
     user_profile = Path(environment["USERPROFILE"])
     config_path = Path(path) if path is not None else Path(__file__).resolve().parent / "gupkg-config.toml"
 
-    # An elevated run trusts what the cache holds, so an elevated initialization
-    # keeps it under ProgramData (restricted to administrators when created). It
-    # cannot sit beside the configuration, which lives inside the system package root.
-    if elevated_mode():
-        program_data = os.environ.get("ProgramData") or str(Path(os.environ.get("SYSTEMDRIVE", "C:") + "/ProgramData"))
-        registry_cache = Path(program_data) / "gupkg" / "registry"
-    else:
-        registry_cache = default_registry_cache()
+    registry_cache = default_registry_cache()
     return ManagerConfig(
         path=config_path,
         system_root=Path(system_drive) / "opt",
@@ -376,9 +375,12 @@ def default_manager_config(path: Path | None = None) -> ManagerConfig:
 
 
 def default_registry_cache() -> Path:
-    """Return the default per-user registry cache without creating it."""
-    local_app_data = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
-    return Path(local_app_data) / "gupkg" / "registry"
+    """Return the default registry cache, ``App\\registry`` in the running gupkg version.
+
+    The cache lives with the gupkg version that uses it, so an administrator's
+    install keeps it in the same admin-only tree as the code that trusts it.
+    """
+    return Path(__file__).resolve().parent.parent / "App" / "registry"
 
 
 def installation_context(
@@ -830,6 +832,14 @@ def _expand_manager_path(value: object, base: Path, field_name: str) -> Path:
 
     path = Path(_VARIABLE_RE.sub(replace, value.strip())).expanduser()
     return (path if path.is_absolute() else base / path).resolve()
+
+
+def _inside_package_app(path: Path, root: Path) -> bool:
+    """Return whether *path* is below ``<root>/[group/]<package>/<version>/App``."""
+    if not path.is_relative_to(root):
+        return False
+    parts = path.relative_to(root).parts
+    return any(part.casefold() == "app" and index >= 2 for index, part in enumerate(parts))
 
 
 def _same_or_nested(left: Path, right: Path) -> bool:

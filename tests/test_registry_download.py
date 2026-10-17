@@ -23,10 +23,10 @@ from gupkg.registry import OFFICIAL_SOURCE, registry_status, search_registry, sy
 
 
 def _registry_zip(path: Path, *, comment: str = "", wrapper: str = "pkg-registry") -> Path:
-    """Write a GitHub-style archive with one valid package seed under ``pkgs``."""
+    """Write a GitHub-style archive with one valid package seed at its top level."""
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr(
-            f"{wrapper}/pkgs/tool/v1.0.0/pkg.toml",
+            f"{wrapper}/tool/v1.0.0/pkg.toml",
             'name = "tool"\nversion = "1.0.0"\nlocalVersion = 0\n',
         )
         archive.writestr(f"{wrapper}/README.md", "ignored")
@@ -49,10 +49,13 @@ def _manager_config(directory: Path, registry: str = "") -> Path:
 def test_registry_table_is_optional_and_cache_and_source_are_configurable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Without [registry] the cache is per-user and the source official; both can be set."""
+    """Without [registry] the cache is App\\registry of this gupkg version and the source official; both can be set."""
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    version = tmp_path / "version"
+    (version / "gupkg").mkdir(parents=True)
+    monkeypatch.setattr("gupkg.manager.__file__", str(version / "gupkg" / "manager.py"))
     default = load_manager_config(_manager_config(tmp_path))
-    assert default.registry_cache == tmp_path / "local" / "gupkg" / "registry"
+    assert default.registry_cache == version / "App" / "registry"
     assert default.registry_source == OFFICIAL_SOURCE
 
     custom = load_manager_config(
@@ -69,7 +72,7 @@ def test_registry_source_must_be_a_url(tmp_path: Path) -> None:
 
 
 def test_sync_downloads_archive_and_identifies_revision_by_commit_comment(tmp_path: Path) -> None:
-    """Syncing a GitHub-style ZIP publishes its pkgs tree under the commit named in the ZIP comment."""
+    """Syncing a GitHub-style ZIP publishes its packages under the commit named in the ZIP comment."""
     commit = "a" * 40
     source = _registry_zip(tmp_path / "registry.zip", comment=commit).as_uri()
     cache = tmp_path / "cache"
@@ -100,7 +103,7 @@ def test_sync_rejects_archives_that_escape_the_cache(tmp_path: Path) -> None:
     """An archive entry using .. cannot write outside the registry tree."""
     archive_path = tmp_path / "evil.zip"
     with zipfile.ZipFile(archive_path, "w") as archive:
-        archive.writestr("wrap/pkgs/../../escape.txt", "x")
+        archive.writestr("wrap/../../escape.txt", "x")
     cache = tmp_path / "cache"
 
     result = sync_registry(cache, source=archive_path.as_uri())

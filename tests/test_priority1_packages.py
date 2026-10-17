@@ -27,8 +27,12 @@ from gupkg.configuration import normalize_runtime_config
 from gupkg.core import PackageIdentity
 
 
+from tests.registry_location import REGISTRY_ROOT, requires_registry
+
+pytestmark = requires_registry
+
 ROOT = Path(__file__).resolve().parents[1]
-PKGS = ROOT / "pkgs"
+PKGS = REGISTRY_ROOT
 
 NEW_PACKAGES = [
     "autoruns", "bulkcrapuninstaller", "crystaldiskinfo", "crystaldiskmark",

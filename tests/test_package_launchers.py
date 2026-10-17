@@ -13,23 +13,27 @@ from pathlib import Path
 
 from gupkg.registry import validate_registry_tree
 
+from tests.registry_location import REGISTRY_ROOT, requires_registry
+
+pytestmark = requires_registry
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_every_registry_package_ships_the_lightweight_launcher() -> None:
     """Each package seed has a gupkg.cmd identical to src/gupkg.cmd."""
-    expected = (ROOT / "src" / "gupkg.cmd").read_bytes()
-    seeds = sorted(path.parent for path in (ROOT / "pkgs").glob("*/*/pkg.toml"))
+    expected = (ROOT / "src" / "gupkg.cmd").read_bytes().replace(b"\r\n", b"\n")
+    seeds = sorted(path.parent for path in REGISTRY_ROOT.glob("*/*/pkg.toml"))
 
     assert seeds
     wrong = [
         f"{seed.parent.name}/{seed.name}"
         for seed in seeds
-        if not (seed / "gupkg.cmd").is_file() or (seed / "gupkg.cmd").read_bytes() != expected
+        if not (seed / "gupkg.cmd").is_file() or (seed / "gupkg.cmd").read_bytes().replace(b"\r\n", b"\n") != expected
     ]
     assert wrong == []
 
 
 def test_checked_in_registry_validates() -> None:
     """The official package tree passes registry validation, launchers included."""
-    assert validate_registry_tree(ROOT / "pkgs")
+    assert validate_registry_tree(REGISTRY_ROOT)

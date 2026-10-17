@@ -19,9 +19,13 @@ from gupkg.configuration import normalize_runtime_config
 from gupkg.core import PackageIdentity
 
 
+from tests.registry_location import REGISTRY_ROOT, requires_registry
+
+pytestmark = requires_registry
+
 ROOT = Path(__file__).resolve().parents[1]
-CHECKER = ROOT / "pkgs" / "msys2" / "pkg.bootstrap" / "pkg.local" / "check_update.py"
-UNPACKER = ROOT / "pkgs" / "msys2" / "pkg.bootstrap" / "pkg.local" / "unpack_app.py"
+CHECKER = REGISTRY_ROOT / "msys2" / "pkg.bootstrap" / "pkg.local" / "check_update.py"
+UNPACKER = REGISTRY_ROOT / "msys2" / "pkg.bootstrap" / "pkg.local" / "unpack_app.py"
 MANIFEST = CHECKER.parents[1] / "pkg.toml"
 NSSWITCH_CONFIGURER = (
     CHECKER.parents[1] / "config.default" / "configure_nsswitch.py"

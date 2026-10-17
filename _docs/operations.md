@@ -118,17 +118,19 @@ user = '%USERPROFILE%\bin'
 
 # Optional. These are the defaults; change them to move the cache or use a mirror.
 [registry]
-cache = '%LOCALAPPDATA%\gupkg\registry'
+cache = 'C:\opt\gupkg\current\App\registry'
 source = "https://github.com/guraltsev/pkg/archive/refs/tags/registry.zip"
 ```
 
 `packages.system` and `packages.user` are required, distinct, non-nesting
 collection roots. The two `bin` directories must also be distinct. The whole
 `[registry]` table is optional: `cache` defaults to
-`%LOCALAPPDATA%\gupkg\registry` and must be outside both package roots, and
-`source` defaults to the official `registry` archive. `source` may be any
-`https://` or `file:` URL of a ZIP archive that contains a `pkgs` folder, so a
-mirror or a network share works. Existing configured paths must be
+`App\registry` inside the running gupkg version (so an administrator's install keeps
+it in the same admin-only tree as the code that trusts it). It must be outside
+both package roots, except inside a package version's `App` folder, and
+`source` defaults to the official `gupkg-registry` repository. It may instead
+be the URL of any ZIP archive whose single top-level folder holds the packages
+(an `https://` mirror or a `file:` share). Existing configured paths must be
 directories; loading the configuration does not create roots. Relative paths
 are resolved relative to the configuration file, `%NAME%` references use the
 case-insensitive process environment, and a leading `~` means the current
@@ -153,14 +155,18 @@ any location.
 
 ## Registry workflow
 
-The official registry is the `pkgs` folder of the `registry` tag of
-`github.com/guraltsev/pkg`, fetched as a plain ZIP archive over HTTPS (or from
-the `[registry] source` you configure) using Python's standard library; neither
-Git nor any other tool is required. Registry data is treated as untrusted
-metadata: sync extracts only the `pkgs` folder with path-safety checks,
-validates manifests and selectors, and does not import or execute package code.
-Each archive is identified by its commit ID (or content hash), and a failed sync
-leaves the previous validated tree in place.
+The official registry is the separate repository
+[`gupkg-registry`](https://github.com/guraltsev/gupkg-registry): one folder per package at its top level.
+`gupkg manager registry sync` clones it (shallow, HTTPS only, no hooks, user Git
+settings ignored) when a `git.exe` in a folder that only administrators can
+modify is on `PATH`; a user-writable Git is never run. Otherwise it downloads the
+repository's GitHub archive with Python's standard library. Registry data is
+treated as untrusted metadata: sync validates manifests and selectors with
+path-safety checks, publishes no Git metadata, and does not import or execute
+package code. The cache keeps each registry in its own folder
+(`<cache>\gupkg-registry`, with room for other registries later); the active
+revision is the commit ID, and a failed sync leaves the previous validated tree
+in place.
 
 ```bat
 gupkg manager registry sync
@@ -272,9 +278,8 @@ They use the repository's `.venv` if present, otherwise the bundled runtime in
 | `test.cmd [pytest args]` | Run the test suite. |
 | `bump.cmd <version>` | Set the version in `_version.py` and both `pkg.toml` files and commit. |
 | `release.cmd "notes" [--no-push]` | Test, add the `RELEASES.md` row, tag, and push branch and tag. |
-| `publish-registry.cmd [--target REV] [--force]` | Check the registry and move and push the `registry` tag. |
-| `validate-registry.cmd` | Validate the `pkgs` tree and list its packages. |
-| `sync-package-launchers.cmd [--check]` | Copy `src\gupkg.cmd` into every package. |
+| `validate-registry.cmd [path]` | Validate the `gupkg-registry` checkout and list its packages. |
+| `sync-package-launchers.cmd [--check]` | Copy `src\gupkg.cmd` into every package of the registry checkout. |
 | `build-standalone.cmd [output.zip]` | Build the release bundle in `dist\` with the pinned, verified Python. |
 
 ## Releasing gupkg itself
@@ -314,30 +319,19 @@ and cache behavior, standalone assembly, payload variables, and the existing
 package/update workflows. The Windows-specific cases in
 `tests\manual_smoke.md` still require a real Windows environment.
 
-## Publishing the registry
+## The registry repository
 
-The registry is versioned separately from gupkg: package changes need no gupkg
-version bump or release. `gupkg manager registry sync` downloads the archive of
-the `registry` tag. Commit and push the change to `pkgs`, then run:
-
-```bat
-scripts\publish-registry.cmd
-```
-
-The tool checks the committed revision (not the working tree): it must already
-be on a remote branch, every package must carry the current `gupkg.cmd`, and the
-whole tree must pass registry validation. If everything passes it moves the
-`registry` tag and pushes it, replacing the old tag. Options:
-
-- `--target REV` publishes the revision `REV` instead of `HEAD` (to publish or
-  roll back to any pushed commit);
-- `--force` moves and pushes the tag even if a check fails (the problems are
-  still printed as warnings);
-- `--remote NAME` pushes to a remote other than the first one.
+The packages live in their own repository, `gupkg-registry`, checked out beside
+this one as `gupkg-registry\` (ignored by this repository). Changing a package
+needs no gupkg version bump or release: commit and push in that repository and
+the next `gupkg manager registry sync` picks it up. Tests that read package
+content use that checkout (or the folder named by `GUPKG_REGISTRY_ROOT`) and are
+skipped when there is none. `scripts\validate-registry.cmd` validates the
+checkout before pushing.
 
 ## Package launchers
 
-Every package in `pkgs/` ships the same lightweight `gupkg.cmd` (a copy of
+Every package in the registry ships the same lightweight `gupkg.cmd` (a copy of
 `src\gupkg.cmd`). It runs a gupkg installed beside it (`gupkg\gupkg.exe`, then
 `gupkg\gupkg.cmd`) and otherwise the first `gupkg.exe` on `PATH`, so
 `gupkg.cmd update` works from any installed package folder. After changing

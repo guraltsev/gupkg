@@ -1,5 +1,5 @@
 @echo off
-rem Copy src\gupkg.cmd into every package in pkgs\.   scripts\sync-package-launchers.cmd [--check]
+rem Copy src\gupkg.cmd into every package of the gupkg-registry checkout.   scripts\sync-package-launchers.cmd [--check]
 rem With --check, only report packages whose copy is missing or different (exit status 1).
 setlocal EnableExtensions
 call "%~dp0_python.cmd" || exit /b %ERRORLEVEL%

@@ -181,3 +181,6 @@ src/gupkg/python/**/__pycache__/
 
 # Per-install manager configuration (written by "gupkg manager init")
 src/gupkg/gupkg-config.toml
+
+# Package registry
+/gupkg-registry

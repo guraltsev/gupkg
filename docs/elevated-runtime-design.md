@@ -325,6 +325,12 @@ Following `_docs/tests.md`:
   package folder (or an explicit `--config`); `%APPDATA%`, `GUPKG_HOME` and the
   working directory are no longer searched. An elevated run additionally
   requires the configuration's folder to pass the trusted-location check.
-  Known remaining gap: the registry cache defaults to `%LOCALAPPDATA%\gupkgegistry`,
-  which an elevated `manager install` trusts; point `[registry] cache` at an
-  admin-only folder for elevated registry use.
+  The registry cache defaults to `App\registry` in the gupkg version folder, so an
+  administrator's install keeps it in the same admin-only tree. An elevated
+  `manager install` still refuses a cache in a folder non-administrators can
+  modify, so a configured `[registry] cache` must also be admin-only.
+- **Registry source.** The package registry is its own repository
+  (`gupkg-registry`). It is cloned only with a `git.exe` from an admin-only
+  folder (user-writable copies on `PATH` are skipped, never run), with HTTPS only,
+  no hooks and user Git settings ignored; otherwise the GitHub archive is
+  downloaded. Each registry is cached in `<cache>\<registry name>`.

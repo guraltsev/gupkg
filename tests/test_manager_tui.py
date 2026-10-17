@@ -193,7 +193,7 @@ def test_manager_init_proceeds_with_displayed_defaults(
     assert config_path.is_file()
     config = load_manager_config(config_path)
     assert config.schema_version == 2
-    assert config.registry_cache == localappdata / "gupkg" / "registry"
+    assert config.registry_cache == package_dir.parent / "App" / "registry"
 
 
 def test_manager_tui_persists_the_selected_shim_linkage(

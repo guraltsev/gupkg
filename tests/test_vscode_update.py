@@ -19,11 +19,14 @@ from gupkg.configuration import normalize_runtime_config
 from gupkg.core import PackageIdentity
 
 
+from tests.registry_location import REGISTRY_ROOT, requires_registry
+
+pytestmark = requires_registry
+
 ROOT = Path(__file__).resolve().parents[1]
-MANIFEST = ROOT / "pkgs" / "vscode" / "pkg.bootstrap" / "pkg.toml"
+MANIFEST = REGISTRY_ROOT / "vscode" / "pkg.bootstrap" / "pkg.toml"
 HOOK_PATH = (
-    ROOT
-    / "pkgs"
+    REGISTRY_ROOT
     / "vscode"
     / "pkg.bootstrap"
     / "pkg.local"

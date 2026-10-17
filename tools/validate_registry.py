@@ -1,4 +1,4 @@
-"""Validate the checked-in official package registry tree."""
+"""Validate a package registry checkout (default: ``gupkg-registry`` beside the sources)."""
 
 from __future__ import annotations
 
@@ -12,9 +12,9 @@ from gupkg.registry import validate_registry_tree  # noqa: E402
 
 
 def main() -> int:
-    """Validate one ``pkgs`` directory and print its selectors."""
+    """Validate one registry checkout and print its selectors."""
     parser = argparse.ArgumentParser()
-    parser.add_argument("root", nargs="?", type=Path, default=Path("pkgs"))
+    parser.add_argument("root", nargs="?", type=Path, default=Path(__file__).resolve().parents[1] / "gupkg-registry")
     args = parser.parse_args()
     packages = validate_registry_tree(args.root)
     for package in packages:

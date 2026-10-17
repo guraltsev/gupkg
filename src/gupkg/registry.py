@@ -1,33 +1,35 @@
-"""Synchronize and query the official, read-only ``pkgs/`` registry tree.
+"""Synchronize and query a read-only package registry.
 
-The registry is a ZIP archive (by default GitHub's archive of the ``registry``
-tag) that contains a ``pkgs`` folder. It is fetched with the Python standard
-library, so neither Git nor any extra tool is needed, and the unpacked tree is
-validated before it becomes visible to callers. It never imports or executes
-package-local hooks; payload acquisition remains the responsibility of the
-ordinary package installation workflow.
+A registry is a Git repository (``gupkg-registry`` by default) with one folder per
+package at its top level. It is fetched with ``git clone`` when a Git that only
+administrators can modify is installed, and otherwise as the repository's ZIP
+archive, using the Python standard library only. Either way the unpacked tree is
+validated before it becomes visible to callers, and the registry never imports
+or executes package-local code.
 
 Usage and API
 -------------
-Call ``sync_registry(...)`` to refresh a cache, ``registry_status(...)`` to
-inspect its active revision, and ``search_registry(...)`` or
-``resolve_selector(...)`` for deterministic offline catalog operations.
+Call ``sync_registry(...)`` to refresh a cache, ``registry_status(...)`` to read
+the active revision, and ``search_registry(...)`` or ``resolve_selector(...)`` to
+find packages. ``validate_registry_tree(...)`` checks a registry checkout.
 
 Implementation Approach
 -----------------------
-The archive is downloaded into a disposable directory, identified by its
-commit ID (or content hash), and only its ``pkgs`` folder is extracted with
-path-safety checks. The tree is validated with the existing manifest
-normalizer, then copied into a revision-addressed cache and published by an
-atomic state file update. Failed work is discarded while the previous active
-revision remains usable.
+Each registry is cached in its own folder (``<cache>/gupkg-registry``) so that more
+than one registry can be supported. A new revision is obtained into a work area,
+validated completely, copied into a revision-addressed folder, and only then
+published by rewriting the state file, so a failed sync leaves the previous
+validated tree active. Git is used only from a location that non-administrators
+cannot modify, because an elevated run would otherwise execute user-writable code.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
+import subprocess
 import tempfile
 import urllib.parse
 import urllib.request
@@ -52,9 +54,14 @@ from .elevation import UntrustedLocationError, elevated_mode, require_trusted_di
 from .origin import validate_origin_health, validate_update_health
 
 
-# Default registry archive: the ``registry`` tag of the official package repository,
-# which moves independently of gupkg releases (see tools/publish_registry.py).
-OFFICIAL_SOURCE = "https://github.com/guraltsev/pkg/archive/refs/tags/registry.zip"
+# Default registry: the official package repository. A repository URL is fetched
+# with Git when a trusted Git exists and as its ZIP archive otherwise; any other
+# source must be the URL of a ZIP archive.
+OFFICIAL_SOURCE = "https://github.com/guraltsev/gupkg-registry.git"
+
+# Name of the folder, inside the cache, that holds the official registry. Other
+# registries would get folders of their own.
+REGISTRY_NAME = "gupkg-registry"
 
 
 @dataclass(frozen=True)
@@ -81,7 +88,7 @@ class RegistryState:
         """Return the active ``pkgs`` tree when one is available."""
         if self.revision is None:
             return None
-        candidate = self.cache_root / "official" / "trees" / self.revision / "pkgs"
+        candidate = self.cache_root / REGISTRY_NAME / "trees" / self.revision / "pkgs"
         return candidate if candidate.is_dir() else None
 
 
@@ -116,7 +123,7 @@ def require_trusted_cache(cache_root: Path) -> None:
 def registry_status(cache_root: Path) -> RegistryState:
     """Read cache state without contacting Git or creating directories."""
     require_trusted_cache(cache_root)
-    state_path = Path(cache_root) / "official" / "state.toml"
+    state_path = Path(cache_root) / REGISTRY_NAME / "state.toml"
     if not state_path.is_file():
         return RegistryState(Path(cache_root))
     values: dict[str, str] = {}
@@ -135,12 +142,13 @@ def registry_status(cache_root: Path) -> RegistryState:
 
 
 def validate_registry_tree(pkgs_root: Path) -> list[RegistryPackage]:
-    """Validate a checked-out ``pkgs`` tree and return deterministic seeds.
+    """Validate a registry checkout and return deterministic seeds.
 
     Parameters
     ----------
     pkgs_root : Path
-        Directory containing one flat child directory per package selector.
+        Registry root: one flat child directory per package selector. Top-level
+        files and dot-named entries are ignored.
 
     Returns
     -------
@@ -155,15 +163,15 @@ def validate_registry_tree(pkgs_root: Path) -> list[RegistryPackage]:
     """
     pkgs_root = Path(pkgs_root)
     if not pkgs_root.is_dir() or pkgs_root.is_symlink():
-        raise ConfigValidationError(f"Registry pkgs tree is not a directory: {pkgs_root}")
+        raise ConfigValidationError(f"Registry tree is not a directory: {pkgs_root}")
     packages: list[RegistryPackage] = []
     seen: dict[str, str] = {}
     for selector_path in sorted(pkgs_root.iterdir(), key=lambda item: (item.name.casefold(), item.name)):
         _reject_reparse(selector_path, "registry selector")
-        if selector_path.name.startswith(".") and selector_path.is_file():
+        # Top-level files (README, LICENSE) and dot entries (.git, .github) are
+        # repository furniture, not packages.
+        if selector_path.name.startswith(".") or not selector_path.is_dir():
             continue
-        if not selector_path.is_dir():
-            raise ConfigValidationError(f"Registry selector is not a directory: {selector_path.name}")
         selector = selector_path.name
         key = selector.casefold()
         if key in seen:
@@ -239,23 +247,25 @@ def sync_registry(
     source: str = OFFICIAL_SOURCE,
     offline: bool = False,
 ) -> ActionResult:
-    """Download the registry archive and publish its validated ``pkgs`` tree.
+    """Fetch the registry and publish its validated tree.
 
     Parameters
     ----------
     cache_root : Path
         Registry cache directory from the manager configuration.
     source : str, default=OFFICIAL_SOURCE
-        ``http(s)://`` or ``file:`` URL of a ZIP archive containing a ``pkgs``
-        folder (a GitHub "archive" link, a mirror, or a file share).
+        An ``https://`` Git repository URL (cloned with a trusted Git, otherwise
+        downloaded as its GitHub ZIP archive), or the ``http(s)://`` or ``file:``
+        URL of a ZIP archive whose single top-level folder holds the packages.
     offline : bool, default=False
         Validate and report the existing cache without any download.
 
     Returns
     -------
     ActionResult
-        ``synced``, ``current`` (the archive is the revision already cached),
-        or ``offline``. On failure the previous validated tree stays active.
+        ``synced``, ``current`` (the fetched revision is the one already
+        cached), or ``offline``. On failure the previous validated tree stays
+        active.
     """
     cache_root = Path(cache_root)
     current = registry_status(cache_root)
@@ -268,29 +278,37 @@ def sync_registry(
             )
         return ActionResult(True, status="offline", exit_code=EXIT_SUCCESS)
 
-    official_root = cache_root / "official"
-    work_parent = official_root / ".work"
+    registry_root = cache_root / REGISTRY_NAME
+    work_parent = registry_root / ".work"
     work_parent.mkdir(parents=True, exist_ok=True)
     try:
         with tempfile.TemporaryDirectory(prefix="sync-", dir=str(work_parent)) as work_name:
             work = Path(work_name)
-            archive_path = work / "registry.zip"
-            _download(source, archive_path)
-            revision = _archive_revision(archive_path)
 
-            # An archive that is already the active revision needs no rebuild;
-            # just re-validate it and refresh the bookkeeping.
+            # A trusted Git can name the remote revision without transferring it.
+            git = trusted_git() if is_git_source(source) else None
+            if git is not None and current.tree_path is not None:
+                remote = _git_remote_revision(git, source)
+                if remote is not None and remote == current.revision:
+                    validate_registry_tree(current.tree_path)
+                    _write_state(registry_root, current, source=source, last_failure=None)
+                    return ActionResult(True, status="current", exit_code=EXIT_SUCCESS)
+
+            registry, revision = _obtain_registry(source, git, work)
+
+            # A revision that is already active needs no rebuild; just re-validate
+            # it and refresh the bookkeeping.
             if current.revision == revision and current.tree_path is not None:
                 validate_registry_tree(current.tree_path)
-                _write_state(official_root, current, source=source, last_failure=None)
+                _write_state(registry_root, current, source=source, last_failure=None)
                 return ActionResult(True, status="current", exit_code=EXIT_SUCCESS)
 
-            # Unpack only ``pkgs``, validate it fully, and only then publish.
+            # Copy the packages (never Git metadata), validate fully, then publish.
             pkgs = work / "pkgs"
-            _extract_pkgs(archive_path, pkgs)
+            shutil.copytree(registry, pkgs, ignore=shutil.ignore_patterns(".git"))
             if not validate_registry_tree(pkgs):
-                raise ConfigValidationError("Registry pkgs tree is empty")
-            target = official_root / "trees" / revision
+                raise ConfigValidationError("The registry contains no packages")
+            target = registry_root / "trees" / revision
             if target.exists():
                 shutil.rmtree(target)
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -301,10 +319,10 @@ def sync_registry(
             source=source,
             synchronized_at=datetime.now(timezone.utc).isoformat(),
         )
-        _write_state(official_root, new_state, source=source, last_failure=None)
+        _write_state(registry_root, new_state, source=source, last_failure=None)
         return ActionResult(True, changed=True, status="synced", exit_code=EXIT_SUCCESS)
     except Exception as exc:
-        _write_state(official_root, current, source=current.source or source, last_failure=str(exc))
+        _write_state(registry_root, current, source=current.source or source, last_failure=str(exc))
         return ActionResult(
             False,
             warnings=["The previous validated registry tree remains active."],
@@ -313,6 +331,104 @@ def sync_registry(
         )
     finally:
         shutil.rmtree(work_parent, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# Obtaining a registry: Git when it is trusted, otherwise the ZIP archive
+# ---------------------------------------------------------------------------
+
+
+def is_git_source(source: str) -> bool:
+    """Return whether *source* names a Git repository rather than a ZIP archive."""
+    parsed = urllib.parse.urlparse(source)
+    if parsed.scheme.lower() != "https":
+        return False
+    path = parsed.path.rstrip("/")
+    if path.lower().endswith(".git"):
+        return True
+    return parsed.netloc.lower() == "github.com" and len([part for part in path.split("/") if part]) == 2
+
+
+def trusted_git() -> str | None:
+    """Return a ``git.exe`` that only administrators can modify, or ``None``.
+
+    Every ``git.exe`` on ``PATH`` is considered in order, and the first whose
+    folder passes the admin-only check wins, so a user-writable copy earlier on
+    ``PATH`` is skipped instead of run.
+    """
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        candidate = Path(entry.strip('"')) / "git.exe" if entry.strip() else None
+        if candidate is None or not candidate.is_file():
+            continue
+        try:
+            require_trusted_directory(candidate.resolve().parent)
+        except UntrustedLocationError:
+            continue
+        return str(candidate)
+    return None
+
+
+def _git_environment() -> dict[str, str]:
+    """Return a child environment that ignores user Git settings and never prompts."""
+    environment = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
+    environment.update(GIT_TERMINAL_PROMPT="0", GIT_CONFIG_GLOBAL=os.devnull)
+    return environment
+
+
+def _git_remote_revision(git: str, source: str) -> str | None:
+    """Return the remote ``HEAD`` commit of *source* without cloning, or ``None`` on failure."""
+    result = subprocess.run(
+        [git, "-c", "protocol.allow=never", "-c", "protocol.https.allow=always", "ls-remote", source, "HEAD"],
+        capture_output=True, text=True, env=_git_environment(), timeout=60, check=False,
+    )
+    match = re.match(r"([0-9a-f]{40})\s", result.stdout) if result.returncode == 0 else None
+    return match.group(1) if match else None
+
+
+def _obtain_registry(source: str, git: str | None, work: Path) -> tuple[Path, str]:
+    """Fetch the registry into *work* and return its root folder and 40-hex revision."""
+    if git is not None and is_git_source(source):
+        log_info(f"Cloning registry: {source}")
+        destination = work / "clone"
+        command = [
+            git, "-c", "protocol.allow=never", "-c", "protocol.https.allow=always",
+            "-c", "core.symlinks=false", "-c", f"core.hooksPath={os.devnull}",
+            "clone", "--depth", "1", "--single-branch", "--no-tags", "--quiet", source, str(destination),
+        ]
+        result = subprocess.run(command, capture_output=True, text=True, env=_git_environment(), timeout=600, check=False)
+        if result.returncode != 0:
+            raise ConfigValidationError(f"git clone failed: {result.stderr.strip()}")
+        head = subprocess.run(
+            [git, "-C", str(destination), "rev-parse", "HEAD"],
+            capture_output=True, text=True, env=_git_environment(), check=False,
+        )
+        revision = head.stdout.strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{40}", revision):
+            raise ConfigValidationError("git clone did not report a commit")
+        return destination, revision
+
+    archive_path = work / "registry.zip"
+    _download(archive_url(source), archive_path)
+    revision = _archive_revision(archive_path)
+    return _extract_archive(archive_path, work / "archive"), revision
+
+
+def archive_url(source: str) -> str:
+    """Return the ZIP archive URL for *source*.
+
+    A GitHub repository URL designates the archive of its default branch; every
+    other source must already be the URL of a ZIP archive.
+    """
+    if is_git_source(source):
+        parsed = urllib.parse.urlparse(source)
+        if parsed.netloc.lower() != "github.com":
+            raise ConfigValidationError(
+                f"No trusted Git is available, and an archive URL is only known for github.com repositories: {source}"
+            )
+        repository = parsed.path.rstrip("/")
+        repository = repository[: -len(".git")] if repository.lower().endswith(".git") else repository
+        return f"https://github.com{repository}/archive/HEAD.zip"
+    return source
 
 
 def _download(source: str, destination: Path) -> None:
@@ -339,40 +455,35 @@ def _archive_revision(archive_path: Path) -> str:
     return file_sha256(archive_path)[:40]
 
 
-def _extract_pkgs(archive_path: Path, destination: Path) -> None:
-    """Extract the archive's ``pkgs`` folder (directly or one level down) safely.
+def _extract_archive(archive_path: Path, destination: Path) -> Path:
+    """Extract a registry archive safely and return the folder that holds the packages.
 
-    Entries that are absolute, climb out with ``..``, are symlinks, or are
-    named with a drive are rejected; everything outside ``pkgs`` is ignored.
+    Entries that are absolute, climb out with ``..``, are symlinks, or are named
+    with a drive are rejected. GitHub wraps a repository in one top-level
+    folder; when the archive has exactly one, that folder is the registry root.
     """
     destination.mkdir(parents=True)
     root = destination.resolve()
     with zipfile.ZipFile(archive_path) as archive:
-        members = [(PurePosixPath(info.filename), info) for info in archive.infolist()]
-        names = [parts for parts, _ in members]
-        # GitHub wraps the repository in a single top-level folder.
-        depth = 0 if any(parts.parts[:1] == ("pkgs",) for parts in names) else 1
-        found = False
-        for parts, info in members:
-            if parts.parts[depth : depth + 1] != ("pkgs",):
-                continue
+        for info in archive.infolist():
+            parts = PurePosixPath(info.filename)
             if parts.is_absolute() or ".." in parts.parts or ":" in info.filename:
                 raise ConfigValidationError(f"Registry archive contains an unsafe path: {info.filename}")
             if (info.external_attr >> 16) & 0o170000 == 0o120000:
                 raise ConfigValidationError(f"Registry archive contains a symlink: {info.filename}")
-            relative = PurePosixPath(*parts.parts[depth + 1 :])
-            target = (root / relative).resolve() if relative.parts else root
+            target = (root / PurePosixPath(*parts.parts)).resolve() if parts.parts else root
             if not target.is_relative_to(root):
                 raise ConfigValidationError(f"Registry archive contains an unsafe path: {info.filename}")
-            found = True
             if info.is_dir():
                 target.mkdir(parents=True, exist_ok=True)
             else:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 with archive.open(info) as source, open(target, "wb") as sink:
                     shutil.copyfileobj(source, sink)
-    if not found:
-        raise ConfigValidationError("Registry archive has no pkgs folder")
+    children = list(root.iterdir())
+    if len(children) == 1 and children[0].is_dir():
+        return children[0]
+    return root
 
 
 def _validate_tree_entries(root: Path, path: Path) -> None:
@@ -401,7 +512,7 @@ def _reject_reparse(path: Path, context: str) -> None:
 
 
 def _write_state(
-    official_root: Path,
+    registry_root: Path,
     state: RegistryState,
     *,
     source: str,
@@ -414,4 +525,4 @@ def _write_state(
         f"synchronized_at = {json.dumps(state.synchronized_at or '')}",
         f"last_failure = {json.dumps(last_failure or '')}",
     ]
-    write_text_atomic(official_root / "state.toml", "\n".join(lines) + "\n")
+    write_text_atomic(registry_root / "state.toml", "\n".join(lines) + "\n")
