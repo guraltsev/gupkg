@@ -16,7 +16,7 @@ from gupkg.core import ActionResult
 
 def _package(root: Path, selector: str = "tool") -> None:
     """Create one manifest-backed package in a collection root."""
-    version = root / selector / "v1.0.0.l1"
+    version = root / selector / "1.0.0.local.1"
     version.mkdir(parents=True)
     (version / "pkg.toml").write_text(
         f'name = "{selector}"\nversion = "1.0.0"\nlocalVersion = 1\n',

@@ -17,7 +17,7 @@ if str(SRC_ROOT) not in sys.path:
 from gupkg.collection import discover_collection
 
 
-def _manifest(root: Path, selector: str, version: str = "v1.0.0.l1") -> None:
+def _manifest(root: Path, selector: str, version: str = "1.0.0.local.1") -> None:
     """Create the smallest manifest-backed package shape for a test collection."""
     manifest = root / selector / version / "pkg.toml"
     manifest.parent.mkdir(parents=True)

@@ -39,8 +39,8 @@ def _fake_git(revision: str = REVISION, calls: list[list[str]] | None = None):
             destination = Path(command[-1])
             (destination / ".git").mkdir(parents=True)
             (destination / "README.md").write_text("registry", encoding="utf-8")
-            (destination / "tool" / "v1.0.0").mkdir(parents=True)
-            (destination / "tool" / "v1.0.0" / "pkg.toml").write_text(SEED, encoding="utf-8")
+            (destination / "tool" / "1.0.0").mkdir(parents=True)
+            (destination / "tool" / "1.0.0" / "pkg.toml").write_text(SEED, encoding="utf-8")
             return types.SimpleNamespace(returncode=0, stdout="", stderr="")
         if "rev-parse" in command:
             return types.SimpleNamespace(returncode=0, stdout=revision + "\n", stderr="")
@@ -124,7 +124,7 @@ def test_without_trusted_git_a_github_repository_is_downloaded_as_its_archive(tm
         with zipfile.ZipFile(buffer, "w") as archive:
             archive.comment = REVISION.encode()
             archive.writestr("gupkg-registry-main/README.md", "registry")
-            archive.writestr("gupkg-registry-main/tool/v1.0.0/pkg.toml", SEED)
+            archive.writestr("gupkg-registry-main/tool/1.0.0/pkg.toml", SEED)
         destination.write_bytes(buffer.getvalue())
 
     with mock.patch.object(registry, "trusted_git", return_value=None), mock.patch.object(registry, "_download", download):

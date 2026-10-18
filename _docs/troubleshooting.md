@@ -19,7 +19,7 @@ gupkg manager self status       :: is gupkg's own installation healthy?
 
 | Message | What it means and what to do |
 | --- | --- |
-| `Name/Version/LocalVersion/Portable flag mismatch: directory=..., config=...` | The folder name and `pkg.toml` disagree. The folder name wins. Run `gupkg config-fix <version folder>` to correct the file. |
+| `Portable flag mismatch: directory=..., config=...` | `only_portable` in `pkg.toml` disagrees with the `-portable` folder name. The folder name wins. Run `gupkg config-fix <version folder>` to correct the file. |
 | `Unknown key 'x' in ...` / `Unsupported legacy key ...` | A typo, or an old spelling. The message names the allowed keys or the replacement. |
 | `Package root has no "current" junction and contains multiple version directories` | You gave the package folder, but several versions exist and none is active. Pass the version folder, for example `C:\opt\tool\v1.2.0`. |
 | `Version directory does not exist` / `Package root does not exist` | Check the path. Relative paths are resolved from the current folder; with no path, the current folder is used. |

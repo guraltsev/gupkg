@@ -11,11 +11,11 @@ appear in Windows in a small file called `pkg.toml`:
 
 ```text
 C:\opt\pandoc\                 <- the package (the folder name is its name)
-  v3.6.1\                      <- one folder per installed version
+  3.6.1\                       <- one folder per installed version
     pkg.toml                   <- what to put in Start Menu / PATH / etc.
     App\                       <- the program's files
-  v3.7.0\                      <- a newer version, installed side by side
-  current  ->  v3.7.0          <- a junction to the active version
+  3.7.0\                       <- a newer version, installed side by side
+  current  ->  3.7.0           <- a junction to the active version
 ```
 
 Because versions sit side by side, an update never overwrites what is working,
@@ -54,10 +54,6 @@ notepad C:\opt\pandoc\pkg.bootstrap\pkg.toml
 Paste this into `pkg.toml`:
 
 ```toml
-name = "pandoc"
-version = "bootstrap"
-localVersion = 0
-
 # Where releases come from: the project's GitHub page.
 [origin]
 url = "https://github.com/jgm/pandoc"
@@ -110,7 +106,7 @@ gupkg install C:\opt\pandoc
 ```
 
 `gupkg` finds the newest release, verifies its SHA-256 checksum when GitHub
-publishes one, unpacks it into `C:\opt\pandoc\v<version>\App`, points `current`
+publishes one, unpacks it into `C:\opt\pandoc\<version>\App`, points `current`
 at it, then creates the command and PATH entry. Open a **new** terminal (Windows
 only hands new environment values to new processes) and run:
 
@@ -148,7 +144,7 @@ gupkg update C:\opt\pandoc                # later: activates the staged version
 Old versions are kept, so going back is just installing one:
 
 ```bat
-gupkg install C:\opt\pandoc\v3.6.1 --allow-downgrade
+gupkg install C:\opt\pandoc\3.6.1 --allow-downgrade
 ```
 
 ## Where next

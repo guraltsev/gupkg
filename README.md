@@ -13,7 +13,7 @@ repair a machine.
 gupkg install C:\opt\pandoc            :: download, verify, install, wire up Windows
 gupkg update C:\opt\pandoc             :: get the newest release; the old one stays
 gupkg manager update --yes             :: do it for every package you manage
-gupkg install C:\opt\pandoc\v3.6.1 --allow-downgrade    :: roll back
+gupkg install C:\opt\pandoc\3.6.1 --allow-downgrade    :: roll back
 ```
 
 **Why use it**
@@ -64,7 +64,7 @@ package on a Python package index. Pick the route that fits:
   gupkg-bootstrap.cmd -Scope system    :: force all users (needs an elevated shell)
   ```
 
-  It downloads gupkg, places it at `<root>\gupkg\v<version>` (default root
+  It downloads gupkg, places it at `<root>\gupkg\<version>` (default root
   `%USERPROFILE%\opt` for user scope, `C:\opt` for system scope; `-Root` changes
   it), creates the `gupkg` and `gupkg-tui` commands and their PATH entry, and
   runs `gupkg manager init`. It is safe to repeat. Use `-Source` with a ZIP
@@ -125,7 +125,7 @@ one. The version directory is the unit that `gupkg` installs and updates.
 ```text
 <PackageName>/
   current/                         # NTFS junction to the active version
-  v1.2.3/
+  1.2.3/
     App/                            # application payload
     Icons/                          # optional icon assets
     Shortcuts/                      # optional package-owned assets
@@ -174,14 +174,16 @@ is reserved for trusted Python update-check and unpack hooks. `.gupkg`, created
 at the package root by update operations, holds manager state, locks, receipts,
 and disposable work files rather than application files.
 
-Version directories must be named `v<upstream-version>` or
-`v<upstream-version>.l<local-version>`. For example, `v1.2.3` has upstream
-version `1.2.3` and local revision `0`, while `v1.2.3.l1` has local revision
-`1`. The digit after `v` is required, so a package root such as `volta` is never
-mistaken for a version directory. The one non-version directory is
-`pkg.bootstrap`, a package's update template; promoting it creates the first
-real version directory. New package definitions and update releases always use the plain version
-name; gupkg never creates a `.lN` collision directory.
+A version directory is named by its version string, which may be any text that
+is a valid folder name (`1.2.3`, `2024-05`, `nightly`). Text after the first
+`.local.` is the package-local revision, itself any string: `1.2.3.local.000002`
+has upstream version `1.2.3` and local revision `000002`. Versions are ordered by
+dotted segments, numbers numerically and text alphabetically, and a version
+without a local revision sorts before the same version with one. A folder counts
+as a version when it contains `pkg.toml`; `current`, `pkg.bootstrap`, and names
+starting with `.` are reserved. `pkg.bootstrap` is a package's update template;
+promoting it creates the first real version directory. The version is the folder
+name only and is never repeated in `pkg.toml`.
 The package name is the package-root directory name. A name ending in
 `-portable` is portable-only by convention.
 
@@ -206,7 +208,7 @@ gupkg install
 Or pass a version directory or package root:
 
 ```bat
-gupkg install C:\Packages\Ripgrep\v14.1.0.l1
+gupkg install C:\Packages\Ripgrep\14.1.0.local.1
 gupkg install C:\Packages\Ripgrep
 ```
 
@@ -381,7 +383,7 @@ and the limiting modes never activate a staged version.
 
 ```bat
 gupkg config-check C:\Packages\Ripgrep
-gupkg config-fix C:\Packages\Ripgrep\v14.1.0.l1
+gupkg config-fix C:\Packages\Ripgrep\14.1.0.local.1
 gupkg config-fix --output C:\OldPackages\Ripgrep\pkg.toml C:\OldPackages\Ripgrep
 ```
 
@@ -442,17 +444,14 @@ convert legacy metadata. Existing files are backed up with a UTC timestamp
 before a change unless `--no-backup` or `--backup=false` is supplied. When a
 file exists, its schema is strict: unknown keys and legacy spellings are errors.
 
-`name`, `version`, `localVersion`, and `only_portable` are package-owned
-metadata. Their canonical values come from the directory name and layout.
-`config-fix` synchronizes those fields while preserving unrelated runtime
-configuration and comments where possible. An install stops on a metadata
-mismatch. Run `gupkg config-fix <version-directory>` before installing to
-synchronize it.
+The package name, version, and local revision come only from the directory
+names (`Ripgrep\14.1.0.local.1`); `pkg.toml` does not record them, and any copy in
+an old file is ignored. `only_portable` must agree with the `-portable`
+naming convention. `config-fix` removes stale name, version, and localVersion
+lines and synchronizes `only_portable`, preserving unrelated configuration and
+comments where possible. An install stops on a portable-flag mismatch.
 
 ```toml
-name = "Ripgrep"                 # package-root directory name
-version = "14.1.0"               # version from v14.1.0.l1
-localVersion = 1                 # local revision from .l1
 only_portable = false            # must agree with the -portable convention
 description = "Fast text search" # descriptive metadata only
 homepage = "https://example.com" # descriptive metadata only
@@ -479,8 +478,7 @@ target = "$App\\rg.exe"
 arguments = ["--color=auto"]
 ```
 
-Top-level keys are exactly: `name`, `version`, `localVersion`, `description`,
-`homepage`, `only_portable`, `origin`, `update`, `shortcut`, `environment`,
+Top-level keys are exactly: `description`, `homepage`, `only_portable`, `origin`, `update`, `shortcut`, `environment`,
 `path`, and `bin`.
 
 ### Application origins
@@ -614,7 +612,7 @@ PowerShell, and shell variables work as expected.
 
 Updates follow **check → download → install**. `gupkg update --check-only` only
 discovers a candidate. `gupkg update --download-only` stages a complete new version under
-`<package-root>\.gupkg\work`, commits it as a new `v<version>` directory,
+`<package-root>\.gupkg\work`, commits it as a new `<version>` directory,
 and records a receipt. `gupkg update` activates the most recently
 downloaded version through the regular install workflow.
 `gupkg update` performs those three steps as one explicit command.
@@ -773,8 +771,8 @@ and creates a timestamped sibling backup unless backup is disabled. Use
 The standalone helpers remain available from `src`:
 
 ```bat
-python gupkg\legacy_to_gupkg_toml.py --dir C:\Packages\Ripgrep\v14.1.0.l1
-python gupkg\shortcuts_to_gupkg_toml.py --dir C:\Packages\Ripgrep\v14.1.0.l1
+python gupkg\legacy_to_gupkg_toml.py --dir C:\Packages\Ripgrep\14.1.0.local.1
+python gupkg\shortcuts_to_gupkg_toml.py --dir C:\Packages\Ripgrep\14.1.0.local.1
 ```
 
 The shortcut importer reads `.lnk` files from `_shortcuts`, converts

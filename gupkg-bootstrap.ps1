@@ -4,7 +4,7 @@
 
 .DESCRIPTION
     Downloads (or copies) a gupkg archive, optionally verifies its SHA-256,
-    places it at <Root>\gupkg\v<version>, and runs "gupkg install" on it so the
+    places it at <Root>\gupkg\<version>, and runs "gupkg install" on it so the
     'current' junction, the gupkg / gupkg-tui commands, and PATH are created.
     It then runs "gupkg manager init" to write a default gupkg-config.toml (in the gupkg folder, admin-only for a system install) and
     create the package folders. Every step is safe to repeat: an existing
@@ -41,7 +41,7 @@
     Do not create a default manager configuration.
 
 .PARAMETER Force
-    Replace an existing <Root>\gupkg\v<version> folder instead of reusing it.
+    Replace an existing <Root>\gupkg\<version> folder instead of reusing it.
 
 .EXAMPLE
     .\gupkg-bootstrap.ps1
@@ -183,12 +183,13 @@ try {
         Expand-Archive -LiteralPath $archive -DestinationPath $tree -Force
     }
 
-    # 3. Place it at <Root>\gupkg\v<version>, reusing an existing copy.
+    # 3. Place it at <Root>\gupkg\<version>, reusing an existing copy.
     $payload = Find-GupkgFolder $tree
-    $manifest = Get-Content -LiteralPath (Join-Path $payload 'pkg.toml') -Raw
-    if ($manifest -notmatch '(?m)^\s*version\s*=\s*"([^"]+)"') { throw "pkg.toml in $payload declares no version." }
+    # The runtime module is the one place the release number is declared.
+    $versionModule = Get-Content -LiteralPath (Join-Path $payload 'gupkg\_version.py') -Raw
+    if ($versionModule -notmatch '(?m)^__version__\s*=\s*"([^"]+)"') { throw "gupkg\_version.py in $payload declares no version." }
     $version = $Matches[1]
-    $target = Join-Path (Join-Path $Root 'gupkg') "v$version"
+    $target = Join-Path (Join-Path $Root 'gupkg') $version
     if ((Test-Path -LiteralPath $target) -and $Force) {
         Step "Replacing $target"
         Remove-Item -LiteralPath $target -Recurse -Force

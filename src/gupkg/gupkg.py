@@ -46,8 +46,9 @@ from gupkg.core import (
     ConfigValidationError,
     PackageIdentity,
     Scope,
+    LOCAL_VERSION_MARKER,
     compare_package_versions,
-    is_version_directory_name,
+    is_version_directory,
     log_info,
     log_warning,
     read_toml_file,
@@ -400,8 +401,7 @@ def install_downloaded_update(
         (
             path.name
             for path in identity.package_root.iterdir()
-            if path.is_dir()
-            and is_version_directory_name(path.name)
+            if is_version_directory(path)
             and compare_package_versions(path.name, version_path.name) > 0
         ),
         key=lambda name: name.casefold(),
@@ -631,7 +631,7 @@ def _newest_receipt(identity: PackageIdentity) -> Tuple[Path, Path]:
     """Return the newest download receipt and the version directory it names."""
     receipts = update_paths(identity.package_root)["receipts"]
     receipt_paths = (
-        sorted(receipts.glob("v*.toml"), key=lambda path: path.stat().st_mtime, reverse=True)
+        sorted(receipts.glob("*.toml"), key=lambda path: path.stat().st_mtime, reverse=True)
         if receipts.exists()
         else []
     )
@@ -644,9 +644,9 @@ def _newest_receipt(identity: PackageIdentity) -> Tuple[Path, Path]:
     except Exception as exc:
         raise ValueError(f"Cannot activate downloaded update: {exc}") from exc
     version, local_version = receipt.get("version"), receipt.get("localVersion")
-    if not isinstance(version, str) or not isinstance(local_version, int):
+    if not isinstance(version, str) or not isinstance(local_version, str):
         raise ValueError("Cannot activate downloaded update: receipt has invalid version metadata")
-    version_name = f"v{version}" + (f".l{local_version}" if local_version else "")
+    version_name = version + (f"{LOCAL_VERSION_MARKER}{local_version}" if local_version else "")
     version_path = identity.package_root / version_name
     if not version_path.is_dir():
         raise ValueError(f"Cannot activate downloaded update: downloaded version is missing: {version_path}")

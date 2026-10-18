@@ -92,13 +92,15 @@ class GupkgCliBehaviorTests(unittest.TestCase):
         return destination
 
     def make_version_dir(
-        self, tmpdir: str, package: str, version_dir_name: str = "v1.0.0.l1"
+        self, tmpdir: str, package: str, version_dir_name: str = "1.0.0.local.1"
     ) -> Path:
         version_dir = Path(tmpdir) / package / version_dir_name
         version_dir.mkdir(parents=True)
         app_dir = version_dir / "App"
         app_dir.mkdir()
         app_dir.joinpath("payload.txt").write_text("payload", encoding="utf-8")
+        # A folder is only a version once it holds pkg.toml.
+        version_dir.joinpath("pkg.toml").write_text("", encoding="utf-8")
         return version_dir
 
     def write_config(self, version_dir: Path, text: str) -> None:
@@ -158,21 +160,20 @@ class GupkgCliBehaviorTests(unittest.TestCase):
             ),
             msg="Starter config header should indicate that the file was generated.",
         )
-        self.assertIn(f'name = "{name}"', text)
-        self.assertIn(f'version = "{version}"', text)
-        self.assertIn(f"localVersion = {local_version}", text)
+        for key in ("name", "version", "localVersion"):
+            self.assertNotRegex(text, rf"(?m)^{key} =")
         self.assertIn(f"only_portable = {str(only_portable).lower()}", text)
         self.assertIn("# [origin]", text)
         self.assertIn("# [[origin.versions]]", text)
         self.assertIn("# Multiple origin versions:", text)
         self.assertIn("#   1. omit top-level url/script above", text)
         self.assertIn(
-            "# Or use the package top-level version to select the current origin:", text
+            "# Or use the package folder's version to select the current origin:", text
         )
         self.assertIn(
             "#   2. define a [[origin.versions]] entry whose version matches", text
         )
-        self.assertIn("#      the top-level package version above", text)
+        self.assertIn("#      the package folder's version", text)
         for example_block in ("shortcut", "environment", "path", "bin"):
             self.assertIn(f"# [[{example_block}]]", text)
 
@@ -193,10 +194,10 @@ class GupkgCliBehaviorTests(unittest.TestCase):
             mock.patch.dict(sys.modules, {"gupkg.tui": tui}),
             mock.patch("gupkg.dependencies.ensure_runtime_dependencies"),
         ):
-            code, _ = self.run_main(module, ["tui", str(FIXTURES / "NoConfigApp" / "v0.9.0.l1")])
+            code, _ = self.run_main(module, ["tui", str(FIXTURES / "GoodApp" / "1.2.3.local.1")])
 
         self.assertEqual(code, 0)
-        tui.run_tui.assert_called_once_with(str(FIXTURES / "NoConfigApp" / "v0.9.0.l1"))
+        tui.run_tui.assert_called_once_with(str(FIXTURES / "GoodApp" / "1.2.3.local.1"))
 
     def test_tui_provisions_its_declared_runtime_dependencies(self) -> None:
         """The tui command provisions its gupkg-owned dependencies before launch."""
@@ -210,11 +211,11 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                 "gupkg.dependencies.ensure_runtime_dependencies"
             ) as ensure_dependencies,
         ):
-            code, _ = self.run_main(module, ["tui", str(FIXTURES / "NoConfigApp" / "v0.9.0.l1")])
+            code, _ = self.run_main(module, ["tui", str(FIXTURES / "GoodApp" / "1.2.3.local.1")])
 
         self.assertEqual(code, 0)
         ensure_dependencies.assert_called_once_with("tui")
-        tui.run_tui.assert_called_once_with(str(FIXTURES / "NoConfigApp" / "v0.9.0.l1"))
+        tui.run_tui.assert_called_once_with(str(FIXTURES / "GoodApp" / "1.2.3.local.1"))
 
     def test_short_help_hides_bootstrap_and_removed_flags(self) -> None:
         """Short help hides bootstrap and removed flags."""
@@ -255,7 +256,7 @@ class GupkgCliBehaviorTests(unittest.TestCase):
             self.run_git(upstream, "commit", "-m", "initial")
 
             package_root = root / "HistoricalApp"
-            version_dir = package_root / "v1.0.0.l1"
+            version_dir = package_root / "1.0.0.local.1"
             version_dir.mkdir(parents=True)
             subprocess.run(
                 ["git", "clone", str(upstream), str(version_dir / "App")],
@@ -394,7 +395,7 @@ class GupkgCliBehaviorTests(unittest.TestCase):
 
             new_versions = [
                 path
-                for path in package_root.glob("v*")
+                for path in package_root.glob("[0-9]*")
                 if path != version_dir
             ]
             self.assertTrue(result.ok, msg=result.errors)
@@ -404,16 +405,13 @@ class GupkgCliBehaviorTests(unittest.TestCase):
             new_version = new_versions[0]
             self.assertRegex(
                 new_version.name,
-                re.compile(r"^v\d{8}-\d{6}-git$"),
+                re.compile(r"^\d{8}-\d{6}-git$"),
             )
             new_config = tomllib.loads(
                 (new_version / "pkg.toml").read_text(encoding="utf-8")
             )
-            self.assertEqual(new_config["name"], "ImmutableGitApp")
-            self.assertEqual(
-                new_config["version"], new_version.name[1:]
-            )
-            self.assertEqual(new_config["localVersion"], 0)
+            for key in ("name", "version", "localVersion"):
+                self.assertNotIn(key, new_config)
             self.assertEqual(new_config["update"]["payload"]["mode"], "git")
             self.assertEqual(
                 (new_version / "App" / "payload.txt").read_text(encoding="utf-8"),
@@ -437,7 +435,7 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                     repeat_result = module.install_package(version_dir)
 
             concrete_versions = [
-                path for path in package_root.glob("v*") if path != version_dir
+                path for path in package_root.glob("[0-9]*") if path != version_dir
             ]
             self.assertTrue(repeat_result.ok, msg=repeat_result.errors)
             self.assertEqual(concrete_versions, [new_version])
@@ -468,7 +466,7 @@ class GupkgCliBehaviorTests(unittest.TestCase):
 
             updated_versions = [
                 path
-                for path in package_root.glob("v*")
+                for path in package_root.glob("[0-9]*")
                 if path not in {version_dir, new_version}
             ]
             self.assertTrue(update_result.ok, msg=update_result.errors)
@@ -483,8 +481,8 @@ class GupkgCliBehaviorTests(unittest.TestCase):
             version_dir = self.make_version_dir(tmpdir, "ReceiptApp")
             receipts = version_dir.parent / ".gupkg" / "receipts"
             receipts.mkdir(parents=True)
-            receipts.joinpath("v1.0.0.l1.toml").write_text(
-                "schemaVersion = 1\nversion = \"1.0.0\"\nlocalVersion = 1\n",
+            receipts.joinpath("1.0.0.local.1.toml").write_text(
+                "schemaVersion = 1\nversion = \"1.0.0\"\nlocalVersion = \"1\"\n",
                 encoding="utf-8",
             )
 
@@ -507,7 +505,7 @@ class GupkgCliBehaviorTests(unittest.TestCase):
         release = json.dumps(
             {
                 "id": 42,
-                "tag_name": "v1.0.0",
+                "tag_name": "1.0.0",
                 "assets": [
                     {
                         "name": "tool.zip",
@@ -550,7 +548,7 @@ class GupkgCliBehaviorTests(unittest.TestCase):
             ):
                 result = module.download_package_update(version_dir)
 
-            repaired_version = version_dir.parent / "v1.0.0"
+            repaired_version = version_dir.parent / "1.0.0"
             self.assertTrue(result.ok, msg=result.errors)
             self.assertEqual(result.status, "downloaded")
             self.assertEqual(
@@ -566,22 +564,24 @@ class GupkgCliBehaviorTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             version_dir = self.make_version_dir(tmpdir, "ReceiptApp")
-            newer_version = version_dir.parent / "v3.0.0.l1"
+            newer_version = version_dir.parent / "3.0.0.local.1"
             newer_version.mkdir()
+            (newer_version / "pkg.toml").write_text("", encoding="utf-8")
             receipts = version_dir.parent / ".gupkg" / "receipts"
             receipts.mkdir(parents=True)
-            receipts.joinpath("v2.0.0.l1.toml").write_text(
-                "schemaVersion = 1\nversion = \"2.0.0\"\nlocalVersion = 1\n",
+            receipts.joinpath("2.0.0.local.1.toml").write_text(
+                "schemaVersion = 1\nversion = \"2.0.0\"\nlocalVersion = \"1\"\n",
                 encoding="utf-8",
             )
-            (version_dir.parent / "v2.0.0.l1").mkdir()
+            (version_dir.parent / "2.0.0.local.1").mkdir()
+            (version_dir.parent / "2.0.0.local.1" / "pkg.toml").write_text("", encoding="utf-8")
 
             result = module.install_downloaded_update(version_dir)
 
         self.assertFalse(result.ok)
         self.assertEqual(result.exit_code, module.EXIT_USER_ERROR)
         self.assertIn(
-            "newer installed version exists: v3.0.0.l1", result.errors[0]
+            "newer installed version exists: 3.0.0.local.1", result.errors[0]
         )
 
     def test_module_zip_bootstrap_creates_populated_release_version(self) -> None:
@@ -645,7 +645,7 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                         ):
                             result = module.install_package(version_dir)
 
-            release_dir = package_root / "v2.0.0"
+            release_dir = package_root / "2.0.0"
             self.assertTrue(result.ok, msg=result.errors)
             self.assertTrue(result.changed)
             self.assertEqual(
@@ -655,8 +655,8 @@ class GupkgCliBehaviorTests(unittest.TestCase):
             release_config = tomllib.loads(
                 (release_dir / "pkg.toml").read_text(encoding="utf-8")
             )
-            self.assertEqual(release_config["version"], "2.0.0")
-            self.assertEqual(release_config["localVersion"], 0)
+            for key in ("name", "version", "localVersion"):
+                self.assertNotIn(key, release_config)
             self.assertFalse((version_dir / "App").exists())
 
     def test_update_install_module_runs_after_zip_payload_is_staged(self) -> None:
@@ -719,7 +719,7 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                         ):
                             result = module.install_package(version_dir)
 
-            release_app = package_root / "v2.0.0" / "App"
+            release_app = package_root / "2.0.0" / "App"
             self.assertTrue(result.ok, msg=result.errors)
             self.assertTrue((release_app / "tool.exe").exists())
             self.assertFalse((release_app / "marker.txt").exists())
@@ -785,7 +785,7 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                         ):
                             result = module.install_package(version_dir)
 
-            release_dir = package_root / "v2.0.0"
+            release_dir = package_root / "2.0.0"
             self.assertTrue(result.ok, msg=result.errors)
             self.assertEqual(
                 (release_dir / "App" / "tool.exe").read_bytes(), executable
@@ -842,7 +842,7 @@ class GupkgCliBehaviorTests(unittest.TestCase):
             release = json.dumps(
                 {
                     "id": 42,
-                    "tag_name": "v2.0.0",
+                    "tag_name": "2.0.0",
                     "assets": [
                         {
                             "name": "tool_Windows_x86_64.zip",
@@ -875,7 +875,7 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                         ):
                             result = module.install_package(version_dir)
 
-            release_dir = package_root / "v2.0.0"
+            release_dir = package_root / "2.0.0"
             self.assertTrue(result.ok, msg=result.errors)
             self.assertTrue(result.changed)
             self.assertEqual(
@@ -899,7 +899,7 @@ class GupkgCliBehaviorTests(unittest.TestCase):
         module = load_gupkg_module()
         with tempfile.TemporaryDirectory() as tmpdir:
             package_root = self.copy_fixture(tmpdir, "NoConfigApp")
-            version_dir = package_root / "v0.9.0.l1"
+            version_dir = package_root / "0.9.0.local.1"
 
             code, output = self.run_main(
                 module, ["config-fix", str(version_dir)]
@@ -919,7 +919,7 @@ class GupkgCliBehaviorTests(unittest.TestCase):
         """Config from-legacy writes canonical TOML through the main gupkg CLI."""
         module = load_gupkg_module()
         with tempfile.TemporaryDirectory() as tmpdir:
-            version_dir = Path(tmpdir) / "LegacyApp" / "v2.3.4.l5"
+            version_dir = Path(tmpdir) / "LegacyApp" / "2.3.4.local.5"
             version_dir.mkdir(parents=True)
             (version_dir / "opt_pkg.json").write_text(
                 json.dumps(
@@ -942,16 +942,15 @@ class GupkgCliBehaviorTests(unittest.TestCase):
             parsed = tomllib.loads(
                 (version_dir / "pkg.toml").read_text(encoding="utf-8")
             )
-            self.assertEqual(parsed["name"], "LegacyApp")
-            self.assertEqual(parsed["version"], "2.3.4")
-            self.assertEqual(parsed["localVersion"], 5)
+            for key in ("name", "version", "localVersion"):
+                self.assertNotIn(key, parsed)
             self.assertFalse(parsed["only_portable"])
 
     def test_convert_legacy_dry_run_emits_only_parseable_toml(self) -> None:
         """Config from-legacy dry-run emits parseable TOML without writing output."""
         module = load_gupkg_module()
         with tempfile.TemporaryDirectory() as tmpdir:
-            version_dir = Path(tmpdir) / "DryLegacy" / "v1.0.0.l2"
+            version_dir = Path(tmpdir) / "DryLegacy" / "1.0.0.local.2"
             version_dir.mkdir(parents=True)
             (version_dir / "opt_pkg.json").write_text(
                 json.dumps(
@@ -975,8 +974,8 @@ class GupkgCliBehaviorTests(unittest.TestCase):
 
             self.assertEqual(code, module.EXIT_SUCCESS)
             parsed = tomllib.loads((version_dir / "converted.toml").read_text(encoding="utf-8"))
-            self.assertEqual(parsed["name"], "DryLegacy")
-            self.assertEqual(parsed["localVersion"], 2)
+            for key in ("name", "version", "localVersion"):
+                self.assertNotIn(key, parsed)
             self.assertFalse((version_dir / "pkg.toml").exists())
 
     def test_update_config_default_path_uses_caller_current_directory(self) -> None:
@@ -991,18 +990,17 @@ class GupkgCliBehaviorTests(unittest.TestCase):
             self.assertEqual(code, module.EXIT_SUCCESS, msg=output)
             self.assertTrue((version_dir / "pkg.toml").exists())
 
-    def test_update_config_uses_the_only_version_directory_when_current_is_missing(
+    def test_update_config_runs_inside_a_folder_holding_app_without_pkg_toml(
         self,
     ) -> None:
         """Update config uses the only version directory when current is missing."""
         module = load_gupkg_module()
         with tempfile.TemporaryDirectory() as tmpdir:
             package_root = self.copy_fixture(tmpdir, "NoConfigApp")
-            version_dir = package_root / "v0.9.0.l1"
+            version_dir = package_root / "0.9.0.local.1"
 
-            code, output = self.run_main(
-                module, ["config-fix", str(package_root)]
-            )
+            with pushd(version_dir):
+                code, output = self.run_main(module, ["config-fix"])
 
             self.assertEqual(code, module.EXIT_SUCCESS, msg=output)
             gupkg_toml = version_dir / "pkg.toml"
@@ -1021,8 +1019,10 @@ class GupkgCliBehaviorTests(unittest.TestCase):
         module = load_gupkg_module()
         with tempfile.TemporaryDirectory() as tmpdir:
             package_root = Path(tmpdir) / "AmbiguousApp"
-            (package_root / "v1.0.0.l1").mkdir(parents=True)
-            (package_root / "v2.0.0.l1").mkdir()
+            (package_root / "1.0.0.local.1").mkdir(parents=True)
+            (package_root / "2.0.0.local.1").mkdir()
+            for folder in ("1.0.0.local.1", "2.0.0.local.1"):
+                (package_root / folder / "pkg.toml").write_text("", encoding="utf-8")
 
             code, output = self.run_main(
                 module, ["config-fix", str(package_root)]
@@ -1039,7 +1039,9 @@ class GupkgCliBehaviorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             package_root = Path(tmpdir) / "AmbiguousApp"
             (package_root / "pkg.bootstrap").mkdir(parents=True)
-            (package_root / "v2.0.0").mkdir()
+            (package_root / "2.0.0").mkdir()
+            for folder in ("pkg.bootstrap", "2.0.0"):
+                (package_root / folder / "pkg.toml").write_text("", encoding="utf-8")
 
             with pushd(package_root):
                 code, output = self.run_main(module, ["install"])
@@ -1053,7 +1055,7 @@ class GupkgCliBehaviorTests(unittest.TestCase):
         module = load_gupkg_module()
         with tempfile.TemporaryDirectory() as tmpdir:
             package_root = self.copy_fixture(tmpdir, "MismatchApp")
-            version_dir = package_root / "v2.0.0.l3"
+            version_dir = package_root / "2.0.0.local.3"
 
             code, output = self.run_main(
                 module, ["config-fix", str(version_dir)]
@@ -1067,9 +1069,8 @@ class GupkgCliBehaviorTests(unittest.TestCase):
             backup = backup_candidates[0].read_text(encoding="utf-8")
             parsed = tomllib.loads(updated)
 
-            self.assertEqual(parsed["name"], "MismatchApp")
-            self.assertEqual(parsed["version"], "2.0.0")
-            self.assertEqual(parsed["localVersion"], 3)
+            for key in ("name", "version", "localVersion"):
+                self.assertNotIn(key, parsed)
             self.assertIn("# Name is stale on purpose.", updated)
             self.assertIn('targetPath = "$App\\\\Mismatch.exe"', updated)
             self.assertIn('name = "MismatchApp-OLD"', backup)
@@ -1080,7 +1081,7 @@ class GupkgCliBehaviorTests(unittest.TestCase):
         """Update config syncs metadata without validating runtime entries."""
         module = load_gupkg_module()
         with tempfile.TemporaryDirectory() as tmpdir:
-            version_dir = self.make_version_dir(tmpdir, "BrokenWriteApp", "v1.0.0.l2")
+            version_dir = self.make_version_dir(tmpdir, "BrokenWriteApp", "1.0.0.local.2")
             self.write_config(
                 version_dir,
                 """
@@ -1127,22 +1128,24 @@ class GupkgCliBehaviorTests(unittest.TestCase):
             self.assertEqual(code, module.EXIT_SUCCESS, msg=output)
             updated = (version_dir / "pkg.toml").read_text(encoding="utf-8")
             parsed = tomllib.loads(updated)
-            self.assertEqual(parsed["name"], "C#Tool")
-            self.assertIn('name = "C#Tool"', updated)
-            self.assertNotIn('"C#Tool"#Tool-OLD"', updated)
+            for key in ("name", "version", "localVersion"):
+                self.assertNotIn(key, parsed)
+            self.assertEqual(parsed["description"], "preserve me")
+            self.assertIn("# Keep this comment", updated)
 
     def test_install_without_config_uses_defaults_without_writing_or_creating_bin(
         self,
     ) -> None:
-        """Install without config uses defaults without writing or creating bin."""
+        """An empty pkg.toml installs with defaults without rewriting it or creating bin."""
         module = load_gupkg_module()
         with tempfile.TemporaryDirectory() as tmpdir:
             package_root = self.copy_fixture(tmpdir, "NoConfigApp")
-            version_dir = package_root / "v0.9.0.l1"
+            version_dir = package_root / "0.9.0.local.1"
             (version_dir / "App").mkdir(exist_ok=True)
             (version_dir / "App" / "payload.txt").write_text(
                 "payload", encoding="utf-8"
             )
+            (version_dir / "pkg.toml").write_text("", encoding="utf-8")
             env = self.user_env(tmpdir)
 
             with mock.patch.dict(os.environ, env, clear=False):
@@ -1152,8 +1155,7 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                     code, output = self.run_main(module, ["install", str(version_dir)])
 
             self.assertEqual(code, module.EXIT_SUCCESS, msg=output)
-            self.assertIn("using defaults without creating a file", output)
-            self.assertFalse((version_dir / "pkg.toml").exists())
+            self.assertEqual((version_dir / "pkg.toml").read_text(encoding="utf-8"), "")
             self.assertFalse((Path(env["USERPROFILE"]) / "bin").exists())
 
     def test_install_uses_the_only_version_directory_when_current_is_missing(
@@ -1163,7 +1165,8 @@ class GupkgCliBehaviorTests(unittest.TestCase):
         module = load_gupkg_module()
         with tempfile.TemporaryDirectory() as tmpdir:
             package_root = self.copy_fixture(tmpdir, "NoConfigApp")
-            version_dir = package_root / "v0.9.0.l1"
+            version_dir = package_root / "0.9.0.local.1"
+            (version_dir / "pkg.toml").write_text("", encoding="utf-8")
             (version_dir / "App").mkdir(exist_ok=True)
             (version_dir / "App" / "payload.txt").write_text(
                 "payload", encoding="utf-8"
@@ -1214,11 +1217,18 @@ class GupkgCliBehaviorTests(unittest.TestCase):
             )
 
     def test_install_aborts_on_metadata_mismatch_before_mutations(self) -> None:
-        """Install aborts on metadata mismatch before mutations."""
+        """Install aborts on a portable-flag mismatch before mutations."""
         module = load_gupkg_module()
         with tempfile.TemporaryDirectory() as tmpdir:
             package_root = self.copy_fixture(tmpdir, "MismatchApp")
-            version_dir = package_root / "v2.0.0.l3"
+            version_dir = package_root / "2.0.0.local.3"
+            config_path = version_dir / "pkg.toml"
+            config_path.write_text(
+                config_path.read_text(encoding="utf-8").replace(
+                    "only_portable = false", "only_portable = true"
+                ),
+                encoding="utf-8",
+            )
 
             with mock.patch.dict(os.environ, self.user_env(tmpdir), clear=False):
                 with mock.patch.object(
@@ -1235,7 +1245,7 @@ class GupkgCliBehaviorTests(unittest.TestCase):
             self.assertIn("Configuration inconsistencies detected", output)
             self.assertIn(f"gupkg config-fix {version_dir}", output)
             self.assertIn(
-                'name = "MismatchApp-OLD"',
+                "only_portable = true",
                 (version_dir / "pkg.toml").read_text(encoding="utf-8"),
             )
             self.assertFalse((version_dir / "pkg.toml.bak").exists())
@@ -1270,7 +1280,7 @@ class GupkgCliBehaviorTests(unittest.TestCase):
             self.assertEqual(code, module.EXIT_SUCCESS, msg=output)
 
     def test_update_config_uses_the_package_directory_name_case(self) -> None:
-        """Config update writes the package directory's exact name spelling."""
+        """Config update removes the stale name rather than rewriting its spelling."""
         module = load_gupkg_module()
         with tempfile.TemporaryDirectory() as tmpdir:
             version_dir = self.make_version_dir(tmpdir, "CaseSensitiveApp")
@@ -1288,9 +1298,8 @@ class GupkgCliBehaviorTests(unittest.TestCase):
             )
 
             self.assertEqual(code, module.EXIT_SUCCESS, msg=output)
-            self.assertIn(
-                'name = "CaseSensitiveApp"',
-                (version_dir / "pkg.toml").read_text(encoding="utf-8"),
+            self.assertNotRegex(
+                (version_dir / "pkg.toml").read_text(encoding="utf-8"), r"(?m)^name ="
             )
 
     def test_config_update_imports_and_archives_shortcuts_by_default(self) -> None:
@@ -1448,7 +1457,7 @@ class GupkgCliBehaviorTests(unittest.TestCase):
         module = load_gupkg_module()
         with tempfile.TemporaryDirectory() as tmpdir:
             package_root = self.copy_fixture(tmpdir, "BadPathApp")
-            version_dir = package_root / "v1.0.0.l1"
+            version_dir = package_root / "1.0.0.local.1"
             (version_dir / "App").mkdir(exist_ok=True)
             (version_dir / "App" / "payload.txt").write_text(
                 "payload", encoding="utf-8"

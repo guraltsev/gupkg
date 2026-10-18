@@ -90,16 +90,16 @@ def test_manager_inventory_keeps_duplicate_selectors_scoped_and_orders_versions(
     user = tmp_path / "user"
     system.mkdir()
     user.mkdir()
-    _manifest(user, "vscode", "v1.9.0.l1")
-    _manifest(user, "vscode", "v1.10.0.l1")
-    _manifest(system, "vscode", "v2.0.0.l1")
+    _manifest(user, "vscode", "1.9.0.local.1")
+    _manifest(user, "vscode", "1.10.0.local.1")
+    _manifest(system, "vscode", "2.0.0.local.1")
     config_path = tmp_path / "gupkg-config.toml"
     _write_config(config_path, "system", "user")
 
     inventory = discover_manager(load_manager_config(config_path))
 
     assert [target.target_id for target in inventory.targets] == ["user:vscode", "system:vscode"]
-    assert inventory.targets[0].local_version == "v1.10.0.l1"
+    assert inventory.targets[0].local_version == "1.10.0.local.1"
     assert all(target.installation_status == "not-installed" for target in inventory.targets)
 
 
@@ -124,8 +124,8 @@ def test_manager_inventory_distinguishes_missing_and_broken_current(tmp_path: Pa
     user = tmp_path / "user"
     system.mkdir()
     user.mkdir()
-    _manifest(user, "not-installed", "v1.0.0.l1")
-    _manifest(system, "broken", "v1.0.0.l1")
+    _manifest(user, "not-installed", "1.0.0.local.1")
+    _manifest(system, "broken", "1.0.0.local.1")
     (system / "broken" / "current").mkdir()
     config_path = tmp_path / "gupkg-config.toml"
     _write_config(config_path, "system", "user")
@@ -149,7 +149,7 @@ def test_discovery_restores_a_saved_available_update(tmp_path: Path) -> None:
     system, user = tmp_path / "system", tmp_path / "user"
     system.mkdir()
     user.mkdir()
-    _manifest(user, "tool", "v1.0.0.l1")
+    _manifest(user, "tool", "1.0.0.local.1")
     _saved_update_state(
         user, "tool",
         'schemaVersion = 1\nlastSuccessfulCheck = "2026-10-17T14:02:00+00:00"\n'
@@ -170,7 +170,7 @@ def test_discovery_shows_current_once_the_saved_candidate_is_installed(tmp_path:
     system, user = tmp_path / "system", tmp_path / "user"
     system.mkdir()
     user.mkdir()
-    _manifest(user, "tool", "v1.0.0.l1")
+    _manifest(user, "tool", "1.0.0.local.1")
     _saved_update_state(
         user, "tool",
         'lastSuccessfulCheck = "2026-10-17T14:02:00+00:00"\n'
@@ -190,7 +190,7 @@ def test_discovery_reports_a_failed_last_check_as_error(tmp_path: Path) -> None:
     system, user = tmp_path / "system", tmp_path / "user"
     system.mkdir()
     user.mkdir()
-    _manifest(user, "tool", "v1.0.0.l1")
+    _manifest(user, "tool", "1.0.0.local.1")
     _saved_update_state(user, "tool", 'lastStatus = "current"\nlastError = "offline"\n')
     config_path = tmp_path / "gupkg-config.toml"
     _write_config(config_path, "system", "user")
@@ -205,7 +205,7 @@ def test_discovery_leaves_a_corrupt_update_state_in_place_and_reports_unchecked(
     system, user = tmp_path / "system", tmp_path / "user"
     system.mkdir()
     user.mkdir()
-    _manifest(user, "tool", "v1.0.0.l1")
+    _manifest(user, "tool", "1.0.0.local.1")
     state = _saved_update_state(user, "tool", "this is [not toml")
     config_path = tmp_path / "gupkg-config.toml"
     _write_config(config_path, "system", "user")

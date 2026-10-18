@@ -20,7 +20,7 @@ from gupkg.manager_tui import run_manager_tui
 
 def _package(root: Path, selector: str) -> None:
     """Create one manifest-backed package row in a real collection root."""
-    version = root / selector / "v1.0.0.l1"
+    version = root / selector / "1.0.0.local.1"
     version.mkdir(parents=True)
     (version / "pkg.toml").write_text(
         f'name = "{selector}"\nversion = "1.0.0"\nlocalVersion = 1\n',

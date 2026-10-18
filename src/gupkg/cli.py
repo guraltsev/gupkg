@@ -169,10 +169,10 @@ def _build_parser() -> tuple[argparse.ArgumentParser, argparse.ArgumentParser]:
     fix = package_command(
         "config-fix",
         "create, repair, or convert pkg.toml",
-        "Create a starter pkg.toml, re-sync name/version/localVersion with the "
+        "Create a starter pkg.toml, remove stale name/version/localVersion lines and re-sync the portable flag with the"
         "directory name, import .lnk files from _shortcuts, or convert legacy "
         "JSON metadata. The old file is backed up first.",
-        "examples:\n  gupkg config-fix C:\\opt\\ripgrep\\v14.1.0\n  gupkg config-fix C:\\old\\tool --output C:\\old\\tool\\pkg.toml",
+        "examples:\n  gupkg config-fix C:\\opt\\ripgrep\\14.1.0\n  gupkg config-fix C:\\old\\tool --output C:\\old\\tool\\pkg.toml",
     )
     backup = fix.add_mutually_exclusive_group()
     backup.add_argument(
@@ -292,7 +292,7 @@ common tasks:
   gupkg manager update                   update everything, with confirmation
   gupkg manager doctor                   health check for scripts and CI
 
-A package path may be a version folder (v1.2.3), the package folder, or its
+A package path may be a version folder (1.2.3), the package folder, or its
 'current' junction; with no path the current folder is used.
 Exit status: 0 ok, 2 user/configuration error, 3 failure while changing the
 system, 4 internal error. Add '--format toml' for scripting.

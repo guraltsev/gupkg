@@ -43,7 +43,7 @@ def test_zip_origin_reports_total_size_and_completion(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A known-length origin download shows its total and reaches 100 percent."""
-    version_path = tmp_path / "Example" / "v1.0.0"
+    version_path = tmp_path / "Example" / "1.0.0"
     version_path.mkdir(parents=True)
     identity = PackageIdentity.from_version_path(
         version_path.parent, version_path, is_current=False
@@ -70,7 +70,7 @@ def test_human_cli_streams_progress_while_toml_keeps_stdout_parseable(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Human output exposes progress while TOML output contains only its document."""
-    version_path = tmp_path / "Example" / "v1.0.0"
+    version_path = tmp_path / "Example" / "1.0.0"
     (version_path / "App").mkdir(parents=True)
     (version_path / "pkg.toml").write_text(
         'name = "Example"\nversion = "1.0.0"\nlocalVersion = 0\n',

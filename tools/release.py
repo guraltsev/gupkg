@@ -1,8 +1,7 @@
 """Record a gupkg release in RELEASES.md and tag it.
 
 A release is the current ``HEAD`` commit. The script checks that the working
-tree is clean, that the version in ``_version.py`` matches both manifests and is
-not already listed, then adds a row to ``RELEASES.md``, commits it, and tags the
+tree is clean and that the version in ``_version.py`` is not already listed, then adds a row to ``RELEASES.md``, commits it, and tags the
 released commit ``v<version>``. Nothing is pushed; the script prints the push
 commands instead.
 """
@@ -14,13 +13,11 @@ import ast
 import re
 import subprocess
 import sys
-import tomllib
 from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 RELEASES = ROOT / "RELEASES.md"
-MANIFESTS = (ROOT / "src" / "pkg.toml", ROOT / "src" / "gupkg" / "pkg.toml")
 VERSION_FILE = ROOT / "src" / "gupkg" / "_version.py"
 SEPARATOR = "|---|---|---|---|"
 
@@ -52,10 +49,6 @@ def main() -> int:
     notes = args.notes.replace("|", "/").strip()
 
     version = runtime_version()
-    for manifest in MANIFESTS:
-        declared = tomllib.loads(manifest.read_text(encoding="utf-8")).get("version")
-        if declared != version:
-            raise SystemExit(f"{manifest.relative_to(ROOT)} says {declared!r}, not {version!r}")
     if _git("status", "--porcelain"):
         raise SystemExit("The working tree is not clean; commit or stash first.")
     text = RELEASES.read_text(encoding="utf-8")

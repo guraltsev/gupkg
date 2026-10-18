@@ -26,7 +26,7 @@ def _registry_zip(path: Path, *, comment: str = "", wrapper: str = "pkg-registry
     """Write a GitHub-style archive with one valid package seed at its top level."""
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr(
-            f"{wrapper}/tool/v1.0.0/pkg.toml",
+            f"{wrapper}/tool/1.0.0/pkg.toml",
             'name = "tool"\nversion = "1.0.0"\nlocalVersion = 0\n',
         )
         archive.writestr(f"{wrapper}/README.md", "ignored")

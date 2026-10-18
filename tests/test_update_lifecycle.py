@@ -38,7 +38,7 @@ def _release(version: str, archive: bytes, release_id: int = 7) -> bytes:
     """Return a GitHub latest-release document with one verified asset."""
     return json.dumps({
         "id": release_id,
-        "tag_name": f"v{version}",
+        "tag_name": f"{version}",
         "assets": [{
             "name": "tool.zip",
             "state": "uploaded",
@@ -50,7 +50,7 @@ def _release(version: str, archive: bytes, release_id: int = 7) -> bytes:
 
 def _github_package(root: Path, name: str = "Tool", extra: str = "") -> Path:
     """Create an installed-looking ``v1.0.0`` package that updates from GitHub releases."""
-    version = root / name / "v1.0.0"
+    version = root / name / "1.0.0"
     (version / "App").mkdir(parents=True)
     (version / "App" / "tool.exe").write_text("old", encoding="utf-8")
     (version / "pkg.toml").write_text(
@@ -124,16 +124,16 @@ def test_full_update_refuses_a_different_release_for_an_already_staged_version(
 
 def test_human_output_reports_each_error_exactly_once(tmp_path: Path) -> None:
     """A failed command prints every error once, after its status line."""
-    version = tmp_path / "Tool" / "v1.0.0"
+    version = tmp_path / "Tool" / "1.0.0"
     (version / "App").mkdir(parents=True)
-    (version / "pkg.toml").write_text('name = "Other"\nversion = "1.0.0"\n', encoding="utf-8")
+    (version / "pkg.toml").write_text("only_portable = true\n", encoding="utf-8")
 
     output = io.StringIO()
     with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
         code = cli.main(["config-check", str(version)])
 
     assert code == 2
-    assert output.getvalue().count("Name mismatch: directory='Tool', config='Other'") == 1
+    assert output.getvalue().count("Portable flag mismatch: directory='False', config='True'") == 1
     assert "config-check: failed" in output.getvalue()
 
 
@@ -141,7 +141,7 @@ def test_install_never_rewrites_a_path_that_cannot_be_read(
     tmp_path: Path, user_env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An unreadable registry PATH fails the install without replacing PATH."""
-    version = tmp_path / "Tool" / "v1.0.0"
+    version = tmp_path / "Tool" / "1.0.0"
     (version / "App").mkdir(parents=True)
     (version / "App" / "tool.exe").write_text("x", encoding="utf-8")
     (version / "pkg.toml").write_text(

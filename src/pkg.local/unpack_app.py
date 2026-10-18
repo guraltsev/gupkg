@@ -23,8 +23,8 @@ and native launchers are kept.
 
 from __future__ import annotations
 
+import re
 import shutil
-import tomllib
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -48,7 +48,7 @@ def unpack_app(context: dict[str, Any]) -> None:
     ------
     RuntimeError
         The archive was not built from the listed commit, has no gupkg
-        ``src`` folder, or its manifest version differs from the candidate.
+        ``src`` folder, or its runtime version differs from the candidate.
     """
     candidate = context["candidate"]
     paths = context["paths"]
@@ -68,10 +68,13 @@ def unpack_app(context: dict[str, Any]) -> None:
         raise RuntimeError("Release archive does not contain a gupkg src folder")
     source = sources[0]
 
-    with (source / "pkg.toml").open("rb") as handle:
-        version = tomllib.load(handle).get("version")
+    # The runtime module is the one place the release number is declared.
+    match = re.search(
+        r'(?m)^__version__ = "([^"]*)"', (source / "gupkg" / "_version.py").read_text(encoding="utf-8")
+    )
+    version = match.group(1) if match else None
     if version != candidate["version"]:
-        raise RuntimeError(f"Release manifest version {version!r} is not {candidate['version']!r}")
+        raise RuntimeError(f"Release version {version!r} is not {candidate['version']!r}")
 
     # Drop the previous code, then lay the new tree over the carried-over
     # support files (pkg.local hooks, config.default, and similar).

@@ -24,7 +24,7 @@ from gupkg.registry import registry_status, search_registry, validate_registry_t
 
 def _identity(root: Path, *, selector: str = "tool") -> PackageIdentity:
     """Create a concrete package identity with a valid custom payload tree."""
-    version = root / selector / "v1.0.0.l1"
+    version = root / selector / "1.0.0.local.1"
     version.mkdir(parents=True)
     (version / "gupkg").mkdir()
     (version / "gupkg" / "payload.exe").write_text("payload", encoding="utf-8")
@@ -149,7 +149,7 @@ def test_registry_validation_rejects_multiple_seed_versions(tmp_path: Path) -> N
     """Registry publication rejects a selector that has more than one seed."""
     pkgs = tmp_path / "pkgs"
     _identity(pkgs, selector="tool")
-    second = pkgs / "tool" / "v2.0.0.l1"
+    second = pkgs / "tool" / "2.0.0.local.1"
     second.mkdir()
     (second / "pkg.toml").write_text('name = "tool"\n', encoding="utf-8")
 

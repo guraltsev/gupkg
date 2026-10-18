@@ -8,6 +8,7 @@ or Windows integration is involved.
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -17,9 +18,10 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME_DIRECTORY = ROOT / "src"
-RELEASE_VERSION = tomllib.loads(
-    (RUNTIME_DIRECTORY / "gupkg" / "pkg.toml").read_text(encoding="utf-8")
-)["version"]
+RELEASE_VERSION = re.search(
+    r'(?m)^__version__ = "([^"]+)"',
+    (RUNTIME_DIRECTORY / "gupkg" / "_version.py").read_text(encoding="utf-8"),
+).group(1)
 
 
 class RuntimeCommandTests(unittest.TestCase):
@@ -40,7 +42,7 @@ class RuntimeCommandTests(unittest.TestCase):
         )
 
     def test_version_matches_the_declared_release(self) -> None:
-        """The checked-in runtime manifest and version command agree exactly."""
+        """The version command reports the runtime module's version, the only declaration."""
         with tempfile.TemporaryDirectory() as tmpdir:
             result = self.run_command("--version", cwd=Path(tmpdir))
 
@@ -49,6 +51,13 @@ class RuntimeCommandTests(unittest.TestCase):
             result.stdout.strip().endswith(f" {RELEASE_VERSION}"),
             msg=result.stdout,
         )
+
+    def test_manifests_do_not_repeat_the_folder_identity(self) -> None:
+        """The checked-in manifests declare no name, version, or localVersion."""
+        for manifest in (RUNTIME_DIRECTORY / "pkg.toml", RUNTIME_DIRECTORY / "gupkg" / "pkg.toml"):
+            declared = tomllib.loads(manifest.read_text(encoding="utf-8"))
+            for key in ("name", "version", "localVersion"):
+                self.assertNotIn(key, declared, msg=str(manifest))
 
     def test_help_exits_without_selecting_a_package(self) -> None:
         """The help command succeeds from a directory that contains no package."""
@@ -62,7 +71,7 @@ class RuntimeCommandTests(unittest.TestCase):
         """A version directory without ``.lN`` has local revision zero for metadata checks."""
         with tempfile.TemporaryDirectory() as tmpdir:
             package_root = Path(tmpdir) / "Example"
-            version_directory = package_root / "v1.2.3"
+            version_directory = package_root / "1.2.3"
             app_directory = version_directory / "App"
             app_directory.mkdir(parents=True)
             (app_directory / "payload.txt").write_text("payload", encoding="utf-8")
@@ -77,9 +86,9 @@ class RuntimeCommandTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
 
     def test_legacy_converter_infers_zero_for_an_absent_local_revision(self) -> None:
-        """Legacy conversion writes local revision zero for a directory without ``.lN``."""
+        """Legacy conversion writes no identity keys; the folder name supplies them."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            version_directory = Path(tmpdir) / "Example" / "v1.2.3"
+            version_directory = Path(tmpdir) / "Example" / "1.2.3"
             version_directory.mkdir(parents=True)
             result = subprocess.run(
                 [
@@ -97,4 +106,4 @@ class RuntimeCommandTests(unittest.TestCase):
             )
 
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
-        self.assertIn("localVersion = 0", result.stdout)
+        self.assertNotIn("localVersion", result.stdout)

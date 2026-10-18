@@ -80,20 +80,20 @@ before installing the converted package.
 Supported `gupkg` action:
 
 ```bat
-gupkg.cmd config-fix --output C:\Packages\Ripgrep\v14.1.0.l1\pkg.toml C:\Packages\Ripgrep\v14.1.0.l1
+gupkg.cmd config-fix --output C:\Packages\Ripgrep\v14.1.0.l1\pkg.toml C:\Packages\Ripgrep\14.1.0.local.1
 ```
 
 The implementation also retains its standalone interface:
 
 ```bat
-python gupkg\legacy_to_gupkg_toml.py --dir C:\Packages\Ripgrep\v14.1.0.l1 --output C:\Packages\Ripgrep\v14.1.0.l1\pkg.toml
+python gupkg\legacy_to_gupkg_toml.py --dir C:\Packages\Ripgrep\14.1.0.local.1 --output C:\Packages\Ripgrep\v14.1.0.l1\pkg.toml
 ```
 
 From the parent `src\` directory, the convenience launcher calls the supported
 action:
 
 ```bat
-legacy_to_gupkg_toml.cmd C:\Packages\Ripgrep\v14.1.0.l1
+legacy_to_gupkg_toml.cmd C:\Packages\Ripgrep\14.1.0.local.1
 ```
 
 Use `--dry-run` to print the generated TOML or `--output <path>` to choose the
@@ -115,14 +115,14 @@ are renamed with the `.lnk.imported` suffix.
 Example:
 
 ```bat
-python gupkg\shortcuts_to_gupkg_toml.py --dir C:\Packages\Ripgrep\v14.1.0.l1
+python gupkg\shortcuts_to_gupkg_toml.py --dir C:\Packages\Ripgrep\14.1.0.local.1
 ```
 
 From the parent `src\` directory, the convenience launcher calls the same
 script:
 
 ```bat
-shortcuts_to_gupkg_toml.cmd --dir C:\Packages\Ripgrep\v14.1.0.l1
+shortcuts_to_gupkg_toml.cmd --dir C:\Packages\Ripgrep\14.1.0.local.1
 ```
 
 Use `--dry-run` to print the updated TOML instead of writing it.

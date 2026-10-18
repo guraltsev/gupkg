@@ -55,13 +55,13 @@ def test_verified_archive_is_placed_as_a_working_versioned_folder_and_rerun_reus
     digest = hashlib.sha256(archive.read_bytes()).hexdigest().upper()
 
     first = _run(tmp_path, "-Source", str(archive), "-Sha256", digest)
-    placed = next((tmp_path / "opt" / "gupkg").glob("v*"))
+    placed = next((tmp_path / "opt" / "gupkg").glob("*"))
     second = _run(tmp_path, "-Source", str(archive), "-Sha256", digest)
     version = subprocess.run([str(placed / "gupkg.cmd"), "--version"], capture_output=True, text=True)
 
     assert first.returncode == 0 and "SHA-256 verified" in first.stdout
     assert "reusing it" in second.stdout and second.returncode == 0
-    assert version.stdout.strip() == f"gupkg {placed.name[1:]}"
+    assert version.stdout.strip() == f"gupkg {placed.name}"
     assert not (placed / "pkgs").exists()
 
 

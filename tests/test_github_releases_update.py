@@ -19,7 +19,7 @@ from gupkg.core import ConfigValidationError, PackageIdentity
 from gupkg import github_releases
 
 
-def release_response(*, tag: str = "v1.13.0") -> io.BytesIO:
+def release_response(*, tag: str = "1.13.0") -> io.BytesIO:
     """Return representative GitHub latest-release metadata as a byte stream."""
     release = {
         "id": 12345,
@@ -156,7 +156,7 @@ def test_latest_release_strips_a_configured_tag_prefix() -> None:
     with mock.patch.object(
         github_releases.urllib.request,
         "urlopen",
-        return_value=release_response(tag="release/v1.13.0"),
+        return_value=release_response(tag="release/1.13.0"),
     ):
         candidate = github_releases.check_update(context)
 

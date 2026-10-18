@@ -34,11 +34,12 @@ from .core import (
 )
 
 
-# Canonical top-level ``pkg.toml`` keys, in documentation order.
+# Canonical top-level ``pkg.toml`` keys, in documentation order. ``name``,
+# ``version``, and ``localVersion`` are legacy: the folder name is the only
+# source of identity, so they are accepted for old files but ignored.
+IGNORED_IDENTITY_KEYS = ("name", "version", "localVersion")
 TOP_LEVEL_KEYS = (
-    "name",
-    "version",
-    "localVersion",
+    *IGNORED_IDENTITY_KEYS,
     "description",
     "homepage",
     "origin",
@@ -140,12 +141,6 @@ def normalize_runtime_config(raw: Any, identity: PackageIdentity) -> Dict[str, A
         )
     validate_top_level_keys(raw)
 
-    # Directory-owned metadata is type-checked here; its agreement with the
-    # directory layout is reported separately by check_metadata_consistency.
-    _optional_string(raw.get("name"), field_name="name")
-    _optional_string(raw.get("version"), field_name="version")
-    if raw.get("localVersion") is not None:
-        _local_version(raw["localVersion"])
     only_portable = raw.get("only_portable")
     if only_portable is None:
         only_portable = identity.only_portable_by_name
@@ -257,23 +252,8 @@ def check_metadata_consistency(
 
     inconsistencies: List[str] = []
 
-    # The directory owns the canonical name; case-only differences identify
-    # the same package and config-fix writes the directory spelling back.
-    name = _optional_string(raw_config.get("name"), field_name="name")
-    if name and name.casefold() != identity.name.casefold():
-        inconsistencies.append(
-            f"Name mismatch: directory='{identity.name}', config='{name}'"
-        )
-    version = _optional_string(raw_config.get("version"), field_name="version")
-    if version and version != identity.version:
-        inconsistencies.append(
-            f"Version mismatch: directory='{identity.version}', config='{version}'"
-        )
-    local_version = raw_config.get("localVersion")
-    if local_version not in (None, "") and _local_version(local_version) != identity.local_version:
-        inconsistencies.append(
-            f"LocalVersion mismatch: directory='{identity.local_version}', config='{local_version}'"
-        )
+    # Name, version, and localVersion come only from the directory; any copy
+    # in pkg.toml is ignored, so it can never disagree.
     only_portable = raw_config.get("only_portable")
     if only_portable is not None:
         if not isinstance(only_portable, bool):
@@ -991,17 +971,6 @@ def _optional_string(value: Any, *, field_name: str) -> Optional[str]:
             f"'{field_name}' must be a string, got: {type(value).__name__}"
         )
     return value
-
-
-def _local_version(value: Any) -> int:
-    """Normalize ``localVersion``, which may be an integer or a digit string."""
-    if isinstance(value, int) and not isinstance(value, bool):
-        return value
-    if isinstance(value, str) and value.isdigit():
-        return int(value)
-    raise ConfigValidationError(
-        f"'localVersion' must be an integer, got: {type(value).__name__}"
-    )
 
 
 def _http_url(url: str, *, context: str) -> str:

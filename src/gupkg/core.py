@@ -36,10 +36,15 @@ EXIT_USER_ERROR = 2
 EXIT_MUTATION_ERROR = 3
 EXIT_INTERNAL_ERROR = 4
 
-# Version directory names: ``v`` followed by a digit-led upstream version and an
-# optional ``.l<local>``, so a package root such as ``volta`` is never mistaken
-# for a version directory.
-VERSION_DIR_NAME_RE = re.compile(r"^v(\d.*?)(?:\.l(\d+))?$")
+# A version directory is named by its version string, any text that is a safe
+# folder name. Text after the first ``.local.`` is the local revision, itself
+# any string, so ``1.2.3.local.000002`` is upstream ``1.2.3`` with local ``000002``.
+LOCAL_VERSION_MARKER = ".local."
+
+# Names that can never be version directories: the activation junction (and
+# its ``current.__new__``/``current.__old__`` swap entries) and hidden folders.
+_RESERVED_DIR_PREFIXES = ("current", ".")
+_UNSAFE_DIR_CHARACTERS = re.compile(r'[<>:"/\\|?*]|[\x00-\x1f]')
 
 # The one directory name that holds a package's update template. It is not a
 # version: promoting it creates the first real version directory.
@@ -132,11 +137,11 @@ class PackageIdentity:
         Package name derived from the package-root directory name.
     version : str
         Upstream version string derived from the version directory.
-    local_version : int
-        Local revision number derived from the optional ``.lN`` suffix, or
-        ``0`` when the suffix is absent.
+    local_version : str
+        Local revision text after the first ``.local.`` in the directory name,
+        or ``""`` when the marker is absent.
     version_string : str
-        Original version-directory name, for example ``v1.2.3.l4``.
+        Original version-directory name, for example ``1.2.3.local.000004``.
     package_root : Path
         Parent directory that contains all versions and ``current``.
     version_path : Path
@@ -150,7 +155,7 @@ class PackageIdentity:
 
     name: str
     version: str
-    local_version: int
+    local_version: str
     version_string: str
     package_root: Path
     version_path: Path
@@ -184,21 +189,21 @@ class PackageIdentity:
         Raises
         ------
         ValueError
-            Raised when ``version_path`` does not follow the
-            ``v<upstream>`` or ``v<upstream>.l<local>`` naming convention and
-            is not the ``pkg.bootstrap`` template directory.
+            Raised when ``version_path`` is not a safe, non-reserved folder
+            name and is not the ``pkg.bootstrap`` template directory.
 
         """
         if version_path.name == BOOTSTRAP_DIR_NAME:
-            upstream, local_version = BOOTSTRAP_VERSION, 0
+            upstream, local_version = BOOTSTRAP_VERSION, ""
         else:
-            match = VERSION_DIR_NAME_RE.match(version_path.name)
-            if not match:
+            if not is_version_directory_name(version_path.name):
                 raise ValueError(
-                    f"Invalid version directory name: {version_path.name}. "
-                    f"Expected format: v<digit>... or v<digit>....l<local>, or {BOOTSTRAP_DIR_NAME}"
+                    f"Invalid version directory name: {version_path.name}. Use a plain folder "
+                    f"name such as 1.2.3 or 1.2.3{LOCAL_VERSION_MARKER}000001; "
+                    f"'current' and names starting with '.' are reserved. "
+                    f"The template folder is {BOOTSTRAP_DIR_NAME}."
                 )
-            upstream, local_version = match.group(1), int(match.group(2) or 0)
+            upstream, local_version = split_package_version(version_path.name)
         return cls(
             name=package_root.name,
             version=upstream,
@@ -383,7 +388,7 @@ def log_error(message: str) -> None:
 
 
 def is_version_directory_name(name: str) -> bool:
-    """Return whether a directory name matches the package version pattern.
+    """Return whether *name* can name a package version directory.
 
     Parameters
     ----------
@@ -393,63 +398,59 @@ def is_version_directory_name(name: str) -> bool:
     Returns
     -------
     bool
-        ``True`` when *name* matches ``v<upstream>`` with an optional
-        ``.l<local>`` revision.
+        ``True`` for a non-empty, path-safe name that is not reserved
+        (``current``, ``pkg.bootstrap``, or a hidden name).
 
     """
-    return VERSION_DIR_NAME_RE.match(name) is not None
+    if not name or name != name.strip() or name.endswith("."):
+        return False
+    if name == BOOTSTRAP_DIR_NAME or _UNSAFE_DIR_CHARACTERS.search(name):
+        return False
+    return not name.lower().startswith(_RESERVED_DIR_PREFIXES)
+
+
+def is_version_directory(path: Path) -> bool:
+    """Return whether *path* is a discoverable version folder.
+
+    A version folder has a valid name and contains ``pkg.toml``.
+    """
+    return is_version_directory_name(path.name) and path.is_dir() and (path / "pkg.toml").is_file()
+
+
+def is_package_directory(path: Path) -> bool:
+    """Return whether *path* is a discoverable version folder or the template."""
+    return path.name == BOOTSTRAP_DIR_NAME or is_version_directory(path)
 
 
 def is_package_directory_name(name: str) -> bool:
-    """Return whether a directory name is a version directory or the template.
-
-    Parameters
-    ----------
-    name : str
-        Directory name to validate.
-
-    Returns
-    -------
-    bool
-        ``True`` for ``v<digit>...`` version directories and ``pkg.bootstrap``.
-
-    """
+    """Return whether *name* is acceptable as a version directory or the template."""
     return name == BOOTSTRAP_DIR_NAME or is_version_directory_name(name)
 
 
-def split_package_version(version: str) -> Tuple[str, int]:
-    """Split a package version string into upstream and local components.
+def split_package_version(version: str) -> Tuple[str, str]:
+    """Split a version directory name into upstream and local components.
 
     Parameters
     ----------
     version : str
-        Version text such as ``v1.2.3.l4`` or ``1.2.3``.
+        Version text such as ``1.2.3`` or ``1.2.3.local.000004``.
 
     Returns
     -------
-    Tuple[str, int]
-        A tuple ``(upstream_version, local_revision)``. Missing or malformed
-        local revisions are treated as ``0``.
+    Tuple[str, str]
+        A tuple ``(upstream_version, local_revision)``; the local revision is
+        everything after the first ``.local.`` and is ``""`` when absent.
 
     """
-    version = version.strip()
-    if version.startswith("v"):
-        version = version[1:]
-    local_match = re.fullmatch(r"(.+)\.l(\d+)", version)
-    if local_match is None:
-        upstream_part = version
-        local_revision = 0
-    else:
-        upstream_part = local_match.group(1)
-        local_revision = int(local_match.group(2))
-    return upstream_part, local_revision
+    upstream, _, local = version.strip().partition(LOCAL_VERSION_MARKER)
+    return upstream, local
 
 
 def compare_package_versions(version1: str, version2: str) -> int:
     """Compare two package version directory strings.
 
     The comparison understands upstream semantic-ish version segments,
-    prerelease suffixes, and the package-local ``.lN`` revision component.
+    prerelease suffixes, and the package-local revision after ``.local.``.
 
     Parameters
     ----------
@@ -494,7 +495,7 @@ def compare_package_versions(version1: str, version2: str) -> int:
         Parameters
         ----------
         upstream : str
-            Upstream version without the ``.lN`` local revision.
+            Upstream version without the ``.local.`` revision.
 
         Returns
         -------
@@ -584,9 +585,12 @@ def compare_package_versions(version1: str, version2: str) -> int:
         )
         if prerelease_comparison != 0:
             return prerelease_comparison
-    if local1 == local2:
-        return 0
-    return 1 if local1 > local2 else -1
+    # A version without a local revision sorts before one that has it.
+    return compare_identifier_lists(
+        [parse_identifier(part) for part in local1.split(".") if part != ""],
+        [parse_identifier(part) for part in local2.split(".") if part != ""],
+        pad_numeric=False,
+    )
 
 
 def normalize_path(path: Union[str, Path]) -> Path:

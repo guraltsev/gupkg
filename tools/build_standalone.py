@@ -20,7 +20,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import tomllib
 import zipfile
 from pathlib import Path
 
@@ -85,12 +84,6 @@ def main() -> int:
         )
     if args.output is None:
         args.output = Path("dist") / f"gupkg-{release_version}.zip"
-    manifest_data = tomllib.loads(args.manifest.read_text(encoding="utf-8"))
-    if manifest_data.get("version") != release_version:
-        raise SystemExit(
-            f"standalone manifest version {manifest_data.get('version')!r} "
-            f"does not match runtime version {release_version!r}"
-        )
     digest = hashlib.sha256(args.runtime.read_bytes()).hexdigest()
     if digest.casefold() != args.runtime_sha256.casefold():
         raise SystemExit("embedded runtime digest does not match --runtime-sha256")

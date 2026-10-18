@@ -169,14 +169,11 @@ def _validate_replacement(rendered: str, identity: PackageIdentity | None, *, le
         validate_runtime_config(normalize_runtime_config(parsed, identity))
     if not legacy:
         return
-    expected_types = {"name": str, "version": str, "localVersion": int, "only_portable": bool}
-    for key, expected in expected_types.items():
-        value = parsed.get(key)
-        if not isinstance(value, expected) or (expected is int and isinstance(value, bool)):
-            raise ConfigValidationError(
-                "Legacy metadata did not produce one unambiguous current package document: "
-                f"missing or invalid {key}"
-            )
+    if not isinstance(parsed.get("only_portable"), bool):
+        raise ConfigValidationError(
+            "Legacy metadata did not produce one unambiguous current package document: "
+            "missing or invalid only_portable"
+        )
 
 
 def _backup_name(destination: Path) -> Path:

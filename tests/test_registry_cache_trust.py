@@ -71,7 +71,7 @@ def test_default_registry_cache_lives_in_the_gupkg_version_app_folder(tmp_path: 
     """The default cache is App\\registry beside the running gupkg version, elevated or not."""
     for name, folder in (("USERPROFILE", "profile"), ("LOCALAPPDATA", "local"), ("SYSTEMDRIVE", "drive")):
         monkeypatch.setenv(name, str(tmp_path / folder))
-    version = tmp_path / "opt" / "gupkg" / "v1.0.0"
+    version = tmp_path / "opt" / "gupkg" / "1.0.0"
     (version / "gupkg").mkdir(parents=True)
     monkeypatch.setattr("gupkg.manager.__file__", str(version / "gupkg" / "manager.py"))
     target = version / "gupkg" / "gupkg-config.toml"
@@ -98,7 +98,7 @@ def _init_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, program_d
 def test_init_accepts_a_cache_inside_the_system_root_when_it_is_in_a_package_app_folder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The gupkg version's own App\\registry may sit under the system package root."""
     config_path = _init_environment(monkeypatch, tmp_path, tmp_path / "unused")
-    version = tmp_path / "drive" / "opt" / "gupkg" / "v1.0.0"
+    version = tmp_path / "drive" / "opt" / "gupkg" / "1.0.0"
     (version / "gupkg").mkdir(parents=True)
     monkeypatch.setattr("gupkg.manager.__file__", str(version / "gupkg" / "manager.py"))
     output = io.StringIO()

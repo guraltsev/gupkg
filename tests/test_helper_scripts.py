@@ -79,7 +79,7 @@ class LegacyConverterTests(unittest.TestCase):
         module = load_gupkg_module()
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            version_dir = Path(tmpdir) / "GoodApp" / "v1.2.3.l1"
+            version_dir = Path(tmpdir) / "GoodApp" / "1.2.3.local.1"
             version_dir.mkdir(parents=True)
             (version_dir / "opt_pkg.json").write_text(
                 json.dumps(
@@ -125,7 +125,7 @@ class LegacyConverterTests(unittest.TestCase):
             rendered = gupkg_toml.read_text(encoding="utf-8")
             parsed = tomllib.loads(rendered)
             self.assertNotIn("[[main]]", rendered)
-            self.assertEqual(parsed["localVersion"], 1)
+            self.assertNotIn("localVersion", parsed)
             self.assertFalse(parsed["only_portable"])
             self.assertIn("[[environment]]", rendered)
             self.assertIn('Name = "GOODAPP_HOME"', rendered)
@@ -173,7 +173,7 @@ class LegacyConverterTests(unittest.TestCase):
     def test_converter_can_infer_metadata_from_directory_name(self) -> None:
         """Converter can infer metadata from directory name."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            version_dir = Path(tmpdir) / "Tool-portable" / "v2.0.1.l7"
+            version_dir = Path(tmpdir) / "Tool-portable" / "2.0.1.local.7"
             version_dir.mkdir(parents=True)
             (version_dir / "shortcut.json").write_text(
                 json.dumps(
@@ -195,9 +195,7 @@ class LegacyConverterTests(unittest.TestCase):
 
             rendered = result.stdout
             parsed = tomllib.loads(rendered)
-            self.assertEqual(parsed["name"], "Tool-portable")
-            self.assertEqual(parsed["version"], "2.0.1")
-            self.assertEqual(parsed["localVersion"], 7)
+            self.assertFalse({"name", "version", "localVersion"} & parsed.keys())
             self.assertTrue(parsed["only_portable"])
             self.assertEqual(parsed["shortcut"][0]["targetPath"], "$App\\tool.exe")
 
@@ -205,7 +203,7 @@ class LegacyConverterTests(unittest.TestCase):
         """The converter emits a single origin table for legacy downloadURL metadata."""
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            version_dir = Path(tmpdir) / "OriginApp" / "v1.0.0.l1"
+            version_dir = Path(tmpdir) / "OriginApp" / "1.0.0.local.1"
             version_dir.mkdir(parents=True)
             (version_dir / "pkg.json").write_text(
                 json.dumps({"downloadURL": "https://example.invalid/origin-app.zip"}),
@@ -226,7 +224,7 @@ class LegacyConverterTests(unittest.TestCase):
         """The converter retains canonical origin settings when it rewrites pkg.toml."""
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            version_dir = Path(tmpdir) / "OriginApp" / "v1.0.0.l1"
+            version_dir = Path(tmpdir) / "OriginApp" / "1.0.0.local.1"
             version_dir.mkdir(parents=True)
             (version_dir / "pkg.toml").write_text(
                 """
@@ -261,7 +259,7 @@ class LegacyConverterTests(unittest.TestCase):
         """The converter creates a numbered backup without replacing an older backup."""
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            version_dir = Path(tmpdir) / "BackupApp" / "v1.0.0.l1"
+            version_dir = Path(tmpdir) / "BackupApp" / "1.0.0.local.1"
             version_dir.mkdir(parents=True)
             (version_dir / "pkg.json").write_text(
                 json.dumps({"name": "BackupApp", "version": "1.0.0"}),
@@ -284,8 +282,8 @@ class LegacyConverterTests(unittest.TestCase):
             self.assertEqual(
                 Path(str(gupkg_toml) + ".bak.1").read_text(encoding="utf-8"), original
             )
-            self.assertEqual(
-                tomllib.loads(gupkg_toml.read_text(encoding="utf-8"))["name"], "BackupApp"
+            self.assertNotIn(
+                "name", tomllib.loads(gupkg_toml.read_text(encoding="utf-8"))
             )
             self.assertIn(f"Backed up {gupkg_toml} to {gupkg_toml}.bak.1", result.stdout)
 
@@ -294,7 +292,7 @@ class LegacyConverterTests(unittest.TestCase):
     ) -> None:
         """Converter rewrites legacy gupkg toml aliases to canonical schema."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            version_dir = Path(tmpdir) / "AliasApp" / "v3.4.5.l2"
+            version_dir = Path(tmpdir) / "AliasApp" / "3.4.5.local.2"
             version_dir.mkdir(parents=True)
             (version_dir / "pkg.toml").write_text(
                 r"""
@@ -326,9 +324,7 @@ class LegacyConverterTests(unittest.TestCase):
 
             self.assertEqual(result.returncode, 0, msg=result.stderr or result.stdout)
             parsed = tomllib.loads(converted.read_text(encoding="utf-8"))
-            self.assertEqual(parsed["name"], "AliasApp")
-            self.assertEqual(parsed["version"], "3.4.5")
-            self.assertEqual(parsed["localVersion"], 2)
+            self.assertFalse({"name", "version", "localVersion"} & parsed.keys())
             self.assertTrue(parsed["only_portable"])
             self.assertEqual(parsed["description"], "Legacy alias config")
             self.assertEqual(parsed["homepage"], "https://example.invalid/alias")
@@ -351,7 +347,7 @@ class LegacyConverterTests(unittest.TestCase):
     def test_converter_accepts_list_root_legacy_sidecar_files(self) -> None:
         """Converter accepts list root legacy sidecar files."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            version_dir = Path(tmpdir) / "ListRootApp" / "v1.0.0.l1"
+            version_dir = Path(tmpdir) / "ListRootApp" / "1.0.0.local.1"
             version_dir.mkdir(parents=True)
             (version_dir / "environment.json").write_text(
                 json.dumps(
@@ -456,9 +452,7 @@ class LegacyConverterTests(unittest.TestCase):
                 )
 
                 parsed = tomllib.loads(result.stdout)
-                self.assertEqual(parsed["name"], expected["name"])
-                self.assertEqual(parsed["version"], expected["version"])
-                self.assertEqual(parsed["localVersion"], expected["localVersion"])
+                self.assertFalse({"name", "version", "localVersion"} & parsed.keys())
 
                 if "only_portable" in expected:
                     self.assertEqual(parsed["only_portable"], expected["only_portable"])
@@ -493,10 +487,10 @@ class ShortcutImporterTests(unittest.TestCase):
 
         importer = load_shortcut_importer_module()
         shortcut_path = Path(
-            r"C:\games\CommanderKeen\v1.4_42493.l1\_shortcuts\Commander Keen.lnk"
+            r"C:\games\CommanderKeen\1.4_42493.local.1\_shortcuts\Commander Keen.lnk"
         )
         payload = {
-            "TargetPath": r"C:\games\CommanderKeen\v1.4_42493.l1\App\keen.exe",
+            "TargetPath": r"C:\games\CommanderKeen\1.4_42493.local.1\App\keen.exe",
             "Arguments": "",
             "WorkingDirectory": "",
             "IconLocation": "",
@@ -534,7 +528,7 @@ class ShortcutImporterTests(unittest.TestCase):
         importer = load_shortcut_importer_module()
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            version_dir = Path(tmpdir) / "Game" / "v1.0.0.l1"
+            version_dir = Path(tmpdir) / "Game" / "1.0.0.local.1"
             shortcuts_dir = version_dir / "_shortcuts" / "Games"
             app_dir = version_dir / "App"
             icons_dir = version_dir / "Icons"
@@ -607,7 +601,7 @@ targetPath = "$App\\tools\\keep.exe"
         importer = load_shortcut_importer_module()
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            version_dir = Path(tmpdir) / "Tool" / "v2.0.0.l3"
+            version_dir = Path(tmpdir) / "Tool" / "2.0.0.local.3"
             nested_dir = version_dir / "_shortcuts" / "Tools"
             app_dir = version_dir / "App" / "bin"
             nested_dir.mkdir(parents=True)

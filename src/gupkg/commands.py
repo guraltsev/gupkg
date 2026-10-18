@@ -48,6 +48,7 @@ from .core import (
     ConfigValidationError,
     PackageIdentity,
     Scope,
+    is_version_directory_name,
     read_toml_file,
     write_text_atomic,
 )
@@ -273,6 +274,16 @@ def resolve_package(
     candidate = candidate.resolve()
     if not candidate.is_dir():
         return None, None, failure(command, f"Package directory does not exist: {candidate}")
+
+    # config-fix run inside a folder that holds App or pkg.toml but is not yet
+    # a discoverable version (no pkg.toml) treats that folder as the version.
+    if (
+        command == "config-fix"
+        and is_version_directory_name(candidate.name)
+        and ((candidate / "App").is_dir() or (candidate / "pkg.toml").is_file())
+    ):
+        identity = PackageIdentity.from_version_path(candidate.parent, candidate, is_current=False)
+        return candidate, identity, None
     if not (pick_legacy_metadata_files(candidate) or has_legacy_metadata(candidate)):
         return None, None, failure(command, resolution_error)
     return candidate, None, None

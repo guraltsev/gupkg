@@ -18,8 +18,6 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-VERSION_DIR_NAME_RE = re.compile(r"^v(.+?)(?:\.l(\d+))?$")
-
 # Legacy package metadata commonly lived in one of these filenames.
 LEGACY_METADATA_FILENAMES = [
     "opt_pkg.json",
@@ -478,17 +476,10 @@ def merge_legacy_source(
 
 
 def infer_metadata_from_directory(base_dir: Path) -> dict[str, Any]:
-    """Infer metadata from a conventional version-directory path."""
+    """Infer the portable flag from the package-root name of a version directory."""
 
     inferred = new_config()
-    match = VERSION_DIR_NAME_RE.match(base_dir.name)
-    if not match:
-        return inferred
-
     package_name = base_dir.parent.name
-    inferred["name"] = package_name or None
-    inferred["version"] = match.group(1)
-    inferred["localVersion"] = int(match.group(2) or 0)
     inferred["only_portable"] = package_name.lower().endswith("-portable")
     return inferred
 
@@ -593,12 +584,7 @@ def render_gupkg_toml(cfg: dict[str, Any]) -> str:
         "",
     ]
 
-    if cfg.get("name") not in (None, ""):
-        lines.append(f"name = {to_toml_scalar(cfg['name'])}")
-    if cfg.get("version") not in (None, ""):
-        lines.append(f"version = {to_toml_scalar(cfg['version'])}")
-    if cfg.get("localVersion") is not None:
-        lines.append(f"localVersion = {to_toml_scalar(cfg['localVersion'])}")
+    # Name, version, and localVersion come from the folder name, not the file.
     if cfg.get("only_portable") is not None:
         lines.append(f"only_portable = {to_toml_scalar(cfg['only_portable'])}")
     for key in ["description", "homepage"]:

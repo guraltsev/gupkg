@@ -21,7 +21,7 @@ from gupkg.tui import run_tui
 
 def _package_version(root: Path) -> Path:
     """Create a minimal package version that the TUI can inspect."""
-    version = root / "ScopeApp" / "v1.0.0.l1"
+    version = root / "ScopeApp" / "1.0.0.local.1"
     version.mkdir(parents=True)
     (version / "pkg.toml").write_text(
         'name = "ScopeApp"\nversion = "1.0.0"\nlocalVersion = 1\n',

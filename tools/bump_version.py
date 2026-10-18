@@ -1,8 +1,7 @@
-"""Set the gupkg version in the runtime module and both manifests.
+"""Set the gupkg version, which lives only in the runtime module.
 
-``tools/bump_version.py 0.14.0`` rewrites ``src/gupkg/_version.py``,
-``src/pkg.toml`` and ``src/gupkg/pkg.toml`` so they agree, which is what
-``tools/release.py`` requires. It does not commit; ``scripts/bump.cmd`` does.
+``tools/bump_version.py 0.14.0`` rewrites ``src/gupkg/_version.py``; the
+manifests carry no version. It does not commit; ``scripts/bump.cmd`` does.
 """
 
 from __future__ import annotations
@@ -27,11 +26,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Not a plain dotted version: {args.version!r}", file=sys.stderr)
         return 2
 
-    # Each file declares the version on one line; replace exactly that line.
+    # The version is declared on exactly one line; replace exactly that line.
     targets = (
         (args.root / "src" / "gupkg" / "_version.py", r'(?m)^__version__ = "[^"]*"', f'__version__ = "{args.version}"'),
-        (args.root / "src" / "pkg.toml", r'(?m)^version = "[^"]*"', f'version = "{args.version}"'),
-        (args.root / "src" / "gupkg" / "pkg.toml", r'(?m)^version = "[^"]*"', f'version = "{args.version}"'),
     )
     for path, pattern, replacement in targets:
         text = path.read_text(encoding="utf-8")

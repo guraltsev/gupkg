@@ -43,7 +43,7 @@ gupkg-bootstrap.cmd -Source \\server\share\gupkg-0.12.0.zip -Sha256 <digest>
 What it does, in order: choose the root (`%USERPROFILE%\opt` or `C:\opt`, or
 `-Root`); fetch the archive from `-Source` (a URL, ZIP, or folder; default: the
 newest release in `RELEASES.md` of the official repository) and verify `-Sha256` when given;
-place it at `<root>\gupkg\v<version>`, reusing a matching folder unless
+place it at `<root>\gupkg\<version>`, reusing a matching folder unless
 `-Force`; run `gupkg install` on it, which creates the `current` junction, the
 `gupkg` and `gupkg-tui` commands, and the PATH entry; and run
 `gupkg manager init` unless `-SkipManagerInit` (an existing configuration is
@@ -83,7 +83,7 @@ may use `GUPKG_PYTHON`, `gupkg.python`, a local `python\python.exe`, Python on
 
 ## Manager configuration
 
-Manager mode is enabled by a v2 `gupkg-config.toml`. It is read from:
+Manager mode is enabled by a 2 `gupkg-config.toml`. It is read from:
 
 1. an explicit `--config PATH`; or
 2. the file beside the imported `gupkg.cli` module (the gupkg package folder).
@@ -285,7 +285,7 @@ They use the repository's `.venv` if present, otherwise the bundled runtime in
 `RELEASES.md` is the release registry: a table of version, full commit hash,
 date, and notes, newest first. gupkg's own `pkg.local/check_update.py` reads it
 from `main`, so `gupkg update` on the gupkg package installs the commit's source
-archive as a new `v<version>` folder, and `gupkg-bootstrap.ps1` installs the
+archive as a new `<version>` folder, and `gupkg-bootstrap.ps1` installs the
 newest row on a fresh machine. The archive's embedded commit must equal the
 listed one.
 

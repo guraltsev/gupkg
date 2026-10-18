@@ -45,7 +45,7 @@ from .core import (
     EXIT_MUTATION_ERROR,
     EXIT_SUCCESS,
     PackageIdentity,
-    is_package_directory_name,
+    is_package_directory,
     log_info,
     write_text_atomic,
 )
@@ -181,7 +181,7 @@ def validate_registry_tree(pkgs_root: Path) -> list[RegistryPackage]:
         seen[key] = selector
         versions = [
             item for item in selector_path.iterdir()
-            if item.is_dir() and is_package_directory_name(item.name)
+            if is_package_directory(item)
         ]
         if len(versions) != 1:
             raise ConfigValidationError(

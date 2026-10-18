@@ -88,8 +88,8 @@ python -c "import tomllib; d=tomllib.load(open('updates.toml','rb')); [print(t['
 ## Adopt a program you already have
 
 1. Put the files where `gupkg` expects them:
-   `C:\opt\<name>\v<version>\App\...` (for example `C:\opt\notepad2\v4.2\App`).
-2. `gupkg config-fix C:\opt\<name>\v<version>` writes a starter `pkg.toml`.
+   `C:\opt\<name>\<version>\App\...` (for example `C:\opt\notepad2\4.2\App`).
+2. `gupkg config-fix C:\opt\<name>\<version>` writes a starter `pkg.toml`.
    If the folder contains a `_shortcuts` folder of `.lnk` files, they are imported
    into `[[shortcut]]` entries automatically.
 3. Edit `pkg.toml` to add PATH entries or wrappers, run
@@ -109,7 +109,7 @@ gupkg manager self repair                   :: repair gupkg's own command shims
 ## Roll back an update
 
 ```bat
-gupkg install C:\opt\<name>\v<older-version> --allow-downgrade
+gupkg install C:\opt\<name>\<older-version> --allow-downgrade
 ```
 
 Old versions are never deleted by `gupkg`, so you can free space by deleting old

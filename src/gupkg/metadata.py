@@ -1,8 +1,8 @@
 """Create and synchronize package-owned ``pkg.toml`` metadata.
 
-The package directory owns the canonical name, version, local revision, and
-portability fields. Synchronization updates only those top-level assignments,
-preserving unrelated tables, comments, ordering, and quoted ``#`` characters.
+The package directory owns the canonical name, version, and local revision, so
+``pkg.toml`` never records them and synchronization removes any stale copy. It
+also keeps the portability field aligned, preserving unrelated tables, comments, ordering, and quoted ``#`` characters.
 
 Usage and API
 -------------
@@ -22,9 +22,9 @@ from __future__ import annotations
 import json
 import re
 import tomllib
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, List, Tuple
 
-from .configuration import validate_top_level_keys
+from .configuration import IGNORED_IDENTITY_KEYS, validate_top_level_keys
 from .core import ConfigValidationError, PackageIdentity
 
 
@@ -67,12 +67,7 @@ def metadata_sync_payload(identity: PackageIdentity) -> Dict[str, Any]:
         Dictionary containing only metadata fields that ``gupkg`` owns.
 
     """
-    return {
-        "name": identity.name,
-        "version": identity.version,
-        "localVersion": identity.local_version,
-        "only_portable": identity.only_portable_by_name,
-    }
+    return {"only_portable": identity.only_portable_by_name}
 
 
 def _parse_editable_top_level_metadata_line(line: str) -> Tuple[str, str, str, str]:
@@ -205,14 +200,21 @@ def sync_config_metadata_text(text: str, identity: PackageIdentity) -> Tuple[str
     lines = text.splitlines(keepends=True)
     first_table: int | None = None
     line_indexes: Dict[str, int] = {}
+    stale_identity: List[int] = []
     for index, line in enumerate(lines):
         if line.strip().startswith("["):
             first_table = index
             break
         match = key_pattern.match(line)
-        if match is None or match.group("key") not in metadata:
+        if match is None:
             continue
         key = match.group("key")
+        if key in IGNORED_IDENTITY_KEYS:
+            _parse_editable_top_level_metadata_line(line.rstrip("\r\n"))
+            stale_identity.append(index)
+            continue
+        if key not in metadata:
+            continue
         _parse_editable_top_level_metadata_line(line.rstrip("\r\n"))
         if key in line_indexes:
             raise ConfigValidationError(f"Duplicate metadata key '{key}' in config.")
@@ -231,6 +233,11 @@ def sync_config_metadata_text(text: str, identity: PackageIdentity) -> Tuple[str
         if existing_value != rendered_value:
             lines[index] = f"{indent}{key} = {rendered_value}{comment_text}{ending}"
             changed = True
+
+    # Drop legacy identity assignments; the folder name is the only source.
+    for index in stale_identity:
+        lines[index] = ""
+        changed = True
 
     # Insert missing keys after the existing metadata block, otherwise before
     # the first table, otherwise at the end of a table-free document.
@@ -301,10 +308,7 @@ def create_starter_config(identity: PackageIdentity) -> str:
     lines = [
         "# Generated automatically by `gupkg`.",
         "",
-        "# `gupkg config-fix` keeps these fields aligned with the package folder name.",
-        f"name = {_to_toml_scalar(metadata['name'])}",
-        f"version = {_to_toml_scalar(metadata['version'])}",
-        f"localVersion = {_to_toml_scalar(metadata['localVersion'])}",
+        "# The package name, version, and local revision come from the folder name only.",
         "# Set only_portable = true when the package stores user config in its folder",
         "# and therefore must only be installed portably.",
         f"only_portable = {_to_toml_scalar(metadata['only_portable'])}",
@@ -342,14 +346,14 @@ def create_starter_config(identity: PackageIdentity) -> str:
         '# url = "https://example.invalid/tool-0.9.0.zip"',
         '# extractSubdir = "tool-0.9.0"',
         "#",
-        "# Or use the package top-level version to select the current origin:",
+        "# Or use the package folder's version to select the current origin:",
         "#   1. omit top-level url/script above",
         "#   2. define a [[origin.versions]] entry whose version matches",
-        "#      the top-level package version above",
+        "#      the package folder's version",
         "# [origin]",
         "#",
         "# [[origin.versions]]",
-        f"# version = {_to_toml_scalar(metadata['version'])}",
+        f"# version = {_to_toml_scalar(identity.version)}",
         '# url = "https://example.invalid/tool-current.zip"',
         "",
         "# Update examples:",

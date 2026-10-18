@@ -164,7 +164,7 @@ def write_receipt(receipt: Path, candidate: Dict[str, Any], identity: PackageIde
         "schemaVersion = 1\n"
         f"candidateId = {_toml_string(candidate['candidateId'])}\n"
         f"version = {_toml_string(identity.version)}\n"
-        f"localVersion = {identity.local_version}\n",
+        f"localVersion = {_toml_string(identity.local_version)}\n",
     )
 
 
@@ -340,7 +340,7 @@ def _candidate_version(state: Dict[str, Any], candidate_id: str, package_root: P
     timestamp = datetime.now(timezone.utc).replace(microsecond=0)
     while True:
         version = timestamp.strftime("%Y%m%d-%H%M%S-git")
-        if version not in taken and not (package_root / f"v{version}").exists():
+        if version not in taken and not (package_root / version).exists():
             break
         timestamp += timedelta(seconds=1)
     assignments.append({"candidateId": candidate_id, "version": version})
@@ -370,7 +370,7 @@ def _normalize_update_candidate(
         "/" in version
         or "\\" in version
         or ".." in version
-        or not is_version_directory_name(f"v{version}")
+        or not is_version_directory_name(version)
     ):
         raise ConfigValidationError("Update candidate version is unsafe for a version directory")
 
@@ -410,9 +410,9 @@ def next_version_identity(
     Returns
     -------
     PackageIdentity
-        Identity of ``<package-root>/v<candidate version>``.
+        Identity of ``<package-root>/<candidate version>``.
     """
-    path = identity.package_root / f"v{candidate['version']}"
+    path = identity.package_root / candidate["version"]
     return PackageIdentity.from_version_path(identity.package_root, path, is_current=False)
 
 

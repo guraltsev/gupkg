@@ -14,11 +14,11 @@ if str(SOURCE_ROOT) not in sys.path:
 # Git does not store empty directories, so a fresh clone lacks the empty ``App``,
 # ``Icons`` and ``Shortcuts`` folders of the fixture packages. Recreate them.
 FIXTURE_VERSIONS = (
-    "BadPathApp/v1.0.0.l1",
-    "GoodApp/v1.2.3.l1",
-    "MismatchApp/v2.0.0.l3",
-    "NoConfigApp/v0.9.0.l1",
-    "PwshApp/v5.4.3.l2",
+    "BadPathApp/1.0.0.local.1",
+    "GoodApp/1.2.3.local.1",
+    "MismatchApp/2.0.0.local.3",
+    "NoConfigApp/0.9.0.local.1",
+    "PwshApp/5.4.3.local.2",
 )
 
 

@@ -34,7 +34,7 @@ def _installed(tmp_path: Path) -> Path:
     current = re.search(
         r'(?m)^__version__ = "([^"]+)"', (REPO / "src" / "gupkg" / "_version.py").read_text(encoding="utf-8")
     )[1]
-    version = tmp_path / "gupkg" / f"v{current}"
+    version = tmp_path / "gupkg" / f"{current}"
     shutil.copytree(
         REPO / "src", version, ignore=shutil.ignore_patterns("__pycache__", "python", "7zip")
     )
@@ -54,8 +54,8 @@ def _release_archive(installed: Path, comment: str) -> bytes:
             if not file.is_file() or relative.parts[:2] == ("gupkg", "python") or relative.name == "removed_module.py":
                 continue
             data = file.read_bytes()
-            if relative.as_posix() in {"pkg.toml", "gupkg/pkg.toml"}:
-                data = re.sub(rb'(?m)^version = "[^"]+"', b'version = "%s"' % NEW_VERSION.encode(), data)
+            if relative.as_posix() == "gupkg/_version.py":
+                data = re.sub(rb'(?m)^__version__ = "[^"]+"', b'__version__ = "%s"' % NEW_VERSION.encode(), data)
             archive.writestr(f"pkg-{COMMIT}/src/{relative.as_posix()}", data)
     return buffer.getvalue()
 
@@ -73,10 +73,10 @@ def test_update_stages_the_listed_commit_as_a_complete_new_version(tmp_path: Pat
     with mock.patch.object(urllib.request, "urlopen", side_effect=responses):
         result = workflows.download_package_update(installed)
 
-    staged = tmp_path / "gupkg" / f"v{NEW_VERSION}"
+    staged = tmp_path / "gupkg" / f"{NEW_VERSION}"
     assert result.ok, result.errors
     assert result.status == "downloaded"
-    assert f'version = "{NEW_VERSION}"' in (staged / "pkg.toml").read_text(encoding="utf-8")
+    assert f'__version__ = "{NEW_VERSION}"' in (staged / "gupkg" / "_version.py").read_text(encoding="utf-8")
     assert (staged / "gupkg" / "cli.py").is_file()
     assert (staged / "pkg.local" / "check_update.py").is_file()
     assert (staged / "gupkg" / "python" / "python.exe").read_text(encoding="utf-8") == "embedded"
@@ -93,7 +93,7 @@ def test_update_reports_current_when_the_table_lists_no_newer_release(tmp_path: 
 
     assert result.ok, result.errors
     assert result.status == "current"
-    assert not (tmp_path / "gupkg" / f"v{NEW_VERSION}").exists()
+    assert not (tmp_path / "gupkg" / f"{NEW_VERSION}").exists()
 
 
 def test_update_refuses_an_archive_built_from_another_commit(tmp_path: Path) -> None:
@@ -106,4 +106,4 @@ def test_update_refuses_an_archive_built_from_another_commit(tmp_path: Path) -> 
 
     assert not result.ok
     assert any("commit" in error for error in result.errors)
-    assert not (tmp_path / "gupkg" / f"v{NEW_VERSION}").exists()
+    assert not (tmp_path / "gupkg" / f"{NEW_VERSION}").exists()

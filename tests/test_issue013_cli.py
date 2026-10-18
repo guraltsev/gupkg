@@ -12,7 +12,7 @@ from gupkg import cli
 
 def _version_directory(root: Path) -> Path:
     """Create a minimal valid package layout for command tests."""
-    version = root / "Example" / "v1.2.3.l1"
+    version = root / "Example" / "1.2.3.local.1"
     (version / "App").mkdir(parents=True)
     return version
 
@@ -61,5 +61,4 @@ def test_config_fix_creates_timestamped_backup_only_when_content_changes(tmp_pat
     backups = list(version.glob("pkg.toml.bak.*"))
     assert len(backups) == 1
     parsed = tomllib.loads(destination.read_text(encoding="utf-8"))
-    assert parsed["name"] == "Example"
-    assert parsed["version"] == "1.2.3"
+    assert not {"name", "version", "localVersion"} & parsed.keys()

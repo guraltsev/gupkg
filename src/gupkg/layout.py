@@ -33,7 +33,7 @@ from .core import (
     PackageIdentity,
     Scope,
     compare_package_versions,
-    is_package_directory_name,
+    is_package_directory,
     is_version_directory_name,
     log_info,
     log_warning,
@@ -68,9 +68,9 @@ def resolve_input_path(raw_path: Path) -> Tuple[PackageIdentity, bool]:
     # instead of being dereferenced before package layout classification.
     candidate = Path(os.path.abspath(os.fspath(Path(raw_path).expanduser())))
 
-    if is_package_directory_name(candidate.name):
-        if not candidate.is_dir():
-            raise ValueError(f"Version directory does not exist: {candidate}")
+    # A version directory is recognized by its pkg.toml (or the template name),
+    # since a package root may have any name.
+    if is_package_directory(candidate):
         package_root = candidate.parent
         identity = PackageIdentity.from_version_path(
             package_root, candidate, is_current=_current_target(package_root) == normalize_path(candidate)
@@ -94,9 +94,7 @@ def resolve_input_path(raw_path: Path) -> Tuple[PackageIdentity, bool]:
 
     # An uninstalled package root is still usable when it holds exactly one
     # version directory; install will create ``current`` later.
-    versions = sorted(
-        child for child in candidate.iterdir() if child.is_dir() and is_package_directory_name(child.name)
-    )
+    versions = sorted(child for child in candidate.iterdir() if is_package_directory(child))
     if not versions:
         raise ValueError(
             f'Package root has no "current" junction and no version directory to use: {candidate}'
