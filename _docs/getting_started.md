@@ -43,12 +43,12 @@ gupkg --help
 ## 2. Describe the program
 
 Create a folder for the package and one folder inside it named
-`pkg.bootstrap`. The name `pkg.bootstrap` marks a *template*: `gupkg` will fetch the
+`_bootstrap`. The name `_bootstrap` marks a *template*: `gupkg` will fetch the
 newest release for you and create the real versioned folder.
 
 ```bat
-mkdir C:\opt\pandoc\pkg.bootstrap
-notepad C:\opt\pandoc\pkg.bootstrap\pkg.toml
+mkdir C:\opt\pandoc\_bootstrap
+notepad C:\opt\pandoc\_bootstrap\pkg.toml
 ```
 
 Paste this into `pkg.toml`:

@@ -186,7 +186,7 @@ def test_missing_named_asset_fails_clearly() -> None:
 def test_github_check_uses_origin_url_and_requires_asset_name(tmp_path) -> None:
     """GitHub mode takes its repository from origin and rejects no asset name."""
     package_root = tmp_path / "Tool"
-    version_path = package_root / "pkg.bootstrap"
+    version_path = package_root / "_bootstrap"
     identity = PackageIdentity.from_version_path(
         package_root,
         version_path,

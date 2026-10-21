@@ -24,10 +24,10 @@ def test_v_prefixed_package_root_resolves_to_its_bootstrap_version(
 ) -> None:
     """A package root named like ``volta`` resolves to its only version directory."""
     root = tmp_path / root_name
-    (root / "pkg.bootstrap").mkdir(parents=True)
+    (root / "_bootstrap").mkdir(parents=True)
 
     identity, from_current = resolve_input_path(root)
 
     assert identity.name == root_name
-    assert identity.version_path == root / "pkg.bootstrap"
+    assert identity.version_path == root / "_bootstrap"
     assert not from_current

@@ -180,8 +180,8 @@ is a valid folder name (`1.2.3`, `2024-05`, `nightly`). Text after the first
 has upstream version `1.2.3` and local revision `000002`. Versions are ordered by
 dotted segments, numbers numerically and text alphabetically, and a version
 without a local revision sorts before the same version with one. A folder counts
-as a version when it contains `pkg.toml`; `current`, `pkg.bootstrap`, and names
-starting with `.` are reserved. `pkg.bootstrap` is a package's update template;
+as a version when it contains `pkg.toml`; `current`, `_bootstrap`, and names
+starting with `.` are reserved. `_bootstrap` is a package's update template;
 promoting it creates the first real version directory. The version is the folder
 name only and is never repeated in `pkg.toml`.
 The package name is the package-root directory name. A name ending in
@@ -749,7 +749,7 @@ def install_step(context):
 Versions beginning with `bootstrap` are templates rather than active payloads.
 Installing one with a Git or module update configuration downloads and
 activates the first immutable version, leaving the template itself without an `App`.
-A Git bootstrap is a `pkg.bootstrap` template with `payload.mode = "git"`.
+A Git bootstrap is a `_bootstrap` template with `payload.mode = "git"`.
 
 ## Configuration, validation, and migration
 

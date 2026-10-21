@@ -48,7 +48,7 @@ _UNSAFE_DIR_CHARACTERS = re.compile(r'[<>:"/\\|?*]|[\x00-\x1f]')
 
 # The one directory name that holds a package's update template. It is not a
 # version: promoting it creates the first real version directory.
-BOOTSTRAP_DIR_NAME = "pkg.bootstrap"
+BOOTSTRAP_DIR_NAME = "_bootstrap"
 BOOTSTRAP_VERSION = "bootstrap"
 
 class ConfigValidationError(ValueError):
@@ -190,7 +190,7 @@ class PackageIdentity:
         ------
         ValueError
             Raised when ``version_path`` is not a safe, non-reserved folder
-            name and is not the ``pkg.bootstrap`` template directory.
+            name and is not the ``_bootstrap`` template directory.
 
         """
         if version_path.name == BOOTSTRAP_DIR_NAME:
@@ -399,7 +399,7 @@ def is_version_directory_name(name: str) -> bool:
     -------
     bool
         ``True`` for a non-empty, path-safe name that is not reserved
-        (``current``, ``pkg.bootstrap``, or a hidden name).
+        (``current``, ``_bootstrap``, or a hidden name).
 
     """
     if not name or name != name.strip() or name.endswith("."):
