@@ -10,6 +10,7 @@ row.
 
 | Version | Commit | Date | Notes |
 |---|---|---|---|
+| 0.17.0 | `800780eb9575f0455e1eaf2c71a3a543f51559e7` | 2026-10-21 | Template folder renamed from pkg.bootstrap to _bootstrap |
 | 0.16.0 | `940ae3705bffbe8a924425706da12263ac0bed20` | 2026-10-18 | Folder name is the single source of identity; plain-string versions with .local.<rev>; no v prefix |
 | 0.15.0 | `2081044d69fadf60e6a94c94b468022d1ae345d1` | 2026-10-17 | TUI progress and scrolling fixes, streamed update checks, saved update status, colors |
 | 0.14.1 | `dee0b5c3167318213127ca583fbfb023dce14a8c` | 2026-10-17 | Point all URLs at the renamed gupkg repository |
