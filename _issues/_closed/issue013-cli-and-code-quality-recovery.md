@@ -1,3 +1,5 @@
+> **Status (2026-10-22):** Closed. The recovery work landed in commits 783170c and 4bbfc55. Its CLI grammar and manager-configuration decisions are superseded by the 1.0 rehaul: see issue 020, issue 029 and `_docs/rehaul_design.md` §10–11. Decision 1's search order (`GUPKG_HOME`, `%APPDATA%`) was never implemented, and settings layering replaces it.
+
 # Issue 013: CLI and code-quality recovery plan
 
 Date: 2026-09-30

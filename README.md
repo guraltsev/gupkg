@@ -35,13 +35,13 @@ gupkg install C:\opt\pandoc\3.6.1 --allow-downgrade    :: roll back
 
 | I want to... | Read |
 | --- | --- |
-| Install my first program in five minutes | [Getting started](docs/getting_started.md) |
-| Do a specific task (nightly updates, rollback, CI checks, ...) | [Cookbook](docs/cookbook.md) |
-| Fix an error message | [Troubleshooting](docs/troubleshooting.md) |
-| Set up and run the multi-package manager, registry, self-repair | [Operations guide](docs/operations.md) |
+| Install my first program in five minutes | [Getting started](_docs/getting_started.md) |
+| Do a specific task (nightly updates, rollback, CI checks, ...) | [Cookbook](_docs/cookbook.md) |
+| Fix an error message | [Troubleshooting](_docs/troubleshooting.md) |
+| Set up and run the multi-package manager, registry, self-repair | [Operations guide](_docs/operations.md) |
 | Look up every `pkg.toml` field | [`pkg.toml` reference](#pkgtoml-reference) below |
 | Look up every command and option | `gupkg --help` and `gupkg <command> --help`, or [Commands and options](#commands-and-options) below |
-| Understand or change the code | [Development guide](docs/development_guide.md) |
+| Understand or change the code | [Development guide](_docs/development_guide.md) |
 
 Requires Windows and Python 3.11 or newer (the release bundle includes its own
 runtime). Git is needed only for Git-based packages; network access only when a
@@ -83,9 +83,9 @@ package on a Python package index. Pick the route that fits:
   The launcher prefers a package-local native command, then the adjacent
   `src\gupkg\gupkg.cmd` bootstrap, then a `gupkg.exe` on `PATH`.
 
-Then open a new terminal and check it with `gupkg --version`. The [operations guide](docs/operations.md)
+Then open a new terminal and check it with `gupkg --version`. The [operations guide](_docs/operations.md)
 covers release build inputs, manager setup, the registry, and recovery commands,
-and [Getting started](docs/getting_started.md) installs a first program.
+and [Getting started](_docs/getting_started.md) installs a first program.
 
 ## What gupkg manages
 
@@ -783,6 +783,6 @@ runtime package API.
 
 ## Development
 
-Implementation and test guidance is in [docs/development_guide.md](docs/development_guide.md).
+Implementation and test guidance is in [_docs/development_guide.md](_docs/development_guide.md).
 The runtime module overview and migration-helper details are in
 [src/gupkg/README.md](src/gupkg/README.md).

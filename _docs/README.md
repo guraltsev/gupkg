@@ -29,8 +29,13 @@ options for the version you have installed.
   visual style for the list-first terminal interfaces.
 - [../tests/manual_smoke.md](../tests/manual_smoke.md) — Windows, elevation, and
   release smoke checks.
-- [issues/](issues/) — design records and acceptance criteria for past and
-  open work.
+- [rehaul_design.md](rehaul_design.md) — **target design for gupkg 1.0**:
+  package state model, system/user/portable modes, `pkg.toml` format 2,
+  built-in services, checksum policy, unified CLI, events and logs, UI and
+  testability. Implemented by issues 020–032.
+- [../_issues/](../_issues/) — design records and acceptance criteria for
+  past and open work. The 1.0 epic is
+  [issue 020](../_issues/issue020-rehaul-epic.md).
 
 `AGENTS.md` is only a pointer to the style and testing files. Put human-facing
 rationale and style rules here.

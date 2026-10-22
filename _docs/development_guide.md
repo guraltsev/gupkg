@@ -1,5 +1,10 @@
 # Development architecture
 
+> This page describes the 0.17 architecture as it is implemented. The 1.0
+> rehaul replaces it. New work should follow
+> [rehaul_design.md](rehaul_design.md) and the issue that owns the area
+> (epic: `_issues/issue020-rehaul-epic.md`).
+
 `src/gupkg/cli.py` is the sole command-line boundary: it owns grammar, one-time
 context resolution, dispatch, rendering, and exit translation. `gupkg.py` owns
 public single-package workflows and has no CLI compatibility entrypoint.

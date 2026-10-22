@@ -1,3 +1,5 @@
+> **Status (2026-10-22):** Closed as superseded. The standalone package, bootstrap script, registry sync and `manager install` landed in 0.13–0.17. The registry layout, registry-backed installs and manager configuration are redesigned by issue 020: see issues 024, 029 and 031 and `_docs/rehaul_design.md` §5, §11 and §17.
+
 ﻿# Design: standalone self-hosting package and GitHub registry
 
 Date: 2026-09-26

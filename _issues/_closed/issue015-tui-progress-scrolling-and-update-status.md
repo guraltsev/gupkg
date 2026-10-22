@@ -1,3 +1,5 @@
+> **Status (2026-10-22):** Closed. Fixes 1–4 landed in commit ea06914. The checklist below was never ticked. The remaining UI problems are tracked by issue 022 (events and logs) and issue 030 (UI redesign).
+
 # Issue 015: TUI progress, scrolling, and update-status feedback
 
 Date: 2026-10-17

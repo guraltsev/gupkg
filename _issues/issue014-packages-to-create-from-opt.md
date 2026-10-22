@@ -1,3 +1,5 @@
+> **Status (2026-10-22):** Still open, re-targeted. New packages are written in the registry 2 layout (`<name>/_check_updates/` plus pinned `<name>/<version>/`, format 2) once issue 031 lands. Read `pkg.bootstrap` below as `_check_updates`, and `pkgs\` as the `gupkg-registry` repository. Prefer the built-in services of issue 026 over `module` hooks.
+
 # Issue 014: Packages to create in `pkgs\` from `c:\opt`
 
 Date: 2026-10-15
