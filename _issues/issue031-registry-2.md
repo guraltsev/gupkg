@@ -13,11 +13,12 @@ Continues issue 014 (new packages), which is now written against this layout.
 - **Many packages skip checksums.** 35 set `ignore_checksum = true`.
   The user therefore gets unverified payloads, or must use
   `--no-checksum`, which the owner's new default refuses.
-- **The hooks are duplicated and buggy.** There are 63 hook files, and the
+- **The hooks are duplicated and buggy.** There are 62 hook files, and the
   bugs are listed in issue 026.
-- **Packages with portable settings declare `only_portable = false`** and lose
-  their settings on update.
-  - Settings beside the executable, per the registry: tixati and SumatraPDF.
+- **Packages with portable settings lose their settings on update**, whatever
+  `only_portable` says.
+  - Settings beside the executable, per the registry: tixati and SumatraPDF
+    (both declare `only_portable = true`).
   - Settings beside the executable, per upstream behaviour (unverified):
     Notepad++, HWiNFO, CrystalDisk*, Rufus, and probably KeePassXC.
   - Switchable to portable: vscode, obsstudio, firefox, winscp, winmerge.
@@ -77,6 +78,7 @@ Continues issue 014 (new packages), which is now written against this layout.
       the expected new version directories.
 - [ ] No more than 13 hook files remain, each with a "why no service" note
       in its docstring.
-- [ ] `gupkg install <name>` and `gupkg update <name>` for a registry
-      package never run a tracker (D11). Upstream checks happen only in CI
+- [ ] Under `--sandbox`, `gupkg install <name>` and `gupkg update <name>` for
+      a registry package fetch only URLs written in the selected version's
+      `pkg.toml` (D10, D11). Upstream checks happen only in CI
       autoupdate, or when the user runs `gupkg check <name>` locally.

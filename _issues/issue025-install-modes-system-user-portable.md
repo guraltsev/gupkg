@@ -56,9 +56,9 @@ Epic: 020. Design: `_docs/rehaul_design.md` §6
    `auto` is consulted only when nothing earlier decides, and it means the
    same in every command. The chosen mode and the reason for it (for example
    `system (auto: elevated)`) are printed and logged.
-3. **Mode support is checked before any work.** `modes = [...]` in
-   `pkg.toml` is enforced up front. System mode never allows portable
-   packages.
+3. **Mode support is checked before any work.** `modes = [...]` in `pkg.toml`
+   is enforced up front. A portable root is never the system root or inside it
+   (§6.3).
 4. **Elevation for system mode** follows threat model T1 (design §9.6,
    D19). It is checked once, up front, for the whole CLI call.
    - **Only an admin-only gupkg elevates, and only by relaunching itself.**
@@ -96,33 +96,30 @@ Epic: 020. Design: `_docs/rehaul_design.md` §6
 ## Acceptance criteria
 
 - [ ] **T1 relaunch.** A gupkg running from a user-writable location refuses
-      to relaunch elevated. An elevated gupkg given
-      `--settings <user-writable path>`, or a target outside the system root
-      for a system-mode operation, refuses, or treats the target as data to
-      copy (design §21.4).
+      to relaunch elevated. It reports that system installs
+      need the system gupkg. An elevated run ignores a `--settings` file
+      outside the system root. A relaunched elevated child refuses any target
+      that is not a package name or a path inside the system root. From an
+      admin shell, `install <folder outside every root> --mode system` copies
+      the folder into the system root and installs from the copy (design
+      §21.4).
 
-- [ ] `gupkg install X --mode user`, the same command with `--mode system`,
-      and the manager-driven equivalents all put shortcuts, shims, the
-      environment and PATH in the locations configured in the settings, and
-      are identical in the CLI and the UI.
+- [ ] For `user` and `system`, the resolved `ModeContext` takes bin, Start
+      Menu, environment target and root from `[integration.*]` and `[roots]`,
+      including non-default values.
 - [ ] With `default_mode = "auto"` and no `--mode`:
-  - `gupkg install X` from an elevated shell installs in system mode and
-    prints `system (auto: elevated)`;
-  - from a normal shell it installs in user mode;
-  - an elevated install of a package without `system` in `modes` installs in
-    user mode, with a notice.
-- [ ] An existing user-mode package, updated from an elevated shell, stays
-      in user mode: the install record wins over `auto`.
-- [ ] A portable fixture app that writes `settings.ini` and `Data\` into its
-      `App` keeps both across `update` and `switch` back and forth. The test
-      runs end to end against `FakeSystem`.
-- [ ] Installing a package with `[nonportable] remove = ["portable"]` in
-      user mode removes the marker. In portable mode, it creates the
-      `[portable] markers` instead.
-- [ ] `--mode system` on a package without `system` in `modes` fails before
-      any download. So does portable mode on a package without `portable`.
-- [ ] With `integrate = "none"`, a portable install makes no HKCU, Start Menu
-      or PATH changes. The test checks `FakeSystem` state.
+  - an admin-only gupkg in an elevated process (`FakeSystem` elevation set)
+    resolves `system`, with the reason `system (auto: elevated)`;
+  - a non-elevated process resolves `user`;
+  - an elevated process refuses a package without `system` in `modes`, and
+    says to run it from a non-elevated shell;
+  - `portable` is never resolved by `auto`.
+- [ ] An existing user-mode package resolves to user mode whatever the
+      elevation: the install record wins over `auto`. A path target inside a
+      configured root keeps that root's mode, whatever the elevation.
+- [ ] The end-to-end checks of portable persistence, `[nonportable]`,
+      unsupported modes and `integrate = "none"` are acceptance criteria of
+      issue 028, which provides the engine they need.
 
 ## Notes
 

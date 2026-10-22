@@ -1,0 +1,28 @@
+Spike S2 (job 07), run 2026-10-22 as a standard user (filtered admin token,
+medium integrity), from:
+  powershell -NoProfile -ExecutionPolicy Bypass -File run-s2.ps1 -WorkDir <temp> -ShellExecute
+
+windows: 26H2 build 26300.9711
+smart app control (VerifiedAndReputablePolicyState, 0=off 1=on 2=evaluation): 0
+zip size MB: 23.8
+files still marked after recursive Unblock-File on the extracted Explorer tree: 0
+
+Zip                         Extract   Files  WithMotw  install.cmd  python.exe  from cmd.exe           via ShellExecute
+MotW (ZoneId=3)             explorer  2720   2720      marked       marked      ran (python 3.12.10)   did not run within 20 s
+MotW (ZoneId=3)             tar       2974   0         clean        clean       ran                    ran
+Unblock-File before extract explorer  2321   0         clean        clean       ran                    ran
+Unblock-File before extract tar       2974   0         clean        clean       ran                    ran
+
+Notes
+- The full tree has 2974 files. Explorer's CopyHere is asynchronous, and the
+  harness stopped counting before it finished (2720 and 2321). install.cmd and
+  python.exe were present in every run, so the results above stand.
+- "did not run within 20 s" means nothing was written by install.cmd. The
+  job holding the ShellExecute call was then stopped. That is consistent
+  with the Attachment Manager's "Open File - Security Warning" prompt for a
+  zone-3 .cmd file; the prompt itself could not be observed in this
+  non-interactive session.
+- Mark of the Web was applied by writing the Zone.Identifier stream that
+  Edge writes (ZoneId=3, ReferrerUrl, HostUrl). Edge itself, SmartScreen
+  toggling and Smart App Control (off on this machine; it cannot be turned
+  back on without reinstalling Windows) were not exercised.

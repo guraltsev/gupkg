@@ -69,7 +69,8 @@ The owner's decisions (2026-10-22) that shape this issue:
    - It parses the arguments, loads the settings, builds the reporter
      (issue 022), calls `engine.lifecycle` or `catalog`, renders the
      `Result`, and returns the exit code.
-   - Exit codes: 0, 2, 3, 4, and 5 for declined or input needed.
+   - Exit codes: 0, 2, 3, 4, 5 for declined or input needed, and 6 when
+     the package needs a newer gupkg (issue 033).
    - The only prompts left are confirmations, such as `uninstall --purge`
      and admitting a proposal. They go through the console renderer and are
      answered by `--yes` or refused by `--no-input`.
@@ -103,27 +104,33 @@ The owner's decisions (2026-10-22) that shape this issue:
 
 ## Acceptance criteria
 
-- [ ] Every row of the §10.3 table works, and each old spelling prints the new
-      one during 1.0.x.
-- [ ] `gupkg install vscode --mode user` and `gupkg install C:\opt\vscode`
-      give identical integration destinations, because both use the
-      `ModeContext` from the settings.
-- [ ] From an elevated shell, `gupkg install X` with no `--mode` installs in
+- [ ] During 1.0.x each 0.17 spelling in the §10.3 table prints its 1.0
+      spelling. CLI rows then run it; rows whose 1.0 spelling is a
+      `gupkg-manager` command run nothing; `repair-deps` and `update-deps`
+      are unknown commands.
+- [ ] `gupkg install vscode --mode user` and `gupkg install
+      %USERPROFILE%\opt\vscode` give identical integration destinations,
+      because both use the `ModeContext` from the settings.
+- [ ] With the system gupkg in an elevated process, `gupkg install X` with
+      no `--mode` installs in
       system mode and prints `system (auto: elevated)`. From a normal shell it
       installs in user mode.
-- [ ] `gupkg check X` on a tracked package writes `X\<new version>\` with no
-      `App`, and changes nothing else.
+- [ ] `gupkg check X` on a tracked user package writes `X\<new version>\`
+      with no `App`, installs nothing, and leaves `current`, the install
+      record and the `FakeSystem` integration state unchanged.
 - [ ] `gupkg update X` after that installs the new version without contacting
-      any URL except the new version's `[source]`. This is verified with the
-      `FakeSystem` fetch log.
+      any URL except those written in the new version's `pkg.toml`. This is
+      verified with the `FakeSystem` fetch log.
 - [ ] `gupkg update X`, when no newer version is known, reports "up to date"
       and makes no network request.
-- [ ] `--plan --json` changes nothing on disk, and the document names every
-      target's checksum status and elevation need.
+- [ ] `--plan --json` changes nothing on disk except the run's log files, and
+      the document names every target's checksum status and elevation need.
 - [ ] A run with `--events-file` from an elevated child produces a JSON-lines
       file that a non-elevated reader can follow to the final result line.
-- [ ] `rg "input\(|isatty" src/gupkg/cli.py` finds nothing: confirmations
-      live in the renderer.
+- [ ] `gupkg uninstall X --purge --no-input` exits 5 with a structured error
+      and changes nothing; with `--yes` it proceeds without reading stdin.
+- [ ] `gupkg update --all` and `gupkg update --check` are usage errors (exit
+      2); the first names `gupkg-manager update --all` (D11, D12).
 
 ## Tests
 

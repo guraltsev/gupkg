@@ -74,8 +74,8 @@ forward. The documentation also has existing drift from the code:
 7. **Release 1.0.0**, using the release tooling of issue 016
    (`tools/release.py`):
    - `RELEASES.md` gets a migration section;
-   - `gupkg-bootstrap.ps1` writes settings schema 3 and runs
-     `gupkg settings init`;
+   - `gupkg-bootstrap.ps1` is issue 033's thin script; it neither writes
+     settings nor runs `settings init`;
    - the documentation rewrite in item 4 builds on the text that issues 016
      and 018 wrote for the new distribution.
 8. **Issue hygiene at the end:** move 020–031 and 033 to `_issues/_closed/` (016–019 close on their own when stage 0 ships), together

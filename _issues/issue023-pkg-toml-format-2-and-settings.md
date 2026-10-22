@@ -21,7 +21,7 @@ Epic: 020. Design: `_docs/rehaul_design.md` §4, §7, §11, §12 (`model/`)
   `commands.automatic_scope` uses the suffix while `gupkg.py` uses the flag.
 - **Bootstrap detection is fragile.**
   - It is done by string prefix: `identity.version.startswith("bootstrap")`
-    in 5 places.
+    in 4 places.
   - `_bootstrap` sorts as the newest version
     (`core.compare_package_versions`), so `local_version` becomes
     `"_bootstrap"`.
@@ -46,7 +46,8 @@ Epic: 020. Design: `_docs/rehaul_design.md` §4, §7, §11, §12 (`model/`)
      `subdir`, `nested`, `extract`, `require`, `checksum`, `installer`,
      `module`, `git.ref`/`git.commit`;
    - `[track]` with `check_url` (or `repo`/`repo_url` for the
-     github/gitlab/git providers), valid in `_check_updates` only (provider tables per issue 026);
+     github/gitlab/git providers), valid in `_check_updates` only
+     (provider-specific fields are added and validated by issue 026);
    - `[[prepare]]`, `[portable]`, `[nonportable]`;
    - `[[shortcut]]`, `[[env]]`, `[[path]]`, `[[shim]]` (the former `[[bin]]`,
      same fields in `snake_case`).
@@ -79,7 +80,8 @@ Epic: 020. Design: `_docs/rehaul_design.md` §4, §7, §11, §12 (`model/`)
    The rendered directory is then an ordinary version directory; it is never
    installed as part of the check.
 6. **`model/settings.py`.** Schema 3 as in §11:
-   - layered loading from built-in defaults, then the version directory,
+   - layered loading from built-in defaults, then `$App\settings.toml` of the
+     running gupkg,
      the system root's `.gupkg\settings.toml`, the user root's
      `.gupkg\settings.toml` (skipped when elevated or in system mode). There
      is nothing in AppData or ProgramData (design §9.7, D20),
@@ -114,18 +116,18 @@ Epic: 020. Design: `_docs/rehaul_design.md` §4, §7, §11, §12 (`model/`)
       than one `[source]`, is rejected. `${version}` always equals the
       version directory's name.
 
-- [ ] **`[source] shipped`.** It defaults to `true` without a
-      `download_url` and to `false` with one, and `pkg migrate` writes it
-      explicitly.
+- [ ] **`[source] shipped`.** When the key is absent it is `true` without a
+      `download_url` and `false` with one.
   - `shipped = false` without a `download_url` is rejected.
-  - `shipped = true` with a `download_url` is accepted, and treated as
-    shipped: `cleanup` and `install --refresh` leave `App` alone.
-  - A missing `App` in that case is recovered from the `download_url`.
-- [ ] **The three URLs are distinct keys.** `project_url`,
-      `[source] download_url` and `[track] check_url` are separate, and
-      `project_url` never reaches the HTTP client: a test fails if it is
-      fetched. The 0.17 `homepage` and `[origin] url` are rejected, with the
-      new key named in the error.
+  - `shipped = true` with a `download_url` is accepted and reported as
+    shipped with a recovery source.
+  - Validating a version whose `App` is missing or empty and that has no
+    `download_url` fails with exactly `App is missing and no way to recover
+    it.`
+- [ ] **The three URLs are distinct keys.** `project_url`, `[source]
+      download_url` and `[track] check_url` are separate, and a `check_url`,
+      `repo` or `repo_url` outside `[track]` is rejected. The 0.17 `homepage`
+      and `[origin] url` are rejected, with the new key named in the error.
 
 - [ ] Every example in §7 parses. Every 0.17 spelling (`targetPath`, `Name`,
       `ignore_checksum`, `[origin]`, `[update]`, `only_portable`, `[[bin]]`)
@@ -140,9 +142,10 @@ Epic: 020. Design: `_docs/rehaul_design.md` §4, §7, §11, §12 (`model/`)
       templated source URL fails validation with an error that names
       `_check_updates`. `render_pinned` output never contains a tracking
       hook.
-- [ ] `gupkg settings show` (or a test of the loader) lists each effective
-      value with its source layer, and the user layer is ignored when the
-      run is elevated.
+- [ ] The settings loader reports each effective value with its source
+      layer. The user layer is ignored in elevated and system-mode runs, a
+      `--settings` file outside the system root is ignored in an elevated
+      run, and no layer is read from AppData or ProgramData.
 
 ## Tests
 

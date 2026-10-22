@@ -38,8 +38,9 @@ to themselves.
   own install logic (place, `gupkg install`, `manager init`), which other
   distributions cannot use.
 - **gupkg keeps data outside its roots.** It uses
-  `%LOCALAPPDATA%\gupkg\embedded` (removed by issue 016) and has a 0.17
-  config search in `%APPDATA%` (issue 013).
+  `%LOCALAPPDATA%\gupkg\embedded` (removed by issue 016) (removed by
+  issue 016). Issue 013's planned `%APPDATA%` config search was never
+  implemented; 0.17 reads `gupkg-config.toml` only beside `manager.py`.
 
 ## Scope
 
@@ -48,8 +49,9 @@ to themselves.
      directories.
    - The engine copies and verifies a bundled tree, and never executes it.
    - A bundled tree carries `VERSION` and `MANIFEST.sha256` (issue 016).
-2. **`[source] local = "<dir>"`** (the schema is issue 023, the unpacking
-   service is issue 026).
+2. **`[source] local = "<dir>"`** (this issue adds it, with `requires_gupkg`
+   and `[root_forwarder]`, to the issue 023 model and the issue 026 unpack
+   services).
    - It populates `App` by **copying** a verified folder shipped in the
      version directory, and falls back to `download_url`.
    - It never moves the folder.
@@ -159,9 +161,10 @@ to themselves.
   - No registry value is read other than `PATH` for its own
     read-modify-write.
   - Deleting the Downloads folder leaves the program working.
-- [ ] **The bundled install manages itself.** `current\gupkg-manager.cmd`
-      runs `check` and then `update` with the bundled copy, and the new
-      version directory has a carried-forward copy. `uninstall --purge`
+- [ ] **The bundled install manages itself.** With no installed gupkg in the
+      root, `current\gupkg-manager.cmd` runs the bundled copy; a check then an
+      update through it installs the new version, whose directory has a
+      carried-forward `gupkg\`. `uninstall --purge`
       leaves only `.gupkg\logs`.
 - [ ] **Bootstrap.** `gupkg-bootstrap.cmd` in user mode, and the same script
       run elevated in system mode, install the gupkg package at
@@ -188,14 +191,29 @@ to themselves.
     (fail-closed).
 - [ ] **Squatted system root.** A `C:\opt` pre-created by a standard user
       makes the system bootstrap refuse.
-- [ ] **Mark of the Web.** The behaviour of a ZIP downloaded from the
-      internet (SmartScreen, Smart App Control) is recorded here, and the
-      troubleshooting guide documents the remedy.
+- [ ] **Mark of the Web.** A manual clean-VM run of `install.cmd` from a
+      downloaded ZIP is recorded here, and the troubleshooting guide
+      documents the SmartScreen / Smart App Control behaviour and the remedy
+      (job 07, spike S2: Explorer extraction marks every file, `tar -xf`
+      marks none, and `Unblock-File` on the ZIP before extraction clears
+      it).
 - [ ] **Self-update.** `gupkg self check` then `gupkg self update` moves to a
       new release. The new `App` is verified, and the forwarder (through
       `current`) needs no change.
 - [ ] **Uninstalling gupkg.** `gupkg uninstall gupkg` removes the forwarder,
-      and package launchers in that root fall back to their bundled copies.
+      and package launchers in that root fall back to their bundled copies
+      where they have one, and otherwise print the bootstrap URL and exit
+      9009.
+- [ ] **System install of a distribution** (D17). From an admin shell, the
+      installed system gupkg's `gupkg install <folder in Downloads> --mode
+      system` copies the folder into `C:\opt\<name>\<v>\` and installs from
+      the copy; the `FakeSystem` process log contains no path under the
+      source folder. `--in-place` installs where the folder is, as an ad-hoc
+      root.
+- [ ] **Recoverable bundled installs.** After deleting every `App`,
+      `install --refresh` repopulates a version with `local` and a
+      `download_url`, and a bundled install, whose `gupkg\` folder stays
+      intact (moved from issue 028).
 
 ## Tests
 

@@ -23,13 +23,13 @@ are covered by issues 016 and 019.
 
 | Where | What it does |
 |---|---|
-| `src/gupkg/gupkg.cmd:59-64` | Ordinary launch: honors `GUPKG_PYTHON`, then a `gupkg.python` file beside the launcher. |
+| `src/gupkg/gupkg.cmd:60-64` | Ordinary launch: honors `GUPKG_PYTHON`, then a `gupkg.python` file beside the launcher. |
 | `src/gupkg/gupkg.cmd:66-72` | Uses the bundled runtime only if a version probe passes, and otherwise falls through. |
 | `src/gupkg/gupkg.cmd:74-88` | `call python -c ...`, then `call py -3 -c ...`: the first Python 3.11+ on `PATH` or registered with the `py` launcher wins. |
 | `src/gupkg/gupkg.cmd:14-18` | Ordinary launch prepends the package parent to the caller's `PYTHONPATH`. That only works because ordinary launches do not use `-I`. |
-| `src/gupkg/gupkg.cmd:93-101` | Two run labels (`:run`, `:run_embedded`) because the interpreter might not be the bundled one. |
+| `src/gupkg/gupkg.cmd:93-102` | Two run labels (`:run`, `:run_embedded`) because the interpreter might not be the bundled one. |
 | `src/gupkg/bootstrap.py:60, 79-85` | `--embedded` flag and the `GUPKG_BUNDLED_RUNTIME` marker tell the code whether it is on the bundled runtime. |
-| `src/gupkg/elevation.py:125-160` (`enforce_elevated_runtime`) | Checks `sys.executable` is the bundled `python.exe` and `-I -s` is active, **only for elevated runs**. |
+| `src/gupkg/elevation.py:127-168` (`enforce_elevated_runtime`) | Checks `sys.executable` is the bundled `python.exe` and `-I -s` is active, **only for elevated runs**. |
 
 As a result, a non-elevated `gupkg` can run on any Python the user has
 installed, with that Python's own site-packages, `PYTHONPATH` and user site.
@@ -155,8 +155,9 @@ every entry point the rehaul adds:
 - **`gupkg-manager`** (issue 030) gets the same single launch path,
   `gupkg-manager.cmd`, which runs `python\python.exe -I -s -B` relative to
   itself, and calls `enforce_bundled_runtime` on start.
-- **The manager starts its sibling `gupkg.cmd`** from its own version
-  directory and never searches `PATH`. This is the same rule as the
+- **The manager starts the `gupkg.cmd` next to it in the same gupkg tree**
+  (`$App\gupkg.cmd` for an installed gupkg, `<version>\gupkg\gupkg.cmd` for a
+  bundled one) and never searches `PATH`. This is the same rule as the
   interpreter rule here, applied to the CLI (§10.4 of the design).
 - **Elevated relaunch.** It relaunches the same bundled launcher (issues 025
   and 029), so elevated and non-elevated runs start one interpreter.

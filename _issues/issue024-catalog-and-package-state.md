@@ -90,17 +90,19 @@ This causes defects the owner has run into:
       status and on the chosen install or update candidate. It builds roots
       on a temporary directory with a fixture registry cache. Each row is its
       own test case, labelled by an `id`.
-- [ ] A root containing `_check_updates` plus two versions, with no
-      `current`, installs the newest valid version, and `list` shows it as
-      `local` with its real version, not `_bootstrap`.
-- [ ] An invalid `_check_updates` marks only the tracker as invalid. The
-      package's installed version still updates from local and registry
-      versions.
-- [ ] Installing `firefox` from the registry when `user\firefox\_bootstrap`
-      already exists does not silently reuse the stale seed. A migrated
-      tracker is refreshed, or reported as diverged.
-- [ ] A package installed from an ad-hoc path appears in `gupkg list`, and
-      in `gupkg-manager update --all`.
+- [ ] For a package root holding `_check_updates` plus two versions and no
+      `current`, the catalog shows the package as `local`, and its install
+      candidate is the newest valid version, never `_check_updates`.
+- [ ] An invalid `_check_updates` marks only the tracker as invalid. For an
+      installed package, the update candidates still include the newer local
+      and linked-registry versions.
+- [ ] Selecting `firefox` from a newer registry revision, when
+      `user\firefox\_check_updates` was copied from an older one, refreshes the
+      tracker if its hash matches the recorded copy and keeps it otherwise. A
+      local version directory whose `pkg.toml` differs from the registry's is
+      kept and reported as `diverged`.
+- [ ] A package root in the `adhoc` list of `state.toml` appears in
+      `catalog.list()` with its mode.
 - [ ] For a package that has only `_check_updates`, `install` reports
       "no version known yet; run `gupkg check <name>`" and makes no network
       request.

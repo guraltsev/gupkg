@@ -114,20 +114,22 @@ Epic: 020. Design: `_docs/rehaul_design.md` §7.4, §13
       admin-only `_check_updates`, never from the proposal) and installs it.
 - [ ] `install` and `update` on a package with only `_check_updates` make no
       tracker request. The `FakeSystem` fetch log is empty.
-- [ ] **`App` is disposable** (design §4). For every fixture package, the
+- [ ] **A recoverable `App` is disposable** (design §4). For every fixture
+      version that has a `download_url`, whatever its `shipped` value, the
       following leaves the package `installed` and healthy, with
       integration unchanged:
       1. delete the `App` of every version, including the current one;
       2. run `install --refresh` (or `doctor --fix`).
 
-      This holds for every version with a `download_url`, with or without
-      `local`, and for a bundled install with its bundled `gupkg\` intact.
+      The same check for `local` and for bundled installs is an acceptance
+      criterion of issue 033.
 - [ ] **A shipped `App` is never lost.** For a version whose `[source]` has
       `[source] shipped = true`, explicit or by default when there is no
       `download_url`:
   - `cleanup` and plain `uninstall` keep its `App`;
-  - `uninstall --purge` asks for an explicit confirmation that names it as
-    unrecoverable;
+  - `uninstall --purge` asks for an explicit confirmation (with `--no-input`
+    it exits 5 and deletes nothing), which names the `App` as unrecoverable
+    when there is no `download_url`;
   - `doctor` reports a modified file when the version carries an `App`
     manifest.
   - With a `download_url` as well, the shipped `App` is still never dropped
@@ -143,3 +145,16 @@ Epic: 020. Design: `_docs/rehaul_design.md` §7.4, §13
       `uninstall` removes its shortcuts, wrappers and PATH entry.
 - [ ] A 3-package batch where package 2 fails still installs package 3, and
       both the summary and the log name the failure.
+- [ ] **Install modes end to end** (moved from issue 025):
+  - a portable fixture app that writes `settings.ini` and `Data\` into its
+    `App` keeps both across `update` and `switch` back and forth;
+  - installing a package with `[nonportable] remove = ["portable"]` in user
+    mode removes the marker, and in portable mode it creates the
+    `[portable] markers` instead;
+  - `--mode system` on a package without `system` in `modes` fails before
+    any download, and so does portable mode on a package without
+    `portable`;
+  - with `integrate = "none"`, a portable install makes no HKCU, Start Menu
+    or PATH changes.
+
+  Each runs end to end against `FakeSystem`.

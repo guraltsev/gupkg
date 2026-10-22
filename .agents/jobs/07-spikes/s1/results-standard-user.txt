@@ -1,0 +1,112 @@
+windows: 26H2 build 26300.9711
+powershell: 5.1.26100.9711
+whoami /groups integrity: Mandatory Label\Medium Mandatory Level  Label  S-1-16-8192
+language mode, plain -Command: FullLanguage
+language mode, __PSLockdownPolicy=4 in process env: FullLanguage
+language mode, CLM set in session: ConstrainedLanguage / method call blocked
+Get-Acl on junction == Get-Acl on target: False
+recursive icacls /save over C:\opt\gupkg: 1655 items, 3304 ACL entries, 331 ms
+
+
+Variant  Case  Exit  Ms Output
+-------  ----  ----  -- ------
+full  1 admin-only C:\opt + its gupkg version dir  0 887  check: GUPKG-ACL-OK | elevated=no lines=1 | RESULT=PROCEED
+full  2 admin-only root, user-writable version dir  1 665  check: GUPKG-ACL-FAIL <work>\fixtures\granted\myapp\1.0: owner <user-sid> is not Administrators, SYSTEM or TrustedInstaller |  check:
+  GUPKG-ACL-FAIL <work>\fixtures\granted\myapp\1.0: BU has write-type rights (A;OICI;0x1301bf;;;BU) |  check: GUPKG-ACL-FAIL
+  <work>\fixtures\granted\myapp\1.0: <user-sid> has write-type rights (A;OICIID;0x1301bf;;;<user-sid>) |
+  check: GUPKG-ACL-FAIL <work>\fixtures\granted\myapp\1.0: <user-sid> has write-type rights
+  (A;OICIID;0x1301bf;;;<user-sid>) |  check: GUPKG-ACL-FAIL <work>\fixtures\granted\myapp\1.0:
+  <user-sid> has write-type rights (A;OICIID;0x1301ff;;;<user-sid>) |  check: GUPKG-ACL-FAIL
+  <work>\fixtures\granted\myapp\1.0: <user-sid> has write-type rights
+  (A;OICIID;0x1301ff;;;<user-sid>) |  check: GUPKG-ACL-FAIL <work>\fixtures\granted\myapp\1.0:
+  <user-sid> has write-type rights (A;OICIID;0x1301ff;;;<user-sid>) |  check: GUPKG-ACL-FAIL
+  <work>\fixtures\granted\myapp\1.0: <user-sid> has write-type rights (A;OICIID;FA;;;<user-sid>) |
+  elevated=no lines=8 | RESULT=REFUSE
+full  2b admin-owned dir with Users write (ProgramData)  1 650  check: GUPKG-ACL-FAIL C:\ProgramData: BU has write-type rights (A;CI;DCLCRPCR;;;BU) | elevated=no lines=1 | RESULT=REFUSE
+full  2c admin-only C:\Windows, user-writable Tasks  1 595  check: GUPKG-ACL-FAIL C:\Windows\Tasks: AU has write-type rights (A;;0x1200ab;;;AU) | elevated=no lines=1 | RESULT=REFUSE
+full  2d admin-only C:\Windows + System32 (sibling Tasks is user-writable)  0 641  check: GUPKG-ACL-OK | elevated=no lines=1 | RESULT=PROCEED
+full  3 squatted root (user-created C:\opt)  1 774  check: GUPKG-ACL-FAIL <work>\fixtures\squatted-opt: owner <user-sid> is not Administrators, SYSTEM or TrustedInstaller |  check:
+  GUPKG-ACL-FAIL <work>\fixtures\squatted-opt: AU has write-type rights (A;OICI;0x1301bf;;;AU) |  check: GUPKG-ACL-FAIL
+  <work>\fixtures\squatted-opt\myapp\1.0: owner <user-sid> is not Administrators, SYSTEM or TrustedInstaller |  check: GUPKG-ACL-FAIL
+  <work>\fixtures\squatted-opt\myapp\1.0: AU has write-type rights (A;OICIID;0x1301bf;;;AU) | elevated=no lines=4 | RESULT=REFUSE
+full  4 Downloads  1 772  check: GUPKG-ACL-FAIL %USERPROFILE%\Downloads\gupkg-s1-spike: owner <user-sid> is not Administrators, SYSTEM or TrustedInstaller |  check: GUPKG-ACL-FAIL %USERPROFILE%\Downloads\gupkg-s1-spike: <user-sid> has write-type
+  rights (A;OICIID;FA;;;<user-sid>) |  check: GUPKG-ACL-FAIL %USERPROFILE%\Downloads\gupkg-s1-spike\myapp\1.0: owner <user-sid> is not Administrators, SYSTEM or TrustedInstaller |  check: GUPKG-ACL-FAIL
+  %USERPROFILE%\Downloads\gupkg-s1-spike\myapp\1.0: <user-sid> has write-type rights (A;OICIID;FA;;;<user-sid>) | elevated=no lines=4 | RESULT=REFUSE
+full  5 null DACL  1 786  check: GUPKG-ACL-FAIL <work>\fixtures\null-dacl: null DACL (everyone has full access) | elevated=no lines=1 | RESULT=REFUSE
+full  6 junction to C:\opt as root  1 695  check: GUPKG-ACL-FAIL <work>\fixtures\junction-to-opt: is a reparse point | elevated=no lines=1 | RESULT=REFUSE
+full  7 path with ..  0 707  check: GUPKG-ACL-OK | elevated=no lines=1 | RESULT=PROCEED
+full  8 missing directory  1 711  check: GUPKG-ACL-FAIL C:\opt\does-not-exist-s1: cannot read ACL | elevated=no lines=1 | RESULT=REFUSE
+clm  1 admin-only C:\opt + its gupkg version dir  0 745  check: GUPKG-ACL-OK | elevated=no lines=1 | RESULT=PROCEED
+clm  2 admin-only root, user-writable version dir  1 784  check: GUPKG-ACL-FAIL <work>\fixtures\granted\myapp\1.0: owner <user-sid> is not Administrators, SYSTEM or TrustedInstaller |  check:
+  GUPKG-ACL-FAIL <work>\fixtures\granted\myapp\1.0: BU has write-type rights (A;OICI;0x1301bf;;;BU) |  check: GUPKG-ACL-FAIL
+  <work>\fixtures\granted\myapp\1.0: <user-sid> has write-type rights (A;OICIID;0x1301bf;;;<user-sid>) |
+  check: GUPKG-ACL-FAIL <work>\fixtures\granted\myapp\1.0: <user-sid> has write-type rights
+  (A;OICIID;0x1301bf;;;<user-sid>) |  check: GUPKG-ACL-FAIL <work>\fixtures\granted\myapp\1.0:
+  <user-sid> has write-type rights (A;OICIID;0x1301ff;;;<user-sid>) |  check: GUPKG-ACL-FAIL
+  <work>\fixtures\granted\myapp\1.0: <user-sid> has write-type rights
+  (A;OICIID;0x1301ff;;;<user-sid>) |  check: GUPKG-ACL-FAIL <work>\fixtures\granted\myapp\1.0:
+  <user-sid> has write-type rights (A;OICIID;0x1301ff;;;<user-sid>) |  check: GUPKG-ACL-FAIL
+  <work>\fixtures\granted\myapp\1.0: <user-sid> has write-type rights (A;OICIID;FA;;;<user-sid>) |
+  elevated=no lines=8 | RESULT=REFUSE
+clm  2b admin-owned dir with Users write (ProgramData)  1 801  check: GUPKG-ACL-FAIL C:\ProgramData: BU has write-type rights (A;CI;DCLCRPCR;;;BU) | elevated=no lines=1 | RESULT=REFUSE
+clm  2c admin-only C:\Windows, user-writable Tasks  1 821  check: GUPKG-ACL-FAIL C:\Windows\Tasks: AU has write-type rights (A;;0x1200ab;;;AU) | elevated=no lines=1 | RESULT=REFUSE
+clm  2d admin-only C:\Windows + System32 (sibling Tasks is user-writable)  0 707  check: GUPKG-ACL-OK | elevated=no lines=1 | RESULT=PROCEED
+clm  3 squatted root (user-created C:\opt)  1 738  check: GUPKG-ACL-FAIL <work>\fixtures\squatted-opt: owner <user-sid> is not Administrators, SYSTEM or TrustedInstaller |  check:
+  GUPKG-ACL-FAIL <work>\fixtures\squatted-opt: AU has write-type rights (A;OICI;0x1301bf;;;AU) |  check: GUPKG-ACL-FAIL
+  <work>\fixtures\squatted-opt\myapp\1.0: owner <user-sid> is not Administrators, SYSTEM or TrustedInstaller |  check: GUPKG-ACL-FAIL
+  <work>\fixtures\squatted-opt\myapp\1.0: AU has write-type rights (A;OICIID;0x1301bf;;;AU) | elevated=no lines=4 | RESULT=REFUSE
+clm  4 Downloads  1 844  check: GUPKG-ACL-FAIL %USERPROFILE%\Downloads\gupkg-s1-spike: owner <user-sid> is not Administrators, SYSTEM or TrustedInstaller |  check: GUPKG-ACL-FAIL %USERPROFILE%\Downloads\gupkg-s1-spike: <user-sid> has write-type
+  rights (A;OICIID;FA;;;<user-sid>) |  check: GUPKG-ACL-FAIL %USERPROFILE%\Downloads\gupkg-s1-spike\myapp\1.0: owner <user-sid> is not Administrators, SYSTEM or TrustedInstaller |  check: GUPKG-ACL-FAIL
+  %USERPROFILE%\Downloads\gupkg-s1-spike\myapp\1.0: <user-sid> has write-type rights (A;OICIID;FA;;;<user-sid>) | elevated=no lines=4 | RESULT=REFUSE
+clm  5 null DACL  1 711  check: GUPKG-ACL-FAIL <work>\fixtures\null-dacl: null DACL (everyone has full access) | elevated=no lines=1 | RESULT=REFUSE
+clm  6 junction to C:\opt as root  1 728  check: GUPKG-ACL-FAIL <work>\fixtures\junction-to-opt: is a reparse point | elevated=no lines=1 | RESULT=REFUSE
+clm  7 path with ..  0 688  check: GUPKG-ACL-OK | elevated=no lines=1 | RESULT=PROCEED
+clm  8 missing directory  1 714  check: GUPKG-ACL-FAIL C:\opt\does-not-exist-s1: cannot read ACL | elevated=no lines=1 | RESULT=REFUSE
+clm-envvar  1 admin-only C:\opt + its gupkg version dir  0 707  check: GUPKG-ACL-OK | elevated=no lines=1 | RESULT=PROCEED
+clm-envvar  2 admin-only root, user-writable version dir  1 809  check: GUPKG-ACL-FAIL <work>\fixtures\granted\myapp\1.0: owner <user-sid> is not Administrators, SYSTEM or TrustedInstaller |  check:
+  GUPKG-ACL-FAIL <work>\fixtures\granted\myapp\1.0: BU has write-type rights (A;OICI;0x1301bf;;;BU) |  check: GUPKG-ACL-FAIL
+  <work>\fixtures\granted\myapp\1.0: <user-sid> has write-type rights (A;OICIID;0x1301bf;;;<user-sid>) |
+  check: GUPKG-ACL-FAIL <work>\fixtures\granted\myapp\1.0: <user-sid> has write-type rights
+  (A;OICIID;0x1301bf;;;<user-sid>) |  check: GUPKG-ACL-FAIL <work>\fixtures\granted\myapp\1.0:
+  <user-sid> has write-type rights (A;OICIID;0x1301ff;;;<user-sid>) |  check: GUPKG-ACL-FAIL
+  <work>\fixtures\granted\myapp\1.0: <user-sid> has write-type rights
+  (A;OICIID;0x1301ff;;;<user-sid>) |  check: GUPKG-ACL-FAIL <work>\fixtures\granted\myapp\1.0:
+  <user-sid> has write-type rights (A;OICIID;0x1301ff;;;<user-sid>) |  check: GUPKG-ACL-FAIL
+  <work>\fixtures\granted\myapp\1.0: <user-sid> has write-type rights (A;OICIID;FA;;;<user-sid>) |
+  elevated=no lines=8 | RESULT=REFUSE
+clm-envvar  2b admin-owned dir with Users write (ProgramData)  1 746  check: GUPKG-ACL-FAIL C:\ProgramData: BU has write-type rights (A;CI;DCLCRPCR;;;BU) | elevated=no lines=1 | RESULT=REFUSE
+clm-envvar  2c admin-only C:\Windows, user-writable Tasks  1 787  check: GUPKG-ACL-FAIL C:\Windows\Tasks: AU has write-type rights (A;;0x1200ab;;;AU) | elevated=no lines=1 | RESULT=REFUSE
+clm-envvar  2d admin-only C:\Windows + System32 (sibling Tasks is user-writable)  0 905  check: GUPKG-ACL-OK | elevated=no lines=1 | RESULT=PROCEED
+clm-envvar  3 squatted root (user-created C:\opt)  1 689  check: GUPKG-ACL-FAIL <work>\fixtures\squatted-opt: owner <user-sid> is not Administrators, SYSTEM or TrustedInstaller |  check:
+  GUPKG-ACL-FAIL <work>\fixtures\squatted-opt: AU has write-type rights (A;OICI;0x1301bf;;;AU) |  check: GUPKG-ACL-FAIL
+  <work>\fixtures\squatted-opt\myapp\1.0: owner <user-sid> is not Administrators, SYSTEM or TrustedInstaller |  check: GUPKG-ACL-FAIL
+  <work>\fixtures\squatted-opt\myapp\1.0: AU has write-type rights (A;OICIID;0x1301bf;;;AU) | elevated=no lines=4 | RESULT=REFUSE
+clm-envvar  4 Downloads  1 642  check: GUPKG-ACL-FAIL %USERPROFILE%\Downloads\gupkg-s1-spike: owner <user-sid> is not Administrators, SYSTEM or TrustedInstaller |  check: GUPKG-ACL-FAIL %USERPROFILE%\Downloads\gupkg-s1-spike: <user-sid> has write-type
+  rights (A;OICIID;FA;;;<user-sid>) |  check: GUPKG-ACL-FAIL %USERPROFILE%\Downloads\gupkg-s1-spike\myapp\1.0: owner <user-sid> is not Administrators, SYSTEM or TrustedInstaller |  check: GUPKG-ACL-FAIL
+  %USERPROFILE%\Downloads\gupkg-s1-spike\myapp\1.0: <user-sid> has write-type rights (A;OICIID;FA;;;<user-sid>) | elevated=no lines=4 | RESULT=REFUSE
+clm-envvar  5 null DACL  1 627  check: GUPKG-ACL-FAIL <work>\fixtures\null-dacl: null DACL (everyone has full access) | elevated=no lines=1 | RESULT=REFUSE
+clm-envvar  6 junction to C:\opt as root  1 627  check: GUPKG-ACL-FAIL <work>\fixtures\junction-to-opt: is a reparse point | elevated=no lines=1 | RESULT=REFUSE
+clm-envvar  7 path with ..  0 674  check: GUPKG-ACL-OK | elevated=no lines=1 | RESULT=PROCEED
+clm-envvar  8 missing directory  1 657  check: GUPKG-ACL-FAIL C:\opt\does-not-exist-s1: cannot read ACL | elevated=no lines=1 | RESULT=REFUSE
+ps-missing  1 admin-only C:\opt + its gupkg version dir  1 115 elevated=no lines=0 | RESULT=REFUSE
+ps-missing  2 admin-only root, user-writable version dir  1 108 elevated=no lines=0 | RESULT=REFUSE
+ps-missing  2b admin-owned dir with Users write (ProgramData)  1 107 elevated=no lines=0 | RESULT=REFUSE
+ps-missing  2c admin-only C:\Windows, user-writable Tasks  1 193 elevated=no lines=0 | RESULT=REFUSE
+ps-missing  2d admin-only C:\Windows + System32 (sibling Tasks is user-writable)  1 124 elevated=no lines=0 | RESULT=REFUSE
+ps-missing  3 squatted root (user-created C:\opt)  1 119 elevated=no lines=0 | RESULT=REFUSE
+ps-missing  4 Downloads  1 103 elevated=no lines=0 | RESULT=REFUSE
+ps-missing  5 null DACL  1 118 elevated=no lines=0 | RESULT=REFUSE
+ps-missing  6 junction to C:\opt as root  1 130 elevated=no lines=0 | RESULT=REFUSE
+ps-missing  7 path with ..  1 107 elevated=no lines=0 | RESULT=REFUSE
+ps-missing  8 missing directory  1  98 elevated=no lines=0 | RESULT=REFUSE
+ps-wrong-exe 1 admin-only C:\opt + its gupkg version dir  1 115 elevated=no lines=0 | RESULT=REFUSE
+ps-wrong-exe 2 admin-only root, user-writable version dir  1 124 elevated=no lines=0 | RESULT=REFUSE
+ps-wrong-exe 2b admin-owned dir with Users write (ProgramData)  1 131 elevated=no lines=0 | RESULT=REFUSE
+ps-wrong-exe 2c admin-only C:\Windows, user-writable Tasks  1 124 elevated=no lines=0 | RESULT=REFUSE
+ps-wrong-exe 2d admin-only C:\Windows + System32 (sibling Tasks is user-writable)  1 129 elevated=no lines=0 | RESULT=REFUSE
+ps-wrong-exe 3 squatted root (user-created C:\opt)  1 140 elevated=no lines=0 | RESULT=REFUSE
+ps-wrong-exe 4 Downloads  1 121 elevated=no lines=0 | RESULT=REFUSE
+ps-wrong-exe 5 null DACL  1 113 elevated=no lines=0 | RESULT=REFUSE
+ps-wrong-exe 6 junction to C:\opt as root  1 129 elevated=no lines=0 | RESULT=REFUSE
+ps-wrong-exe 7 path with ..  1 224 elevated=no lines=0 | RESULT=REFUSE
+ps-wrong-exe 8 missing directory  1 182 elevated=no lines=0 | RESULT=REFUSE

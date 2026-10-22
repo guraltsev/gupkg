@@ -41,15 +41,15 @@ with a ZIP).
 
 | Where | What it does today | Action |
 |---|---|---|
-| `src/gupkg/gupkg.cmd:63-91` | Tries `GUPKG_PYTHON`, `gupkg.python`, the bundled runtime, `python` and `py -3`. | Remove. Run `python\python.exe -I -s -B` only. |
-| `src/gupkg/gupkg.cmd:21-24, 103-123` | Pinned `python.org` URL and hash. Downloads and extracts CPython through PowerShell. | Remove. |
+| `src/gupkg/gupkg.cmd:60-91` | Tries `GUPKG_PYTHON`, `gupkg.python`, the bundled runtime, `python` and `py -3`. | Remove. Run `python\python.exe -I -s -B` only. |
+| `src/gupkg/gupkg.cmd:25-28, 104-120` | Pinned `python.org` URL and hash. Downloads and extracts CPython through PowerShell. | Remove. |
 | `src/gupkg/bootstrap.py:104-158` | Rewrites `._pth`. `_ensure_pip` downloads and runs unpinned `get-pip.py`. | Remove. The build writes `._pth`. The `--embedded` flag disappears. |
 | `src/gupkg/dependencies.py` | `ensure_runtime_dependencies` (called from `cli.py:325, 404` before the TUIs) probes and pip-installs gupkg's own dependencies into `%LOCALAPPDATA%\gupkg\embedded\site-packages` or the bundled `site-packages`. `run_with_missing_dependencies` (used by `updates.py:51`) retries hooks after installing their missing imports. | Delete the module. The TUIs import Textual directly. Hooks run once, and an `ImportError` fails the hook with its module name. |
 | `--allow-hook-dependency-install` (`cli.py:83, 345, 383, 421-443`, `commands.py:141-153`) | Opt-in for hook dependency installs. | Remove the option and its plumbing. Hooks may import only the standard library, what the bundle ships, and modules in their own `pkg.local\`. |
-| Elevated-run trust check in `dependencies.py:205-230` | Before importing in an elevated run, confirms that the bundled `site-packages` is admin-only. | Keep the guarantee and move it. The elevated launch path checks the whole active version directory once with `require_trusted_directory` (`elevation.py`), which already covers `python\`. |
+| Elevated-run trust check in `dependencies.py:205-223` | Before importing in an elevated run, confirms that the bundled `site-packages` is admin-only. | Keep the guarantee and move it. The elevated launch path checks the whole active version directory once with `require_trusted_directory` (`elevation.py`), which already covers `python\`. |
 | `src/gupkg/locked_deps.py`, `cli.py:272-279, 364`, `commands.py:1068-1110` | `gupkg manager self repair-deps` / `update-deps`. | Move the logic to `tools/` (see below). Remove both commands. |
 | `src/gupkg/dependency_notices.py`, `commands.py:1113-1125`, `cli.py:332, 393, 408` | Queries PyPI on start and prints "update-deps available" notices. | Remove. Dependency freshness is a maintainer concern (see `tools/check_deps.py`). |
-| `gupkg-bootstrap.ps1:94-140` (`Install-BundledRuntime`) | Downloads CPython and the pip wheel, then installs the lock. | Remove. A payload without `gupkg\python\python.exe` is rejected. |
+| `gupkg-bootstrap.ps1:95-136` (`Install-BundledRuntime`) | Downloads CPython and the pip wheel, then installs the lock. | Remove. A payload without `gupkg\python\python.exe` is rejected. |
 | `src/gupkg/pkg.toml` | `ignore_checksum = true` for self-update. | Remove. Self-update is verified (see below). |
 
 ## Dev tree (new or moved)
@@ -211,16 +211,17 @@ Points of contact:
     extract, run `install.cmd`.
 - **Self-update hooks are interim.** The `src\pkg.local\check_update.py` and
   `unpack_app.py` described above are the 0.18 implementation. In 1.0,
-  issue 032 replaces them with a format 2 `_check_updates` tracker
+  issue 033 replaces them with a format 2 `_check_updates` tracker
   (decision D14), using:
   - `[track] provider = "github"`;
   - `[source.checksum] page_match` on `RELEASES.md`;
-  - `[source] local = "gupkg"` for bootstrap, a `url` for self-update, and
-    `verify_manifest = "MANIFEST.sha256"`, a new general unpack service from
-    issue 026.
+  - `[source] local = "gupkg"` for bootstrap, a `download_url` for self-update
+    and repair, and `verify_manifest = "MANIFEST.sha256"`, a new general
+    unpack service from issue 026.
 
-  `self update` then becomes `gupkg check gupkg` followed by
-  `gupkg update gupkg` (decision D11).
+  `self update` then splits into `gupkg self check` (= `gupkg check gupkg`)
+  and `gupkg self update` (= `gupkg update gupkg`), two separate operations
+  (decisions D11, D14).
 - **Command names.** `gupkg manager self status|repair|update` becomes
   `gupkg self status|repair|check|update` in issue 029. The commands that
   this issue removes (`repair-deps`, `update-deps`) are not reintroduced.
@@ -231,7 +232,9 @@ Points of contact:
 - **Trust model.** No runtime pip and no hook dependency installs is assumed
   by §8.6, §9.3 and §9.4 of the design. `gupkg-manager` (issue 030) imports
   Textual from the bundle directly.
-- **Bootstrap script.** `gupkg-bootstrap.ps1` writes settings schema 3 and
-  runs `gupkg settings init`, not `manager init`, from issue 032 on.
+- **Bootstrap script.** From issue 033 on, `gupkg-bootstrap.ps1` only
+  downloads, verifies, extracts (straight into an admin-only `C:\opt` for
+  system mode) and runs `install.cmd`. Installing the `gupkg` package
+  creates `<root>\.gupkg\` with settings schema 3; `manager init` is gone.
 - **Documentation.** The README and `_docs` text written here is the base
   that issue 032 rewrites for 1.0.

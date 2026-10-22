@@ -6,8 +6,8 @@ Epic: 020. Design: `_docs/rehaul_design.md` §8
 
 ## Problem
 
-The registry has 63 hook files (42 `check_update.py`, 17 `unpack_app.py`, 1
-`populate_app.py`, 2 `install_step`), about 5,300 lines in total. Most of
+The registry has 62 hook files (42 `check_update.py`, 17 `unpack_app.py`, 1
+`populate_app.py`, 2 `install_step`), about 5,200 lines in total. Most of
 them are copies of a few patterns, and the copies are inconsistent with each
 other.
 
@@ -117,7 +117,7 @@ other.
 
 - [ ] Each provider has tests against recorded responses taken from the real
       registry packages named in §8.1, stored as HTTP fixtures under
-      `tests/fixtures/http/`. They are recorded once by a `_tools` script
+      `tests/fixtures/http/`. They are recorded once by a script under `tools/`
       and replayed offline.
 - [ ] Each unpack kind has tests against archives built at test time,
       including a nested archive, a wrapper folder, an escaping path (which
@@ -126,8 +126,13 @@ other.
 - [ ] The registry's firefox, obsidian, pidgin, keypirinha, lockhunter,
       volta, hwinfo, crystaldiskinfo, autoruns, msys2 and julia packages can
       be expressed with no hook. This is shown by format 2 manifests
-      committed as test fixtures that pass `gupkg pkg check`.
-- [ ] No hook in the test fixtures performs its own HTTP download.
+      committed as test fixtures that pass the format 2 validator (`gupkg pkg
+      check` once issue 029 lands).
+- [ ] A version-directory hook receives a `HookContext` with no HTTP client,
+      and the validator warns about a version-directory hook that imports
+      `urllib`, `http`, `socket`, `requests` or `subprocess`.
+- [ ] An unpacked tree with an extra, missing or modified file relative to
+      its `verify_manifest` fails the unpack and leaves nothing staged.
 
 ## Out of scope
 

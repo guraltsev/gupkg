@@ -56,9 +56,10 @@ Epic: 020. Design: `_docs/rehaul_design.md` §15, §10.4, §13.2. Supersedes the
    - **It runs only on the bundled interpreter.** The launcher starts
      `python\python.exe -I -s -B` relative to itself and calls
      `enforce_bundled_runtime` on start, under the same rules as issue 018.
-   - **It runs its sibling CLI.** It always calls the `gupkg.cmd` of its own
-     version directory, never a `gupkg` found on `PATH`. It refuses a CLI
-     whose `"api"` version does not match.
+   - **It runs its sibling CLI.** It always calls the `gupkg.cmd` next to it
+     in the same gupkg tree (`$App\gupkg.cmd` installed,
+     `<version>\gupkg\gupkg.cmd` bundled), never a `gupkg` found on `PATH`. It
+     refuses a CLI whose `"api"` version does not match.
    - **It is part of the bundle checks.** It is covered by `MANIFEST.sha256`
      (issue 016) and imported by the build probe (issue 019).
    - **It imports nothing from `gupkg`.** A test enforces this.
@@ -112,11 +113,10 @@ Epic: 020. Design: `_docs/rehaul_design.md` §15, §10.4, §13.2. Supersedes the
    the current package?". Cancelling stops scheduling further CLI calls. The
    CLI call in progress is allowed to finish.
 8. **Launchers.** `gupkg-manager.cmd` (the package launcher in each version
-   folder; issue 033 replaces `gupkg-tui.cmd` with it) finds a gupkg as in
-   design §21.3, then runs
-   `gupkg-manager "%~dp0."`. When the manager exits, the last run's summary
-   and the log path are printed to the normal console (`[manager]
-   keep_screen`).
+   folder, delivered later by issue 033, which replaces `gupkg-tui.cmd`) finds
+   a gupkg as in design §21.3, then runs `gupkg-manager "%~dp0."`. When the
+   manager exits, the last run's summary and the log path are printed to the
+   normal console (`[manager] keep_screen`).
 9. **The style guide is rewritten.** `_docs/tui_style_guide.md` now requires
    the key-hint bar and the status footer, and keeps the list-first,
    frameless content area.
@@ -127,22 +127,25 @@ Epic: 020. Design: `_docs/rehaul_design.md` §15, §10.4, §13.2. Supersedes the
 
 - [ ] `gupkg_manager` has no import of `gupkg` (enforced by a test). Every
       operation it performs appears as a `gupkg …` subprocess call in its
-      own log.
+      run log under `<root>\.gupkg\logs\`.
 - [ ] Every screen shows a key-hint line at the top and a status line at the
       bottom. This is checked with Textual `Pilot` at 80×24 and 200×50.
 - [ ] In the run view, phase headers appear in order and in colour. The output
       follows the tail and can be scrolled back, and the verdict is the last
       line of the log.
-- [ ] *Update all* with two user and two system targets shows one plan and
-      one confirmation, makes exactly two CLI calls (one of them elevated),
-      and raises one UAC prompt.
-- [ ] *Check for updates* writes new version directories and installs
-      nothing. The browser then shows those packages as `outdated`.
+- [ ] *Update all* with two user and two system targets, run from the system
+      gupkg, shows one plan and one confirmation and makes exactly two CLI
+      calls; elevation is requested once, for the system-target call. Run
+      from a user-writable gupkg, it requests no elevation and reports the
+      system targets as needing the system gupkg.
+- [ ] *Check for updates* writes new version directories (proposals for system
+      packages) and installs nothing. The browser then shows those packages as
+      `outdated`.
 - [ ] Opening a package from the browser, running an install and going back
       keeps the browser's filter and selection, without restarting the app.
-- [ ] A 2,000-line run keeps the UI responsive: appends are not re-rendering
-      the whole view.
-- [ ] After `gupkg-manager.cmd` closes, the console still shows the summary and
+- [ ] Fed a 2,000-line events file, the run view stays scrolled to the tail
+      and keeps responding to key presses (Pilot).
+- [ ] After `gupkg-manager` exits, the console still shows the summary and
       the log path.
 
 ## Tests

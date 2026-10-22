@@ -29,7 +29,7 @@ The owner's requirements and where each one is addressed:
 | Version directories carry no update-check code; the update checker is the only component that accesses the network to discover anything (a security boundary) | §9.3 | 023, 026, 028 |
 | Hard-to-test system installation becomes testable | §16 | 021 |
 | A clear threat model for running as administrator (T1); the registry is never a source of information; gupkg keeps its files only in its roots | §9.5–9.7 | 025, 033 |
-| `App` is disposable when `[source]` has a `download_url`; otherwise it is shipped (the default, for example proprietary software), a first-class kind that is never dropped. Project URL, download URL and check URL are distinct keys | §4 | 023, 028 |
+| `App` is disposable when `[source]` has a `download_url` and is not marked `shipped = true`; otherwise it is shipped (the default without a `download_url`, for example proprietary software), a first-class kind that is never dropped. `shipped = true` with a `download_url` is valid, and the URL then only recovers a missing `App`. Project URL, download URL and check URL are distinct keys | §4 | 023, 028 |
 | Bundled mode: gupkg can travel inside another program's distribution (`<version>\gupkg\`) and install it **without installing gupkg**; package launchers prefer an installed gupkg and fall back to the bundled one; gupkg's own package always carries a bundled gupkg, which becomes its `App` | §21 | 033 |
 
 ## Workstreams and order
@@ -47,7 +47,7 @@ stage 1+ (1.0):                           ▼
 025 install modes ────┤        │
 026 services ─────────┴─► 027 checksum policy
 031 registry 2 (after 023, 026, 027)
-033 bundled mode, launchers, bootstrap (after 028, 029)
+033 bundled mode, launchers, bootstrap (after 028, 029, 030)
 032 migration, docs, release (last; closes this epic)
 ```
 
@@ -58,22 +58,22 @@ stage 1+ (1.0):                           ▼
 | 018 | Remove system-Python autodetection (external, stage 0) | 016 |
 | 019 | The bundled Python ships without pip (external, stage 0) | 016 |
 | 021 | System boundary, FakeSystem, and sandbox mode | 017 (preferred) |
-| 022 | Event stream, console renderer, and standard logs | — |
+| 022 | Event stream, console renderer, and standard logs | 021 |
 | 023 | `pkg.toml` format 2 and settings model | 019 (for locking `tomli_w`) |
 | 024 | Catalog and package state model | 023 |
 | 025 | First-class install modes (system, user, portable) | 021, 023 |
-| 026 | Built-in services replacing hook scripts | 021, 023 |
+| 026 | Built-in services replacing hook scripts | 021, 022, 023 |
 | 027 | Checksum policy | 023, 026 |
 | 028 | Execution engine: phases, receipts, uninstall, cleanup, doctor | 021, 022, 024, 025, 026, 027 |
 | 029 | Unified command-line interface | 028 |
-| 030 | `gupkg-manager`: separate manager program and UI redesign | 018, 022, 029 |
+| 030 | `gupkg-manager`: separate manager program and UI redesign | 018, 022, 027, 029 |
 | 031 | Registry 2: pinned versions, trackers, CI autoupdate, package migration | 023, 026, 027 |
 | 032 | Migration tools, documentation, issue hygiene, 1.0 release | all |
-| 033 | Bundled mode, package launchers, and bootstrap | 016, 023, 026, 028, 029 |
+| 033 | Bundled mode, package launchers, and bootstrap | 016, 023, 026, 028, 029, 030 |
 
-Stage 0 can ship as 0.18 on its own. After it, 021, 022 and 023 can
-proceed in parallel. Each issue is meant to be mergeable on its own behind
-the existing CLI until 029 switches the front end.
+Stage 0 can ship as 0.18 on its own. After it, 021 and 023 can proceed in
+parallel, and 022 follows 021. Each issue is meant to be mergeable on its own
+behind the existing CLI until 029 switches the front end.
 
 ## Stage 0: the external issues 016–019
 
@@ -84,7 +84,7 @@ with the 1.0 rehaul" section. In summary:
 
 | Issue | What the rehaul relies on | What the rehaul adds or asks |
 | --- | --- | --- |
-| 016 | No runtime pip or dependency installs; `MANIFEST.sha256`; deletion of `dependencies.py`, `locked_deps.py` and `dependency_notices.py`. | The release ZIP is a distribution with a bundled gupkg (D15, issue 033). In 1.0, installing it copies the bundled tree into `App` (`local = "gupkg"`), which removes the `App\RELEASE.txt` marker. In 1.0, its self-update hooks become a format 2 tracker plus the new `verify_manifest` service (D14, issues 026 and 032). `self update` splits into `self check` and `self update` (D11, issue 029). |
+| 016 | No runtime pip or dependency installs; `MANIFEST.sha256`; deletion of `dependencies.py`, `locked_deps.py` and `dependency_notices.py`. | The release ZIP is a distribution with a bundled gupkg (D15, issue 033). In 1.0, installing it copies the bundled tree into `App` (`local = "gupkg"`), which removes the `App\RELEASE.txt` marker. In 1.0, its self-update hooks become a format 2 tracker plus the new `verify_manifest` service (D14, issues 026 and 033). `self update` splits into `self check` and `self update` (D11, issue 029). |
 | 017 | COM shortcuts with read-back. | Do the optional junction part too, because issue 021 needs it as a contract-tested `System` operation. Land before 021. |
 | 018 | One interpreter, enforced on every start. | The same launcher rule for `gupkg-manager`. The manager runs its sibling `gupkg.cmd`, never one found on `PATH`. |
 | 019 | A pip-free bundle and a build probe. | Lock `tomli_w` (today it is only vendored in pip). The probe also imports `gupkg_manager`. |
@@ -96,12 +96,18 @@ owner (2026-10-22):
 
 - **D1:** the tracker folder is named `_check_updates`.
 - **D4:** `default_mode = "auto"`. An elevated run selects system, and a
-  non-elevated run selects user.
-- **D10:** version directories contain no update-check code.
+  non-elevated run selects user. It never selects portable, and applies
+  only when no flag, install record or containing root decides.
+- **D10:** version directories contain no update-check code: no `[track]`,
+  no check hook, and only the fixed URLs written in their `pkg.toml`.
 - **D11:** checking and installing are separate operations. `gupkg check`
-  writes new version directories; `install` and `update` never run a tracker.
-- **D12:** the manager is a separate program, `gupkg-manager`. It drives the
-  CLI only through its machine interface.
+  writes new pinned version directories (or system-root proposals) and
+  stops; `install` and `update` never run a tracker, and no flag combines
+  the two.
+- **D12:** the manager is a separate program, `gupkg-manager`. It imports
+  nothing from gupkg and drives the CLI only through its machine interface
+  (`--json`, `--plan`, `--events-file`, `--no-input`). The CLI has no `--all`,
+  no UI and no checksum prompts.
 
 These were added when the external issues were integrated:
 
@@ -110,9 +116,9 @@ These were added when the external issues were integrated:
 - **D14:** gupkg is an ordinary format 2 package of itself.
 - **D15:** bundled mode. Any version directory may carry `gupkg\`, so a
   program can be installed without installing gupkg. A bundled install keeps
-  and carries forward its copy, and never registers gupkg. gupkg's own
-  package always carries a bundled gupkg, and installing it copies that
-  tree into `App` (`local = "gupkg"`).
+  and carries forward its copy, and never installs gupkg or writes a root
+  forwarder. gupkg's own package always carries a bundled gupkg, and
+  installing it copies that tree into `App` (`local = "gupkg"`).
 - **D16:** package launchers find gupkg relative to themselves: the root
   forwarder `%~dp0..\..\.gupkg\gupkg.cmd`, then the bundled copy, and never
   `PATH`, the registry, AppData or ProgramData. Elevated launchers first
@@ -130,7 +136,8 @@ These were added when the external issues were integrated:
 - **D20:** gupkg owns no files outside its roots. Its data lives in
   `<root>\.gupkg\`, never in AppData or ProgramData.
 
-D2, D3, D5–D9 and D13–D20 stand unless they are overruled here before the
+D2, D3 and D5–D9 were proposed by the designer and are not yet confirmed
+by the owner. They stand unless they are overruled here before the
 dependent issue starts.
 
 ## Acceptance (epic)
@@ -139,7 +146,7 @@ dependent issue starts.
 - [ ] Every one of the 79 registry packages installs with the strict CLI
       default (no `--skip-checksum`) in user mode, and the packages that
       declare `portable` also install in portable mode.
-- [ ] At least 50 of the 63 registry hook files have been replaced by
+- [ ] At least 50 of the 62 registry hook files have been replaced by
       services; every hook that remains has a recorded reason.
 - [ ] The default test suite exercises install, update, switch, uninstall
       and portable data persistence end to end against `FakeSystem`, with no

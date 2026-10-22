@@ -15,7 +15,8 @@ Epic: 020. Design: `_docs/rehaul_design.md` §9
   `ignore_checksum = true` is set.
   - 35 of the 79 registry manifests set `ignore_checksum = true`.
   - Some of them throw away GitHub digests that do exist: gsmartcontrol,
-    keypirinha, nano, volta, emacs and wumgr.
+    keypirinha, nano, volta and wumgr (emacs also ignores checksums, but it is
+  not on GitHub).
 - **A required hash that is unavailable makes the update fail outright.**
   The 8 hooks that fetch digests optionally (dontsleep, firefox, gimp, julia,
   perl, portablegit, inkscape and bcu) must leave the policy at "required",
@@ -62,9 +63,9 @@ Epic: 020. Design: `_docs/rehaul_design.md` §9
 5. **The receipt** records:
    - `observed_sha256`;
    - `checksum_decision`: `verified`, `skipped-cli` (`--skip-checksum` given
-     directly), `skipped-setting` (the manager's `skip`), or `user-approved`
-     (the manager's `ask`, answered yes). The manager passes the decision to
-     the CLI as `--skip-checksum=<reason>`;
+     directly), `skipped-setting` (the manager's `skip`), `user-approved` (the
+     manager's `ask`, answered yes), or `verified-by-bootstrap` (issue 033).
+     The manager passes the decision to the CLI as `--skip-checksum=<reason>`;
    - the URL, the final URL after redirects, and the size.
 
    `list --details`, `info` and `doctor` flag unverified installs.
@@ -81,15 +82,18 @@ Epic: 020. Design: `_docs/rehaul_design.md` §9
 ## Acceptance criteria
 
 - [ ] CLI, hash missing: `install` exits 3 with a message naming
-      `--skip-checksum`. Nothing is written outside `.gupkg\work`, and the
-      download is never started.
+      `--skip-checksum`. The download is never started, and the install
+      record, `current` and the `FakeSystem` integration state are unchanged.
 - [ ] CLI, hash missing, `--skip-checksum`: the install succeeds and prints a
       warning, and the receipt says `skipped-cli`.
 - [ ] Hash mismatch: the install fails with or without `--skip-checksum`, and
-      under every manager policy.
-- [ ] Manager with `ask`: one prompt per missing-hash package. *Cancel* leaves
+      under every manager policy (the manager part is verified once issue 030
+      lands).
+- [ ] Manager with `ask` (verified once issue 030 lands): one prompt per
+      missing-hash package. *Cancel* leaves
       the package unchanged, and the batch continues with the next one.
-- [ ] Manager, `update --all --yes` with `ask`: packages without a hash are
+- [ ] `gupkg-manager update --all --yes` with `ask` (verified once issue 030
+      lands): packages without a hash are
       reported as "refused: no checksum", and the others proceed.
 - [ ] A user-layer `checksum_missing = "skip"` has no effect on a system-mode
       install.

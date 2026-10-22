@@ -22,7 +22,7 @@ Every Windows side effect is called directly, with no injection seam:
 - `git` subprocesses.
 
 Tests work around this with `mock.patch.object` on module attributes. That
-includes patching `gupkg.install_components` about 15 times and
+includes patching `gupkg.install_components` 12 times and
 `manager.__file__` 12 times. End-to-end installation from a registry seed has
 no test. The owner notes that "a lot of things are not easy to test" because
 system installation is involved.
@@ -39,8 +39,9 @@ system installation is involved.
      `read_shortcut(path)`, `delete_shortcut(path)`;
    - **privilege:** `is_elevated()`, `relaunch_elevated(argv)`,
      `directory_is_admin_only(path)`;
-   - **processes:** `run(argv, cwd, env, on_line)`, which streams each output
-     line to the event stream (issue 022);
+   - **processes:** `run(argv, cwd, env, on_line)`, which passes each output
+     line to the `on_line` callback (issue 022 connects it to the event
+     stream);
    - **network:** `fetch(url, headers, dest, on_progress)` and
      `fetch_text(url, headers)`.
 2. **`system/windows.py`.** Move the existing implementations behind the
@@ -85,7 +86,7 @@ sites behind the boundary.
 
 ## Acceptance criteria
 
-- [ ] `rg "winreg|ctypes|urlopen|powershell|subprocess\.run" src/gupkg`
+- [ ] `rg "winreg|ctypes|urlopen|powershell|subprocess\.run" src/gupkg --type py`
       matches only `system/windows.py`, plus `selfmgmt/` where that is
       justified in a comment.
 - [ ] The contract suite passes against `FakeSystem` on every run and

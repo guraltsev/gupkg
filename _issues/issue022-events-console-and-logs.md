@@ -75,15 +75,15 @@ Epic: 020. Design: `_docs/rehaul_design.md` §14. Supersedes the output parts of
 - [ ] With output redirected to a file, the output has no ANSI codes and no
       `\r`, shows one final progress line per download, and has `==>` phase
       headers.
-- [ ] Every run, CLI or TUI, leaves a `.log` and a `.jsonl` in the
-      mode's log directory. The final summary and the result object both
-      contain that path.
+- [ ] Every run that acts on a root leaves a `.log` and a `.jsonl` in
+      `<root>\.gupkg\logs\` of that root, and nothing under AppData or
+      ProgramData. The final summary contains that path.
 - [ ] A failing `git clone` shows git's error lines inside the Fetch phase of
       both the console and the log. Nothing is written behind the TUI.
 - [ ] Each warning appears exactly once in the console output and once in
       the log.
-- [ ] `manager update --yes`, or its 1.0 replacement, records each package's
-      phase output in the log.
+- [ ] A CLI call with several targets records each package's phase output
+      in the run log.
 
 ## Tests
 
@@ -92,5 +92,6 @@ Epic: 020. Design: `_docs/rehaul_design.md` §14. Supersedes the output parts of
   and `NO_COLOR`.
 - Log writer tests cover naming, flushing, retention and a non-writable
   directory, which must produce a warning and no failure.
-- Rewrite `tests/test_line_stream.py` and the TUI string assertions in
-  `tests/test_tui.py:146-223` against the event model.
+- Delete `tests/test_line_stream.py` with `LineStream`; replace the TUI
+  string assertions in `tests/test_tui.py:146-223` with renderer tests on
+  visible text.
