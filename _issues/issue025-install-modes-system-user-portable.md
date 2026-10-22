@@ -39,7 +39,10 @@ Epic: 020. Design: `_docs/rehaul_design.md` §6
    - bin and Start Menu directories;
    - the environment target (HKLM, HKCU or none);
    - whether elevation is required;
-   - the log directory and the settings layers.
+   - the log directories (D26): the package's `<root>\<name>\.gupkg\logs\`
+     for per-package information, and `<root>\.gupkg\logs\` for global run
+     information only;
+   - the settings layers.
 
    Its values come from the settings `[roots]` and `[integration.*]`
    (issue 023). Every subsystem reads only this object. The four sources
@@ -48,14 +51,19 @@ Epic: 020. Design: `_docs/rehaul_design.md` §6
    selector, then the install record, then the containing root, then
    `default_mode`. The default is **`auto`** (owner's decision D4,
    2026-10-22):
-   - an elevated process selects `system`, or `user` with a notice when the
-     package lacks `system` in `modes`;
+   - an elevated process selects `system`; when the package lacks `system`
+     in `modes`, it refuses and says to use a normal shell (D31);
    - a non-elevated process selects `user`;
    - `auto` never selects `portable`.
 
    `auto` is consulted only when nothing earlier decides, and it means the
    same in every command. The chosen mode and the reason for it (for example
    `system (auto: elevated)`) are printed and logged.
+
+   **An elevated gupkg never acts on a user root** (D31): not through the
+   `auto` fallback, not through an explicit `--mode user`, and not through
+   an install record or a containing root that selects a user root. It
+   refuses and says to use a normal shell.
 3. **Mode support is checked before any work.** `modes = [...]` in `pkg.toml`
    is enforced up front. A portable root is never the system root or inside it
    (§6.3).
@@ -73,13 +81,19 @@ Epic: 020. Design: `_docs/rehaul_design.md` §6
      `.gupkg\settings.toml`, and never user settings, user roots, the user's
      environment or the registry (D18).
    - **The CLI** relaunches itself elevated after a confirmation, or
-     immediately with `--yes`. A declined prompt returns exit code 5 and
-     leaves everything unchanged.
+     immediately with `--yes` (D25). A declined prompt, or the question
+     under `--no-input`, returns exit code 5 and leaves everything
+     unchanged.
    - **`gupkg-manager`** groups all system targets into one elevated CLI
      call (issue 030).
 5. **Portable mode**, as in §6.3:
    - a `[roots].portable` setting, and portable targets at any path
      (`--mode portable PATH`);
+   - **the portable target** (D42): `--mode portable` on a folder already
+     shaped `<name>\<version>\pkg.toml` installs it in place, and the
+     folder above `<name>` is the portable root. Otherwise the configured
+     portable root is used, or gupkg asks for one (an error under
+     `--no-input`);
    - a `<package>\data` directory;
    - `[portable] persist` (directories are junctioned, files are copied in
      and copied back), `markers`, `args` and `env`; and `[nonportable]
@@ -102,7 +116,8 @@ Epic: 020. Design: `_docs/rehaul_design.md` §6
       that is not a package name or a path inside the system root. From an
       admin shell, `install <folder outside every root> --mode system` copies
       the folder into the system root and installs from the copy (design
-      §21.4).
+      §21.4). The copies carry no Mark of the Web, and when the source was
+      marked, the receipt says so (D40).
 
 - [ ] For `user` and `system`, the resolved `ModeContext` takes bin, Start
       Menu, environment target and root from `[integration.*]` and `[roots]`,
@@ -114,9 +129,18 @@ Epic: 020. Design: `_docs/rehaul_design.md` §6
   - an elevated process refuses a package without `system` in `modes`, and
     says to run it from a non-elevated shell;
   - `portable` is never resolved by `auto`.
-- [ ] An existing user-mode package resolves to user mode whatever the
-      elevation: the install record wins over `auto`. A path target inside a
-      configured root keeps that root's mode, whatever the elevation.
+- [ ] In a non-elevated process, an existing user-mode package resolves to
+      user mode: the install record wins over `auto`. A path target inside a
+      configured root keeps that root's mode.
+- [ ] **No elevated user-root actions (D31).** An elevated process refuses,
+      and says to use a normal shell, for an existing user-mode package, a
+      path target inside a user root, and an explicit `--mode user`. Nothing
+      under the user root changes.
+- [ ] **Portable target (D42).** `--mode portable` on a folder shaped
+      `<name>\<version>\pkg.toml` installs it in place, with the folder above
+      `<name>` as the portable root, and copies nothing. On any other target
+      it uses `[roots].portable`; with no portable root configured it asks,
+      and under `--no-input` it fails without changes.
 - [ ] The end-to-end checks of portable persistence, `[nonportable]`,
       unsupported modes and `integrate = "none"` are acceptance criteria of
       issue 028, which provides the engine they need.

@@ -2,7 +2,7 @@
 
 Date: 2026-10-22
 Priority: High
-Epic: 020. Design: `_docs/rehaul_design.md` §21, §9.6 (threat model T1), §9.7 (files only in roots); decisions D14–D20
+Epic: 020. Design: `_docs/rehaul_design.md` §21, §9.6 (threat model T1), §9.7 (files only in roots); decisions D14–D20, D26, D27, D29, D30, D32–D34, D40, D43
 
 ## Objective
 
@@ -18,12 +18,12 @@ infrastructure** (owner's definition, 2026-10-22).
   repaired and uninstalled later in the same way.
 
 gupkg's own package uses the same mechanism. Its distribution always carries
-a bundled gupkg. Installing the package **copies that tree into `App`**,
-from which the installed gupkg runs. Installing it also creates the root
-data directory `<root>\.gupkg\`, which holds gupkg's settings, logs and the
-**root forwarder**. Package launchers find an installed gupkg only through
-that forwarder: `%~dp0..\..\.gupkg\gupkg.cmd`, at a fixed position relative
-to themselves.
+a bundled gupkg. Installing the package runs its **custom populate script**,
+which **copies that tree into `App`**, from which the installed gupkg runs
+(D27). Installing it also creates the root data directory `<root>\.gupkg\`,
+which holds gupkg's settings, logs and the **root forwarder**. Package
+launchers find an installed gupkg only through that forwarder:
+`%~dp0..\..\.gupkg\gupkg.cmd`, at a fixed position relative to themselves.
 
 ## Current state
 
@@ -38,27 +38,31 @@ to themselves.
   own install logic (place, `gupkg install`, `manager init`), which other
   distributions cannot use.
 - **gupkg keeps data outside its roots.** It uses
-  `%LOCALAPPDATA%\gupkg\embedded` (removed by issue 016) (removed by
-  issue 016). Issue 013's planned `%APPDATA%` config search was never
-  implemented; 0.17 reads `gupkg-config.toml` only beside `manager.py`.
+  `%LOCALAPPDATA%\gupkg\embedded` (removed by issue 016). Issue 013's
+  planned `%APPDATA%` config search was never implemented; 0.17 reads
+  `gupkg-config.toml` only beside `manager.py`.
 
 ## Scope
 
 1. **Reserved names and layout** (§21.2).
-   - `gupkg\`, `install.cmd` and `gupkg-manager.cmd` are reserved in version
-     directories.
-   - The engine copies and verifies a bundled tree, and never executes it.
+   - `gupkg\`, `install.cmd` and `gupkg-tui.cmd` are reserved in version
+     directories (D34). Version directories carry no `gupkg-manager.cmd`:
+     the general program is reached through the installed gupkg.
+   - The engine copies and verifies a bundled tree, and never executes it
+     except through the launchers below.
    - A bundled tree carries `VERSION` and `MANIFEST.sha256` (issue 016).
-2. **`[source] local = "<dir>"`** (this issue adds it, with `requires_gupkg`
-   and `[root_forwarder]`, to the issue 023 model and the issue 026 unpack
-   services).
-   - It populates `App` by **copying** a verified folder shipped in the
-     version directory, and falls back to `download_url`.
-   - It never moves the folder.
+2. **`requires_gupkg` and `[root_forwarder]`** (this issue adds them to the
+   issue 023 model). There is no `[source] local` (D27). A distribution
+   whose `App` is built from a folder shipped in its version directory uses
+   a **custom populate script** in `pkg.local\` that copies the folder into
+   `App` (issue 028).
+   - The script never moves the folder.
+   - Its `App` is as verified as the package itself, and is recoverable
+     while the folder exists.
 3. **The root data directory and root forwarder** (§9.7, §21.1).
    - **The data directory.** Installing the `gupkg` package creates
-     `<root>\.gupkg\`: settings, state, logs, registry cache, and, in user
-     roots, proposals.
+     `<root>\.gupkg\`: settings, state, global logs and the registry cache.
+     Per-package logs live in `<root>\<name>\.gupkg\logs\` (D26).
    - **The forwarder.** Through the `[root_forwarder]` effect it also writes
      `gupkg.cmd` and `gupkg-manager.cmd` there, forwarding to
      `$PackageRoot\current\App\…`. The effect is recorded in the install
@@ -69,64 +73,93 @@ to themselves.
 4. **Bundled installs** (§21.4).
    - **No forwarder.** They never write one.
    - **The bundled copy stays** in the installed version directory.
-   - **It is carried forward.** When `check` or `update` produces a new
-     version directory in a root that has no forwarder, the running bundled
-     gupkg is copied into it.
+   - **It is carried forward** (D32). When `check-updates` or `update`
+     produces a new version directory for a package that has a bundled
+     copy, the package's own bundled copy is copied into it, whichever
+     gupkg is running.
+   - **Old version directories keep their bundled copies.** Only an
+     explicit `cleanup --bundled` removes them (item 12).
+   - **Logs.** A bundled gupkg logs runs that involve no package into its
+     own package's `.gupkg\logs\` (D26).
    - **Uninstall.** `uninstall --purge` leaves only the root's
      `.gupkg\logs`.
 5. **The package launcher template**
    (`src\gupkg\launchers\package-launcher.cmd`, from which `install.cmd` and
-   `gupkg-manager.cmd` are generated). It is plain `cmd`, kept minimal
-   (§21.3).
-   - **Non-elevated lookup:**
-     1. `%~dp0..\..\.gupkg\gupkg.cmd`, the root forwarder;
-     2. `%~dp0gupkg\gupkg.cmd`, the bundled copy;
+   `gupkg-tui.cmd` are generated). It is plain `cmd`, kept minimal
+   (§21.3). `gupkg-tui.cmd` runs `gupkg tui "%~dp0."` through the gupkg it
+   finds, which forwards to `gupkg-tui` (issue 030).
+   - **Which gupkg runs** (D32):
+     1. `%~dp0..\..\.gupkg\gupkg.cmd`, the installed gupkg reachable
+        through the root forwarder, unless the launcher is given
+        `--no-system-gupkg=true`;
+     2. otherwise `%~dp0gupkg\gupkg.cmd`, the package's bundled copy;
      3. if neither exists, print the bootstrap URL and exit 9009.
-   - **Elevated runs:** first verify that the root `%~dp0..\..` and the
-     version directory `%~dp0` are not user-writable. The owner must be
-     Administrators, SYSTEM or TrustedInstaller, and no other security
-     identifier may have a write-type right.
+
+     There is no version comparison between the two.
+   - **Elevated runs check everything they will run, recursively** (D30),
+     before starting anything: the root `%~dp0..\..`, the package directory,
+     the version directory `%~dp0`, `<root>\.gupkg\` and the forwarder, and
+     the whole gupkg and Python tree that will start. For each object the
+     owner must be Administrators, SYSTEM or TrustedInstaller, and no other
+     security identifier may have a write-type right.
+     - **Launched through `current`**, the check follows the junction,
+       requires its target to be a version directory of the same package,
+       and checks both the junction and its target.
      - The check runs
        `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe
-       -NoProfile -NonInteractive` with a fixed `Get-Acl` script that
-       compares security identifiers, never localized names.
+       -NoProfile -NonInteractive` with a fixed script that compares
+       security identifiers, never localized names. `%SystemRoot%` is
+       trusted to locate PowerShell: malware running as the same account
+       is out of scope (T1 rule 5, §9.6).
      - It **fails closed**, and the launcher **refuses** on failure.
-     - After the check, it uses the same lookup as a non-elevated run.
+     - After the check, it uses the same selection as a non-elevated run.
    - **Never searched:** `PATH`, the registry, AppData, ProgramData or the
      current directory.
    - **Exit 6 fallback:** print a notice and re-run with the bundled copy.
-     When elevated, only if that copy lies in the verified location.
+     When elevated, only if that copy passed the check.
    - `GUPKG_NO_PAUSE` keeps today's meaning.
 6. **Exit code 6** in the CLI (issue 029). It is raised before any work when
    the target's `format` is unknown, or its `requires_gupkg` is not met.
 7. **Installing from a distribution folder** (§21.4).
    - A folder outside every root is copied whole into
      `<mode root>\<name>\<version>\`, then installed.
+   - **The copy removes the Mark of the Web** from the copied files, and the
+     receipt records that the source was marked (D40).
    - The copy never overwrites; a differing existing copy is `diverged`.
-   - `--in-place` installs it where it is, as an ad-hoc root.
+   - `--in-place` installs it where it is, as an ad-hoc root. `--mode
+     portable` on a folder already shaped `<name>\<version>\pkg.toml`
+     installs it in place (D42, issue 025).
+   - **Origin** (D29, issue 028). Such an install is labelled *origin not
+     verified*, unless the synced registry publishes a matching fingerprint
+     for that package and version; a mismatching fingerprint refuses the
+     install.
    - **System mode** is done only by the installed system gupkg from an
      admin shell: `gupkg install <folder> --mode system`. It reads and
      copies the folder, then installs from the admin-only copy. It never
      runs anything from the source.
 8. **gupkg's own package in format 2** (§21.6).
-   - **Tracker:** GitHub provider, with the checksum from `RELEASES.md`.
-   - **Source:** `local = "gupkg"`, plus a `download_url` with
-     `subdir = "gupkg/${version}/gupkg"`, and `verify_manifest`.
+   - **Tracker:** no declarative tracker. `_check_updates` has a custom
+     `track` script (Reading of D27).
+   - **Source:** no `download_url`. A custom populate script in
+     `pkg.local\` copies the bundled `gupkg\` folder into `App`. When a
+     version written by `check-updates` has no bundled folder yet, the
+     script fetches that release itself (D28 allows it) and verifies it
+     against `RELEASES.md` and `MANIFEST.sha256`.
    - **Integration:** shims into `$App`, and `[root_forwarder]`.
-   - **Commands:** `self check` and `self update` alias `check gupkg` and
-     `update gupkg`.
+   - **Commands:** `self check-updates` and `self update` alias
+     `check-updates gupkg` and `update gupkg`.
    - **Deleted:** `src\pkg.local\check_update.py`, `unpack_app.py` and the
-     `RELEASE.txt` marker.
-   - **Cleanup:** `cleanup` drops the redundant bundled copy once `App` is
-     populated.
+     `RELEASE.txt` marker. The two new scripts replace them.
+   - **The bundled folder stays.** It is the populate script's input, so
+     `App` stays recoverable while it exists (D27).
 9. **Release ZIP layout** (built by issue 016):
-   - `gupkg\<version>\{pkg.toml, gupkg\…, install.cmd, gupkg-manager.cmd}`;
-   - `gupkg\_check_updates\pkg.toml`.
+   - `gupkg\<version>\{pkg.toml, pkg.local\…, gupkg\…, install.cmd,
+     gupkg-tui.cmd}`;
+   - `gupkg\_check_updates\{pkg.toml, pkg.local\…}`.
 
-   The ZIP's `pkg.toml` is fully pinned, with a *fixed*
-   `[source.checksum]` page match on `RELEASES.md` for that exact version. A
-   bootstrap downloads nothing; its receipt records
-   `verified-by-bootstrap`.
+   The ZIP's `pkg.toml` is fully pinned and has no `download_url`. A
+   bootstrap install downloads nothing through gupkg. There is no
+   `verified-by-bootstrap`: its origin label follows item 7 (D29).
 10. **A thin bootstrap script** (§21.5).
     1. Download the release named in `RELEASES.md`, or `-Source`, and verify
        `-Sha256` or the `RELEASES.md` row.
@@ -138,15 +171,21 @@ to themselves.
        2. Extract straight into `C:\opt\gupkg\<version>\`.
        3. Run that `install.cmd` elevated. Its check passes, and it finds no
           forwarder yet, so the bundled copy installs gupkg.
+
+    Re-running the bootstrap is also the one-time path from 0.18 to 1.0
+    (D33, issue 032).
 11. **Authoring commands** (issue 029).
-    - `gupkg pkg bundle <version-dir> [--lite]`
+    - `gupkg pkg bundle <version-dir>` (there is no lite bundle in 1.0,
+      D43)
     - `gupkg pkg export <version-dir> -o X.zip`
-12. **`gupkg cleanup --bundled`** (§21.8). It drops bundled copies in a root
-    only when the root's forwarder points to an installed gupkg of at least
-    that version. Off by default.
-13. **Registry launchers.** `sync-launchers` replaces `gupkg-tui.cmd` with the
-    two generated launchers (issue 031). Registry packages do not bundle
-    gupkg.
+12. **`gupkg cleanup --bundled`** (§21.8, D32). It drops bundled copies in
+    a root only when an installed gupkg can take over, that is, when the
+    root's forwarder points to an installed gupkg. It runs only when asked;
+    plain `cleanup` never touches bundles, and `cleanup` never runs
+    automatically (D43).
+13. **Registry launchers.** `sync-launchers` replaces the 0.17
+    `gupkg-tui.cmd` with the two generated launchers, `install.cmd` and
+    `gupkg-tui.cmd` (issue 031). Registry packages do not bundle gupkg.
 
 ## Acceptance criteria
 
@@ -158,14 +197,17 @@ to themselves.
     forwarder, no gupkg shim and no gupkg `PATH` entry.
   - Nothing is created under `%LOCALAPPDATA%`, `%APPDATA%` or
     `%ProgramData%`, apart from the program's own Start Menu entries.
-  - No registry value is read other than `PATH` for its own
-    read-modify-write.
   - Deleting the Downloads folder leaves the program working.
+  - The same install run against `FakeSystem` reads no registry value
+    other than `PATH` for its own read-modify-write, as its registry access
+    log shows (D38).
 - [ ] **The bundled install manages itself.** With no installed gupkg in the
-      root, `current\gupkg-manager.cmd` runs the bundled copy; a check then an
-      update through it installs the new version, whose directory has a
-      carried-forward `gupkg\`. `uninstall --purge`
-      leaves only `.gupkg\logs`.
+      root, `current\gupkg-tui.cmd` runs the bundled copy; a
+      `check-updates` then an update through it installs the new version,
+      whose directory has a carried-forward copy of the package's own
+      `gupkg\`. The old version directory keeps its `gupkg\`, and switching
+      back to it leaves its launchers working. `uninstall --purge` leaves
+      only `.gupkg\logs`.
 - [ ] **Bootstrap.** `gupkg-bootstrap.cmd` in user mode, and the same script
       run elevated in system mode, install the gupkg package at
       `<root>\gupkg\<v>\`.
@@ -173,33 +215,42 @@ to themselves.
   - `current`, the shims, `PATH`, the Start Menu entry and
     `<root>\.gupkg\` (with the forwarder and settings) exist.
   - In system mode, `C:\opt` and `C:\opt\.gupkg` are admin-only.
-  - `gupkg doctor` reports healthy.
+  - `gupkg check` reports healthy.
 - [ ] **An installed gupkg takes over.** After gupkg is installed into the
       same root, launchers of an earlier bundled install use the forwarder,
-      as the installed gupkg's log shows.
+      as the installed gupkg's log shows, also when their bundled copy is
+      newer. Given `--no-system-gupkg=true`, they use the bundled copy.
 - [ ] **Too-old fallback.** When the installed gupkg is older than a
       package's `requires_gupkg`, it exits 6, and the launcher completes the
       run with the bundled copy.
 - [ ] **No `PATH` search.** A decoy `gupkg.exe` on `PATH` and in the current
       directory is never run.
-- [ ] **Elevated refusal.** An elevated launcher in a user-writable folder
-      (Downloads, or a user root) refuses before starting any Python. An
-      elevated launcher in `C:\opt\<name>\<v>\` proceeds.
-  - A test grants a user write on the version directory, and the launcher
-    must then refuse.
+- [ ] **Elevated refusal** (D30). An elevated launcher in a user-writable
+      folder (Downloads, or a user root) refuses before starting any Python.
+      An elevated launcher in `C:\opt\<name>\<v>\` proceeds.
+  - Tests grant a user write, one at a time, on the package directory, the
+    version directory, `<root>\.gupkg\`, the forwarder file, and one file
+    deep inside the gupkg tree and the Python tree; the launcher must then
+    refuse.
+  - Run as `C:\opt\<name>\current\install.cmd`, it proceeds when `current`
+    points to a version directory of the same package, and refuses when
+    `current` points anywhere else.
   - A test blocks PowerShell, and the launcher must then refuse
     (fail-closed).
 - [ ] **Squatted system root.** A `C:\opt` pre-created by a standard user
       makes the system bootstrap refuse.
-- [ ] **Mark of the Web.** A manual clean-VM run of `install.cmd` from a
+- [ ] **Mark of the Web.** Installing a distribution folder that Explorer
+      extracted (every file marked) leaves no `Zone.Identifier` on the
+      copies in the root, and the receipt records that the source was
+      marked (D40). A manual clean-VM run of `install.cmd` from a
       downloaded ZIP is recorded here, and the troubleshooting guide
-      documents the SmartScreen / Smart App Control behaviour and the remedy
-      (job 07, spike S2: Explorer extraction marks every file, `tar -xf`
-      marks none, and `Unblock-File` on the ZIP before extraction clears
-      it).
-- [ ] **Self-update.** `gupkg self check` then `gupkg self update` moves to a
-      new release. The new `App` is verified, and the forwarder (through
-      `current`) needs no change.
+      documents the SmartScreen / Smart App Control behaviour of that first
+      run and the remedy (job 07, spike S2: Explorer extraction marks every
+      file, `tar -xf` marks none, and `Unblock-File` on the ZIP before
+      extraction clears it).
+- [ ] **Self-update.** `gupkg self check-updates` then `gupkg self update`
+      moves to a new release. The new `App` is verified, and the forwarder
+      (through `current`) needs no change.
 - [ ] **Uninstalling gupkg.** `gupkg uninstall gupkg` removes the forwarder,
       and package launchers in that root fall back to their bundled copies
       where they have one, and otherwise print the bootstrap URL and exit
@@ -211,9 +262,13 @@ to themselves.
       source folder. `--in-place` installs where the folder is, as an ad-hoc
       root.
 - [ ] **Recoverable bundled installs.** After deleting every `App`,
-      `install --refresh` repopulates a version with `local` and a
-      `download_url`, and a bundled install, whose `gupkg\` folder stays
-      intact (moved from issue 028).
+      `install --refresh` repopulates a version whose custom populate
+      script copies a folder from its version directory, and a bundled
+      install, whose `gupkg\` folder stays intact (moved from issue 028).
+- [ ] **`cleanup --bundled`.** With no forwarder in the root, it removes no
+      bundled copy and says why. With a forwarder to an installed gupkg, it
+      removes the bundled copies, and the launchers then run the installed
+      gupkg. Plain `cleanup` removes no bundled copy.
 
 ## Tests
 
@@ -221,15 +276,16 @@ to themselves.
   `.cmd` in a temporary directory tree that stands in for a root:
   - fakes that record their argv replace the forwarder target and the
     bundled `gupkg.cmd`;
-  - exit 6 is simulated;
-  - elevated cases run on Windows CI under `windows_integration`, with
-    permissions set by the test.
+  - exit 6 and `--no-system-gupkg=true` are simulated;
+  - elevated cases, including launches through `current`, run on Windows
+    CI under `windows_integration`, with permissions set by the test.
 - **Engine tests against `FakeSystem`** cover:
-  - `local` population and its fallback to `download_url`;
-  - carrying a bundle forward;
+  - population by a custom populate script that copies a shipped folder;
+  - carrying the package's own bundle forward;
   - writing and removing the root forwarder, and its absence for bundled
     installs;
-  - copying in a distribution folder, `--in-place` and `diverged`;
+  - copying in a distribution folder (with Mark of the Web removal and the
+    origin label), `--in-place` and `diverged`;
   - `cleanup --bundled`.
 - **Manual smoke tests on real Windows** cover UAC, permission inheritance
   from `C:\opt`, Mark of the Web, and the clean-VM bootstrap.

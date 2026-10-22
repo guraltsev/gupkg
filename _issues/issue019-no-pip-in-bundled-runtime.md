@@ -128,11 +128,12 @@ This issue is **stage 0** of the rehaul. Its decisions stand.
   today is vendored inside pip, so it disappears with this issue. Add it to
   the lock as a real runtime dependency with `tools/update_deps.py`, and add
   it to the build probe's import list.
-- **The build probe also imports `gupkg_manager`** (issue 030), so the
-  separate manager program is checked like the CLI.
+- **The build probe also imports the packages of both UI programs,
+  `gupkg-tui` and `gupkg-manager`** (issue 030, decision D34), so they are
+  checked like the CLI.
 - **Hooks.** Package hooks have no pip and no dependency installs. The
   rehaul's built-in services (issue 026) are designed to need only the
   standard library plus the bundle.
-- **The registry's CI** (issue 031) runs package checks through the release
-  bundle, so it inherits a pip-free runtime. Its own tooling uses a
-  separate `.venv`.
+- **The registry tool and its CI** (issue 031, decision D36) run package
+  checks through the release bundle, so they inherit a pip-free runtime.
+  Their own tooling uses a separate `.venv`.

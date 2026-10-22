@@ -37,16 +37,24 @@ Epic: 020. Design: `_docs/rehaul_design.md` §9
 
 ## Scope
 
-1. **The CLI rule (§9.1).**
+1. **The CLI rule (§9.1).** It applies wherever a download happens:
+   `gupkg check-updates` (which downloads and verifies by default, D23),
+   `install` and `update` (D24).
    - **A mismatch always fails.** No flag overrides it.
    - **A missing hash is refused**, unless the call carries
      `--skip-checksum`. That flag covers missing hashes only, and lasts for
      one invocation.
-   - **The CLI never prompts about checksums**, and it ignores the
+   - **`--skip-checksum` works only for `https://` URLs** (D24). A missing
+     hash on any other URL is refused with or without the flag.
+   - **System installs may skip too** (D24), including an elevated call
+     that receives `--skip-checksum` relayed by the manager. The run shows
+     the skip, the receipt records it, and `gupkg check` flags the install.
+   - **The CLI never prompts about checksums** (D25), and it ignores the
      `[manager]` settings table.
-2. **The plan exposes checksum status.** `gupkg install|update … --plan
-   --json` (issue 029) reports, for each target, `sha256: present | missing`
-   and the source URL, so a caller can decide before anything is downloaded.
+2. **The plan exposes checksum status.** `gupkg install|update|check-updates
+   … --plan --json` (issue 029) reports, for each target, `sha256: present |
+   missing` and the source URL, so a caller can decide before anything is
+   downloaded.
 3. **The manager policy** (`gupkg-manager`, issue 030). The setting is
    `[manager] checksum_missing = "ask" | "refuse" | "skip"`, default `ask`.
    - **`ask`:** one prompt per package, showing the package, version, URL and
@@ -57,26 +65,32 @@ Epic: 020. Design: `_docs/rehaul_design.md` §9
      "refused: no checksum" and does not run them.
    - **Nobody to answer** (non-interactive runs, `--yes`, no TTY): `ask`
      behaves as `refuse`.
-4. **System-mode runs ignore the user settings layer** (issue 023). A user
-   cannot set `skip` in their own settings and have it apply to system
-   installs.
+4. **System-mode runs ignore the user settings layer** (issue 023). The
+   CLI reads no checksum policy from any layer; a skip on a system install
+   happens only through `--skip-checksum` on the call itself, given by the
+   administrator or relayed by the manager to the elevated call (D24).
 5. **The receipt** records:
    - `observed_sha256`;
    - `checksum_decision`: `verified`, `skipped-cli` (`--skip-checksum` given
-     directly), `skipped-setting` (the manager's `skip`), `user-approved` (the
-     manager's `ask`, answered yes), or `verified-by-bootstrap` (issue 033).
-     The manager passes the decision to the CLI as `--skip-checksum=<reason>`;
+     directly), `skipped-setting` (the manager's `skip`), or `user-approved`
+     (the manager's `ask`, answered yes). There is no `verified-by-bootstrap`
+     (D29). The manager passes the decision to the CLI as
+     `--skip-checksum=<reason>`;
    - the URL, the final URL after redirects, and the size.
 
-   `list --details`, `info` and `doctor` flag unverified installs.
+   `list --details`, `info` and `gupkg check` flag unverified installs.
+   Installs with no download at all (a distribution folder, a custom
+   populate script) are labelled by issue 028's origin rules (D27, D29),
+   not by this decision field.
 6. **Nothing writes a hash into `pkg.toml` automatically.**
-   - `gupkg check` copies only a hash the tracker *discovered*, through
-     `render_pinned` (issue 023).
+   - `gupkg check-updates` copies only a hash the tracker *discovered*,
+     through `render_pinned` (issue 023). The hash it observes when it
+     downloads the payload goes into the receipt, not into `pkg.toml`.
    - `gupkg pkg pin <target>` is the explicit action that copies a receipt's
      observed hash into `pkg.toml`, with `sha256_from = "manual"`.
-7. **`ignore_checksum` is removed** from the format. The migration tool
-   (issue 032) drops it and lists the packages that will now need a hash, or
-   the policy.
+7. **`ignore_checksum` is removed** from the format. The separate
+   migration tool (issue 023, D33) drops it and lists the packages that
+   will now need a hash, or the policy.
 8. **Git sources** must resolve to a commit, and the receipt records it.
 
 ## Acceptance criteria
@@ -84,8 +98,18 @@ Epic: 020. Design: `_docs/rehaul_design.md` §9
 - [ ] CLI, hash missing: `install` exits 3 with a message naming
       `--skip-checksum`. The download is never started, and the install
       record, `current` and the `FakeSystem` integration state are unchanged.
-- [ ] CLI, hash missing, `--skip-checksum`: the install succeeds and prints a
-      warning, and the receipt says `skipped-cli`.
+- [ ] CLI, hash missing, `--skip-checksum`, `https://` URL: the install
+      succeeds and prints a warning, and the receipt says `skipped-cli`.
+      The same holds for a system-mode install, and `gupkg check` then
+      flags that install as unverified.
+- [ ] CLI, hash missing, `--skip-checksum`, `http://` URL: the install is
+      refused, nothing is downloaded, and nothing changes.
+- [ ] `gupkg check-updates` on a found version with no checksum does not
+      download it without `--skip-checksum`: it reports the version as
+      needing `--skip-checksum` and leaves no populated `App` for it. With
+      `--skip-checksum` (on an `https://` URL) it downloads and populates
+      the version. A found version whose payload does not match its hash
+      is reported as failed, and no ready `App` is left for it.
 - [ ] Hash mismatch: the install fails with or without `--skip-checksum`, and
       under every manager policy (the manager part is verified once issue 030
       lands).
@@ -95,15 +119,17 @@ Epic: 020. Design: `_docs/rehaul_design.md` §9
 - [ ] `gupkg-manager update --all --yes` with `ask` (verified once issue 030
       lands): packages without a hash are
       reported as "refused: no checksum", and the others proceed.
-- [ ] A user-layer `checksum_missing = "skip"` has no effect on a system-mode
-      install.
-- [ ] A version directory written by `gupkg check`, where the tracker found
-      no checksum, has no `sha256` in its `pkg.toml`.
+- [ ] A `checksum_missing = "skip"` in any settings layer has no effect on
+      a CLI system-mode install that is not given `--skip-checksum`.
+- [ ] A version directory written by `gupkg check-updates`, where the
+      tracker found no checksum, has no `sha256` in its `pkg.toml`, also
+      after a download with `--skip-checksum`.
 
 ## Tests
 
 - **CLI behaviour matrix:** present, missing and mismatch × with and without
-  `--skip-checksum`, end to end against `FakeSystem`.
+  `--skip-checksum` × `https://` and `http://` × `install` and
+  `check-updates`, end to end against `FakeSystem`.
 - **Manager policy matrix:** `ask`, `refuse` and `skip` × interactive and
   non-interactive, with a fake `gupkg` executable that records the argv it
   receives. This tests the manager through its real subprocess boundary.

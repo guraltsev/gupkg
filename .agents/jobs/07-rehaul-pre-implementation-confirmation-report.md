@@ -1,8 +1,12 @@
 # Job 07 report: rehaul pre-implementation confirmation
 
 Date: 2026-10-22
-Branch: `rehaul-design` (commit 1 holds the design state as it was when the
-job started; commit 2 holds the changes listed here).
+Branch: `rehaul-design`. Commit 1 holds the design state as it was when
+the job started. Commit 2 holds the consistency fixes, spikes and this
+report. Commit 3 applies the owner's answers to every "Needs owner" item and
+open question (see "Owner decisions from the review session"); where this
+report's later sections describe the state after commit 2, the decisions
+table supersedes them.
 
 ## Summary verdict
 
@@ -24,16 +28,65 @@ graph has no cycle. The three assumptions that could force a redesign hold:
 
 Conditions, each to be met before the issue named:
 
-1. **Before 025, 028, 029 and 033:** the owner answers the T1 questions
-   N1–N5 and N7–N9 under "Needs owner".
-2. **Before 028:** the owner settles open question 4 (an `App` manifest for
-   every install). This is required by the job and blocks issue 028.
+1. ~~**Before 025, 028, 029 and 033:** the owner answers the T1 questions
+   N1–N5 and N7–N9.~~ Met: answered in the review session (see "Owner
+   decisions from the review session").
+2. ~~**Before 028:** the owner settles open question 4.~~ Met: D41.
 3. **Before 033 merges:** S1 is re-run from an elevated shell, and S2 is
    repeated on a clean VM with a real Edge download and Smart App Control in
    evaluation mode. Neither was possible in this session (see "Spike
-   results").
-4. **Before 026 and 031:** the owner decides how the `inno` kind and MSYS2
-   are handled (N23).
+   results"). **Still open.**
+4. ~~**Before 026 and 031:** the owner decides how the `inno` kind and
+   MSYS2 are handled.~~ Met: D39.
+
+## Owner decisions from the review session
+
+The owner answered every "Needs owner" item and every open question on
+2026-10-22, in a review session after commit 2. They are recorded in the
+design as D21–D43 (§19) and applied to the design and issues 016–033 in
+commit 3. Where an answer replaced an earlier answer in the same session,
+only the final one is listed. "Reading" marks a detail that the designer
+inferred from the owner's answer and the owner did not spell out.
+
+| D | Decision | Answers |
+| --- | --- | --- |
+| D2 (changed) | A local package follows the registry entry with the same name **automatically** (Scoop-like). A package can opt out (`gupkg link --unlink`), or be pointed at another registry entry with `gupkg link`. | D2 |
+| D5–D9 | Confirmed as designed. D8 now means "the registry tool computes the hash when the vendor publishes none" (`sha256_from = "registry"`), reviewed by the maintainer (D36). | D5–D9 |
+| D21 | **Names.** Update discovery is `gupkg check-updates`; `gupkg self check-updates` is its alias for gupkg. `gupkg check [<target>…] [--fix]` is the health check and replaces `doctor`. `gupkg pkg check` stays the authoring validator. The manager's batch is `gupkg-manager check-updates --all`. | — |
+| D22 | **Who runs `check-updates`.** For a system package an administrator runs it from an admin shell (elevated), and it writes straight into the system root. There are no proposals, no inbox and no `admit`. From a normal shell it is allowed for every package and implies `--no-download`; for a system package it then only reports. An elevated `check-updates` on a user package refuses (D31). | N1, N19 |
+| D23 | **What `check-updates` writes.** By default it writes the new version directory, downloads and verifies the payload, and populates its `App`; the version is ready but not active. `update` (or `install name@ver`) then activates and integrates it, still as a separate operation (D11). `--no-download` writes only the `pkg.toml`-and-support-files directory where the root is writable, and only reports otherwise. `update` populates a version that has no `App` yet. | — |
+| D24 | **Skipping a missing checksum** is allowed for system installs too, including when the manager passes `--skip-checksum` to the elevated call, but **only for `https://` URLs**. The run shows it, the receipt records it, and `check` flags the install. The checksum rules apply wherever a download happens (`check-updates`, `install`, `update`). | N2 |
+| D25 | **CLI questions.** The CLI asks before consequential actions (`uninstall --purge`, multi-target plans, anything destructive) unless `--yes` is given; with `--no-input` a question becomes exit code 5. It never asks about checksums. | N3 |
+| D26 | **Logs.** Per-package information goes to `<root>\<name>\.gupkg\logs\`; `<root>\.gupkg\logs\` holds only global run information, with links to the per-package logs. `--events-file NAME` takes a plain file name, not a path; the CLI writes the event stream into those log directories, and the caller reads it there. A bundled gupkg logs runs that involve no package into its own package's `.gupkg\logs\`. | N4, N12 |
+| D27 | **Populate scripts are first class.** `[source]` names how `App` is populated: the built-in **download script** (`download_url`, optional `sha256`; it downloads, verifies, unpacks, then runs the package's remaining local install steps through a hook), or a **custom populate script** in `pkg.local\` (Python, `.ps1`, `.cmd`/`.bat` or an executable; non-Python scripts run as a subprocess and receive the context as JSON). A custom-populated `App` is **as verified as the package itself**, and is **recoverable while the script's inputs exist** (repair re-runs the script; `cleanup` drops it only then). `shipped` keeps its meaning: `App` is present and nothing populates it. `[source] local` is **removed**. | N6, N22 |
+| D28 | **Network.** Scripts and hooks in a version directory **may use the network** (Python cannot sandbox trusted code). What D10 keeps, enforced by validation: no update-discovery code in a version directory (no `[track]`, no `track` hook). All hooks get gupkg's shared HTTP client in their context. The `pkg check` import warning is dropped. | (network question) |
+| D29 | **Installs with no download** (a distribution folder) are labelled *origin not verified*, unless the registry publishes a **fingerprint** for that package and version (one SHA-256 over the version directory's files) and it matches: then *verified against registry `<name>`*. Compared at install when the synced registry is on disk, and again by `check`. A **mismatch refuses the install** (like a checksum mismatch) and `check` reports it for installed packages. `verified-by-bootstrap` is dropped. | N5 |
+| D30 | **Elevated launchers check everything they will run, recursively:** root, package directory, version directory, `<root>\.gupkg\` and the forwarder, and the whole gupkg and Python tree that will start. Launched through `current`, the check follows the junction, requires its target to be a version directory of the same package, and checks both. `%SystemRoot%` is trusted to locate PowerShell; same-account malware is out of scope (T1 rule 5), and §9.6 says so. | N7, N8, N9 |
+| D31 | **An elevated gupkg never acts on a user root**: neither through the `auto` fallback nor through an explicit `--mode user`. It refuses and says to use a normal shell. | N10 |
+| D32 | **Which gupkg runs.** A launcher uses the installed gupkg reachable through the root forwarder, unless `--no-system-gupkg=true` is given; otherwise the package's bundled copy. No version comparison. Carry-forward copies the package's own bundled copy. Old version directories keep their bundled copies; only an explicit `cleanup --bundled` removes them, and only when an installed gupkg can take over. | N11, N13, Q5 |
+| D33 | **No legacy-specific code in core.** The migration tool is a **separate, non-core program** (built in issue 023): format 1 → format 2, `_bootstrap` → `_check_updates`, the 0.17 manager config → settings, and **adoption** of 0.17 installs (writing their install records). Core has no 0.17 aliases, no format 1 hint and no `_bootstrap` handling (it is just a reserved `_` name). 0.18 → 1.0 is a one-time **bootstrap re-run**; 0.18's `self update` points to the bootstrap when it sees 1.0. | N14, N16, N17 |
+| D34 | **Two UI programs, both in issue 030:** `gupkg-tui` (one package; `gupkg tui PATH` forwards to it; version directories carry `gupkg-tui.cmd`) and `gupkg-manager` (general; `gupkg manager …`, including `gupkg manager tui`, forwards to it). The forwarders are permanent. Both follow D12: no import of gupkg core, only the machine interface. | (TUI question) |
+| D35 | Issue 017 lands **strictly before** 021; 021 depends on all of stage 0. | N15 |
+| D36 | **Registry tool.** It only creates new version directories (with hashes and fingerprints); a maintainer reviews and pushes. `--auto-push` commits and pushes directly. The registry keeps **every** version; deletion is manual. | N18, Q2 |
+| D37 | **Cancel** in a UI stops after the current package: the running CLI finishes it cleanly and skips the rest. An elevated call is asked to stop through a stop marker, which can only make it stop. | N20 |
+| D38 | The rules "the UI programs import nothing from gupkg core" and "no registry read except `PATH`" are guarded by **behaviour tests**: the UIs run with only the CLI available, and installs are checked against `FakeSystem`'s registry access log. | N21 |
+| D39 | **Unpack kinds.** `inno` is dropped for 1.0; GIMP keeps running its vendor installer. A `tar` kind (`.tar.xz`, `.tar.gz`, …, two 7-Zip passes) is added; MSYS2 uses its `.tar.xz`. | N23 |
+| D40 | Copying a distribution into a root **removes the Mark of the Web** from the copies; the receipt records that the source was marked. | N24 |
+| D41 | Every install records an **`App` fingerprint** (SHA-256 of every file) by default; a package can opt out with `record_manifest = false`; a global switch remains. | Q4 |
+| D42 | **Portable target.** `--mode portable` on a folder already shaped `<name>\<version>\pkg.toml` installs it in place (the folder above `<name>` is the portable root). Otherwise the configured portable root is used, or gupkg asks (an error under `--no-input`). | Q1 |
+| D43 | `cleanup` never runs automatically (`[cleanup] auto = true` enables it after `gupkg-manager update --all`). No lite bundle in 1.0. | Q3, Q6 |
+
+Readings to keep in mind:
+
+- **gupkg's own package (D27).** It has no `download_url` and no
+  declarative tracker. Its `_check_updates` uses a custom `track` script,
+  and its version directories use a custom populate script that copies the
+  bundled `gupkg\` folder into `App`. When a version written by
+  `check-updates` has no bundled folder yet, the populate script fetches
+  the release itself (D28 allows it).
+- **The download script's hook (D27).** The built-in download script runs
+  the package's `[[prepare]]` steps after unpacking. A custom populate
+  script can run the same steps through its context.
 
 ## Consistency fixes made
 

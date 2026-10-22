@@ -36,6 +36,14 @@ The owner's decisions (2026-10-22) that shape this issue:
 
 - **D11:** checking and installing are separate operations.
 - **D12:** the manager is a separate program that calls the CLI.
+- **D21:** update discovery is `gupkg check-updates`; `gupkg check` is the
+  health check and replaces `doctor`; `gupkg pkg check` stays the
+  authoring validator.
+- **D22, D23:** who runs `check-updates`, and what it writes.
+- **D25:** the CLI asks before consequential actions.
+- **D26:** `--events-file NAME` and the log locations.
+- **D33, D34:** no 0.17 aliases in core; `gupkg tui` and `gupkg manager`
+  are permanent forwarders.
 
 ## Scope
 
@@ -47,67 +55,91 @@ The owner's decisions (2026-10-22) that shape this issue:
    - Every mutating command takes `--yes`.
    - The CLI has **no `--all`, no interactive UI and no checksum prompts**.
      Several targets in one call run one after another.
-2. **`gupkg check <target>…`** runs `_check_updates` trackers and writes
-   pinned version directories, or system-root proposals (§9.3). It never
-   installs anything.
+2. **`gupkg check-updates <target>…`** (D21–D23) runs `_check_updates`
+   trackers and writes pinned version directories. By default it also
+   downloads and verifies each new version's payload (issue 027) and
+   populates its `App`; the version is ready but not active. It never
+   activates or integrates anything.
+   - `--no-download` writes only the `pkg.toml`-and-support-files
+     directory where the root is writable, and only reports otherwise.
+   - **System packages:** an administrator runs it from an admin shell, and
+     it writes straight into the system root. From a normal shell it
+     implies `--no-download` for a system package and only reports. There
+     are no proposals and no admission step.
+   - **An elevated `check-updates` on a user package refuses** (D31).
    - **`update` and `install` never run a tracker.**
-   - `update` installs the newest *known* version.
-   - An elevated `update` admits pending system-root proposals after
-     confirmation.
-3. **The machine interface** (§10.4) is a versioned, public contract
+   - `update` activates and integrates the newest *known* version, and
+     populates it first if it has no `App` yet.
+3. **`gupkg check [<target>…] [--fix]`** (D21) is the health check of
+   issue 028. It replaces `doctor`. `gupkg pkg check` stays the authoring
+   validator.
+4. **The machine interface** (§10.4) is a versioned, public contract
    (`"api": 1`):
    - **`--json`:** one result document on stdout, with structured errors;
      human output goes to stderr.
    - **`--plan`:** resolves and plans without changing anything. Per target it
      reports version, mode, whether elevation is needed, checksum present or
      missing, the URL and the effects.
-   - **`--events-file PATH`:** the event stream as JSON lines, flushed per
-     event, ending with the result. This works across an elevation boundary.
+   - **`--events-file NAME`** (D26): the event stream as JSON lines,
+     flushed per event, ending with the result. `NAME` is a plain file
+     name, not a path. The CLI writes the stream into the log directories
+     (issue 022): per-package information under
+     `<root>\<name>\.gupkg\logs\`, global run information under
+     `<root>\.gupkg\logs\`, and a bundled gupkg's runs that involve no
+     package under its own package's `.gupkg\logs\`. The caller reads it
+     there. This works across an elevation boundary, because the elevated
+     child chooses the directory itself.
    - **`--no-input`:** never prompts. A needed answer becomes a structured
      error, with exit code 5.
-4. **`cli.py` stays thin.**
+5. **`cli.py` stays thin.**
    - It parses the arguments, loads the settings, builds the reporter
      (issue 022), calls `engine.lifecycle` or `catalog`, renders the
      `Result`, and returns the exit code.
    - Exit codes: 0, 2, 3, 4, 5 for declined or input needed, and 6 when
      the package needs a newer gupkg (issue 033).
-   - The only prompts left are confirmations, such as `uninstall --purge`
-     and admitting a proposal. They go through the console renderer and are
-     answered by `--yes` or refused by `--no-input`.
-5. **`gupkg settings show|path|init|set`.** `init --from
-   <gupkg-config.toml>` converts manager schema 2 (issue 032).
-6. **`gupkg self status|repair|check|update`** (design §20, D14).
-   - `self check` and `self update` are aliases for `gupkg check gupkg` and
-     `gupkg update gupkg`. A self-update is therefore checked first, then
-     installed, like any package (D11).
+   - **Confirmations** (D25). The CLI asks before consequential actions:
+     `uninstall --purge`, a plan with several targets, and anything
+     destructive. They go through the console renderer. `--yes` answers
+     them, and under `--no-input` a question becomes exit code 5. The CLI
+     never asks about checksums.
+6. **`gupkg settings show|path|init|set`.** Converting the 0.17 manager
+   config is the separate migration tool's job (issue 023, D33).
+7. **`gupkg self status|repair|check-updates|update`** (design §20, D14).
+   - `self check-updates` and `self update` are aliases for `gupkg
+     check-updates gupkg` and `gupkg update gupkg`. A self-update is
+     therefore checked first, then installed, like any package (D11).
    - `self status` reports the bundle's `MANIFEST.sha256` check (issue 016)
      and the interpreter in use (issue 018).
    - `self repair` re-applies gupkg's own integration.
    - The `repair-deps` and `update-deps` commands are gone, per issue 016.
-7. **The 0.17 spellings** are deprecated aliases during 1.0.x. They print the
-   new spelling and run it, and are removed in 1.1:
+8. **No 0.17 aliases** (D33). Core has no deprecated spellings and no
+   format 1 hints. `config-check`, `config-fix`, `doctor`, `repair-deps`
+   and `update-deps` are unknown commands, and `update --check-only` and
+   `--scope` are usage errors.
+9. **Permanent forwarders to the UI programs** (D34, issue 030). They are
+   part of the 1.0 grammar, not aliases:
+   - `gupkg tui PATH` runs `gupkg-tui PATH`;
+   - `gupkg manager …`, including `gupkg manager tui`, runs
+     `gupkg-manager …` with the same arguments.
 
-   | 0.17 spelling | 1.0 behaviour |
-   | --- | --- |
-   | `gupkg manager <sub>` | the CLI equivalent, or a hint pointing to `gupkg-manager` for `tui` and `update` (all) |
-   | `gupkg tui PATH` | `gupkg-manager PATH` |
-   | `config-check` / `config-fix` | `gupkg pkg check` / `gupkg pkg migrate` |
-   | `update --check-only` | `check` |
-   | `--scope` | `--mode` |
-
-8. **`commands.py` is deleted.** Its remaining responsibilities move to
-   `engine`, `catalog`, `selfmgmt` and `migrate`. `outcome.py` becomes the
-   `Result` renderers in `report/`.
-9. **Help text.** `gupkg --help` lists the commands in task order:
-   check/install/update/list/info first, then maintenance, then authoring,
-   then self. Every subcommand has an example.
+   A forwarder passes the exit code through.
+10. **`commands.py` is deleted.** Its remaining responsibilities move to
+    `engine`, `catalog` and `selfmgmt`. `outcome.py` becomes the `Result`
+    renderers in `report/`.
+11. **Help text.** `gupkg --help` lists the commands in task order:
+    check-updates/install/update/list/info first, then maintenance
+    (including `check`), then authoring, then self. Every subcommand has an
+    example.
 
 ## Acceptance criteria
 
-- [ ] During 1.0.x each 0.17 spelling in the §10.3 table prints its 1.0
-      spelling. CLI rows then run it; rows whose 1.0 spelling is a
-      `gupkg-manager` command run nothing; `repair-deps` and `update-deps`
-      are unknown commands.
+- [ ] `gupkg tui PATH` runs `gupkg-tui PATH`, and `gupkg manager <args>`
+      (including `gupkg manager tui`) runs `gupkg-manager <args>`, and each
+      returns the program's exit code. This is checked with fake
+      `gupkg-tui` and `gupkg-manager` executables that record their argv,
+      so it does not wait for issue 030. `config-check`, `config-fix`,
+      `doctor`, `repair-deps` and `update-deps` are unknown commands, and
+      `update --check-only` and `--scope` are usage errors (exit 2).
 - [ ] `gupkg install vscode --mode user` and `gupkg install
       %USERPROFILE%\opt\vscode` give identical integration destinations,
       because both use the `ModeContext` from the settings.
@@ -115,20 +147,31 @@ The owner's decisions (2026-10-22) that shape this issue:
       no `--mode` installs in
       system mode and prints `system (auto: elevated)`. From a normal shell it
       installs in user mode.
-- [ ] `gupkg check X` on a tracked user package writes `X\<new version>\`
-      with no `App`, installs nothing, and leaves `current`, the install
-      record and the `FakeSystem` integration state unchanged.
-- [ ] `gupkg update X` after that installs the new version without contacting
-      any URL except those written in the new version's `pkg.toml`. This is
-      verified with the `FakeSystem` fetch log.
+- [ ] `gupkg check-updates X` on a tracked user package writes
+      `X\<new version>\` with a populated `App`, and leaves `current`, the
+      install record and the `FakeSystem` integration state unchanged. With
+      `--no-download` it writes the directory with no `App` and makes no
+      request except the tracker's.
+- [ ] `gupkg update X` after `check-updates X --no-download` installs the
+      new version without contacting any URL except those written in the
+      new version's `pkg.toml`. This is verified with the `FakeSystem`
+      fetch log.
+- [ ] `gupkg self check-updates` and `gupkg check-updates gupkg` give the
+      same result document.
+- [ ] `gupkg check X` reports a deleted shim of an installed package as
+      drift and changes nothing; `gupkg check X --fix` restores it.
 - [ ] `gupkg update X`, when no newer version is known, reports "up to date"
       and makes no network request.
 - [ ] `--plan --json` changes nothing on disk except the run's log files, and
       the document names every target's checksum status and elevation need.
-- [ ] A run with `--events-file` from an elevated child produces a JSON-lines
-      file that a non-elevated reader can follow to the final result line.
+- [ ] A run with `--events-file NAME` from an elevated child produces a
+      JSON-lines file named `NAME` in the system root's log directories,
+      which a non-elevated reader can follow to the final result line.
+      `--events-file` with a value that contains a path separator or `..`
+      is a usage error (exit 2) and writes nothing.
 - [ ] `gupkg uninstall X --purge --no-input` exits 5 with a structured error
       and changes nothing; with `--yes` it proceeds without reading stdin.
+      The same holds for `gupkg install X Y` (a plan with several targets).
 - [ ] `gupkg update --all` and `gupkg update --check` are usage errors (exit
       2); the first names `gupkg-manager update --all` (D11, D12).
 

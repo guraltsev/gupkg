@@ -74,10 +74,15 @@ other.
 
    Every provider returns `TrackResult(version, captures, checksum)`, and
    **the version comparison lives in the catalog, not in providers**.
-3. **`services/unpack/`.** The `kind` values `zip`, `7z`, `sfx`, `nsis`,
-   `msi`, `inno`, `exe`/`file` and `git`, detected from the file's
+3. **`services/unpack/`.** The `kind` values `zip`, `7z`, `tar`, `sfx`,
+   `nsis`, `msi`, `exe`/`file` and `git`, detected from the file's
    signature and extension. Every kind supports `strip`, `subdir`, `nested`,
    `extract`, `require` and `verify_manifest`.
+   - **`tar`** (D39) covers `.tar.xz`, `.tar.gz` and the other compressed
+     tarballs, with two 7-Zip passes (decompress, then unpack the tar).
+     MSYS2 uses its `.tar.xz`.
+   - **There is no `inno` kind in 1.0** (D39). GIMP keeps running its
+     vendor installer.
    - **`verify_manifest = "<path>"`** (design §8.2, §20). The artifact ships
      a `<sha256>  <relative path>` manifest. Every unpacked file must match
      it, and there must be no extra or missing files. gupkg's own release
@@ -87,12 +92,11 @@ other.
      with cleanup in `finally`.
    - **7-Zip:** the bundled `7zip\7z.exe` is the default, run through
      `System.run`.
-   - **`inno`:** a bundled innoextract is preferred, if its licence allows
-     bundling. Otherwise 7-Zip covers formats it can open, and
-     `[source.installer]` is used as an explicit fallback.
 4. **`services/prepare.py`.** The `remove`, `rename` (glob with exactly one
    match, never overwriting), `copy`, `write` and `module` steps. All of them
-   are confined to the staged `App`.
+   are confined to the staged `App`. The built-in download script runs a
+   package's `[[prepare]]` steps after unpacking, and a custom populate
+   script can run the same steps through its context (D27).
 5. **`services/checksum.py`.** Checksum discovery through `sidecar`,
    `sums_file`/`entry`, `json` and `page_match`, with GitHub and GitLab
    digests picked up implicitly. Verification itself is in issue 027.
@@ -101,17 +105,22 @@ other.
      and the paths.
    - Entry points: `track(ctx) -> TrackResult`, `unpack(ctx)` and
      `prepare(ctx)`.
-   - Hooks may not download artifacts; the engine downloads.
-   - **Network boundary (§9.3).** Only `track` hooks in `_check_updates` get
-     the HTTP client. Unpack and prepare hooks in a version directory get a
-     `HookContext` without one. `gupkg pkg check` warns when a
-     version-directory hook imports `urllib`, `http`, `socket`, `requests` or
-     `subprocess`.
+   - The built-in download script downloads `download_url` and verifies it
+     (issue 027). A custom populate script (D27) may fetch what it needs
+     through the context's HTTP client.
+   - **Network (§9.3, D28).** Every hook gets gupkg's shared HTTP client in
+     its context, including unpack, prepare and populate hooks in a version
+     directory; Python cannot sandbox trusted code, so version-directory
+     code may use the network. What stays forbidden, and is enforced by
+     validation, is update discovery in a version directory: no `[track]`
+     table and no `track` hook. There is no import warning.
    - `hooklib` re-exports the helpers listed in §8.6.
-   - API 1 hooks are rejected, with a pointer to `gupkg pkg migrate`.
+   - API 1 hooks are rejected like any other invalid hook. Core carries no
+     API 1 or format 1 hint (D33).
 7. **Service hints.** `gupkg pkg check` reports a hook that matches a known
    service pattern, together with a suggested format 2 replacement. The
-   same code is used by the migration tool (issue 032).
+   separate migration tool (issue 023) offers the same suggestions when it
+   converts a package.
 
 ## Acceptance criteria
 
@@ -120,17 +129,21 @@ other.
       `tests/fixtures/http/`. They are recorded once by a script under `tools/`
       and replayed offline.
 - [ ] Each unpack kind has tests against archives built at test time,
-      including a nested archive, a wrapper folder, an escaping path (which
-      must be rejected) and a `require` failure. The NSIS and SFX tests
-      use a small committed sample with a documented origin.
+      including a nested archive, a wrapper folder, a `.tar.xz` and a
+      `.tar.gz`, an escaping path (which must be rejected) and a `require`
+      failure. The NSIS and SFX tests use a small committed sample with a
+      documented origin. A manifest that asks for `kind = "inno"` fails
+      validation.
 - [ ] The registry's firefox, obsidian, pidgin, keypirinha, lockhunter,
       volta, hwinfo, crystaldiskinfo, autoruns, msys2 and julia packages can
       be expressed with no hook. This is shown by format 2 manifests
       committed as test fixtures that pass the format 2 validator (`gupkg pkg
       check` once issue 029 lands).
-- [ ] A version-directory hook receives a `HookContext` with no HTTP client,
-      and the validator warns about a version-directory hook that imports
-      `urllib`, `http`, `socket`, `requests` or `subprocess`.
+- [ ] A version-directory hook receives a `HookContext` with the shared HTTP
+      client, and a request it makes through it carries gupkg's User-Agent
+      and timeout policy. The validator rejects a version directory that has
+      a `[track]` table or a `track` hook, and does not warn about a hook
+      that imports `urllib`, `http`, `socket`, `requests` or `subprocess`.
 - [ ] An unpacked tree with an extra, missing or modified file relative to
       its `verify_manifest` fails the unpack and leaves nothing staged.
 

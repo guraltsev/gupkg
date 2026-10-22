@@ -196,45 +196,63 @@ Points of contact:
   - `gupkg\<version>\pkg.toml`;
   - `gupkg\<version>\gupkg\…`, the bundled tree (`python\`, the launchers,
     `MANIFEST.sha256`, `VERSION`);
-  - `gupkg\<version>\install.cmd` and `gupkg-manager.cmd`;
+  - `gupkg\<version>\install.cmd` and `gupkg-tui.cmd` (decision D34);
   - `gupkg\_check_updates\pkg.toml`.
 
-  **In 1.0, installing the package copies the bundled tree into `App`**
-  (`[source] local = "gupkg"`), and the installed gupkg runs from `App`. The
-  same bundled-tree layout lets any other program carry gupkg and be
-  installed without gupkg being installed.
+  **In 1.0, installing the package copies the bundled tree into `App`**, and
+  the installed gupkg runs from `App`. The copy is made by a custom populate
+  script in the version directory's `pkg.local\` (decision D27); gupkg's
+  own package has no `download_url`. When a version written by `gupkg
+  check-updates` has no bundled tree yet, the populate script fetches the
+  release itself (decision D28). The same bundled-tree layout lets any other
+  program carry gupkg and be installed without gupkg being installed.
   - In 0.18 the 0.17 engine still needs the tree at the version root and the
     `App\RELEASE.txt` marker. Issue 033 removes both.
-  - Existing installs need no file move: the first 1.0 self-update creates a
-    new version directory whose `App` is extracted from the ZIP.
   - The bootstrap script shrinks to: download, verify against `RELEASES.md`,
     extract, run `install.cmd`.
+- **0.18 → 1.0 is a one-time bootstrap re-run (decision D33).** The 0.18
+  self-update hooks never install a 1.0 release. A small 0.18 addition in
+  this issue: when `check_update` finds a release whose major version is 1
+  or higher, `gupkg manager self update` installs nothing, leaves the active
+  version unchanged, and prints the bootstrap command to run instead.
+  Adopting the packages installed by 0.17 or 0.18 is the job of the
+  separate migration tool (issue 023).
 - **Self-update hooks are interim.** The `src\pkg.local\check_update.py` and
   `unpack_app.py` described above are the 0.18 implementation. In 1.0,
-  issue 033 replaces them with a format 2 `_check_updates` tracker
-  (decision D14), using:
-  - `[track] provider = "github"`;
-  - `[source.checksum] page_match` on `RELEASES.md`;
-  - `[source] local = "gupkg"` for bootstrap, a `download_url` for self-update
-    and repair, and `verify_manifest = "MANIFEST.sha256"`, a new general
-    unpack service from issue 026.
+  issue 033 replaces them with gupkg's own format 2 package (decision D14):
+  - a `_check_updates` tracker with a custom `track` script, since gupkg has
+    no declarative tracker. It finds the release and its `sha256` in
+    `RELEASES.md`;
+  - version directories with no `download_url` and the custom populate
+    script described above, which checks the tree against
+    `MANIFEST.sha256`. `verify_manifest`, a new general unpack service from
+    issue 026, is the general form of that check.
 
-  `self update` then splits into `gupkg self check` (= `gupkg check gupkg`)
-  and `gupkg self update` (= `gupkg update gupkg`), two separate operations
-  (decisions D11, D14).
+  `self update` then splits into `gupkg self check-updates` (an alias of
+  `gupkg check-updates gupkg`) and `gupkg self update` (= `gupkg update
+  gupkg`), two separate operations (decisions D11, D14, D21). By default
+  `self check-updates` also downloads and populates the new version, and
+  `self update` activates it (decision D23).
 - **Command names.** `gupkg manager self status|repair|update` becomes
-  `gupkg self status|repair|check|update` in issue 029. The commands that
-  this issue removes (`repair-deps`, `update-deps`) are not reintroduced.
+  `gupkg self status|repair|check-updates|update` in issue 029. The commands
+  that this issue removes (`repair-deps`, `update-deps`) are not
+  reintroduced.
 - **Manifest checks.** "`manager self status` / `manager doctor` check
-  `MANIFEST.sha256`" becomes `gupkg self status` and `gupkg doctor` in 1.0.
-  Open question 4 of the design proposes recording an `App` manifest for
-  every package.
+  `MANIFEST.sha256`" becomes `gupkg self status` and `gupkg check`, the
+  health check that replaces `doctor` (decision D21), in 1.0. Every install
+  also records an `App` fingerprint (a SHA-256 of every file) by default,
+  so `gupkg check` reports modified files for every package, not only
+  gupkg (decision D41).
 - **Trust model.** No runtime pip and no hook dependency installs is assumed
-  by §8.6, §9.3 and §9.4 of the design. `gupkg-manager` (issue 030) imports
-  Textual from the bundle directly.
+  by §8.6, §9.3 and §9.4 of the design. `gupkg-tui` and `gupkg-manager`
+  (issue 030) import Textual from the bundle directly.
 - **Bootstrap script.** From issue 033 on, `gupkg-bootstrap.ps1` only
   downloads, verifies, extracts (straight into an admin-only `C:\opt` for
   system mode) and runs `install.cmd`. Installing the `gupkg` package
   creates `<root>\.gupkg\` with settings schema 3; `manager init` is gone.
+  gupkg cannot tell that the script verified the ZIP, so this install is
+  labelled like any install from a distribution folder: *verified against
+  registry `<name>`* when the registry's fingerprint for that version
+  matches, otherwise *origin not verified* (decision D29).
 - **Documentation.** The README and `_docs` text written here is the base
   that issue 032 rewrites for 1.0.

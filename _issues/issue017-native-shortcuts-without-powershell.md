@@ -132,14 +132,16 @@ This issue is **stage 0** of the rehaul. Its decisions stand.
   `WindowsSystem.write_shortcut` and `read_shortcut`. `FakeSystem` stores the
   same `ShellLink` fields, so the shortcut contract tests check both
   implementations.
-- **Order.** Land this issue before 021 if possible. Otherwise 021 moves
-  today's PowerShell code behind the boundary, and this issue replaces it
-  there; the call sites do not change twice.
+- **Order.** This issue lands strictly before 021, which depends on all of
+  stage 0 (decision D35). Issue 021 moves this issue's COM code behind the
+  boundary; it never moves PowerShell shortcut code.
 - **Junctions (section 3).** Do this part. Issue 021 needs junctions,
   replacement and rollback as a contract-tested `System` operation, and a
   `DeviceIoControl` implementation removes the last `cmd /c` child process.
-  If it is not done here, it moves to 021.
-- **Read-back** is used by `gupkg doctor` (issue 028) to detect shortcut drift
-  (missing, or changed target) without starting a process.
-- **`shortcuts_to_gupkg_toml.py`** moves under `migrate/` in 1.0. It keeps
+- **Read-back** is used by `gupkg check`, the health check that replaces
+  `doctor` (issue 028, decision D21), to detect shortcut drift (missing, or
+  changed target) without starting a process.
+- **`shortcuts_to_gupkg_toml.py`** was to move under a core `migrate/`
+  package in 1.0. Core carries no migration code (decision D33), so it
+  moves out of core with the separate migration tool (issue 023). It keeps
   using `read_shell_link`.

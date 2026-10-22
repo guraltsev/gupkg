@@ -11,7 +11,7 @@ Every Windows side effect is called directly, with no injection seam:
 - junctions: `windows.create_junction` and `is_junction`, called from
   `layout.py`;
 - `winreg` reads and writes;
-- shortcuts, created through a `powershell.exe` COM subprocess;
+- shortcuts, through issue 017's COM `shell_link` module;
 - `WM_SETTINGCHANGE` broadcasts;
 - `IsUserAnAdmin`, implemented twice (`windows.is_current_user_admin` and
   `elevation.is_elevated`);
@@ -46,17 +46,19 @@ system installation is involved.
      `fetch_text(url, headers)`.
 2. **`system/windows.py`.** Move the existing implementations behind the
    protocol unchanged in behaviour, and delete the duplicate admin check.
-   The shortcut implementation is the COM `IShellLinkW` module from issue
-   017, if that issue has landed. Otherwise this issue moves the PowerShell
-   version and issue 017 replaces it behind the boundary.
+   This issue depends on all of stage 0 (issues 016–019), and issue 017
+   lands strictly before it (decision D35).
+   - The shortcut implementation is the COM `IShellLinkW` module from issue
+     017.
    - Junction creation is `DeviceIoControl(FSCTL_SET_REPARSE_POINT)`, from
-     issue 017 section 3, if 017 did it. Otherwise this issue implements it,
-     so that no `cmd /c mklink` remains.
+     issue 017 section 3, so that no `cmd /c mklink` remains.
    - Elevated relaunch starts the bundled launcher, as issue 018 requires.
      It never starts `sys.executable` with arbitrary flags.
 3. **`system/fake.py`.** A `FakeSystem` that:
    - uses real temporary directories for files;
-   - keeps an in-memory registry for user and system scope;
+   - keeps an in-memory registry for user and system scope, and an access
+     log of every registry read and write, so that behaviour tests can
+     check that an install reads nothing but `PATH` (decisions D18, D38);
    - keeps shortcuts as records serialised to `.lnk.json` files, so they are
      visible in the temporary tree;
    - has a configurable elevation flag;
@@ -106,4 +108,6 @@ Contract tests (§16). The behaviours protected:
 - environment and PATH round-trips are idempotent and case-insensitive;
 - a junction replacement is atomic, with rollback;
 - shortcut fields survive a round-trip;
-- elevation is reported correctly.
+- elevation is reported correctly;
+- `FakeSystem`'s registry access log lists each registry read and write
+  that a run made, in order.

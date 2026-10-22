@@ -50,13 +50,24 @@ Epic: 020. Design: `_docs/rehaul_design.md` §14. Supersedes the output parts of
      progress line.
    - Human output goes to stderr whenever `--json` (issue 029) is active.
 5. **`report/logfile.py`.**
-   - **Location:** the root data directory of the root a run acts on,
-     `<root>\.gupkg\logs\` (design §9.7). That is `C:\opt\.gupkg\logs\` for
-     system runs, which inherits the root's admin-only permissions, and
-     `%USERPROFILE%\opt\.gupkg\logs\` for user runs. gupkg never logs to
-     AppData or ProgramData (decision D20).
+   - **Locations (decision D26):**
+     - **Per package:** everything about one package goes to that
+       package's `<root>\<name>\.gupkg\logs\`.
+     - **Per root:** `<root>\.gupkg\logs\`, in the root data directory
+       (design §9.7), holds only global run information, with links to the
+       per-package logs the run wrote. That is `C:\opt\.gupkg\logs\` for
+       system runs and `%USERPROFILE%\opt\.gupkg\logs\` for user runs.
+     - Both inherit the root's permissions, so system logs are admin-only.
+     - **A bundled gupkg** logs a run that involves no package into its own
+       package's `.gupkg\logs\`.
+     - gupkg never logs to AppData or ProgramData (decision D20).
    - **Files per run:** `<UTC yyyymmddThhmmssZ>-<command>[-<package>].log`
      (plain text, flushed per line) and a `.jsonl` file of the events.
+   - **`--events-file NAME`** (the flag is issue 029's) takes a plain file
+     name, not a path. The CLI writes the event stream under that name into
+     the run's log directories, and the caller reads it there (decision
+     D26). This also keeps an elevated child from writing to a path that a
+     standard user chose.
    - **Header and footer:** the header records the gupkg version, argv, mode,
      elevation and settings layers. The footer records the exit code.
    - **`latest.log`** is a copy of the most recent run's text log.
@@ -65,7 +76,8 @@ Epic: 020. Design: `_docs/rehaul_design.md` §14. Supersedes the output parts of
    - **Never fatal:** a logging failure produces one warning and the operation
      continues.
 6. **Batch output is logged.** The manager's batch execution logs each
-   package's events into the same run log, and drops `_quiet`.
+   package's events into that package's log, links each one from the run
+   log, and drops `_quiet`.
 
 ## Acceptance criteria
 
@@ -75,15 +87,23 @@ Epic: 020. Design: `_docs/rehaul_design.md` §14. Supersedes the output parts of
 - [ ] With output redirected to a file, the output has no ANSI codes and no
       `\r`, shows one final progress line per download, and has `==>` phase
       headers.
-- [ ] Every run that acts on a root leaves a `.log` and a `.jsonl` in
-      `<root>\.gupkg\logs\` of that root, and nothing under AppData or
-      ProgramData. The final summary contains that path.
+- [ ] Every run that acts on a package leaves a `.log` and a `.jsonl` in
+      that package's `<root>\<name>\.gupkg\logs\`, and a run log in
+      `<root>\.gupkg\logs\` that holds no per-package output and links to
+      the package logs. Nothing is written under AppData or ProgramData. The
+      final summary contains the log paths.
+- [ ] A bundled gupkg run that involves no package leaves its log in its
+      own package's `.gupkg\logs\`.
+- [ ] `--events-file events.jsonl` makes the event stream appear in the
+      run's log directories under that name. A value that contains a path
+      separator is refused, and nothing is written outside the log
+      directories.
 - [ ] A failing `git clone` shows git's error lines inside the Fetch phase of
       both the console and the log. Nothing is written behind the TUI.
 - [ ] Each warning appears exactly once in the console output and once in
       the log.
 - [ ] A CLI call with several targets records each package's phase output
-      in the run log.
+      in that package's log, and the run log links to each of them.
 
 ## Tests
 

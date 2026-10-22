@@ -40,7 +40,8 @@ This causes defects the owner has run into:
    (per version) and `diverged`.
 2. **The install record.** `<package>\.gupkg\package.toml` is
    read and written here, holding the mode, the link (registry, name,
-   revision, and the hash of the copied tracker) and the applied effects. The
+   revision, and the hash of the copied tracker) or the opt-out written by
+   `gupkg link --unlink` (decision D2), and the applied effects. The
    effects are written by issue 028.
 3. **`catalog/local.py`.** It scans the configured roots and the ad-hoc roots
    from `state.toml`. Grouping folders work as today, through
@@ -56,8 +57,12 @@ This causes defects the owner has run into:
      It no longer fails the whole tree.
    - **Validated once per revision:** a validated index is cached, so
      `search` stops re-validating everything.
-   - **Entries in both forms:** registry 2 entries (`<version>/` and
-     `_check_updates/`) and, for the transition, 0.17 seeds.
+   - **Registry 2 entries only:** `<version>/`, each with its fingerprint
+     when the registry publishes one (decision D29), and `_check_updates/`.
+     Core reads no 0.17 seeds (decision D33); the registry is converted
+     with the separate migration tool (issues 023 and 031).
+   - **Every version is kept** (decision D36): the catalog offers every
+     pinned version the registry holds.
 5. **`catalog/catalog.py`.**
    - `describe(selector) -> PackageView`.
    - `list(filters)`.
@@ -65,11 +70,12 @@ This causes defects the owner has run into:
      of §10.1. A name found in several roots is ambiguous for mutating
      commands.
    - `candidates(view) -> list[Candidate]`: the newer local versions,
-     including those written by earlier checks, and the linked registry's
-     pinned versions. It is pure, and **never includes running a tracker**
-     (D11). Install and update choose only from these.
-   - `compare(view, TrackResult)`: used by `gupkg check` to decide whether
-     a tracker result is newer than every known version.
+     including those written by earlier `check-updates` runs, and the
+     linked registry's pinned versions. It is pure, and **never includes
+     running a tracker** (D11). Install and update choose only from these.
+   - `compare(view, TrackResult)`: used by `gupkg check-updates` (decision
+     D21) to decide whether a tracker result is newer than every known
+     version.
 6. **The behaviour of the §5.3 table**, in particular:
    - a not-installed package with any number of versions installs the newest
      valid one;
@@ -77,10 +83,13 @@ This causes defects the owner has run into:
      reported as `diverged`;
    - the registry tracker is copied in and refreshed unless it was edited
      locally;
-   - packages with the same name but no link are shown as
-     "same name in registry" and are never merged;
+   - **a local package follows the registry entry with the same name
+     automatically** (decision D2, Scoop-like). `gupkg link` points it at
+     another entry. A package that opted out with `gupkg link --unlink` is
+     shown as `same name in registry: main (not followed)`, gets no
+     registry candidates, and is never merged;
    - a same-name package in both system and user roots produces a "shadowing"
-     warning in `list` and `doctor`.
+     warning in `list` and `gupkg check` (decision D21).
 7. **The old call sites are deleted.** The five functions above are replaced
    by catalog calls.
 
@@ -101,11 +110,19 @@ This causes defects the owner has run into:
       tracker if its hash matches the recorded copy and keeps it otherwise. A
       local version directory whose `pkg.toml` differs from the registry's is
       kept and reported as `diverged`.
+- [ ] **Following by name (D2).** An installed local package `foo` whose
+      install record has no link, with a registry entry `foo`, is listed as
+      following `main/foo`, and a newer registry pinned version is its
+      update candidate. With the `--unlink` opt-out in its install record,
+      it is listed as `same name in registry: main (not followed)` and has
+      no registry candidates. Linked to the entry `bar`, it follows `bar`.
+- [ ] A registry entry with three pinned versions offers all three as
+      candidates (D36).
 - [ ] A package root in the `adhoc` list of `state.toml` appears in
       `catalog.list()` with its mode.
 - [ ] For a package that has only `_check_updates`, `install` reports
-      "no version known yet; run `gupkg check <name>`" and makes no network
-      request.
+      "no version known yet; run `gupkg check-updates <name>`" and makes no
+      network request.
 
 ## Out of scope
 

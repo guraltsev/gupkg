@@ -152,13 +152,15 @@ Added 2026-10-22. See `_docs/rehaul_design.md` §20 and epic issue 020.
 This issue is **stage 0** of the rehaul. Its decisions stand and apply to
 every entry point the rehaul adds:
 
-- **`gupkg-manager`** (issue 030) gets the same single launch path,
-  `gupkg-manager.cmd`, which runs `python\python.exe -I -s -B` relative to
-  itself, and calls `enforce_bundled_runtime` on start.
-- **The manager starts the `gupkg.cmd` next to it in the same gupkg tree**
-  (`$App\gupkg.cmd` for an installed gupkg, `<version>\gupkg\gupkg.cmd` for a
-  bundled one) and never searches `PATH`. This is the same rule as the
-  interpreter rule here, applied to the CLI (§10.4 of the design).
+- **`gupkg-tui` and `gupkg-manager`** (issue 030, decision D34) each get
+  the same single launch path, `gupkg-tui.cmd` and `gupkg-manager.cmd`,
+  which run `python\python.exe -I -s -B` relative to themselves, and call
+  `enforce_bundled_runtime` on start.
+- **Both UI programs start the `gupkg.cmd` next to them in the same gupkg
+  tree** (`$App\gupkg.cmd` for an installed gupkg,
+  `<version>\gupkg\gupkg.cmd` for a bundled one) and never search `PATH`.
+  This is the same rule as the interpreter rule here, applied to the CLI
+  (§10.4 of the design).
 - **Elevated relaunch.** It relaunches the same bundled launcher (issues 025
   and 029), so elevated and non-elevated runs start one interpreter.
 - **`--sandbox`** (issue 021) runs through the same launcher. A sandbox does
@@ -171,9 +173,13 @@ every entry point the rehaul adds:
   resolves `%~dp0python\python.exe` relative to itself, the rule here works
   unchanged wherever the bundle is.
 - **Package launchers follow the same spirit.** `install.cmd` and
-  `gupkg-manager.cmd` find a gupkg only through the root forwarder
+  `gupkg-tui.cmd` find a gupkg only through the root forwarder
   `%~dp0..\..\.gupkg\gupkg.cmd` or the bundled `%~dp0gupkg`. They never use
-  `PATH`, the registry, AppData or ProgramData (decision D16). Elevated
-  launchers refuse unless their root and version directory are admin-only
-  (threat model T1, decision D19). The PATH
-  search in today's `gupkg-tui.cmd` is removed by issue 033.
+  `PATH`, the registry, AppData or ProgramData (decision D16). They use the
+  installed gupkg behind the root forwarder unless `--no-system-gupkg=true`
+  is given, and otherwise the bundled copy, with no version comparison
+  (decision D32). Elevated launchers refuse unless everything they will run
+  is admin-only, checked recursively: the root, the package and version
+  directories, `<root>\.gupkg\`, the forwarder, and the whole gupkg and
+  Python tree that will start (threat model T1, decisions D19, D30). The
+  PATH search in today's `gupkg-tui.cmd` is removed by issue 033.
