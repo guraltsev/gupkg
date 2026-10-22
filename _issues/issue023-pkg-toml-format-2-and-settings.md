@@ -134,7 +134,8 @@ Epic: 020. Design: `_docs/rehaul_design.md` §4, §7, §11, §12 (`model/`),
    reserved `_` name (decision D33). The current `configuration.py` leaves
    core and becomes the migration tool's reader (item 10).
 10. **The migration tool (decision D33).** A separate, non-core program.
-    gupkg core never calls it and runs without it. It does four jobs:
+    It may import gupkg core and any libraries (D44); gupkg core never
+    calls it and runs without it. It does four jobs:
     - **Format 1 → format 2** for a version directory, as described in
       §18. It writes a backup by default and validates the result with
       `gupkg pkg check` before replacing the file. A `--check` dry run

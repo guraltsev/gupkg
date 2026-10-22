@@ -108,10 +108,11 @@ owner (2026-10-22):
   check-updates` (D21) writes new pinned version directories and stops
   without activating them (D23); `install` and `update` never run a
   tracker, and no flag combines the two.
-- **D12:** the manager is a separate program, `gupkg-manager`. It imports
-  nothing from gupkg and drives the CLI only through its machine interface
-  (`--json`, `--plan`, `--events-file`, `--no-input`). The CLI has no `--all`,
-  no UI and no checksum prompts.
+- **D12:** the manager is a separate program, `gupkg-manager`. The CLI has
+  no `--all`, no UI and no checksum prompts. Amended by D44: the separate
+  programs may import gupkg core; the machine interface (`--json`,
+  `--plan`, `--events-file`, `--no-input`) serves elevated CLI children
+  and other tools.
 
 These were added when the external issues were integrated:
 
@@ -209,8 +210,8 @@ from D10, D11, D15 or D16 above, they win:
   hashes and fingerprints, for a maintainer to review and push
   (`--auto-push` pushes directly). The registry keeps every version.
 - **D37:** cancel in a UI stops after the current package.
-- **D38:** the rules "UIs import nothing from core" and "no registry read
-  except `PATH`" are guarded by behaviour tests.
+- **D38:** the rule "no registry read except `PATH`" is guarded by a
+  behaviour test. Its UI half was dropped by D44.
 - **D39:** no `inno` kind in 1.0; a `tar` kind is added.
 - **D40:** copying a distribution into a root removes the Mark of the Web.
 - **D41:** every install records an `App` fingerprint by default
@@ -219,6 +220,9 @@ from D10, D11, D15 or D16 above, they win:
   installs it in place.
 - **D43:** `cleanup` never runs automatically unless `[cleanup] auto =
   true`; no lite bundle in 1.0.
+- **D44:** `gupkg-tui`, `gupkg-manager` and the migration tool are separate
+  programs that may import gupkg core and any libraries; reuse is
+  preferred. Work that needs elevation still runs in an elevated CLI child.
 
 ## Acceptance (epic)
 

@@ -43,7 +43,7 @@ Conditions, each to be met before the issue named:
 
 The owner answered every "Needs owner" item and every open question on
 2026-10-22, in a review session after commit 2. They are recorded in the
-design as D21–D43 (§19) and applied to the design and issues 016–033 in
+design as D21–D44 (§19) and applied to the design and issues 016–033 in
 commit 3. Where an answer replaced an earlier answer in the same session,
 only the final one is listed. "Reading" marks a detail that the designer
 inferred from the owner's answer and the owner did not spell out.
@@ -65,7 +65,7 @@ inferred from the owner's answer and the owner did not spell out.
 | D31 | **An elevated gupkg never acts on a user root**: neither through the `auto` fallback nor through an explicit `--mode user`. It refuses and says to use a normal shell. | N10 |
 | D32 | **Which gupkg runs.** A launcher uses the installed gupkg reachable through the root forwarder, unless `--no-system-gupkg=true` is given; otherwise the package's bundled copy. No version comparison. Carry-forward copies the package's own bundled copy. Old version directories keep their bundled copies; only an explicit `cleanup --bundled` removes them, and only when an installed gupkg can take over. | N11, N13, Q5 |
 | D33 | **No legacy-specific code in core.** The migration tool is a **separate, non-core program** (built in issue 023): format 1 → format 2, `_bootstrap` → `_check_updates`, the 0.17 manager config → settings, and **adoption** of 0.17 installs (writing their install records). Core has no 0.17 aliases, no format 1 hint and no `_bootstrap` handling (it is just a reserved `_` name). 0.18 → 1.0 is a one-time **bootstrap re-run**; 0.18's `self update` points to the bootstrap when it sees 1.0. | N14, N16, N17 |
-| D34 | **Two UI programs, both in issue 030:** `gupkg-tui` (one package; `gupkg tui PATH` forwards to it; version directories carry `gupkg-tui.cmd`) and `gupkg-manager` (general; `gupkg manager …`, including `gupkg manager tui`, forwards to it). The forwarders are permanent. Both follow D12: no import of gupkg core, only the machine interface. | (TUI question) |
+| D34 | **Two UI programs, both in issue 030:** `gupkg-tui` (one package; `gupkg tui PATH` forwards to it; version directories carry `gupkg-tui.cmd`) and `gupkg-manager` (general; `gupkg manager …`, including `gupkg manager tui`, forwards to it). The forwarders are permanent. (Their import rule is D44.) | (TUI question) |
 | D35 | Issue 017 lands **strictly before** 021; 021 depends on all of stage 0. | N15 |
 | D36 | **Registry tool.** It only creates new version directories (with hashes and fingerprints); a maintainer reviews and pushes. `--auto-push` commits and pushes directly. The registry keeps **every** version; deletion is manual. | N18, Q2 |
 | D37 | **Cancel** in a UI stops after the current package: the running CLI finishes it cleanly and skips the rest. An elevated call is asked to stop through a stop marker, which can only make it stop. | N20 |
@@ -75,6 +75,7 @@ inferred from the owner's answer and the owner did not spell out.
 | D41 | Every install records an **`App` fingerprint** (SHA-256 of every file) by default; a package can opt out with `record_manifest = false`; a global switch remains. | Q4 |
 | D42 | **Portable target.** `--mode portable` on a folder already shaped `<name>\<version>\pkg.toml` installs it in place (the folder above `<name>` is the portable root). Otherwise the configured portable root is used, or gupkg asks (an error under `--no-input`). | Q1 |
 | D43 | `cleanup` never runs automatically (`[cleanup] auto = true` enables it after `gupkg-manager update --all`). No lite bundle in 1.0. | Q3, Q6 |
+| D44 | **The separate programs may import core.** `gupkg-tui`, `gupkg-manager` and the migration tool are separate programs that may import gupkg core and any libraries; reusing core is preferred. Work that needs elevation still runs in an elevated CLI child, so the machine interface stays for those children and other tools. Amends D12, and drops the UI half of D38. | (follow-up after commit 3) |
 
 Readings to keep in mind:
 

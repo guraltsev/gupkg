@@ -70,10 +70,11 @@ Epic: 020. Design: `_docs/rehaul_design.md` §15, §10.4, §13.2. Supersedes the
    - **They are part of the bundle checks.** They are covered by
      `MANIFEST.sha256` (issue 016) and imported by the build probe (issue
      019).
-   - **They import nothing from gupkg core** (D12, D34), and **talk to
-     gupkg only through the CLI machine interface** of issue 029: `--json`,
-     `--plan`, `--events-file` and `--no-input`. Both rules are guarded by
-     behaviour tests (D38), not by module-boundary tests.
+   - **They build on gupkg core** (D44). They may import gupkg core and
+     any libraries, and reuse core rather than reimplement it. Work that
+     needs elevation runs in an elevated CLI child through the machine
+     interface of issue 029: `--json`, `--plan`, `--events-file` and
+     `--no-input`.
    - **`gupkg_manager`'s parts:**
      - `client.py` runs `gupkg` subprocesses and follows the events file;
      - `batch.py` does inventory → plan → confirm → grouped execution;
@@ -152,11 +153,10 @@ Epic: 020. Design: `_docs/rehaul_design.md` §15, §10.4, §13.2. Supersedes the
 
 ## Acceptance criteria
 
-- [ ] **Only the CLI (D38).** With gupkg core not importable and only the
-      `gupkg` CLI available, `gupkg-tui` and `gupkg-manager` open, plan,
-      install and check as usual. Every operation they perform appears as a
-      `gupkg …` subprocess call in their run log under
-      `<root>\.gupkg\logs\`.
+- [ ] **Elevated work goes through the CLI** (D44). For system targets,
+      `gupkg-tui` and `gupkg-manager` start one elevated `gupkg` child,
+      follow its `--events-file`, and show its result; the run log under
+      `<root>\.gupkg\logs\` names that call.
 - [ ] `gupkg-tui PATH` opens the package view of that package, and
       `gupkg-manager tui` opens the browser.
 - [ ] Every screen of both programs shows a key-hint line at the top and a
