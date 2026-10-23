@@ -43,7 +43,17 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from ..extractors import find_7z
-from .port import EnvValue, ProcessResult, Scope, ScopeFolders, ShortcutSpec, System
+from .port import (
+    DownloadResponse,
+    EnvValue,
+    HttpResponse,
+    ProcessResult,
+    ResponseTooLarge,
+    Scope,
+    ScopeFolders,
+    ShortcutSpec,
+    System,
+)
 from .windows import WindowsLinks, WindowsSystem
 
 
@@ -78,6 +88,34 @@ class FakeResponse:
 
     body: bytes
     report_size: bool = True
+
+
+@dataclass(frozen=True)
+class FakeHttp:
+    """Serve a URL fixture with a chosen status and headers (``http_request``, ``http_download``).
+
+    ``headers`` are the response headers (any letter case). With ``ranges`` true the
+    fixture honours ``Range: bytes=N-`` with a 206 answer, as a resumable server does.
+    ``fail_after`` makes ``http_download`` drop the connection (``OSError``) after that
+    many body bytes, leaving the partial file behind.
+    """
+
+    body: bytes | str = b""
+    status: int = 200
+    headers: Mapping[str, str] = field(default_factory=dict)
+    ranges: bool = False
+    fail_after: int | None = None
+
+
+@dataclass(frozen=True)
+class RecordedRequest:
+    """Record one ``http_request`` or ``http_download`` call made to a ``FakeSystem``."""
+
+    method: str
+    url: str
+    headers: Mapping[str, str]
+    timeout: float
+    max_bytes: int | None = None
 
 
 @dataclass(frozen=True)
@@ -137,6 +175,7 @@ class FakeSystem(WindowsLinks):
     broadcasts: int = 0
     relaunches: list[list[str]] = field(default_factory=list)
     fetch_log: list[str] = field(default_factory=list)
+    request_log: list[RecordedRequest] = field(default_factory=list)
     process_log: list[list[str]] = field(default_factory=list)
     real_programs: dict[str, Path] = field(default_factory=dict)
     _env: dict[str, dict[str, tuple[str, EnvValue]]] = field(
@@ -372,7 +411,98 @@ class FakeSystem(WindowsLinks):
             return self.delegate.fetch_text(url, headers, timeout=timeout)
         return self._served(url, headers)[0].decode("utf-8")
 
+    def http_request(
+        self,
+        url: str,
+        headers: Mapping[str, str] | None = None,
+        *,
+        method: str = "GET",
+        timeout: float = 60,
+        max_bytes: int | None = None,
+    ) -> HttpResponse:
+        """Answer from the fixture for *url* (a ``HEAD`` gets no body); no redirect is followed."""
+        self._maybe_fail("http_request")
+        self.request_log.append(RecordedRequest(method, url, dict(headers or {}), timeout, max_bytes))
+        if url not in self.urls and self.delegate is not None:
+            self.fetch_log.append(url)
+            return self.delegate.http_request(url, headers, method=method, timeout=timeout, max_bytes=max_bytes)
+        fixture = self._http_fixture(url, headers)
+        body = fixture.body if isinstance(fixture.body, bytes) else fixture.body.encode("utf-8")
+        if max_bytes is not None and len(body) > max_bytes and method != "HEAD" and max_bytes > 0:
+            raise ResponseTooLarge(f"The response is larger than {max_bytes} bytes")
+        answer_headers = {name.lower(): value for name, value in fixture.headers.items()}
+        answer_headers.setdefault("content-length", str(len(body)))
+        return HttpResponse(fixture.status, url, answer_headers, b"" if method == "HEAD" or max_bytes == 0 else body)
+
+    def http_download(
+        self,
+        url: str,
+        headers: Mapping[str, str] | None,
+        dest: Path,
+        on_progress: Callable[[int, int | None], None] | None = None,
+        *,
+        timeout: float = 60,
+        append: bool = False,
+        on_headers: Callable[[int, Mapping[str, str]], None] | None = None,
+    ) -> DownloadResponse:
+        """Write the fixture for *url* to *dest*, honouring ``Range`` when the fixture allows it."""
+        self._maybe_fail("http_download")
+        self.request_log.append(RecordedRequest("GET", url, dict(headers or {}), timeout))
+        if url not in self.urls and self.delegate is not None:
+            self.fetch_log.append(url)
+            return self.delegate.http_download(
+                url, headers, dest, on_progress, timeout=timeout, append=append, on_headers=on_headers
+            )
+        fixture = self._http_fixture(url, headers)
+        body = fixture.body if isinstance(fixture.body, bytes) else fixture.body.encode("utf-8")
+        answer_headers = {name.lower(): value for name, value in fixture.headers.items()}
+        if on_headers is not None:
+            on_headers(fixture.status, answer_headers)
+        if not 200 <= fixture.status < 300:
+            return DownloadResponse(fixture.status, url, answer_headers)
+
+        # A range request is honoured only by a fixture that says it is resumable.
+        status, resumed, payload = fixture.status, False, body
+        wanted = {name.lower(): value for name, value in (headers or {}).items()}.get("range", "")
+        if append and fixture.ranges and wanted.startswith("bytes=") and wanted.endswith("-"):
+            start = int(wanted[6:-1])
+            if start >= len(body):
+                return DownloadResponse(416, url, answer_headers)
+            status, resumed, payload = 206, True, body[start:]
+        total = len(body)
+        already = len(body) - len(payload)
+        if on_progress is not None:
+            on_progress(already, total)
+        cut = payload if fixture.fail_after is None else payload[: fixture.fail_after]
+        with open(dest, "ab" if resumed else "wb") as handle:
+            for begin in range(0, len(cut), 64 * 1024):
+                chunk = cut[begin : begin + 64 * 1024]
+                handle.write(chunk)
+                if on_progress is not None:
+                    on_progress(already + begin + len(chunk), total)
+        if len(cut) < len(payload):
+            raise ConnectionResetError(f"FakeSystem dropped the connection to {url}")
+        return DownloadResponse(status, url, answer_headers, len(payload), resumed)
+
     # -- internals -----------------------------------------------------------------
+
+    def _http_fixture(self, url: str, headers: Mapping[str, str] | None) -> FakeHttp:
+        """Resolve a URL fixture to a :class:`FakeHttp` or raise its error."""
+        self.fetch_log.append(url)
+        if url not in self.urls:
+            raise UnexpectedCall(f"FakeSystem has no fixture for URL {url}")
+        content = self.urls[url]
+        if callable(content):
+            content = content(url, dict(headers or {}))
+        if isinstance(content, BaseException):
+            raise content
+        if isinstance(content, FakeHttp):
+            return content
+        if isinstance(content, FakeResponse):
+            return FakeHttp(content.body)
+        if isinstance(content, str):
+            return FakeHttp(content)
+        return FakeHttp(bytes(content))
 
     def _served(self, url: str, headers: Mapping[str, str] | None) -> tuple[bytes, bool]:
         """Resolve a URL fixture to ``(body, report_size)`` or raise its error."""

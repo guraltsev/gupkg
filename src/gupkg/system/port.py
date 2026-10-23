@@ -14,6 +14,10 @@ the user or machine target of an environment or shortcut operation. Use
 ``run_checked(system, argv, ...)`` for the three patterns that every caller
 repeats.
 
+``http_request`` returns the response of any status without following redirects, and
+``http_download`` streams a body into a file (appending a ``206`` answer when asked); redirect,
+retry and token policy live in ``gupkg.services.http``, not in the implementations.
+
 Beyond the groups in the issue, the protocol has ``scope_folders`` (the Start Menu
 ``opt`` and ``bin`` folders of a scope, so the sandbox can keep them off the real
 machine), ``directory_untrusted_reason`` (why a folder is not admin-only, next to
@@ -106,6 +110,41 @@ class ProcessResult:
 
 class ProcessFailed(RuntimeError):
     """Report that a child process that had to succeed exited with a failure status."""
+
+
+@dataclass(frozen=True)
+class HttpResponse:
+    """Hold one HTTP response whatever its status: final URL, lower-case headers and body.
+
+    ``http_request`` never follows a redirect, so ``url`` is the URL that was
+    requested and a 3xx response carries its ``location`` header. Repeated
+    headers are joined with ``", "``.
+    """
+
+    status: int
+    url: str
+    headers: Mapping[str, str]
+    body: bytes = b""
+
+
+@dataclass(frozen=True)
+class DownloadResponse:
+    """Report one ``http_download`` call: status, headers, and how the file was written.
+
+    ``written`` counts the bytes this call wrote to the file. ``resumed`` is true
+    only when the server answered a ``Range`` request with 206 and the bytes were
+    appended. A 3xx or error status writes nothing.
+    """
+
+    status: int
+    url: str
+    headers: Mapping[str, str]
+    written: int = 0
+    resumed: bool = False
+
+
+class ResponseTooLarge(OSError):
+    """Report that a response body is larger than the size the caller allows."""
 
 
 class System(Protocol):
@@ -232,6 +271,47 @@ class System(Protocol):
         self, url: str, headers: Mapping[str, str] | None = None, *, timeout: float = 60
     ) -> str:
         """Return the UTF-8 text served at *url*."""
+
+    def http_request(
+        self,
+        url: str,
+        headers: Mapping[str, str] | None = None,
+        *,
+        method: str = "GET",
+        timeout: float = 60,
+        max_bytes: int | None = None,
+    ) -> HttpResponse:
+        """Send one request and return the response of any status, without following redirects.
+
+        Only ``http://``, ``https://`` and ``file://`` URLs are served. At most
+        *max_bytes* of the body are read; a longer body raises
+        ``ResponseTooLarge``, and ``max_bytes=0`` returns the headers only. Network
+        failures raise ``OSError``. Redirect, retry and header policy belong to
+        ``gupkg.services.http``, which calls this method once per hop.
+        """
+
+    def http_download(
+        self,
+        url: str,
+        headers: Mapping[str, str] | None,
+        dest: Path,
+        on_progress: Callable[[int, int | None], None] | None = None,
+        *,
+        timeout: float = 60,
+        append: bool = False,
+        on_headers: Callable[[int, Mapping[str, str]], None] | None = None,
+    ) -> DownloadResponse:
+        """Stream one response body into *dest* and report how it went; redirects are not followed.
+
+        A 2xx answer is written to *dest*. With ``append=True`` the caller has sent
+        a ``Range`` header: a 206 answer is appended to *dest*, and any other 2xx
+        answer replaces it (the server ignored the range). A 3xx, 4xx or 5xx answer
+        leaves *dest* untouched and writes nothing. ``on_progress(received, total)``
+        counts the bytes of the whole file, resumed ones included. ``on_headers(status,
+        headers)`` is called once, before the first body byte, for every answer, so a
+        caller can remember the validators (``etag``, ``last-modified``) of a file whose
+        body is then interrupted.
+        """
 
 
 # ---------------------------------------------------------------------------

@@ -38,6 +38,8 @@ import re
 import struct
 import subprocess
 import threading
+import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from contextlib import contextmanager
@@ -46,7 +48,17 @@ from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping, Sequence
 
 from ..selfmgmt import elevation
-from .port import EnvValue, ProcessResult, Scope, ScopeFolders, ShortcutSpec
+from ..tls import enable_partial_chain_verification
+from .port import (
+    DownloadResponse,
+    EnvValue,
+    HttpResponse,
+    ProcessResult,
+    ResponseTooLarge,
+    Scope,
+    ScopeFolders,
+    ShortcutSpec,
+)
 
 if os.name == "nt":
     import winreg
@@ -441,6 +453,57 @@ class WindowsSystem(WindowsLinks):
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return response.read().decode("utf-8")
 
+    def http_request(
+        self,
+        url: str,
+        headers: Mapping[str, str] | None = None,
+        *,
+        method: str = "GET",
+        timeout: float = 60,
+        max_bytes: int | None = None,
+    ) -> HttpResponse:
+        """Send one request without following redirects and return the response of any status."""
+        with _open_without_redirects(url, headers, method, timeout) as response:
+            status, final_url, response_headers = _response_parts(response, url)
+            body = _read_limited(response, max_bytes)
+        return HttpResponse(status, final_url, response_headers, body)
+
+    def http_download(
+        self,
+        url: str,
+        headers: Mapping[str, str] | None,
+        dest: Path,
+        on_progress: Callable[[int, int | None], None] | None = None,
+        *,
+        timeout: float = 60,
+        append: bool = False,
+        on_headers: Callable[[int, Mapping[str, str]], None] | None = None,
+    ) -> DownloadResponse:
+        """Stream a 2xx response into *dest* (appending a 206 answer when asked); write nothing otherwise."""
+        with _open_without_redirects(url, headers, "GET", timeout) as response:
+            status, final_url, response_headers = _response_parts(response, url)
+            if on_headers is not None:
+                on_headers(status, response_headers)
+            if not 200 <= status < 300:
+                return DownloadResponse(status, final_url, response_headers)
+
+            # A 206 answer to a range request continues the existing file; any other
+            # 2xx answer is the whole body and replaces it.
+            resumed = append and status == 206
+            already = Path(dest).stat().st_size if resumed else 0
+            length = _content_length(response)
+            total = already + length if length is not None else None
+            if on_progress is not None:
+                on_progress(already, total)
+            received = already
+            with open(dest, "ab" if resumed else "wb") as handle:
+                while chunk := response.read(64 * 1024):
+                    handle.write(chunk)
+                    received += len(chunk)
+                    if on_progress is not None:
+                        on_progress(received, total)
+        return DownloadResponse(status, final_url, response_headers, received - already, resumed)
+
 
 # ---------------------------------------------------------------------------
 # Console helpers (used by the command line, not part of System)
@@ -591,6 +654,56 @@ def _script_command(argv: Sequence[str]) -> list[str]:
     if suffix in {".cmd", ".bat"}:
         return [_system_tool("cmd"), "/c", program, *rest]
     return [program, *rest]
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Hand a 3xx answer to the caller instead of following it."""
+
+    def redirect_request(self, *args: Any, **kwargs: Any) -> None:
+        """Decline every redirect, so urllib reports the 3xx response itself."""
+        return None
+
+
+_ALLOWED_SCHEMES = ("http", "https", "file")
+
+
+def _open_without_redirects(url: str, headers: Mapping[str, str] | None, method: str, timeout: float):
+    """Open *url* and return its response object, a 3xx or error answer included.
+
+    Only ``http``, ``https`` and ``file`` URLs are opened. HTTPS verification
+    uses the system store with partial-chain support (``gupkg.tls``).
+    """
+    scheme = urllib.parse.urlsplit(url).scheme.lower()
+    if scheme not in _ALLOWED_SCHEMES:
+        raise OSError(f"Only http, https and file URLs are fetched, not {url!r}")
+    enable_partial_chain_verification()
+    opener = urllib.request.build_opener(_NoRedirect)
+    request = urllib.request.Request(url, headers=dict(headers or {}), method=method)
+    try:
+        return opener.open(request, timeout=timeout)
+    except urllib.error.HTTPError as error:
+        # An HTTPError is itself a readable response; the caller maps it like any other.
+        return error
+
+
+def _response_parts(response: Any, requested: str) -> tuple[int, str, dict[str, str]]:
+    """Return ``(status, url, lower-case headers)`` of a urllib response or ``HTTPError``."""
+    status = getattr(response, "status", None) or getattr(response, "code", None) or 200
+    collected: dict[str, str] = {}
+    for name, value in response.headers.items():
+        key = name.lower()
+        collected[key] = f"{collected[key]}, {value}" if key in collected else value
+    return int(status), requested, collected
+
+
+def _read_limited(response: Any, max_bytes: int | None) -> bytes:
+    """Read the body, failing with ``ResponseTooLarge`` when it exceeds *max_bytes*."""
+    if max_bytes is None:
+        return response.read()
+    body = response.read(max_bytes + 1) if max_bytes > 0 else b""
+    if len(body) > max_bytes:
+        raise ResponseTooLarge(f"The response is larger than {max_bytes} bytes")
+    return body
 
 
 def _content_length(response: Any) -> int | None:
