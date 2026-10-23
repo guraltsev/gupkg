@@ -275,7 +275,7 @@ def call_track(module: ModuleType, context: HookContext) -> TrackResult:
     HookError
         If the module has no ``track`` function or it returns anything but a ``TrackResult``.
     """
-    result = _entry(module, "track")(context)
+    result = _call(module, "track", context)
     if not isinstance(result, TrackResult):
         raise HookError(f"track(ctx) must return a TrackResult, not {type(result).__name__}")
     return result
@@ -283,17 +283,25 @@ def call_track(module: ModuleType, context: HookContext) -> TrackResult:
 
 def call_unpack(module: ModuleType, context: HookContext) -> None:
     """Run ``unpack(ctx)``, which fills ``ctx.paths.app`` from ``ctx.paths.artifact``."""
-    _entry(module, "unpack")(context)
+    _call(module, "unpack", context)
 
 
 def call_prepare(module: ModuleType, context: HookContext) -> None:
     """Run ``prepare(ctx)``, which adjusts the staged ``ctx.paths.app``."""
-    _entry(module, "prepare")(context)
+    _call(module, "prepare", context)
 
 
 def call_populate(module: ModuleType, context: HookContext) -> None:
     """Run ``populate(ctx)``, a custom populate script that fills ``ctx.paths.app`` by itself."""
-    _entry(module, "populate")(context)
+    _call(module, "populate", context)
+
+
+def _call(module: ModuleType, name: str, context: HookContext) -> Any:
+    """Run the entry point *name*; a ``sys.exit`` inside it is a ``HookError`` (it would end gupkg itself)."""
+    try:
+        return _entry(module, name)(context)
+    except SystemExit as error:
+        raise HookError(f"{name}(ctx) called sys.exit({error.code!r})") from error
 
 
 def _entry(module: ModuleType, name: str):

@@ -54,6 +54,12 @@ class Hostile(BaseHTTPRequestHandler):
                 self.send(b"HTTP/1.0 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: %d\r\n\r\n" % len(body) + body)
             elif self.path == "/exact":
                 self.send(b"HTTP/1.0 200 OK\r\nContent-Length: 5\r\n\r\nhello")
+            elif self.path == "/cut-headers":
+                self.send(b"HTTP/1.0 200 OK\r\nContent-Length: 5\r\nX-Half: val")
+            elif self.path == "/not-modified":
+                self.send(b"HTTP/1.0 304 Not Modified\r\nContent-Length: 100\r\n\r\n")
+            elif self.path == "/no-content":
+                self.send(b"HTTP/1.0 204 No Content\r\nContent-Length: 100\r\n\r\n")
         except ConnectionAbortedError:
             pass
 
@@ -121,3 +127,22 @@ def test_a_compressed_response_is_refused(hostile: str, tmp_path: Path) -> None:
     with pytest.raises(OSError, match="Content-Encoding"):
         system.http_download(hostile + "/gzip", None, tmp_path / "out.bin")
     assert not (tmp_path / "out.bin").exists()
+
+
+def test_a_connection_closed_in_the_middle_of_the_headers_is_an_error_not_an_empty_download(hostile: str, tmp_path: Path) -> None:
+    """The standard library would take the cut for the end of the headers; the transport reports a protocol error."""
+    system = WindowsSystem()
+
+    with pytest.raises(OSError, match="middle of the response headers"):
+        system.http_request(hostile + "/cut-headers")
+    with pytest.raises(OSError, match="middle of the response headers"):
+        system.http_download(hostile + "/cut-headers", None, tmp_path / "out.bin")
+    assert not (tmp_path / "out.bin").exists()
+
+
+@pytest.mark.parametrize("path", [pytest.param("/not-modified", id="304"), pytest.param("/no-content", id="204")])
+def test_an_answer_without_a_body_is_not_judged_by_its_content_length(hostile: str, path: str) -> None:
+    """A 304 or 204 may repeat the Content-Length of the full file; no body is then expected."""
+    answer = WindowsSystem().http_request(hostile + path)
+
+    assert answer.status in (204, 304) and answer.body == b""

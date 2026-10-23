@@ -475,7 +475,7 @@ class HttpClient:
         parts = urllib.parse.urlsplit(url)
         if parts.scheme.lower() != "file":
             return
-        if parts.netloc not in ("", "localhost"):
+        if parts.netloc.lower() not in ("", "localhost"):
             raise HttpError(f"{url[:80]} names a network host; reading it would make Windows authenticate to that server")
         decoded = urllib.parse.unquote(parts.path)
         if re.match(r"\\{2,3}\?\\[A-Za-z]:\\", decoded.replace("/", "\\")):

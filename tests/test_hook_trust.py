@@ -15,7 +15,16 @@ from pathlib import Path
 import pytest
 
 from gupkg.model.manifest import PrepareModule
-from gupkg.services.hooks import HookContext, HookError, HookPaths, load_hook
+from gupkg.services.hooks import (
+    HookContext,
+    HookError,
+    HookPaths,
+    call_populate,
+    call_prepare,
+    call_track,
+    call_unpack,
+    load_hook,
+)
 from gupkg.services.http import HttpClient
 from gupkg.services.populate import run_custom_populate
 from gupkg.services.prepare import PrepareError, run_prepare
@@ -141,6 +150,19 @@ def test_a_hook_that_exits_while_loading_is_a_hook_error(tmp_path: Path, system:
 
     with pytest.raises(HookError, match=r"pkg\.local/quit\.py failed while loading: SystemExit"):
         load_hook(tmp_path, "pkg.local/quit.py", system)
+
+
+@pytest.mark.parametrize("entry", ["track", "unpack", "prepare", "populate"])
+def test_a_hook_that_exits_inside_an_entry_point_is_a_hook_error(tmp_path: Path, system: FakeSystem, entry: str) -> None:
+    """`sys.exit()` inside `track`, `unpack`, `prepare` or `populate` is a HookError, like at import time."""
+    (tmp_path / "pkg.local").mkdir()
+    body = f"import sys\nPKG_MODULE_API = 2\n\ndef {entry}(ctx):\n    sys.exit(4)\n"
+    (tmp_path / "pkg.local" / "quit.py").write_text(body, encoding="utf-8")
+    module = load_hook(tmp_path, "pkg.local/quit.py", system)
+    call = {"track": call_track, "unpack": call_unpack, "prepare": call_prepare, "populate": call_populate}[entry]
+
+    with pytest.raises(HookError, match=rf"{entry}\(ctx\) called sys.exit\(4\)"):
+        call(module, context(system, tmp_path))
 
 
 def test_a_keyboard_interrupt_in_a_hook_still_stops_the_run(tmp_path: Path, system: FakeSystem) -> None:

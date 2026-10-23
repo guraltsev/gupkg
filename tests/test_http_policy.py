@@ -134,6 +134,7 @@ def test_file_urls_that_name_a_network_share_are_refused_unless_allowed(system: 
     [
         pytest.param("file:///C:/Windows/win.ini", id="drive-path"),
         pytest.param("file://localhost/C:/Windows/win.ini", id="localhost"),
+        pytest.param("file://LOCALHOST/C:/Windows/win.ini", id="localhost-upper-case"),
         pytest.param("file:///C:/a%20b/c.txt", id="encoded-space"),
         pytest.param("file:///%5C%5C%3F%5CC:%5Cx", id="extended-local-drive"),
     ],

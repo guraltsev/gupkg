@@ -500,3 +500,31 @@ def test_windows_aborted_child_is_gone_and_so_is_a_grandchild_it_started(tmp_pat
     time.sleep(5)
 
     assert not marker.exists()
+
+
+def test_a_watcher_that_raises_stops_the_run_at_once_and_its_error_reaches_the_caller(machine: System, tmp_path: Path) -> None:
+    """An exception from ``watch`` propagates and the child is killed (a leaked child would keep the call for 30 s)."""
+    command = _watched_command(machine, "import time; time.sleep(30)")
+    calls = {"count": 0}
+
+    def watch() -> str | None:
+        """Fail on the second look, so the child is running when it is raised."""
+        calls["count"] += 1
+        if calls["count"] >= 2 or isinstance(machine, FakeSystem):
+            raise RuntimeError("watcher broke")
+        return None
+
+    started = time.monotonic()
+
+    with pytest.raises(RuntimeError, match="watcher broke"):
+        machine.run(command, tmp_path, None, None, watch=watch)
+
+    assert time.monotonic() - started < 15
+
+
+def test_a_child_that_finishes_at_once_is_still_judged_by_one_last_look_of_the_watcher(machine: System, tmp_path: Path) -> None:
+    """A watcher that only objects after the child ended still aborts the run, on the fake and on Windows alike."""
+    command = _watched_command(machine, "pass")
+
+    with pytest.raises(ProcessAborted, match="late objection"):
+        machine.run(command, tmp_path, None, None, watch=lambda: "late objection")

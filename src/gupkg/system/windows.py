@@ -433,6 +433,15 @@ class WindowsSystem(WindowsLinks):
                         _kill_tree(process)
                         process.wait()
                         raise ProcessAborted(reason) from None
+            # Like the test double, ask the watcher once more after the child has finished.
+            reason = watch() if watch is not None else None
+            if reason is not None:
+                raise ProcessAborted(reason)
+        except BaseException:
+            # A raising watcher, Ctrl-C or any other failure must not leave the child running,
+            # because the reader threads below would wait for it.
+            _kill_tree(process)
+            raise
         finally:
             for reader in readers:
                 reader.join()
@@ -489,7 +498,7 @@ class WindowsSystem(WindowsLinks):
                 status, final_url, response_headers = _response_parts(response, url)
                 if 200 <= status < 300:
                     _refuse_encoding(response_headers)
-                expected = None if method == "HEAD" else _content_length(response)
+                expected = _expected_length(response, method, status)
                 body = _read_limited(response, max_bytes, deadline, expected)
         except http.client.HTTPException as error:
             raise _transport_error(deadline, error) from error
@@ -528,7 +537,7 @@ class WindowsSystem(WindowsLinks):
                 # 2xx answer is the whole body and replaces it.
                 resumed = append and status == 206
                 already = Path(dest).stat().st_size if resumed else 0
-                length = _content_length(response)
+                length = _expected_length(response, "GET", status)
                 total = already + length if length is not None else None
                 if on_progress is not None:
                     on_progress(already, total)
@@ -766,11 +775,56 @@ class _Deadline:
             pass
 
 
+class _CutHeaders(http.client.HTTPException):
+    """The server closed the connection in the middle of the response headers."""
+
+
+class _EofWatch:
+    """Wrap a response file to note whether a line read came back empty (end of file) inside the headers."""
+
+    def __init__(self, inner: Any) -> None:
+        """Wrap *inner*."""
+        self.inner = inner
+        self.hit_eof = False
+
+    def readline(self, *args: Any) -> bytes:
+        """Read a line and remember an end of file."""
+        line = self.inner.readline(*args)
+        if not line:
+            self.hit_eof = True
+        return line
+
+    def __getattr__(self, name: str) -> Any:
+        """Delegate everything else to the wrapped file."""
+        return getattr(self.inner, name)
+
+
+class _StrictResponse(http.client.HTTPResponse):
+    """An HTTP response that fails when the headers end by end of file instead of by a blank line.
+
+    The standard library treats a connection closed in the middle of the headers as a normal end of
+    the headers, so a cut-short answer would look like a successful (empty) one.
+    """
+
+    def begin(self) -> None:
+        """Read the status line and headers; refuse a connection that closed before the blank line."""
+        watch = _EofWatch(self.fp)
+        self.fp = watch
+        try:
+            super().begin()
+        finally:
+            self.fp = watch.inner
+        if watch.hit_eof:
+            raise _CutHeaders("the server closed the connection in the middle of the response headers")
+
+
 def _timed(base: type, deadline: _Deadline):
     """Return a connection class like *base* whose socket is watched by *deadline*."""
 
     class Timed(base):  # type: ignore[misc, valid-type]
         """A connection that registers its socket with the request's deadline."""
+
+        response_class = _StrictResponse
 
         def connect(self) -> None:
             """Connect, then hand the socket to the deadline."""
@@ -899,6 +953,17 @@ def _read_limited(response: Any, max_bytes: int | None, deadline: _Deadline | No
         pieces.append(block)
         if deadline is not None and deadline.expired():
             raise TimeoutError("The response took longer than its total time limit")
+
+
+def _expected_length(response: Any, method: str, status: int) -> int | None:
+    """Return the body size to verify, or ``None`` when the answer has no body (HEAD, 1xx, 204, 304).
+
+    A body without a ``Content-Length`` (HTTP/1.0 or ``Connection: close``) cannot be verified;
+    like a browser, gupkg accepts it, and the checksum rules cover integrity.
+    """
+    if method == "HEAD" or status < 200 or status in (204, 304):
+        return None
+    return _content_length(response)
 
 
 def _content_length(response: Any) -> int | None:
