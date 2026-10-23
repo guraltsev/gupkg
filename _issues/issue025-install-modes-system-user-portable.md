@@ -1,5 +1,7 @@
 # Issue 025: First-class install modes (system, user, portable)
 
+> **Status (2026-10-23):** Implemented (the mode model, selection, elevation rules and the safe distribution copy; nothing is wired to a command yet). Merged in e51f057. Wiring and follow-ups: issue 029 wires `resolve_mode`/`ensure_elevation`/`copy_distribution` into the CLI, must always set `ModeRequest.relaunched` in the elevated child's argv and test it; issue 028 installs from the copy, writes `CopyResult.source_marked` into the receipt, passes `required=ModeChoice` to `copy_distribution`, and implements portable persistence/markers/`[nonportable]`. Manual checks still owed: `tests/manual_smoke.md`, "Install modes (issue 025)" entries 1-5 (several only possible once 028/029 land).
+
 Date: 2026-10-22
 Priority: Critical
 Epic: 020. Design: `_docs/rehaul_design.md` §6
