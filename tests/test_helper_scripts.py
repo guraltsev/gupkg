@@ -525,6 +525,49 @@ class ShortcutImporterTests(unittest.TestCase):
         self.assertIn(str(missing), str(caught.exception))
         self.assertNotIn("\n", str(caught.exception))
 
+    @unittest.skipUnless(os.name == "nt", "reading .lnk files requires Windows")
+    def test_importer_turns_real_lnk_files_into_toml_with_and_without_icons(self) -> None:
+        """Real shortcuts become shortcut tables; a shortcut with no icon gets an empty icon, not ",0"."""
+
+        from gupkg.shell_link import ShellLink, write_shell_link
+
+        importer = load_shortcut_importer_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            version_dir = Path(tmpdir) / "Game" / "1.0.0.local.1"
+            shortcuts_dir = version_dir / "_shortcuts"
+            (version_dir / "App").mkdir(parents=True)
+            (version_dir / "Icons").mkdir()
+            shortcuts_dir.mkdir()
+            (version_dir / "pkg.toml").write_text(
+                'name = "Game"\nversion = "1.0.0"\nlocalVersion = 1\n', encoding="utf-8"
+            )
+            write_shell_link(
+                shortcuts_dir / "With Icon.lnk",
+                ShellLink(
+                    target_path=str(version_dir / "App" / "game.exe"),
+                    arguments="--go",
+                    working_directory=str(version_dir / "App"),
+                    icon_location=f"{version_dir / 'Icons' / 'game.ico'},2",
+                    description="Has icon",
+                ),
+            )
+            write_shell_link(
+                shortcuts_dir / "No Icon.lnk",
+                ShellLink(target_path=str(version_dir / "App" / "tool.exe")),
+            )
+
+            rendered, shortcuts = importer.import_shortcuts(version_dir)
+
+        parsed = {item["name"]: item for item in tomllib.loads(rendered)["shortcut"]}
+        self.assertEqual(len(shortcuts), 2)
+        with_icon = parsed["With Icon"]
+        self.assertEqual(with_icon["targetPath"], "$App\\game.exe")
+        self.assertEqual(with_icon["arguments"], "--go")
+        self.assertEqual(with_icon["workingDirectory"], "$App")
+        self.assertEqual(with_icon["iconLocation"], "$Icons\\game.ico,2")
+        self.assertEqual(with_icon["description"], "Has icon")
+        self.assertEqual(parsed["No Icon"].get("iconLocation", ""), "")
+
     def test_importer_overwrites_matching_shortcuts_and_preserves_other_config(
         self,
     ) -> None:

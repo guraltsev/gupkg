@@ -17,3 +17,8 @@ Branch: rehaul/issue017. Baseline on main: 257 passed. After: 271 passed.
 - S_FALSE from CoInitializeEx is balanced with CoUninitialize (MS docs), unlike the issue text.
 - Importer maps "no icon" to "" (the old WScript path gave ",0").
 - Junction part done (DeviceIoControl FSCTL_SET_REPARSE_POINT).
+
+## Review round 1
+- Fixed signed HRESULT handling (OverflowError) and RPC_E_CHANGED_MODE constant.
+- Importer icon change ("" instead of ",0") recorded in the issue file.
+- Junction target: `\\?\` prefix stripped, UNC targets refused.

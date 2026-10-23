@@ -84,6 +84,77 @@ def test_shortcut_fields_round_trip_exactly(tmp_path: Path) -> None:
     assert read_shell_link(path) == link
 
 
+def test_target_and_icon_paths_over_two_hundred_characters_round_trip(
+    tmp_path: Path,
+) -> None:
+    """Target and icon paths of 259 and 258 characters, near the Windows limit, come back unchanged."""
+    link = ShellLink(
+        target_path="C:\\" + "t" * 256,
+        icon_location="C:\\" + "i" * 255 + ",4",
+        working_directory="C:\\" + "w" * 257,
+    )
+    path = tmp_path / "long.lnk"
+
+    write_shell_link(path, link)
+
+    assert read_shell_link(path) == link
+
+
+def test_target_longer_than_windows_allows_raises_an_error_naming_the_path(
+    tmp_path: Path,
+) -> None:
+    """A target over 259 characters is refused with an OSError that names the shortcut path."""
+    path = tmp_path / "toolong.lnk"
+
+    with pytest.raises(OSError) as caught:
+        write_shell_link(path, ShellLink(target_path="C:\\" + "t" * 300))
+
+    assert caught.value.filename == str(path)
+    assert "\n" not in str(caught.value)
+    assert not path.exists()
+
+
+def test_reading_a_corrupt_lnk_raises_an_error_naming_the_path(tmp_path: Path) -> None:
+    """A file that is not a shortcut raises OSError naming the file, so callers can report it."""
+    path = tmp_path / "corrupt.lnk"
+    path.write_text("garbage", encoding="utf-8")
+
+    with pytest.raises(OSError) as caught:
+        read_shell_link(path)
+
+    assert caught.value.filename == str(path)
+    assert "\n" not in str(caught.value)
+
+
+def test_shortcuts_work_on_a_thread_already_in_the_multithreaded_apartment(
+    tmp_path: Path,
+) -> None:
+    """A thread that already initialised COM as multithreaded can still write and read links."""
+    import ctypes
+
+    results: list[ShellLink] = []
+    errors: list[BaseException] = []
+
+    def work() -> None:
+        ole32 = ctypes.windll.ole32
+        ole32.CoInitializeEx(None, 0)  # COINIT_MULTITHREADED
+        try:
+            path = tmp_path / "mta.lnk"
+            write_shell_link(path, ShellLink("C:\\Windows\\notepad.exe"))
+            results.append(read_shell_link(path))
+        except BaseException as exc:  # noqa: BLE001 - reported to the main thread
+            errors.append(exc)
+        finally:
+            ole32.CoUninitialize()
+
+    thread = threading.Thread(target=work)
+    thread.start()
+    thread.join()
+
+    assert errors == []
+    assert results == [ShellLink("C:\\Windows\\notepad.exe")]
+
+
 def test_shortcut_without_optional_fields_reads_back_empty(tmp_path: Path) -> None:
     """Optional fields that were never set read back as empty text, with no icon."""
     path = tmp_path / "plain.lnk"
@@ -193,9 +264,13 @@ def test_unwritable_directory_is_reported_by_install_and_names_the_shortcut(
             ["icacls", str(start_menu), "/remove:d", user], check=True, capture_output=True
         )
 
-    output = capsys.readouterr()
+    captured = capsys.readouterr()
+    lines = [
+        line for line in (captured.out + captured.err).splitlines() if "Short 0" in line
+    ]
     assert code != 0
-    assert "Short 0" in output.out + output.err
+    assert lines, "the failure must name the shortcut"
+    assert any("Short 0.lnk" in line and "denied" in line.lower() for line in lines)
 
 
 def test_install_creates_every_shortcut_without_powershell(
@@ -288,6 +363,23 @@ def test_junction_refuses_to_replace_a_real_directory_and_a_missing_target(
 
     with pytest.raises(RuntimeError, match="does not exist"):
         windows.create_junction(link, tmp_path / "absent")
+    assert not link.exists()
+
+
+def test_junction_accepts_a_long_path_prefixed_target_and_refuses_network_targets(
+    junction_dirs: tuple[Path, Path], tmp_path: Path
+) -> None:
+    r"""A ``\\?\``-prefixed target works like a plain one; a UNC target is refused with no leftovers."""
+    target, link = junction_dirs
+    prefixed = Path("\\\\?\\" + str(target))
+
+    windows.create_junction(link, prefixed)
+
+    assert (link / "marker.txt").read_text(encoding="utf-8") == "marker"
+    os.rmdir(link)
+
+    with pytest.raises(RuntimeError, match="network"):
+        windows.create_junction(link, Path("\\\\localhost\\C$\\Windows"))
     assert not link.exists()
 
 

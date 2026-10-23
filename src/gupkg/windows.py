@@ -150,9 +150,7 @@ def create_junction(source: Path, target: Path) -> None:
                 f"{source} already exists and is not a junction; refusing to overwrite."
             )
 
-    # Create the empty directory, then turn it into a mount-point reparse point.
-    # A failure after creation removes the directory so no half-made junction
-    # is left behind.
+    # Create the junction; callers see one RuntimeError for any failure.
     try:
         _win_make_junction(source, target)
     except OSError as exc:
@@ -216,7 +214,19 @@ def _win_make_junction(source: Path, target: Path) -> None:
 
     # Build the MOUNT_POINT_REPARSE_BUFFER: the substitute name is the NT path
     # ``\??\<absolute target>``, the print name is the plain absolute path.
-    absolute = os.path.abspath(str(target)).rstrip("\\")
+    # A ``\\?\`` prefix is dropped so the NT name is not doubled; network
+    # (UNC) targets cannot be junction targets and are refused up front.
+    absolute = os.path.abspath(str(target))
+    if absolute.upper().startswith("\\\\?\\UNC\\"):
+        raise OSError(f"a junction cannot point to a network path: {target}")
+    if absolute.startswith("\\\\?\\"):
+        absolute = absolute[4:]
+    if absolute.startswith("\\\\"):
+        raise OSError(f"a junction cannot point to a network path: {target}")
+    absolute = absolute.rstrip("\\")
+    if len(absolute) == 2:
+        # A drive root such as ``C:\`` loses its backslash above; restore it.
+        absolute += "\\"
     substitute = ("\\??\\" + absolute).encode("utf-16-le")
     printed = absolute.encode("utf-16-le")
     path_buffer = substitute + b"\0\0" + printed + b"\0\0"
@@ -224,7 +234,8 @@ def _win_make_junction(source: Path, target: Path) -> None:
     data = header + path_buffer
     buffer = struct.pack("<IHH", io_reparse_tag_mount_point, len(data), 0) + data
 
-    # Create the directory that will carry the reparse point.
+    # Create the empty directory that will carry the reparse point. Every
+    # failure from here on removes it again, so no half-made junction is left.
     if not kernel32.CreateDirectoryW(str(source), None):
         raise ctypes.WinError(ctypes.get_last_error())
 

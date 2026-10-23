@@ -1,30 +1,22 @@
-"""Read and write Windows shortcut (``.lnk``) files through the Shell COM API.
+"""Read and write Windows shortcut (``.lnk``) files without a child process.
 
-Shortcuts are written and read by calling ``IShellLinkW`` and ``IPersistFile``
-directly through :mod:`ctypes`. No child process is started, no value is ever
-embedded in source code, and no third-party package is needed.
+A shortcut is stored with its target, arguments, start-in directory, icon and
+comment. The target is kept exactly as given: it is never resolved, and
+``%VAR%`` references stay unexpanded in the link. A failed Shell call surfaces
+as ``OSError`` whose ``filename`` is the shortcut path.
 
-Public API
-----------
-``ShellLink``
-    The shortcut fields gupkg manages.
-``write_shell_link(path, link)``
-    Create or replace one ``.lnk`` file.
-``read_shell_link(path)``
-    Read one ``.lnk`` file back into a ``ShellLink``.
-
-Notes
------
-The target is stored exactly as given: it is not resolved and ``%VAR%``
-references stay unexpanded in the link. A failed COM call surfaces as
-``OSError`` whose ``filename`` is the shortcut path.
+Usage and API
+-------------
+Build a ``ShellLink`` and pass it to ``write_shell_link(path, link)`` to create
+or replace a ``.lnk`` file. Call ``read_shell_link(path)`` to get a
+``ShellLink`` back from an existing file.
 
 Implementation Approach
 -----------------------
-COM methods are called through the object's vtable at fixed slot indexes
-(see ``_ISHELLLINK_SLOTS`` and ``_IPERSISTFILE_SLOTS``). Each call initializes
-COM for its thread, so the TUI may call in from worker threads, and releases
-every interface pointer before returning.
+The module talks to the Windows Shell COM interfaces directly through
+:mod:`ctypes`, so it adds no dependency and starts no process. Each call
+initializes COM for the calling thread, which lets worker threads use it, and
+releases every interface it acquired before returning.
 """
 
 from __future__ import annotations
@@ -57,6 +49,14 @@ class ShellLink:
         Icon reference as ``"path,index"``. Empty means no icon.
     description : str
         Comment shown by Windows.
+
+    Notes
+    -----
+    Windows limits what a link can hold. Measured limits: a target longer than
+    259 characters is refused when writing (``OSError`` from ``E_FAIL``), and
+    the working directory, the description and the icon path are cut at 260
+    characters when read back. Arguments of 1000 characters were stored intact
+    when written on their own.
     """
 
     target_path: str
@@ -65,6 +65,114 @@ class ShellLink:
     icon_location: str = ""
     description: str = ""
 
+
+def write_shell_link(path: Path, link: ShellLink) -> None:
+    """Create or replace one ``.lnk`` file.
+
+    Parameters
+    ----------
+    path : Path
+        Full ``.lnk`` path to write. The parent directory must exist.
+    link : ShellLink
+        Fields to store. ``target_path`` is stored unresolved.
+
+    Raises
+    ------
+    OSError
+        If any COM call fails. ``filename`` is *path*.
+    """
+    with _open_link(path) as (shell_link, persist):
+        # Set the target first, then each optional text field.
+        _check(
+            _method(shell_link, _ISHELLLINK_SLOTS["SetPath"], wintypes.LPCWSTR)(
+                link.target_path
+            ),
+            path,
+        )
+        setters = (
+            ("SetArguments", link.arguments),
+            ("SetWorkingDirectory", link.working_directory),
+            ("SetDescription", link.description),
+        )
+        for name, value in setters:
+            _check(_method(shell_link, _ISHELLLINK_SLOTS[name], wintypes.LPCWSTR)(value), path)
+
+        # An empty icon location means "no icon", so the setter is skipped.
+        if link.icon_location:
+            icon_path, index = _split_icon(link.icon_location)
+            set_icon = _method(
+                shell_link, _ISHELLLINK_SLOTS["SetIconLocation"], wintypes.LPCWSTR, ctypes.c_int
+            )
+            _check(set_icon(icon_path, index), path)
+
+        # Save through IPersistFile; this replaces any existing file.
+        save = _method(persist, _IPERSISTFILE_SLOTS["Save"], wintypes.LPCWSTR, wintypes.BOOL)
+        _check(save(os.fspath(path), True), path)
+
+
+def read_shell_link(path: Path) -> ShellLink:
+    """Read one ``.lnk`` file.
+
+    Parameters
+    ----------
+    path : Path
+        Existing ``.lnk`` file.
+
+    Returns
+    -------
+    ShellLink
+        The stored fields. The target is the raw stored text, with ``%VAR%``
+        references unexpanded. ``icon_location`` is ``"path,index"``, or empty
+        when the link has no icon path.
+
+    Raises
+    ------
+    OSError
+        If the file cannot be loaded or a field cannot be read. ``filename``
+        is *path*.
+    """
+    with _open_link(path) as (shell_link, persist):
+        # Load the file into the link object.
+        load = _method(persist, _IPERSISTFILE_SLOTS["Load"], wintypes.LPCWSTR, wintypes.DWORD)
+        _check(load(os.fspath(path), _STGM_READ), path)
+
+        def read_text(name: str, *extra: tuple[Any, Any]) -> str:
+            """Call one ``Get...(buffer, size, ...)`` method and return its text."""
+            buffer = ctypes.create_unicode_buffer(_BUFFER_CHARS)
+            getter = _method(
+                shell_link,
+                _ISHELLLINK_SLOTS[name],
+                ctypes.c_void_p,
+                ctypes.c_int,
+                *[argtype for argtype, _ in extra],
+            )
+            _check(getter(buffer, _BUFFER_CHARS, *[value for _, value in extra]), path)
+            return buffer.value
+
+        # Read the text fields; the raw-path flag keeps %VAR% unexpanded.
+        target = read_text("GetPath", (ctypes.c_void_p, None), (wintypes.DWORD, _SLGP_RAWPATH))
+        arguments = read_text("GetArguments")
+        working_directory = read_text("GetWorkingDirectory")
+        description = read_text("GetDescription")
+
+        # The icon comes back as a path plus a separate index.
+        icon_buffer = ctypes.create_unicode_buffer(_BUFFER_CHARS)
+        icon_index = ctypes.c_int(0)
+        get_icon = _method(
+            shell_link,
+            _ISHELLLINK_SLOTS["GetIconLocation"],
+            ctypes.c_void_p,
+            ctypes.c_int,
+            ctypes.POINTER(ctypes.c_int),
+        )
+        _check(get_icon(icon_buffer, _BUFFER_CHARS, ctypes.byref(icon_index)), path)
+        icon = f"{icon_buffer.value},{icon_index.value}" if icon_buffer.value else ""
+    return ShellLink(target, arguments, working_directory, icon, description)
+
+
+# ------------------------------------------
+# Section: COM plumbing
+# ------------------------------------------
 
 # IShellLinkW vtable slots (ShObjIdl_core.h method order, IUnknown is 0-2):
 #   3 GetPath, 4 GetIDList, 5 SetIDList, 6 GetDescription, 7 SetDescription,
@@ -94,8 +202,8 @@ _IUNKNOWN_RELEASE = 2
 
 _COINIT_APARTMENTTHREADED = 0x2
 _CLSCTX_INPROC_SERVER = 0x1
-_S_FALSE = 1
-_RPC_E_CHANGED_MODE = -0x7FEFFEFA  # 0x80010106 as a signed HRESULT
+# HRESULTs are signed 32-bit values in ctypes.
+_RPC_E_CHANGED_MODE = ctypes.c_long(0x80010106).value
 _STGM_READ = 0
 _SLGP_RAWPATH = 0x4
 _BUFFER_CHARS = 32768
@@ -125,13 +233,15 @@ def _guid(text: str) -> _GUID:
 
 def _hresult_error(hresult: int, path: Path) -> OSError:
     """Convert a failed ``HRESULT`` into an ``OSError`` naming *path*."""
-    code = hresult & 0xFFFFFFFF
+    # ctypes wants signed HRESULTs; normalise whatever width the caller used.
+    signed = ctypes.c_long(hresult & 0xFFFFFFFF).value
+    code = signed & 0xFFFFFFFF
     # HRESULT_FROM_WIN32 wraps Win32 codes with facility 7; unwrap them so the
     # message and winerror match what the rest of Python reports.
     if (code >> 16) == 0x8007:
-        code &= 0xFFFF
-    message = ctypes.FormatError(code).strip() or f"COM error 0x{hresult & 0xFFFFFFFF:08X}"
-    return OSError(0, message, str(path), code)
+        signed = code & 0xFFFF
+    message = ctypes.FormatError(signed).strip() or f"COM error 0x{code:08X}"
+    return OSError(0, message, str(path), signed)
 
 
 def _ole32() -> Any:
@@ -235,108 +345,3 @@ def _split_icon(icon_location: str) -> tuple[str, int]:
         except ValueError:
             pass
     return icon_location, 0
-
-
-def write_shell_link(path: Path, link: ShellLink) -> None:
-    """Create or replace one ``.lnk`` file.
-
-    Parameters
-    ----------
-    path : Path
-        Full ``.lnk`` path to write. The parent directory must exist.
-    link : ShellLink
-        Fields to store. ``target_path`` is stored unresolved.
-
-    Raises
-    ------
-    OSError
-        If any COM call fails. ``filename`` is *path*.
-    """
-    with _open_link(path) as (shell_link, persist):
-        _check(_method(shell_link, _ISHELLLINK_SLOTS["SetPath"], wintypes.LPCWSTR)(link.target_path), path)
-        setters = (
-            ("SetArguments", link.arguments),
-            ("SetWorkingDirectory", link.working_directory),
-            ("SetDescription", link.description),
-        )
-        for name, value in setters:
-            _check(_method(shell_link, _ISHELLLINK_SLOTS[name], wintypes.LPCWSTR)(value), path)
-        if link.icon_location:
-            icon_path, index = _split_icon(link.icon_location)
-            _check(
-                _method(
-                    shell_link, _ISHELLLINK_SLOTS["SetIconLocation"], wintypes.LPCWSTR, ctypes.c_int
-                )(icon_path, index),
-                path,
-            )
-        _check(
-            _method(persist, _IPERSISTFILE_SLOTS["Save"], wintypes.LPCWSTR, wintypes.BOOL)(
-                os.fspath(path), True
-            ),
-            path,
-        )
-
-
-def read_shell_link(path: Path) -> ShellLink:
-    """Read one ``.lnk`` file.
-
-    Parameters
-    ----------
-    path : Path
-        Existing ``.lnk`` file.
-
-    Returns
-    -------
-    ShellLink
-        The stored fields. The target is the raw stored text, with ``%VAR%``
-        references unexpanded. ``icon_location`` is ``"path,index"``, or empty
-        when the link has no icon path.
-
-    Raises
-    ------
-    OSError
-        If the file cannot be loaded or a field cannot be read.
-    """
-    with _open_link(path) as (shell_link, persist):
-        _check(
-            _method(persist, _IPERSISTFILE_SLOTS["Load"], wintypes.LPCWSTR, wintypes.DWORD)(
-                os.fspath(path), _STGM_READ
-            ),
-            path,
-        )
-
-        def read_text(name: str, *extra: Any) -> str:
-            buffer = ctypes.create_unicode_buffer(_BUFFER_CHARS)
-            _check(
-                _method(
-                    shell_link,
-                    _ISHELLLINK_SLOTS[name],
-                    ctypes.c_void_p,
-                    ctypes.c_int,
-                    *[argtype for argtype, _ in extra],
-                )(buffer, _BUFFER_CHARS, *[value for _, value in extra]),
-                path,
-            )
-            return buffer.value
-
-        target = read_text(
-            "GetPath", (ctypes.c_void_p, None), (wintypes.DWORD, _SLGP_RAWPATH)
-        )
-        arguments = read_text("GetArguments")
-        working_directory = read_text("GetWorkingDirectory")
-        description = read_text("GetDescription")
-
-        icon_buffer = ctypes.create_unicode_buffer(_BUFFER_CHARS)
-        icon_index = ctypes.c_int(0)
-        _check(
-            _method(
-                shell_link,
-                _ISHELLLINK_SLOTS["GetIconLocation"],
-                ctypes.c_void_p,
-                ctypes.c_int,
-                ctypes.POINTER(ctypes.c_int),
-            )(icon_buffer, _BUFFER_CHARS, ctypes.byref(icon_index)),
-            path,
-        )
-        icon = f"{icon_buffer.value},{icon_index.value}" if icon_buffer.value else ""
-    return ShellLink(target, arguments, working_directory, icon, description)
