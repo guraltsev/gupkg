@@ -36,7 +36,6 @@ from dataclasses import dataclass, field
 from functools import cmp_to_key
 from pathlib import Path
 
-from .elevation import elevated_mode
 from .collection import DiscoveredPackage, Inventory, discover_collection
 from .configuration import read_runtime_config
 from .core import (
@@ -52,6 +51,7 @@ from .core import (
 )
 from .layout import compute_scope_paths, inspect_current
 from .registry import OFFICIAL_SOURCE
+from .system.port import System
 
 
 @dataclass(frozen=True)
@@ -304,8 +304,12 @@ def manager_config_text(config: ManagerConfig) -> str:
     str
         TOML text that :func:`load_manager_config` accepts.
     """
-    user_bin = config.user_bin or compute_scope_paths(Scope.USER)["bin_dir"]
-    system_bin = config.system_bin or compute_scope_paths(Scope.MACHINE)["bin_dir"]
+    # Directories the configuration leaves unset take the same defaults that
+    # interactive initialization proposes.
+    defaults = default_manager_config(config.path)
+    user_bin = config.user_bin or defaults.user_bin
+    system_bin = config.system_bin or defaults.system_bin
+
     def toml_path(value: Path) -> str:
         """Render a Windows path as a TOML literal string."""
         return "'" + str(value).replace("\\", "/").replace("'", "''") + "'"
@@ -380,7 +384,7 @@ def default_registry_cache() -> Path:
 
 
 def installation_context(
-    config: ManagerConfig, scope: Scope, *, shim_linkage: str | None = None
+    config: ManagerConfig, scope: Scope, system: System, *, shim_linkage: str | None = None
 ) -> InstallationContext:
     """Build the manager-owned destinations for one explicit scope.
 
@@ -390,6 +394,8 @@ def installation_context(
         Validated manager configuration.
     scope : Scope
         ``Scope.USER`` or ``Scope.MACHINE``.
+    system : System
+        Boundary that knows the scope's default Start Menu and ``bin`` folders.
     shim_linkage : {"dynamic", "static"}, optional
         Overrides the configured shim linkage.
 
@@ -402,7 +408,7 @@ def installation_context(
         raise ValueError("Installation context requires an explicit scope")
     bin_dir = config.user_bin if scope == Scope.USER else config.system_bin
     try:
-        defaults = compute_scope_paths(scope)
+        defaults = compute_scope_paths(scope, system)
     except ValueError:
         defaults = {}
     if bin_dir is None:
@@ -423,13 +429,17 @@ def installation_context(
 # ---------------------------------------------------------------------------
 
 
-def discover_manager(config: ManagerConfig, *, max_depth: int = 8) -> ManagerInventory:
+def discover_manager(
+    config: ManagerConfig, system: System, *, max_depth: int = 8
+) -> ManagerInventory:
     """Discover both configured roots and return scoped, deterministic targets.
 
     Parameters
     ----------
     config : ManagerConfig
         Validated manager configuration.
+    system : System
+        Boundary used to read each package's ``current`` junction.
     max_depth : int, default=8
         Maximum descent through marked grouping directories.
 
@@ -454,16 +464,20 @@ def discover_manager(config: ManagerConfig, *, max_depth: int = 8) -> ManagerInv
             ))
             continue
         scopes.append(ManagedScope(scope, root, inventory, inventory.complete, list(inventory.diagnostics)))
-        targets.extend(_managed_target(scope, package, inventory.complete) for package in inventory.packages)
+        targets.extend(
+            _managed_target(scope, package, inventory.complete, system) for package in inventory.packages
+        )
     targets.sort(key=lambda target: (
         target.package.selector.casefold(), target.package.selector, _scope_order(target.scope)
     ))
     return ManagerInventory(config, scopes, targets)
 
 
-def _managed_target(scope: Scope, package: DiscoveredPackage, complete: bool) -> ManagedTarget:
+def _managed_target(
+    scope: Scope, package: DiscoveredPackage, complete: bool, system: System
+) -> ManagedTarget:
     """Describe one discovered package's activation, versions, and health."""
-    current = inspect_current(package.root)
+    current = inspect_current(package.root, system)
     diagnostics = list(package.diagnostics) + list(current.diagnostics)
 
     # Validate every manifest through the package configuration boundary so
@@ -682,7 +696,7 @@ def _exception_result(exc: Exception) -> ActionResult:
 # ---------------------------------------------------------------------------
 
 
-def manager_update_target(target: ManagedTarget) -> ActionResult:
+def manager_update_target(target: ManagedTarget, system: System) -> ActionResult:
     """Refresh one managed target's update status through the package workflow.
 
     Parameters
@@ -690,6 +704,8 @@ def manager_update_target(target: ManagedTarget) -> ActionResult:
     target : ManagedTarget
         Target whose active (or newest local) manifest should be checked; its
         ``update_status`` and ``candidate_version`` are updated.
+    system : System
+        Boundary for network, Git and junction reads.
 
     Returns
     -------
@@ -705,7 +721,7 @@ def manager_update_target(target: ManagedTarget) -> ActionResult:
     if manifest is None:
         result = ActionResult(False, errors=["No manifest is available for the local version"], exit_code=EXIT_USER_ERROR)
     else:
-        result = _quiet(lambda: check_package_update(manifest.version_path))
+        result = _quiet(lambda: check_package_update(manifest.version_path, system))
     if result.ok and result.status in {"available", "current", "not-configured"}:
         target.update_status = result.status
     else:
@@ -721,7 +737,9 @@ def manager_update_target(target: ManagedTarget) -> ActionResult:
     return result
 
 
-def manager_revalidate_target(target: ManagedTarget, config: ManagerConfig) -> str | None:
+def manager_revalidate_target(
+    target: ManagedTarget, config: ManagerConfig, system: System
+) -> str | None:
     """Recheck managed ownership and health immediately before mutation.
 
     Parameters
@@ -730,6 +748,8 @@ def manager_revalidate_target(target: ManagedTarget, config: ManagerConfig) -> s
         Target whose activation and package health must still be valid.
     config : ManagerConfig
         Configuration whose scope root must still contain the target.
+    system : System
+        Boundary used to read the ``current`` junction.
 
     Returns
     -------
@@ -742,12 +762,12 @@ def manager_revalidate_target(target: ManagedTarget, config: ManagerConfig) -> s
         root = target.package.root.resolve()
         if not root.is_relative_to(config.root(target.scope).resolve()):
             return "target path escaped configured root"
-        current = inspect_current(target.package.root)
+        current = inspect_current(target.package.root, system)
         if current.status != "installed" or current.version_path is None:
             return f"current changed to {current.status}"
         if not current.version_path.resolve().is_relative_to(root):
             return "current target escaped configured root"
-        if not _quiet(lambda: health_check_package(current.version_path, scope=target.scope)).ok:
+        if not _quiet(lambda: health_check_package(current.version_path, system, scope=target.scope)).ok:
             return "health changed before upgrade"
     except (OSError, ValueError, RuntimeError) as exc:
         return str(exc)
@@ -757,6 +777,7 @@ def manager_revalidate_target(target: ManagedTarget, config: ManagerConfig) -> s
 def manager_upgrade_target(
     target: ManagedTarget,
     config: ManagerConfig,
+    system: System,
     *,
     no_checksum: bool = False,
     shim_linkage: str | None = None,
@@ -769,6 +790,8 @@ def manager_upgrade_target(
         Managed package to update.
     config : ManagerConfig
         Manager configuration whose bin and package roots receive the install.
+    system : System
+        Boundary for every machine side effect of the update.
     no_checksum : bool, default=False
         Skip an applicable payload checksum.
     shim_linkage : {"dynamic", "static"}, optional
@@ -784,15 +807,17 @@ def manager_upgrade_target(
     linkage = shim_linkage or config.shim_linkage
     return _quiet(lambda: full_package_upgrade(
         target.package.root,
+        system,
         scope=target.scope,
         no_checksum=no_checksum,
         shim_linkage=linkage,
-        install_context=installation_context(config, target.scope, shim_linkage=linkage),
+        install_context=installation_context(config, target.scope, system, shim_linkage=linkage),
     ))
 
 
 def manager_download_target(
     target: ManagedTarget,
+    system: System,
     *,
     no_checksum: bool = False,
 ) -> ActionResult:
@@ -805,6 +830,8 @@ def manager_download_target(
     ----------
     target : ManagedTarget
         Managed package whose configured update should be staged.
+    system : System
+        Boundary for network, Git and junction reads.
     no_checksum : bool, default=False
         Skip an applicable payload checksum while staging the update.
 
@@ -816,7 +843,7 @@ def manager_download_target(
     from .gupkg import download_package_update
 
     return _quiet(lambda: download_package_update(
-        target.package.root, no_checksum=no_checksum
+        target.package.root, system, no_checksum=no_checksum
     ))
 
 

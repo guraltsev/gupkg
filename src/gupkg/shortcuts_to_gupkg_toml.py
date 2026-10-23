@@ -192,7 +192,7 @@ def main() -> int:
 # Section: Shortcut reading
 # ------------------------------------------
 #
-# Python's standard library cannot parse Shell Link files. ``gupkg.shell_link``
+# Python's standard library cannot parse Shell Link files. ``gupkg.system.windows``
 # reads them through the Shell COM API without starting a process.
 
 
@@ -268,16 +268,15 @@ def read_windows_shortcut(shortcut_path: Path) -> dict[str, str]:
         raise RuntimeError("reading .lnk files requires Windows")
 
     # This file also runs as a standalone script, where the package import is
-    # unavailable; ``shell_link`` needs only the standard library, so load the
-    # sibling file directly in that case.
+    # unavailable; make the package importable from the script's own location.
     try:
-        from gupkg.shell_link import read_shell_link
+        from gupkg.system.windows import WindowsSystem
     except ImportError:
-        sys.path.insert(0, str(Path(__file__).resolve().parent))
-        from shell_link import read_shell_link  # type: ignore[no-redef]
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        from gupkg.system.windows import WindowsSystem
 
     try:
-        link = read_shell_link(shortcut_path)
+        link = WindowsSystem().read_shortcut(shortcut_path)
     except OSError as exc:
         raise RuntimeError(f"failed to read {shortcut_path}: {exc}") from exc
     return {

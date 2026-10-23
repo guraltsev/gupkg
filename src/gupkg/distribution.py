@@ -31,6 +31,7 @@ from typing import Any
 
 from .core import ActionResult, ConfigValidationError, EXIT_MUTATION_ERROR, Scope
 from .integrity import IntegrityReport, ManifestError, verify_version_directory
+from .system.port import System
 
 
 @dataclass(frozen=True)
@@ -86,6 +87,7 @@ def self_status(
 
 
 def repair_self(
+    system: System,
     *,
     scope: Scope,
     version_root: Path | None = None,
@@ -108,7 +110,7 @@ def repair_self(
 
         linkage = install_context.shim_linkage if install_context is not None else "dynamic"
         result = install_package(
-            root, scope=scope, install_context=install_context, shim_linkage=linkage
+            root, system, scope=scope, install_context=install_context, shim_linkage=linkage
         )
         return result
     except (ConfigValidationError, OSError, ValueError) as exc:
@@ -116,6 +118,7 @@ def repair_self(
 
 
 def update_self(
+    system: System,
     *,
     scope: Scope,
     version_root: Path | None = None,
@@ -134,7 +137,7 @@ def update_self(
 
         linkage = install_context.shim_linkage if install_context is not None else "dynamic"
         return full_package_upgrade(
-            root, scope=scope, shim_linkage=linkage, install_context=install_context
+            root, system, scope=scope, shim_linkage=linkage, install_context=install_context
         )
     except (ConfigValidationError, OSError, ValueError) as exc:
         return ActionResult(False, errors=[str(exc)], exit_code=EXIT_MUTATION_ERROR)

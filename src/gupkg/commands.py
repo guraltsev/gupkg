@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import Any, Callable, TextIO
 
 from . import gupkg as package_workflows
-from .elevation import UntrustedLocationError, elevated_mode, require_trusted_directory
+from .selfmgmt.elevation import UntrustedLocationError
 from .configfix import fix_package_config, has_legacy_metadata
 from .configuration import check_metadata_consistency
 from .core import (
@@ -75,6 +75,7 @@ from .manager import (
 )
 from .outcome import Outcome, failure
 from .registry import registry_status, resolve_selector, search_registry, sync_registry
+from .system.port import System, is_elevated_run, require_admin_only
 
 
 # ---------------------------------------------------------------------------
@@ -231,7 +232,7 @@ class LineStream(io.TextIOBase):
 
 
 def resolve_package(
-    path: Path | None, *, command: str, allow_legacy_directory: bool = False
+    path: Path | None, system: System, *, command: str, allow_legacy_directory: bool = False
 ) -> tuple[Path | None, PackageIdentity | None, Outcome | None]:
     """Classify a package argument and resolve its version directory.
 
@@ -239,6 +240,8 @@ def resolve_package(
     ----------
     path : Path, optional
         Explicit package argument, or ``None`` for the current directory.
+    system : System
+        Boundary used to read ``current`` junctions.
     command : str
         Command name used in a failure outcome.
     allow_legacy_directory : bool, default=False
@@ -253,7 +256,7 @@ def resolve_package(
     """
     candidate = (path or Path.cwd()).expanduser()
     try:
-        identity, _ = resolve_input_path(candidate)
+        identity, _ = resolve_input_path(candidate, system)
         return identity.version_path, identity, None
     except OSError as exc:
         return None, None, failure(command, str(exc))
@@ -286,13 +289,17 @@ def resolve_package(
     return candidate, None, None
 
 
-def run_package_command(request: PackageRequest, *, output: TextIO | None = None) -> Outcome:
+def run_package_command(
+    request: PackageRequest, system: System, *, output: TextIO | None = None
+) -> Outcome:
     """Run one package operation and describe its result.
 
     Parameters
     ----------
     request : PackageRequest
         The operation and its options.
+    system : System
+        Boundary for every machine side effect the operation has.
     output : TextIO, optional
         Receives progress text while the operation runs (see :func:`run_guarded`).
 
@@ -303,7 +310,7 @@ def run_package_command(request: PackageRequest, *, output: TextIO | None = None
     """
     command = request.command
     directory, identity, error = resolve_package(
-        request.path, command=command, allow_legacy_directory=command == "config-fix"
+        request.path, system, command=command, allow_legacy_directory=command == "config-fix"
     )
     if error is not None:
         return error
@@ -323,13 +330,14 @@ def run_package_command(request: PackageRequest, *, output: TextIO | None = None
         )
     if command == "config-check":
         outcome = run_guarded(
-            command, lambda: package_workflows.health_check_package(directory, scope=request.scope), output
+            command, lambda: package_workflows.health_check_package(directory, system, scope=request.scope), output
         )
         outcome.data["config"] = {"path": _path_text(directory), "operation": "check"}
         return outcome
     if command == "install":
         operation = lambda: package_workflows.install_package(  # noqa: E731
             directory,
+            system,
             scope=request.scope,
             allow_downgrade=request.allow_downgrade,
             refresh_app=request.refresh_app,
@@ -337,14 +345,15 @@ def run_package_command(request: PackageRequest, *, output: TextIO | None = None
             shim_linkage=request.shim_linkage,
         )
     elif command == "update" and request.check_only:
-        operation = lambda: package_workflows.check_package_update(directory)  # noqa: E731
+        operation = lambda: package_workflows.check_package_update(directory, system)  # noqa: E731
     elif command == "update" and request.download_only:
         operation = lambda: package_workflows.download_package_update(  # noqa: E731
-            directory, no_checksum=request.no_checksum
+            directory, system, no_checksum=request.no_checksum
         )
     elif command == "update":
         operation = lambda: package_workflows.full_package_upgrade(  # noqa: E731
             directory,
+            system,
             scope=request.scope,
             no_checksum=request.no_checksum,
             shim_linkage=request.shim_linkage,
@@ -352,7 +361,7 @@ def run_package_command(request: PackageRequest, *, output: TextIO | None = None
     else:
         return failure(command, f"Unsupported package command: {command}")
     outcome = run_guarded(command, operation, output)
-    outcome.data["package"] = _package_record(directory, request.scope)
+    outcome.data["package"] = _package_record(directory, request.scope, system)
     return outcome
 
 
@@ -370,13 +379,13 @@ def run_guarded_outcome(
         return failure(command, f"Unexpected internal error: {exc}", EXIT_INTERNAL_ERROR)
 
 
-def _package_record(path: Path, scope: Scope) -> dict[str, Any]:
+def _package_record(path: Path, scope: Scope, system: System) -> dict[str, Any]:
     """Describe a package after a command: the selected version and what ``current`` activates."""
     try:
-        identity, _ = resolve_input_path(path)
+        identity, _ = resolve_input_path(path, system)
     except (OSError, ValueError):
         return {"path": _path_text(path), "scope": scope.value}
-    current = inspect_current(identity.package_root)
+    current = inspect_current(identity.package_root, system)
     return {
         "path": _path_text(identity.version_path),
         "identity": identity.name,
@@ -395,15 +404,15 @@ class PackageSummary:
     warning: str
 
 
-def describe_package(path_text: str) -> PackageSummary:
+def describe_package(path_text: str, system: System) -> PackageSummary:
     """Summarize the package at *path_text* (empty means the current directory)."""
     try:
-        identity, _ = resolve_input_path(Path(path_text or ".").expanduser())
+        identity, _ = resolve_input_path(Path(path_text or ".").expanduser(), system)
         config_path = identity.version_path / "pkg.toml"
         config = read_toml_file(config_path) if config_path.exists() else {}
         installed = "not installed"
         try:
-            current_identity, _ = resolve_input_path(identity.package_root)
+            current_identity, _ = resolve_input_path(identity.package_root, system)
             if current_identity.is_current:
                 installed = current_identity.version_string
         except (OSError, ValueError):
@@ -419,15 +428,13 @@ def describe_package(path_text: str) -> PackageSummary:
         return PackageSummary("No package selected", "Enter a package path to see its summary.", "")
 
 
-def automatic_scope(path_text: str) -> tuple[Scope, bool] | None:
+def automatic_scope(path_text: str, system: System) -> tuple[Scope, bool] | None:
     """Return the scope ``auto`` would pick for a package, and whether System is available."""
-    from .windows import is_current_user_admin
-
     try:
-        identity, _ = resolve_input_path(Path(path_text or ".").expanduser())
+        identity, _ = resolve_input_path(Path(path_text or ".").expanduser(), system)
     except (OSError, ValueError):
         return None
-    system_available = is_current_user_admin() and not identity.only_portable_by_name
+    system_available = system.is_elevated() and not identity.only_portable_by_name
     return (Scope.MACHINE if system_available else Scope.USER), system_available
 
 
@@ -436,8 +443,15 @@ def automatic_scope(path_text: str) -> tuple[Scope, bool] | None:
 # ---------------------------------------------------------------------------
 
 
-def load_manager(explicit: Path | None = None) -> ManagerConfig:
+def load_manager(system: System, explicit: Path | None = None) -> ManagerConfig:
     """Load the manager configuration from ``--config`` or the fixed search locations.
+
+    Parameters
+    ----------
+    system : System
+        Boundary that answers whether the run is elevated and the folder admin-only.
+    explicit : Path, optional
+        ``--config`` value.
 
     Raises
     ------
@@ -456,9 +470,9 @@ def load_manager(explicit: Path | None = None) -> ManagerConfig:
     # The configuration names the roots, executables, and registry source an
     # elevated run will act on, so an elevated run reads it only from a
     # directory that non-administrators cannot modify.
-    if elevated_mode():
+    if is_elevated_run(system):
         try:
-            require_trusted_directory(Path(selected).resolve().parent)
+            require_admin_only(system, Path(selected).resolve().parent)
         except UntrustedLocationError as exc:
             raise ConfigValidationError(f"Refusing the manager configuration {selected}: {exc}") from exc
     return load_manager_config(selected)
@@ -602,6 +616,7 @@ def diagnostic_lines(config: ManagerConfig, inventory: ManagerInventory) -> list
 
 def refresh_update_status(
     inventory: ManagerInventory,
+    system: System,
     *,
     on_progress: Callable[[int, int, ManagedTarget, ActionResult | None], None] | None = None,
     cancel_requested: Callable[[], bool] = lambda: False,
@@ -621,27 +636,23 @@ def refresh_update_status(
             break
         if on_progress is not None:
             on_progress(index, total, target, None)
-        result = manager_update_target(target)
+        result = manager_update_target(target, system)
         results.append(result)
         if on_progress is not None:
             on_progress(index, total, target, result)
     return results
 
 
-def needs_elevation(plan: UpgradePlan) -> bool:
+def needs_elevation(plan: UpgradePlan, system: System) -> bool:
     """Return whether the plan changes the system scope from a non-elevated process."""
-    from .windows import is_current_user_admin
-
     return any(
         entry.outcome == "eligible" and entry.target.scope == Scope.MACHINE for entry in plan.entries
-    ) and not is_current_user_admin()
+    ) and not system.is_elevated()
 
 
-def relaunch_elevated_update(config: ManagerConfig, *, no_checksum: bool) -> bool:
+def relaunch_elevated_update(config: ManagerConfig, system: System, *, no_checksum: bool) -> bool:
     """Ask Windows to repeat a confirmed bulk update elevated; return whether it was accepted."""
-    from .windows import relaunch_elevated
-
-    return relaunch_elevated(elevated_update_arguments(config, no_checksum=no_checksum))
+    return system.relaunch_elevated(elevated_update_arguments(config, no_checksum=no_checksum))
 
 
 def list_outcome(
@@ -685,6 +696,7 @@ def self_integrity_problems() -> list[str]:
 def plan_updates(
     inventory: ManagerInventory,
     scope: str,
+    system: System,
     *,
     on_progress: Callable[[int, int, ManagedTarget, ActionResult | None], None] | None = None,
 ) -> UpgradePlan:
@@ -711,7 +723,7 @@ def plan_updates(
         done += 1
         if on_progress is not None:
             on_progress(done, total, target, None)
-        result = manager_update_target(target)
+        result = manager_update_target(target, system)
         if on_progress is not None:
             on_progress(done, total, target, result)
         return result
@@ -738,6 +750,7 @@ def decline_updates(plan: UpgradePlan, reason: str) -> None:
 def execute_updates(
     plan: UpgradePlan,
     config: ManagerConfig,
+    system: System,
     *,
     download_only: bool = False,
     no_checksum: bool = False,
@@ -753,6 +766,8 @@ def execute_updates(
         Plan from :func:`plan_updates`; entries receive their results.
     config : ManagerConfig
         Supplies roots, bin directories, and the default shim linkage.
+    system : System
+        Boundary for every machine side effect of the updates.
     download_only : bool, default=False
         Stage new versions without activating them.
     cancel_requested : callable, optional
@@ -765,11 +780,12 @@ def execute_updates(
         if on_progress:
             on_progress(target.target_id, "running")
         if download_only:
-            result = manager_download_target(target, no_checksum=no_checksum)
+            result = manager_download_target(target, system, no_checksum=no_checksum)
         else:
             result = manager_upgrade_target(
                 target,
                 config,
+                system,
                 no_checksum=no_checksum,
                 shim_linkage=shim_linkage,
             )
@@ -779,7 +795,7 @@ def execute_updates(
 
     return execute_upgrade_plan(
         plan,
-        lambda target: manager_revalidate_target(target, config),
+        lambda target: manager_revalidate_target(target, config, system),
         operation,
         cancel_requested=cancel_requested,
     )
@@ -864,21 +880,23 @@ def elevated_update_arguments(config: ManagerConfig, *, no_checksum: bool) -> li
 # ---------------------------------------------------------------------------
 
 
-def registry_sync_outcome(config: ManagerConfig, output: TextIO | None = None) -> Outcome:
+def registry_sync_outcome(
+    config: ManagerConfig, system: System, output: TextIO | None = None
+) -> Outcome:
     """Download the latest registry archive into the configured cache."""
     outcome = run_guarded(
         "manager.registry.sync",
-        lambda: sync_registry(config.registry_cache, source=config.registry_source),
+        lambda: sync_registry(config.registry_cache, system, source=config.registry_source),
         output,
     )
     outcome.data["registry"] = {"cache": _path_text(config.registry_cache), "source": config.registry_source}
     return outcome
 
 
-def registry_status_outcome(config: ManagerConfig) -> Outcome:
+def registry_status_outcome(config: ManagerConfig, system: System) -> Outcome:
     """Report the active cached registry revision without any download."""
     try:
-        state = registry_status(config.registry_cache)
+        state = registry_status(config.registry_cache, system)
     except ConfigValidationError as exc:
         return failure("manager.registry.status", str(exc))
     return Outcome(
@@ -894,14 +912,14 @@ def registry_status_outcome(config: ManagerConfig) -> Outcome:
 
 
 def _ensure_registry(
-    command: str, config: ManagerConfig, offline: bool, output: TextIO | None
+    command: str, config: ManagerConfig, system: System, offline: bool, output: TextIO | None
 ) -> Outcome | None:
     """Make sure a cached registry exists, downloading only when allowed.
 
     Returns a failure outcome when no usable cache is available, else ``None``.
     """
     try:
-        cached = registry_status(config.registry_cache).tree_path is not None
+        cached = registry_status(config.registry_cache, system).tree_path is not None
     except ConfigValidationError as exc:
         return failure(command, str(exc))
     if cached:
@@ -910,21 +928,21 @@ def _ensure_registry(
         return failure(command, "--offline requires a usable cached registry tree")
     sync = run_guarded(
         command,
-        lambda: sync_registry(config.registry_cache, source=config.registry_source),
+        lambda: sync_registry(config.registry_cache, system, source=config.registry_source),
         output,
     )
     return None if sync.result.ok else sync
 
 
 def registry_search_outcome(
-    config: ManagerConfig, query: str, *, offline: bool, output: TextIO | None = None
+    config: ManagerConfig, system: System, query: str, *, offline: bool, output: TextIO | None = None
 ) -> Outcome:
     """Search the registry by name, downloading it first only when none is cached."""
-    problem = _ensure_registry("manager.search", config, offline, output)
+    problem = _ensure_registry("manager.search", config, system, offline, output)
     if problem is not None:
         return problem
     try:
-        matches = search_registry(config.registry_cache, query)
+        matches = search_registry(config.registry_cache, system, query)
     except (FileNotFoundError, ValueError, ConfigValidationError) as exc:
         return failure("manager.search", str(exc))
     return Outcome(
@@ -933,7 +951,7 @@ def registry_search_outcome(
         {
             "registry": {
                 "cache": _path_text(config.registry_cache),
-                "revision": registry_status(config.registry_cache).revision,
+                "revision": registry_status(config.registry_cache, system).revision,
             },
             "registry_packages": [
                 {"selector": item.selector, "path": _path_text(item.version_path)} for item in matches
@@ -944,6 +962,7 @@ def registry_search_outcome(
 
 def install_registry_package(
     config: ManagerConfig,
+    system: System,
     selector: str,
     scope: Scope,
     *,
@@ -954,6 +973,8 @@ def install_registry_package(
 
     Parameters
     ----------
+    system : System
+        Boundary for every machine side effect of the install.
     selector : str
         Exact (case-insensitive) registry name, never a path.
     scope : Scope
@@ -972,10 +993,10 @@ def install_registry_package(
     ):
         return failure(command, "Registry selectors cannot be paths")
     try:
-        problem = _ensure_registry(command, config, offline, output)
+        problem = _ensure_registry(command, config, system, offline, output)
         if problem is not None:
             return problem
-        package = resolve_selector(config.registry_cache, selector)
+        package = resolve_selector(config.registry_cache, system, selector)
 
         # Stage the validated seed below the selected root, then hand it to
         # the ordinary installer with manager-owned destinations.
@@ -991,8 +1012,9 @@ def install_registry_package(
         command,
         lambda: package_workflows.install_package(
             target,
+            system,
             scope=scope,
-            install_context=installation_context(config, scope),
+            install_context=installation_context(config, scope, system),
             shim_linkage=config.shim_linkage,
         ),
         output,
@@ -1008,6 +1030,7 @@ def install_registry_package(
 
 def self_outcome(
     config: ManagerConfig,
+    system: System,
     action: str,
     *,
     scope: Scope = Scope.USER,
@@ -1046,7 +1069,9 @@ def self_outcome(
         outcome = run_guarded(
             command,
             lambda: update_self(
-                scope=scope, install_context=installation_context(config, scope, shim_linkage=shim_linkage)
+                system,
+                scope=scope,
+                install_context=installation_context(config, scope, system, shim_linkage=shim_linkage),
             ),
             output,
         )
@@ -1057,7 +1082,9 @@ def self_outcome(
     outcome = run_guarded(
         command,
         lambda: repair_self(
-            scope=scope, install_context=installation_context(config, scope, shim_linkage=shim_linkage)
+            system,
+            scope=scope,
+            install_context=installation_context(config, scope, system, shim_linkage=shim_linkage),
         ),
         output,
     )

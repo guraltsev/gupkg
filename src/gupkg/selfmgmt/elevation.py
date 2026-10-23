@@ -1,5 +1,11 @@
 """Detect elevated runs and verify that the code they import is admin-only.
 
+This module is the one place outside ``system/windows.py`` that uses ``ctypes``:
+it reads the process token and access-control lists. It must stay
+self-contained (no ``gupkg`` imports) because ``bootstrap.py`` loads it by file
+path before the package, and so before any other code, is importable; the trust
+check therefore cannot be shadowed by anything in the package directory.
+
 An elevated gupkg process must execute only code that non-administrators
 cannot modify. This module answers whether the process is elevated, reads the
 access-control list of a directory, and refuses a runtime whose import path,
@@ -214,8 +220,8 @@ def enforce_bundled_runtime(package_directory: Path, elevated: bool = False) -> 
             require_trusted_directory(directory)
 
 
-def require_trusted_directory(directory: Path, reader=None) -> None:
-    """Raise unless only administrators can modify *directory* and replace its ancestors.
+def untrusted_reason(directory: Path, reader=None) -> str | None:
+    """Return why *directory* is not admin-only, or ``None`` when only administrators can modify it.
 
     Parameters
     ----------
@@ -224,11 +230,11 @@ def require_trusted_directory(directory: Path, reader=None) -> None:
     reader : callable, optional
         Replacement for the security-descriptor reader, used by tests.
 
-    Raises
-    ------
-    UntrustedLocationError
-        If the directory or one of its ancestors is not admin-only, or its
-        security descriptor cannot be read.
+    Returns
+    -------
+    str or None
+        Human-readable reason. A directory or ancestor that is not admin-only,
+        and a security descriptor that cannot be read, both give a reason.
     """
     read = reader or read_directory_security
     resolved = Path(os.path.realpath(directory))
@@ -245,8 +251,28 @@ def require_trusted_directory(directory: Path, reader=None) -> None:
                     break
     except OSError as exc:
         problem = f"its permissions could not be read ({exc})"
+    return problem
+
+
+def require_trusted_directory(directory: Path, reader=None) -> None:
+    """Raise unless only administrators can modify *directory* and replace its ancestors.
+
+    Parameters
+    ----------
+    directory : Path
+        Directory an elevated process is about to trust.
+    reader : callable, optional
+        Replacement for the security-descriptor reader, used by tests.
+
+    Raises
+    ------
+    UntrustedLocationError
+        If the directory or one of its ancestors is not admin-only, or its
+        security descriptor cannot be read.
+    """
+    problem = untrusted_reason(directory, reader)
     if problem is not None:
-        raise UntrustedLocationError(_untrusted_message(resolved, problem))
+        raise UntrustedLocationError(untrusted_message(Path(os.path.realpath(directory)), problem))
 
 
 def find_untrusted_principal(security: DirectorySecurity, rights: int, where: str | None = None) -> str | None:
@@ -284,7 +310,7 @@ def _principal_name(sid: str) -> str:
     return _SID_NAMES.get(sid, TRUSTED_SIDS.get(sid, sid))
 
 
-def _untrusted_message(directory: Path, problem: str) -> str:
+def untrusted_message(directory: Path, problem: str) -> str:
     """Build the failure message, including an icacls command that fixes the common case."""
     fix = (
         f'icacls "{directory}" /inheritance:r /setowner *S-1-5-32-544 '

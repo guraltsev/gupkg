@@ -29,10 +29,8 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import tempfile
 import urllib.parse
-import urllib.request
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -49,9 +47,10 @@ from .core import (
     log_info,
     write_text_atomic,
 )
-from .downloads import download_response, file_sha256
-from .elevation import UntrustedLocationError, elevated_mode, require_trusted_directory
+from .downloads import download_file, file_sha256
+from .selfmgmt.elevation import UntrustedLocationError
 from .origin import validate_origin_health, validate_update_health
+from .system.port import System, is_elevated_run, require_admin_only
 
 
 # Default registry: the official package repository. A repository URL is fetched
@@ -92,7 +91,7 @@ class RegistryState:
         return candidate if candidate.is_dir() else None
 
 
-def require_trusted_cache(cache_root: Path) -> None:
+def require_trusted_cache(cache_root: Path, system: System) -> None:
     """Refuse a registry cache that an elevated run cannot trust.
 
     The cache supplies package templates, download addresses and hashes that an
@@ -104,7 +103,7 @@ def require_trusted_cache(cache_root: Path) -> None:
     ConfigValidationError
         If the run is elevated and the location is not admin-only.
     """
-    if not elevated_mode():
+    if not is_elevated_run(system):
         return
 
     # A cache that does not exist yet will be created inside its nearest parent.
@@ -112,7 +111,7 @@ def require_trusted_cache(cache_root: Path) -> None:
     while not probe.exists() and probe.parent != probe:
         probe = probe.parent
     try:
-        require_trusted_directory(probe)
+        require_admin_only(system, probe)
     except UntrustedLocationError as exc:
         raise ConfigValidationError(
             f"Refusing the registry cache {cache_root} for an elevated run: {exc} "
@@ -120,9 +119,9 @@ def require_trusted_cache(cache_root: Path) -> None:
         ) from exc
 
 
-def registry_status(cache_root: Path) -> RegistryState:
+def registry_status(cache_root: Path, system: System) -> RegistryState:
     """Read cache state without contacting Git or creating directories."""
-    require_trusted_cache(cache_root)
+    require_trusted_cache(cache_root, system)
     state_path = Path(cache_root) / REGISTRY_NAME / "state.toml"
     if not state_path.is_file():
         return RegistryState(Path(cache_root))
@@ -218,22 +217,22 @@ def validate_registry_tree(pkgs_root: Path) -> list[RegistryPackage]:
     return packages
 
 
-def search_registry(cache_root: Path, query: str = "") -> list[RegistryPackage]:
+def search_registry(cache_root: Path, system: System, query: str = "") -> list[RegistryPackage]:
     """Return validated active-tree packages whose selector contains *query*.
 
     The search is case-insensitive, never uses the network, and returns every
     package for an empty query.
     """
-    state = registry_status(cache_root)
+    state = registry_status(cache_root, system)
     if state.tree_path is None:
         raise FileNotFoundError("No validated registry cache is available")
     needle = query.casefold()
     return [item for item in validate_registry_tree(state.tree_path) if needle in item.selector.casefold()]
 
 
-def resolve_selector(cache_root: Path, selector: str) -> RegistryPackage:
+def resolve_selector(cache_root: Path, system: System, selector: str) -> RegistryPackage:
     """Resolve one case-insensitive selector from the active validated tree."""
-    matches = [item for item in search_registry(cache_root) if item.selector.casefold() == selector.casefold()]
+    matches = [item for item in search_registry(cache_root, system) if item.selector.casefold() == selector.casefold()]
     if not matches:
         raise ValueError(f"Registry package was not found: {selector}")
     if len(matches) > 1:
@@ -243,6 +242,7 @@ def resolve_selector(cache_root: Path, selector: str) -> RegistryPackage:
 
 def sync_registry(
     cache_root: Path,
+    system: System,
     *,
     source: str = OFFICIAL_SOURCE,
     offline: bool = False,
@@ -253,6 +253,8 @@ def sync_registry(
     ----------
     cache_root : Path
         Registry cache directory from the manager configuration.
+    system : System
+        Boundary for downloads, Git and the admin-only checks.
     source : str, default=OFFICIAL_SOURCE
         An ``https://`` Git repository URL (cloned with a trusted Git, otherwise
         downloaded as its GitHub ZIP archive), or the ``http(s)://`` or ``file:``
@@ -268,7 +270,7 @@ def sync_registry(
         active.
     """
     cache_root = Path(cache_root)
-    current = registry_status(cache_root)
+    current = registry_status(cache_root, system)
     if offline:
         if current.tree_path is None:
             return ActionResult(
@@ -286,15 +288,15 @@ def sync_registry(
             work = Path(work_name)
 
             # A trusted Git can name the remote revision without transferring it.
-            git = trusted_git() if is_git_source(source) else None
+            git = trusted_git(system) if is_git_source(source) else None
             if git is not None and current.tree_path is not None:
-                remote = _git_remote_revision(git, source)
+                remote = _git_remote_revision(system, git, source)
                 if remote is not None and remote == current.revision:
                     validate_registry_tree(current.tree_path)
                     _write_state(registry_root, current, source=source, last_failure=None)
                     return ActionResult(True, status="current", exit_code=EXIT_SUCCESS)
 
-            registry, revision = _obtain_registry(source, git, work)
+            registry, revision = _obtain_registry(source, git, work, system)
 
             # A revision that is already active needs no rebuild; just re-validate
             # it and refresh the bookkeeping.
@@ -354,7 +356,7 @@ def is_git_source(source: str) -> bool:
     return parsed.netloc.lower() == "github.com" and len([part for part in path.split("/") if part]) == 2
 
 
-def trusted_git() -> str | None:
+def trusted_git(system: System) -> str | None:
     """Return a ``git.exe`` that only administrators can modify, or ``None``.
 
     Every ``git.exe`` on ``PATH`` is considered in order, and the first whose
@@ -366,7 +368,7 @@ def trusted_git() -> str | None:
         if candidate is None or not candidate.is_file():
             continue
         try:
-            require_trusted_directory(candidate.resolve().parent)
+            require_admin_only(system, candidate.resolve().parent)
         except UntrustedLocationError:
             continue
         return str(candidate)
@@ -380,17 +382,17 @@ def _git_environment() -> dict[str, str]:
     return environment
 
 
-def _git_remote_revision(git: str, source: str) -> str | None:
+def _git_remote_revision(system: System, git: str, source: str) -> str | None:
     """Return the remote ``HEAD`` commit of *source* without cloning, or ``None`` on failure."""
-    result = subprocess.run(
+    result = system.run(
         [git, "-c", "protocol.allow=never", "-c", "protocol.https.allow=always", "ls-remote", source, "HEAD"],
-        capture_output=True, text=True, env=_git_environment(), timeout=60, check=False,
+        env=_git_environment(), timeout=60,
     )
     match = re.match(r"([0-9a-f]{40})\s", result.stdout) if result.returncode == 0 else None
     return match.group(1) if match else None
 
 
-def _obtain_registry(source: str, git: str | None, work: Path) -> tuple[Path, str]:
+def _obtain_registry(source: str, git: str | None, work: Path, system: System) -> tuple[Path, str]:
     """Fetch the registry into *work* and return its root folder and 40-hex revision."""
     if git is not None and is_git_source(source):
         log_info(f"Cloning registry: {source}")
@@ -400,20 +402,17 @@ def _obtain_registry(source: str, git: str | None, work: Path) -> tuple[Path, st
             "-c", "core.symlinks=false", "-c", f"core.hooksPath={os.devnull}",
             "clone", "--depth", "1", "--single-branch", "--no-tags", "--quiet", source, str(destination),
         ]
-        result = subprocess.run(command, capture_output=True, text=True, env=_git_environment(), timeout=600, check=False)
+        result = system.run(command, env=_git_environment(), timeout=600)
         if result.returncode != 0:
             raise ConfigValidationError(f"git clone failed: {result.stderr.strip()}")
-        head = subprocess.run(
-            [git, "-C", str(destination), "rev-parse", "HEAD"],
-            capture_output=True, text=True, env=_git_environment(), check=False,
-        )
+        head = system.run([git, "-C", str(destination), "rev-parse", "HEAD"], env=_git_environment())
         revision = head.stdout.strip().lower()
         if not re.fullmatch(r"[0-9a-f]{40}", revision):
             raise ConfigValidationError("git clone did not report a commit")
         return destination, revision
 
     archive_path = work / "registry.zip"
-    _download(archive_url(source), archive_path)
+    _download(archive_url(source), archive_path, system)
     revision = _archive_revision(archive_path)
     return _extract_archive(archive_path, work / "archive"), revision
 
@@ -436,15 +435,14 @@ def archive_url(source: str) -> str:
     return source
 
 
-def _download(source: str, destination: Path) -> None:
+def _download(source: str, destination: Path, system: System) -> None:
     """Download *source* (HTTP, HTTPS, or ``file:``) to *destination* with progress."""
     if urllib.parse.urlparse(source).scheme.lower() not in {"http", "https", "file"}:
         raise ConfigValidationError(
             f"Registry source must be an http(s):// or file: URL to a ZIP archive: {source}"
         )
     log_info(f"Downloading registry: {source}")
-    with urllib.request.urlopen(source, timeout=60) as response:
-        download_response(response, destination, label="Downloading registry")
+    download_file(system, source, destination, label="Downloading registry")
 
 
 def _archive_revision(archive_path: Path) -> str:
