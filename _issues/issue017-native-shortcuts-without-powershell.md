@@ -145,3 +145,19 @@ This issue is **stage 0** of the rehaul. Its decisions stand.
   package in 1.0. Core carries no migration code (decision D33), so it
   moves out of core into the separate migration tool (issue 023), called
   as `gupkg migrate shortcuts` (D45). It keeps using `read_shell_link`.
+
+## Timings (recorded 2026-10-22)
+
+Ten `create_shortcut` calls into a temporary directory: 6.75 s with
+PowerShell, 0.15 s through COM.
+
+## Behaviour differences from the PowerShell implementation
+
+- The importer (`read_windows_shortcut`) returns an empty icon location for a
+  shortcut with no icon. `WScript.Shell` returned `,0`, which the importer used
+  to write into `pkg.toml` as `iconLocation = ",0"`.
+- `read_shell_link` returns the target as stored, with `%VAR%` unexpanded.
+  `WScript.Shell` expanded it on read.
+- Measured Windows limits are documented on `ShellLink`: a target over 259
+  characters is refused, and the working directory, description and icon path
+  are cut at 260 characters.

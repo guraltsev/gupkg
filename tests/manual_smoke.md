@@ -92,3 +92,14 @@ several MiB.
    highlight, and a package updated meanwhile shows `Current`.
 7. Quit and start a new `gupkg manager` session. Confirm the saved statuses
    are shown and the Details screen shows the check time.
+
+Shortcut and junction checks (issue 017):
+
+1. Install a package with shortcuts, then open each shortcut's Properties
+   dialog in Explorer. Confirm Target, Start in, Comment and the icon match
+   `pkg.toml`. Automation cannot open the Properties dialog.
+2. Run the same install from `gupkg tui` (worker thread) and from an elevated
+   system-scope shell. Confirm the shortcuts appear under the matching Start
+   Menu root. Elevation and the TUI need a real session.
+3. Install a 10-shortcut package before and after the change and compare
+   times (automated measurement: 6.75 s before, 0.15 s after for 10 shortcuts).
