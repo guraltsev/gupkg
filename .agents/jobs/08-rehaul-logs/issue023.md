@@ -33,3 +33,24 @@ New tool: `src/gupkg_migrate/` (separate, non-core; ships in the bundle).
 ## Acceptance criteria -> coverage
 
 See the final report.
+
+## Findings while building
+
+- `cmd.exe` splits `--no-system-gupkg=true` at the `=` into two arguments; the launcher template consumes both
+  spellings (found by running the launchers through the real `cmd.exe`).
+- `tomli_w` writes an array of tables as inline tables when each fits in 100 characters, so converted files mix
+  `[[shortcut]]` blocks and `shim = [ { ... } ]` lines. Both are valid TOML and parse to the same data; the design's
+  single-writer rule (section 12) wins over the layout.
+- The CLI now imports `tomli_w`, so a `--skip-deps` bundle cannot start `gupkg --version` by itself: the shared
+  `release_bundle` fixture keeps `tomli_w` in its runtime zip, and the bare probe list is `gupkg.core`,
+  `gupkg.model.version`, `gupkg.model.settings`.
+- Legacy `core.is_version_directory_name` now delegates to `model.version.is_version_name`, so the 0.17 inventory no longer
+  lists `_check_updates` or `data` as versions.
+
+## Not done
+
+- Adoption of 0.17 installs (install record `.gupkg\package.toml`): waits for issue 024 (record) and 028 (effects).
+- `configuration.py` is still in core (see decisions). `shortcuts_to_gupkg_toml.py` and `legacy_to_gupkg_toml.py` still
+  serve the 0.17 `config-fix`; `gupkg_migrate.shortcuts` is the format 2 importer.
+- `metadata.py` keeps its own scalar renderer: it patches key lines into a user's commented 0.17 file, which a TOML writer
+  cannot do; it leaves with `config-fix`.
