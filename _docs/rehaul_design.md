@@ -804,11 +804,15 @@ manifest is parsed (`gupkg.model.trackspec`).
 - **Safety.** Responses are data: a page over 8 MiB is refused. Validation rejects patterns that
   repeat a repeated group, an empty-matching body, or overlapping alternatives inside an unbounded
   repeat, a leading unbounded wildcard combined with other unbounded repeats, more than three wildcard
-  (`.`, `[^x]`) repeats and more than eight unbounded repeats. Before matching, runs of word
-  characters or of one character are cut to 1024, lines to 8 KiB, and at most a mebibyte is scanned.
-  Python's `re` cannot be interrupted: a pattern that passes validation is *not* proven linear, so a
-  page crafted against it can still cost seconds (never code execution). A subprocess regex runner
-  with a deadline is the complete fix and is planned with the execution engine (issue 028).
+  (`.`, `[^x]`) repeats (an unbounded `.` repeat only when it is the sole unbounded repeat), and more
+  than 24 unbounded repeats or 6 in a row without a literal between them; groups are looked through at
+  any depth. Before matching, runs of word characters or of one character are cut to 1024, lines to
+  1 KiB, and at most a mebibyte is scanned, in 4 KiB line-aligned windows with a one-second budget
+  checked between windows (an over-budget page is refused). This is a mitigation, **not a bound**:
+  Python's `re` cannot be interrupted, so a pattern that passes validation is not proven linear and a
+  page crafted against it (or one slow window) can still cost seconds (never code execution). A
+  subprocess regex runner with a deadline is the complete fix and is planned with the execution
+  engine (issue 028).
   Redirects are followed by the client: HTTPS to HTTP and any non-http(s) target are refused, and
   `Authorization`, `Cookie` and any header whose name contains auth, key, token, secret, password,
   cookie or session are dropped when the host changes. A manifest `headers` table may not set
@@ -850,8 +854,12 @@ apply in this order, each addressing the tree as it is at that point: `nested`, 
   letter case are refused, and so are archives over 200,000 entries, 8 GiB in total or 4 GiB in one
   file (zip bombs); the limits are one budget shared by the artifact and every archive nested in it.
   Declared sizes are only a hint, so the limits are enforced while data is written: gzip, bzip2 and xz
-  wrappers are decompressed in process with a byte cap, and every 7-Zip run is watched (the staging
-  folder is measured about five times a second and 7-Zip is killed when it passes the limit). The
+  wrappers are decompressed in process with a byte cap (xz with a 256 MiB decoder memory limit), and
+  every 7-Zip run is watched (the staging folder is measured about five times a second, junctions are
+  not followed, and 7-Zip is killed within one poll of the limit being passed, not at the moment it is
+  passed). A bomb that declares its size is caught earlier, by the check of the listing; the watcher
+  is for archives that declare nothing or lie. Package code is trusted per file as well as per folder
+  (script and parent chain), and a `sys.exit` at hook import is a `HookError`. The
   finished tree is walked again for links and special files. The tree appears under its final name by
   one rename, so a failed unpack leaves no `App` and no scratch folder.
 

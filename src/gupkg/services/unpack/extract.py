@@ -44,6 +44,7 @@ from ..safepath import UnsafePath, check_member_set, confine, is_reparse_point, 
 from .sevenzip import Listing, SevenZip, SevenZipError
 
 _COPY_BLOCK = 1024 * 1024
+XZ_MEMORY_LIMIT = 256 * 1024 * 1024
 _NOT_REGULAR = (0o020000, 0o060000, 0o010000, 0o140000)  # device, block, fifo, socket
 _DECOMPRESSORS = (
     (b"\x1f\x8b", gzip.open),
@@ -177,7 +178,10 @@ def check_tree(root: Path, limits: Limits, budget: Budget | None = None) -> tupl
 
 
 def decompress_capped(source: Path, destination: Path, limit: int) -> int:
-    """Decompress a gzip, bzip2 or xz file to *destination*, writing at most *limit* bytes.
+    """Decompress a gzip, bzip2 or xz file to *destination*, never writing more than *limit* bytes.
+
+    The xz decoder runs with a memory limit (``XZ_MEMORY_LIMIT``), so a file that asks for a huge
+    dictionary fails before it allocates it. On any failure the partial output is deleted.
 
     Returns
     -------
@@ -187,26 +191,50 @@ def decompress_capped(source: Path, destination: Path, limit: int) -> int:
     Raises
     ------
     UnpackError
-        If the output would exceed *limit* (what was written is at most *limit* plus one block
-        and is deleted), or the file is not one of the three formats.
+        If the output would exceed *limit* (the block that would cross it is not written), the
+        xz file needs more memory than allowed, the file is damaged, or it is not one of the
+        three formats.
     """
     with open(source, "rb") as handle:
         head = handle.read(8)
-    opener = next((open_ for signature, open_ in _DECOMPRESSORS if head.startswith(signature)), None)
-    if opener is None:
+    if not any(head.startswith(signature) for signature, _opener in _DECOMPRESSORS):
         raise UnpackError(f"{source.name} is not a gzip, bzip2 or xz file")
     written = 0
     try:
-        with opener(source, "rb") as reader, open(destination, "xb") as writer:
-            while block := reader.read(_COPY_BLOCK):
+        with open(destination, "xb") as writer:
+            for block in _decompressed_blocks(source, head):
                 written += len(block)
                 if written > limit:
                     raise UnpackError("The compressed file expands past the allowed size")
                 writer.write(block)
-    except UnpackError:
+    except BaseException as error:
         destination.unlink(missing_ok=True)
+        if isinstance(error, (lzma.LZMAError, EOFError, zlib.error, gzip.BadGzipFile)):
+            raise UnpackError(f"{source.name} cannot be decompressed: {error}") from error
         raise
     return written
+
+
+def _decompressed_blocks(source: Path, head: bytes):
+    """Yield the decompressed content of *source* in blocks of at most ``_COPY_BLOCK`` bytes."""
+    if head.startswith(b"\xfd7zXZ\x00"):
+        decompressor = lzma.LZMADecompressor(format=lzma.FORMAT_XZ, memlimit=XZ_MEMORY_LIMIT)
+        with open(source, "rb") as reader:
+            pending = b""
+            while not decompressor.eof:
+                if decompressor.needs_input:
+                    pending = reader.read(_COPY_BLOCK)
+                    if not pending:
+                        raise EOFError("the xz stream is cut short")
+                block = decompressor.decompress(pending, max_length=_COPY_BLOCK)
+                pending = b""
+                if block:
+                    yield block
+        return
+    opener = next(open_ for signature, open_ in _DECOMPRESSORS if head.startswith(signature))
+    with opener(source, "rb") as reader:
+        while block := reader.read(_COPY_BLOCK):
+            yield block
 
 
 # ---------------------------------------------------------------------------
@@ -264,8 +292,12 @@ def _extract_zip(archive: Path, destination: Path, budget: Budget) -> None:
 class _FolderWatch:
     """Measure a folder while 7-Zip writes into it and say when a limit is crossed.
 
-    Called by ``System.run`` about five times a second. The walk is repeated no more often
-    than four times its own duration, so a huge tree is not scanned continuously.
+    ``System.run`` calls it about five times a second, so it reacts *within one poll* of a limit
+    being crossed, not at the moment it is crossed; the walk is repeated no more often than four
+    times its own duration, so a huge tree is not scanned continuously. Links and junctions are not
+    entered and not counted (a cyclic junction cannot make the walk loop), and the final tree walk
+    (``check_tree``) rejects them. A bomb whose archive declares its size is stopped earlier, by the
+    check of the listing; this watcher is for archives that declare nothing, or lie.
     """
 
     def __init__(self, root: Path, max_bytes: int, max_entries: int, max_file: int) -> None:
@@ -280,16 +312,29 @@ class _FolderWatch:
         if now < self._next:
             return None
         total = entries = 0
-        for current, folders, names in os.walk(self.root, followlinks=False):
-            entries += len(folders) + len(names)
-            for name in names:
-                try:
-                    size = os.lstat(os.path.join(current, name)).st_size
-                except OSError:
-                    continue
-                total += size
-                if size > self.max_file:
-                    return "a file is larger than the allowed size"
+        pending = [self.root]
+        while pending:
+            folder = pending.pop()
+            try:
+                scanner = os.scandir(folder)
+            except OSError:
+                continue
+            with scanner:
+                for entry in scanner:
+                    entries += 1
+                    path = Path(entry.path)
+                    if is_reparse_point(path):
+                        continue
+                    if entry.is_dir(follow_symlinks=False):
+                        pending.append(path)
+                        continue
+                    try:
+                        size = entry.stat(follow_symlinks=False).st_size
+                    except OSError:
+                        continue
+                    if size > self.max_file:
+                        return "a file is larger than the allowed size"
+                    total += size
             if total > self.max_bytes or entries > self.max_entries:
                 break
         self.largest = max(self.largest, total)

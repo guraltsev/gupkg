@@ -85,8 +85,9 @@ Merged main (025) with no conflicts. Fixes, by the reviewer's numbers:
    repeats, more than 3 wildcard repeats or 8 unbounded repeats are refused at validation; lines are cut to 8 KiB.
    The reviewer's pairs are tests run in a child process with a hard timeout: all refused or finished under 2 s.
    **Not bounded (for 028's runner):** any pattern that passes validation is not proven linear; text inside one
-   8 KiB line can still cost O(line^2) for two or three wildcard repeats (about 0.5 s per MiB at worst in my
-   runs); a page designed against one accepted pattern can cost seconds; nothing can interrupt `re`.
+   8 KiB line can still cost O(line^2) for two or three wildcard repeats (round 2: the reviewer measured about
+   40 s per MiB, so my earlier "0.5 s per MiB" claim was wrong and is withdrawn); a page designed against one
+   accepted pattern can cost seconds; nothing can interrupt `re`. Superseded by round 2 below.
 3. `pkgcheck` rejects API 1, no declaration, a string and a computed declaration (test); the migrate test now
    asserts the error exists for firefox before filtering it.
 4. `load_hook`, `run_custom_populate` and the `[[prepare]] module` step take the `System` and, in an elevated run
@@ -119,3 +120,9 @@ hooks' regexes, marked recorded: null, to be re-recorded by tools/record_http_fi
 expected values live in each fixture's `expected` block; `record_case` runs the real tracker and records the whole
 walk (index walks, chains, redirect hops) and rewrites `expected`. **Owed to 031 / the owner:** recording the
 fixtures (explicit 031 acceptance item and manual check 1) and a committed real NSIS sample.
+
+## Review round 2
+
+M1 regex guard: lines cut to 1 KiB, 4 KiB line-aligned windows, a 1 s budget between windows; text and design now say the guard is a mitigation, not a bound (worst of the 20 patterns x 7 hostile pages: 1.05 s; each pair refused or under 2 s in a child process with a 60 s timeout). M2 groups are looked through at any depth; an unbounded dot repeat only when sole. M3 the `file:` UNC gate decides on the decoded and converted path (12 spellings plus 4 local ones tested). M4 `System.run(watch=)` contract tests on FakeSystem and WindowsSystem (process tree killed). m1 absolute header deadline and `HTTPException` mapping (loopback hostile server). m2 truncated bodies and non-identity Content-Encoding are refused. m3 all 50 registry regexes validate. m4 docs reworded. m5 the watcher does not follow junctions (`windows_integration` test). m6 `tests/test_unpack_guards.py`; a 31-mutant run left no survivor. m7 trust also judges the script file and parent chain; `sys.exit` at hook import is a `HookError`. m9 xz memory limit 256 MiB with a crafted 4 GiB-dictionary test.
+
+Owed to 028 (m8): git and ssh are resolved through the inherited PATH; elevated runs must resolve git from machine or admin-only paths. Also owed: the subprocess regex runner (the guard is not a bound).

@@ -101,6 +101,57 @@ def test_a_planted_pkg_local_folder_is_judged_too(tmp_path: Path, version: Path)
     assert not (version / "pkg.local" / "executed.txt").exists()
 
 
+def test_the_script_file_and_the_folders_between_it_and_the_version_directory_are_judged_too(tmp_path: Path, version: Path) -> None:
+    """A user-writable script file, or a user-writable subfolder that holds it, is refused in an elevated run."""
+    nested = version / "pkg.local" / "sub"
+    nested.mkdir()
+    (nested / "deep.py").write_text("PKG_MODULE_API = 2\nfrom pathlib import Path\nPath(__file__).with_name('ran.txt').write_text('x')\n", encoding="utf-8")
+    file_untrusted = FakeSystem(tmp_path / "m1", elevated=True, untrusted_dirs={nested / "deep.py"})
+    folder_untrusted = FakeSystem(tmp_path / "m2", elevated=True, untrusted_dirs={nested})
+    trusted = FakeSystem(tmp_path / "m3", elevated=True)
+
+    with pytest.raises(HookError, match=r"deep\.py"):
+        load_hook(version, "pkg.local/sub/deep.py", file_untrusted)
+    with pytest.raises(HookError, match="sub"):
+        load_hook(version, "pkg.local/sub/deep.py", folder_untrusted)
+    assert not (nested / "ran.txt").exists()
+    load_hook(version, "pkg.local/sub/deep.py", trusted)
+    assert (nested / "ran.txt").exists()
+
+
+def test_a_script_file_that_is_untrusted_blocks_a_non_python_populate_script_too(tmp_path: Path, version: Path) -> None:
+    """The `.cmd` script itself is judged, not only its folder."""
+    started: list[ProcessCall] = []
+    system = FakeSystem(
+        tmp_path / "machine", elevated=True, untrusted_dirs={version / "pkg.local" / "populate.cmd"},
+        processes={"populate.cmd": lambda call: started.append(call) or ProcessResult(0)}, real_7zip=False,
+    )
+
+    with pytest.raises(HookError, match=r"populate\.cmd"):
+        run_custom_populate(context(system, version), "pkg.local/populate.cmd")
+
+    assert started == []
+
+
+@pytest.mark.parametrize("body", ["import sys\nsys.exit(3)\n", "raise SystemExit('bye')\n"], ids=["sys-exit", "system-exit"])
+def test_a_hook_that_exits_while_loading_is_a_hook_error(tmp_path: Path, system: FakeSystem, body: str) -> None:
+    """`sys.exit()` in a hook's top-level code does not end gupkg: it is a HookError naming the hook."""
+    (tmp_path / "pkg.local").mkdir()
+    (tmp_path / "pkg.local" / "quit.py").write_text("PKG_MODULE_API = 2\n" + body, encoding="utf-8")
+
+    with pytest.raises(HookError, match=r"pkg\.local/quit\.py failed while loading: SystemExit"):
+        load_hook(tmp_path, "pkg.local/quit.py", system)
+
+
+def test_a_keyboard_interrupt_in_a_hook_still_stops_the_run(tmp_path: Path, system: FakeSystem) -> None:
+    """An interrupt from the user is not swallowed as a hook failure."""
+    (tmp_path / "pkg.local").mkdir()
+    (tmp_path / "pkg.local" / "stop.py").write_text("PKG_MODULE_API = 2\nraise KeyboardInterrupt\n", encoding="utf-8")
+
+    with pytest.raises(KeyboardInterrupt):
+        load_hook(tmp_path, "pkg.local/stop.py", system)
+
+
 def test_an_elevated_run_refuses_a_populate_script_and_a_prepare_module_from_an_untrusted_directory(tmp_path: Path, version: Path) -> None:
     """The Python populate hook, a `.cmd` populate script and a `[[prepare]] module` step are all refused before they start."""
     started: list[ProcessCall] = []

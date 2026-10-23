@@ -53,6 +53,26 @@ def test_wildcards_hidden_in_groups_are_counted_like_bare_ones(pattern: str) -> 
         compile_pattern(pattern)
 
 
+def test_four_negated_class_repeats_are_refused_but_three_pass() -> None:
+    """Negated-class repeats separated by literals are allowed up to three; the fourth is refused for that reason alone."""
+    assert compile_pattern(r"a[^b]*b[^c]*c[^d]*d")
+    with pytest.raises(PatternError, match="wildcard or negated-class"):
+        compile_pattern(r"a[^b]*b[^c]*c[^d]*d[^e]*e")
+
+
+def test_a_streak_of_unbounded_repeats_with_no_literal_between_is_refused() -> None:
+    """Seven unbounded repeats in a row (digits, spaces, words) fail the streak rule; a literal between them resets it."""
+    with pytest.raises(PatternError, match="in a row with no literal"):
+        compile_pattern(r"\d+\s+\w+\s+\d+\s+\w+\s+\d+")
+    assert compile_pattern(r"\d+\s+x\w+\s+x\d+\s+x\w+\s+x\d+")
+
+
+def test_more_than_the_total_number_of_unbounded_repeats_is_refused() -> None:
+    """Twenty-five unbounded repeats, each after a literal, exceed the total cap."""
+    with pytest.raises(PatternError, match="more than 24 unbounded repeats"):
+        compile_pattern("".join(rf"k{index}\d+" for index in range(25)))
+
+
 PATTERNS = [
     r"(?P<version>\d+(?:\.\d+)*)-setup\.exe",
     r"(?P<version>\d+(?:\.\d+)+)\.win64\.zip",

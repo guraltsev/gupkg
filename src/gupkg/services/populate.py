@@ -144,6 +144,7 @@ def run_custom_populate(context: HookContext, script: str, timeout: float | None
         raise HookError(f"{script}: {error}") from error
     if not path.is_file():
         raise HookError(f"{script} does not exist")
+    require_trusted_code(context.system, root, path)
     command = [str(path)]
     result = context.system.run(
         command, cwd=root, input_text=context.to_json(), on_line=subprocess_lines(command), timeout=timeout

@@ -154,27 +154,44 @@ class HookContext:
         )
 
 
-def require_trusted_code(system: System, root: Path) -> None:
+def require_trusted_code(system: System, root: Path, script: Path | None = None) -> None:
     """Refuse to run package code from *root* in an elevated run unless only administrators can change it.
 
     An elevated gupkg runs no code that a standard user can modify (decision D19). The check
-    fails closed: when the run is elevated (or marked so) and *root*, its ``pkg.local`` folder or
-    one of their parents is not admin-only, or cannot be read, nothing is imported or started.
-    A normal run is not restricted: the code is the user's own.
+    fails closed: when the run is elevated (or marked so), nothing is imported or started unless
+    *root*, its ``pkg.local`` folder and, when *script* is given, every folder between the script
+    and *root* and the script file itself are admin-only (a file moved into an admin-only folder
+    keeps its own user-writable permissions, so the file is judged too). A normal run is not
+    restricted: the code is the user's own. Call it once with the version directory before any
+    file is read, and again with *script* once its path is known.
 
     Raises
     ------
     HookError
-        In an elevated run, if the folder is not admin-only.
+        In an elevated run, if any of those paths is not admin-only or cannot be judged.
     """
     if not is_elevated_run(system):
         return
-    for folder in (Path(root), Path(root) / LOCAL_DIR):
-        reason = system.directory_untrusted_reason(folder)
+    places = [Path(root), Path(root) / LOCAL_DIR]
+    if script is not None:
+        script = Path(script)
+        folders = [parent for parent in script.parents if _is_below(parent, Path(root))]
+        places += [*reversed(folders), script]
+    for place in places:
+        reason = system.directory_untrusted_reason(place)
         if reason is not None:
             raise HookError(
-                f"Refusing to run code from {folder} in an elevated run: it is not admin-only ({reason})"
+                f"Refusing to run code from {place} in an elevated run: it is not admin-only ({reason})"
             )
+
+
+def _is_below(path: Path, root: Path) -> bool:
+    """Return whether *path* is *root* or inside it (by name, no file system access)."""
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
 
 
 def load_hook(root: Path, reference: str, system: System) -> ModuleType:
@@ -218,6 +235,7 @@ def load_hook(root: Path, reference: str, system: System) -> ModuleType:
         inside = False
     if not path.is_file() or not inside:
         raise HookError(f"{reference} does not exist inside {LOCAL_DIR}")
+    require_trusted_code(system, Path(root), path)
 
     # A unique name per file revision keeps unrelated hooks from sharing import state.
     name = "_gupkg_hook_" + hashlib.sha256(f"{real}{real.stat().st_mtime_ns}".encode()).hexdigest()[:16]
@@ -235,7 +253,9 @@ def load_hook(root: Path, reference: str, system: System) -> ModuleType:
             f"{reference} cannot import {error.name or error!s}; hooks may import only the standard "
             f"library, what the gupkg bundle ships, and modules in their own {LOCAL_DIR} folder"
         ) from error
-    except Exception as error:  # noqa: BLE001 - a hook's import-time code may fail in any way
+    except KeyboardInterrupt:
+        raise
+    except BaseException as error:  # noqa: BLE001 - a hook's import-time code may fail, or call sys.exit(), in any way
         raise HookError(f"{reference} failed while loading: {type(error).__name__}: {error}") from error
     finally:
         sys.dont_write_bytecode = previous

@@ -319,6 +319,19 @@ def test_windows_distinguishes_admin_only_folders_from_user_writable_ones(tmp_pa
     assert system.directory_untrusted_reason(tmp_path)
 
 
+@pytest.mark.windows_integration
+@windows_only
+def test_windows_judges_a_single_file_by_its_own_permissions(tmp_path: Path) -> None:
+    """A user-writable file is untrusted, and a file of an admin-only folder is trusted (the per-file check of the hook rule)."""
+    system = WindowsSystem()
+    mine = tmp_path / "script.py"
+    mine.write_text("x", encoding="utf-8")
+    system_file = Path(os.environ["SystemRoot"]) / "System32" / "cmd.exe"
+
+    assert system.directory_untrusted_reason(mine)
+    assert system.directory_untrusted_reason(system_file) is None
+
+
 def test_machine_and_user_scopes_have_different_shortcut_and_bin_folders(machine: System) -> None:
     """Each scope has its own Start Menu ``opt`` folder and its own ``bin`` folder."""
     user, machine_scope = machine.scope_folders(Scope.USER), machine.scope_folders(Scope.MACHINE)
