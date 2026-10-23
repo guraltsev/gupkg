@@ -96,7 +96,6 @@ def install_package(
     allow_downgrade: bool = False,
     refresh_app: bool = False,
     no_checksum: bool = False,
-    local_deps_autoinstall: bool = False,
     install_context=None,
     shim_linkage: str = "dynamic",
 ) -> ActionResult:
@@ -119,9 +118,6 @@ def install_package(
         Whether to repopulate ``App/`` from origin even when it has files.
     no_checksum : bool, default=False
         Whether to skip configured origin checksum verification.
-    local_deps_autoinstall : bool, default=False
-        Whether package-local update hooks may install missing dependencies
-        while promoting a bootstrap package.
     install_context : InstallationContext, optional
         Manager-owned destinations that replace the scope's default shortcut
         and wrapper locations.
@@ -188,11 +184,7 @@ def install_package(
     # first immutable version and install that instead.
     if _is_update_bootstrap(identity, runtime_config):
         log_info("Promoting bootstrap into an immutable package version...")
-        downloaded = download_package_update(
-            identity.version_path,
-            no_checksum=no_checksum,
-            local_deps_autoinstall=local_deps_autoinstall,
-        )
+        downloaded = download_package_update(identity.version_path, no_checksum=no_checksum)
         if not downloaded.ok:
             downloaded.warnings = warnings + downloaded.warnings
             return downloaded
@@ -297,9 +289,7 @@ def health_check_package(package_path: Path, *, scope: Scope = Scope.USER) -> Ac
 # ---------------------------------------------------------------------------
 
 
-def check_package_update(
-    package_path: Path, *, local_deps_autoinstall: bool = False
-) -> ActionResult:
+def check_package_update(package_path: Path) -> ActionResult:
     """Check one package's configured source and persist the result.
 
     Parameters
@@ -307,24 +297,19 @@ def check_package_update(
     package_path : Path
         Any version directory, package root, or ``current`` junction; a
         historical version may provide the update configuration.
-    local_deps_autoinstall : bool, default=False
-        Whether package-local update hooks may install missing dependencies.
 
     Returns
     -------
     ActionResult
         ``status`` is ``available``, ``current``, or ``not-configured``.
     """
-    return _run_update(
-        package_path, stage=False, no_checksum=False, local_deps_autoinstall=local_deps_autoinstall
-    )
+    return _run_update(package_path, stage=False, no_checksum=False)
 
 
 def download_package_update(
     package_path: Path,
     *,
     no_checksum: bool = False,
-    local_deps_autoinstall: bool = False,
 ) -> ActionResult:
     """Check, download, and stage an available package update without activating it.
 
@@ -334,8 +319,6 @@ def download_package_update(
         Version directory, package root, or ``current`` junction.
     no_checksum : bool, default=False
         Whether checksum verification may be bypassed for downloaded payloads.
-    local_deps_autoinstall : bool, default=False
-        Whether package-local update hooks may install missing dependencies.
 
     Returns
     -------
@@ -348,7 +331,6 @@ def download_package_update(
         package_path,
         stage=True,
         no_checksum=no_checksum,
-        local_deps_autoinstall=local_deps_autoinstall,
     )
 
 
@@ -425,7 +407,6 @@ def full_package_upgrade(
     *,
     scope: Scope = Scope.AUTO,
     no_checksum: bool = False,
-    local_deps_autoinstall: bool = False,
     shim_linkage: str = "dynamic",
     install_context=None,
 ) -> ActionResult:
@@ -439,8 +420,6 @@ def full_package_upgrade(
         Installation scope used when activating the staged version.
     no_checksum : bool, default=False
         Whether checksum verification may be bypassed while staging a payload.
-    local_deps_autoinstall : bool, default=False
-        Whether package-local update hooks may install missing dependencies.
     shim_linkage : {"dynamic", "static"}, default="dynamic"
         Native launcher linkage used while activating the downloaded update.
     install_context : InstallationContext, optional
@@ -452,9 +431,7 @@ def full_package_upgrade(
         The download result when nothing was staged, otherwise the activation
         result with the download warnings prepended.
     """
-    downloaded = download_package_update(
-        package_path, no_checksum=no_checksum, local_deps_autoinstall=local_deps_autoinstall
-    )
+    downloaded = download_package_update(package_path, no_checksum=no_checksum)
     if not downloaded.ok or downloaded.status != "downloaded":
         return downloaded
     installed = install_downloaded_update(
@@ -464,9 +441,7 @@ def full_package_upgrade(
     return installed
 
 
-def _run_update(
-    package_path: Path, *, stage: bool, no_checksum: bool, local_deps_autoinstall: bool
-) -> ActionResult:
+def _run_update(package_path: Path, *, stage: bool, no_checksum: bool) -> ActionResult:
     """Run one locked update check and optionally stage the discovered candidate."""
     warnings: List[str] = []
     try:
@@ -481,9 +456,7 @@ def _run_update(
                 status="not-configured",
             )
         with _update_session(identity.package_root) as (paths, work):
-            status, candidate = _discover_update(
-                identity, config, paths, local_deps_autoinstall=local_deps_autoinstall
-            )
+            status, candidate = _discover_update(identity, config, paths)
             if candidate is None:
                 log_info(f"Current: {identity.version_string}")
                 return ActionResult(True, warnings=warnings, status=status)
@@ -497,7 +470,6 @@ def _run_update(
                 paths,
                 work,
                 no_checksum=no_checksum,
-                local_deps_autoinstall=local_deps_autoinstall,
             )
             return ActionResult(True, changed=changed, warnings=warnings, status="downloaded")
     except (ConfigValidationError, ValueError) as exc:
@@ -535,8 +507,6 @@ def _discover_update(
     identity: PackageIdentity,
     config: Dict[str, Any],
     paths: Dict[str, Path],
-    *,
-    local_deps_autoinstall: bool,
 ) -> Tuple[str, Optional[Dict[str, Any]]]:
     """Contact the configured source and persist timing and candidate state."""
     state = load_update_state(paths["state"])
@@ -552,9 +522,7 @@ def _discover_update(
         if _is_update_bootstrap(identity, config) and config["update"]["check"]["mode"] == "git":
             status, candidate = "available", git_origin_candidate(identity, config, state)
         else:
-            status, candidate = check_update(
-                identity, config, state, local_deps_autoinstall=local_deps_autoinstall
-            )
+            status, candidate = check_update(identity, config, state)
     except Exception as exc:
         # Record the failure for diagnosis, but never let a state-write
         # problem hide the check error itself.
@@ -582,7 +550,6 @@ def _stage_candidate(
     work: Path,
     *,
     no_checksum: bool,
-    local_deps_autoinstall: bool,
 ) -> bool:
     """Commit the candidate as a new immutable version and record its receipt.
 
@@ -609,7 +576,6 @@ def _stage_candidate(
             candidate,
             work,
             no_checksum=no_checksum,
-            local_deps_autoinstall=local_deps_autoinstall,
         )
         os.replace(staged, new_identity.version_path)
     paths["receipts"].mkdir(parents=True, exist_ok=True)

@@ -1,24 +1,23 @@
-"""Prepare an embedded runtime and dispatch the public gupkg command.
+"""Dispatch the public gupkg command on the bundled interpreter.
 
-The bootstrap entry point is used after batch code has selected an interpreter.
-It owns Python-readable runtime support files and the embedded-runtime pip
-bootstrap, while ordinary interpreter selection remains in the local command
-file.
+The launcher (``gupkg.cmd``) starts this file with the Python inside the same
+version directory, in isolated mode. It prepares nothing and downloads
+nothing: the release ZIP already contains the interpreter, its dependencies
+and the application.
 
 Usage and API
 -------------
-Call ``main(...)`` from the internal launcher. It prepares an embedded runtime
-when requested and forwards the remaining arguments to ``gupkg.cli.main``.
+Call ``main(...)`` from the launcher. It forwards the remaining arguments to
+``gupkg.cli.main``.
 
 Implementation Approach
 -----------------------
-The bootstrap establishes import paths from its own package location, writes
-the small runtime support files needed by an embeddable interpreter, and then
-hands the original command arguments to the existing Python CLI. System Python
-invocations skip embedded-runtime mutation. An elevated run (requested with
-``--elevated`` or detected from the process token) mutates and downloads
-nothing: it first verifies that the interpreter is the isolated bundled one and
-that every directory it imports from is admin-only, and refuses otherwise.
+The bootstrap makes the sibling package importable from its own location and
+hands the original command arguments to the Python CLI. An elevated run
+(requested with ``--elevated`` or detected from the process token) first
+verifies that the interpreter is the isolated bundled one and that every
+directory it imports from, which includes the whole bundled runtime, is
+admin-only, and refuses otherwise.
 """
 
 from __future__ import annotations
@@ -26,20 +25,17 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import os
-from pathlib import Path
-import ssl
-import subprocess
 import sys
 import types
 from collections.abc import Sequence
-from urllib.request import urlopen
+from pathlib import Path
 
 # Fixed when the module loads, so the trust check always reads the sibling file.
 _ELEVATION_SOURCE = Path(__file__).resolve().parent / "elevation.py"
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Prepare the selected runtime and return the public CLI exit status.
+    """Run the public CLI on the bundled runtime and return its exit status.
 
     Parameters
     ----------
@@ -50,14 +46,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     -------
     int
         The exit status returned by the public CLI.
-
-    Raises
-    ------
-    RuntimeError
-        If embedded-runtime support files or pip cannot be prepared.
     """
     parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("--embedded", action="store_true")
     parser.add_argument("--elevated", action="store_true")
     options, command_args = parser.parse_known_args(argv)
 
@@ -67,7 +57,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         sys.path.insert(0, str(package_parent))
 
     # An elevated process, whether the launcher said so or the token shows it,
-    # must pass the trust check before anything else is imported or changed.
+    # must pass the trust check before anything else is imported.
     elevation = _load_elevation()
     if options.elevated or elevation.is_elevated():
         try:
@@ -76,13 +66,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"[gupkg] {error}", file=sys.stderr)
             return 1
         os.environ["GUPKG_ELEVATED"] = "1"
-        os.environ["GUPKG_BUNDLED_RUNTIME"] = "1"
-    elif options.embedded:
-        # The bootstrap file and bundled runtime are one owned unit. Never
-        # derive a write target from the interpreter that launched the command.
-        runtime_directory = Path(__file__).resolve().parent / "python"
-        _prepare_embedded_runtime(runtime_directory)
-        os.environ["GUPKG_BUNDLED_RUNTIME"] = "1"
 
     # Keep bootstrap-only flags out of the public command parser.
     from gupkg.cli import main as cli_main
@@ -101,65 +84,5 @@ def _load_elevation() -> types.ModuleType:
     return module
 
 
-def _prepare_embedded_runtime(runtime_directory: Path) -> None:
-    """Write embedded-runtime support files and ensure pip is available."""
-    # Keep the bundled interpreter isolated while making its own dependency
-    # directory importable. Every generated path remains inside this runtime.
-    pth_name = f"python{sys.version_info.major}{sys.version_info.minor}._pth"
-    pth_path = runtime_directory / pth_name
-    content = f"python{sys.version_info.major}{sys.version_info.minor}.zip\n.\n..\nLib/site-packages\n\nimport site\n"
-
-    # A release bundle ships this file already; rewrite it only when it differs,
-    # and tolerate an admin-only install that this user cannot write.
-    try:
-        if not pth_path.is_file() or pth_path.read_text(encoding="ascii") != content:
-            pth_path.write_text(content, encoding="ascii")
-    except OSError:
-        pass
-    _ensure_pip(runtime_directory)
-
-
-def _ensure_pip(runtime_directory: Path) -> None:
-    """Install pip into the embedded runtime's mutable dependency location."""
-    runtime_python = runtime_directory / "python.exe"
-
-    # Invoke only the bundled executable, even when another launcher reached
-    # this bootstrap command.
-    probe = subprocess.run(
-        [runtime_python, "-m", "pip", "--version"],
-        capture_output=True,
-        check=False,
-    )
-    if probe.returncode == 0:
-        return
-
-    # Keep the installer and every installed file inside the local bundle.
-    pip_target = runtime_directory / "Lib" / "site-packages"
-    pip_target.mkdir(parents=True, exist_ok=True)
-    installer_path = runtime_directory / "get-pip.py"
-    try:
-        # Accept chains that end at a trusted intermediate, as CPython 3.13 does.
-        context = ssl.create_default_context()
-        context.verify_flags |= getattr(ssl, "VERIFY_X509_PARTIAL_CHAIN", 0)
-        with urlopen("https://bootstrap.pypa.io/get-pip.py", context=context) as response:
-            installer_path.write_bytes(response.read())
-        environment = os.environ.copy()
-        environment["GUPKG_BOOTSTRAPPING_PIP"] = "1"
-        environment["PIP_TARGET"] = str(pip_target)
-        result = subprocess.run(
-            [runtime_python, str(installer_path), "--no-warn-script-location"],
-            env=environment,
-            check=False,
-        )
-        if result.returncode:
-            raise RuntimeError("Could not install pip for embedded Python.")
-    finally:
-        installer_path.unlink(missing_ok=True)
-
-
 if __name__ == "__main__":
-    try:
-        raise SystemExit(main())
-    except RuntimeError as error:
-        print(f"[gupkg] {error}", file=sys.stderr)
-        raise SystemExit(1)
+    raise SystemExit(main())

@@ -138,7 +138,6 @@ class PackageRequest:
     allow_downgrade: bool = False
     refresh_app: bool = False
     no_checksum: bool = False
-    allow_hook_dependency_install: bool = False
     shim_linkage: str = "dynamic"
     backup: bool = True
     import_shortcuts: bool = True
@@ -149,8 +148,6 @@ class PackageRequest:
         parts = ["gupkg"]
         if self.scope != Scope.AUTO:
             parts += ["--scope", self.scope.value]
-        if self.allow_hook_dependency_install:
-            parts.append("--allow-hook-dependency-install")
         parts.append(self.command)
         if self.command == "install":
             parts += [f"--{flag}" for flag, on in (
@@ -324,7 +321,6 @@ def run_package_command(request: PackageRequest, *, output: TextIO | None = None
             command,
             output,
         )
-    hooks = request.allow_hook_dependency_install
     if command == "config-check":
         outcome = run_guarded(
             command, lambda: package_workflows.health_check_package(directory, scope=request.scope), output
@@ -338,23 +334,19 @@ def run_package_command(request: PackageRequest, *, output: TextIO | None = None
             allow_downgrade=request.allow_downgrade,
             refresh_app=request.refresh_app,
             no_checksum=request.no_checksum,
-            local_deps_autoinstall=hooks,
             shim_linkage=request.shim_linkage,
         )
     elif command == "update" and request.check_only:
-        operation = lambda: package_workflows.check_package_update(  # noqa: E731
-            directory, local_deps_autoinstall=hooks
-        )
+        operation = lambda: package_workflows.check_package_update(directory)  # noqa: E731
     elif command == "update" and request.download_only:
         operation = lambda: package_workflows.download_package_update(  # noqa: E731
-            directory, no_checksum=request.no_checksum, local_deps_autoinstall=hooks
+            directory, no_checksum=request.no_checksum
         )
     elif command == "update":
         operation = lambda: package_workflows.full_package_upgrade(  # noqa: E731
             directory,
             scope=request.scope,
             no_checksum=request.no_checksum,
-            local_deps_autoinstall=hooks,
             shim_linkage=request.shim_linkage,
         )
     else:
@@ -645,17 +637,11 @@ def needs_elevation(plan: UpgradePlan) -> bool:
     ) and not is_current_user_admin()
 
 
-def relaunch_elevated_update(
-    config: ManagerConfig, *, allow_hook_dependency_install: bool, no_checksum: bool
-) -> bool:
+def relaunch_elevated_update(config: ManagerConfig, *, no_checksum: bool) -> bool:
     """Ask Windows to repeat a confirmed bulk update elevated; return whether it was accepted."""
     from .windows import relaunch_elevated
 
-    return relaunch_elevated(
-        elevated_update_arguments(
-            config, allow_hook_dependency_install=allow_hook_dependency_install, no_checksum=no_checksum
-        )
-    )
+    return relaunch_elevated(elevated_update_arguments(config, no_checksum=no_checksum))
 
 
 def list_outcome(
@@ -684,7 +670,6 @@ def plan_updates(
     inventory: ManagerInventory,
     scope: str,
     *,
-    allow_hook_dependency_install: bool = False,
     on_progress: Callable[[int, int, ManagedTarget, ActionResult | None], None] | None = None,
 ) -> UpgradePlan:
     """Check every selected installed target and plan updates; nothing is downloaded.
@@ -710,7 +695,7 @@ def plan_updates(
         done += 1
         if on_progress is not None:
             on_progress(done, total, target, None)
-        result = manager_update_target(target, allow_dependencies=allow_hook_dependency_install)
+        result = manager_update_target(target)
         if on_progress is not None:
             on_progress(done, total, target, result)
         return result
@@ -740,7 +725,6 @@ def execute_updates(
     *,
     download_only: bool = False,
     no_checksum: bool = False,
-    allow_hook_dependency_install: bool = False,
     shim_linkage: str | None = None,
     cancel_requested: Callable[[], bool] | None = None,
     on_progress: Callable[[str, str], None] | None = None,
@@ -765,15 +749,12 @@ def execute_updates(
         if on_progress:
             on_progress(target.target_id, "running")
         if download_only:
-            result = manager_download_target(
-                target, no_checksum=no_checksum, allow_dependencies=allow_hook_dependency_install
-            )
+            result = manager_download_target(target, no_checksum=no_checksum)
         else:
             result = manager_upgrade_target(
                 target,
                 config,
                 no_checksum=no_checksum,
-                allow_dependencies=allow_hook_dependency_install,
                 shim_linkage=shim_linkage,
             )
         if on_progress:
@@ -854,12 +835,9 @@ def execution_summary_line(plan: UpgradePlan) -> str:
     )
 
 
-def elevated_update_arguments(
-    config: ManagerConfig, *, allow_hook_dependency_install: bool, no_checksum: bool
-) -> list[str]:
+def elevated_update_arguments(config: ManagerConfig, *, no_checksum: bool) -> list[str]:
     """Return the argument vector that repeats a confirmed bulk update elevated."""
-    arguments = ["--allow-hook-dependency-install"] if allow_hook_dependency_install else []
-    arguments += ["manager", "--config", str(config.path), "update", "--yes"]
+    arguments = ["manager", "--config", str(config.path), "update", "--yes"]
     if no_checksum:
         arguments.append("--no-checksum")
     return arguments
@@ -954,7 +932,6 @@ def install_registry_package(
     scope: Scope,
     *,
     offline: bool = False,
-    allow_hook_dependency_install: bool = False,
     output: TextIO | None = None,
 ) -> Outcome:
     """Install one registry package by exact name into the configured root.
@@ -1000,7 +977,6 @@ def install_registry_package(
             target,
             scope=scope,
             install_context=installation_context(config, scope),
-            local_deps_autoinstall=allow_hook_dependency_install,
             shim_linkage=config.shim_linkage,
         ),
         output,
@@ -1022,8 +998,8 @@ def self_outcome(
     shim_linkage: str | None = None,
     output: TextIO | None = None,
 ) -> Outcome:
-    """Report on (``status``) or repair (``repair``/``update``) the standalone runtime."""
-    from .distribution import repair_self, self_status
+    """Report on (``status``), repair (``repair``) or update (``update``) gupkg itself."""
+    from .distribution import repair_self, self_status, update_self
 
     command = f"manager.self.{action}"
     if action == "status":
@@ -1031,19 +1007,37 @@ def self_outcome(
             report = self_status()
         except (OSError, ConfigValidationError, ValueError) as exc:
             return failure(command, str(exc), EXIT_MUTATION_ERROR)
-        healthy = report["runtime_healthy"]
+        integrity = report["integrity"]
+        healthy = bool(report["runtime_healthy"]) and integrity.ok
+        problems = integrity.problems()
+        if problems:
+            problems.append("Reinstall gupkg from a release ZIP (gupkg-bootstrap.cmd) to fix this.")
         return Outcome(
             command,
             ActionResult(
                 healthy,
+                errors=problems,
                 status="healthy" if healthy else "unhealthy",
                 exit_code=EXIT_SUCCESS if healthy else EXIT_MUTATION_ERROR,
             ),
             _self_record(report),
         )
 
-    # Repair and update both reinstall the running version.
+    # Update installs a newer verified release; the new version, not the running
+    # one, is then the active install, so no diagnostics of the old one follow.
     scope = Scope.USER if scope == Scope.AUTO else scope
+    if action == "update":
+        outcome = run_guarded(
+            command,
+            lambda: update_self(
+                scope=scope, install_context=installation_context(config, scope, shim_linkage=shim_linkage)
+            ),
+            output,
+        )
+        outcome.data = {"self": {"operation": action}}
+        return outcome
+
+    # Repair reinstalls the running version's shims and PATH entries.
     outcome = run_guarded(
         command,
         lambda: repair_self(
@@ -1058,73 +1052,6 @@ def self_outcome(
     return outcome
 
 
-def dependency_outcome(
-    action: str,
-    *,
-    assume_yes: bool = False,
-    interactive: bool = True,
-    output: TextIO | None = None,
-) -> Outcome:
-    """Reinstall (``repair-deps``) or update (``update-deps``) the locked runtime dependencies.
-
-    Parameters
-    ----------
-    action : {"repair-deps", "update-deps"}
-        Which dependency command to run.
-    assume_yes : bool, default=False
-        Apply an update plan without asking.
-    interactive : bool, default=True
-        Whether a confirmation question can be asked; when ``False`` an update
-        plan requires *assume_yes*.
-    output : TextIO, optional
-        Stream that receives progress text.
-    """
-    from .elevation import UntrustedLocationError
-    from .locked_deps import NotElevatedError, repair_deps, update_deps
-
-    command = f"manager.self.{action}"
-
-    def confirm(lines: list[str]) -> bool:
-        """Show the plan and decide whether to apply it."""
-        for line in lines:
-            print(line)
-        if assume_yes:
-            return True
-        if not interactive:
-            raise ConfigValidationError(f"{command} requires --yes in non-interactive mode")
-        return input("Apply these changes? [y/N] ").strip().casefold() in {"y", "yes"}
-
-    def operation() -> ActionResult:
-        """Run the dependency command and translate its failures to exit codes."""
-        try:
-            if action == "repair-deps":
-                repair_deps()
-                return ActionResult(ok=True, changed=True)
-            applied = update_deps(confirm=confirm)
-        except NotElevatedError as exc:
-            return ActionResult(ok=False, errors=[str(exc)], exit_code=EXIT_USER_ERROR)
-        except (UntrustedLocationError, RuntimeError) as exc:
-            return ActionResult(ok=False, errors=[str(exc)], exit_code=EXIT_MUTATION_ERROR)
-        return ActionResult(ok=True, changed=bool(applied))
-
-    return run_guarded(command, operation, output)
-
-
-def dependency_notices_for(config: ManagerConfig | None = None) -> tuple[str, ...]:
-    """Return advisory lines about newer pinned dependencies, only for elevated runs.
-
-    Non-elevated runs install the newest releases rather than the pinned ones,
-    so a pin warning would be misleading there.
-    """
-    from .dependency_notices import dependency_notices
-    from .elevation import elevated_mode
-
-    if not elevated_mode():
-        return ()
-    enabled = True if config is None else config.dependency_update_check
-    return tuple(dependency_notices(enabled=enabled))
-
-
 def _self_record(report: dict[str, Any], *, operation: str | None = None) -> dict[str, Any]:
     """Serialize standalone runtime and shim diagnostics."""
     self_data: dict[str, Any] = {"operation": operation}
@@ -1133,6 +1060,12 @@ def _self_record(report: dict[str, Any], *, operation: str | None = None) -> dic
             self_data[key] = _path_text(Path(report[key]))
     if "runtime_healthy" in report:
         self_data["runtime_healthy"] = bool(report["runtime_healthy"])
+    if "integrity" in report:
+        integrity = report["integrity"]
+        self_data["manifest_found"] = integrity.manifest_found
+        self_data["files_modified"] = len(integrity.modified)
+        self_data["files_missing"] = len(integrity.missing)
+        self_data["files_extra"] = len(integrity.extra)
     shims = sorted(
         (
             {
@@ -1156,8 +1089,6 @@ __all__ = [
     "PackageSummary",
     "automatic_scope",
     "decline_updates",
-    "dependency_notices_for",
-    "dependency_outcome",
     "describe_package",
     "diagnostic_lines",
     "filter_targets",

@@ -8,14 +8,16 @@ standalone and ordinary package installs share activation and shim behavior.
 Usage and API
 -------------
 Call ``standalone_version_root(...)`` to identify a packaged runtime,
-``self_status(...)`` for diagnostics, and ``repair_self(...)`` to request a
-normal package repair for one scope.
+``self_status(...)`` for diagnostics (including the check of every file against
+``MANIFEST.sha256``), and ``repair_self(...)`` to request a normal package
+repair for one scope.
 
 Implementation Approach
 -----------------------
 Package identity is derived from the executable module location and every
 shim is inspected as a separate scope integration. Runtime checks are
-read-only; repair validates the selected version before delegating mutation to
+read-only and report only: a damaged install is fixed by installing the
+release ZIP again. Repair validates the selected version before delegating mutation to
 the existing installer.
 """
 
@@ -28,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from .core import ActionResult, ConfigValidationError, EXIT_MUTATION_ERROR, Scope
+from .integrity import IntegrityReport, ManifestError, verify_version_directory
 
 
 @dataclass(frozen=True)
@@ -59,9 +62,16 @@ def self_status(
     user_bin: Path | None = None,
     system_bin: Path | None = None,
 ) -> dict[str, Any]:
-    """Return read-only standalone version, runtime, and shim diagnostics."""
+    """Return read-only standalone version, runtime, integrity, and shim diagnostics."""
     root = Path(version_root) if version_root is not None else standalone_version_root()
     runtime = root / "gupkg" / "python" / "python.exe"
+
+    # Compare every installed file with the manifest the release was built
+    # with; an unreadable manifest is itself reported as damage.
+    try:
+        integrity = verify_version_directory(root)
+    except ManifestError as error:
+        integrity = IntegrityReport(manifest_found=True, modified=(f"{error}",))
     shims = [
         _inspect_shim(Scope.USER, user_bin or _user_bin(), root),
         _inspect_shim(Scope.MACHINE, system_bin or _system_bin(), root),
@@ -70,6 +80,7 @@ def self_status(
         "version_root": root,
         "runtime": runtime,
         "runtime_healthy": _runtime_healthy(runtime, root),
+        "integrity": integrity,
         "shims": shims,
     }
 
@@ -88,7 +99,8 @@ def repair_self(
             return ActionResult(
                 False,
                 errors=[
-                    f"Embedded runtime is missing or unhealthy: {runtime}. Run the release bootstrap or version-local gupkg.cmd."
+                    f"The bundled Python is missing or unhealthy: {runtime}. "
+                    "Reinstall gupkg from a release ZIP (gupkg-bootstrap.cmd)."
                 ],
                 exit_code=EXIT_MUTATION_ERROR,
             )
@@ -99,6 +111,31 @@ def repair_self(
             root, scope=scope, install_context=install_context, shim_linkage=linkage
         )
         return result
+    except (ConfigValidationError, OSError, ValueError) as exc:
+        return ActionResult(False, errors=[str(exc)], exit_code=EXIT_MUTATION_ERROR)
+
+
+def update_self(
+    *,
+    scope: Scope,
+    version_root: Path | None = None,
+    install_context=None,
+) -> ActionResult:
+    """Install the newest verified gupkg release through the ordinary update workflow.
+
+    The release is found, downloaded and verified by gupkg's own update hooks
+    (the ZIP digest from ``RELEASES.md``, then every file against
+    ``MANIFEST.sha256``) and activated like any other package update. When no
+    newer release exists the result is ``current`` and nothing changes.
+    """
+    try:
+        root = Path(version_root) if version_root is not None else standalone_version_root()
+        from .gupkg import full_package_upgrade
+
+        linkage = install_context.shim_linkage if install_context is not None else "dynamic"
+        return full_package_upgrade(
+            root, scope=scope, shim_linkage=linkage, install_context=install_context
+        )
     except (ConfigValidationError, OSError, ValueError) as exc:
         return ActionResult(False, errors=[str(exc)], exit_code=EXIT_MUTATION_ERROR)
 
@@ -131,8 +168,8 @@ def _inspect_shim(scope: Scope, bin_dir: Path, version_root: Path) -> SelfShim:
     if not target:
         return SelfShim(scope, shim_path, config_path, None, False, "shim target is missing")
 
-    # Standalone shims delegate to the sibling batch bootstrap through cmd.exe;
-    # that bootstrap owns interpreter selection and may use system Python.
+    # Standalone shims delegate to the sibling batch launcher through cmd.exe;
+    # that launcher runs only the bundled Python.
     expanded_target = os.path.expandvars(target)
     target_path = Path(expanded_target)
     if not target_path.is_absolute():

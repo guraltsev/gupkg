@@ -1,13 +1,14 @@
 """Cover the trust rules that gate elevated gupkg runs.
 
-Behavior covered: which directories an elevated run accepts or refuses, what an
-elevated run does when a dependency is missing, that the bootstrap refuses an
-elevated run on an untrusted interpreter, and that an elevated update relaunch
-goes through the isolated launcher.
+Behavior covered: which directories an elevated run accepts or refuses, that the
+trust check covers the whole active version directory (including the bundled
+runtime and its dependency folder), that the bootstrap refuses an elevated run on
+an untrusted interpreter, and that an elevated update relaunch goes through the
+isolated launcher.
 
 Mocked boundaries: the Windows security-descriptor reader (replaced by synthetic
-descriptors), the process's elevation state, the Windows shell relaunch call, and
-the subprocess used for pip. One Windows-only test reads real access-control
+descriptors), the process's elevation state, and the Windows shell relaunch call.
+One Windows-only test reads real access-control
 lists from system folders and the temporary folder. Out of scope: running a real
 elevated process, which needs an administrator token.
 """
@@ -169,7 +170,7 @@ def test_bootstrap_refuses_an_elevated_run_without_importing_the_cli(tmp_path: P
         mock.patch.object(bootstrap, "__file__", str(package / "bootstrap.py")),
         mock.patch.dict(sys.modules, {"gupkg.cli": cli}),
     ):
-        status = bootstrap.main(["--embedded", "--elevated", "list"])
+        status = bootstrap.main(["--elevated", "list"])
 
     assert status == 1
     assert "bundled Python" in capsys.readouterr().err
@@ -177,83 +178,29 @@ def test_bootstrap_refuses_an_elevated_run_without_importing_the_cli(tmp_path: P
 
 
 # ---------------------------------------------------------------------------
-# Dependencies under elevation
+# The bundled runtime under elevation
 # ---------------------------------------------------------------------------
 
 
-def _load_dependencies(package: Path):
-    """Load the dependency module with its adjacent bundle at *package*."""
-    spec = importlib.util.spec_from_file_location("gupkg._dependencies_elevated_test", SRC / "dependencies.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    module.__file__ = str(package / "dependencies.py")
-    return module
-
-
-def test_elevated_run_reports_a_missing_dependency_without_installing(tmp_path: Path) -> None:
-    """An elevated run that lacks a dependency names the repair command and never runs pip."""
-    module = _load_dependencies(tmp_path)
-
-    with (
-        mock.patch.dict(os.environ, {"GUPKG_ELEVATED": "1"}),
-        mock.patch.object(module.subprocess, "run") as run,
-        mock.patch.object(module, "require_trusted_directory"),
-        pytest.raises(RuntimeError, match="repair-deps"),
-    ):
-        module.ensure_dependency("gupkg_absent_dependency")
-
-    run.assert_not_called()
-
-
-def test_elevated_run_imports_dependencies_from_the_trusted_bundle_directory(tmp_path: Path) -> None:
-    """An elevated run finds a healthy dependency in the adjacent bundled site-packages."""
-    site_packages = tmp_path / "python" / "Lib" / "site-packages"
+def test_elevated_trust_check_covers_the_version_directory_and_the_whole_bundled_runtime(tmp_path: Path) -> None:
+    """An elevated run on the bundled Python demands admin-only access to the version folder, python\\ and its site-packages."""
+    version_root = tmp_path / "0.18.0"
+    package = version_root / "gupkg"
+    site_packages = package / "python" / "Lib" / "site-packages"
     site_packages.mkdir(parents=True)
-    (site_packages / "gupkg_bundled_probe.py").write_text("VALUE = 1\n", encoding="utf-8")
-    module = _load_dependencies(tmp_path)
-    original_path = list(sys.path)
-
-    try:
-        with (
-            mock.patch.dict(os.environ, {"GUPKG_ELEVATED": "1"}),
-            mock.patch.object(module, "require_trusted_directory") as trusted,
-        ):
-            module.ensure_dependency("gupkg_bundled_probe")
-        trusted.assert_called_once_with(site_packages)
-        assert "gupkg_bundled_probe" in sys.modules
-    finally:
-        sys.path[:] = original_path
-        sys.modules.pop("gupkg_bundled_probe", None)
-
-
-def test_elevated_run_refuses_a_dependency_directory_users_can_write(tmp_path: Path) -> None:
-    """The bundled dependency directory is never imported from when it is not admin-only."""
-    (tmp_path / "python" / "Lib" / "site-packages").mkdir(parents=True)
-    module = _load_dependencies(tmp_path)
+    python = package / "python" / "python.exe"
+    python.touch()
+    isolated = types.SimpleNamespace(ignore_environment=1, no_user_site=1)
 
     with (
-        mock.patch.dict(os.environ, {"GUPKG_ELEVATED": "1"}),
-        mock.patch.object(module, "require_trusted_directory", side_effect=UntrustedLocationError("writable")),
-        pytest.raises(UntrustedLocationError),
+        mock.patch.object(sys, "executable", str(python)),
+        mock.patch.object(sys, "flags", isolated),
+        mock.patch.object(elevation, "require_trusted_directory") as trusted,
     ):
-        module.ensure_dependency("gupkg_absent_dependency")
+        elevation.enforce_elevated_runtime(package)
 
-
-def test_elevated_run_never_installs_on_request_of_a_hook(tmp_path: Path) -> None:
-    """Even an explicit hook opt-in cannot make an elevated run install packages."""
-    module = _load_dependencies(tmp_path)
-
-    def hook() -> None:
-        __import__("gupkg_missing_hook_dependency")
-
-    with (
-        mock.patch.dict(os.environ, {"GUPKG_ELEVATED": "1"}),
-        mock.patch.object(module.subprocess, "run") as run,
-        pytest.raises(RuntimeError, match="never install"),
-    ):
-        module.run_with_missing_dependencies(hook, autoinstall=True)
-
-    run.assert_not_called()
+    checked = {Path(call.args[0]).resolve() for call in trusted.call_args_list}
+    assert {version_root.resolve(), package.resolve(), (package / "python").resolve(), site_packages.resolve()} <= checked
 
 
 # ---------------------------------------------------------------------------
