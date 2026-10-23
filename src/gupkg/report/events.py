@@ -368,19 +368,21 @@ def package_scope(name: str, path: Any, **extra: Any) -> Iterator[PackageHandle]
 
 
 # Escape sequences a child process may print: CSI (also the single-character
-# U+009B form), OSC (an OSC 8 hyperlink loses its URL and keeps its text),
-# device-control and similar string sequences up to their terminator, and any
-# other two-character escape.
+# U+009B form); OSC and the device-control, SOS, PM and APC strings, up to
+# BEL, ST, or the end of their line when unterminated (an OSC 8 hyperlink
+# loses its URL and keeps its text); and any other two-character escape. The
+# string alternative reads its payload with disjoint alternatives and always
+# ends in one of three terminators, so it never backtracks: time is linear in
+# the line length however many unterminated openers a line holds.
 _ANSI = re.compile(
     r"\x1b\[[0-?]*[ -/]*[@-~]|\x9b[0-?]*[ -/]*[@-~]"
-    r"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)"
-    r"|\x1b[PX^_].*?(?:\x07|\x1b\\)"
+    r"|\x1b[\]PX^_](?:[^\x07\x1b\n]|\x1b(?!\\))*(?:\x07|\x1b\\|(?=\n)|\Z)"
     r"|\x1b."
 )
 # Control characters other than tab and newline (C0, DEL and the C1 range), and
 # the bidirectional overrides and isolates that can make text read in another
 # order: they would let output steer a terminal or disguise a line.
-_CONTROL = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f‪-‮⁦-⁩]")
+_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f‪-‮⁦-⁩]")
 
 
 def clean_line(text: str) -> str:

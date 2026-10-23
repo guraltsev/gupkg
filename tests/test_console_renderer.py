@@ -343,3 +343,85 @@ def test_the_output_does_not_depend_on_the_ambient_console_settings(monkeypatch,
     reporter = ConsoleReporter(console=console)
 
     assert stream.getvalue() == "==> Fetch\n" and reporter.fancy is False
+
+
+@pytest.mark.parametrize(
+    ("hostile", "shown"),
+    [
+        pytest.param("a\x1bPx\x1bXy\x1b\\b", "ab", id="device-string-with-an-embedded-escape"),
+        pytest.param("a\x1bPpayload\x07b", "ab", id="device-string-ended-by-bel"),
+        pytest.param("a\x1bPsecret\nnext line", "a\nnext line", id="unterminated-device-string-ends-with-its-line"),
+        pytest.param("a\x1b]0;title payload\nnext line", "a\nnext line", id="unterminated-osc-ends-with-its-line"),
+        pytest.param("a\x1b]0;title payload", "a", id="unterminated-osc-ends-with-the-text"),
+        pytest.param("a\x1b]0;one\x07b\x1b]0;two\x1b\\c", "abc", id="two-terminated-osc-strings"),
+        pytest.param("one\x1bPsecret\ntwo\x1b_apc\nthree", "one\ntwo\nthree", id="each-unterminated-string-stays-on-its-line"),
+    ],
+)
+def test_escape_strings_are_stripped_to_their_terminator_or_the_end_of_their_own_line(hostile: str, shown: str) -> None:
+    """A terminated string loses exactly its payload; an unterminated one loses its payload up to the end of its own line only."""
+    from gupkg.report.events import clean_line
+
+    assert clean_line(hostile) == shown
+
+
+# What each child process of the timing tests runs: it cleans the given lines and reports the slowest one.
+_TIMING_CHILD = """
+import json, sys, time
+sys.path.insert(0, {source!r})
+from gupkg.report.events import clean_line
+lines = json.loads(sys.stdin.read())
+slowest = 0.0
+for line in lines:
+    started = time.perf_counter()
+    clean_line(line)
+    slowest = max(slowest, time.perf_counter() - started)
+print(slowest)
+"""
+
+
+def _slowest_line(lines: list[str], *, timeout: float) -> float:
+    """Clean *lines* in a child process and return the slowest line's time; a child that exceeds *timeout* fails the test instead of hanging it."""
+    import json
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    import gupkg
+
+    source = str(Path(gupkg.__file__).resolve().parents[1])
+    try:
+        done = subprocess.run(
+            [sys.executable, "-c", _TIMING_CHILD.format(source=source)],
+            input=json.dumps(lines), capture_output=True, text=True, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail(f"cleaning did not finish within {timeout} s: it is not linear")
+    assert done.returncode == 0, done.stderr
+    return float(done.stdout)
+
+
+HOSTILE_LINES = {
+    "dcs-openers": "\x1bPx" * 21_000,
+    "doubled-dcs-openers": "\x1bP\x1bP" * 16_000,
+    "bare-dcs-openers": "\x1bP" * 20_000,
+    "osc-openers": "\x1b]x" * 21_000,
+    "apc-openers": "\x1b_" * 30_000,
+    "csi-openers": "\x1b[" * 30_000,
+    "bare-escapes": "\x1b" * 60_000,
+    "mixed-escape-run": "\x1bP\x1b]\x1b_\x1bX\x1b[\x1b" * 9_000,
+}
+
+
+@pytest.mark.parametrize("name", list(HOSTILE_LINES))
+def test_a_64_kib_line_of_unterminated_escape_openers_is_cleaned_in_linear_time(name: str) -> None:
+    """Repeated unterminated escape openers, the worst input for a backtracking pattern, clean in well under a second."""
+    assert _slowest_line([HOSTILE_LINES[name][:64 * 1024]], timeout=60) < 1.0
+
+
+def test_a_10_mb_flood_of_hostile_lines_is_cleaned_in_linear_time() -> None:
+    """Ten megabytes of hostile lines, cut into 64 KiB lines like the output reader does, clean with every line fast."""
+    flood = "".join(HOSTILE_LINES.values())
+    flood = flood * (10 * 1024 * 1024 // len(flood) + 1)
+    lines = [flood[i : i + 64 * 1024] for i in range(0, 10 * 1024 * 1024, 64 * 1024)]
+
+    assert _slowest_line(lines, timeout=120) < 1.0
