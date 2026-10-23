@@ -44,6 +44,9 @@ MAX_SCAN_BYTES = 1024 * 1024
 MAX_RUN = 1024
 MAX_MATCHES = 10_000
 _UNBOUNDED = 1000
+_MAX_BROAD = 3
+_MAX_UNBOUNDED = 8
+MAX_LINE = 8192
 
 _REFERENCE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 # A run of word characters can only start where the previous character is not one, so the
@@ -113,9 +116,33 @@ def prepare_text(text: str) -> str:
             count = sum(1 for _ in group)
             pieces.append(character * min(count, MAX_RUN))
         text = "".join(pieces)
+    text = _cut_long_lines(text)
     if len(text) > MAX_SCAN_BYTES:
         raise PatternError(f"the text is {len(text)} characters long; at most {MAX_SCAN_BYTES} are scanned")
     return text
+
+
+def _cut_long_lines(text: str) -> str:
+    """Break every line longer than ``MAX_LINE`` into lines of at most that length.
+
+    A line is broken after the last ``>`` or space of its last half-window when there is one, so
+    a tag or a word is rarely split; a match that spans a break is lost, which only happens on
+    minified pages whose single line is longer than the window.
+    """
+    if len(text) <= MAX_LINE:
+        return text
+    lines = text.split("\n")
+    if max(map(len, lines)) <= MAX_LINE:
+        return text
+    cut: list[str] = []
+    for line in lines:
+        while len(line) > MAX_LINE:
+            window = line[:MAX_LINE]
+            point = max(window.rfind(">", MAX_LINE // 2), window.rfind(" ", MAX_LINE // 2)) + 1 or MAX_LINE
+            cut.append(line[:point])
+            line = line[point:]
+        cut.append(line)
+    return "\n".join(cut)
 
 
 def scan(compiled: re.Pattern[str], text: str, limit: int = MAX_MATCHES) -> list[re.Match[str]]:
@@ -179,24 +206,65 @@ def _unsafe_reason(pattern: str) -> str | None:
                 return True
         return False
 
-    def walk(sub: Any) -> bool:
-        """Return whether some unbounded repeat in *sub* contains an ambiguous inner repeat."""
-        for operation, argument in sub.data:
-            if operation in repeats and argument[1] >= _UNBOUNDED:
-                # A body that starts with a literal character cannot be re-entered in
-                # two ways unless an inner repeat is able to consume that character.
-                body = argument[2]
-                first = body.data[0] if body.data else None
-                guard = chr(first[1]) if first is not None and first[0] == _sre_constants.LITERAL else None
-                if repeats_inside(body, guard):
-                    return True
-            if any(walk(child) for child in _children(argument)):
-                return True
-        return False
+    unbounded = {"count": 0, "broad": 0}
+    reasons: list[str] = []
 
-    if walk(tree):
-        return "it repeats a repeated group without a bound, which can take exponential time on a hostile page"
-    return None
+    def is_broad(body: Any) -> bool:
+        """Return whether a repeated body starts with a wildcard or a negated class (``.``, ``[^"]``)."""
+        first = body.data[0] if body.data else None
+        if first is None:
+            return False
+        if first[0] in (_sre_constants.ANY, _sre_constants.NOT_LITERAL):
+            return True
+        return first[0] == _sre_constants.IN and any(op == _sre_constants.NEGATE for op, _arg in first[1])
+
+    def distinct_literals(alternatives: Any) -> bool:
+        """Return whether every alternative starts with a different literal character."""
+        starts = []
+        for alternative in alternatives:
+            first = alternative.data[0] if alternative.data else None
+            if first is None or first[0] != _sre_constants.LITERAL:
+                return False
+            starts.append(first[1])
+        return len(set(starts)) == len(starts)
+
+    def walk(sub: Any, inside: bool) -> None:
+        """Collect the reasons why repeats in *sub* are unsafe; *inside* means within an unbounded repeat."""
+        for operation, argument in sub.data:
+            if operation in repeats:
+                body = argument[2]
+                unlimited = argument[1] >= _UNBOUNDED
+                if unlimited:
+                    unbounded["count"] += 1
+                    unbounded["broad"] += is_broad(body)
+                    first = body.data[0] if body.data else None
+                    guard = chr(first[1]) if first is not None and first[0] == _sre_constants.LITERAL else None
+                    if repeats_inside(body, guard):
+                        reasons.append("it repeats a repeated group without a bound, which can take exponential time on a hostile page")
+                    if body.getwidth()[0] == 0:
+                        reasons.append("it repeats, without a bound, something that can match nothing")
+                walk(body, inside or unlimited)
+            elif operation == _sre_constants.BRANCH:
+                if inside and not distinct_literals(argument[1]):
+                    reasons.append("it has alternatives that can overlap inside an unbounded repeat, which can take exponential time")
+                for alternative in argument[1]:
+                    walk(alternative, inside)
+            else:
+                for child in _children(argument):
+                    walk(child, inside)
+
+    walk(tree, False)
+
+    # Wildcard repeats multiply: a leading ``.*`` with any other unbounded repeat, or many wildcards, are refused.
+    first = tree.data[0] if tree.data else None
+    leading_broad = first is not None and first[0] in repeats and first[1][1] >= _UNBOUNDED and is_broad(first[1][2])
+    if leading_broad and unbounded["count"] > 1:
+        reasons.append("it starts with an unbounded wildcard and has more unbounded repeats, which is quadratic on a long line")
+    if unbounded["broad"] > _MAX_BROAD:
+        reasons.append(f"it has more than {_MAX_BROAD} unbounded wildcard or negated-class repeats")
+    if unbounded["count"] > _MAX_UNBOUNDED:
+        reasons.append(f"it has more than {_MAX_UNBOUNDED} unbounded repeats")
+    return reasons[0] if reasons else None
 
 
 def _may_match(item: Any, guard: str | None) -> bool:

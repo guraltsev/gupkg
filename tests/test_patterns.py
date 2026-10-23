@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from gupkg.model.patterns import MAX_RUN, PatternError, compile_pattern, escape_template, prepare_text, scan
+from gupkg.model.patterns import MAX_LINE, MAX_RUN, PatternError, compile_pattern, escape_template, prepare_text, scan
 
 SOURCE = Path(__file__).resolve().parents[1] / "src"
 
@@ -95,34 +95,86 @@ def test_scan_returns_a_bounded_number_of_matches() -> None:
     assert len(found) == 100
 
 
-HOSTILE = [
-    pytest.param(r"(?P<version>\d+(?:\.\d+)+)", "'a' * 5_000_000", id="a-5mb-dotted-version"),
-    pytest.param(r"(?P<version>\d+(?:\.\d+)+)", "'1' * 5_000_000", id="ones-5mb-dotted-version"),
+PAGES = {
+    "href-repeated": "'<a href=\"' * 100_000",
+    "anchors": "'<a href=\"x\" class=\"y\">z</a> ' * 40_000",
+    "ones-dot": "'1.' * 500_000",
+    "a-run": "'a' * 5_000_000",
+}
+
+# (pattern, page) pairs a registry author could plausibly write. The first group is refused when
+# the manifest is validated; the second must be scanned within the time bound.
+REFUSED = [
+    pytest.param(r".*(?P<version>\d+\.\d+)", "href-repeated", id="leading-dot-star-with-a-version"),
+    pytest.param(r'<a[^>]*href="([^"]*)"[^>]*>(?:[^<]|<(?!/a))*</a>', "anchors", id="anchor-with-alternation-in-a-repeat"),
+    pytest.param(r"(?P<version>(?:\d+\.)+\d+)$", "ones-dot", id="repeated-digit-groups-then-end"),
+    pytest.param(r".*.*.*x", "a-run", id="three-leading-wildcards"),
+    pytest.param(r"(?:a|a)+b", "a-run", id="overlapping-alternatives"),
+    pytest.param(r"(?:a|aa)+b", "a-run", id="prefix-alternatives"),
+    pytest.param(r"(a?)+b", "a-run", id="repeat-of-an-optional-group"),
+    pytest.param(r".*(?P<version>\d+)zip", "a-run", id="leading-dot-star-spaces"),
+]
+BOUNDED = [
+    pytest.param(r"(?P<version>\d+(?:\.\d+)+)", "a-run", id="a-5mb-dotted-version"),
+    pytest.param(r"(?P<version>\d+(?:\.\d+)+)", "ones-dot", id="ones-dot-dotted-version"),
     pytest.param(r"(?P<version>\d+(?:\.\d+)+)", "'12' * 1_000_000", id="alternating-digits-dotted-version"),
-    pytest.param(r'href="(?P<href>[^"]+)"', "'x' * 5_000_000", id="x-5mb-attribute"),
+    pytest.param(r"(?P<version>\d+\.\d+)", "ones-dot", id="two-part-version-on-ones-dot"),
+    pytest.param(r'href="(?P<href>[^"]+)"', "href-repeated", id="attribute-on-repeated-href"),
+    pytest.param(r'href="(?P<href>[^"]+)"', "'x' * 5_000_000", id="attribute-on-a-5mb-word"),
     pytest.param(r"(?P<version>\d+)\.zip", "'-' * 5_000_000", id="dashes-5mb"),
-    pytest.param(r".*(?P<version>\d+)zip", "' ' * 4_000_000", id="spaces-leading-dot-star"),
     pytest.param(r"Version: (?P<version>\d+(?:\.\d+)+)", "'Version: ' * 400_000", id="repeated-prefix"),
+    pytest.param(r'href="[^"]*(?P<version>\d+)[^"]*\.zip"', "anchors", id="two-wildcards-around-a-version"),
 ]
 
 
-@pytest.mark.parametrize(("pattern", "make"), HOSTILE)
-def test_hostile_pages_finish_quickly_under_a_hard_timeout(pattern: str, make: str) -> None:
-    """A multi-megabyte page of one repeated pattern is scanned in seconds; a hang fails the test by timeout."""
+def run_scan(pattern: str, page: str) -> subprocess.CompletedProcess[str]:
+    """Compile *pattern* and scan *page* in a child interpreter with a hard timeout; it prints `refused` or the seconds."""
+    expression = PAGES.get(page, page)
     code = textwrap.dedent(
         f"""
-        import sys
+        import sys, time
         sys.path.insert(0, {str(SOURCE)!r})
         from gupkg.model.patterns import PatternError, compile_pattern, scan
-        compiled = compile_pattern({pattern!r})
         try:
-            print(len(scan(compiled, {make})))
-        except PatternError as error:
+            compiled = compile_pattern({pattern!r})
+        except PatternError:
             print("refused")
+            sys.exit(0)
+        page = {expression}
+        started = time.monotonic()
+        try:
+            scan(compiled, page)
+        except PatternError:
+            pass
+        print(round(time.monotonic() - started, 2))
         """
     )
+    return subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)
 
-    done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=30)
+
+@pytest.mark.parametrize(("pattern", "page"), REFUSED)
+def test_patterns_that_are_quadratic_or_exponential_on_a_hostile_page_are_refused_at_validation(pattern: str, page: str) -> None:
+    """A pattern that could hang on a crafted page never reaches a scan: validation refuses it."""
+    done = run_scan(pattern, page)
 
     assert done.returncode == 0, done.stderr
-    assert done.stdout.strip() in ("0", "refused") or done.stdout.strip().isdigit()
+    assert done.stdout.strip() == "refused"
+
+
+@pytest.mark.parametrize(("pattern", "page"), BOUNDED)
+def test_plausible_patterns_scan_hostile_pages_within_a_second_or_two(pattern: str, page: str) -> None:
+    """Accepted patterns finish on a megabyte-scale hostile page in under two seconds; a hang fails by the child's timeout."""
+    done = run_scan(pattern, page)
+
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip() == "refused" or float(done.stdout.strip()) < 2.0
+
+
+def test_long_lines_are_broken_at_a_tag_or_space_and_short_pages_are_untouched() -> None:
+    """A line over 8 KiB is cut into lines of at most 8 KiB, preferably after a `>` or space; ordinary pages are unchanged."""
+    line = ('<a href="/files/tool-1.2.3.zip">tool</a> ' * 1000).rstrip()
+    cut = prepare_text(line)
+
+    assert max(len(piece) for piece in cut.split("\n")) <= MAX_LINE and len(cut.replace("\n", "")) == len(line)
+    assert cut.split("\n")[0].endswith((">", " "))
+    assert prepare_text("short\npage") == "short\npage"
