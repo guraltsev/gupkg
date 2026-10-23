@@ -1,9 +1,4 @@
 linkify_it/__init__.py,sha256=udz3Es5MSLBSGjfFBHQXv7qHlaFXoFIq7xvQshw7mLo,111
-linkify_it/__pycache__/__init__.cpython-314.pyc,,
-linkify_it/__pycache__/_ucre_data.cpython-314.pyc,,
-linkify_it/__pycache__/main.cpython-314.pyc,,
-linkify_it/__pycache__/tlds.cpython-314.pyc,,
-linkify_it/__pycache__/ucre.cpython-314.pyc,,
 linkify_it/_ucre_data.py,sha256=oPqUs8fkACWTd8IVZjcYZ4e1RjhLcGAfUB1GzwpEp7E,3191
 linkify_it/main.py,sha256=PTgD_5vWzqzQTZhLHTwgZfH4_XCCwr2wxAuIi35Op74,23699
 linkify_it/tlds.py,sha256=oiIQOb7vdyQjcZSsO9HlEw4roC1ibeDPyN8cJuq_XJs,20792
