@@ -197,8 +197,8 @@ prompt and the broadcast to running programs.
    `"elevated": true` in `system.json` (the sandbox never reads the real token) and
    confirm the HKLM environment and `%ProgramData%` Start Menu are unchanged too.
    Limits to expect: default package and config roots are not redirected (a package
-   given by path is installed where it is), and only `git` and 7-Zip may run as child
-   processes. Why manual: it compares against the real registry and Start Menu, which
+   given by path is installed where it is), and only `git` (on `PATH`) and the bundled 7-Zip may
+   run as child processes. Why manual: it compares against the real registry and Start Menu, which
    the automated tests never read.
 2. **Real environment broadcast.** After a normal user-scope install of a package with
    a `[[path]]` row, open a new terminal and confirm the entry is on `PATH`; then run

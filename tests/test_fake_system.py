@@ -23,6 +23,8 @@ import hashlib
 import io
 import json
 import os
+import shutil
+import sys
 import zipfile
 from pathlib import Path
 
@@ -325,6 +327,68 @@ def test_a_program_outside_the_allow_list_raises_in_a_sandbox_run(tmp_path: Path
     assert system.run(["git", "--version"]).returncode == 0
     if os.name == "nt":
         assert system.run([str(find_7z()), "i"]).returncode == 0
+
+
+def _impostor(tmp_path: Path, name: str, marker: Path) -> list[str]:
+    """Create a file called *name* that would write *marker* if it ran, and return the command that starts it."""
+    path = tmp_path / "impostors" / name
+    path.parent.mkdir(exist_ok=True)
+    if name.endswith(".exe"):
+        # A real executable (cmd.exe) renamed: run as ``<name> /c echo ...`` it writes the marker.
+        shutil.copy(Path(os.environ["SystemRoot"]) / "System32" / "cmd.exe", path)
+        return [str(path), "/c", f"echo x> {marker}"]
+    if name.endswith(".ps1"):
+        path.write_text(f"Set-Content -Path '{marker}' -Value x\r\n", encoding="ascii")
+    else:
+        path.write_text(f'@echo off\r\necho x> "{marker}"\r\n', encoding="ascii")
+    return [str(path)]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the impostors are Windows scripts and executables")
+@pytest.mark.parametrize(
+    "name",
+    ["git.cmd", "git.bat", "git.ps1", "7z.cmd", "git.exe", "7z.exe"],
+    ids=["git.cmd", "git.bat", "git.ps1", "7z.cmd", "git.exe-copy", "7z.exe-copy"],
+)
+def test_the_sandbox_allows_programs_by_identity_not_by_name(tmp_path: Path, name: str) -> None:
+    """A script or executable that is merely named like git or 7-Zip raises ``UnexpectedCall`` and never runs."""
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    system = FakeSystem.sandbox(sandbox, WindowsSystem())
+    marker = tmp_path / "ran.txt"
+    command = _impostor(tmp_path, name, marker)
+
+    with pytest.raises(UnexpectedCall):
+        system.run(command)
+
+    assert not marker.exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the bundled 7-Zip is a Windows executable")
+def test_the_sandbox_runs_the_real_git_and_seven_zip_by_bare_name_or_resolved_path(tmp_path: Path) -> None:
+    """The git found on PATH (bare, or by its exact path) and the bundled 7-Zip (by its exact path) run for real."""
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    system = FakeSystem.sandbox(sandbox, WindowsSystem())
+    git = system.real_programs["git"]
+
+    assert system.run(["git", "--version"]).returncode == 0
+    assert system.run([str(git), "--version"]).returncode == 0
+    assert system.run([str(find_7z()), "i"]).returncode == 0
+    with pytest.raises(UnexpectedCall):
+        system.run(["7z", "i"])
+
+
+def test_a_real_allowed_program_streams_lines_and_honours_the_timeout(tmp_path: Path) -> None:
+    """An allowed real program streams its lines to ``on_line`` and is killed by ``timeout``, as ``System.run`` promises."""
+    system = FakeSystem(tmp_path / "machine")
+    system.real_programs["python"] = Path(os.path.realpath(sys.executable))
+    lines: list[str] = []
+
+    result = system.run(["python", "-c", "print('streamed')"], on_line=lines.append)
+    assert (result.returncode, lines) == (0, ["streamed"])
+    with pytest.raises(TimeoutError):
+        system.run(["python", "-c", "import time; time.sleep(30)"], timeout=0.5)
 
 
 # ---------------------------------------------------------------------------

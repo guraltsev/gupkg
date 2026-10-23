@@ -73,3 +73,16 @@ See the final report.
 - Controller note: port.py module docstring now lists the protocol additions
   (scope_folders, directory_untrusted_reason, run's input_text/timeout, script expansion
   inside WindowsSystem).
+
+## Review round 2
+
+- Sandbox process allow-list is by identity: `git` resolved on PATH (never the working
+  directory) and the exact `find_7z()` path; suffixes other than none/.exe are refused;
+  a path must equal the resolved executable; allowed programs run from the resolved path
+  with `timeout` and `on_line` passed through.
+- Note for issues 026/028 (controller to carry): design section 16 has
+  `gupkg pkg check --install` running a sandboxed install. With this allow-list, any
+  package-local program, installer or script raises `UnexpectedCall` in a sandbox. Issue
+  028 must route every external process through `System.run`, and let the sandbox install
+  declare per-package doubles or an explicit opt-in allow-list, or treat `UnexpectedCall`
+  as a clear "needs a real run" result instead of a crash.
