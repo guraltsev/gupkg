@@ -464,6 +464,11 @@ subsystem reads only that object:
 | gupkg's data (settings, logs, registry cache, state) | `C:\opt\.gupkg\` (admin-only) | `%USERPROFILE%\opt\.gupkg\` | `<portable root>\.gupkg\` |
 | Settings layers read | the system root's only | system root's + user root's | system root's + portable root's |
 
+- **The default portable root is a scanned location, not a target.** The
+  built-in `%USERPROFILE%\opt-portable` is where listings look for portable
+  packages. `--mode portable` needs a *configured* portable root (a settings
+  layer above the built-in defaults sets `[roots].portable`), a folder shaped
+  `<name>\<version>\pkg.toml`, or an answer to a question (D42).
 - **The defaults are configurable.** Bin and Start Menu defaults live in the
   settings. The Start Menu becomes configurable, which it is not today.
 - **One duplicated helper goes away.** The second admin-detection
@@ -491,7 +496,8 @@ The mode of an operation is resolved in this order:
   `system`, the command refuses and says to run it from a non-elevated
   shell. An elevated gupkg never acts on a user root, so an explicit
   `--mode user` in an elevated process is refused the same way (D31,
-  section 9.6 rule 2).
+  section 9.6 rule 2). A portable root is user-writable too, so `--mode
+  portable` (and a portable target) is refused under elevation the same way.
 - **A non-elevated process selects `user`.**
 - **`auto` never selects `portable`.** Portable is always chosen explicitly,
   either with `--mode portable` or by a target inside the portable root.
@@ -967,7 +973,8 @@ the file to `_docs/`).
   state, logs). The threat model behind this rule is section 9.6.
 - **The user settings layer is ignored when elevated.**
 - **An elevated gupkg never acts on a user root** (D31): not through the
-  `auto` fallback, and not through an explicit `--mode user`.
+  `auto` fallback, and not through an explicit `--mode user`. Portable roots
+  are refused under elevation the same way.
 
 ### 9.5 The Windows registry is a write target, never a source of information
 
@@ -1235,7 +1242,9 @@ Layers, lowest to highest priority. All of them are files in roots
    the system root for the other settings, which is how roots stay
    configurable without any lookup outside the roots.
 4. **The user layer, `<user root>\.gupkg\settings.toml`.** It is ignored in
-   elevated and system-mode runs.
+   elevated and system-mode runs. In a portable run it is replaced by the
+   portable root's layer, `<portable root>\.gupkg\settings.toml`, which
+   is where `[integration.portable] integrate` is read from (section 6.1).
 5. **`--settings PATH`.** It is ignored in elevated runs unless `PATH` is
    inside the admin-only system root.
 
@@ -1256,6 +1265,7 @@ bin = 'C:\bin'
 start_menu = '%ProgramData%\Microsoft\Windows\Start Menu\opt'
 [integration.user]
 bin = '%USERPROFILE%\bin'
+start_menu = '%APPDATA%\Microsoft\Windows\Start Menu\opt'
 [integration.portable]
 integrate = "user"            # user | none
 
@@ -1298,6 +1308,7 @@ gupkg/
     version.py      version parsing/ordering, reserved names
     manifest.py     pkg.toml format 2: parse, validate, typed dataclasses, templates
     settings.py     settings schema + layering
+    mode.py         ModeContext, mode selection (6.2), context building (6.1)
     state.py        PackageView, LocalState, InstalledState, status derivation
     plan.py         InstallPlan, Phase, Effect (data only)
   catalog/      discovery and joins (reads disk, no mutation)
@@ -1325,6 +1336,9 @@ gupkg/
     events.py       event dataclasses + Reporter protocol (contextvar)
     console.py      Rich renderer
     logfile.py      text + JSONL log writer, retention
+  modes.py      target -> mode: install record, containing root, portable target (D42), elevated admission (6.2, 9.6)
+  relaunch.py   the up-front elevation step for system mode (9.6)
+  distcopy.py   copy a distribution folder into a root, dropping the Mark of the Web (21.4)
   cli.py        argparse grammar -> lifecycle calls -> exit code; --json/--plan/--events-file/--no-input; the tui/manager forwarders
   selfmgmt/     self status/repair: MANIFEST.sha256 check, bundled-runtime enforcement (issues 016, 018); self check-updates/update are aliases (section 20)
 ```
@@ -1782,7 +1796,7 @@ in changed form.
 | D28 | **Version-directory scripts may use the network.** Python cannot sandbox trusted code. D10 keeps only "no update-discovery code in version directories". | A contract that version-directory hooks get no HTTP client, with an import warning |
 | D29 | **Installs with no download** are labelled *origin not verified*, unless a registry fingerprint matches (then *verified against registry*). A mismatch refuses the install (section 9.2). | `verified-by-bootstrap`; the bootstrap vouching for its ZIP |
 | D30 | **Elevated launchers check everything they will run, recursively**, follow `current` safely, and trust `%SystemRoot%` (sections 9.6, 21.3). | Root and version directory only (job 07, spike S1 showed admin-only parents with user-writable children) |
-| D31 | **An elevated gupkg never acts on a user root**, neither through the `auto` fallback nor an explicit `--mode user`. | Fall back to user mode; drop elevation for user-mode work |
+| D31 | **An elevated gupkg never acts on a user root**, neither through the `auto` fallback nor an explicit `--mode user` (nor `--mode portable`: a portable root is user-writable too). | Fall back to user mode; drop elevation for user-mode work |
 | D32 | **Which gupkg runs.** The installed gupkg through the root forwarder, unless `--no-system-gupkg=true`; otherwise the bundled copy. No version comparison. Carry-forward copies the package's own bundle; bundles stay until an explicit `cleanup --bundled`. | Copy the running gupkg, never an older one; drop old versions' bundles |
 | D33 | **No legacy-specific code in core.** A separate migration tool (built in issue 023) converts formats, settings and `_bootstrap`, and adopts 0.17 installs. No 0.17 aliases. 0.18 → 1.0 is a bootstrap re-run (section 18). | `gupkg pkg migrate`, `settings init --from`, deprecated aliases and automatic adoption in core |
 | D34 | **Two UI programs:** `gupkg-tui` (one package) and `gupkg-manager` (general), both in issue 030. `gupkg tui` and `gupkg manager` are permanent forwarders (section 15). | One `gupkg-manager` program with a package view |

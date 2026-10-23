@@ -988,7 +988,7 @@ def self_outcome(
     command = f"manager.self.{action}"
     if action == "status":
         try:
-            report = self_status()
+            report = self_status(system=system)
         except (OSError, ConfigValidationError, ValueError) as exc:
             return failure(command, str(exc), EXIT_MUTATION_ERROR)
         integrity = report["integrity"]
@@ -1016,7 +1016,8 @@ def self_outcome(
             lambda: update_self(
                 system,
                 scope=scope,
-                install_context=installation_context(config, scope, system, shim_linkage=shim_linkage),
+                install_context=installation_context(config, scope, system),
+                shim_linkage=shim_linkage or config.shim_linkage,
             ),
         )
         outcome.data = {"self": {"operation": action}}
@@ -1028,11 +1029,12 @@ def self_outcome(
         lambda: repair_self(
             system,
             scope=scope,
-            install_context=installation_context(config, scope, system, shim_linkage=shim_linkage),
+            install_context=installation_context(config, scope, system),
+            shim_linkage=shim_linkage or config.shim_linkage,
         ),
     )
     try:
-        outcome.data = _self_record(self_status(), operation=action)
+        outcome.data = _self_record(self_status(system=system), operation=action)
     except (OSError, ConfigValidationError, ValueError):
         outcome.data = {"self": {"operation": action}}
     return outcome

@@ -279,6 +279,19 @@ ships and modules in their own `pkg.local` folder; a missing import fails the
 update with the module's name. The earlier design is recorded in
 `docs/elevated-runtime-design.md`.
 
+### Portable roots are never machine-wide
+
+The 1.0 install modes (design section 6) include `portable`, where an application's
+settings and state live in `<package>\data` so the package folder can be copied or
+carried. A portable root is never the system root and never lies inside it (and the
+system root never lies inside a portable root). The reason is the threat model of
+section 9.6: state that a package keeps inside its own folder is writable by whoever runs
+the package, and in the admin-only system root that would be shared, writable state
+next to code that an elevated gupkg runs. An elevated gupkg also never acts on a user or
+portable root: use a normal shell for those. A gupkg that
+runs from a user-writable place never relaunches itself elevated: system installs need the
+system gupkg.
+
 ## Maintenance scripts
 
 Every routine job has a script in `scripts\`, so no Python needs to be typed.
