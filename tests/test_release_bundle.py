@@ -92,20 +92,22 @@ def test_build_stops_when_the_runtime_archive_does_not_match_the_pinned_digest(t
     assert not output.exists()
 
 
-def test_build_ships_no_bytecode_and_the_built_tree_verifies(tmp_path: Path) -> None:
+def test_build_ships_no_bytecode_and_the_built_tree_verifies(tmp_path: Path, runtime_zip_factory) -> None:
     """A runtime tree that contains __pycache__/.pyc files yields a ZIP with none, and its tree passes the integrity check."""
     runtime = tmp_path / "runtime.zip"
-    with zipfile.ZipFile(runtime, "w") as archive:
-        archive.writestr("python312._pth", "python312.zip\n")
-        archive.writestr("python.exe", "stub")
-        archive.writestr("Lib/site-packages/dep/__init__.py", "x = 1\n")
-        archive.writestr("Lib/site-packages/dep/__pycache__/__init__.cpython-312.pyc", b"\0")
-        archive.writestr("Lib/site-packages/stray.pyc", b"\0")
+    digest = runtime_zip_factory(
+        runtime,
+        {
+            "Lib/site-packages/dep/__init__.py": "x = 1\n",
+            "Lib/site-packages/dep/__pycache__/__init__.cpython-312.pyc": b"\0",
+            "Lib/site-packages/stray.pyc": b"\0",
+        },
+    )
     output = tmp_path / "out.zip"
 
     subprocess.run(
         [sys.executable, str(BUILD), "--skip-deps", "--runtime", str(runtime),
-         "--runtime-sha256", hashlib.sha256(runtime.read_bytes()).hexdigest(),
+         "--runtime-sha256", digest,
          "--commit", "a" * 40, "--output", str(output)],
         check=True, capture_output=True,
     )

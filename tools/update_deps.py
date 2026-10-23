@@ -6,7 +6,9 @@ gupkg never runs it. ``tools/gupkg-deps.lock`` pins every distribution
 ``update_deps`` resolves newer stable releases, shows the plan, asks for
 confirmation, then installs them into the committed runtime's
 ``Lib/site-packages`` and rewrites the lock. ``repair_deps`` reinstalls exactly
-the pinned set. It only touches the checkout, so it needs no elevation.
+the pinned set. It only touches the checkout, so it needs no elevation. The
+runtime contains no pip: run the tool with the development ``.venv``, whose pip
+does the resolving and the installing.
 
 Usage and API
 -------------
@@ -17,13 +19,17 @@ generate lock files.
 
 Implementation Approach
 -----------------------
-Wheels are installed into a staging directory next to the live one with
-``--require-hashes --only-binary=:all: --no-deps`` so no build script runs.
-Probe imports run in an isolated child process against the staging directory.
+Wheels are installed into a staging directory next to the live one with the
+build machine's pip (``fetch_runtime.wheel_install_command``: cross-targeted at
+the bundled CPython, ``--require-hashes --only-binary=:all: --no-deps``) so no
+build script runs. A staging directory that contains pip, setuptools or ensurepip
+is refused. Probe imports run in an isolated child process (the bundled
+interpreter) against the staging directory.
 Only after they pass is the live directory renamed to a backup and the staging
 directory renamed into place, so each step either completes or leaves the live
 install as it was. New versions are resolved with ``pip install --dry-run
---report`` in the committed interpreter, which also yields the wheel hashes.
+--report`` (targeted at the bundled CPython so markers match), which also yields
+the wheel hashes.
 """
 
 from __future__ import annotations
@@ -40,13 +46,16 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fetch_runtime  # noqa: E402  (a sibling script, not an installed package)
+
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_RUNTIME = ROOT / "src" / "gupkg" / "python"
 DEFAULT_LOCK = Path(__file__).resolve().parent / "gupkg-deps.lock"
 
-# Distributions whose closure the lock must contain: gupkg's text interface, and
-# pip, which the staged install and the resolution step run.
-LOCK_ROOTS = ("textual", "pip")
+# Distributions whose closure the lock must contain: gupkg's text interface and the
+# TOML writer. pip is not one of them: the bundle has no installer.
+LOCK_ROOTS = ("textual", "tomli_w")
 
 # A bare top-level import can succeed for an empty or damaged package directory
 # (it becomes a namespace package), so these imports prove the install is usable.
@@ -90,6 +99,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--yes", action="store_true", help="apply the plan without asking")
     parser.add_argument("--runtime", type=Path, default=DEFAULT_RUNTIME)
     parser.add_argument("--lock", type=Path, default=DEFAULT_LOCK)
+    parser.add_argument("--python", help="interpreter whose pip does the work (default: the one running this tool)")
     args = parser.parse_args(argv)
 
     def confirm(lines: list[str]) -> bool:
@@ -104,9 +114,9 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.repair:
-            repair_deps(args.runtime, args.lock)
+            repair_deps(args.runtime, args.lock, python=args.python)
         else:
-            update_deps(args.runtime, args.lock, confirm=confirm)
+            update_deps(args.runtime, args.lock, confirm=confirm, python=args.python)
     except RuntimeError as error:
         print(f"[update-deps] {error}", file=sys.stderr)
         return 1
@@ -114,7 +124,10 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def repair_deps(
-    runtime: Path = DEFAULT_RUNTIME, lock: Path = DEFAULT_LOCK, progress: Callable[[str], None] = print
+    runtime: Path = DEFAULT_RUNTIME,
+    lock: Path = DEFAULT_LOCK,
+    progress: Callable[[str], None] = print,
+    python: str | None = None,
 ) -> list[LockedRequirement]:
     """Reinstall exactly the distributions pinned by the lock.
 
@@ -134,7 +147,7 @@ def repair_deps(
     if not requirements:
         raise RuntimeError(f"{lock} lists no distributions; nothing to install")
     progress(f"[update-deps] Installing {len(requirements)} locked distributions with hash verification")
-    _install_and_swap(runtime, lock)
+    _install_and_swap(runtime, lock, python)
     progress("[update-deps] Dependencies repaired")
     return requirements
 
@@ -145,6 +158,7 @@ def update_deps(
     *,
     confirm: Callable[[list[str]], bool],
     progress: Callable[[str], None] = print,
+    python: str | None = None,
 ) -> list[PlanEntry]:
     """Resolve newer stable releases, confirm the plan, then install and relock.
 
@@ -152,6 +166,8 @@ def update_deps(
     ----------
     confirm : callable
         Receives the plan lines and returns whether to proceed.
+    python : str, optional
+        Interpreter whose pip resolves and installs; defaults to the running one.
 
     Returns
     -------
@@ -168,9 +184,9 @@ def update_deps(
     _require_runtime(runtime)
     current = read_lock(lock)
 
-    # Resolve with the committed interpreter so environment markers match it.
+    # Resolve for the bundled CPython so environment markers match it.
     progress("[update-deps] Resolving the newest stable releases from PyPI")
-    candidate = resolve_lock(runtime, LOCK_ROOTS)
+    candidate = resolve_lock(runtime, LOCK_ROOTS, python)
     plan = plan_changes(current, candidate)
     if not plan:
         progress("[update-deps] Dependencies are already current")
@@ -186,7 +202,7 @@ def update_deps(
     pending = lock.with_name(lock.name + ".new")
     pending.write_text(format_lock(candidate), encoding="utf-8", newline="\n")
     try:
-        _install_and_swap(runtime, pending)
+        _install_and_swap(runtime, pending, python)
         os.replace(pending, lock)
     finally:
         pending.unlink(missing_ok=True)
@@ -273,8 +289,11 @@ def _printable(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def resolve_lock(runtime: Path, roots: tuple[str, ...]) -> list[LockedRequirement]:
+def resolve_lock(runtime: Path, roots: tuple[str, ...], python: str | None = None) -> list[LockedRequirement]:
     """Resolve the newest stable wheels for *roots* and their dependencies.
+
+    The build machine's pip resolves for the bundled CPython (platform and
+    interpreter flags), so the runtime itself needs no pip.
 
     Returns
     -------
@@ -284,20 +303,25 @@ def resolve_lock(runtime: Path, roots: tuple[str, ...]) -> list[LockedRequiremen
     Raises
     ------
     RuntimeError
-        If pip cannot resolve (for example, offline) or reports no hash.
+        If pip cannot resolve (for example, offline), reports no hash, or the
+        closure contains pip or setuptools.
     """
+    tag = fetch_runtime.runtime_tag(runtime)
     with tempfile.TemporaryDirectory(prefix="gupkg-resolve-") as scratch:
         report_path = Path(scratch) / "report.json"
         command = [
-            _python(runtime), "-I", "-B", "-m", "pip", "install", "--isolated",
+            python or sys.executable, "-I", "-B", "-m", "pip", "install", "--isolated",
             "--dry-run", "--ignore-installed", "--only-binary=:all:", "--disable-pip-version-check",
-            "--no-input", "--quiet", "--report", str(report_path), *roots,
+            "--no-input", "--quiet", "--report", str(report_path),
+            "--target", str(Path(scratch) / "target"), "--platform", "win_amd64", "--implementation", "cp",
+            "--python-version", f"{tag[0]}.{tag[1:]}", "--abi", f"cp{tag}", *roots,
         ]
         result = _run(command, runtime)
         if result.returncode != 0 or not report_path.is_file():
             detail = [_printable(line) for line in (result.stderr or result.stdout).strip().splitlines()[-1:]] or ["no output"]
             raise RuntimeError(
-                f"Could not resolve dependency versions (is PyPI reachable?): {detail[0]}. "
+                f"Could not resolve dependency versions (is PyPI reachable? does {python or sys.executable} have pip?): "
+                f"{detail[0]}. "
                 "The existing install and lock are unchanged."
             )
         report = json.loads(report_path.read_text(encoding="utf-8"))
@@ -320,6 +344,8 @@ def requirements_from_report(report: dict) -> list[LockedRequirement]:
         digest = item.get("download_info", {}).get("archive_info", {}).get("hashes", {}).get("sha256")
         if not (_NAME.match(name) and _VERSION.match(version)):
             raise RuntimeError(f"Refusing unexpected release {name!r} {version!r} (stable releases only)")
+        if name.casefold().replace("_", "-") in fetch_runtime.FORBIDDEN_PREFIXES:
+            raise RuntimeError(f"Refusing {name}: the bundle must not contain pip or setuptools")
         if item.get("is_yanked"):
             raise RuntimeError(f"Refusing yanked release {name} {version}")
         if not (isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{64}", digest)):
@@ -333,7 +359,7 @@ def requirements_from_report(report: dict) -> list[LockedRequirement]:
 # ---------------------------------------------------------------------------
 
 
-def _install_and_swap(runtime: Path, lock_path: Path) -> None:
+def _install_and_swap(runtime: Path, lock_path: Path, python: str | None = None) -> None:
     """Install *lock_path* into staging, probe it, then swap it into place."""
     live = runtime / "Lib" / "site-packages"
     staging = live.with_name("site-packages.staging")
@@ -344,18 +370,28 @@ def _install_and_swap(runtime: Path, lock_path: Path) -> None:
     staging.mkdir(parents=True)
     try:
         # Wheels only, hashes required, no dependency resolution: nothing but
-        # the pinned files can land, and no build script can run.
-        command = [
-            _python(runtime), "-I", "-B", "-m", "pip", "install", "--isolated",
-            "--target", str(staging), "--require-hashes", "--only-binary=:all:", "--no-deps",
-            "--disable-pip-version-check", "--no-input", "--upgrade", "-r", str(lock_path),
-        ]
+        # the pinned files can land, and no build script can run. The build
+        # machine's pip does the work, cross-targeted at the bundled CPython.
+        command = fetch_runtime.wheel_install_command(staging, lock_path, fetch_runtime.runtime_tag(runtime), python)
         result = _run(command, runtime)
         if result.returncode != 0:
             tail = _printable("\n".join((result.stderr or result.stdout).strip().splitlines()[-4:]))
             raise RuntimeError(
-                "Installing the locked dependencies failed (hash mismatch, or no wheel for a "
-                f"pinned version); the live install is unchanged.\n{tail}"
+                "Installing the locked dependencies failed (hash mismatch, no wheel for a "
+                f"pinned version, or no pip in the installing interpreter); the live install is unchanged.\n{tail}"
+            )
+        fetch_runtime.tidy_site_packages(staging)
+
+        # An installer in the tree (a lock entry, or a transitive dependency) is refused.
+        offenders = [
+            entry.name for entry in sorted(staging.iterdir())
+            if entry.name.casefold().split("-", 1)[0].removesuffix(".py").removesuffix(".dist")
+            in fetch_runtime.FORBIDDEN_PREFIXES
+        ]
+        if offenders:
+            raise RuntimeError(
+                f"The staged install contains {', '.join(offenders)}; the bundle must "
+                "not contain pip or setuptools. The live install is unchanged."
             )
 
         # Prove the staged copy imports before it replaces anything.
@@ -381,14 +417,17 @@ def _probe_staging(runtime: Path, staging: Path) -> None:
     # Roots pull in their transitive closure, so importing them exercises it.
     names = [IMPORT_PROBES.get(root.replace("-", "_"), root.replace("-", "_")) for root in LOCK_ROOTS]
     code = (
-        "import importlib, sys\n"
-        "sys.path.append(sys.argv[1])\n"
+        "import importlib, importlib.machinery, sys\n"
+        "sys.path.insert(0, sys.argv[1])\n"
         "failed = []\n"
         "for name in sys.argv[2:]:\n"
         "    try:\n"
         "        importlib.import_module(name)\n"
         "    except Exception as exc:\n"
         "        failed.append(f'{name}: {exc}')\n"
+        "for banned in ('pip', 'ensurepip'):\n"
+        "    if importlib.machinery.PathFinder.find_spec(banned, [sys.argv[1]]) is not None:\n"
+        "        failed.append(f'{banned} is importable')\n"
         "print('; '.join(failed))\n"
         "raise SystemExit(1 if failed else 0)\n"
     )

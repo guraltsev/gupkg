@@ -1372,8 +1372,8 @@ This retires several of today's modules:
 - **Merged:** the four hand-written TOML emitters become one writer,
   `tomli_w`. It is added to the runtime lock as a dependency in its own
   right, through the dev-tree lock tooling of issue 016
-  (`tools/update_deps.py`). Its only copy today is vendored inside pip, which
-  issue 019 removes from the bundle.
+  (`tools/update_deps.py`). Its only copy used to be vendored inside pip, which
+  issue 019 removed from the bundle; issue 019 locked `tomli_w` 1.2.0.
 - **Replaced:** `LineStream`, global `redirect_stdout`, `_quiet`, and the
   manager callback types.
 

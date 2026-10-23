@@ -11,7 +11,9 @@ Usage and API
 ``python tools/build_standalone.py [--runtime ZIP] [--output ZIP]`` builds the
 bundle (the pinned CPython is fetched and verified when ``--runtime`` is not
 given), writes ``<zip>.sha256`` next to it and prints the ZIP's SHA-256.
-``build_bundle(...)`` is the same operation for ``release.py``.
+``build_bundle(...)`` is the same operation for ``release.py``. ``--find-links DIR``
+installs the locked wheels from a local folder instead of PyPI (offline builds;
+hashes are still required).
 
 Implementation Approach
 -----------------------
@@ -22,7 +24,14 @@ Implementation Approach
 3. ``gupkg/RELEASE.txt`` records the version and the commit, and
    ``gupkg/MANIFEST.sha256`` lists ``<sha256>  <relative path>`` for every
    other file in the tree, sorted by path. The manifest is written last.
-4. The tree is zipped and the ZIP's SHA-256 is reported.
+4. The staged ``python\\python.exe -I -s -B`` runs the build probe: it imports
+   every top-level package of the lock (by import name) and the gupkg modules,
+   and confirms pip and ensurepip are not importable. A bundle that contains
+   pip, setuptools or ensurepip, or whose probe fails, is never zipped.
+5. The tree is zipped and the ZIP's SHA-256 is reported.
+
+The bundle has no pip: packages get into it only here, installed by the build
+machine's pip (the development ``.venv``) from hash-pinned wheels.
 """
 
 from __future__ import annotations
@@ -30,6 +39,8 @@ from __future__ import annotations
 import argparse
 import ast
 import hashlib
+import os
+import re
 import shutil
 import subprocess
 import sys
@@ -41,6 +52,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fetch_runtime  # noqa: E402  (a sibling script, not an installed package)
 
 ROOT = Path(__file__).resolve().parents[1]
+
+# Imported by the build probe when the bundle's dependencies are installed. The UI
+# programs are modules of the gupkg package today; the separate programs the rehaul
+# creates (issues 029-030) are probed too as soon as their package directories exist
+# beside ``gupkg`` in the version directory.
+PROBE_MODULES = ("gupkg.cli", "gupkg.manager", "gupkg.tui", "gupkg.manager_tui")
+OPTIONAL_PROBE_PACKAGES = ("gupkg_ui", "gupkg_tui", "gupkg_manager")
+# Modules of the base probe that need no third-party package (used by --skip-deps builds).
+BARE_PROBE_MODULES = ("gupkg.cli",)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -55,6 +75,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, help="default: dist/gupkg-<version>-win-amd64.zip")
     parser.add_argument("--deps-lock", type=Path, default=fetch_runtime.DEFAULT_LOCK)
     parser.add_argument("--skip-deps", action="store_true", help="do not install locked dependencies (offline test builds)")
+    parser.add_argument("--python", help="interpreter whose pip installs the wheels (default: the one running this tool)")
+    parser.add_argument("--find-links", type=Path, help="install the locked wheels from this folder instead of PyPI (offline builds)")
     args = parser.parse_args(argv)
 
     # The runtime module owns the release number; an optional command-line
@@ -78,6 +100,8 @@ def main(argv: list[str] | None = None) -> int:
         commit=commit,
         deps_lock=args.deps_lock,
         skip_deps=args.skip_deps,
+        find_links=args.find_links,
+        python=args.python,
     )
     print(f"[build] {output}")
     print(f"[build] sha256 {digest}")
@@ -94,6 +118,9 @@ def build_bundle(
     commit: str,
     deps_lock: Path,
     skip_deps: bool = False,
+    find_links: Path | None = None,
+    python: str | None = None,
+    probe_modules: tuple[str, ...] | None = None,
 ) -> str:
     """Assemble the release ZIP at *output* and return its SHA-256.
 
@@ -110,12 +137,27 @@ def build_bundle(
     deps_lock : Path
         Hash-pinned dependency lock, installed unless *skip_deps*.
     skip_deps : bool, default=False
-        Leave the runtime without dependencies (offline test builds only).
+        Leave the runtime without dependencies (offline test builds only); the
+        probe then imports only what needs no third-party package.
+    find_links : Path, optional
+        Folder of wheels installed instead of those from PyPI (offline builds).
+    python : str, optional
+        Interpreter whose pip installs the wheels (the build machine's); defaults
+        to the running one.
+    probe_modules : tuple of str, optional
+        The gupkg modules the build probe imports besides the lock's packages
+        (default: ``PROBE_MODULES``; tests with stand-in wheels name fewer).
 
     Returns
     -------
     str
         Lower-case SHA-256 of the written ZIP; also saved in ``<output>.sha256``.
+
+    Raises
+    ------
+    SystemExit
+        If the digest does not match, the lock lists pip, the tree contains pip,
+        setuptools or ensurepip, or the build probe fails. Nothing is written then.
     """
     # Step 1: the interpreter must be exactly the pinned (or stated) archive.
     actual = hashlib.sha256(runtime_zip.read_bytes()).hexdigest()
@@ -163,7 +205,16 @@ def build_bundle(
             archive.extractall(payload / "python")
         fetch_runtime.write_pth(payload / "python")
         if not skip_deps:
-            fetch_runtime.install_locked_dependencies(payload / "python", deps_lock)
+            fetch_runtime.install_locked_dependencies(
+                payload / "python", deps_lock, python=python, find_links=find_links
+            )
+        # Whatever the source (a stale or foreign runtime archive, a transitive
+        # dependency), the bundle must not carry an installer.
+        installers = fetch_runtime.installer_entries(payload / "python")
+        if installers:
+            raise SystemExit(
+                f"The bundle would contain {', '.join(installers)}; the runtime ships without pip and setuptools"
+            )
 
         # No bytecode ships: it is not release content, installed Python runs with -B,
         # and a stale .pyc would be trusted by its source's size and mtime alone.
@@ -176,7 +227,10 @@ def build_bundle(
         (payload / "RELEASE.txt").write_text(f"gupkg {version}\ncommit {commit}\n", encoding="utf-8", newline="\n")
         write_manifest(root)
 
-        # Step 4: zip the tree in a fixed order and report the ZIP's digest.
+        # Step 4: the last check before zipping runs the staged interpreter on the staged tree.
+        run_build_probe(root, deps_lock, skip_deps=skip_deps, modules=probe_modules)
+
+        # Step 5: zip the tree in a fixed order and report the ZIP's digest.
         output.parent.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             for path in sorted(root.rglob("*")):
@@ -185,6 +239,97 @@ def build_bundle(
     zip_digest = hashlib.sha256(output.read_bytes()).hexdigest()
     output.with_name(output.name + ".sha256").write_text(f"{zip_digest}  {output.name}\n", encoding="ascii")
     return zip_digest
+
+
+def import_names(site_packages: Path, lock: Path) -> list[str]:
+    """Return the top-level import names of every distribution in *lock*, read from its ``RECORD``.
+
+    Raises
+    ------
+    SystemExit
+        If a locked distribution is not installed or its ``RECORD`` names no module.
+    """
+    names: list[str] = []
+    for line in lock.read_text(encoding="utf-8").replace("\\\n", " ").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        distribution = re.sub(r"[-_.]+", "_", line.split("==", 1)[0]).casefold()
+        records = [
+            folder / "RECORD"
+            for folder in site_packages.glob("*.dist-info")
+            if re.sub(r"[-_.]+", "_", folder.name[: -len(".dist-info")].rsplit("-", 1)[0]).casefold() == distribution
+        ]
+        if not records:
+            raise SystemExit(f"Locked distribution {line.split('==', 1)[0]} is not installed in the bundle")
+        found = set()
+        for entry in records[0].read_text(encoding="utf-8").splitlines():
+            first = entry.replace("\\", "/").split(",", 1)[0].split("/", 1)[0]
+            if first.endswith((".dist-info", ".data")) or first in {"", "..", "bin", "__pycache__"}:
+                continue
+            module = first.removesuffix(".py")
+            if module.isidentifier():
+                found.add(module)
+        if not found:
+            raise SystemExit(f"The RECORD of {line.split('==', 1)[0]} names no importable module")
+        names.extend(sorted(found))
+    return names
+
+
+def run_build_probe(
+    root: Path, lock: Path, *, skip_deps: bool = False, modules: tuple[str, ...] | None = None
+) -> None:
+    """Run the staged interpreter on the staged tree and fail the build if it cannot import it.
+
+    The probe runs ``python\\python.exe -I -s -B``. It imports every top-level
+    package of the lock (by import name) and the gupkg modules, asserts that
+    ``pip`` and ``ensurepip`` are not importable, and prints the failures. With
+    *skip_deps* (no dependencies installed) only the modules that need no
+    third-party package are imported. *modules* replaces the default gupkg module
+    list. The probe must leave no bytecode behind.
+
+    Raises
+    ------
+    SystemExit
+        If anything fails to import, pip or ensurepip is importable, or the probe
+        wrote bytecode into the tree.
+    """
+    payload = root / "gupkg"
+    interpreter = payload / "python" / "python.exe"
+    if skip_deps:
+        names = list(BARE_PROBE_MODULES)
+    else:
+        names = [
+            *import_names(payload / "python" / "Lib" / "site-packages", lock),
+            *(PROBE_MODULES if modules is None else modules),
+        ]
+        names += [name for name in OPTIONAL_PROBE_PACKAGES if (root / name).is_dir()]
+    code = (
+        "import importlib, importlib.util, sys\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "failed = []\n"
+        "for name in sys.argv[2:]:\n"
+        "    try:\n"
+        "        importlib.import_module(name)\n"
+        "    except BaseException as exc:\n"
+        "        failed.append(f'import {name}: {type(exc).__name__}: {exc}')\n"
+        "for banned in ('pip', 'ensurepip'):\n"
+        "    if importlib.util.find_spec(banned) is not None:\n"
+        "        failed.append(f'{banned} is importable')\n"
+        "print('\\n'.join(failed))\n"
+        "raise SystemExit(1 if failed else 0)\n"
+    )
+    environment = {key: value for key, value in os.environ.items() if not key.upper().startswith(("PYTHON", "PIP_"))}
+    result = subprocess.run(
+        [str(interpreter), "-I", "-s", "-B", "-c", code, str(root), *names],
+        cwd=str(payload / "python"), env=environment, capture_output=True, text=True, check=False,
+    )
+    if result.returncode != 0:
+        detail = (result.stdout + result.stderr).strip() or f"exit status {result.returncode}"
+        raise SystemExit(f"The build probe failed on the staged bundle:\n{detail}")
+    stray = sorted(path.relative_to(root).as_posix() for path in root.rglob("*.pyc"))
+    if stray:
+        raise SystemExit(f"The build probe wrote bytecode into the bundle: {', '.join(stray[:5])}")
 
 
 def write_manifest(root: Path) -> None:

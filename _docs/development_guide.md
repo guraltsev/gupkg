@@ -122,11 +122,25 @@ integrity data:
 
 | Tool | Role |
 | --- | --- |
-| `tools/fetch_runtime.py` (`scripts\fetch-runtime.cmd`) | The only place that pins the embeddable CPython URL and SHA-256. Fetches and verifies it, writes `._pth`, installs `tools/gupkg-deps.lock` with `--require-hashes --only-binary=:all: --no-deps`. |
-| `tools/update_deps.py` | Resolves newer releases, shows the plan, rewrites the lock and refreshes the committed runtime's `site-packages` (`--repair` reinstalls the lock). |
+| `tools/fetch_runtime.py` (`scripts\fetch-runtime.cmd`) | The only place that pins the embeddable CPython URL and SHA-256. Fetches and verifies it, writes `._pth`, installs `tools/gupkg-deps.lock` with the `.venv`'s pip (`--target`, cross-targeted at the bundled CPython, `--require-hashes --only-binary=:all: --no-deps`). |
+| `tools/update_deps.py` | Resolves newer releases, shows the plan, rewrites the lock and refreshes the committed runtime's `site-packages` the same way the build installs them (`--repair` reinstalls the lock; `--python` names the interpreter whose pip does it). |
 | `tools/check_deps.py` | Compares the lock with PyPI (exit 1 when pins are stale). |
-| `tools/build_standalone.py` (`scripts\build-standalone.cmd`) | Verifies the inputs, assembles the version tree, writes `gupkg/RELEASE.txt` and `gupkg/MANIFEST.sha256`, zips it and prints the ZIP's SHA-256. |
+| `tools/build_standalone.py` (`scripts\build-standalone.cmd`) | Verifies the inputs, assembles the version tree, fails if pip, setuptools or ensurepip is in it, writes `gupkg/RELEASE.txt` and `gupkg/MANIFEST.sha256`, runs the build probe on the staged tree, zips it and prints the ZIP's SHA-256. |
 | `tools/release.py` (`scripts\release.cmd`) | Builds, tags, uploads the ZIP to GitHub release `v<version>` and records the digest in `RELEASES.md`. |
+
+**Where pip lives.** The bundled runtime (`src/gupkg/python` and every release)
+has no pip, setuptools or ensurepip, and `tools/gupkg-deps.lock` does not list
+them. pip exists only in the development `.venv` (`python -m venv .venv`, which
+includes pip). Packages reach the runtime at one point, the build, which uses the
+`.venv`'s pip to install hash-pinned wheels into the bundle's `site-packages`.
+To refresh the committed runtime's `site-packages` run
+`.venv\Scripts\python tools\update_deps.py` (add `--repair` to reinstall the
+lock unchanged). The build ends with a probe: the staged
+`python\python.exe -I -s -B` imports every top-level package of the lock (by
+import name, read from each `RECORD`), the gupkg modules (`gupkg.cli`,
+`gupkg.manager`, `gupkg.tui`, `gupkg.manager_tui`, and the `gupkg_ui`,
+`gupkg_tui` and `gupkg_manager` packages once they exist beside `gupkg`), and
+asserts pip and ensurepip are not importable. A failing probe fails the build.
 
 At run time the launcher starts only `python\python.exe` from its own folder
 (`-I -s -B`); there is no system-Python lookup, no run-time pip and no

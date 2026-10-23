@@ -13,7 +13,9 @@ section 9.
 > status` checks the installed files against `MANIFEST.sha256`. The elevated
 > trust rules below (bundled interpreter only, isolated mode, admin-only
 > directories) still apply unchanged. The text below is kept as the record of
-> the original design.
+> the original design. Issue 019 also removed pip from the bundle and from the
+> lock: the build machine's pip installs the wheels, and a build probe checks the
+> staged tree.
 
 ## 1. Problem
 

@@ -58,6 +58,24 @@ class ReleaseBundle(NamedTuple):
     commit: str
 
 
+def write_runtime_zip(destination: Path, extra: dict[str, bytes | str] | None = None) -> str:
+    """Zip this checkout's committed CPython (without ``Lib/site-packages``) and return the ZIP's SHA-256.
+
+    The archive stands in for the downloaded embeddable CPython, so a build can run
+    the real ``python.exe`` without network access. *extra* adds ``{path: content}``
+    entries, for example a planted ``Lib/site-packages/pip/__init__.py``.
+    """
+    runtime = Path(__file__).resolve().parents[1] / "src" / "gupkg" / "python"
+    with zipfile.ZipFile(destination, "w", zipfile.ZIP_STORED) as archive:
+        for path in sorted(runtime.rglob("*")):
+            relative = path.relative_to(runtime)
+            if path.is_file() and "__pycache__" not in path.parts and relative.parts[:2] != ("Lib", "site-packages"):
+                archive.write(path, relative)
+        for name, content in (extra or {}).items():
+            archive.writestr(name, content)
+    return hashlib.sha256(destination.read_bytes()).hexdigest()
+
+
 @pytest.fixture(scope="session")
 def release_bundle(tmp_path_factory: pytest.TempPathFactory) -> ReleaseBundle:
     """A release ZIP built by ``tools/build_standalone.py`` from this checkout.
@@ -69,13 +87,8 @@ def release_bundle(tmp_path_factory: pytest.TempPathFactory) -> ReleaseBundle:
     a damaged or foreign release derive it from this one.
     """
     work = tmp_path_factory.mktemp("release-bundle")
-    runtime = Path(__file__).resolve().parents[1] / "src" / "gupkg" / "python"
     runtime_zip = work / "runtime.zip"
-    with zipfile.ZipFile(runtime_zip, "w", zipfile.ZIP_STORED) as archive:
-        for path in sorted(runtime.rglob("*")):
-            relative = path.relative_to(runtime)
-            if path.is_file() and "__pycache__" not in path.parts and relative.parts[:2] != ("Lib", "site-packages"):
-                archive.write(path, relative)
+    runtime_sha256 = write_runtime_zip(runtime_zip)
     output = work / "bundle.zip"
     tool = Path(__file__).resolve().parents[1] / "tools" / "build_standalone.py"
     version = re.search(
@@ -84,7 +97,7 @@ def release_bundle(tmp_path_factory: pytest.TempPathFactory) -> ReleaseBundle:
     subprocess.run(
         [
             sys.executable, str(tool), "--skip-deps", "--runtime", str(runtime_zip),
-            "--runtime-sha256", hashlib.sha256(runtime_zip.read_bytes()).hexdigest(),
+            "--runtime-sha256", runtime_sha256,
             "--commit", RELEASE_COMMIT, "--output", str(output),
         ],
         check=True,
@@ -119,3 +132,9 @@ def derive_zip():
         return hashlib.sha256(target.read_bytes()).hexdigest()
 
     return derive
+
+
+@pytest.fixture
+def runtime_zip_factory():
+    """Return ``write_runtime_zip``: ``factory(destination, extra=None)`` writes a stand-in CPython ZIP, returning its SHA-256."""
+    return write_runtime_zip

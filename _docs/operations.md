@@ -281,9 +281,11 @@ update with the module's name. The earlier design is recorded in
 
 Every routine job has a script in `scripts\`, so no Python needs to be typed.
 They use the repository's `.venv` if present, otherwise the runtime committed in
-`src\gupkg\python` (the build scripts always use the committed runtime, which
-has the pip they need). These are development-tree tools: none ships in the
-release ZIP and gupkg cannot reach them.
+`src\gupkg\python`. The committed runtime has no pip, and neither does any
+release: the build scripts and `tools\update_deps.py` need the pip of the
+repository's `.venv` (create it with `python -m venv .venv`). These are
+development-tree tools: none ships in the release ZIP and gupkg cannot reach
+them.
 
 | Script | What it does |
 |---|---|

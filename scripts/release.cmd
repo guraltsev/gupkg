@@ -15,18 +15,15 @@ set "NOTES=%~1"
 set "NOPUSH="
 if /I "%~2"=="--no-push" set "NOPUSH=1"
 call "%~dp0_python.cmd" || exit /b %ERRORLEVEL%
-rem The ZIP build needs pip, which the committed runtime provides (a plain venv may not).
-set "TOOL_PY=%PY%"
-if exist "%REPO_ROOT%\src\gupkg\python\python.exe" set "TOOL_PY="%REPO_ROOT%\src\gupkg\python\python.exe""
 pushd "%REPO_ROOT%"
 
 call "%~dp0test.cmd" || (>&2 echo [release] Tests failed; nothing was released. & popd & exit /b 1)
 if defined NOPUSH (
-    %TOOL_PY% tools\release.py "%NOTES%" --no-publish || (popd & exit /b 1)
+    %PY% tools\release.py "%NOTES%" --no-publish || (popd & exit /b 1)
     echo [release] Not publishing. Upload the ZIP and push yourself: git push ^<remote^> HEAD and the new v^<version^> tag.
     popd & exit /b 0
 )
-%TOOL_PY% tools\release.py "%NOTES%" || (popd & exit /b 1)
+%PY% tools\release.py "%NOTES%" || (popd & exit /b 1)
 
 rem The release row is committed after the tag was pushed; push the branch with it.
 set "REMOTE="
