@@ -1081,9 +1081,9 @@ root forwarder (section 21.1). Each package's own logs and records live in its
   resolves through the configured roots and registries in every command.
 - **The UI programs are separate** (owner's decisions, 2026-10-22: D12, D34).
   `gupkg-tui` shows and acts on one package, and `gupkg-manager` is the
-  general manager (section 15). Both may import gupkg core and any libraries,
-  and reusing core is preferred (D44). Work that needs elevation always runs
-  in an elevated CLI child (section 10.4). Inventory browsing, `--all`
+  general manager (section 15). Both may import gupkg core and any libraries for reading and
+  reference, but every operation they perform is a `gupkg` CLI call
+  (D44, section 10.4). Inventory browsing, `--all`
   batches, planning across packages, the missing-checksum policy, grouping
   operations under one elevation, and the interactive UIs all live there. The
   CLI acts on explicit targets: one or several names or paths.
@@ -1171,12 +1171,11 @@ planning and confirmation, the batch form is `gupkg-manager`.
 There are no deprecated aliases (D33). `gupkg tui` and `gupkg manager` are
 permanent forwarders; every other 0.17 spelling is an unknown command.
 
-### 10.4 Machine interface (the contract for CLI children and other tools)
+### 10.4 Machine interface (the contract the UI programs and other tools use)
 
-The UI programs may import gupkg core and do non-elevated work in-process
-(D44). Work that needs elevation always runs in a `gupkg` CLI child, because
-only an admin-only gupkg elevates, and only by relaunching itself (section
-9.6). That child, scripts and any other tool use this interface, so it is a
+The UI programs may import gupkg core for reading and reference (D44), but
+they perform every operation by running `gupkg` as a subprocess through this
+interface. Scripts and any other tool use it the same way, so it is a
 public, versioned contract (`"api": 1`).
 
 | Option | Meaning |
@@ -1349,8 +1348,9 @@ Dependency rules:
 - **The separate programs build on core** (D44). `gupkg_ui`, `gupkg_tui`,
   `gupkg_manager` and `gupkg_migrate` may import gupkg core and any
   libraries, and reusing core is preferred to reimplementing it. Core never
-  imports them. Work that needs elevation still runs in an elevated CLI
-  child (section 10.4).
+  imports them. The UI programs use core only for reading and reference:
+  every operation they perform is a `gupkg` CLI call (section 10.4). The
+  migration tool may use core to do its own work.
 - **The migration tool is not part of core.** Core contains no code for
   0.17 data (D33).
 
@@ -1548,14 +1548,15 @@ and both are specified in issue 030.
   schedules are `gupkg-manager check-updates --all`,
   `gupkg-manager update --all [--mode M] [--yes]` and
   `gupkg-manager check`. `gupkg manager …` forwards to it.
-- **They build on core** (D44). They may import gupkg core and any
-  libraries, and reuse core rather than reimplement it. Work that needs
-  elevation runs in an elevated CLI child through the machine interface
-  (section 10.4). They share a small UI library of their own (`gupkg_ui`,
+- **They read through core and act through the CLI** (D44). They may
+  import gupkg core and any libraries for reading and reference, such as
+  package state, settings and the event renderer, but every operation they
+  perform is a `gupkg` CLI call through the machine interface (section
+  10.4). They share a small UI library of their own (`gupkg_ui`,
   section 12).
-- **Rendering.** Both render the event stream (section 14.1), in-process
-  or, for a CLI child, read from the files named by `--events-file`, with
-  the same phase styling as the console renderer.
+- **Rendering.** Both render the CLI's event stream (section 14.1), read
+  from the files named by `--events-file`, with the same phase styling as
+  the console renderer.
 - **Scheduled runs.** A schedule typically runs
   `gupkg-manager check-updates --all`, then
   `gupkg-manager update --all --yes` (D11, D23 and section 5.3). These are
@@ -1590,10 +1591,9 @@ same frame for one package:
   - It keeps a progress bar under the active phase.
   - The verdict is written **at the end of the log**, and repeated in the
     footer.
-- **Operations never block the UI.** In-process work reports through the
-  event stream's reporter, and an elevated CLI child is followed through
-  its `--events-file`. Neither is touched by child-process output, and
-  neither needs the old process-global `redirect_stdout`.
+- **Operations never block the UI.** Each runs as a CLI subprocess whose
+  `--events-file` the UI follows, so the UI is never touched by
+  child-process output and needs no process-global `redirect_stdout`.
 - **The style guide changes.** `_docs/tui_style_guide.md` is revised: one
   key-hint line and one status line are now *required*. Today the guide bans
   both.
@@ -1748,7 +1748,7 @@ in changed form.
 | D9 | `update` never installs a package that is not installed. | `update` installs missing packages |
 | D10 | **Version directories contain no update-check code** (owner's decision, 2026-10-22). `_check_updates` is the only component that discovers anything over the network. Validation rejects `[track]` and `track` hooks in a version directory. Amended by D28: version-directory scripts may use the network (section 9.3). | Allow `[track]` in pinned versions so that a lone version directory can update itself |
 | D11 | **Checking and installing are separate operations** (owner's decision, 2026-10-22). `gupkg check-updates` (D21) runs trackers, writes pinned version directories and by default populates them (D23), and stops. `install` and `update` install only already-known versions and never run a tracker. No flag combines the two. | The tracker hands the install off to the new version (the earlier draft); an `update --check` convenience flag |
-| D12 | **The manager is a separate program, `gupkg-manager`** (owner's decision, 2026-10-22; with `gupkg-tui`, D34). Amended by D44: it may import gupkg core and any libraries; the versioned machine interface (`--json`, `--plan`, `--events-file`, `--no-input`) serves elevated CLI children and other tools. The CLI acts on explicit targets, with no `--all`, no UI and no checksum prompts. | A `manager` subcommand or mode inside the CLI (0.17); the manager importing the engine directly |
+| D12 | **The manager is a separate program, `gupkg-manager`** (owner's decision, 2026-10-22; with `gupkg-tui`, D34). Amended by D44: it may import gupkg core and any libraries for reading, but every operation is a CLI call through the versioned machine interface (`--json`, `--plan`, `--events-file`, `--no-input`). The CLI acts on explicit targets, with no `--all`, no UI and no checksum prompts. | A `manager` subcommand or mode inside the CLI (0.17); the manager importing the engine directly |
 | D13 | **Stage 0 is issues 016–019, and they land first.** gupkg runs only on its bundled interpreter (`-I -s -B`). There is no runtime pip, dependency install or dependency check, and the bundle integrity is `MANIFEST.sha256`. The rehaul builds on these rather than redesigning them (section 20). | Fold them into the rehaul issues |
 | D14 | **gupkg is an ordinary format 2 package of itself.** It has a custom `_check_updates` tracker and a custom populate script, and no `download_url` (D27). `self check-updates` and `self update` are aliases for `check-updates gupkg` and `update gupkg`, so D11 applies to gupkg too. | Keep self-update as special-cased hooks (`src/pkg.local`) |
 | D15 | **Bundled mode** (owner's direction, 2026-10-22). Any version directory may carry a complete gupkg in `<version>\gupkg\`, so a program can be installed **without installing gupkg**. A bundled install keeps (and carries forward) its bundled copy to manage itself later, and never writes a root forwarder. gupkg's own package always carries a bundled gupkg, which its populate script copies into `App` (D27; the earlier `[source] local` is removed). The engine never executes a bundled tree (section 21). | A bundled install also installs gupkg (rejected by the owner: no extra infrastructure); gupkg's payload outside `App` (`into = "gupkg"`, an earlier draft) |
@@ -1780,7 +1780,7 @@ in changed form.
 | D41 | **Every install records an `App` fingerprint**; a package opts out with `record_manifest = false` (section 4). | Off by default; only for shipped `App`s |
 | D42 | **Portable target.** A folder shaped `<name>\<version>\pkg.toml` installs in place; otherwise the configured portable root, or gupkg asks (section 6.3). | A fixed `%USERPROFILE%\opt-portable` default |
 | D43 | **`cleanup` never runs automatically** (`[cleanup] auto` enables it). **No lite bundle** in 1.0. | Automatic cleanup; `pkg bundle --lite` |
-| D44 | **The separate programs may import core.** `gupkg-tui`, `gupkg-manager` and the migration tool may import gupkg core and any libraries; reusing core is preferred. Work that needs elevation still runs in an elevated CLI child (sections 10.4, 12). Amends D12 and D38. | UI programs limited to the CLI machine interface (D12 as first written) |
+| D44 | **The separate programs may import core.** `gupkg-tui` and `gupkg-manager` may import gupkg core and any libraries for reading and reference, but every operation they perform is a `gupkg` CLI call (sections 10.4, 12). The migration tool may import core and does its own work. Amends D12 and D38. | No imports at all (D12 as first written); UI programs doing operations in-process |
 
 There are no open questions. The six questions of the first draft were
 answered by the owner on 2026-10-22: the default portable root (D42), the
@@ -1831,7 +1831,7 @@ an "Integration with the 1.0 rehaul" section with the same points.
 4. **`self status` and `check`.** Issue 016's "check the active version
    against `MANIFEST.sha256`" becomes `gupkg self status`. gupkg's own
    package also shows up in `gupkg check` like any other package.
-5. **The UI programs' CLI children use their sibling CLI** (section 10.4).
+5. **The UI programs run their sibling CLI** (section 10.4).
    They always use the `gupkg.cmd` next to them in the same bundle, never one
    found on `PATH`. This follows issue 018's rule against interpreter probing.
 6. **The bootstrap script becomes thin** (section 21.5). `gupkg-bootstrap.ps1`

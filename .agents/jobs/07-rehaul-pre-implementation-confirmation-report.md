@@ -75,7 +75,7 @@ inferred from the owner's answer and the owner did not spell out.
 | D41 | Every install records an **`App` fingerprint** (SHA-256 of every file) by default; a package can opt out with `record_manifest = false`; a global switch remains. | Q4 |
 | D42 | **Portable target.** `--mode portable` on a folder already shaped `<name>\<version>\pkg.toml` installs it in place (the folder above `<name>` is the portable root). Otherwise the configured portable root is used, or gupkg asks (an error under `--no-input`). | Q1 |
 | D43 | `cleanup` never runs automatically (`[cleanup] auto = true` enables it after `gupkg-manager update --all`). No lite bundle in 1.0. | Q3, Q6 |
-| D44 | **The separate programs may import core.** `gupkg-tui`, `gupkg-manager` and the migration tool are separate programs that may import gupkg core and any libraries; reusing core is preferred. Work that needs elevation still runs in an elevated CLI child, so the machine interface stays for those children and other tools. Amends D12, and drops the UI half of D38. | (follow-up after commit 3) |
+| D44 | **The separate programs may import core.** `gupkg-tui` and `gupkg-manager` may import gupkg core and any libraries for reading and reference, but every operation they perform is a `gupkg` CLI call. The migration tool may import core and does its own work. Amends D12, and drops the UI half of D38. | (follow-up after commit 3) |
 
 Readings to keep in mind:
 

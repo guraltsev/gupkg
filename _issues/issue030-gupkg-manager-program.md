@@ -70,9 +70,9 @@ Epic: 020. Design: `_docs/rehaul_design.md` §15, §10.4, §13.2. Supersedes the
    - **They are part of the bundle checks.** They are covered by
      `MANIFEST.sha256` (issue 016) and imported by the build probe (issue
      019).
-   - **They build on gupkg core** (D44). They may import gupkg core and
-     any libraries, and reuse core rather than reimplement it. Work that
-     needs elevation runs in an elevated CLI child through the machine
+   - **They read through core and act through the CLI** (D44). They may
+     import gupkg core and any libraries for reading and reference, but
+     every operation they perform is a `gupkg` CLI call through the machine
      interface of issue 029: `--json`, `--plan`, `--events-file` and
      `--no-input`.
    - **`gupkg_manager`'s parts:**
@@ -153,10 +153,10 @@ Epic: 020. Design: `_docs/rehaul_design.md` §15, §10.4, §13.2. Supersedes the
 
 ## Acceptance criteria
 
-- [ ] **Elevated work goes through the CLI** (D44). For system targets,
-      `gupkg-tui` and `gupkg-manager` start one elevated `gupkg` child,
-      follow its `--events-file`, and show its result; the run log under
-      `<root>\.gupkg\logs\` names that call.
+- [ ] **Every operation is a CLI call** (D44). Against a fake `gupkg`
+      executable that records its argv, every install, update, uninstall,
+      check and check-updates started from `gupkg-tui` or `gupkg-manager`
+      arrives as a `gupkg` call; for system targets it is one elevated call.
 - [ ] `gupkg-tui PATH` opens the package view of that package, and
       `gupkg-manager tui` opens the browser.
 - [ ] Every screen of both programs shows a key-hint line at the top and a

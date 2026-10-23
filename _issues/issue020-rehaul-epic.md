@@ -109,10 +109,9 @@ owner (2026-10-22):
   without activating them (D23); `install` and `update` never run a
   tracker, and no flag combines the two.
 - **D12:** the manager is a separate program, `gupkg-manager`. The CLI has
-  no `--all`, no UI and no checksum prompts. Amended by D44: the separate
-  programs may import gupkg core; the machine interface (`--json`,
-  `--plan`, `--events-file`, `--no-input`) serves elevated CLI children
-  and other tools.
+  no `--all`, no UI and no checksum prompts. Amended by D44: the separate programs may import gupkg core for
+  reading, but every operation is a CLI call through the machine interface
+  (`--json`, `--plan`, `--events-file`, `--no-input`).
 
 These were added when the external issues were integrated:
 
@@ -220,9 +219,10 @@ from D10, D11, D15 or D16 above, they win:
   installs it in place.
 - **D43:** `cleanup` never runs automatically unless `[cleanup] auto =
   true`; no lite bundle in 1.0.
-- **D44:** `gupkg-tui`, `gupkg-manager` and the migration tool are separate
-  programs that may import gupkg core and any libraries; reuse is
-  preferred. Work that needs elevation still runs in an elevated CLI child.
+- **D44:** `gupkg-tui` and `gupkg-manager` may import gupkg core and any
+  libraries for reading and reference, but every operation they perform is
+  a `gupkg` CLI call. The migration tool may import core and does its own
+  work.
 
 ## Acceptance (epic)
 
