@@ -16,6 +16,8 @@ elevated process, which needs an administrator token.
 from __future__ import annotations
 
 import importlib.util
+import shutil
+import subprocess
 import os
 import sys
 import types
@@ -260,3 +262,153 @@ def test_elevated_relaunch_goes_through_the_isolated_launcher() -> None:
     assert "manager update --yes" in parameters
     assert "-m gupkg" not in parameters
     assert Path(directory) == SRC
+
+
+# ---------------------------------------------------------------------------
+# Elevation detection fails closed; checks run before the import path changes
+# ---------------------------------------------------------------------------
+
+windows_only = pytest.mark.skipif(os.name != "nt", reason="elevation signals exist only on Windows")
+
+
+def _detect(admin, token) -> bool:
+    """Run is_elevated() with the two Windows signals replaced by *admin* and *token* (a bool or an exception)."""
+
+    def signal(value):
+        def read():
+            if isinstance(value, Exception):
+                raise value
+            return value
+
+        return read
+
+    with (
+        mock.patch.object(elevation, "_admin_signal", signal(admin)),
+        mock.patch.object(elevation, "_token_elevation_signal", signal(token)),
+    ):
+        return elevation.is_elevated()
+
+
+@windows_only
+@pytest.mark.parametrize(
+    ("admin", "token", "expected"),
+    [
+        (False, False, False),
+        (True, False, True),
+        (False, True, True),
+        (OSError("no shell32"), False, True),
+        (False, OSError("no token"), True),
+    ],
+    ids=["neither", "IsUserAnAdmin-only", "TokenElevation-only", "admin-signal-fails", "token-signal-fails"],
+)
+def test_elevation_is_true_when_either_signal_says_so_or_cannot_be_read(admin, token, expected) -> None:
+    """Either Windows signal reporting elevation, or failing to report at all, counts as elevated; only two clean 'no' answers do not."""
+    assert _detect(admin, token) is expected
+
+
+@windows_only
+def test_real_token_signals_can_be_read_without_error() -> None:
+    """Both real Windows signals answer with a bool for this process, so detection does not fall back to 'cannot tell'."""
+    assert isinstance(elevation._admin_signal(), bool)
+    assert isinstance(elevation._token_elevation_signal(), bool)
+
+
+def _bootstrap_module():
+    """Load a fresh copy of the bootstrap script as a module."""
+    spec = importlib.util.spec_from_file_location("bootstrap_detection_under_test", SRC / "bootstrap.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _bundled_package(tmp_path: Path) -> tuple[Path, Path]:
+    """Create ``<tmp>/gupkg/python/python.exe`` and return the package and interpreter paths."""
+    package = tmp_path / "gupkg"
+    (package / "python").mkdir(parents=True)
+    (package / "bootstrap.py").touch()
+    python = package / "python" / "python.exe"
+    python.touch()
+    return package, python
+
+
+@pytest.mark.parametrize(
+    ("env_marker", "admin_signal", "expect_trust_check"),
+    [("1", False, True), (None, True, True), (None, False, False)],
+    ids=["GUPKG_ELEVATED=1", "elevation-signal", "ordinary"],
+)
+def test_bootstrap_applies_the_admin_only_checks_exactly_for_elevated_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, env_marker, admin_signal, expect_trust_check
+) -> None:
+    """On the bundled isolated Python the bootstrap checks directories when GUPKG_ELEVATED=1 or a signal says elevated, and not for an ordinary run."""
+    package, python = _bundled_package(tmp_path)
+    bootstrap = _bootstrap_module()
+    cli = types.ModuleType("gupkg.cli")
+    cli.main = mock.Mock(return_value=0)
+    if env_marker:
+        monkeypatch.setenv("GUPKG_ELEVATED", env_marker)
+    else:
+        monkeypatch.delenv("GUPKG_ELEVATED", raising=False)
+    refuse = UntrustedLocationError("writable")
+
+    with (
+        mock.patch.object(bootstrap, "__file__", str(package / "bootstrap.py")),
+        mock.patch.object(bootstrap, "_load_elevation", return_value=elevation),
+        mock.patch.object(sys, "executable", str(python)),
+        mock.patch.object(sys, "flags", types.SimpleNamespace(isolated=1)),
+        mock.patch.object(elevation, "is_elevated", return_value=admin_signal),
+        mock.patch.object(elevation, "require_trusted_directory", side_effect=refuse) as trusted,
+        mock.patch.dict(sys.modules, {"gupkg.cli": cli}),
+    ):
+        status = bootstrap.main(["list"])
+
+    assert trusted.called is expect_trust_check
+    assert status == (1 if expect_trust_check else 0)
+    assert cli.main.called is (not expect_trust_check)
+
+
+def test_bootstrap_adds_nothing_to_sys_path_until_the_checks_pass(tmp_path: Path) -> None:
+    """The package parent is not on sys.path while the trust check runs, and is not added at all when the check refuses."""
+    package, _ = _bundled_package(tmp_path)
+    bootstrap = _bootstrap_module()
+    seen: list[list[str]] = []
+
+    def refuse(*args, **kwargs) -> None:
+        seen.append(list(sys.path))
+        raise UntrustedLocationError("no")
+
+    fake = types.SimpleNamespace(
+        UntrustedLocationError=UntrustedLocationError, elevated_mode=lambda: True, enforce_bundled_runtime=refuse
+    )
+    before = list(sys.path)
+
+    with (
+        mock.patch.object(bootstrap, "__file__", str(package / "bootstrap.py")),
+        mock.patch.object(bootstrap, "_load_elevation", return_value=fake),
+    ):
+        status = bootstrap.main(["list"])
+
+    assert status == 1
+    assert seen == [before]
+    assert sys.path == before
+
+
+def test_planted_stdlib_look_alikes_never_run_before_the_check_refuses(tmp_path: Path) -> None:
+    """Running a copy of the bootstrap whose parent folder holds ctypes.py, struct.py and dataclasses.py refuses without executing any of them."""
+    folder = tmp_path / "gupkg"
+    folder.mkdir()
+    shutil.copy2(SRC / "bootstrap.py", folder / "bootstrap.py")
+    shutil.copy2(SRC / "elevation.py", folder / "elevation.py")
+    marker = tmp_path / "planted-ran.txt"
+    for name in ("ctypes", "struct", "dataclasses", "wintypes", "pathlib"):
+        (tmp_path / f"{name}.py").write_text(f"open({str(marker)!r}, 'a').write({name!r})\n", encoding="utf-8")
+    environment = {key: value for key, value in os.environ.items() if not key.startswith("PYTHON")}
+    environment["GUPKG_ELEVATED"] = "1"
+
+    result = subprocess.run(
+        [sys.executable, "-I", "-B", str(folder / "bootstrap.py"), "list"],
+        cwd=str(folder), env=environment, capture_output=True, text=True, check=False,
+    )
+
+    assert result.returncode == 1, result.stderr
+    assert "runs only on its bundled Python" in result.stderr
+    assert not marker.exists()

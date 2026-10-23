@@ -29,3 +29,16 @@ Branch: rehaul/issue018 (from main 3760ff7). Baseline: 296 passed, 0 failed, 0 s
 - Isolation is checked with `sys.flags.isolated` (set only by -I), which implies no user site.
 - requirements-dev.txt repeats the lock's package versions without hashes (pip's hash mode would
   reject pytest); a test checks the two stay equal, ignoring pip (issue 019 may drop it).
+
+## Review round 1
+
+- bootstrap.py now runs the checks before touching sys.path; elevation.py preloads ctypes and
+  wintypes at import (loaded by file path), so no check import can resolve from the package
+  directory. __main__.py delegates to bootstrap.main (same order).
+- is_elevated() fails closed on Windows: IsUserAnAdmin or TokenElevation true, or either signal
+  failing to read, counts as elevated. GUPKG_ELEVATED=1 stays stricter-only.
+- test_launcher.py parametrisations renamed (the launcher has no elevated branch); the elevated
+  behaviour is covered at bootstrap level in test_elevated_runtime.py.
+- _docs/development_guide.md: "Development environment" section. getting_started and
+  troubleshooting have no relevant text.
+- NOT done, routed to later issues: the ACL check is not recursive over the runtime tree (D30).

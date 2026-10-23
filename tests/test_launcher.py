@@ -9,9 +9,8 @@ other interpreter or without ``-I``.
 
 Real: the Windows ``cmd`` launcher, the checked-in native shim (which stands in
 for ``python.exe`` and records what it was started with) and, for the bootstrap
-refusal, the test interpreter. Elevation is selected with ``GUPKG_ELEVATED``,
-which can only make a run stricter, because a real administrator token is not
-available to tests. Out of scope: the access-control trust check (covered in
+refusal, the test interpreter. The launcher has no elevated branch (the bootstrap detects
+elevation), so ``GUPKG_ELEVATED`` is set only to show it changes nothing here. Out of scope: the access-control trust check (covered in
 ``test_elevated_runtime.py``).
 """
 
@@ -76,9 +75,13 @@ def _run(package: Path, *arguments: str, env: dict[str, str]) -> subprocess.Comp
     )
 
 
-@pytest.mark.parametrize("elevated", [False, True], ids=["ordinary", "elevated"])
-def test_launch_runs_only_the_bundled_python_isolated_and_ignores_every_override(tmp_path: Path, elevated: bool) -> None:
-    """Ordinary and elevated launches both run the bundled python.exe with -I -s -B and identical arguments despite every override."""
+@pytest.mark.parametrize("marker", [None, "1"], ids=["no-marker", "GUPKG_ELEVATED=1"])
+def test_launch_runs_only_the_bundled_python_isolated_and_ignores_every_override(tmp_path: Path, marker: str | None) -> None:
+    """The launcher runs the bundled python.exe with -I -s -B and the same arguments despite every override and whatever GUPKG_ELEVATED says.
+
+    The launcher has no elevated branch; elevation is detected in the bootstrap
+    (see test_elevated_runtime.py), so an elevated run starts this same command line.
+    """
     package, log = _package(tmp_path)
     decoys, decoy_log = _decoy_python(tmp_path)
     (package / "gupkg.python").write_text(str(decoys / "python.cmd"), encoding="ascii")
@@ -88,8 +91,8 @@ def test_launch_runs_only_the_bundled_python_isolated_and_ignores_every_override
         PYTHONPATH=str(decoys),
         PATH=f"{decoys};{env['PATH']}",
     )
-    if elevated:
-        env["GUPKG_ELEVATED"] = "1"
+    if marker:
+        env["GUPKG_ELEVATED"] = marker
 
     result = _run(package, "manager", "list", env=env)
 
@@ -101,16 +104,16 @@ def test_launch_runs_only_the_bundled_python_isolated_and_ignores_every_override
     assert not decoy_log.exists()
 
 
-@pytest.mark.parametrize("elevated", [False, True], ids=["ordinary", "elevated"])
-def test_launch_without_the_bundled_python_stops_with_the_reinstall_message(tmp_path: Path, elevated: bool) -> None:
+@pytest.mark.parametrize("marker", [None, "1"], ids=["no-marker", "GUPKG_ELEVATED=1"])
+def test_launch_without_the_bundled_python_stops_with_the_reinstall_message(tmp_path: Path, marker: str | None) -> None:
     """With no python\\python.exe the launcher exits 1 telling the person to reinstall, and runs no other Python."""
     package, log = _package(tmp_path)
     (package / "python" / "python.exe").unlink()
     decoys, decoy_log = _decoy_python(tmp_path)
     env = os.environ.copy()
     env.update(GUPKG_PYTHON=str(decoys / "python.cmd"), PATH=f"{decoys};{env['PATH']}")
-    if elevated:
-        env["GUPKG_ELEVATED"] = "1"
+    if marker:
+        env["GUPKG_ELEVATED"] = marker
 
     result = _run(package, "list", env=env)
 

@@ -1,18 +1,8 @@
 """Run the installed gupkg command dispatcher."""
 
-import sys
-from pathlib import Path
-
-from .elevation import UntrustedLocationError, elevated_mode, enforce_bundled_runtime
-
-# `python -m gupkg` runs only on the isolated bundled interpreter, like the
-# gupkg.cmd launcher; developers use scripts\run.cmd instead.
-try:
-    enforce_bundled_runtime(Path(__file__).resolve().parent, elevated=elevated_mode())
-except UntrustedLocationError as error:
-    print(f"[gupkg] {error}", file=sys.stderr)
-    raise SystemExit(1)
-
-from .cli import main  # noqa: E402
+# `python -m gupkg` takes the same path as gupkg.cmd: the bootstrap checks that the
+# run is on the isolated bundled interpreter (and, when elevated, admin-only
+# folders) before it imports any other gupkg code. Developers use scripts\run.cmd.
+from .bootstrap import main
 
 raise SystemExit(main())

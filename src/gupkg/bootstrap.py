@@ -48,14 +48,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     """
     command_args = list(sys.argv[1:] if argv is None else argv)
 
-    # -I drops the script directory and PYTHONPATH from sys.path, so make the
-    # sibling package importable from this file's own location.
-    package_parent = Path(__file__).resolve().parent.parent
-    if sys.path[:1] != [str(package_parent)]:
-        sys.path.insert(0, str(package_parent))
-
-    # Every run must be the isolated bundled interpreter, and an elevated run
-    # must also import only admin-only code, before anything else is imported.
+    # Run the checks before sys.path gains any entry: elevation.py is loaded by
+    # file path and imports everything it needs on load, so nothing in the
+    # package directory can shadow a module that the check itself uses.
     elevation = _load_elevation()
     elevated = elevation.elevated_mode()
     try:
@@ -65,6 +60,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     if elevated:
         os.environ["GUPKG_ELEVATED"] = "1"
+
+    # Only now make the sibling package importable: -I drops the script
+    # directory and PYTHONPATH from sys.path.
+    package_parent = Path(__file__).resolve().parent.parent
+    if sys.path[:1] != [str(package_parent)]:
+        sys.path.insert(0, str(package_parent))
 
     from gupkg.cli import main as cli_main
 

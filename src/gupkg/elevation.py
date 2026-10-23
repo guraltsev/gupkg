@@ -32,6 +32,12 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+if os.name == "nt":
+    # Load everything the checks need while sys.path holds only the interpreter's
+    # own folders, so no module of the package directory can shadow it.
+    import ctypes
+    from ctypes import wintypes
+
 
 class UntrustedLocationError(RuntimeError):
     """Report that an elevated run would trust a directory non-administrators can change."""
@@ -88,23 +94,55 @@ _ACCESS_ALLOWED_TYPES = {0, 9}  # plain and callback allow entries; both put the
 # ---------------------------------------------------------------------------
 
 
+def _admin_signal() -> bool:
+    """Return ``IsUserAnAdmin()`` as a bool (raises when the call is unavailable)."""
+    return bool(ctypes.windll.shell32.IsUserAnAdmin())
+
+
+def _token_elevation_signal() -> bool:
+    """Return the ``TokenElevation`` flag of the process token (raises on any failure)."""
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    advapi32.OpenProcessToken.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
+    advapi32.GetTokenInformation.argtypes = [
+        wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD),
+    ]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    token = wintypes.HANDLE()
+    if not advapi32.OpenProcessToken(kernel32.GetCurrentProcess(), 0x8, ctypes.byref(token)):  # TOKEN_QUERY
+        raise OSError(ctypes.get_last_error(), "OpenProcessToken failed")
+    try:
+        elevation = wintypes.DWORD()
+        size = wintypes.DWORD()
+        # TokenElevation = 20
+        if not advapi32.GetTokenInformation(token, 20, ctypes.byref(elevation), ctypes.sizeof(elevation), ctypes.byref(size)):
+            raise OSError(ctypes.get_last_error(), "GetTokenInformation failed")
+        return bool(elevation.value)
+    finally:
+        kernel32.CloseHandle(token)
+
+
 def is_elevated() -> bool:
-    """Return whether the current process holds an elevated administrator token.
+    """Return whether the current process may hold an elevated administrator token.
 
     Returns
     -------
     bool
-        ``True`` only on Windows when ``IsUserAnAdmin`` reports elevation;
-        ``False`` on other platforms and on any error.
+        On Windows, ``True`` when either ``IsUserAnAdmin`` or the token's
+        ``TokenElevation`` flag says elevated, and also when either signal
+        cannot be read (detection fails closed, so the strict checks apply).
+        ``False`` on other platforms.
     """
     if os.name != "nt":
         return False
-    try:
-        import ctypes
-
-        return bool(ctypes.windll.shell32.IsUserAnAdmin())
-    except Exception:
-        return False
+    for signal in (_admin_signal, _token_elevation_signal):
+        try:
+            if signal():
+                return True
+        except Exception:
+            return True
+    return False
 
 
 def elevated_mode() -> bool:
@@ -280,9 +318,6 @@ def read_directory_security(path: Path) -> DirectorySecurity:
     """
     if os.name != "nt":
         raise OSError("access-control lists can only be read on Windows")
-    import ctypes
-    from ctypes import wintypes
-
     advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     pointer = ctypes.c_void_p
