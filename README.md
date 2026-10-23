@@ -43,9 +43,10 @@ gupkg install C:\opt\pandoc\3.6.1 --allow-downgrade    :: roll back
 | Look up every command and option | `gupkg --help` and `gupkg <command> --help`, or [Commands and options](#commands-and-options) below |
 | Understand or change the code | [Development guide](_docs/development_guide.md) |
 
-Requires Windows and Python 3.11 or newer (the release bundle includes its own
-runtime). Git is needed only for Git-based packages; network access only when a
-package contacts its source.
+Requires Windows. gupkg ships as one self-contained release ZIP that includes its
+own Python, so no Python needs to be installed (and none is ever used besides
+the bundled one). Git is needed only for Git-based packages; network access only
+when a package contacts its source.
 
 ## Installing gupkg
 
@@ -64,24 +65,33 @@ package on a Python package index. Pick the route that fits:
   gupkg-bootstrap.cmd -Scope system    :: force all users (needs an elevated shell)
   ```
 
-  It downloads gupkg, places it at `<root>\gupkg\<version>` (default root
+  It downloads the newest release ZIP (`gupkg-<version>-win-amd64.zip`, which
+  `RELEASES.md` lists with its SHA-256) and checks the download against that
+  digest. It then checks every file of the unpacked release against the
+  release's `MANIFEST.sha256` (a modified, missing or extra file stops the
+  install), places it at `<root>\gupkg\<version>` (default root
   `%USERPROFILE%\opt` for user scope, `C:\opt` for system scope; `-Root` changes
   it), creates the `gupkg` and `gupkg-tui` commands and their PATH entry, and
-  runs `gupkg manager init`. It is safe to repeat. Use `-Source` with a ZIP
-  (URL or path) or folder, and `-Sha256` to verify it, to install a vetted
-  release bundle from your own share; `-SkipInstall` only places the files.
-  Nothing needs to be installed first: gupkg fetches a verified embedded
-  Python itself when the machine has none.
-- **Release bundle by hand.** The bundle built by `tools\build_standalone.py`
-  already contains the embedded runtime and native shims; unpack it and run its
-  `gupkg.cmd --scope user install <folder>`, or give it to the bootstrap script
-  as `-Source`.
-- **From a source checkout.** Copy the `src` folder to a place such as
-  `C:\opt\gupkg\` and run `src\gupkg.cmd install [PATH]`. It uses a system
-  Python 3.11+ when one exists; otherwise it downloads a verified x64 CPython
-  and pip into the copied folder's ignored `python\` directory on first use.
-  The launcher prefers a package-local native command, then the adjacent
-  `src\gupkg\gupkg.cmd` bootstrap, then a `gupkg.exe` on `PATH`.
+  runs `gupkg manager init`. It is safe to repeat. The only downloads are
+  `RELEASES.md` and the ZIP. Use `-Source` with a ZIP (URL or path) or an
+  extracted release folder, and `-Sha256` to verify it, to install a vetted
+  release from your own share; `-SkipInstall` only places the files.
+  Nothing needs to be installed first: the ZIP carries its own Python, the
+  locked dependencies and the native launchers.
+- **Release ZIP by hand.** The ZIP built by `tools\build_standalone.py` (and
+  attached to each GitHub release) is the only distribution. Give it to the
+  bootstrap script as `-Source`, or unpack it yourself and run its
+  `gupkg\gupkg.cmd --scope user install <folder>`.
+- **From a source checkout (development).** `src\gupkg.cmd install [PATH]` runs
+  on the Python committed at `src\gupkg\python`, like every other launch: no
+  system Python, `PATH` lookup or download is ever used. Fetching or refreshing
+  that runtime, updating the locked dependencies and building the release ZIP
+  are maintainer tasks that live in `tools\` and `scripts\` (see the
+  [development guide](_docs/development_guide.md)); none of them ships.
+
+If a release is damaged or its Python is missing, gupkg does not repair it at
+run time. The fix is always the same: install the release ZIP again
+(`gupkg-bootstrap.cmd`).
 
 Then open a new terminal and check it with `gupkg --version`. The [operations guide](_docs/operations.md)
 covers release build inputs, manager setup, the registry, and recovery commands,
@@ -104,7 +114,7 @@ files are already present.
 
 ## At a glance
 
-- Works on Windows with Python 3.11 or newer.
+- Works on Windows; the release ZIP carries its own Python.
 - Treats the directory layout as the authority for package identity.
 - Uses a canonical, strict `pkg.toml` format.
 - Supports ZIP, Git, and package-local-script application sources.
@@ -248,7 +258,7 @@ explicitly rebuild `App` from its origin before that repair.
 `gupkg` uses one explicit command grammar. `update` performs a full update by
 default; `--check-only` and `--download-only` limit it without changing the
 package. The root options are `--scope auto|user|system`, `--format
-human|toml`, `--pause`, and `--allow-hook-dependency-install`.
+human|toml`, and `--pause`.
 
 ### Central manager mode
 
@@ -299,7 +309,13 @@ explicitly before manager commands can use them.
 Manager workflows include `gupkg manager list`, `gupkg manager doctor`,
 `gupkg manager update`, `gupkg manager init`, `gupkg manager registry sync|status`,
 `gupkg manager search`, `gupkg manager install`, and
-`gupkg manager self status|repair|update`. `list` is local-only. Doctor
+`gupkg manager self status|repair|update`. `self status` checks every file of the
+running version against its `MANIFEST.sha256` and lists modified, missing or
+extra files (report only; reinstall the release ZIP to fix them), `self repair`
+re-creates the shims and PATH entries, and `self update` installs the newest
+release after verifying its ZIP digest and manifest. A 1.x release is never
+installed by 0.x: `self update` then changes nothing and names the bootstrap
+command to run. `list` is local-only. Doctor
 validates configuration, roots, `current`, and manifests without contacting providers. A valid `current` is
 authoritative: a lone version directory is not installed, and a broken or
 escaping activation is broken. Bootstrap definitions remain available but are
@@ -308,8 +324,8 @@ never implicitly installed.
 `gupkg --scope auto manager list` reports the manager inventory. Use
 `gupkg manager tui` for the interactive manager interface. Manager update first shows a
 non-installing plan with available, current, skipped, and failed-check counts.
-The confirmation screen puts `Run planned updates` first and exposes scope,
-checksum, and dependency auto-install settings. Execution remains scrollable
+The confirmation screen puts `Run planned updates` first and exposes scope
+and checksum settings. Execution remains scrollable
 with per-target states and final totals, then refreshes inventory. Elevation
 occurs before any mixed-scope mutation; declining it leaves packages unchanged.
 Later safe targets continue after a failure.
@@ -340,10 +356,8 @@ an invalid package selection instead of switching modes.
 The interface exposes install, update, and every configuration action with the
 same package path, scope, and applicable flags as the command line. It
 intentionally uses selections and plain output instead of a
-frame-heavy terminal layout. On first use, `gupkg` automatically installs its
-Textual dependency into `%LOCALAPPDATA%\gupkg\embedded\site-packages` when
-using a system Python; the bundled runtime uses its own
-`gupkg\python\Lib\site-packages` instead. The launcher Python is not modified.
+frame-heavy terminal layout. Textual ships inside the release's bundled
+`gupkg\python\Lib\site-packages`; nothing is installed on first use.
 `--pause` is omitted because the interface stays open after each operation.
 
 ```text
@@ -403,7 +417,6 @@ they have an effect.
 | `--allow-downgrade` | For `install`, permits replacing `current` when it already targets a newer version. |
 | `--refresh-app` | For `Install`, replaces `App` from `[origin]`, even when it is populated. |
 | `--no-checksum` | Bypasses configured origin or update checksum verification and emits a warning. |
-| `--allow-hook-dependency-install` | Allows trusted `pkg.local` update hooks to install missing imports for this invocation. |
 | `--import-shortcuts true\|false` | For `config-fix`, imports `.lnk` files from `_shortcuts`; defaults to `true`. |
 | `--output <path>` | Selects `config-fix` output for legacy conversion only. |
 | `--no-backup`, `--backup=false` | Suppress the default timestamped `config-fix` backup. |
@@ -424,16 +437,11 @@ The convenience scripts call the same `gupkg.cli:main` entry point. The
 console script and `python -m gupkg` therefore use identical parsing and
 version information.
 
-The internal `src\gupkg\gupkg.cmd` locates Python in this order:
-`GUPKG_PYTHON`, `gupkg.python` beside the launcher, an existing
-`python\python.exe`, then `python` from `PATH`, then the Windows `py -3`
-launcher. When none is usable, it creates the ignored `python\` directory,
-downloads CPython 3.12.10's official x64 embeddable package, verifies its
-SHA-256 digest, and extracts it there. The Python bootstrap then writes runtime
-support files and installs pip only inside that `python\` directory. The
-downloaded runtime keeps manually installed packages in
-`python\Lib\site-packages`; it does not alter a system Python. Use
-`GUPKG_PYTHON` or `gupkg.python` to select another interpreter.
+The internal `src\gupkg\gupkg.cmd` runs only `python\python.exe` from its own
+folder, as `python.exe -I -s -B bootstrap.py`. It never consults `GUPKG_PYTHON`,
+a `gupkg.python` file, `python` on `PATH` or the `py` launcher, and it downloads
+nothing. When `python\python.exe` is missing it exits with status 1 and tells
+you to reinstall gupkg from a release ZIP.
 
 ## `pkg.toml` reference
 
@@ -663,14 +671,11 @@ can stage a repair. Candidate mappings contain non-empty `candidateId`,
 `sha256` (64 hex digits), `fileName`, `headers`, and `extractSubdir`. Candidate
 versions must be safe version-directory values and may not go backward.
 
-`gupkg` installs every dependency declared by its own optional runtime features
-into `%LOCALAPPDATA%\gupkg\embedded\site-packages` when using a system Python;
-the bundled runtime instead uses its own `python\Lib\site-packages` directory.
-The launcher Python is not modified. Trusted package-local hooks never trigger
-dependency installation by default. When a hook needs an unavailable import,
-`gupkg` reports it and stops. Pass `--allow-hook-dependency-install` to explicitly
-allow installation and retrying for that command. Installations use the active
-interpreter's `pip`. Trusted package-local hooks are not sandboxed.
+`gupkg` never installs dependencies at run time, neither its own nor a hook's.
+Hooks run once and may import only the standard library, the modules the gupkg
+bundle ships, and modules in their own `pkg.local` folder. When a hook needs an
+unavailable import, the update fails with a message naming the module and
+nothing is installed or changed. Trusted package-local hooks are not sandboxed.
 
 #### Update payloads
 

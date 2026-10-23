@@ -36,15 +36,16 @@ Manager release checks:
 
 Standalone and registry checks:
 
-1. Build a release ZIP with `tools\build_standalone.py` using a known runtime
-   archive and SHA-256 digest. Confirm the digest is required, a source
-   checkout `python\` directory is not copied, and the versioned payload
-   contains the embedded runtime, `pkg.toml`, and native shims.
+1. Build a release ZIP with `scripts\build-standalone.cmd` (network needed).
+   Confirm the printed SHA-256 equals the digest in `dist\*.zip.sha256`, a
+   source-checkout `python\` directory is not copied, and the ZIP contains the
+   embedded runtime with its locked dependencies, `pkg.toml`, native shims,
+   `gupkg\RELEASE.txt` and `gupkg\MANIFEST.sha256`.
 2. Install the release once with
    `gupkg-bootstrap.cmd -Source <bundle.zip> -Sha256 <digest>` (user scope), then
    repeat the same command. Confirm the second run reuses the folder, neither run
    requires elevation, a new terminal finds `gupkg`, `gupkg manager init` created a
-   configuration, and `gupkg manager self status` reports a healthy embedded
+   configuration, and `gupkg manager self status` reports a healthy bundled
    runtime. Repeat with `-Scope system` from an elevated shell, and confirm a
    non-elevated shell is refused with a clear message. The automated tests
    cover only `-SkipInstall`; this step is the only coverage of the live
@@ -92,3 +93,43 @@ several MiB.
    highlight, and a package updated meanwhile shows `Current`.
 7. Quit and start a new `gupkg manager` session. Confirm the saved statuses
    are shown and the Details screen shows the check time.
+
+## One self-contained release ZIP (issue 016)
+
+Each step needs a real Windows machine, a real GitHub release, UAC, or a
+machine without Python, which the automated tests cannot provide. The automated
+tests cover the build, the manifest check, the bootstrap with `-Source`, the
+update hooks and the removed commands; these steps cover live downloads and
+activation.
+
+1. **Fresh VM, no Python, user scope** (needs two published releases, or the
+   first one with its `RELEASES.md` row). On a Windows VM without any Python,
+   run `gupkg-bootstrap.cmd` with no arguments from a non-elevated prompt. Watch
+   the network (for example with a proxy log): the only downloads are
+   `RELEASES.md` and `gupkg-<version>-win-amd64.zip`. In a new terminal,
+   `gupkg --version` prints the release version. Then confirm
+   `gupkg manager self status` reports a healthy install (the installed `Icons`,
+   `Shortcuts` and `App` folders and `gupkg-config.toml` must not be listed as
+   extra files). Why manual: it needs the real GitHub asset, the registry
+   `PATH` change and a machine with no Python.
+2. **Same VM, elevated, `-Scope system`.** From an elevated prompt run
+   `gupkg-bootstrap.cmd -Scope system`, open a new elevated terminal, and run
+   `gupkg --version` and `gupkg manager self status`. Both succeed, and the
+   elevated run reports no untrusted folder. Why manual: it needs a real
+   administrator token and the `C:\opt` ACL change.
+3. **Self-update.** With release N installed and release N+1 published, run
+   `gupkg manager self update`. Confirm the new version folder appears beside the
+   old one with its own `gupkg\python\`, `gupkg\MANIFEST.sha256` verifies
+   (`gupkg manager self status` is healthy), `current` points at it, and the old
+   version folder is untouched. Why manual: it needs two real releases and the
+   junction and shim activation.
+4. **Edited file.** In the installed version folder change one file (for
+   example append a line to `gupkg\README.md`), then run
+   `gupkg manager self status`. It exits with status 3 and names that file as
+   modified. Why manual: the automated test uses an unpacked copy, not an
+   activated install with the real shims.
+5. **Publishing.** From a clean tree on a throwaway fork run
+   `scripts\release.cmd "test release"` with `gh` signed in. Confirm the tag
+   `v<version>` and the release asset appear, and the new `RELEASES.md` row holds
+   the digest that `Get-FileHash` reports for the downloaded asset. Why manual:
+   it creates a real GitHub release.

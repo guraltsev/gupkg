@@ -20,7 +20,7 @@ domains used by the `gupkg.cli` command boundary and package workflows:
 - `downloads.py`: HTTP downloads with progress and SHA-256 verification
 - `updates.py`: update state, receipts, hooks, candidate validation, and staging
 - `github_releases.py`: built-in latest-release discovery for GitHub assets
-- `dependencies.py`: isolated installation of runtime and hook dependencies
+- `integrity.py`: the check of an installed version against its `MANIFEST.sha256`
 - `collection.py`: bounded discovery of packages below a collection root
 - `manager.py`: manager configuration, scoped inventory, and batch updates
 - `registry.py`: ZIP-downloaded, validated registry cache, search, and selectors
@@ -29,8 +29,9 @@ domains used by the `gupkg.cli` command boundary and package workflows:
 - `outcome.py`, `configfix.py`: command results and their human/TOML
   formatting; safe `pkg.toml` creation, repair, and conversion
 - `distribution.py`: standalone runtime health and scoped self-repair
-- `bootstrap.py`, `extractors.py`: embedded-runtime preparation and the
-  bundled 7-Zip lookup used by package hooks
+- `bootstrap.py`, `extractors.py`: the launcher's Python entry point (trust
+  check for elevated runs, then the CLI) and the bundled 7-Zip lookup used by
+  package hooks
 
 `gupkg/cli.py` owns only command parsing and display; all behaviour lives in `commands.py`; `gupkg/gupkg.py` exposes the
 high-level install, health-check, and update workflows; `tui.py` and
