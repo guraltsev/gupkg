@@ -1,5 +1,7 @@
 # Issue 021: System boundary, FakeSystem, and sandbox mode
 
+> **Status (2026-10-22):** Implemented. Merged in 2fcf02c. Manual checks still owed: `tests/manual_smoke.md`, "The system boundary and sandbox mode (issue 021)": 1 (sandbox install against the real HKCU PATH and Start Menu, user and system scope), 2 (real `WM_SETTINGCHANGE` broadcast), 3 (UAC relaunch accepted/declined), 4 (administrator detection and `--scope auto` in elevated and non-elevated shells).
+
 Date: 2026-10-22
 Priority: Critical (foundation)
 Epic: 020. Design: `_docs/rehaul_design.md` §12 (`system/`), §16
