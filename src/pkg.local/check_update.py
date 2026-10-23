@@ -10,7 +10,8 @@ Usage and API
 -------------
 The package manager calls ``check_update(context)`` during an update check; the
 context's ``fetch_text`` function reads the table through gupkg's machine
-boundary, so the check needs no network access of its own. The returned candidate describes the newest listed release (its asset URL and
+boundary, so the check needs no network access of its own. The returned
+candidate describes the newest listed release (its asset URL and
 digest), or ``None`` when the installed version is current or newer.
 ``parse_releases(text)`` is the table parser shared with the tests.
 
@@ -93,7 +94,10 @@ def check_update(context: dict[str, Any]) -> dict[str, str] | None:
         without a digest, or the newest release needs the bootstrap script.
     """
     try:
-        text = context["fetch_text"](_RELEASES_URL, timeout=30)
+        fetch_text = context.get("fetch_text")
+        if fetch_text is None:
+            raise RuntimeError("this gupkg is too old for this package; update gupkg")
+        text = fetch_text(_RELEASES_URL, timeout=30)
     except (OSError, UnicodeDecodeError) as exc:
         raise RuntimeError(f"Could not read the gupkg release list: {exc}") from exc
     releases = parse_releases(text)

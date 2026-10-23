@@ -14,7 +14,7 @@ test and inspect ``registry_log``, ``env_values(...)``, ``shortcuts()``,
 ``broadcasts`` and ``relaunches`` afterwards. ``FakeSystem.sandbox(directory,
 delegate)`` is what ``--sandbox DIR`` uses: it keeps its registry state in
 ``DIR/system.json`` across runs and sends network and process calls that have
-no double to the real ``delegate``.
+no fixture to the real ``delegate``; processes never go there (only ``git`` and 7-Zip run for real).
 
 Implementation Approach
 -----------------------
@@ -142,7 +142,11 @@ class FakeSystem(WindowsLinks):
         (environment, shortcuts, elevation) stays fake.
         """
         directory = Path(directory)
-        return cls(directory, delegate=delegate, state_file=directory / "system.json")
+        sandbox = cls(directory, delegate=delegate, state_file=directory / "system.json")
+        # Processes stay on an allow-list: git (a package may clone its origin) and,
+        # through ``real_7zip``, 7-Zip. Any other program raises ``UnexpectedCall``.
+        sandbox.allow_real("git")
+        return sandbox
 
     # -- inspection helpers for tests ---------------------------------------
 
@@ -285,7 +289,7 @@ class FakeSystem(WindowsLinks):
         input_text: str | None = None,
         timeout: float | None = None,
     ) -> ProcessResult:
-        """Run a registered double, a real 7-Zip, or the delegate; anything else raises."""
+        """Run a registered double or a real 7-Zip; any other program raises ``UnexpectedCall``."""
         self._maybe_fail("run")
         command = [str(part) for part in argv]
         self.process_log.append(command)
@@ -307,8 +311,6 @@ class FakeSystem(WindowsLinks):
             return (self.delegate or WindowsSystem()).run(
                 command, cwd, env, on_line, input_text=input_text, timeout=timeout
             )
-        if self.delegate is not None:
-            return self.delegate.run(command, cwd, env, on_line, input_text=input_text, timeout=timeout)
         raise UnexpectedCall(f"FakeSystem has no process double for {command[0]!r}: {command}")
 
     # -- network -----------------------------------------------------------------

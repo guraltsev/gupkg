@@ -14,6 +14,13 @@ the user or machine target of an environment or shortcut operation. Use
 ``run_checked(system, argv, ...)`` for the three patterns that every caller
 repeats.
 
+Beyond the groups in the issue, the protocol has ``scope_folders`` (the Start Menu
+``opt`` and ``bin`` folders of a scope, so the sandbox can keep them off the real
+machine), ``directory_untrusted_reason`` (why a folder is not admin-only, next to
+``directory_is_admin_only``), and ``run`` takes ``input_text`` and ``timeout`` and
+returns a ``ProcessResult``. ``WindowsSystem.run`` starts ``.ps1``, ``.cmd`` and
+``.bat`` paths through their interpreter itself, so no caller names a shell.
+
 Implementation Approach
 -----------------------
 The protocol carries only data types defined here (plain dataclasses), so a
