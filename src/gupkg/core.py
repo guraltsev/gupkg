@@ -26,7 +26,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 
-from .model.version import compare_versions
+from .model.version import compare_versions, is_version_name
 
 
 __copyright__ = "Copyright (C) 2025 Gennady Uraltsev. All rights reserved."
@@ -42,11 +42,6 @@ EXIT_INTERNAL_ERROR = 4
 # folder name. Text after the first ``.local.`` is the local revision, itself
 # any string, so ``1.2.3.local.000002`` is upstream ``1.2.3`` with local ``000002``.
 LOCAL_VERSION_MARKER = ".local."
-
-# Names that can never be version directories: the activation junction (and
-# its ``current.__new__``/``current.__old__`` swap entries) and hidden folders.
-_RESERVED_DIR_PREFIXES = ("current", ".")
-_UNSAFE_DIR_CHARACTERS = re.compile(r'[<>:"/\\|?*]|[\x00-\x1f]')
 
 # The one directory name that holds a package's update template. It is not a
 # version: promoting it creates the first real version directory.
@@ -401,14 +396,11 @@ def is_version_directory_name(name: str) -> bool:
     -------
     bool
         ``True`` for a non-empty, path-safe name that is not reserved
-        (``current``, ``_bootstrap``, or a hidden name).
+        (``current``, ``_check_updates``, ``data``, or a name starting with
+        ``.`` or ``_``, which includes ``_bootstrap``).
 
     """
-    if not name or name != name.strip() or name.endswith("."):
-        return False
-    if name == BOOTSTRAP_DIR_NAME or _UNSAFE_DIR_CHARACTERS.search(name):
-        return False
-    return not name.lower().startswith(_RESERVED_DIR_PREFIXES)
+    return is_version_name(name)
 
 
 def is_version_directory(path: Path) -> bool:

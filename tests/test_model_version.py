@@ -5,14 +5,18 @@ before releases, local revisions after the plain version), reserved names (`curr
 `_check_updates`, `data`, anything starting with `.` or `_`) never appear as versions or
 as the newest version, and a version merely named `bootstrap2` is ordinary.
 
-Real: the pure ``gupkg.model.version`` functions and the 0.17 comparison kept in
-``gupkg.core``. Mocked: nothing. Out of scope: reading directories from disk.
+Real: the pure ``gupkg.model.version`` functions, the 0.17 comparison kept in ``gupkg.core``,
+and the collection scan of ``gupkg.collection`` on folders under a temporary directory.
+Mocked: nothing. Out of scope: version directory contents beyond ``pkg.toml``.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
+from gupkg.collection import discover_collection
 from gupkg.core import compare_package_versions
 from gupkg.model.version import (
     compare_versions,
@@ -54,6 +58,18 @@ def test_reserved_names_never_take_part_in_ordering() -> None:
 
     assert sort_versions(children) == ["1.2.0", "1.10.0"]
     assert newest_version(children) == "1.10.0"
+
+
+def test_inventory_lists_only_real_versions(tmp_path: Path) -> None:
+    """A package folder's inventory contains its real versions in order, never `_check_updates`, `data` or `current`."""
+    for name in ("1.10.0", "1.2.0", "_check_updates", "data", "current"):
+        (tmp_path / "tool" / name).mkdir(parents=True)
+        (tmp_path / "tool" / name / "pkg.toml").write_text("format = 2\n", encoding="utf-8")
+
+    inventory = discover_collection(tmp_path)
+
+    assert [package.selector for package in inventory.packages] == ["tool"]
+    assert [m.version_path.name for m in inventory.packages[0].manifests] == ["1.2.0", "1.10.0"]
 
 
 def test_no_version_means_no_newest_version() -> None:

@@ -8,13 +8,15 @@ ever read from AppData or ProgramData; invalid files are reported with every pro
 and a hint.
 
 Real: ``gupkg.settingsload.load_settings`` and the model, on settings files written
-under pytest's temporary folder. Mocked: the administrator-only folder check
-(``trust_check``), because the real one reads Windows access-control lists. Out of
-scope: the ``gupkg settings show`` command itself and the real folder check.
+under pytest's temporary folder, and (one ``windows_integration`` test) the real
+administrator-only folder check. Mocked: that check (``trust_check``) in the other tests,
+which would otherwise need an administrator-owned folder. Out of scope: the
+``gupkg settings show`` command itself.
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -292,3 +294,15 @@ def test_invalid_toml_names_the_file(world: World) -> None:
 
     with pytest.raises(SettingsError, match="not valid TOML"):
         world.load()
+
+
+@pytest.mark.windows_integration
+@pytest.mark.skipif(os.name != "nt", reason="reads Windows access-control lists")
+def test_real_admin_only_check_refuses_a_user_writable_system_layer(world: World) -> None:
+    """With the real folder check, a system-mode run refuses a system layer in a folder the current user can write."""
+    world.system_file('schema = 3\n[ui]\ncolor = "never"\n')
+
+    with pytest.raises(SettingsError, match="Refusing the system settings"):
+        load_settings(
+            env=world.env, elevated=False, system_mode=True, app_dir=None, installed_system_root=world.system,
+        )

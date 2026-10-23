@@ -740,10 +740,9 @@ def _parse_source(collector: _Collector, raw: Any, modes: tuple[str, ...]) -> So
         return Source()
     collector.keys(table, _SOURCE_KEYS, "source")
 
+    # Read each key with its own type check first; the blocks after that check how
+    # the keys fit together (one populate method, shipped, unpack options).
     download_url = collector.string(table, "download_url", "source")
-    if download_url is not None and not re.match(r"(https?|file)://\S", download_url, re.IGNORECASE) \
-            and collector.kind is ManifestKind.VERSION:
-        collector.error("source.download_url", "must be an http://, https:// or file:// URL")
     script = collector.string(table, "script", "source")
     if script is not None:
         script = _local_script(collector, script, "source.script", suffixes=SCRIPT_SUFFIXES)
@@ -763,6 +762,16 @@ def _parse_source(collector: _Collector, raw: Any, modes: tuple[str, ...]) -> So
     if kind is not None and kind not in SOURCE_KINDS:
         collector.error("source.kind", f"must be one of {', '.join(SOURCE_KINDS)}")
         kind = None
+    # A pinned version's URL must be a concrete address; a tracker's holds templates
+    # such as ${asset_url}, so it is checked only after rendering.
+    if download_url is not None and collector.kind is ManifestKind.VERSION:
+        web = re.match(r"(https?|file)://\S", download_url, re.IGNORECASE)
+        # A git source may also be an ssh or scp-style address.
+        remote = kind == "git" and re.match(r"(ssh|git)://\S|[\w.-]+@[\w.-]+:\S", download_url)
+        if not (web or remote):
+            collector.error("source.download_url", "must be an http://, https:// or file:// URL")
+    # Unpack options: how many wrapper levels to strip, which subtree to keep, and
+    # which files must exist afterwards. Every path must stay inside App.
     strip = table.get("strip")
     if strip is not None and not (
         (isinstance(strip, int) and not isinstance(strip, bool) and strip >= 0) or strip == "auto"
@@ -781,6 +790,7 @@ def _parse_source(collector: _Collector, raw: Any, modes: tuple[str, ...]) -> So
     if verify_manifest is not None:
         verify_manifest = _relative_path(collector, verify_manifest, "source.verify_manifest")
 
+    # Sub-tables and arrays of tables are parsed by their own functions.
     checksum = _parse_checksum(collector, table.get("checksum"))
     installer = _parse_installer(collector, table.get("installer"), modes)
     git = _parse_git(collector, table.get("git"), kind)
@@ -793,6 +803,9 @@ def _parse_source(collector: _Collector, raw: Any, modes: tuple[str, ...]) -> So
     populated = download_url is not None or script is not None
     if shipped is False and not populated:
         collector.error("source", "shipped = false needs a download_url or a script: nothing could ever populate App")
+
+    # Only the built-in download script unpacks an artifact, so unpack options and a
+    # checksum make no sense without a download_url. Refuse them rather than ignore them.
     if not populated or script is not None:
         unpack_only = {
             "kind": kind, "strip": strip, "subdir": subdir, "checksum": checksum, "installer": installer,
