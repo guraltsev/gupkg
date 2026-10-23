@@ -60,7 +60,7 @@ def terminal():
     from rich.console import Console
 
     raw = io.StringIO()
-    console = Console(record=True, force_terminal=True, width=100, color_system="truecolor", file=raw)
+    console = Console(record=True, force_terminal=True, width=100, color_system="truecolor", no_color=False, legacy_windows=False, file=raw)
     return console, raw
 
 
@@ -243,7 +243,7 @@ def test_problems_use_their_own_console_on_a_terminal(terminal, monkeypatch) -> 
     monkeypatch.delenv("TERM", raising=False)
     console, raw = terminal
     problem_raw = io.StringIO()
-    problem_console = Console(record=True, force_terminal=True, width=100, color_system="truecolor", file=problem_raw)
+    problem_console = Console(record=True, force_terminal=True, width=100, color_system="truecolor", no_color=False, legacy_windows=False, file=problem_raw)
 
     _feed(ConsoleReporter(console=console, problems_to_stderr=True, problems_console=problem_console), _install_events())
 
@@ -297,3 +297,49 @@ def test_the_text_log_is_cleaned_like_the_console_while_the_json_log_keeps_the_o
     assert "\x1b" not in log.read_text(encoding="utf-8") and "red step" in log.read_text(encoding="utf-8")
     steps = [json.loads(line) for line in events.read_text(encoding="utf-8").splitlines() if '"step"' in line]
     assert steps[0]["text"] == "\x1b[31mred\x1b[0m step"
+
+
+@pytest.mark.parametrize(
+    ("hostile", "shown"),
+    [
+        pytest.param("\u009b31mred\u009b0m text", "red text", id="single-character-csi"),
+        pytest.param("a\u0085b\u0090c\u009d", "abc", id="c1-controls"),
+        pytest.param("\x1bPpayload-that-steers\x1b\\after", "after", id="device-control-string"),
+        pytest.param("\x1b_apc payload\x07done", "done", id="application-command"),
+        pytest.param("safe\u202egnp.exe\u202c end \u2066x\u2069", "safegnp.exe end x", id="bidi-overrides-and-isolates"),
+        pytest.param("\x1b]8;;http://example.invalid/x\x07click here\x1b]8;;\x07", "click here", id="osc8-hyperlink-keeps-its-text"),
+    ],
+)
+def test_displayed_text_loses_single_byte_csi_device_strings_c1_controls_and_bidi_overrides(hostile: str, shown: str) -> None:
+    """Terminal-steering sequences and text-reordering characters are removed from displayed text; the visible words stay."""
+    stream = io.StringIO()
+
+    ConsoleReporter(stream).handle(Step(hostile))
+
+    assert stream.getvalue() == f"    {shown}\n"
+
+
+def test_displayed_text_keeps_legitimate_characters() -> None:
+    """Non-ASCII words, Windows paths with brackets, tabs and ordinary punctuation are shown unchanged."""
+    stream = io.StringIO()
+    text = "C:\\Users\\Zo\u00eb [x86]\\caf\u00e9\\\u65e5\u672c.exe\tdone (100%) <ok> {y}"
+
+    ConsoleReporter(stream).handle(Step(text))
+
+    assert stream.getvalue() == f"    {text}\n"
+
+
+def test_the_output_does_not_depend_on_the_ambient_console_settings(monkeypatch, terminal) -> None:
+    """Even when the developer's shell sets NO_COLOR, TERM, COLUMNS or Python encoding variables, the terminal and plain renderers behave as tested."""
+    for name, value in (
+        ("NO_COLOR", "1"), ("TERM", "dumb"), ("COLUMNS", "20"), ("PYTHONUTF8", "1"), ("PYTHONIOENCODING", "cp1252"),
+    ):
+        monkeypatch.setenv(name, value)
+    stream = io.StringIO()
+
+    # Plain by environment, whatever the stream; the injected terminal is plain too.
+    _feed(ConsoleReporter(stream), [PhaseStart("Fetch")])
+    console, raw = terminal
+    reporter = ConsoleReporter(console=console)
+
+    assert stream.getvalue() == "==> Fetch\n" and reporter.fancy is False
