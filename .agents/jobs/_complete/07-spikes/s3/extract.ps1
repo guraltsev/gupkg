@@ -9,7 +9,7 @@ param(
 )
 # 7z writes errors to stderr; keep going so the exit code is recorded.
 $ErrorActionPreference = 'Continue'
-$SevenZip = Join-Path $PSScriptRoot '..\..\..\..\src\gupkg\7zip\7z.exe'
+$SevenZip = Join-Path $PSScriptRoot '..\..\..\..\..\src\gupkg\7zip\7z.exe'
 $items = [ordered]@{
     firefox     = 'Firefox Setup 158.0.1.exe'
     obsidian    = 'Obsidian-1.14.4.exe'

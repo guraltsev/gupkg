@@ -1,6 +1,15 @@
 # Job 07: Rehaul pre-implementation confirmation
 
-Status: Open
+Status: Closed. The design, issues 016–033 and the report landed in commits
+`591ffd3`, `34ef46a`, `a18ebb7`, `db3cb2a`, `0d7b194`, `9852e47` and `6f9a88e`
+(branch `rehaul-design`, merged into `main`). The owner decided every open
+item (design §19, D21–D46). Left open by the owner's choice: the elevated
+re-run of spike S1 and the clean-VM run of spike S2 (report, "Summary
+verdict", condition 3). They gate merging issue 033 and are tracked by job
+08.
+
+Report: `07-rehaul-pre-implementation-confirmation-report.md`; spike
+scripts and results: `07-spikes/` (both in this folder).
 
 Depends on: nothing. This job must finish before implementation of issues
 020–033 starts. Stage 0 (issues 016–019) may proceed in parallel.

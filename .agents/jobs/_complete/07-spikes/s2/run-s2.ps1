@@ -17,7 +17,7 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
-$repo = Resolve-Path (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) '..\..\..\..')
+$repo = Resolve-Path (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) '..\..\..\..\..')
 New-Item -ItemType Directory -Force -Path $WorkDir | Out-Null
 
 # --- build the distribution -------------------------------------------------

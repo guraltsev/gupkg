@@ -513,7 +513,7 @@ bundle.**
 
 ### S1: the elevated permission check
 
-**Files** (in `.agents/jobs/07-spikes/s1/`):
+**Files** (in `.agents/jobs/_complete/07-spikes/s1/`):
 
 - `acl-check.ps1`: the check;
 - `launcher-template.cmd`: the launcher;
@@ -605,7 +605,7 @@ bundle.**
 
 ### S2: Mark of the Web
 
-**Files:** `.agents/jobs/07-spikes/s2/run-s2.ps1` and `results.txt`.
+**Files:** `.agents/jobs/_complete/07-spikes/s2/run-s2.ps1` and `results.txt`.
 
 **What was built.** A 23.8 MB ZIP with
 `myapp\1.0\{install.cmd, gupkg\python\…, App\dummy.txt}`. Its `python\` is
@@ -641,7 +641,7 @@ not be driven from this session.
 
 ### S3: installer extraction
 
-**Files:** `.agents/jobs/07-spikes/s3/` holds `results.md` (full table,
+**Files:** `.agents/jobs/_complete/07-spikes/s3/` holds `results.md` (full table,
 commands and the 0.17 comparison), `download.sh`, `extract.ps1` and
 `extract_followup.ps1`.
 

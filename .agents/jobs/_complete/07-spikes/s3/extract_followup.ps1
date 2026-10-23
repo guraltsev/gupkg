@@ -6,7 +6,7 @@ param(
     [Parameter(Mandatory)] [string] $ExtractRoot
 )
 $ErrorActionPreference = 'Continue'
-$Z = Join-Path $PSScriptRoot '..\..\..\..\src\gupkg\7zip\7z.exe'
+$Z = Join-Path $PSScriptRoot '..\..\..\..\..\src\gupkg\7zip\7z.exe'
 
 function New-Out([string] $name) {
     $out = Join-Path $ExtractRoot $name
