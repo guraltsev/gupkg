@@ -1,5 +1,7 @@
 # Issue 018: Remove system Python autodetection
 
+> **Status (2026-10-22):** Implemented. Merged in 1f4e085. The launcher runs `-I -s -B -S` on a minimal `python312._pth` (no `..`, no `import site`), the trust check runs before `sys.path` changes, and elevation detection fails closed with two signals. Manual checks still owed: `tests/manual_smoke.md`, "One interpreter (issue 018)": 1 (system Python 3.13 on `PATH`, ordinary and elevated `manager self status`), 2 (fresh clone, `scripts	est.cmd` without and with `.venv`).
+
 Date: 2026-10-22
 Priority: High
 Change type: Launcher (`gupkg.cmd`), `bootstrap.py`, `elevation.py`,
