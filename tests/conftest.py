@@ -194,3 +194,13 @@ def neutral_console_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         "PYTHONIOENCODING", "PYTHONUTF8", "JUPYTER_COLUMNS", "TTY_COMPATIBLE", "TTY_INTERACTIVE",
     ):
         monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def no_ambient_elevation_marker(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Remove the launcher's ``GUPKG_ELEVATED`` marker before every test, so elevation comes only from the test's own system.
+
+    ``is_elevated_run`` counts the marker as elevated; a developer's elevated shell may carry it. A test that needs an
+    elevated environment sets it itself.
+    """
+    monkeypatch.delenv("GUPKG_ELEVATED", raising=False)

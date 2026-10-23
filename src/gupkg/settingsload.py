@@ -13,9 +13,10 @@ The layers are read lowest priority first: built-in defaults, ``$App\\settings.t
 of the running gupkg, the system root's ``.gupkg\\settings.toml``, the user root's
 ``.gupkg\\settings.toml`` and ``--settings``. The user root is only known once the
 system layer has been merged, because the system layer may change ``[roots]``.
-Nothing is ever read from AppData or ProgramData. The user layer is skipped when the
-run is elevated or in system mode, ``--settings`` in an elevated run must lie inside
-the system root, and in those runs every file must sit in an admin-only folder
+Nothing is ever read from AppData or ProgramData. A portable run reads the portable root's
+layer in place of the user layer, and no elevated or system-mode run may be given a portable
+root. The user layer is skipped when the run is elevated or in system mode, ``--settings`` in an
+elevated run must lie inside the system root, and in those runs every file must sit in an admin-only folder
 (``System.directory_untrusted_reason``): a layer that fails that check stops the
 run, because an elevated run must not trust a folder a standard user can change.
 Reading goes through an injectable function so that tests never touch a real machine.
@@ -35,6 +36,7 @@ from .model.settings import (
     LAYER_APP,
     LAYER_CLI,
     LAYER_DEFAULTS,
+    LAYER_PORTABLE,
     LAYER_SYSTEM,
     LAYER_USER,
     Layer,
@@ -116,6 +118,7 @@ def load_settings(
     app_dir: Path | None,
     installed_system_root: Path | None = None,
     settings_path: Path | None = None,
+    portable_root: Path | None = None,
     read_text: Callable[[Path], str | None] = read_text_file,
 ) -> LoadedSettings:
     """Read the layers a run may use and merge them.
@@ -135,6 +138,10 @@ def load_settings(
         when omitted.
     settings_path : Path, optional
         The ``--settings`` file.
+    portable_root : Path, optional
+        The portable root of a portable-mode run. Its ``.gupkg\\settings.toml`` is read as the
+        portable layer *instead of* the user layer (design 6.1: a portable run reads the system
+        root's layer and the portable root's).
     system : System
         The boundary that says whether a folder is admin-only
         (``directory_untrusted_reason``); a ``FakeSystem`` in tests.
@@ -149,10 +156,13 @@ def load_settings(
     Raises
     ------
     SettingsError
-        If a layer is invalid, ``--settings`` is missing, or an elevated or
-        system-mode run would read a file from a folder that is not admin-only.
+        If a layer is invalid, ``--settings`` is missing, an elevated or
+        system-mode run would read a file from a folder that is not admin-only, or an
+        elevated or system-mode run is given a portable root.
     """
     strict = elevated or system_mode
+    if strict and portable_root is not None:
+        raise SettingsError("a portable root is never read in an elevated or system-mode run")
     layers: list[Layer] = [default_layer()]
     reports: list[LayerReport] = [LayerReport(LAYER_DEFAULTS, None, "applied", "built in")]
 
@@ -202,6 +212,11 @@ def load_settings(
             LAYER_USER, None, "ignored",
             "the user layer is ignored in elevated and system-mode runs",
         ))
+    elif portable_root is not None:
+        reports.append(LayerReport(
+            LAYER_USER, None, "ignored", "a portable run reads the portable root's layer, not the user's",
+        ))
+        read_layer(LAYER_PORTABLE, settings_file(Path(portable_root)))
     else:
         read_layer(LAYER_USER, settings_file(Path(expand_env(merged["roots.user"], env))))
 
