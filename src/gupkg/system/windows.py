@@ -32,9 +32,11 @@ gupkg.system.port : the protocol this class implements.
 from __future__ import annotations
 
 import ctypes
+import http.client
 import locale
 import os
 import re
+import socket
 import struct
 import subprocess
 import threading
@@ -423,12 +425,12 @@ class WindowsSystem(WindowsLinks):
                     break
                 except subprocess.TimeoutExpired:
                     if timeout is not None and time.monotonic() - started >= timeout:
-                        process.kill()
+                        _kill_tree(process)
                         process.wait()
                         raise TimeoutError(f"{command[0]} did not finish within {timeout} seconds") from None
                     reason = watch() if watch is not None else None
                     if reason is not None:
-                        process.kill()
+                        _kill_tree(process)
                         process.wait()
                         raise ProcessAborted(reason) from None
         finally:
@@ -481,10 +483,22 @@ class WindowsSystem(WindowsLinks):
         total_timeout: float | None = None,
     ) -> HttpResponse:
         """Send one request without following redirects and return the response of any status."""
-        deadline = time.monotonic() + total_timeout if total_timeout else None
-        with _open_without_redirects(url, headers, method, timeout) as response:
-            status, final_url, response_headers = _response_parts(response, url)
-            body = _read_limited(response, max_bytes, deadline)
+        deadline = _Deadline(total_timeout)
+        try:
+            with _open_without_redirects(url, headers, method, timeout, deadline) as response:
+                status, final_url, response_headers = _response_parts(response, url)
+                if 200 <= status < 300:
+                    _refuse_encoding(response_headers)
+                expected = None if method == "HEAD" else _content_length(response)
+                body = _read_limited(response, max_bytes, deadline, expected)
+        except http.client.HTTPException as error:
+            raise _transport_error(deadline, error) from error
+        except OSError as error:
+            if deadline.hit and not isinstance(error, TimeoutError):
+                raise _transport_error(deadline, error) from error
+            raise
+        finally:
+            deadline.finish()
         return HttpResponse(status, final_url, response_headers, body)
 
     def http_download(
@@ -500,31 +514,43 @@ class WindowsSystem(WindowsLinks):
         total_timeout: float | None = None,
     ) -> DownloadResponse:
         """Stream a 2xx response into *dest* (appending a 206 answer when asked); write nothing otherwise."""
-        deadline = time.monotonic() + total_timeout if total_timeout else None
-        with _open_without_redirects(url, headers, "GET", timeout) as response:
-            status, final_url, response_headers = _response_parts(response, url)
-            if on_headers is not None:
-                on_headers(status, response_headers)
-            if not 200 <= status < 300:
-                return DownloadResponse(status, final_url, response_headers)
+        deadline = _Deadline(total_timeout)
+        try:
+            with _open_without_redirects(url, headers, "GET", timeout, deadline) as response:
+                status, final_url, response_headers = _response_parts(response, url)
+                if on_headers is not None:
+                    on_headers(status, response_headers)
+                if not 200 <= status < 300:
+                    return DownloadResponse(status, final_url, response_headers)
+                _refuse_encoding(response_headers)
 
-            # A 206 answer to a range request continues the existing file; any other
-            # 2xx answer is the whole body and replaces it.
-            resumed = append and status == 206
-            already = Path(dest).stat().st_size if resumed else 0
-            length = _content_length(response)
-            total = already + length if length is not None else None
-            if on_progress is not None:
-                on_progress(already, total)
-            received = already
-            with open(dest, "ab" if resumed else "wb") as handle:
-                while chunk := _read_some(response):
-                    handle.write(chunk)
-                    received += len(chunk)
-                    if on_progress is not None:
-                        on_progress(received, total)
-                    if deadline is not None and time.monotonic() > deadline:
-                        raise TimeoutError(f"{url} took longer than {total_timeout} seconds in total")
+                # A 206 answer to a range request continues the existing file; any other
+                # 2xx answer is the whole body and replaces it.
+                resumed = append and status == 206
+                already = Path(dest).stat().st_size if resumed else 0
+                length = _content_length(response)
+                total = already + length if length is not None else None
+                if on_progress is not None:
+                    on_progress(already, total)
+                received = already
+                with open(dest, "ab" if resumed else "wb") as handle:
+                    while chunk := _read_some(response):
+                        handle.write(chunk)
+                        received += len(chunk)
+                        if on_progress is not None:
+                            on_progress(received, total)
+                        if deadline.expired():
+                            raise TimeoutError(f"{url} took longer than {total_timeout} seconds in total")
+                if length is not None and received - already != length:
+                    raise OSError(f"{url} sent {received - already} of {length} bytes: the transfer was cut short")
+        except http.client.HTTPException as error:
+            raise _transport_error(deadline, error) from error
+        except OSError as error:
+            if deadline.hit and not isinstance(error, TimeoutError):
+                raise _transport_error(deadline, error) from error
+            raise
+        finally:
+            deadline.finish()
         return DownloadResponse(status, final_url, response_headers, received - already, resumed)
 
 
@@ -690,7 +716,114 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 _ALLOWED_SCHEMES = ("http", "https", "file")
 
 
-def _open_without_redirects(url: str, headers: Mapping[str, str] | None, method: str, timeout: float):
+class _Deadline:
+    """An absolute time limit for one request, enforced from a timer thread as well as between reads.
+
+    ``socket`` timeouts only bound the idle time of each operation, so a server that drips header
+    lines or body bytes could keep a request alive for ever. When the limit passes, the timer shuts
+    the connection's sockets down, which wakes a blocked read with an error.
+    """
+
+    def __init__(self, seconds: float | None) -> None:
+        """Start the clock (no limit when *seconds* is falsy)."""
+        self.seconds = seconds
+        self.expires = time.monotonic() + seconds if seconds else None
+        self.hit = False
+        self._sockets: list[socket.socket] = []
+        self._timer: threading.Timer | None = None
+        if seconds:
+            self._timer = threading.Timer(seconds, self._expire)
+            self._timer.daemon = True
+            self._timer.start()
+
+    def expired(self) -> bool:
+        """Return whether the limit has passed."""
+        return self.expires is not None and time.monotonic() > self.expires
+
+    def register(self, sock: socket.socket) -> None:
+        """Watch *sock*; if the limit already passed, shut it down at once."""
+        self._sockets.append(sock)
+        if self.hit:
+            self._shutdown(sock)
+
+    def finish(self) -> None:
+        """Stop the timer; the request is over."""
+        if self._timer is not None:
+            self._timer.cancel()
+
+    def _expire(self) -> None:
+        """Mark the limit as hit and wake every blocked read."""
+        self.hit = True
+        for sock in list(self._sockets):
+            self._shutdown(sock)
+
+    @staticmethod
+    def _shutdown(sock: socket.socket) -> None:
+        """Shut a socket down in both directions, ignoring a socket that is already closed."""
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+
+
+def _timed(base: type, deadline: _Deadline):
+    """Return a connection class like *base* whose socket is watched by *deadline*."""
+
+    class Timed(base):  # type: ignore[misc, valid-type]
+        """A connection that registers its socket with the request's deadline."""
+
+        def connect(self) -> None:
+            """Connect, then hand the socket to the deadline."""
+            super().connect()
+            deadline.register(self.sock)
+
+    return Timed
+
+
+class _DeadlineHTTP(urllib.request.HTTPHandler):
+    """Open ``http`` URLs with connections that obey a request deadline."""
+
+    def __init__(self, deadline: _Deadline) -> None:
+        """Remember the deadline."""
+        super().__init__()
+        self._deadline = deadline
+
+    def http_open(self, req: Any) -> Any:
+        """Open *req* on a watched connection."""
+        return self.do_open(_timed(http.client.HTTPConnection, self._deadline), req)
+
+
+class _DeadlineHTTPS(urllib.request.HTTPSHandler):
+    """Open ``https`` URLs with connections that obey a request deadline."""
+
+    def __init__(self, deadline: _Deadline) -> None:
+        """Remember the deadline."""
+        super().__init__()
+        self._deadline = deadline
+
+    def https_open(self, req: Any) -> Any:
+        """Open *req* on a watched connection."""
+        return self.do_open(_timed(http.client.HTTPSConnection, self._deadline), req, context=self._context)
+
+
+def _transport_error(deadline: _Deadline, error: BaseException) -> OSError:
+    """Map a protocol exception (not an ``OSError`` in the standard library) to the port's error type."""
+    if deadline.hit:
+        return TimeoutError(f"The request took longer than {deadline.seconds} seconds in total")
+    if isinstance(error, OSError):
+        return error
+    return OSError(f"HTTP protocol error: {type(error).__name__}: {error}")
+
+
+def _refuse_encoding(headers: Mapping[str, str]) -> None:
+    """Refuse a body with a ``Content-Encoding`` other than identity: gupkg never decompresses a response."""
+    encoding = headers.get("content-encoding", "").strip().lower()
+    if encoding not in ("", "identity"):
+        raise OSError(f"The response uses Content-Encoding {encoding!r}, which is not accepted")
+
+
+def _open_without_redirects(url: str, headers: Mapping[str, str] | None, method: str, timeout: float,
+                            deadline: _Deadline | None = None):
     """Open *url* and return its response object, a 3xx or error answer included.
 
     Only ``http``, ``https`` and ``file`` URLs are opened. HTTPS verification
@@ -700,7 +833,8 @@ def _open_without_redirects(url: str, headers: Mapping[str, str] | None, method:
     if scheme not in _ALLOWED_SCHEMES:
         raise OSError(f"Only http, https and file URLs are fetched, not {url!r}")
     enable_partial_chain_verification()
-    opener = urllib.request.build_opener(_NoRedirect)
+    watched = deadline or _Deadline(None)
+    opener = urllib.request.build_opener(_NoRedirect, _DeadlineHTTP(watched), _DeadlineHTTPS(watched))
     request = urllib.request.Request(url, headers=dict(headers or {}), method=method)
     try:
         return opener.open(request, timeout=timeout)
@@ -719,14 +853,36 @@ def _response_parts(response: Any, requested: str) -> tuple[int, str, dict[str, 
     return int(status), requested, collected
 
 
+def _kill_tree(process: "subprocess.Popen[bytes]") -> None:
+    """Kill *process* and every process it started (``taskkill /T``), then the process itself.
+
+    ``Popen.kill`` ends only the child, so a script that started a helper would leave it running.
+    """
+    try:
+        subprocess.run(
+            [os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "taskkill.exe"),
+             "/PID", str(process.pid), "/T", "/F"],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), timeout=15, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
+    process.kill()
+
+
 def _read_some(response: Any) -> bytes:
     """Return up to 64 KiB as soon as some bytes are available (``read1``), so a deadline can be checked between reads."""
     reader = getattr(response, "read1", None)
     return reader(64 * 1024) if reader is not None else response.read(64 * 1024)
 
 
-def _read_limited(response: Any, max_bytes: int | None, deadline: float | None = None) -> bytes:
-    """Read the body in blocks, failing with ``ResponseTooLarge`` past *max_bytes* and ``TimeoutError`` past *deadline*."""
+def _read_limited(response: Any, max_bytes: int | None, deadline: _Deadline | None = None,
+                  expected: int | None = None) -> bytes:
+    """Read the body in blocks.
+
+    Fails with ``ResponseTooLarge`` past *max_bytes*, ``TimeoutError`` past the deadline, and ``OSError``
+    when the body ends before the *expected* ``Content-Length`` (a cut-short transfer is never data).
+    """
     if max_bytes == 0:
         return b""
     pieces: list[bytes] = []
@@ -734,12 +890,14 @@ def _read_limited(response: Any, max_bytes: int | None, deadline: float | None =
     while True:
         block = _read_some(response)
         if not block:
+            if expected is not None and size != expected:
+                raise OSError(f"The response ended after {size} of {expected} bytes: the transfer was cut short")
             return b"".join(pieces)
         size += len(block)
         if max_bytes is not None and size > max_bytes:
             raise ResponseTooLarge(f"The response is larger than {max_bytes} bytes")
         pieces.append(block)
-        if deadline is not None and time.monotonic() > deadline:
+        if deadline is not None and deadline.expired():
             raise TimeoutError("The response took longer than its total time limit")
 
 

@@ -1,0 +1,202 @@
+[
+ {
+  "pattern": "Download\\s+7-Zip\\s+(?P<version>\\d+(?:\\.\\d+)+)\\s*\\([^)]*\\)\\s*for\\s+Windows\\s+x64",
+  "source": "7zip/check_update.py"
+ },
+ {
+  "pattern": "^7z\\d+-x64\\.exe$",
+  "source": "7zip/check_update.py"
+ },
+ {
+  "pattern": "BCUninstaller_\\d+(?:\\.\\d+)+_portable\\.7z",
+  "source": "bulkcrapuninstaller/check_update.py"
+ },
+ {
+  "pattern": "^[vV](?=\\d)",
+  "source": "bulkcrapuninstaller/check_update.py"
+ },
+ {
+  "pattern": "sha256:[0-9a-fA-F]{64}",
+  "source": "bulkcrapuninstaller/check_update.py"
+ },
+ {
+  "pattern": "/files/(?P<version>\\d+(?:\\.\\d+)+)/",
+  "source": "crystaldiskinfo/check_update.py"
+ },
+ {
+  "pattern": "/downloads/cwrsync/cwrsync_(?P<version>\\d+(?:\\.\\d+)*)_x64_free\\.zip",
+  "source": "cwrsync/check_update.py"
+ },
+ {
+  "pattern": "Download Don't Sleep (?P<version>\\d+(?:\\.\\d+)*)",
+  "source": "dontsleep/check_update.py"
+ },
+ {
+  "pattern": "href=\"emacs-(?P<major>\\d+)/\"",
+  "source": "emacs/check_update.py"
+ },
+ {
+  "pattern": "emacs-(?P<version>\\d+(?:\\.\\d+)*(?:_\\d+)?)-UCRT64\\.zip",
+  "source": "emacs/check_update.py"
+ },
+ {
+  "pattern": "^(?P<digest>[0-9a-fA-F]{64}) \\*?(?P<name>\\S+)$",
+  "source": "emacs/check_update.py"
+ },
+ {
+  "pattern": "\\d+",
+  "source": "emacs/check_update.py"
+ },
+ {
+  "pattern": "\\d+(?:\\.\\d+)+",
+  "source": "ffmpeg/check_update.py"
+ },
+ {
+  "pattern": "[0-9a-fA-F]{64}",
+  "source": "ffmpeg/check_update.py"
+ },
+ {
+  "pattern": "^(?P<digest>[0-9a-fA-F]{64})  (?P<name>.+)$",
+  "source": "firefox/check_update.py"
+ },
+ {
+  "pattern": "Portable-(?P<version>\\d+(?:-\\d+)+)\\.zip",
+  "source": "geogebra/check_update.py"
+ },
+ {
+  "pattern": "href=\"v(?P<major>\\d+)\\.(?P<minor>\\d+)/\"",
+  "source": "gimp/check_update.py"
+ },
+ {
+  "pattern": "href=\"gimp-(?P<version>\\d+(?:\\.\\d+)*)-setup\\.exe\"",
+  "source": "gimp/check_update.py"
+ },
+ {
+  "pattern": "^(?P<digest>[0-9a-fA-F]{64}) [ *]?(?P<name>\\S+)$",
+  "source": "gimp/check_update.py"
+ },
+ {
+  "pattern": "graphviz-releases/(?P<version>\\d+(?:\\.\\d+)+)/windows_10_cmake_Release_Graphviz-(?P=version)-win64\\.zip",
+  "source": "graphviz/check_update.py"
+ },
+ {
+  "pattern": "href=\"(?P<href>https://www\\.hwinfo\\.com/files/hwi_(?P<version>\\d+)\\.zip)\"[^>]*>\\s*Local \\(U\\.S\\.\\)",
+  "source": "hwinfo/check_update.py"
+ },
+ {
+  "pattern": "hwmonitor_(?P<version>\\d+\\.\\d+)\\.zip",
+  "source": "hwmonitor/check_update.py"
+ },
+ {
+  "pattern": "href=\"(?:/[a-z]{2}(?:-[a-z]+)?)?/release/inkscape-(?P<version>\\d+(?:\\.\\d+)+)/\"",
+  "source": "inkscape/check_update.py"
+ },
+ {
+  "pattern": "href=\"(?P<path>/gallery/item/\\d+/[^\"]+-x64[^\"]*\\.7z)\"",
+  "source": "inkscape/check_update.py"
+ },
+ {
+  "pattern": "href=\"(?P<url>https://[^\"]+-x64\\.7z[^\"]*\\.sha256)\"",
+  "source": "inkscape/check_update.py"
+ },
+ {
+  "pattern": "\\b(?P<digest>[0-9a-fA-F]{64})\\b",
+  "source": "inkscape/check_update.py"
+ },
+ {
+  "pattern": "iview(?P<version>\\d{3})\\.zip",
+  "source": "irfanview/check_update.py"
+ },
+ {
+  "pattern": "\\d+\\.\\d+\\.\\d+",
+  "source": "julia/check_update.py"
+ },
+ {
+  "pattern": "Version: (?P<version>\\d+(?:\\.\\d+)+)",
+  "source": "lockhunter/check_update.py"
+ },
+ {
+  "pattern": "^(?P<date>\\d{4}-\\d{2}-\\d{2})$",
+  "source": "msys2/check_update.py"
+ },
+ {
+  "pattern": "/(?P<name>netio-gui_v(?P<version>\\d+(?:\\.\\d+)*)_portable\\.zip)",
+  "source": "netio-gui/check_update.py"
+ },
+ {
+  "pattern": "files/openhardwaremonitor-v(?P<version>\\d+(?:\\.\\d+)+)\\.zip",
+  "source": "openhardwaremonitor/check_update.py"
+ },
+ {
+  "pattern": "strawberry-perl-(?P<version>\\d+(?:\\.\\d+)+)-64bit-portable\\.zip",
+  "source": "perl/check_update.py"
+ },
+ {
+  "pattern": "Pidgin/(?P<version>\\d+(?:\\.\\d+)+)/",
+  "source": "pidgin/check_update.py"
+ },
+ {
+  "pattern": "PortableGit-(?P<version>\\d+(?:\\.\\d+)*)-64-bit\\.7z\\.exe",
+  "source": "portablegit/check_update.py"
+ },
+ {
+  "pattern": "href=\"(?P<version>3\\.\\d+\\.\\d+)/\"",
+  "source": "python/check_update.py"
+ },
+ {
+  "pattern": "\\bqbittorrent_(?P<version>\\d+(?:\\.\\d+)*)_x64_setup\\.exe\\b",
+  "source": "qbittorrent/check_update.py"
+ },
+ {
+  "pattern": "Current version \\((?P<version>\\d+(?:\\.\\d+)+)\\)",
+  "source": "rapidee/check_update.py"
+ },
+ {
+  "pattern": "v?(?P<version>\\d+(?:\\.\\d+)*)",
+  "source": "restic-backup-gx/check_update.py"
+ },
+ {
+  "pattern": "https://www\\.shutterencoder\\.com/sdc_download/\\d+/\\?key=[A-Za-z0-9]+",
+  "source": "shutter-encoder/check_update.py"
+ },
+ {
+  "pattern": "filename=\"?(?P<name>Shutter Encoder (?P<version>\\d+(?:\\.\\d+)*) Windows 64bits\\.zip)\"?",
+  "source": "shutter-encoder/check_update.py"
+ },
+ {
+  "pattern": "^/dl/rel/(?P<version>[^/]+)/SumatraPDF-(?P=version)-64\\.zip$",
+  "source": "SumatraPDF-portable/check_update.py"
+ },
+ {
+  "pattern": "^v?(?P<version>\\d+\\.\\d+\\.\\d+(?:\\.\\d+)*)$",
+  "source": "systeminformer/check_update.py"
+ },
+ {
+  "pattern": "testdisk-(?P<version>\\d+(?:\\.\\d+)*(?:-WIP)?)\\.win64\\.zip",
+  "source": "testdisk/check_update.py"
+ },
+ {
+  "pattern": "tixati-(?P<version>\\d+(?:\\.\\d+)*-\\d+)\\.portable\\.zip",
+  "source": "tixati/check_update.py"
+ },
+ {
+  "pattern": "^(?P<version>\\d+(?:\\.\\d+)+)/$",
+  "source": "vlc/check_update.py"
+ },
+ {
+  "pattern": "WinSCP-(?P<version>\\d+(?:\\.\\d+)+)-Portable\\.zip\\b(?!-)",
+  "source": "winscp/check_update.py"
+ },
+ {
+  "pattern": "WuMgr_v[\\d.]+[a-z]?\\.zip",
+  "source": "wumgr/check_update.py"
+ },
+ {
+  "pattern": "\"softwareVersion\":\\s*\"(?P<version>\\d+(?:\\.\\d+)*)\"",
+  "source": "xnviewmp/check_update.py"
+ },
+ {
+  "pattern": "/release/(?P<version>\\d+(?:\\.\\d+)+)/",
+  "source": "zotero/check_update.py"
+ }
+]

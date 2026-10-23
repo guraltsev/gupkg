@@ -40,6 +40,7 @@ import os
 import re
 import time
 import urllib.parse
+import urllib.request
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from email.message import Message
@@ -462,14 +463,28 @@ class HttpClient:
         return current
 
     def _refuse_unc(self, url: str) -> None:
-        """Refuse a ``file:`` URL that names a network host or UNC share unless the client allows it."""
+        """Refuse a ``file:`` URL that names a network host or UNC share unless the client allows it.
+
+        The decision is made on the *path the transport will open*, not on the spelling of the URL:
+        the path is percent-decoded, converted the way ``urllib`` converts it, and both the decoded
+        and the converted forms are refused when they start with two separators (``\\\\host\\share``,
+        ``\\\\?\\UNC\\host\\share``). Only ``\\\\?\\C:\\...`` (a local drive) is allowed to start that way.
+        """
         if self.allow_unc_file_urls:
             return
         parts = urllib.parse.urlsplit(url)
         if parts.scheme.lower() != "file":
             return
-        if parts.netloc not in ("", "localhost") or parts.path.startswith(("//", "\\\\")) or url.lower().startswith("file:////"):
-            raise HttpError(f"{url[:80]} names a network share; reading it would make Windows authenticate to that server")
+        if parts.netloc not in ("", "localhost"):
+            raise HttpError(f"{url[:80]} names a network host; reading it would make Windows authenticate to that server")
+        decoded = urllib.parse.unquote(parts.path)
+        if re.match(r"\\{2,3}\?\\[A-Za-z]:\\", decoded.replace("/", "\\")):
+            return  # an extended-length path on a local drive
+        for candidate in (decoded, urllib.request.url2pathname(decoded)):
+            normal = candidate.replace("/", "\\")
+            if normal.startswith("\\\\"):
+                raise HttpError(f"{url[:80]} names a network share; reading it would make Windows authenticate to that server")
+
 
     def redirect_target(self, url: str, response: HttpResponse) -> str:
         """Return the redirect target of *response*, or raise when the policy refuses it."""

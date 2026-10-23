@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 import uuid
 from pathlib import Path
 from typing import Iterator
@@ -23,7 +24,7 @@ from typing import Iterator
 import pytest
 
 from gupkg.system.fake import FakeSystem
-from gupkg.system.port import EnvValue, Scope, ShortcutSpec, System
+from gupkg.system.port import EnvValue, ProcessAborted, ProcessResult, Scope, ShortcutSpec, System
 from gupkg.system.windows import WindowsSystem
 
 windows_only = pytest.mark.skipif(os.name != "nt", reason="needs Windows")
@@ -406,3 +407,83 @@ def test_windows_run_kills_a_child_that_outlives_its_timeout(tmp_path: Path) -> 
     """A child that runs past the timeout is killed and the caller gets a ``TimeoutError``."""
     with pytest.raises(TimeoutError):
         WindowsSystem().run([sys.executable, "-c", "import time; time.sleep(30)"], tmp_path, None, None, timeout=0.5)
+
+
+# ---------------------------------------------------------------------------
+# Processes under a watcher (System.run(watch=...))
+# ---------------------------------------------------------------------------
+
+
+def _watched_command(machine: System, script: str, output: str = "") -> list[str]:
+    """Return a command for *machine* that behaves like the Python *script* (a double on the fake).
+
+    The fake runs no real child: it gets a double that finishes at once with *output* and, like the
+    contract says, asks the watcher once after the child has run.
+    """
+    if isinstance(machine, FakeSystem):
+        machine.processes["probe"] = lambda call: ProcessResult(0, output)
+        return ["probe"]
+    return [sys.executable, "-c", script]
+
+
+def test_a_watcher_that_names_a_reason_aborts_the_run_with_that_reason(machine: System, tmp_path: Path) -> None:
+    """``watch`` returning text raises ``ProcessAborted`` carrying it; on the real system the child is killed first."""
+    command = _watched_command(machine, "import time; time.sleep(30)")
+    started = time.monotonic()
+
+    with pytest.raises(ProcessAborted, match="too much output"):
+        machine.run(command, tmp_path, None, None, watch=lambda: "too much output")
+
+    assert time.monotonic() - started < 15
+
+
+def test_a_watcher_that_returns_nothing_leaves_the_run_unchanged(machine: System, tmp_path: Path) -> None:
+    """``watch`` returning ``None`` gives the normal status and output, and ``on_line`` still streams each line."""
+    command = _watched_command(machine, "print('one'); print('two')", "one\ntwo\n")
+    lines: list[str] = []
+    calls: list[int] = []
+
+    result = machine.run(command, tmp_path, None, lines.append, watch=lambda: calls.append(1))
+
+    # A child shorter than one poll may never be watched, so the number of polls is not part of the contract.
+    assert result.returncode == 0 and result.stdout.split() == ["one", "two"] and lines == ["one", "two"]
+    assert len(calls) < 50
+
+
+@pytest.mark.windows_integration
+@windows_only
+def test_windows_watcher_is_polled_while_the_child_runs_and_the_timeout_still_applies(tmp_path: Path) -> None:
+    """A slow child sees several polls; with a watcher that never objects, ``timeout`` still raises ``TimeoutError``."""
+    polls: list[float] = []
+
+    with pytest.raises(TimeoutError):
+        WindowsSystem().run(
+            [sys.executable, "-c", "import time; time.sleep(30)"], tmp_path, None, None,
+            timeout=1.0, watch=lambda: polls.append(time.monotonic()),
+        )
+
+    assert len(polls) >= 3
+
+
+@pytest.mark.windows_integration
+@windows_only
+def test_windows_aborted_child_is_gone_and_so_is_a_grandchild_it_started(tmp_path: Path) -> None:
+    """After an abort neither the child nor the helper process it started is still running to write its marker file."""
+    marker = tmp_path / "survivor.txt"
+    grandchild = f"import time, pathlib; time.sleep(3); pathlib.Path({str(marker)!r}).write_text('alive')"
+    script = (
+        "import subprocess, sys, time; "
+        f"subprocess.Popen([sys.executable, '-c', {grandchild!r}]); time.sleep(30)"
+    )
+    state = {"polls": 0}
+
+    def watch() -> str | None:
+        """Let the child start its helper, then ask for the abort."""
+        state["polls"] += 1
+        return "stop" if state["polls"] >= 3 else None
+
+    with pytest.raises(ProcessAborted):
+        WindowsSystem().run([sys.executable, "-c", script], tmp_path, None, None, watch=watch)
+    time.sleep(5)
+
+    assert not marker.exists()

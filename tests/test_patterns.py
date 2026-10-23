@@ -79,7 +79,7 @@ def test_text_is_cut_to_bounded_runs_without_touching_ordinary_content() -> None
     assert len(prepare_text("a" * 100_000)) == MAX_RUN
     assert len(prepare_text("12" * 100_000)) == MAX_RUN
     assert len(prepare_text("-" * 100_000)) == MAX_RUN
-    assert prepare_text("x" * 10 + " " + "y" * 3000) == "x" * 10 + " " + "y" * MAX_RUN
+    assert prepare_text("x" * 10 + " " + "y" * 3000).replace("\n", "") == "x" * 10 + " " + "y" * MAX_RUN
 
 
 def test_a_page_that_stays_huge_after_the_cuts_is_refused() -> None:

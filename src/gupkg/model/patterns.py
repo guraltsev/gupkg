@@ -1,33 +1,41 @@
 """Compile and run the regular expressions of a ``pkg.toml`` against untrusted text.
 
-Patterns come from administrator-written manifests, but the text they scan comes from
-the network. Python's ``re`` backtracks, so a careless pattern on a hostile page can
-run for hours. This module narrows the exposure in three ways: a pattern is rejected
-at validation time when it nests unbounded repetition (``(a+)+``), the scanned text
-has any run of one repeated character cut to a bounded length, and the amount of
-text and the number of matches are capped.
+Patterns come from administrator-written manifests, but the text they scan comes from the
+network. Python's ``re`` backtracks and cannot be interrupted, so this module is a *mitigation*,
+not a bound: a pattern is refused at validation time when its shape is known to blow up
+(nested or empty-matching unbounded repeats, overlapping alternatives inside a repeat, several
+wildcards, long runs of unbounded repeats with no literal between them), the scanned text has long
+runs of one character class and long lines cut, and the scan itself runs over small line-aligned
+windows with a time budget checked between windows, so a page that makes an accepted pattern slow
+fails with an error after about a second instead of running for minutes.
+
+What is NOT bounded: a single window can still cost as much as its pattern allows (a pattern with
+exponential behavior that the shape rules miss can hang inside one window, and no window can be
+interrupted); the budget is checked between windows only. The complete fix is a subprocess regex
+runner with a deadline, which is owed to the execution engine (issue 028).
 
 Usage and API
 -------------
-``compile_pattern(pattern, groups=...)`` returns a compiled pattern or raises
-``PatternError``; ``required groups`` must be named groups of the pattern.
-``scan(compiled, text)`` returns the bounded list of matches of a prepared text, and
-``prepare_text(text)`` is the same preparation on its own. ``escape_template(pattern,
-values)`` substitutes ``${name}`` references inside a pattern with escaped values.
+``compile_pattern(pattern, groups=...)`` returns a compiled pattern or raises ``PatternError``;
+the *groups* must be named groups of the pattern. ``scan(compiled, text)`` returns the bounded
+list of matches over the prepared text (a match that would span two windows is not found), and
+``prepare_text(text)`` is the same preparation on its own. ``escape_template(pattern, values)``
+substitutes ``${name}`` references inside a pattern with escaped values.
 
 Implementation Approach
 -----------------------
-Validation walks the parsed pattern tree. A repeat with no upper bound that contains
-another repeat able to repeat more than once is refused, which covers the classic
-exponential shapes. The remaining risk is polynomial (a leading ``.*`` on a very long line
-of mixed punctuation), which the text cap and the run cuts bound but cannot remove: Python's
-``re`` cannot be interrupted, so a page designed against a specific pattern can still keep one
-check busy for seconds. The module is pure: no input or output.
+Validation walks the parsed pattern tree: nested and empty-matching unbounded repeats, alternation
+inside a repeat, ``.``-style repeats that are not the only unbounded repeat, and the longest run of
+unbounded repeats not separated by a required literal are measured. Preparation cuts word runs
+and single-character runs to ``MAX_RUN`` and breaks lines at ``MAX_LINE``. Scanning uses
+``finditer(text, pos, endpos)`` over windows of about ``WINDOW`` characters that end at line
+breaks. The module is pure: no input or output.
 """
 
 from __future__ import annotations
 
 import re
+import time
 from collections.abc import Iterator, Mapping
 from itertools import groupby
 from typing import Any
@@ -45,8 +53,13 @@ MAX_RUN = 1024
 MAX_MATCHES = 10_000
 _UNBOUNDED = 1000
 _MAX_BROAD = 3
-_MAX_UNBOUNDED = 8
-MAX_LINE = 8192
+_MAX_UNBOUNDED = 24
+_MAX_STREAK = 6
+# Lines are cut to 1 KiB: the cost of a quadratic pattern per line is about 5 ms there, and the
+# windows below are a few lines long, so the time budget is checked every few milliseconds.
+MAX_LINE = 1024
+WINDOW = 4096
+SCAN_SECONDS = 1.0
 
 _REFERENCE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 # A run of word characters can only start where the previous character is not one, so the
@@ -145,21 +158,42 @@ def _cut_long_lines(text: str) -> str:
     return "\n".join(cut)
 
 
-def scan(compiled: re.Pattern[str], text: str, limit: int = MAX_MATCHES) -> list[re.Match[str]]:
+def scan(compiled: re.Pattern[str], text: str, limit: int = MAX_MATCHES, budget: float = SCAN_SECONDS) -> list[re.Match[str]]:
     """Return up to *limit* matches of *compiled* in a bounded version of *text*.
+
+    The prepared text is scanned in line-aligned windows of about ``WINDOW`` characters. The time
+    spent is checked after each window, so a page that is expensive for the pattern is refused
+    after about *budget* seconds. A match that would span two windows is not found.
 
     Raises
     ------
     PatternError
-        If the text is longer than ``MAX_SCAN_BYTES`` characters.
+        If the text is longer than ``MAX_SCAN_BYTES`` characters after preparation, or the scan
+        used more than *budget* seconds.
     """
     prepared = prepare_text(text)
+    deadline = time.monotonic() + budget
     found: list[re.Match[str]] = []
-    for match in compiled.finditer(prepared):
-        found.append(match)
-        if len(found) >= limit:
-            break
+    start, size = 0, len(prepared)
+    while start < size:
+        end = _window_end(prepared, start)
+        for match in compiled.finditer(prepared, start, end):
+            found.append(match)
+            if len(found) >= limit:
+                return found
+        if time.monotonic() > deadline:
+            raise PatternError(f"scanning took longer than {budget:g} seconds; the page is refused for this pattern")
+        start = end
     return found
+
+
+def _window_end(text: str, start: int) -> int:
+    """Return where the scan window that begins at *start* ends: the next line break after ``WINDOW`` characters."""
+    end = start + WINDOW
+    if end >= len(text):
+        return len(text)
+    newline = text.find("\n", end, end + MAX_LINE + 1)
+    return newline + 1 if newline != -1 else end
 
 
 def escape_template(pattern: str, values: Mapping[str, str]) -> str:
@@ -206,12 +240,37 @@ def _unsafe_reason(pattern: str) -> str | None:
                 return True
         return False
 
-    unbounded = {"count": 0, "broad": 0}
+    unbounded = {"count": 0, "broad": 0, "any": 0}
     reasons: list[str] = []
+
+    def flatten(sub: Any):
+        """Yield the items of *sub* in order, entering groups (capturing or not) in place."""
+        for item in sub.data:
+            operation, argument = item
+            if operation == _sre_constants.SUBPATTERN:
+                yield from flatten(argument[3])
+            elif operation == getattr(_sre_constants, "ATOMIC_GROUP", None):
+                yield from flatten(argument)
+            else:
+                yield item
+
+    def is_any(body: Any) -> bool:
+        """Return whether a repeated body starts with ``.`` or a class that matches everything."""
+        first = next(flatten(body), None)
+        if first is None:
+            return False
+        if first[0] == _sre_constants.ANY:
+            return True
+        if first[0] == _sre_constants.IN:
+            names = {str(argument) for operation, argument in first[1] if operation == _sre_constants.CATEGORY}
+            return any(
+                f"CATEGORY_{kind}" in names and f"CATEGORY_NOT_{kind}" in names for kind in ("SPACE", "DIGIT", "WORD")
+            )
+        return False
 
     def is_broad(body: Any) -> bool:
         """Return whether a repeated body starts with a wildcard or a negated class (``.``, ``[^"]``)."""
-        first = body.data[0] if body.data else None
+        first = next(flatten(body), None)
         if first is None:
             return False
         if first[0] in (_sre_constants.ANY, _sre_constants.NOT_LITERAL):
@@ -222,11 +281,29 @@ def _unsafe_reason(pattern: str) -> str | None:
         """Return whether every alternative starts with a different literal character."""
         starts = []
         for alternative in alternatives:
-            first = alternative.data[0] if alternative.data else None
+            first = next(flatten(alternative), None)
             if first is None or first[0] != _sre_constants.LITERAL:
                 return False
             starts.append(first[1])
         return len(set(starts)) == len(starts)
+
+    def streak(sub: Any) -> int:
+        """Return the most unbounded repeats in a row, with no required literal between, inside *sub*.
+
+        A repeat counts for one plus the streak inside its body, so a dot-and-digits group repeated
+        without a bound is two.
+        """
+        best = current = 0
+        for operation, argument in flatten(sub):
+            if operation in repeats:
+                inner = streak(argument[2])
+                current += (1 if argument[1] >= _UNBOUNDED else 0) + inner
+            elif operation == _sre_constants.LITERAL:
+                current = 0
+            elif operation == _sre_constants.BRANCH:
+                current += max((streak(alternative) for alternative in argument[1]), default=0)
+            best = max(best, current)
+        return best
 
     def walk(sub: Any, inside: bool) -> None:
         """Collect the reasons why repeats in *sub* are unsafe; *inside* means within an unbounded repeat."""
@@ -237,7 +314,8 @@ def _unsafe_reason(pattern: str) -> str | None:
                 if unlimited:
                     unbounded["count"] += 1
                     unbounded["broad"] += is_broad(body)
-                    first = body.data[0] if body.data else None
+                    unbounded["any"] += is_any(body)
+                    first = next(flatten(body), None)
                     guard = chr(first[1]) if first is not None and first[0] == _sre_constants.LITERAL else None
                     if repeats_inside(body, guard):
                         reasons.append("it repeats a repeated group without a bound, which can take exponential time on a hostile page")
@@ -255,13 +333,19 @@ def _unsafe_reason(pattern: str) -> str | None:
 
     walk(tree, False)
 
-    # Wildcard repeats multiply: a leading ``.*`` with any other unbounded repeat, or many wildcards, are refused.
-    first = tree.data[0] if tree.data else None
+    # Wildcards multiply: ``.*`` is allowed only as the one unbounded repeat of the pattern, a
+    # leading negated class with other unbounded repeats is refused, and so are many wildcards,
+    # long runs of repeats with no literal between them, and very many repeats.
+    first = next(flatten(tree), None)
     leading_broad = first is not None and first[0] in repeats and first[1][1] >= _UNBOUNDED and is_broad(first[1][2])
+    if unbounded["any"] and unbounded["count"] > unbounded["any"]:
+        reasons.append("it has an unbounded '.' repeat next to other unbounded repeats, which is quadratic or worse on a long line")
     if leading_broad and unbounded["count"] > 1:
         reasons.append("it starts with an unbounded wildcard and has more unbounded repeats, which is quadratic on a long line")
     if unbounded["broad"] > _MAX_BROAD:
         reasons.append(f"it has more than {_MAX_BROAD} unbounded wildcard or negated-class repeats")
+    if streak(tree) > _MAX_STREAK:
+        reasons.append(f"it has more than {_MAX_STREAK} unbounded repeats in a row with no literal between them")
     if unbounded["count"] > _MAX_UNBOUNDED:
         reasons.append(f"it has more than {_MAX_UNBOUNDED} unbounded repeats")
     return reasons[0] if reasons else None
