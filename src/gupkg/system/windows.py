@@ -551,9 +551,12 @@ def _output_lines(stream: Any) -> Iterator[tuple[str, bool, bool]]:
             # Cut a very long line into bounded pieces, backing up so a UTF-8
             # character is never split between two pieces.
             while end - start > _MAX_LINE:
-                cut = start + _MAX_LINE
-                while cut > start + 1 and pending[cut] & 0xC0 == 0x80:
+                # A UTF-8 character has at most 4 bytes, so backing up 3 at most
+                # finds its start; bytes that are not UTF-8 are cut as they are.
+                cut, back = start + _MAX_LINE, 0
+                while back < 3 and pending[cut] & 0xC0 == 0x80:
                     cut -= 1
+                    back += 1
                 yield _decode_output(bytes(pending[start:cut])), False, True
                 start = cut
             if match is None:

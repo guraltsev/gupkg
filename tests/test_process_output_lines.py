@@ -8,6 +8,7 @@ lines and the event stream are out of scope (see ``test_console_renderer.py``).
 
 from __future__ import annotations
 
+import random
 import sys
 import time
 
@@ -83,16 +84,46 @@ def test_a_very_long_line_without_a_newline_is_cut_into_bounded_pieces_quickly()
     assert "".join(text for text, _, _ in pieces) == "abcdefgh" * (total // 8)
 
 
-def test_a_long_line_is_never_cut_inside_a_utf8_character() -> None:
-    """When a piece boundary would fall inside a multi-byte character the cut moves back so every piece decodes cleanly."""
-    text = "\u00e9" * 100_000
+@pytest.mark.parametrize(
+    ("character", "prefix"),
+    [
+        pytest.param(character, prefix, id=f"{len(character.encode())}-byte-char-after-{prefix}-ascii")
+        for character in ("\u00e9", "\u65e5", "\U0001f600")
+        for prefix in range(len(character.encode()))
+    ],
+)
+def test_a_long_line_is_never_cut_inside_a_utf8_character(character: str, prefix: int) -> None:
+    """Whatever offset of a 2-, 3- or 4-byte character the 64 KiB cut falls on, every piece is whole and the pieces rebuild the line exactly."""
+    text = "a" * prefix + character * 40_000
     data = text.encode("utf-8") + b"\n"
     chunks = [data[i : i + 8191] for i in range(0, len(data), 8191)]
 
     pieces = _lines(*chunks)
 
+    assert len(pieces) > 1, "the line was long enough to be cut"
     assert "".join(piece for piece, _, _ in pieces) == text
     assert all("\ufffd" not in piece for piece, _, _ in pieces)
+    assert all(len(piece.encode("utf-8")) <= 64 * 1024 for piece, _, _ in pieces)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param(b"\x80" * 200_000, id="continuation-bytes"),
+        pytest.param(b"\xc3" * 200_000, id="lead-bytes"),
+        pytest.param(random.Random(7).randbytes(200_000).replace(b"\n", b"x").replace(b"\r", b"y"), id="random-bytes"),
+    ],
+)
+def test_hostile_bytes_without_a_newline_are_cut_into_few_pieces_quickly(payload: bytes) -> None:
+    """Output that is not UTF-8 at all (runs of continuation or lead bytes, random bytes) is cut at the cap in bounded time, not byte by byte."""
+    chunks = [payload[i : i + 8192] for i in range(0, len(payload), 8192)]
+
+    started = time.monotonic()
+    pieces = _lines(*chunks)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 5
+    assert len(pieces) <= 200_000 // (64 * 1024 - 3) + 2
 
 
 @pytest.mark.windows_integration
