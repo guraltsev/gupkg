@@ -1,8 +1,8 @@
 """Cover observable package CLI behavior across configuration and installation.
 
-Temporary package trees, TOML parsing, and filesystem output are real. Windows
-registry, junction, shortcut, process, and network boundaries are mocked where
-the behavior would otherwise depend on the host. Internal module layout and
+Temporary package trees, TOML parsing, filesystem output, and junctions are real.
+The machine boundary (registry, shortcuts, elevation, processes, network) is a
+``FakeSystem`` per test, so no test reaches the host. Internal module layout and
 private call order are out of scope.
 """
 
@@ -20,12 +20,14 @@ import sys
 import tempfile
 import textwrap
 import tomllib
-import urllib.request
 import zipfile
 from pathlib import Path
 from types import ModuleType
 import unittest
 from unittest import mock
+
+from gupkg.system.fake import FakeSystem
+from gupkg.system.port import ProcessResult
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = ROOT / "src"
@@ -41,12 +43,6 @@ def load_gupkg_module():
     return module
 
 
-def runtime_module(name: str) -> ModuleType:
-    """Return one runtime module loaded by the ``gupkg.py`` entrypoint."""
-
-    return sys.modules[f"gupkg.{name}"]
-
-
 @contextlib.contextmanager
 def pushd(path: Path):
     cwd = Path.cwd()
@@ -60,31 +56,23 @@ def pushd(path: Path):
 class GupkgCliBehaviorTests(unittest.TestCase):
     maxDiff = None
 
+    def setUp(self) -> None:
+        """Give each test its own fake machine (Start Menu, bin folders, registry)."""
+        machine = tempfile.TemporaryDirectory()
+        self.addCleanup(machine.cleanup)
+        self.system = FakeSystem(Path(machine.name))
+
     def run_main(self, module, args: list[str]) -> tuple[int, str]:
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stdout):
             try:
-                code = module.main(args)
+                code = module.main(args, system=self.system)
             except SystemExit as exc:
                 code = exc.code
         if code is None:
             code = 0
         self.assertIsInstance(code, int)
         return code, stdout.getvalue()
-
-    def user_env(self, tmpdir: str) -> dict[str, str]:
-        root = Path(tmpdir)
-        return {
-            "APPDATA": str(root / "AppData"),
-            "USERPROFILE": str(root / "UserProfile"),
-        }
-
-    def machine_env(self, tmpdir: str) -> dict[str, str]:
-        root = Path(tmpdir)
-        return {
-            "PROGRAMDATA": str(root / "ProgramData"),
-            "SYSTEMDRIVE": str(root / "SystemDrive"),
-        }
 
     def copy_fixture(self, tmpdir: str, name: str) -> Path:
         destination = Path(tmpdir) / name
@@ -194,7 +182,7 @@ class GupkgCliBehaviorTests(unittest.TestCase):
             code, _ = self.run_main(module, ["tui", str(FIXTURES / "GoodApp" / "1.2.3.local.1")])
 
         self.assertEqual(code, 0)
-        tui.run_tui.assert_called_once_with(str(FIXTURES / "GoodApp" / "1.2.3.local.1"))
+        tui.run_tui.assert_called_once_with(self.system, str(FIXTURES / "GoodApp" / "1.2.3.local.1"))
 
     def test_short_help_hides_bootstrap_and_removed_flags(self) -> None:
         """Short help hides bootstrap and removed flags."""
@@ -226,6 +214,7 @@ class GupkgCliBehaviorTests(unittest.TestCase):
             root = Path(tmpdir)
             upstream = root / "upstream"
             upstream.mkdir()
+            self.system.allow_real("git")  # the repository below is a local fixture
             self.run_git(upstream, "init")
             self.run_git(upstream, "checkout", "-b", "main")
             self.run_git(upstream, "config", "user.name", "Gupkg Tests")
@@ -315,6 +304,7 @@ class GupkgCliBehaviorTests(unittest.TestCase):
             root = Path(tmpdir)
             upstream = root / "upstream"
             upstream.mkdir()
+            self.system.allow_real("git")  # the repository below is a local fixture
 
             # Build one upstream commit for the bootstrap template to resolve
             # without first populating the template's own App directory.
@@ -366,11 +356,7 @@ class GupkgCliBehaviorTests(unittest.TestCase):
 
             # Installing the bootstrap template must stage and install a new
             # immutable version rather than activating _bootstrap itself.
-            with mock.patch.dict(os.environ, self.user_env(tmpdir), clear=False):
-                with mock.patch.object(
-                    module, "update_current_junction_if_needed", return_value=True
-                ):
-                    result = module.install_package(version_dir)
+            result = module.install_package(version_dir, self.system)
 
             new_versions = [
                 path
@@ -407,11 +393,7 @@ class GupkgCliBehaviorTests(unittest.TestCase):
 
             # Reinstalling a bootstrap reuses its immutable promotion instead
             # of manufacturing a local-version directory.
-            with mock.patch.dict(os.environ, self.user_env(tmpdir), clear=False):
-                with mock.patch.object(
-                    module, "update_current_junction_if_needed", return_value=True
-                ):
-                    repeat_result = module.install_package(version_dir)
+            repeat_result = module.install_package(version_dir, self.system)
 
             concrete_versions = [
                 path for path in package_root.glob("[0-9]*") if path != version_dir
@@ -426,22 +408,12 @@ class GupkgCliBehaviorTests(unittest.TestCase):
             upstream.joinpath("payload.txt").write_text("two", encoding="utf-8")
             self.run_git(upstream, "add", "payload.txt")
             self.run_git(upstream, "commit", "-m", "update")
-            current = package_root / "current"
-            current.mkdir()
-            layout = runtime_module("layout")
-            with mock.patch.dict(os.environ, self.user_env(tmpdir), clear=False):
-                with mock.patch.object(layout, "is_junction", return_value=True):
-                    with mock.patch.object(
-                        layout, "get_junction_target", return_value=new_version
-                    ):
-                        with mock.patch.object(
-                            module,
-                            "update_current_junction_if_needed",
-                            return_value=True,
-                        ):
-                            update_result = module.full_package_upgrade(
-                                new_version, scope=module.Scope.USER
-                            )
+            self.assertEqual(
+                self.system.read_link(package_root / "current"), new_version.resolve()
+            )
+            update_result = module.full_package_upgrade(
+                new_version, self.system, scope=module.Scope.USER
+            )
 
             updated_versions = [
                 path
@@ -465,7 +437,7 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            result = module.install_downloaded_update(version_dir)
+            result = module.install_downloaded_update(version_dir, self.system)
 
         self.assertFalse(result.ok)
         self.assertEqual(result.exit_code, module.EXIT_USER_ERROR)
@@ -520,12 +492,12 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                 """,
             )
 
-            with mock.patch.object(
-                runtime_module("github_releases").urllib.request,
-                "urlopen",
-                side_effect=[io.BytesIO(release), io.BytesIO(archive)],
-            ):
-                result = module.download_package_update(version_dir)
+            self.system.add_url(
+                "https://api.github.com/repos/owner/tool/releases/latest", release
+            )
+            self.system.add_url("https://example.invalid/tool.zip", archive)
+
+            result = module.download_package_update(version_dir, self.system)
 
             repaired_version = version_dir.parent / "1.0.0"
             self.assertTrue(result.ok, msg=result.errors)
@@ -555,7 +527,7 @@ class GupkgCliBehaviorTests(unittest.TestCase):
             (version_dir.parent / "2.0.0.local.1").mkdir()
             (version_dir.parent / "2.0.0.local.1" / "pkg.toml").write_text("", encoding="utf-8")
 
-            result = module.install_downloaded_update(version_dir)
+            result = module.install_downloaded_update(version_dir, self.system)
 
         self.assertFalse(result.ok)
         self.assertEqual(result.exit_code, module.EXIT_USER_ERROR)
@@ -606,23 +578,10 @@ class GupkgCliBehaviorTests(unittest.TestCase):
             )
             archive = self.zip_bytes({"tool.exe": "release payload"})
 
-            # Keep HTTP and Windows junction boundaries controlled while
-            # exercising module loading, staging, extraction, and metadata.
-            with mock.patch.dict(os.environ, self.user_env(tmpdir), clear=False):
-                with mock.patch.object(
-                    module, "is_current_user_admin", return_value=False
-                ):
-                    with mock.patch.object(
-                        module,
-                        "update_current_junction_if_needed",
-                        return_value=True,
-                    ):
-                        with mock.patch.object(
-                            runtime_module("updates").urllib.request,
-                            "urlopen",
-                            return_value=io.BytesIO(archive),
-                        ):
-                            result = module.install_package(version_dir)
+            # Serve the release ZIP from the fake network while exercising
+            # module loading, staging, extraction, and metadata.
+            self.system.add_url("https://example.invalid/tool.zip", archive)
+            result = module.install_package(version_dir, self.system)
 
             release_dir = package_root / "2.0.0"
             self.assertTrue(result.ok, msg=result.errors)
@@ -684,19 +643,10 @@ class GupkgCliBehaviorTests(unittest.TestCase):
             )
             archive = self.zip_bytes({"tool.exe": "release payload", "marker.txt": "remove"})
 
-            # Exercise the public bootstrap workflow while holding its network
-            # and Windows-junction boundaries deterministic.
-            with mock.patch.dict(os.environ, self.user_env(tmpdir), clear=False):
-                with mock.patch.object(module, "is_current_user_admin", return_value=False):
-                    with mock.patch.object(
-                        module, "update_current_junction_if_needed", return_value=True
-                    ):
-                        with mock.patch.object(
-                            runtime_module("updates").urllib.request,
-                            "urlopen",
-                            return_value=io.BytesIO(archive),
-                        ):
-                            result = module.install_package(version_dir)
+            # Exercise the public bootstrap workflow with the release ZIP
+            # served from the fake network.
+            self.system.add_url("https://example.invalid/tool.zip", archive)
+            result = module.install_package(version_dir, self.system)
 
             release_app = package_root / "2.0.0" / "App"
             self.assertTrue(result.ok, msg=result.errors)
@@ -746,23 +696,10 @@ class GupkgCliBehaviorTests(unittest.TestCase):
             )
             executable = b"MZ executable payload"
 
-            # Keep HTTP and Windows junction boundaries controlled while
-            # exercising module loading, staging, and executable deployment.
-            with mock.patch.dict(os.environ, self.user_env(tmpdir), clear=False):
-                with mock.patch.object(
-                    module, "is_current_user_admin", return_value=False
-                ):
-                    with mock.patch.object(
-                        module,
-                        "update_current_junction_if_needed",
-                        return_value=True,
-                    ):
-                        with mock.patch.object(
-                            runtime_module("updates").urllib.request,
-                            "urlopen",
-                            return_value=io.BytesIO(executable),
-                        ):
-                            result = module.install_package(version_dir)
+            # Serve the executable from the fake network while exercising
+            # module loading, staging, and executable deployment.
+            self.system.add_url("https://example.invalid/tool.exe", executable)
+            result = module.install_package(version_dir, self.system)
 
             release_dir = package_root / "2.0.0"
             self.assertTrue(result.ok, msg=result.errors)
@@ -836,23 +773,16 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                 }
             ).encode()
 
-            # Keep HTTP and Windows junction boundaries controlled while
+            # Serve the release metadata and ZIP from the fake network while
             # exercising built-in discovery, staging, verification, and extraction.
-            with mock.patch.dict(os.environ, self.user_env(tmpdir), clear=False):
-                with mock.patch.object(
-                    module, "is_current_user_admin", return_value=False
-                ):
-                    with mock.patch.object(
-                        module,
-                        "update_current_junction_if_needed",
-                        return_value=True,
-                    ):
-                        with mock.patch.object(
-                            runtime_module("updates").urllib.request,
-                            "urlopen",
-                            side_effect=[io.BytesIO(release), io.BytesIO(archive)],
-                        ):
-                            result = module.install_package(version_dir)
+            self.system.add_url(
+                "https://api.github.com/repos/owner/tool/releases/latest", release
+            )
+            self.system.add_url(
+                "https://github.com/owner/tool/releases/download/v2.0.0/tool_Windows_x86_64.zip",
+                archive,
+            )
+            result = module.install_package(version_dir, self.system)
 
             release_dir = package_root / "2.0.0"
             self.assertTrue(result.ok, msg=result.errors)
@@ -1125,17 +1055,12 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                 "payload", encoding="utf-8"
             )
             (version_dir / "pkg.toml").write_text("", encoding="utf-8")
-            env = self.user_env(tmpdir)
 
-            with mock.patch.dict(os.environ, env, clear=False):
-                with mock.patch.object(
-                    module, "update_current_junction_if_needed", return_value=True
-                ):
-                    code, output = self.run_main(module, ["install", str(version_dir)])
+            code, output = self.run_main(module, ["install", str(version_dir)])
 
             self.assertEqual(code, module.EXIT_SUCCESS, msg=output)
             self.assertEqual((version_dir / "pkg.toml").read_text(encoding="utf-8"), "")
-            self.assertFalse((Path(env["USERPROFILE"]) / "bin").exists())
+            self.assertFalse(self.system.scope_folders(module.Scope.USER).bin_dir.exists())
 
     def test_install_uses_the_only_version_directory_when_current_is_missing(
         self,
@@ -1150,25 +1075,13 @@ class GupkgCliBehaviorTests(unittest.TestCase):
             (version_dir / "App" / "payload.txt").write_text(
                 "payload", encoding="utf-8"
             )
-            env = self.user_env(tmpdir)
 
-            with mock.patch.dict(os.environ, env, clear=False):
-                with mock.patch.object(
-                    module, "update_current_junction_if_needed", return_value=True
-                ) as junction_mock:
-                    with mock.patch.object(
-                        module,
-                        "install_components",
-                        return_value=mock.Mock(
-                            ok=True, changed=False, warnings=[], errors=[]
-                        ),
-                    ) as components_mock:
-                        code, output = self.run_main(module, ["install", str(package_root)])
+            code, output = self.run_main(module, ["install", str(package_root)])
 
             self.assertEqual(code, module.EXIT_SUCCESS, msg=output)
-            junction_mock.assert_called_once()
-            self.assertEqual(junction_mock.call_args.args[0].version_path, version_dir)
-            components_mock.assert_called_once()
+            self.assertEqual(
+                self.system.read_link(package_root / "current"), version_dir.resolve()
+            )
 
     def test_install_rejects_legacy_config_aliases_with_actionable_error(self) -> None:
         """Install rejects legacy config aliases with actionable error."""
@@ -1186,8 +1099,7 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                 """,
             )
 
-            with mock.patch.dict(os.environ, self.user_env(tmpdir), clear=False):
-                code, output = self.run_main(module, ["install", str(version_dir)])
+            code, output = self.run_main(module, ["install", str(version_dir)])
 
             self.assertEqual(code, module.EXIT_USER_ERROR)
             self.assertIn(
@@ -1209,18 +1121,13 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with mock.patch.dict(os.environ, self.user_env(tmpdir), clear=False):
-                with mock.patch.object(
-                    module, "update_current_junction_if_needed"
-                ) as junction_mock:
-                    with mock.patch.object(
-                        module, "install_components"
-                    ) as components_mock:
-                        code, output = self.run_main(module, ["install", str(version_dir)])
+            code, output = self.run_main(module, ["install", str(version_dir)])
 
             self.assertEqual(code, module.EXIT_USER_ERROR)
-            junction_mock.assert_not_called()
-            components_mock.assert_not_called()
+            # Nothing was changed: no junction, registry access, or shortcut.
+            self.assertFalse(os.path.lexists(package_root / "current"))
+            self.assertEqual(self.system.registry_log, [])
+            self.assertEqual(self.system.shortcuts(), {})
             self.assertIn("Configuration inconsistencies detected", output)
             self.assertIn(f"gupkg config-fix {version_dir}", output)
             self.assertIn(
@@ -1243,18 +1150,7 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                 """,
             )
 
-            with mock.patch.dict(os.environ, self.user_env(tmpdir), clear=False):
-                with mock.patch.object(
-                    module, "update_current_junction_if_needed", return_value=True
-                ):
-                    with mock.patch.object(
-                        module,
-                        "install_components",
-                        return_value=mock.Mock(
-                            ok=True, changed=False, warnings=[], errors=[]
-                        ),
-                    ):
-                        code, output = self.run_main(module, ["install", str(version_dir)])
+            code, output = self.run_main(module, ["install", str(version_dir)])
 
             self.assertEqual(code, module.EXIT_SUCCESS, msg=output)
 
@@ -1377,22 +1273,11 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                         only_portable = {str(only_portable).lower()}
                         """,
                     )
-                    env = self.user_env(tmpdir) | self.machine_env(tmpdir)
+                    self.system.elevated = is_admin
 
-                    with mock.patch.dict(os.environ, env, clear=False):
-                        with mock.patch.object(
-                            module,
-                            "is_current_user_admin",
-                            return_value=is_admin,
-                        ):
-                            with mock.patch.object(
-                                module,
-                                "update_current_junction_if_needed",
-                                return_value=True,
-                            ):
-                                code, output = self.run_main(
-                                    module, ["install", str(version_dir)]
-                                )
+                    code, output = self.run_main(
+                        module, ["install", str(version_dir)]
+                    )
 
                 self.assertEqual(code, module.EXIT_SUCCESS, msg=output)
                 self.assertIn(f"Selected scope: {expected_scope}", output)
@@ -1415,16 +1300,9 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                 """,
             )
 
-            with mock.patch.dict(os.environ, self.user_env(tmpdir), clear=False):
-                with mock.patch.object(
-                    module, "update_current_junction_if_needed", return_value=True
-                ):
-                    with mock.patch.object(
-                        runtime_module("components"),
-                        "create_shortcut",
-                        side_effect=RuntimeError("boom"),
-                    ):
-                        code, output = self.run_main(module, ["install", str(version_dir)])
+            self.system.failures["write_shortcut"] = RuntimeError("boom")
+
+            code, output = self.run_main(module, ["install", str(version_dir)])
 
             self.assertEqual(code, module.EXIT_MUTATION_ERROR)
             self.assertIn("Failed to create shortcut 'Broken Shortcut': boom", output)
@@ -1442,11 +1320,7 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                 "payload", encoding="utf-8"
             )
 
-            with mock.patch.dict(os.environ, self.user_env(tmpdir), clear=False):
-                with mock.patch.object(
-                    module, "update_current_junction_if_needed", return_value=True
-                ):
-                    code, output = self.run_main(module, ["install", str(version_dir)])
+            code, output = self.run_main(module, ["install", str(version_dir)])
 
             self.assertEqual(code, module.EXIT_MUTATION_ERROR)
             self.assertIn("unresolved variable", output)
@@ -1471,17 +1345,10 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                 """,
             )
 
-            with mock.patch.dict(os.environ, self.user_env(tmpdir), clear=False):
-                with mock.patch.object(
-                    module, "update_current_junction_if_needed", return_value=True
-                ):
-                    with mock.patch.object(
-                        runtime_module("components"), "create_shortcut"
-                    ) as create_shortcut_mock:
-                        code, output = self.run_main(module, ["install", str(version_dir)])
+            code, output = self.run_main(module, ["install", str(version_dir)])
 
             self.assertEqual(code, module.EXIT_MUTATION_ERROR)
-            create_shortcut_mock.assert_not_called()
+            self.assertEqual(self.system.shortcuts(), {})
             self.assertIn("unresolved variable", output)
 
     def test_bin_name_outside_default_root_is_allowed_but_warned(self) -> None:
@@ -1501,23 +1368,12 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                 content = "@echo off\\r\\n"
                 """,
             )
-            env = self.user_env(tmpdir)
 
-            with mock.patch.dict(os.environ, env, clear=False):
-                with mock.patch.object(
-                    module, "update_current_junction_if_needed", return_value=True
-                ):
-                    with mock.patch.object(
-                        runtime_module("components"),
-                        "ensure_bin_in_path",
-                        return_value=mock.Mock(
-                            ok=True, changed=False, warnings=[], errors=[]
-                        ),
-                    ):
-                        code, output = self.run_main(module, ["install", str(version_dir)])
+            code, output = self.run_main(module, ["install", str(version_dir)])
 
             self.assertEqual(code, module.EXIT_SUCCESS, msg=output)
-            self.assertTrue((Path(env["USERPROFILE"]) / "outside.cmd").exists())
+            bin_dir = self.system.scope_folders(module.Scope.USER).bin_dir
+            self.assertTrue((bin_dir.parent / "outside.cmd").exists())
             self.assertIn(
                 "WARNING: bin output resolves outside the default bin root", output
             )
@@ -1539,22 +1395,12 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                 targetPath = "C:\\Tools\\tool.exe"
                 """,
             )
-            env = self.user_env(tmpdir)
 
-            with mock.patch.dict(os.environ, env, clear=False):
-                with mock.patch.object(
-                    module, "update_current_junction_if_needed", return_value=True
-                ):
-                    with mock.patch.object(
-                        runtime_module("components"), "create_shortcut"
-                    ) as create_shortcut_mock:
-                        code, output = self.run_main(module, ["install", str(version_dir)])
+            code, output = self.run_main(module, ["install", str(version_dir)])
 
             self.assertEqual(code, module.EXIT_SUCCESS, msg=output)
-            shortcut_path = create_shortcut_mock.call_args.args[0]
-            default_root = (
-                Path(env["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "opt"
-            )
+            [shortcut_path] = self.system.shortcuts()
+            default_root = self.system.scope_folders(module.Scope.USER).shortcut_root
             self.assertFalse(
                 shortcut_path.resolve(strict=False).is_relative_to(
                     default_root.resolve(strict=False)
@@ -1589,26 +1435,14 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                 '''
                 """,
             )
-            env = self.user_env(tmpdir)
-            env["SystemRoot"] = r"C:\Windows"
 
-            with mock.patch.dict(os.environ, env, clear=False):
-                with mock.patch.object(
-                    module, "update_current_junction_if_needed", return_value=True
-                ):
-                    with mock.patch.object(
-                        runtime_module("components"),
-                        "ensure_bin_in_path",
-                        return_value=mock.Mock(
-                            ok=True, changed=False, warnings=[], errors=[]
-                        ),
-                    ):
-                        code, output = self.run_main(module, ["install", str(version_dir)])
+            # ${SystemRoot} in the wrapper text expands from the process environment.
+            with mock.patch.dict(os.environ, {"SystemRoot": r"C:\Windows"}):
+                code, output = self.run_main(module, ["install", str(version_dir)])
 
             self.assertEqual(code, module.EXIT_SUCCESS, msg=output)
-            written = (Path(env["USERPROFILE"]) / "bin" / "tool.ps1").read_text(
-                encoding="utf-8"
-            )
+            bin_dir = self.system.scope_folders(module.Scope.USER).bin_dir
+            written = (bin_dir / "tool.ps1").read_text(encoding="utf-8")
             self.assertIn("$ErrorActionPreference = 'Stop'", written)
             self.assertIn(r"C:\Windows", written)
             self.assertIn("$app = Join-Path $PSScriptRoot 'Tool.exe'", written)
@@ -1636,24 +1470,13 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                 forward_args = true
                 """,
             )
-            env = self.user_env(tmpdir)
 
-            with mock.patch.dict(os.environ, env, clear=False):
-                with mock.patch.object(
-                    module, "update_current_junction_if_needed", return_value=True
-                ):
-                    with mock.patch.object(
-                        runtime_module("components"),
-                        "ensure_bin_in_path",
-                        return_value=mock.Mock(
-                            ok=True, changed=False, warnings=[], errors=[]
-                        ),
-                    ):
-                        code, output = self.run_main(module, ["install", str(version_dir)])
+            code, output = self.run_main(module, ["install", str(version_dir)])
 
             self.assertEqual(code, module.EXIT_SUCCESS, msg=output)
-            shim_path = Path(env["USERPROFILE"]) / "bin" / "tool.exe"
-            config_path = Path(env["USERPROFILE"]) / "bin" / "tool.config.toml"
+            bin_dir = self.system.scope_folders(module.Scope.USER).bin_dir
+            shim_path = bin_dir / "tool.exe"
+            config_path = bin_dir / "tool.config.toml"
             self.assertEqual(
                 shim_path.read_bytes(),
                 (SRC_ROOT / "gupkg" / "shim" / "shim-console.exe").read_bytes(),
@@ -1703,8 +1526,7 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                 """,
             )
 
-            with mock.patch.dict(os.environ, self.user_env(tmpdir), clear=False):
-                code, output = self.run_main(module, ["install", str(version_dir)])
+            code, output = self.run_main(module, ["install", str(version_dir)])
 
             self.assertEqual(code, module.EXIT_USER_ERROR)
             self.assertIn("cannot be combined with shim options", output)
@@ -1714,7 +1536,6 @@ class GupkgCliBehaviorTests(unittest.TestCase):
         module = load_gupkg_module()
         with tempfile.TemporaryDirectory() as tmpdir:
             version_dir = self.make_version_dir(tmpdir, "WrapperRepairApp")
-            env = self.user_env(tmpdir)
 
             def write_wrapper_config(message: str) -> None:
                 self.write_config(
@@ -1730,31 +1551,19 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                     """,
                 )
 
-            with mock.patch.dict(os.environ, env, clear=False):
-                with mock.patch.object(
-                    module, "update_current_junction_if_needed", return_value=True
-                ):
-                    with mock.patch.object(
-                        runtime_module("components"),
-                        "ensure_bin_in_path",
-                        return_value=mock.Mock(
-                            ok=True, changed=False, warnings=[], errors=[]
-                        ),
-                    ):
-                        write_wrapper_config("one")
-                        first_code, first_output = self.run_main(
-                            module, ["install", str(version_dir)]
-                        )
-                        write_wrapper_config("two")
-                        second_code, second_output = self.run_main(
-                            module, ["install", str(version_dir)]
-                        )
+            write_wrapper_config("one")
+            first_code, first_output = self.run_main(
+                module, ["install", str(version_dir)]
+            )
+            write_wrapper_config("two")
+            second_code, second_output = self.run_main(
+                module, ["install", str(version_dir)]
+            )
 
             self.assertEqual(first_code, module.EXIT_SUCCESS, msg=first_output)
             self.assertEqual(second_code, module.EXIT_SUCCESS, msg=second_output)
-            written = (Path(env["USERPROFILE"]) / "bin" / "tool.cmd").read_text(
-                encoding="ascii"
-            )
+            bin_dir = self.system.scope_folders(module.Scope.USER).bin_dir
+            written = (bin_dir / "tool.cmd").read_text(encoding="ascii")
             self.assertIn("echo two", written)
             self.assertNotIn("echo one", written)
 
@@ -1774,8 +1583,7 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                 """,
             )
 
-            with mock.patch.dict(os.environ, self.user_env(tmpdir), clear=False):
-                code, output = self.run_main(module, ["install", str(version_dir)])
+            code, output = self.run_main(module, ["install", str(version_dir)])
 
             self.assertEqual(code, module.EXIT_USER_ERROR)
             self.assertIn("Unsupported legacy key 'downloadURL'", output)
@@ -1796,14 +1604,13 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                 """,
             )
 
-            with mock.patch.object(
-                module, "update_current_junction_if_needed"
-            ) as junction_mock:
-                result = module.install_package(version_dir)
+            result = module.install_package(version_dir, self.system)
 
             self.assertTrue(result.ok)
             self.assertEqual(result.exit_code, module.EXIT_SUCCESS)
-            junction_mock.assert_called_once()
+            self.assertEqual(
+                self.system.read_link(version_dir.parent / "current"), version_dir.resolve()
+            )
 
     def test_install_populates_missing_app_from_zip_origin_before_components(
         self,
@@ -1828,30 +1635,32 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                 url = "https://example.invalid/tool.zip"
                 checksum = "sha256:{checksum}"
                 extractSubdir = "tool"
+
+                [[environment]]
+                Name = "ZIP_ORIGIN_READY"
+                Value = "ready"
                 """,
             )
 
-            def assert_app_ready(*_args, **_kwargs):
-                self.assertEqual(
-                    (version_dir / "App" / "tool.exe").read_text(encoding="utf-8"),
-                    "payload",
-                )
-                return mock.Mock(ok=True, changed=False, warnings=[], errors=[])
+            # Record what App held at the moment the first component (an
+            # environment value) was written.
+            app_when_components_ran: list[str] = []
+            write_env = self.system.set_env
 
-            with mock.patch.dict(os.environ, self.user_env(tmpdir), clear=False):
-                with mock.patch.object(
-                    module, "update_current_junction_if_needed", return_value=True
-                ):
-                    with mock.patch.object(
-                        urllib.request, "urlopen", return_value=io.BytesIO(archive)
-                    ) as urlopen_mock:
-                        with mock.patch.object(
-                            module, "install_components", side_effect=assert_app_ready
-                        ):
-                            code, output = self.run_main(module, ["install", str(version_dir)])
+            def probing_set_env(scope, name, value, expandable):
+                app_when_components_ran.append(
+                    (version_dir / "App" / "tool.exe").read_text(encoding="utf-8")
+                )
+                write_env(scope, name, value, expandable)
+
+            self.system.set_env = probing_set_env
+            self.system.add_url("https://example.invalid/tool.zip", archive)
+
+            code, output = self.run_main(module, ["install", str(version_dir)])
 
             self.assertEqual(code, module.EXIT_SUCCESS, msg=output)
-            urlopen_mock.assert_called_once_with("https://example.invalid/tool.zip", timeout=60)
+            self.assertEqual(self.system.fetch_log, ["https://example.invalid/tool.zip"])
+            self.assertEqual(app_when_components_ran, ["payload"])
             self.assertIn("Verifying sha256 checksum", output)
 
     def test_install_skips_zip_origin_when_app_is_already_populated(self) -> None:
@@ -1873,22 +1682,10 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                 """,
             )
 
-            with mock.patch.dict(os.environ, self.user_env(tmpdir), clear=False):
-                with mock.patch.object(
-                    module, "update_current_junction_if_needed", return_value=True
-                ):
-                    with mock.patch.object(urllib.request, "urlopen") as urlopen_mock:
-                        with mock.patch.object(
-                            module,
-                            "install_components",
-                            return_value=mock.Mock(
-                                ok=True, changed=False, warnings=[], errors=[]
-                            ),
-                        ):
-                            code, output = self.run_main(module, ["install", str(version_dir)])
+            code, output = self.run_main(module, ["install", str(version_dir)])
 
             self.assertEqual(code, module.EXIT_SUCCESS, msg=output)
-            urlopen_mock.assert_not_called()
+            self.assertEqual(self.system.fetch_log, [])
             self.assertEqual(
                 (version_dir / "App" / "existing.txt").read_text(encoding="utf-8"),
                 "keep",
@@ -1923,24 +1720,12 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                 """,
             )
 
-            with mock.patch.dict(os.environ, self.user_env(tmpdir), clear=False):
-                with mock.patch.object(
-                    module, "update_current_junction_if_needed", return_value=True
-                ):
-                    with mock.patch.object(
-                        urllib.request, "urlopen", return_value=io.BytesIO(archive)
-                    ) as urlopen_mock:
-                        with mock.patch.object(
-                            module,
-                            "install_components",
-                            return_value=mock.Mock(
-                                ok=True, changed=False, warnings=[], errors=[]
-                            ),
-                        ):
-                            code, output = self.run_main(module, ["install", str(version_dir)])
+            self.system.add_url("https://example.invalid/current.zip", archive)
+
+            code, output = self.run_main(module, ["install", str(version_dir)])
 
             self.assertEqual(code, module.EXIT_SUCCESS, msg=output)
-            urlopen_mock.assert_called_once_with("https://example.invalid/current.zip", timeout=60)
+            self.assertEqual(self.system.fetch_log, ["https://example.invalid/current.zip"])
             self.assertTrue((version_dir / "App" / "selected.exe").exists())
 
     def test_refresh_app_replaces_existing_app_from_zip_origin(self) -> None:
@@ -1964,23 +1749,10 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                 """,
             )
 
-            with mock.patch.dict(os.environ, self.user_env(tmpdir), clear=False):
-                with mock.patch.object(
-                    module, "update_current_junction_if_needed", return_value=True
-                ):
-                    with mock.patch.object(
-                        urllib.request, "urlopen", return_value=io.BytesIO(archive)
-                    ):
-                        with mock.patch.object(
-                            module,
-                            "install_components",
-                            return_value=mock.Mock(
-                                ok=True, changed=False, warnings=[], errors=[]
-                            ),
-                        ):
-                            code, output = self.run_main(
-                                module, ["install", "--refresh-app", str(version_dir)]
-                            )
+            self.system.add_url("https://example.invalid/tool.zip", archive)
+            code, output = self.run_main(
+                module, ["install", "--refresh-app", str(version_dir)]
+            )
 
             self.assertEqual(code, module.EXIT_SUCCESS, msg=output)
             self.assertEqual(
@@ -2007,11 +1779,7 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                 """,
             )
 
-            with mock.patch.dict(os.environ, self.user_env(tmpdir), clear=False):
-                with mock.patch.object(
-                    module, "update_current_junction_if_needed", return_value=True
-                ):
-                    code, output = self.run_main(module, ["install", str(version_dir)])
+            code, output = self.run_main(module, ["install", str(version_dir)])
 
             self.assertEqual(code, module.EXIT_MUTATION_ERROR)
             self.assertIn("does not declare url, script, or module", output)
@@ -2038,16 +1806,10 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                 """,
             )
 
-            with mock.patch.dict(os.environ, self.user_env(tmpdir), clear=False):
-                with mock.patch.object(
-                    module, "update_current_junction_if_needed", return_value=True
-                ):
-                    with mock.patch.object(
-                        urllib.request, "urlopen", return_value=io.BytesIO(archive)
-                    ):
-                        code, output = self.run_main(
-                            module, ["install", "--refresh-app", str(version_dir)]
-                        )
+            self.system.add_url("https://example.invalid/tool.zip", archive)
+            code, output = self.run_main(
+                module, ["install", "--refresh-app", str(version_dir)]
+            )
 
             self.assertEqual(code, module.EXIT_MUTATION_ERROR)
             self.assertEqual(
@@ -2076,16 +1838,10 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                 """,
             )
 
-            with mock.patch.dict(os.environ, self.user_env(tmpdir), clear=False):
-                with mock.patch.object(
-                    module, "update_current_junction_if_needed", return_value=True
-                ):
-                    with mock.patch.object(
-                        urllib.request, "urlopen", return_value=io.BytesIO(archive)
-                    ):
-                        code, output = self.run_main(
-                            module, ["install", "--refresh-app", str(version_dir)]
-                        )
+            self.system.add_url("https://example.invalid/tool.zip", archive)
+            code, output = self.run_main(
+                module, ["install", "--refresh-app", str(version_dir)]
+            )
 
             self.assertEqual(code, module.EXIT_MUTATION_ERROR)
             self.assertEqual(
@@ -2115,23 +1871,10 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                 """,
             )
 
-            with mock.patch.dict(os.environ, self.user_env(tmpdir), clear=False):
-                with mock.patch.object(
-                    module, "update_current_junction_if_needed", return_value=True
-                ):
-                    with mock.patch.object(
-                        urllib.request, "urlopen", return_value=io.BytesIO(archive)
-                    ):
-                        with mock.patch.object(
-                            module,
-                            "install_components",
-                            return_value=mock.Mock(
-                                ok=True, changed=False, warnings=[], errors=[]
-                            ),
-                        ):
-                            code, output = self.run_main(
-                                module, ["install", "--no-checksum", str(version_dir)]
-                            )
+            self.system.add_url("https://example.invalid/tool.zip", archive)
+            code, output = self.run_main(
+                module, ["install", "--no-checksum", str(version_dir)]
+            )
 
             self.assertEqual(code, module.EXIT_SUCCESS, msg=output)
             self.assertTrue((version_dir / "App" / "tool.exe").exists())
@@ -2160,40 +1903,29 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                 """,
             )
 
-            def run_script(*_args, **kwargs):
-                payload = json.loads(kwargs["input"])
+            def run_script(call):
+                payload = json.loads(call.input_text)
                 self.assertEqual(payload["identity"]["name"], "ScriptOriginApp")
                 self.assertNotIn("version", payload["config"]["origin"])
                 self.assertEqual(
                     Path(payload["PkgVars"]["App"]).resolve(),
                     (version_dir / "App").resolve(),
                 )
-                self.assertEqual(Path(kwargs["cwd"]).resolve(), script_dir.resolve())
+                self.assertEqual(Path(call.cwd).resolve(), script_dir.resolve())
                 app_dir = version_dir / "App"
                 app_dir.mkdir()
                 (app_dir / "created.txt").write_text("ok", encoding="utf-8")
-                return subprocess.CompletedProcess(
-                    args=[], returncode=0, stdout="", stderr=""
-                )
+                return ProcessResult(0)
 
-            with mock.patch.dict(os.environ, self.user_env(tmpdir), clear=False):
-                with mock.patch.object(
-                    module, "update_current_junction_if_needed", return_value=True
-                ):
-                    with mock.patch.object(
-                        subprocess, "run", side_effect=run_script
-                    ) as run_mock:
-                        with mock.patch.object(
-                            module,
-                            "install_components",
-                            return_value=mock.Mock(
-                                ok=True, changed=False, warnings=[], errors=[]
-                            ),
-                        ):
-                            code, output = self.run_main(module, ["install", str(version_dir)])
+            self.system.processes["populate.cmd"] = run_script
+
+            code, output = self.run_main(module, ["install", str(version_dir)])
 
             self.assertEqual(code, module.EXIT_SUCCESS, msg=output)
-            run_mock.assert_called_once()
+            self.assertEqual(
+                [[Path(part).resolve() for part in command] for command in self.system.process_log],
+                [[script_path.resolve()]],
+            )
             self.assertTrue((version_dir / "App" / "created.txt").exists())
 
     def test_module_origin_populates_a_missing_app_with_package_context(self) -> None:
@@ -2234,20 +1966,9 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                 """,
             )
 
-            with mock.patch.dict(os.environ, self.user_env(tmpdir), clear=False):
-                with mock.patch.object(
-                    module, "update_current_junction_if_needed", return_value=True
-                ):
-                    with mock.patch.object(
-                        module,
-                        "install_components",
-                        return_value=mock.Mock(
-                            ok=True, changed=False, warnings=[], errors=[]
-                        ),
-                    ):
-                        code, output = self.run_main(
-                            module, ["install", str(version_dir)]
-                        )
+            code, output = self.run_main(
+                module, ["install", str(version_dir)]
+            )
 
             self.assertEqual(code, module.EXIT_SUCCESS, msg=output)
             self.assertEqual(
@@ -2281,14 +2002,12 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                 """,
             )
 
-            with mock.patch.dict(os.environ, self.user_env(tmpdir), clear=False):
-                with mock.patch.object(urllib.request, "urlopen") as urlopen_mock:
-                    code, output = self.run_main(
-                        module, ["config-check", str(version_dir)]
-                    )
+            code, output = self.run_main(
+                module, ["config-check", str(version_dir)]
+            )
 
             self.assertEqual(code, module.EXIT_SUCCESS, msg=output)
-            urlopen_mock.assert_not_called()
+            self.assertEqual(self.system.fetch_log, [])
             self.assertIn("Health check passed.", output)
 
     def test_health_check_accepts_origin_history_without_sources(self) -> None:
@@ -2312,10 +2031,9 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                 """,
             )
 
-            with mock.patch.dict(os.environ, self.user_env(tmpdir), clear=False):
-                code, output = self.run_main(
-                        module, ["config-check", str(version_dir)]
-                )
+            code, output = self.run_main(
+                    module, ["config-check", str(version_dir)]
+            )
 
             self.assertEqual(code, module.EXIT_SUCCESS, msg=output)
             self.assertIn("Health check passed.", output)
@@ -2343,10 +2061,9 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                 """,
             )
 
-            with mock.patch.dict(os.environ, self.user_env(tmpdir), clear=False):
-                code, output = self.run_main(
-                        module, ["config-check", str(version_dir)]
-                )
+            code, output = self.run_main(
+                    module, ["config-check", str(version_dir)]
+            )
 
             self.assertEqual(code, module.EXIT_USER_ERROR)
             self.assertIn("duplicate version: 1.0", output)
@@ -2370,10 +2087,9 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                 """,
             )
 
-            with mock.patch.dict(os.environ, self.user_env(tmpdir), clear=False):
-                code, output = self.run_main(
-                        module, ["config-check", str(version_dir)]
-                )
+            code, output = self.run_main(
+                    module, ["config-check", str(version_dir)]
+            )
 
             self.assertEqual(code, module.EXIT_USER_ERROR)
             self.assertIn(
@@ -2403,10 +2119,9 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                 """,
             )
 
-            with mock.patch.dict(os.environ, self.user_env(tmpdir), clear=False):
-                code, output = self.run_main(
-                        module, ["config-check", str(version_dir)]
-                )
+            code, output = self.run_main(
+                    module, ["config-check", str(version_dir)]
+            )
 
             self.assertEqual(code, module.EXIT_USER_ERROR)
             self.assertIn("Unknown key 'version' in origin", output)
@@ -2429,10 +2144,9 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                 """,
             )
 
-            with mock.patch.dict(os.environ, self.user_env(tmpdir), clear=False):
-                code, output = self.run_main(
-                        module, ["config-check", str(version_dir)]
-                )
+            code, output = self.run_main(
+                    module, ["config-check", str(version_dir)]
+            )
 
             self.assertEqual(code, module.EXIT_USER_ERROR)
             self.assertIn("[origin].script was not found", output)
@@ -2452,22 +2166,29 @@ class GupkgCliBehaviorTests(unittest.TestCase):
 
                 [origin]
                 url = "https://example.invalid/tool.zip"
+
+                [[environment]]
+                Name = "NEWER_CURRENT_APP"
+                Value = "installed"
                 """,
             )
 
-            with mock.patch.dict(os.environ, self.user_env(tmpdir), clear=False):
-                with mock.patch.object(
-                    module, "update_current_junction_if_needed", return_value=False
-                ):
-                    with mock.patch.object(urllib.request, "urlopen") as urlopen_mock:
-                        with mock.patch.object(
-                            module, "install_components"
-                        ) as install_components_mock:
-                            code, output = self.run_main(module, ["install", str(version_dir)])
+            # A newer version is already the active one.
+            newer = version_dir.parent / "2.0.0.local.1"
+            (newer / "App").mkdir(parents=True)
+            (newer / "pkg.toml").write_text("", encoding="utf-8")
+            self.system.create_junction(version_dir.parent / "current", newer)
+            shutil.rmtree(version_dir / "App")
+
+            code, output = self.run_main(module, ["install", str(version_dir)])
 
             self.assertEqual(code, module.EXIT_SUCCESS, msg=output)
-            urlopen_mock.assert_not_called()
-            install_components_mock.assert_not_called()
+            self.assertEqual(self.system.fetch_log, [])
+            self.assertFalse((version_dir / "App").exists())
+            self.assertEqual(self.system.env_values(module.Scope.USER), {})
+            self.assertEqual(
+                self.system.read_link(version_dir.parent / "current"), newer.resolve()
+            )
 
 
 if __name__ == "__main__":

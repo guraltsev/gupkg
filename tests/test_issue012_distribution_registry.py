@@ -1,6 +1,7 @@
 """Cover manager-v2, custom-payload, and offline-registry behavior.
 
-Manager TOML, package-shaped directories, and registry state are real. Git,
+Manager TOML, package-shaped directories, registry state, and installed wrapper
+files are real; the machine (PATH, shortcuts, links) is a ``FakeSystem``. Git,
 network, Windows elevation, and native launcher execution are out of scope;
 these tests protect the validation and cache boundaries that do not require
 those external systems.
@@ -8,16 +9,18 @@ those external systems.
 
 from __future__ import annotations
 
+import io
+from contextlib import redirect_stdout
 from pathlib import Path
-from unittest import mock
 
 import pytest
+import tomllib
 
 from gupkg.configuration import normalize_runtime_config
 from gupkg import components
-from gupkg.core import ActionResult, ConfigValidationError, ExpansionMode, PackageIdentity, Scope, expand_text, read_toml_file
+from gupkg.core import ConfigValidationError, ExpansionMode, PackageIdentity, Scope, expand_text, read_toml_file
 from gupkg import cli
-from gupkg import gupkg as package_workflows
+from gupkg.system.fake import FakeSystem
 from gupkg.manager import load_manager_config
 from gupkg.registry import registry_status, search_registry, validate_registry_tree
 
@@ -98,21 +101,24 @@ def test_dynamic_shims_provision_runtime_and_licenses_but_static_shims_do_not(tm
     assert not (static_bin / "libstdc++-6.dll").exists()
 
 
-def test_cli_shim_linkage_option_temporarily_overrides_the_default(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The CLI passes an explicit static linkage choice into a package install."""
-    captured: dict[str, object] = {}
+def test_cli_shim_linkage_option_temporarily_overrides_the_default(tmp_path: Path, system: FakeSystem) -> None:
+    """``install --shim-linkage static`` installs the self-contained launcher and no shared runtime DLLs."""
+    version_path = tmp_path / "tool" / "1.0.0.local.1"
+    (version_path / "App").mkdir(parents=True)
+    (version_path / "App" / "payload.exe").write_text("payload", encoding="utf-8")
+    (version_path / "pkg.toml").write_text(
+        'name = "tool"\nversion = "1.0.0"\nlocalVersion = 1\n\n'
+        "[[bin]]\nname = \"tool\"\ntarget = '$App\\payload.exe'\ntype = \"console\"\n",
+        encoding="utf-8",
+    )
 
-    def install(*args: object, **kwargs: object) -> ActionResult:
-        captured.update(kwargs)
-        return ActionResult(True)
+    code = cli.main(["--scope", "user", "install", str(version_path), "--shim-linkage", "static"], system=system)
 
-    monkeypatch.setattr(package_workflows, "install_package", install)
-    version_path = _identity(tmp_path).version_path
-
-    assert cli.main(["install", str(version_path), "--shim-linkage", "static"]) == 0
-    assert captured["shim_linkage"] == "static"
+    bin_dir = system.scope_folders(Scope.USER).bin_dir
+    shim_dir = Path(components.__file__).with_name("shim")
+    assert code == 0
+    assert (bin_dir / "tool.exe").read_bytes() == (shim_dir / "shim-console.static.exe").read_bytes()
+    assert not (bin_dir / "libstdc++-6.dll").exists()
 
 
 def test_version_root_expands_without_rebinding_literal_app(tmp_path: Path) -> None:
@@ -157,27 +163,27 @@ def test_registry_validation_rejects_multiple_seed_versions(tmp_path: Path) -> N
         validate_registry_tree(pkgs)
 
 
-def test_offline_registry_search_uses_only_validated_cache(tmp_path: Path) -> None:
+def test_offline_registry_search_uses_only_validated_cache(tmp_path: Path, system: FakeSystem) -> None:
     """Offline registry search fails without a validated cache and never creates one."""
     cache = tmp_path / "cache"
 
     with pytest.raises(FileNotFoundError):
-        search_registry(cache, "tool")
+        search_registry(cache, system, "tool")
 
-    state = registry_status(cache)
+    state = registry_status(cache, system)
     assert state.revision is None
     assert not cache.exists()
 
 
 def test_manager_bare_install_token_is_resolved_as_registry_selector(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, system: FakeSystem
 ) -> None:
-    """A bare manager install token selects the offline registry, not a local path."""
+    """A bare manager install token selects the offline registry, not a local path, and installs that package."""
     manager_dir = tmp_path / "manager"
-    system = tmp_path / "system"
+    system_root = tmp_path / "system"
     user = tmp_path / "user"
     cache = tmp_path / "cache"
-    for directory in (manager_dir, system, user):
+    for directory in (manager_dir, system_root, user):
         directory.mkdir()
     _identity(cache / "gupkg-registry" / "trees" / "a" / "pkgs", selector="tool")
     (cache / "gupkg-registry" / "state.toml").parent.mkdir(parents=True, exist_ok=True)
@@ -187,24 +193,28 @@ def test_manager_bare_install_token_is_resolved_as_registry_selector(
     )
     (manager_dir / "gupkg-config.toml").write_text(
         'mode = "manager"\nschema_version = 2\n\n'
-        f"[packages]\nsystem = '{system}'\nuser = '{user}'\n\n"
+        f"[packages]\nsystem = '{system_root}'\nuser = '{user}'\n\n"
         f"[bin]\nsystem = '{tmp_path / 'system-bin'}'\nuser = '{tmp_path / 'user-bin'}'\n\n"
             f"[registry]\ncache = '{cache}'\n\n"
             "[shims]\nlinkage = 'dynamic'\n",
         encoding="utf-8",
     )
     monkeypatch.chdir(manager_dir)
-    assert registry_status(cache).tree_path is not None
+    assert registry_status(cache, system).tree_path is not None
+    output = io.StringIO()
 
-    with mock.patch.object(
-        package_workflows, "install_package", return_value=ActionResult(True, exit_code=0)
-    ) as install:
-        assert cli.main(
+    with redirect_stdout(output):
+        code = cli.main(
             [
-                "--scope", "user", "manager", "--config",
+                "--format", "toml", "--scope", "user", "manager", "--config",
                 str(manager_dir / "gupkg-config.toml"),
                 "install", "tool", "--offline",
-            ]
-        ) == 0
+            ],
+            system=system,
+        )
 
-    assert install.call_args.kwargs["scope"] == Scope.USER
+    document = tomllib.loads(output.getvalue())
+    assert code == 0, document
+    assert document["manager"]["scope"] == "user"
+    assert (user / "tool" / "1.0.0.local.1" / "pkg.toml").is_file()
+    assert system.is_link(user / "tool" / "current")
