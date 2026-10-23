@@ -160,21 +160,19 @@ def test_latest_log_is_a_copy_of_the_newest_text_log(tmp_path: Path) -> None:
 
 
 def test_retention_keeps_the_newest_runs_and_drops_aged_ones_when_a_run_starts(tmp_path: Path) -> None:
-    """Pruning at run start leaves keep_runs runs including the new one, removes runs older than keep_days, and spares other files."""
+    """Pruning at run start leaves keep_runs runs including the new one, newest first, and spares other files (the age rule has its own test)."""
     logs = _logs(tmp_path)
     logs.mkdir(parents=True)
     for index in range(10):
         stamp = (FIXED_TIME - timedelta(hours=index + 1)).strftime("%Y%m%dT%H%M%SZ")
         for suffix in (".log", ".jsonl"):
             (logs / f"{stamp}-install{suffix}").write_text("old", encoding="utf-8")
-    ancient = (FIXED_TIME - timedelta(days=400)).strftime("%Y%m%dT%H%M%SZ")
-    (logs / f"{ancient}-install.log").write_text("ancient", encoding="utf-8")
     (logs / "notes.txt").write_text("keep me", encoding="utf-8")
     (logs / "events.jsonl").write_text("caller file", encoding="utf-8")
 
     session = RunSession(
         command="check", argv=[], mode="user", elevated=False, version="1.0.0", reporters=[],
-        fallback_base=tmp_path, clock=lambda: FIXED_TIME, keep_runs=4, keep_days=90,
+        fallback_base=tmp_path, clock=lambda: FIXED_TIME, keep_runs=4, keep_days=10000,
     )
     with session:
         session.finish("done", 0)
@@ -185,7 +183,6 @@ def test_retention_keeps_the_newest_runs_and_drops_aged_ones_when_a_run_starts(t
     assert runs[:3] == [(FIXED_TIME - timedelta(hours=h)).strftime("%Y%m%dT%H%M%SZ") + "-install" for h in (3, 2, 1)]
     assert (logs / "notes.txt").read_text(encoding="utf-8") == "keep me"
     assert (logs / "events.jsonl").read_text(encoding="utf-8") == "caller file"
-    assert not list(logs.glob(f"{ancient}*"))
 
 
 def test_an_unwritable_log_location_gives_one_warning_and_the_run_still_succeeds(
@@ -198,11 +195,12 @@ def test_an_unwritable_log_location_gives_one_warning_and_the_run_still_succeeds
 
     code = cli.main(["--scope", "user", "install", str(version)], system=system)
 
-    output = capsys.readouterr().out
+    captured = capsys.readouterr()
+    output = captured.out + captured.err
     assert code == 0
     assert len(re.findall(r"WARNING: Cannot write the run log", output)) == 1
     assert len(_run_files(root / "Example", ".log")) == 1
-    assert "==> Done" in output and output.rstrip().splitlines()[-1].startswith("Log of Example:")
+    assert "==> Done" in captured.out and captured.out.rstrip().splitlines()[-1].startswith("Log of Example:")
 
 
 def test_a_log_failure_in_the_middle_of_a_run_is_one_warning_not_a_failed_run(
@@ -334,7 +332,8 @@ def test_a_junction_planted_as_the_log_directory_cannot_redirect_the_writes(
 
     code = cli.main(["--scope", "user", "--events-file", "events.jsonl", "install", str(version)], system=system)
 
-    output = capsys.readouterr().out
+    captured = capsys.readouterr()
+    output = captured.out + captured.err
     assert code == 0
     assert list(outside.iterdir()) == []
     assert len(re.findall(r"WARNING: Cannot write the log of package Example", output)) == 1
@@ -357,7 +356,7 @@ def test_an_events_file_name_that_is_a_junction_inside_the_log_directory_is_not_
 
     assert code == 0
     assert list(outside.iterdir()) == []
-    assert "WARNING: Cannot write the log of package Example" in capsys.readouterr().out
+    assert "WARNING: Cannot write the log of package Example" in (lambda c: c.out + c.err)(capsys.readouterr())
 
 
 # ---------------------------------------------------------------------------
@@ -378,7 +377,8 @@ def test_an_install_leaves_package_logs_a_linking_run_log_and_nothing_in_appdata
 
     code = cli.main(["--scope", "user", "install", str(version)], system=system)
 
-    output = capsys.readouterr().out
+    captured = capsys.readouterr()
+    output = captured.out + captured.err
     assert code == 0
     [package_log] = _run_files(root / "Example", ".log")
     [package_events] = _run_files(root / "Example", ".jsonl")
@@ -398,7 +398,7 @@ def test_an_install_leaves_package_logs_a_linking_run_log_and_nothing_in_appdata
     assert (link["log"], link["events"]) == (str(package_log), str(package_events))
 
     # The summary names every log and is the last thing printed.
-    tail = output.rstrip().splitlines()[-2:]
+    tail = captured.out.rstrip().splitlines()[-2:]
     assert tail == [f"Run log: {run_log}", f"Log of Example: {package_log}"]
     assert list(appdata.iterdir()) == [] and list(local.iterdir()) == [] and list(programdata.iterdir()) == []
 
@@ -416,7 +416,8 @@ def test_redirected_install_output_is_plain_with_phase_headers_and_a_final_summa
 
     code = cli.main(["--scope", "user", "install", str(version)], system=system)
 
-    output = capsys.readouterr().out
+    captured = capsys.readouterr()
+    output = captured.out + captured.err
     assert code == 0
     assert "\x1b" not in output and "\r" not in output
     lines = output.splitlines()
@@ -459,7 +460,8 @@ def test_a_failing_git_clone_shows_gits_error_lines_in_the_fetch_phase_of_consol
 
     code = cli.main(["--scope", "user", "install", str(version)], system=system)
 
-    output = capsys.readouterr().out
+    captured = capsys.readouterr()
+    output = captured.out + captured.err
     assert code == 3, output
     package_text = _run_files(root / "Example", ".log")[0].read_text(encoding="utf-8")
     for text in (output, package_text):
@@ -478,7 +480,8 @@ def test_each_warning_appears_once_on_the_console_and_once_in_the_log(
     system.failures["broadcast_environment_change"] = OSError("broadcast refused")
 
     assert cli.main(["--scope", "user", "install", str(version)], system=system) == 0
-    live_output = capsys.readouterr().out
+    captured = capsys.readouterr()
+    live_output = captured.out + captured.err
     live_log = _run_files(root / "Example", ".log")[0].read_text(encoding="utf-8")
 
     for text in (live_output, live_log):
@@ -585,7 +588,8 @@ def test_a_manager_call_with_several_packages_logs_each_one_and_links_them_from_
 
     code = cli.main(["--scope", "user", "manager", "--config", str(config), "update", "--yes"], system=system)
 
-    output = capsys.readouterr().out
+    captured = capsys.readouterr()
+    output = captured.out + captured.err
     assert code == 0, output
     [run_log] = _run_files(user, ".log")
     run_text = run_log.read_text(encoding="utf-8")
@@ -598,3 +602,249 @@ def test_a_manager_call_with_several_packages_logs_each_one_and_links_them_from_
         other = "beta" if name == "alpha" else "alpha"
         assert f"{other}.zip" not in package_text
     assert "==> Fetch" not in run_text and "Downloading update" not in run_text
+
+
+# ---------------------------------------------------------------------------
+# Hostile entries in a log directory (the directory of an elevated run is
+# admin-only, but a user-owned root has no such protection)
+# ---------------------------------------------------------------------------
+
+
+def _combined(capsys: pytest.CaptureFixture[str]) -> str:
+    """Return everything the run printed, standard output then standard error."""
+    captured = capsys.readouterr()
+    return captured.out + captured.err
+
+
+def _run_install_with_events_file(tmp_path: Path, system: FakeSystem, prepare) -> tuple[Path, int]:
+    """Prepare the package's log directory with *prepare(logs)*, then run an install with ``--events-file events.jsonl``."""
+    root = tmp_path / "opt"
+    version = _package(root)
+    logs = _logs(root / "Example")
+    logs.mkdir(parents=True)
+    prepare(logs)
+    code = cli.main(["--scope", "user", "--events-file", "events.jsonl", "install", str(version)], system=system)
+    return logs, code
+
+
+def _victim(tmp_path: Path) -> Path:
+    """Create a file outside every log directory that an attack would want to overwrite."""
+    victim = tmp_path / "victim.txt"
+    victim.write_text("precious", encoding="utf-8")
+    return victim
+
+
+def test_an_events_file_name_that_is_a_hard_link_to_another_file_is_refused(
+    tmp_path: Path, system: FakeSystem, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A hard link planted under the events-file name is not opened, so the file it shares stays untouched, and the run warns once and succeeds."""
+    import os
+
+    victim = _victim(tmp_path)
+    logs, code = _run_install_with_events_file(tmp_path, system, lambda logs: os.link(victim, logs / "events.jsonl"))
+
+    assert code == 0
+    assert victim.read_text(encoding="utf-8") == "precious"
+    assert (logs / "events.jsonl").read_text(encoding="utf-8") == "precious"
+    assert _combined(capsys).count("WARNING: Cannot write the log of package Example") == 1
+
+
+def test_an_events_file_name_that_is_a_symbolic_link_is_not_followed(
+    tmp_path: Path, system: FakeSystem, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A symbolic link planted under the events-file name is refused rather than written through."""
+    import os
+
+    victim = _victim(tmp_path)
+
+    def plant(logs: Path) -> None:
+        try:
+            os.symlink(victim, logs / "events.jsonl")
+        except OSError:
+            pytest.skip("this account may not create symbolic links")
+
+    logs, code = _run_install_with_events_file(tmp_path, system, plant)
+
+    assert code == 0
+    assert victim.read_text(encoding="utf-8") == "precious"
+    assert "WARNING: Cannot write the log of package Example" in _combined(capsys)
+
+
+def test_a_link_planted_between_the_check_and_the_creation_is_not_followed(
+    tmp_path: Path, system: FakeSystem, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """If a hard link appears right after the name was found free, the exclusive creation fails and the victim stays untouched."""
+    import os
+
+    from gupkg.report import logfile
+
+    victim = _victim(tmp_path)
+    real_lexists = os.path.lexists
+
+    def racing_lexists(path) -> bool:
+        free = not real_lexists(path)
+        if Path(path).name == "events.jsonl" and free:
+            os.link(victim, path)       # the attacker wins the race here
+        return not free
+
+    monkeypatch.setattr(logfile.os.path, "lexists", racing_lexists)
+    logs, code = _run_install_with_events_file(tmp_path, system, lambda logs: None)
+
+    assert code == 0
+    assert victim.read_text(encoding="utf-8") == "precious"
+    assert "WARNING: Cannot write the log of package Example" in _combined(capsys)
+
+
+def test_an_events_file_that_gains_a_second_name_while_being_created_is_refused(
+    tmp_path: Path, system: FakeSystem, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A file that was linked to another place right after its creation is detected and not used."""
+    import builtins
+    import os
+
+    from gupkg.report import logfile
+
+    created: list[Path] = []
+
+    def linking_open(path, mode="r", *args, **kwargs):
+        handle = builtins.open(path, mode, *args, **kwargs)
+        if Path(path).name == "events.jsonl" and mode == "x":
+            created.append(tmp_path / f"second-name-{len(created)}.txt")
+            os.link(path, created[-1])
+        return handle
+
+    monkeypatch.setattr(logfile, "open", linking_open, raising=False)
+    logs, code = _run_install_with_events_file(tmp_path, system, lambda logs: None)
+
+    output = _combined(capsys)
+    assert code == 0 and len(created) == 2
+    assert "WARNING: Cannot write the log of package Example" in output
+    assert "WARNING: Cannot write the run log" in output
+
+
+def test_a_stale_events_file_from_an_earlier_run_is_replaced(tmp_path: Path, system: FakeSystem) -> None:
+    """A plain events file left by an earlier run is replaced, not appended to."""
+    logs, code = _run_install_with_events_file(
+        tmp_path, system, lambda logs: (logs / "events.jsonl").write_text("stale\n", encoding="utf-8")
+    )
+
+    assert code == 0
+    text = (logs / "events.jsonl").read_text(encoding="utf-8")
+    assert "OLD-RUN-MARKER" not in text and json.loads(text.splitlines()[0])["event"] == "run_start"
+
+
+def test_latest_log_is_published_without_writing_through_planted_names(tmp_path: Path) -> None:
+    """latest.log is built in a fresh temporary file and swapped in, so hard links planted at the old fixed temporary name or at latest.log never receive the copy."""
+    import os
+
+    victim = _victim(tmp_path)
+    logs = _logs(tmp_path)
+    logs.mkdir(parents=True)
+    os.link(victim, logs / "latest.log.tmp")
+    os.link(victim, logs / "latest.log")
+    session = RunSession(
+        command="check", argv=[], mode="user", elevated=False, version="1.0.0", reporters=[],
+        fallback_base=tmp_path, clock=lambda: FIXED_TIME,
+    )
+
+    with session:
+        session.finish("done", 0)
+
+    assert victim.read_text(encoding="utf-8") == "precious"
+    assert "# command: check" in (logs / "latest.log").read_text(encoding="utf-8")
+    assert [p.name for p in logs.glob("latest.*.tmp")] == ["latest.log.tmp"], "no temporary copy leaked"
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        pytest.param("latest.log.tmp", id="latest-temporary"),
+        pytest.param("latest.jsonl", id="latest-prefix"),
+        pytest.param("20261022T101500Z-install.jsonl", id="run-jsonl-name"),
+        pytest.param("20261022T101500Z-install-Example.log", id="run-log-name"),
+    ],
+)
+def test_events_file_names_that_collide_with_the_logs_own_files_are_refused(name: str) -> None:
+    """A name that would open a second handle on a run file, or on latest.log or its temporary copy, is refused."""
+    with pytest.raises(ValueError):
+        validate_log_file_name(name)
+
+
+# ---------------------------------------------------------------------------
+# Retention in isolation
+# ---------------------------------------------------------------------------
+
+
+def _old_run(logs: Path, moment: datetime, command: str = "install") -> str:
+    """Create a run's .log and .jsonl stamped *moment* and return their shared name."""
+    stem = f"{moment:%Y%m%dT%H%M%SZ}-{command}"
+    for suffix in (".log", ".jsonl"):
+        (logs / f"{stem}{suffix}").write_text("old", encoding="utf-8")
+    return stem
+
+
+def test_the_age_limit_alone_removes_old_runs_while_the_count_would_keep_them(tmp_path: Path) -> None:
+    """With a generous run count, only runs older than keep_days are removed."""
+    logs = _logs(tmp_path)
+    logs.mkdir(parents=True)
+    recent = _old_run(logs, FIXED_TIME - timedelta(days=10))
+    aged = _old_run(logs, FIXED_TIME - timedelta(days=200))
+    session = RunSession(
+        command="check", argv=[], mode="user", elevated=False, version="1.0.0", reporters=[],
+        fallback_base=tmp_path, clock=lambda: FIXED_TIME, keep_runs=50, keep_days=90,
+    )
+
+    with session:
+        session.finish("done", 0)
+
+    assert (logs / f"{recent}.log").exists() and (logs / f"{recent}.jsonl").exists()
+    assert not (logs / f"{aged}.log").exists() and not (logs / f"{aged}.jsonl").exists()
+
+
+def test_pruning_leaves_links_named_like_old_runs_alone(tmp_path: Path) -> None:
+    """A symbolic link named like an expired run is neither removed nor followed; only regular files are pruned."""
+    import os
+
+    victim = _victim(tmp_path)
+    logs = _logs(tmp_path)
+    logs.mkdir(parents=True)
+    expired = FIXED_TIME - timedelta(days=500)
+    link = logs / f"{expired:%Y%m%dT%H%M%SZ}-install.log"
+    try:
+        os.symlink(victim, link)
+    except OSError:
+        pytest.skip("this account may not create symbolic links")
+    session = RunSession(
+        command="check", argv=[], mode="user", elevated=False, version="1.0.0", reporters=[],
+        fallback_base=tmp_path, clock=lambda: FIXED_TIME,
+    )
+
+    with session:
+        session.finish("done", 0)
+
+    assert link.is_symlink() and victim.read_text(encoding="utf-8") == "precious"
+
+
+def test_the_cli_keeps_warnings_and_errors_on_standard_error_and_toml_mode_moves_everything_there(
+    tmp_path: Path, system: FakeSystem, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """As in 0.17, plain output puts warnings and errors on stderr and the rest on stdout; --format toml leaves stdout as only the document."""
+    root = tmp_path / "opt"
+    version = _package(root, extra='\n[[environment]]\nName = "EXAMPLE_READY"\nValue = "yes"\n')
+    system.failures["broadcast_environment_change"] = OSError("broadcast refused")
+
+    assert cli.main(["--scope", "user", "install", str(version)], system=system) == 0
+    plain = capsys.readouterr()
+    assert "WARNING: failed to broadcast" in plain.err and "WARNING" not in plain.out
+    assert "==> Done" in plain.out and "install: changed" in plain.out
+
+    missing = tmp_path / "no-such-package"
+    assert cli.main(["install", str(missing)], system=system) == 2
+    failed = capsys.readouterr()
+    assert "ERROR:" in failed.err and "ERROR:" not in failed.out
+
+    system.failures["broadcast_environment_change"] = OSError("broadcast refused")
+    assert cli.main(["--format", "toml", "--scope", "user", "install", str(version)], system=system) == 0
+    toml_run = capsys.readouterr()
+    assert toml_run.out.startswith("output_schema = 1") and "==>" not in toml_run.out
+    assert "==> Done" in toml_run.err and "WARNING: failed to broadcast" in toml_run.err

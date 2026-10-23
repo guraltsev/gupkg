@@ -37,6 +37,7 @@ import re
 import shutil
 import stat
 import threading
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -74,8 +75,13 @@ def validate_log_file_name(name: str) -> str:
     reserved = {"con", "prn", "aux", "nul", "conin", "conout", *(f"com{n}" for n in range(1, 10)), *(f"lpt{n}" for n in range(1, 10))}
     if device in reserved:
         raise ValueError(f"Invalid events file name {name!r}: it names a Windows device")
-    if name.lower().endswith(".log"):
-        raise ValueError(f"Invalid events file name {name!r}: .log files are the text logs")
+    if name.lower().endswith(".log") or name.lower().startswith("latest."):
+        raise ValueError(f"Invalid events file name {name!r}: .log files and latest.* belong to the text logs")
+
+    # A run's own files are named <stamp>-<command>.log/.jsonl; an events file
+    # with such a name would open a second handle on one of them.
+    if _RUN_FILE.match(name):
+        raise ValueError(f"Invalid events file name {name!r}: it looks like a run's log file")
     return name
 
 
@@ -186,7 +192,7 @@ class _Sink:
             prune_logs(self.directory, keep_runs, keep_days, now)
             self._open_pair(stem)
             if events_name is not None:
-                self._open_events_file(real_logs, events_name)
+                self._open_events_file(events_name)
         except OSError as exc:
             self.close()
             raise LogUnavailable(f"{self.directory}: {exc}") from exc
@@ -212,16 +218,32 @@ class _Sink:
             return
         raise OSError("no free log file name")
 
-    def _open_events_file(self, real_logs: Path, name: str) -> None:
+    def _open_events_file(self, name: str) -> None:
         """Create the caller-named events file, refusing anything that is not a plain file in this directory."""
         validate_log_file_name(name)
         path = self.directory / name
-        real = Path(os.path.realpath(path))
-        if real.parent != real_logs or _is_reparse_or_link(path) or (path.exists() and not path.is_file()):
-            raise OSError(f"{name} would not be a plain file inside {self.directory}")
-        handle = open(path, "w", encoding="utf-8", newline="\n")
+        refusal = OSError(f"{name} would not be a plain file inside {self.directory}")
+
+        # A stale file from an earlier run is replaced; anything else that
+        # already has this name (a link, a junction, a directory, a file with a
+        # second hard link that another folder shares) is refused, never opened.
+        if os.path.lexists(path):
+            info = os.lstat(path)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink > 1:
+                raise refusal
+            path.unlink()
+
+        # Create it exclusively, so that a link planted after the check above
+        # makes the creation fail instead of being followed.
+        handle = open(path, "x", encoding="utf-8", newline="\n")
         self._files.append(handle)
         self._json_files.append(handle)
+
+        # Prove what was created is a plain file with a single name (nobody
+        # linked it to another place in the meantime).
+        opened = os.fstat(handle.fileno())
+        if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1:
+            raise refusal
 
     def write_line(self, text: str) -> None:
         """Append one text line and flush."""
@@ -247,9 +269,16 @@ class _Sink:
 
     def publish_latest(self) -> None:
         """Replace ``latest.log`` with a copy of this run's text log."""
-        temporary = self.directory / "latest.log.tmp"
-        shutil.copyfile(self.text_path, temporary)
-        os.replace(temporary, self.directory / "latest.log")
+        # Copy into a uniquely named file that this call creates exclusively
+        # (a planted file or link under a fixed name is never written), then
+        # swap it in; replacing a name never follows a link at that name.
+        temporary = self.directory / f"latest.{uuid.uuid4().hex}.tmp"
+        try:
+            with open(self.text_path, "rb") as source, open(temporary, "xb") as target:
+                shutil.copyfileobj(source, target)
+            os.replace(temporary, self.directory / "latest.log")
+        finally:
+            temporary.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------
