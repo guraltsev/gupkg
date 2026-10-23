@@ -122,3 +122,6 @@ TODO            text eol=lf
 
 # Vendored third-party runtime, kept byte-identical to its wheels.
 src/gupkg/python/** -whitespace
+
+# Real 0.17 manifests copied verbatim as migration fixtures; their trailing whitespace is part of the input.
+tests/fixtures/registry_017/** -whitespace

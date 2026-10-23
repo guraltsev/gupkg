@@ -1,0 +1,16 @@
+only_portable = false
+description = "Bulk uninstaller for removing unwanted programs."
+homepage = "https://www.bcuninstaller.com/"
+
+[update]
+
+[update.check]
+mode = "module"
+
+[update.payload]
+mode = "module"
+
+[[shortcut]]
+name = "Bulk Crap Uninstaller"
+targetPath = "$App\\BCUninstaller.exe"
+description = "Bulk uninstaller"

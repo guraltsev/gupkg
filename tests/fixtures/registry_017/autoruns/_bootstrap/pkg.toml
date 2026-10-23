@@ -1,0 +1,18 @@
+only_portable = false
+description = "Shows what runs automatically at startup and logon."
+homepage = "https://learn.microsoft.com/sysinternals/"
+
+[update]
+
+[update.check]
+mode = "module"
+
+[update.payload]
+mode = "zip"
+# The publisher provides no checksum for this release asset.
+ignore_checksum = true
+
+[[shortcut]]
+name = "Tools\\Autoruns"
+targetPath = "$App\\Autoruns64.exe"
+description = "Shows what runs automatically at startup and logon."

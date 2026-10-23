@@ -55,6 +55,7 @@ from .origin import (
     copy_zip_extract_mappings,
     safe_extract_zip,
 )
+from .tomlio import write_toml
 from .system.port import System, run_checked
 
 
@@ -124,7 +125,7 @@ def write_update_state(path: Path, state: Dict[str, Any]) -> None:
         Timing, last-result, and assigned Git-version records; only the most
         recent 100 assignments are retained.
     """
-    lines = ["schemaVersion = 1"]
+    document: Dict[str, Any] = {"schemaVersion": 1}
     for key in (
         "lastAttemptedCheck",
         "lastSuccessfulCheck",
@@ -134,15 +135,14 @@ def write_update_state(path: Path, state: Dict[str, Any]) -> None:
         "lastError",
     ):
         if state.get(key) is not None:
-            lines.append(f"{key} = {_toml_string(state[key])}")
-    for item in state.get("assignedVersion", [])[-100:]:
-        lines.extend([
-            "",
-            "[[assignedVersion]]",
-            f"candidateId = {_toml_string(item['candidateId'])}",
-            f"version = {_toml_string(item['version'])}",
-        ])
-    write_text_atomic(path, "\n".join(lines) + "\n")
+            document[key] = str(state[key])
+    assigned = [
+        {"candidateId": str(item["candidateId"]), "version": str(item["version"])}
+        for item in state.get("assignedVersion", [])[-100:]
+    ]
+    if assigned:
+        document["assignedVersion"] = assigned
+    write_toml(path, document)
 
 
 def write_receipt(receipt: Path, candidate: Dict[str, Any], identity: PackageIdentity) -> None:
@@ -157,18 +157,12 @@ def write_receipt(receipt: Path, candidate: Dict[str, Any], identity: PackageIde
     identity : PackageIdentity
         Committed version directory that the next activation should install.
     """
-    write_text_atomic(
-        receipt,
-        "schemaVersion = 1\n"
-        f"candidateId = {_toml_string(candidate['candidateId'])}\n"
-        f"version = {_toml_string(identity.version)}\n"
-        f"localVersion = {_toml_string(identity.local_version)}\n",
-    )
-
-
-def _toml_string(value: Any) -> str:
-    """Render one value as a TOML basic string."""
-    return '"' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
+    write_toml(receipt, {
+        "schemaVersion": 1,
+        "candidateId": str(candidate["candidateId"]),
+        "version": str(identity.version),
+        "localVersion": str(identity.local_version),
+    })
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,28 @@
+only_portable = false
+description = "Git for Windows portable distribution with Git Bash and the MSYS2 tool set."
+homepage = "https://gitforwindows.org/"
+
+[update]
+
+[update.check]
+mode = "module"
+
+[update.payload]
+mode = "module"
+ignore_checksum = false
+
+[[path]]
+value = "$App\\cmd"
+
+[[path]]
+value = "$App\\bin"
+
+[[shortcut]]
+name = "Git bash"
+targetPath = "$App\\git-bash.exe"
+workingDirectory = "%USERPROFILE%"
+description = "Git Bash terminal"
+
+[[bin]]
+name = "diff"
+target = "$App\\usr\\bin\\diff.exe"

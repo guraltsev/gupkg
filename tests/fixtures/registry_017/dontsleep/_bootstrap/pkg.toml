@@ -1,0 +1,17 @@
+only_portable = false
+description = "Prevents Windows from sleeping, hibernating, shutting down, or restarting."
+homepage = "https://www.softwareok.com/?Download=DontSleep"
+
+[update]
+
+[update.check]
+mode = "module"
+
+[update.payload]
+mode = "zip"
+ignore_checksum = false
+
+[[shortcut]]
+name = "Dont Sleep"
+targetPath = "$App\\DontSleep_x64_p.exe"
+description = "Prevent Windows from sleeping"

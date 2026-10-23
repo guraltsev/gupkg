@@ -1,0 +1,28 @@
+only_portable = false
+description = "Image viewer, browser, and converter."
+homepage = "https://www.xnview.com/en/xnview-mp/"
+
+[update]
+
+[update.check]
+mode = "module"
+
+[update.payload]
+mode = "zip"
+# The publisher provides no checksum for this download.
+ignore_checksum = true
+
+# The ZIP wraps everything in one XnViewMP folder.
+[[update.payload.extract]]
+src = "XnViewMP/"
+dest = ""
+
+[[shortcut]]
+name = "XnView MP"
+targetPath = "$App\\xnviewmp.exe"
+description = "Image viewer and manager"
+
+[[bin]]
+name = "xnviewmp"
+target = "$App\\xnviewmp.exe"
+type = "gui"

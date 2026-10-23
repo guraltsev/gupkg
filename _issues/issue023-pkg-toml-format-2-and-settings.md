@@ -112,12 +112,11 @@ Epic: 020. Design: `_docs/rehaul_design.md` §4, §7, §11, §12 (`model/`),
      `gupkg settings show`);
    - the admin-only ACL check on the system layer is reused from
      `elevation.py`.
-7. **One TOML writer.** Add `tomli_w` to the runtime lock as its own
-   dependency, through the dev-tree lock tooling of issue 016
-   (`tools/update_deps.py`), and add it to the build probe of issue 019. Its
-   only copy today is vendored inside pip, which issue 019 removes. Use it for
-   settings, state, install records and receipts. Delete the hand-written
-   emitters and the hand-parsed `state.toml`.
+7. **One TOML writer.** `tomli_w` is already in the runtime lock as its own
+   dependency (issue 019 locked 1.2.0 through `tools/update_deps.py`, and the
+   build probe imports it). Use it for settings, state, install records and
+   receipts. Delete the hand-written emitters and the hand-parsed
+   `state.toml`.
 8. **No update discovery in a version directory (§9.3, decisions D10,
    D28).** A version directory is invalid if any of these hold:
    - it has a `[track]` table;
