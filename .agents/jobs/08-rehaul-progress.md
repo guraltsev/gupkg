@@ -20,7 +20,7 @@ on `main` before dispatching the first worker.
 | 018 | Remove system-Python autodetection | 016 | in review | rehaul/issue018 | | | |
 | 019 | The bundled Python ships without pip | 016 | merged | rehaul/issue019 | 5c922cb | 331 passed, 0 failed, 0 skipped | 019-1 real build; 019-2 clean-VM pip-less run; 019-3 update_deps --repair no-diff |
 | 021 | System boundary, FakeSystem, and sandbox mode | 016–019 | merged | rehaul/issue021 | 2fcf02c | 419 passed, 0 failed, 0 skipped | 021-1 sandbox vs real HKCU/Start Menu; 021-2 WM_SETTINGCHANGE; 021-3 UAC relaunch; 021-4 admin detection and --scope auto |
-| 022 | Event stream, console renderer, and standard logs | 021 | in review | rehaul/issue022 | | | |
+| 022 | Event stream, console renderer, and standard logs | 021 | blocked (owner question 1) | rehaul/issue022 (tip 7f6abfe, includes main at f08a5fc) | | 949 passed on the branch (3 ambient environments), 0 skipped | 022-1..022-5 in tests/manual_smoke.md |
 | 023 | `pkg.toml` format 2, settings model, and migration tool | 019 (and D35) | merged (part B pending, see notes) | rehaul/issue023 | 8e384cd | 642 passed, 0 failed, 0 skipped | 023-1 launchers refuse elevated; 023-2 elevated settings layers; 023-3 run tool on a copy of a real 0.17 C:/opt |
 | 024 | Catalog and package state model | 023 | merged | rehaul/issue024 | f08a5fc | 821 passed, 0 failed, 0 skipped | none |
 | 025 | First-class install modes | 021, 023 | in progress | rehaul/issue025 | | | |
@@ -50,7 +50,18 @@ on `main` before dispatching the first worker.
 
 ## Owner questions
 
-None blocking. For information:
+**1. Issue 022 needs a fourth review round. Allow it?** Review rounds 1, 2 and 3 of issue 022 (events, console renderer, logs) each found defects, and the job rule is to stop after three rounds without a clean review. Round 3 found ONE major defect; everything else was verified (events-file containment, hardlink/symlink/junction protections, bounded line splitting, independence from ambient environment variables, the merge with 024; 949 tests pass in three environments, no skips).
+
+The defect: `clean_line` in `src/gupkg/report/events.py:373-378` is quadratic on repeated unterminated device-string openers. The `_ANSI` alternative for `ESC P`/`ESC X`/`ESC ^`/`ESC _` is a lazy match up to a terminator (BEL or ESC backslash); with no terminator it rescans to the end of the line for every opener. A 64 KiB hostile child line made of `ESC P` repeated 20000 times stalls the renderer and the log writer for 5-12 seconds, and a 10 MB flood takes tens of minutes. The reviewer's fix is one line (accept end of line as a terminator) plus a timing-bounded regression test. Recorded minors: write the bidi characters as `\u` escapes in the source; an unterminated OSC leaves its payload visible (same fix); the catalog's `registry.py` git calls lack `on_line=subprocess_lines(...)` (wire in at issue 029).
+
+Options:
+- (A, recommended) Allow one more fix round limited to this regex and its test, followed by a short review.
+- (B) Merge 022 as it is and file the regex stall as a follow-up for issue 032.
+- (C) Reject 022 and rework it differently.
+
+Issue 022 blocks 026, 028, 029, 030, 031, 033 and 032, so the controller will end its session when 025 is merged unless you answer.
+
+For information (not a question):
 
 - The repo `.venv` was created by `uv` and has no pip, but 018/019 made the build tools (`scripts/build-standalone.cmd`, `release.cmd`, `update_deps.py`) use the `.venv`'s pip. `scripts/release.cmd` therefore fails with "No module named pip" until the `.venv` is recreated with `python -m venv` and `pip install -r requirements-dev.txt` (the docs now say so). The controller worked around it for 0.18 with `--python`. 1.0 will need the same unless the `.venv` is recreated.
 
@@ -84,3 +95,4 @@ None blocking. For information:
 - 2026-10-23: 022 review r1 (no blockers; hardlink-following events file, latest.log.tmp, quadratic _output_lines, vacuous retention tests; stderr->stdout change to be reverted per D13) sent back with a main-merge request. 024 review r1 (no blockers; majors: invalid UTF-8 in state files crashes catalog, five-function replacement only renamed) sent back. Merge order: whichever is clean first; the other merges main (reconciliation of 0.17 call sites in commands.py/gupkg.py/registry.py/manager.py). Notes for later: 029 must move catalog/registry.py's shared transports and ConfigValidationError out of legacy modules and delete layout.identity_from_path (D33); 031 should name _registry.toml [fingerprints] as the fingerprint location; 022 defaults for [logs] retention to be fed from settings in 025/029.
 - 2026-10-23: 024 merged (f08a5fc) after 3 review rounds (r1: invalid UTF-8 in state files crashed the catalog, five-function replacement only renamed; r2: two 0.17 regressions found by differential runs vs main (`_bootstrap`-only root shown broken; a broken `current` blocked explicit version directories); r3 clean). Suite on main: 821 passed. 022 is in fix round 2 and must merge main (reconcile 0.17 call sites). Dispatched 025.
 - Notes from 024 for later issues: 029 deletes `layout.identity_from_path`/`installed_version` and the renamed 0.17 adapters, after moving the shared registry transports and `ConfigValidationError` out of `gupkg.registry`/`gupkg.core` (catalog/registry.py imports them); 031 names `_registry.toml [fingerprints]` as the fingerprint location; 027/028 compute and verify fingerprints; `[[adhoc]]` in state.toml is `{path, mode}` (028 writes it); 028 defines the effect kinds the install record verifies; the 0.17 reviewer-confirmed intentional changes are in the issue 024 status line. Minor: `current` -> `_bootstrap` now refused (0.17 exited 0), not listed in the worker's log.
+- 2026-10-23: 022 review round 3 found one major defect (quadratic clean_line on unterminated device-string openers). Three rounds without a clean review: issue 022 is blocked and the question is in Owner questions. Branch rehaul/issue022 (tip 7f6abfe) and its worktree are kept. 025 continues.
