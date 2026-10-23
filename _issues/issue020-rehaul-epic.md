@@ -224,6 +224,12 @@ from D10, D11, D15 or D16 above, they win:
   libraries for reading and reference, but every operation they perform is
   a `gupkg` CLI call. The migration tool may import core and does its own
   work.
+- **D45:** every separate tool is callable as `gupkg <command>`:
+  `gupkg tui`, `gupkg manager` and `gupkg migrate` are permanent
+  forwarders. The migration tool ships in the release bundle.
+- **D46:** when `check-updates` finds a version whose download the
+  checksum rules refuse, the version directory stays written without
+  `App`.
 
 ## Acceptance (epic)
 

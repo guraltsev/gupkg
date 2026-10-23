@@ -135,7 +135,8 @@ Epic: 020. Design: `_docs/rehaul_design.md` §4, §7, §11, §12 (`model/`),
    core and becomes the migration tool's reader (item 10).
 10. **The migration tool (decision D33).** A separate, non-core program.
     It may import gupkg core and any libraries (D44); gupkg core never
-    calls it and runs without it. It does four jobs:
+    calls it and runs without it. It ships in the release bundle, and
+    `gupkg migrate …` forwards to it (D45). It does these jobs:
     - **Format 1 → format 2** for a version directory, as described in
       §18. It writes a backup by default and validates the result with
       `gupkg pkg check` before replacing the file. A `--check` dry run
@@ -150,6 +151,11 @@ Epic: 020. Design: `_docs/rehaul_design.md` §4, §7, §11, §12 (`model/`),
       `gupkg-config.toml` into a schema 3 `<root>\.gupkg\settings.toml`:
       roots become `[roots]`, `[bin]` becomes `[integration.*].bin`, and
       `[registry]` becomes a `[[registry]]` named `main`.
+    - **Shortcut import.** `gupkg migrate shortcuts` turns existing `.lnk`
+      shortcuts into `[[shortcut]]` tables (0.17's
+      `shortcuts_to_gupkg_toml.py`, D45).
+    - **Launchers.** Converting a package also writes its 1.0 launchers
+      (`install.cmd`, `gupkg-tui.cmd`).
     - **Adoption of 0.17 installs.** It writes an install record
       (`.gupkg\package.toml`, issue 024) for each installed 0.17 package,
       from its `current` and its declared components, and marks those

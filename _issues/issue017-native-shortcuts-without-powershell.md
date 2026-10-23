@@ -143,5 +143,5 @@ This issue is **stage 0** of the rehaul. Its decisions stand.
   changed target) without starting a process.
 - **`shortcuts_to_gupkg_toml.py`** was to move under a core `migrate/`
   package in 1.0. Core carries no migration code (decision D33), so it
-  moves out of core with the separate migration tool (issue 023). It keeps
-  using `read_shell_link`.
+  moves out of core into the separate migration tool (issue 023), called
+  as `gupkg migrate shortcuts` (D45). It keeps using `read_shell_link`.

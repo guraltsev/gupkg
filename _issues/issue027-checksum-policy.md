@@ -106,7 +106,8 @@ Epic: 020. Design: `_docs/rehaul_design.md` §9
       refused, nothing is downloaded, and nothing changes.
 - [ ] `gupkg check-updates` on a found version with no checksum does not
       download it without `--skip-checksum`: it reports the version as
-      needing `--skip-checksum` and leaves no populated `App` for it. With
+      needing `--skip-checksum` and leaves the version directory written
+      without `App` (D46). With
       `--skip-checksum` (on an `https://` URL) it downloads and populates
       the version. A found version whose payload does not match its hash
       is reported as failed, and no ready `App` is left for it.

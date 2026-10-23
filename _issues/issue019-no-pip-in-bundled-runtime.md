@@ -129,8 +129,8 @@ This issue is **stage 0** of the rehaul. Its decisions stand.
   the lock as a real runtime dependency with `tools/update_deps.py`, and add
   it to the build probe's import list.
 - **The build probe also imports the packages of both UI programs,
-  `gupkg-tui` and `gupkg-manager`** (issue 030, decision D34), so they are
-  checked like the CLI.
+  `gupkg-tui` and `gupkg-manager`, and of the migration tool** (issues 030
+  and 023, decisions D34 and D45), so they are checked like the CLI.
 - **Hooks.** Package hooks have no pip and no dependency installs. The
   rehaul's built-in services (issue 026) are designed to need only the
   standard library plus the bundle.

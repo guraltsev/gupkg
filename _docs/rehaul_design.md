@@ -2,7 +2,7 @@
 
 Date: 2026-10-22
 Status: proposed, revised after the owner review of 2026-10-22 (decisions
-D21–D44). Tracking issue: `_issues/issue020-rehaul-epic.md`.
+D21–D46). Tracking issue: `_issues/issue020-rehaul-epic.md`.
 Supersedes: the manager-mode and `_bootstrap` parts of issues 012 and 013.
 
 Issues 016–019 were filed separately on the same day. They cover how gupkg
@@ -275,6 +275,9 @@ Rules:
   - **The default** for `shipped` is `false` when `[source]` has a
     `download_url` or a `script`, and `true` otherwise. `shipped = false`
     with neither is **invalid**, because nothing could ever populate `App`.
+  - **One populate method per version.** `[source]` has a `download_url`
+    or a `script`, not both. The one combination is `shipped = true` with
+    a `download_url`. (Designer's default; it can be relaxed later.)
   - **gupkg's own tools always write the key explicitly:** `pkg new`,
     `pkg bundle`, the migration tool (section 18), and `check-updates`'
     `render_pinned`.
@@ -692,7 +695,10 @@ target = "$App\\firefox.exe"
 4. **Populate it, unless `--no-download`.** Run the version's populate
    script (section 4) into the new directory: download, verify (section 9),
    unpack and prepare. The checksum rules apply here exactly as in
-   `install`. The new version is now ready, but **not active**.
+   `install`. The new version is now ready, but **not active**. If the
+   checksum rules refuse the download (no hash and no `--skip-checksum`),
+   the version directory stays written without `App`, and the refusal is
+   reported (D46).
 5. **Report and stop.** The check reports the new directory, and the package
    shows as `outdated`. Nothing is activated or integrated: `current`,
    shortcuts, shims and the environment are unchanged.
@@ -1087,10 +1093,11 @@ root forwarder (section 21.1). Each package's own logs and records live in its
   across packages, the missing-checksum policy, grouping operations under one
   elevation, and the interactive UIs all live there. The CLI acts on explicit
   targets: one or several names or paths.
-- **`gupkg tui` and `gupkg manager` are permanent forwarders.**
-  `gupkg tui PATH` starts `gupkg-tui PATH`, and `gupkg manager …`
-  (including `gupkg manager tui`) starts `gupkg-manager …`, both from the
-  same gupkg tree. The CLI itself still has no UI.
+- **Every separate tool is callable as `gupkg <command>`** (D45).
+  `gupkg tui PATH` starts `gupkg-tui PATH`, `gupkg manager …` (including
+  `gupkg manager tui`) starts `gupkg-manager …`, and `gupkg migrate …`
+  starts `gupkg-migrate …`, all from the same gupkg tree. These
+  forwarders are permanent. The CLI itself still has no UI.
 - **Targets are names or paths.**
   - Selector grammar: `name`, `name@version`, `mode:name`, or a path. A path is
     anything containing `\` or `/`, or starting with `.`.
@@ -1111,7 +1118,7 @@ root forwarder (section 21.1). Each package's own logs and records live in its
   toml`, and the output is one document on stdout. Human output goes to
   stderr.
 - **No legacy code** (D33). The CLI has no 0.17 aliases. Old spellings other
-  than the two forwarders are unknown commands. Converting 0.17 data is the
+  than the forwarders are unknown commands. Converting 0.17 data is the
   job of the separate migration tool (section 18).
 
 ### 10.2 Commands (`gupkg`)
@@ -1142,6 +1149,7 @@ gupkg self status|repair|check-updates|update             # check-updates/update
 
 gupkg tui <target>                                        # forwards to gupkg-tui (section 15)
 gupkg manager ...                                         # forwards to gupkg-manager, e.g. `gupkg manager tui`
+gupkg migrate ...                                         # forwards to gupkg-migrate, the migration tool (section 18)
 ```
 
 The CLI has no `--all` and no interactive UI. Several targets in one call
@@ -1160,7 +1168,7 @@ planning and confirmation, the batch form is `gupkg-manager`.
 | `gupkg update PATH` (check + download + install) | `gupkg check-updates PATH` (finds, downloads and prepares), then `gupkg update PATH` (activates): two separate operations. |
 | `gupkg install PATH --allow-downgrade` | `gupkg switch PATH 1.2.3` |
 | `--no-checksum` | `--skip-checksum` (missing hashes only, `https://` URLs only) |
-| `gupkg config-check` / `config-fix` | `gupkg pkg check` / the migration tool (section 18) |
+| `gupkg config-check` / `config-fix` | `gupkg pkg check` / `gupkg migrate` (section 18) |
 | `gupkg manager list/doctor/search/registry` | `gupkg list/check/search/registry` |
 | `gupkg manager self status/repair` | `gupkg self status/repair` |
 | `gupkg manager self update` (which only repaired) | `gupkg self check-updates`, then `gupkg self update`: a real update to a new release |
@@ -1168,8 +1176,9 @@ planning and confirmation, the batch form is `gupkg-manager`.
 | `gupkg tui PATH` / `gupkg manager tui` | unchanged: they forward to `gupkg-tui PATH` and `gupkg-manager` |
 | a 0.17 installation | re-run the bootstrap once, then convert packages and settings with the migration tool (section 18) |
 
-There are no deprecated aliases (D33). `gupkg tui` and `gupkg manager` are
-permanent forwarders; every other 0.17 spelling is an unknown command.
+There are no deprecated aliases (D33). `gupkg tui`, `gupkg manager` and
+`gupkg migrate` are permanent forwarders (D45); every other 0.17 spelling
+is an unknown command.
 
 ### 10.4 Machine interface (the contract the UI programs and other tools use)
 
@@ -1334,7 +1343,9 @@ gupkg_manager/  separate program (gupkg-manager.exe shim)
 ```text
 gupkg_migrate/  separate, non-core tool (gupkg-migrate), built in issue 023 (section 18); may import gupkg core (D44)
                 0.17 pkg.toml -> format 2, _bootstrap -> _check_updates,
-                gupkg-config -> settings, adoption of 0.17 installs
+                gupkg-config -> settings, adoption of 0.17 installs,
+                shortcut import; ships in the release bundle;
+                `gupkg migrate` forwards to it (D45)
 ```
 
 Dependency rules:
@@ -1683,9 +1694,9 @@ gupkg-registry/
 ## 18. Migration
 
 Migration is done by a **separate, non-core tool**, `gupkg-migrate` (D33),
-built in issue 023. It may import gupkg core (D44). 1.0 core contains no code
-for 0.17 data: no format 1 reader, no `_bootstrap` handling and no 0.17
-aliases.
+built in issue 023. It may import gupkg core (D44). It ships in the release
+bundle and is called as `gupkg migrate …` (D45). 1.0 core contains no code for
+0.17 data: no format 1 reader, no `_bootstrap` handling and no 0.17 aliases.
 
 - **Upgrading gupkg itself.** 0.18 → 1.0 is a one-time re-run of the
   bootstrap script (section 21.5). 0.18's `self update` says so when it sees
@@ -1713,11 +1724,14 @@ aliases.
   file.
 - **`gupkg-migrate settings <gupkg-config.toml>`** converts manager config
   schema 2 into `settings.toml`.
+- **`gupkg-migrate shortcuts`** turns existing `.lnk` shortcuts into
+  `[[shortcut]]` tables (0.17's `shortcuts_to_gupkg_toml.py`, D45).
 - **Existing installs need no reinstall.** The migration tool *adopts*
   them. For each converted package that 0.17 installed, it writes
   `.gupkg\package.toml` from the existing `current` and the declared
   components, and marks those components "adopted". It reads old receipts
-  and `.gupkg\state\update.toml` once, then removes them.
+  and `.gupkg\state\update.toml` once, then removes them. Converting a
+  package also writes its 1.0 launchers (`install.cmd`, `gupkg-tui.cmd`).
 - **gupkg's own package** (`src\pkg.toml`, `src\pkg.local\check_update.py`,
   `unpack_app.py`) is rewritten for format 2 as described in section 21.6:
   a custom tracker and a custom populate script.
@@ -1729,7 +1743,7 @@ aliases.
 
 ## 19. Decisions
 
-D1, D3, D4 and D10–D20 are the owner's decisions of 2026-10-22. D21–D44
+D1, D3, D4 and D10–D20 are the owner's decisions of 2026-10-22. D21–D46
 were taken by the owner in the review that followed job 07, on the same
 day; they amend D2, D10, D11, D12, D14, D15 and D16 where the rows say so. D2
 and D5–D9 were proposed by the designer and confirmed in that review, D2
@@ -1781,6 +1795,8 @@ in changed form.
 | D42 | **Portable target.** A folder shaped `<name>\<version>\pkg.toml` installs in place; otherwise the configured portable root, or gupkg asks (section 6.3). | A fixed `%USERPROFILE%\opt-portable` default |
 | D43 | **`cleanup` never runs automatically** (`[cleanup] auto` enables it). **No lite bundle** in 1.0. | Automatic cleanup; `pkg bundle --lite` |
 | D44 | **The separate programs may import core.** `gupkg-tui` and `gupkg-manager` may import gupkg core and any libraries for reading and reference, but every operation they perform is a `gupkg` CLI call (sections 10.4, 12). The migration tool may import core and does its own work. Amends D12 and D38. | No imports at all (D12 as first written); UI programs doing operations in-process |
+| D45 | **Every separate tool is callable as `gupkg <command>`.** `gupkg tui`, `gupkg manager` and `gupkg migrate` are permanent forwarders. The migration tool ships in the release bundle and includes the shortcut import (0.17's `shortcuts_to_gupkg_toml.py`) (sections 10.1, 18). | Separate commands only |
+| D46 | **A refused download leaves the version without `App`.** When `check-updates` finds a version but the checksum rules refuse its download (no hash and no `--skip-checksum`), the version directory stays written without `App`, and the refusal is reported (section 7.4). | Write nothing |
 
 There are no open questions. The six questions of the first draft were
 answered by the owner on 2026-10-22: the default portable root (D42), the

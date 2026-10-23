@@ -43,7 +43,7 @@ Conditions, each to be met before the issue named:
 
 The owner answered every "Needs owner" item and every open question on
 2026-10-22, in a review session after commit 2. They are recorded in the
-design as D21–D44 (§19) and applied to the design and issues 016–033 in
+design as D21–D46 (§19) and applied to the design and issues 016–033 in
 commit 3. Where an answer replaced an earlier answer in the same session,
 only the final one is listed. "Reading" marks a detail that the designer
 inferred from the owner's answer and the owner did not spell out.
@@ -76,6 +76,16 @@ inferred from the owner's answer and the owner did not spell out.
 | D42 | **Portable target.** `--mode portable` on a folder already shaped `<name>\<version>\pkg.toml` installs it in place (the folder above `<name>` is the portable root). Otherwise the configured portable root is used, or gupkg asks (an error under `--no-input`). | Q1 |
 | D43 | `cleanup` never runs automatically (`[cleanup] auto = true` enables it after `gupkg-manager update --all`). No lite bundle in 1.0. | Q3, Q6 |
 | D44 | **The separate programs may import core.** `gupkg-tui` and `gupkg-manager` may import gupkg core and any libraries for reading and reference, but every operation they perform is a `gupkg` CLI call. The migration tool may import core and does its own work. Amends D12, and drops the UI half of D38. | (follow-up after commit 3) |
+| D45 | **Every separate tool is callable as `gupkg <command>`**: `gupkg tui`, `gupkg manager` and `gupkg migrate` are permanent forwarders. The migration tool ships in the release bundle and includes the shortcut import (`shortcuts_to_gupkg_toml.py`). | (follow-up) |
+| D46 | When `check-updates` finds a version whose download the checksum rules refuse, the version directory stays written **without `App`**, and the refusal is reported. | (follow-up) |
+
+Designer defaults set in the same follow-up, where the owner left the
+choice open: one populate method per version (`download_url` or
+`script`, plus the existing `shipped` + `download_url` exception); the
+migration tool writes the 1.0 launchers when it converts a package; no
+per-package exemption from `--auto-push`. Adoption stays in the
+migration tool (issue 023), and its criterion is checked once issues 024
+and 028 have landed.
 
 Readings to keep in mind:
 

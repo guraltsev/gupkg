@@ -116,11 +116,13 @@ The owner's decisions (2026-10-22) that shape this issue:
    format 1 hints. `config-check`, `config-fix`, `doctor`, `repair-deps`
    and `update-deps` are unknown commands, and `update --check-only` and
    `--scope` are usage errors.
-9. **Permanent forwarders to the UI programs** (D34, issue 030). They are
+9. **Permanent forwarders to the separate tools** (D34, D45). They are
    part of the 1.0 grammar, not aliases:
    - `gupkg tui PATH` runs `gupkg-tui PATH`;
    - `gupkg manager …`, including `gupkg manager tui`, runs
-     `gupkg-manager …` with the same arguments.
+     `gupkg-manager …` with the same arguments;
+   - `gupkg migrate …` runs `gupkg-migrate …`, the migration tool
+     (issue 023), with the same arguments.
 
    A forwarder passes the exit code through.
 10. **`commands.py` is deleted.** Its remaining responsibilities move to
