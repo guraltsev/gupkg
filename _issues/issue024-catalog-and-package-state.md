@@ -1,5 +1,7 @@
 # Issue 024: Catalog and package state model
 
+> **Status (2026-10-23):** Implemented. Merged in f08a5fc. Intentional 0.17 behaviour changes (documented in the worker log): several versions with no `current` (or `_bootstrap` beside a version) resolve to the newest valid version instead of failing; a `current` that leaves its package root is refused where 0.17 followed it (`config-check`/`update` exit 0 became 2); `current` pointing at `_bootstrap` is refused. The 0.17 adapters (`layout.identity_from_path`, `layout.installed_version`, `commands.package_summary`, `commands._command_package_record`, `manager._target_from_catalog`) remain until issue 029 deletes them (D33). No manual checks owed.
+
 Date: 2026-10-22
 Priority: Critical
 Epic: 020. Design: `_docs/rehaul_design.md` §3, §5, §17 (cache)
