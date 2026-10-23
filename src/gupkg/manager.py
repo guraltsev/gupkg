@@ -46,7 +46,9 @@ from .core import (
     compare_package_versions,
     read_toml_file,
 )
-from .layout import compute_scope_paths, inspect_current
+from .catalog.catalog import CatalogError, resolve_package_path
+from .catalog.local import read_current
+from .layout import compute_scope_paths
 from .registry import OFFICIAL_SOURCE
 from .report.events import emit_problems, package_scope
 from .tomlio import dumps
@@ -459,7 +461,7 @@ def discover_manager(
             continue
         scopes.append(ManagedScope(scope, root, inventory, inventory.complete, list(inventory.diagnostics)))
         targets.extend(
-            _managed_target(scope, package, inventory.complete, system, root) for package in inventory.packages
+            _target_from_catalog(scope, package, inventory.complete, system, root) for package in inventory.packages
         )
     targets.sort(key=lambda target: (
         target.package.selector.casefold(), target.package.selector, _scope_order(target.scope)
@@ -467,25 +469,34 @@ def discover_manager(
     return ManagerInventory(config, scopes, targets)
 
 
-def _managed_target(
+def _target_from_catalog(
     scope: Scope, package: DiscoveredPackage, complete: bool, system: System, scope_root: Path | None = None
 ) -> ManagedTarget:
-    """Describe one discovered package's activation, versions, and health."""
-    current = inspect_current(package.root, system)
-    diagnostics = list(package.diagnostics) + list(current.diagnostics)
+    """Describe one discovered package's activation, versions, and health from the catalog's ``current`` reading."""
+    diagnostics = list(package.diagnostics)
+    try:
+        view = resolve_package_path(package.root, system).view
+        current = view.local.current
+    except CatalogError:
+        # Discovery found version directories that the catalog does not count (0.17's ``_bootstrap`` template
+        # only): that is not a broken package, so only ``current`` itself is read.
+        current = read_current(package.root, system)
+    activation = {"valid": "installed", "absent": "not-installed"}.get(current.status, "broken")
+    if current.problem:
+        diagnostics.append(current.problem)
 
     # Validate every manifest through the package configuration boundary so
     # inventory health reflects real package semantics, not file presence.
     for manifest in package.manifests:
         identity = PackageIdentity.from_version_path(
-            package.root, manifest.version_path, is_current=manifest.version_path == current.version_path
+            package.root, manifest.version_path, is_current=manifest.version_path == current.target
         )
         try:
             read_runtime_config(identity)
         except Exception as exc:
             diagnostics.append(f"Invalid manifest {manifest.path}: {exc}")
     health = "incomplete" if not complete else ("unhealthy" if diagnostics else "healthy")
-    installed_version = current.version_path.name if current.version_path else None
+    installed_version = current.version
     local_version = max(
         (manifest.version_path.name for manifest in package.manifests),
         key=cmp_to_key(compare_package_versions),
@@ -498,7 +509,7 @@ def _managed_target(
         f"{scope.value}:{package.selector}",
         scope,
         package,
-        current.status,
+        activation,
         installed_version,
         local_version,
         health,
@@ -757,12 +768,12 @@ def manager_revalidate_target(
         root = target.package.root.resolve()
         if not root.is_relative_to(config.root(target.scope).resolve()):
             return "target path escaped configured root"
-        current = inspect_current(target.package.root, system)
-        if current.status != "installed" or current.version_path is None:
+        current = read_current(target.package.root, system)
+        if current.status != "valid" or current.target is None:
             return f"current changed to {current.status}"
-        if not current.version_path.resolve().is_relative_to(root):
+        if not current.target.resolve().is_relative_to(root):
             return "current target escaped configured root"
-        if not _scoped(target, lambda: health_check_package(current.version_path, system, scope=target.scope)).ok:
+        if not _scoped(target, lambda: health_check_package(current.target, system, scope=target.scope)).ok:
             return "health changed before upgrade"
     except (OSError, ValueError, RuntimeError) as exc:
         return str(exc)

@@ -54,7 +54,7 @@ from gupkg.core import (
     read_toml_file,
 )
 from gupkg.report.events import phase
-from gupkg.layout import compute_scope_paths, resolve_input_path, update_current_junction_if_needed
+from gupkg.layout import compute_scope_paths, identity_from_path, update_current_junction_if_needed
 from gupkg.origin import populate_app_from_origin, validate_origin_health, validate_update_health
 from gupkg.updates import (
     check_update,
@@ -141,7 +141,7 @@ def install_package(
     # layout, validation, and metadata problems stop the install early.
     with phase("Resolve") as resolving:
         try:
-            identity, installing_from_current = resolve_input_path(Path(package_path), system)
+            identity, installing_from_current = identity_from_path(Path(package_path), system)
             runtime_config, raw_config, warnings = read_runtime_config(identity)
         except (ConfigValidationError, ValueError) as exc:
             return resolving.settle(
@@ -284,7 +284,7 @@ def health_check_package(
 
     """
     try:
-        identity, _ = resolve_input_path(Path(package_path), system)
+        identity, _ = identity_from_path(Path(package_path), system)
         runtime_config, raw_config, warnings = read_runtime_config(identity)
     except (ConfigValidationError, ValueError) as exc:
         return _failure(f"Failed to load package metadata/config: {exc}", EXIT_USER_ERROR)
@@ -388,7 +388,7 @@ def install_downloaded_update(
         Activation outcome; ``status`` is ``installed-update`` on success.
     """
     try:
-        identity, _ = resolve_input_path(Path(package_path), system)
+        identity, _ = identity_from_path(Path(package_path), system)
         receipt_path, version_path = _newest_receipt(identity)
     except (OSError, ValueError) as exc:
         return _failure(str(exc), EXIT_USER_ERROR)
@@ -479,7 +479,7 @@ def _run_update(
     try:
         # Any package version may define the update source; persistent update
         # state remains package-root owned either way.
-        identity, _ = resolve_input_path(Path(package_path), system)
+        identity, _ = identity_from_path(Path(package_path), system)
         config, _, warnings = read_runtime_config(identity)
         if config.get("update") is None:
             return ActionResult(

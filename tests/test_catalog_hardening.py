@@ -1,0 +1,291 @@
+"""Cover how the catalog survives hostile or damaged files, links and elevated path targets.
+
+Behavior covered: files that are not valid UTF-8 (a root's ``state.toml``, a registry cache's ``state.toml`` and
+``registry.toml``, a version's ``pkg.toml``) become warnings or invalid entries, never exceptions; a registry cache
+revision or index name that could leave the cache folder is ignored; a package root or version that is reached through
+a junction still resolves for an explicit path outside elevation (the 0.17 commands rely on it) and is refused in an
+elevated run; an elevated run accepts a path only inside the system root and never a record that claims another mode,
+and reads a root's ``state.toml`` only when its data directory is admin-only; a package named twice (an ad-hoc entry
+inside a configured root) is listed and resolved once; a package whose versions are all invalid says so instead of
+"no version known yet".
+
+Real: files and real junctions on pytest's temporary folder (``FakeSystem`` links are real; the
+``windows_integration`` test uses ``WindowsSystem``), the real sync, and the catalog. Mocked: elevation and the
+admin-only answer (``FakeSystem``). Out of scope: acting on packages (issue 028).
+"""
+
+from __future__ import annotations
+
+import io
+import zipfile
+from pathlib import Path
+
+import pytest
+
+from gupkg.catalog.catalog import NoValidVersion, UntrustedLocation, resolve_package_path
+from gupkg.catalog.registry import load_registry, registry_cache_dir, sync_registry
+from gupkg.layout import identity_from_path
+from gupkg.model.state import InstallRecord, Root
+from gupkg.system.fake import FakeSystem
+from gupkg.system.windows import WindowsSystem
+from gupkg.tomlio import dumps, write_toml
+from tests.catalog_support import (
+    REVISION,
+    build_registry,
+    make_catalog,
+    version_text,
+    write_record,
+    write_version,
+)
+
+BAD_BYTES = b"\xff\xfe\x00 not utf-8 \xc3\x28"
+
+
+def test_root_state_toml_that_is_not_utf8_is_a_warning(system, tmp_path: Path) -> None:
+    """A root's ``state.toml`` with invalid UTF-8 does not stop the catalog from opening; it is reported."""
+    roots = make_catalog(system, tmp_path)[1]
+    write_version(roots["user"] / "foo", "1.0")
+    (roots["user"] / ".gupkg").mkdir()
+    (roots["user"] / ".gupkg" / "state.toml").write_bytes(BAD_BYTES)
+
+    listing = make_catalog(system, tmp_path)[0].list()
+
+    assert [view.name for view in listing.views] == ["foo"]
+    assert any("state.toml" in warning for warning in listing.warnings)
+
+
+def test_registry_cache_files_that_are_not_utf8_leave_the_registry_empty_not_crashing(system, tmp_path: Path) -> None:
+    """Invalid UTF-8 in the cache ``state.toml`` means "never synchronised"; in ``registry.toml`` it is a reported problem."""
+    cache = build_registry(tmp_path, {"foo": {"versions": ["1.0"]}})
+
+    (cache / "trees" / REVISION / "registry.toml").write_bytes(BAD_BYTES)
+    broken_registry = load_registry("main", cache, system)
+    (cache / "state.toml").write_bytes(BAD_BYTES)
+    broken_state = load_registry("main", cache, system)
+
+    assert broken_registry.entries == {} and "Cannot read _registry.toml" in broken_registry.problems[0]
+    assert broken_state.entries == {} and broken_state.revision is None
+
+
+def test_registry_listing_survives_a_damaged_cache(system, tmp_path: Path) -> None:
+    """``list`` with a damaged registry cache still lists the local packages."""
+    roots = make_catalog(system, tmp_path)[1]
+    cache = build_registry(roots["user"], {"foo": {"versions": ["1.0"]}})
+    (cache / "trees" / REVISION / "registry.toml").write_bytes(BAD_BYTES)
+    write_version(roots["user"] / "foo", "1.0")
+
+    listing = make_catalog(system, tmp_path)[0].list()
+
+    assert [(view.name, view.following) for view in listing.views] == [("foo", None)]
+
+
+def test_version_and_tracker_files_that_are_not_utf8_are_invalid_not_fatal(system, tmp_path: Path) -> None:
+    """A ``pkg.toml`` with invalid UTF-8 invalidates its version in a package root and in a registry, and nothing else."""
+    roots = make_catalog(system, tmp_path)[1]
+    folder = write_version(roots["user"] / "foo", "2.0")
+    (folder / "pkg.toml").write_bytes(BAD_BYTES)
+    write_version(roots["user"] / "foo", "1.0")
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as zipped:
+        zipped.writestr("r/_registry.toml", dumps({"format": 2}))
+        zipped.writestr("r/foo/1.0/pkg.toml", version_text("1.0"))
+        zipped.writestr("r/foo/2.0/pkg.toml", BAD_BYTES)
+        zipped.writestr("r/foo/_check_updates/pkg.toml", BAD_BYTES)
+    system.add_url("https://example.org/main.zip", archive.getvalue())
+
+    result = sync_registry(registry_cache_dir(roots["user"], "main"), system, name="main", source="https://example.org/main.zip")
+    view = make_catalog(system, tmp_path)[0].describe("foo")
+
+    assert result.ok and any("foo/2.0" in problem for problem in result.problems)
+    assert [(item.name, item.valid) for item in view.local.versions] == [("1.0", True), ("2.0", False)]
+    assert [item.name for item in view.registry.versions] == ["1.0"] and view.registry.tracker is None
+
+
+def test_cache_revision_that_could_leave_the_cache_folder_is_ignored(system, tmp_path: Path) -> None:
+    """A ``state.toml`` revision such as ``..\\..\\x`` is not a 40-digit revision, so no folder outside the cache is read."""
+    cache = registry_cache_dir(tmp_path / "root", "main")
+    outside = cache.parent.parent.parent / "x"
+    write_version(outside / "pkgs" / "evil", "1.0")
+    write_toml(outside / "registry.toml", {"format": 2})
+    cache.mkdir(parents=True)
+    write_toml(cache / "state.toml", {"revision": "..\\..\\..\\..\\x", "source": "", "synchronized_at": "", "last_failure": ""})
+
+    snapshot = load_registry("main", cache, system)
+
+    assert snapshot.entries == {} and snapshot.revision is None
+
+
+def test_index_with_names_that_could_leave_the_tree_is_rebuilt(system, tmp_path: Path) -> None:
+    """An index that names a package like ``..\\..\\evil`` is not trusted: the tree is validated again instead."""
+    cache = build_registry(tmp_path, {"foo": {"versions": ["1.0"]}})
+    tree = cache / "trees" / REVISION
+    write_toml(tree / "index.toml", {
+        "schema": 1, "revision": REVISION, "name": "main", "problem": [],
+        "entry": [{"name": "..\\..\\evil", "version": [{"name": "1.0"}]}],
+    })
+
+    snapshot = load_registry("main", cache, system)
+
+    assert sorted(snapshot.entries) == ["foo"]
+
+
+def build_linked_package(system, tmp_path: Path) -> tuple[Path, Path]:
+    """Create ``dev/foo`` with version 1.0 and the junction ``opt/foo`` to it; return both package roots."""
+    real = tmp_path / "dev" / "foo"
+    write_version(real, "1.0", populated=True)
+    (tmp_path / "opt").mkdir()
+    system.create_junction(tmp_path / "opt" / "foo", real)
+    return tmp_path / "opt" / "foo", real
+
+
+@pytest.mark.parametrize("suffix", ["", "1.0"], ids=["package-root", "version-directory"])
+def test_explicit_path_through_a_package_junction_resolves_for_the_0_17_commands(system, tmp_path: Path, suffix: str) -> None:
+    """``opt\\foo`` as a junction to ``dev\\foo`` (and ``opt\\foo\\1.0``) still resolves outside elevation."""
+    linked, _ = build_linked_package(system, tmp_path)
+
+    identity, _ = identity_from_path(linked / suffix if suffix else linked, system)
+    catalog = make_catalog(system, tmp_path)[0]
+    resolved = catalog.resolve(str(linked / suffix if suffix else linked))
+
+    assert identity.version_string == "1.0"
+    assert resolved.version == "1.0"
+
+
+def test_package_junction_is_still_skipped_by_scanning_and_refused_when_elevated(tmp_path: Path) -> None:
+    """The refusal of a linked package root belongs to scanning and to elevated runs, not to an explicit path."""
+    system = FakeSystem(tmp_path / "machine", elevated=True)
+    roots = make_catalog(system, tmp_path, elevated=True)[1]
+    real = tmp_path / "dev" / "foo"
+    write_version(real, "1.0", populated=True)
+    system.create_junction(roots["system"] / "foo", real)
+    catalog = make_catalog(system, tmp_path)[0]
+
+    assert catalog.list().views == ()
+    with pytest.raises(UntrustedLocation, match="not in the system root"):
+        catalog.resolve(str(roots["system"] / "foo"))
+
+
+@pytest.mark.windows_integration
+def test_real_junction_package_root_resolves_for_an_explicit_path(tmp_path: Path) -> None:
+    """With ``WindowsSystem`` junctions the 0.17 path resolution accepts a package root that is a junction."""
+    real = WindowsSystem()
+    linked, _ = build_linked_package(real, tmp_path)
+
+    identity, _ = identity_from_path(linked, real)
+
+    assert identity.version_string == "1.0"
+
+
+def test_elevated_path_must_be_in_the_system_root_even_when_admin_only(tmp_path: Path) -> None:
+    """An admin-only folder outside the system root is refused in an elevated run, whatever its install record says."""
+    system = FakeSystem(tmp_path / "machine", elevated=True)
+    roots = make_catalog(system, tmp_path, elevated=True)[1]
+    outside = tmp_path / "admin-only-elsewhere" / "foo"
+    write_version(outside, "1.0")
+    write_record(outside, InstallRecord(mode="user"))
+    inside = roots["system"] / "foo"
+    write_version(inside, "1.0")
+    catalog = make_catalog(system, tmp_path)[0]
+
+    with pytest.raises(UntrustedLocation, match="not in the system root"):
+        catalog.resolve(str(outside))
+    with pytest.raises(UntrustedLocation, match="acts only on system"):
+        catalog.resolve(f"user:{inside}")
+    assert catalog.resolve(str(inside)).view.mode == "system"
+
+
+def test_elevated_view_treats_a_record_for_another_mode_as_broken(tmp_path: Path) -> None:
+    """In an elevated run a record whose mode is not ``system`` is a problem even when the root says nothing."""
+    system = FakeSystem(tmp_path / "machine", elevated=True)
+    package = tmp_path / "opt" / "foo"
+    write_version(package, "1.0")
+    write_record(package, InstallRecord(mode="portable"))
+    catalog = make_catalog(system, tmp_path)[0]
+
+    view = catalog._view(Root(tmp_path / "opt", None), "foo", package)
+
+    assert any("acts only on system packages" in reason for reason in view.broken_reasons)
+
+
+def test_bare_catalog_in_an_elevated_run_still_accepts_an_admin_only_path(tmp_path: Path) -> None:
+    """With no roots configured (0.17 callers) an elevated run's only test is that the folder is admin-only."""
+    system = FakeSystem(tmp_path / "machine", elevated=True, untrusted_dirs={tmp_path / "bad"})
+    write_version(tmp_path / "good" / "foo", "1.0")
+    write_version(tmp_path / "bad" / "foo", "1.0")
+
+    assert resolve_package_path(tmp_path / "good" / "foo", system).version == "1.0"
+    with pytest.raises(UntrustedLocation):
+        resolve_package_path(tmp_path / "bad" / "foo", system)
+
+
+def test_elevated_run_does_not_read_state_toml_from_an_untrusted_data_directory(tmp_path: Path) -> None:
+    """When ``<system root>\\.gupkg`` can be modified by users, its ``state.toml`` is not read: no ad-hoc root appears."""
+    adhoc = tmp_path / "elsewhere" / "inplace"
+    write_version(adhoc, "1.0")
+    system = FakeSystem(tmp_path / "machine", elevated=True, untrusted_dirs={tmp_path / "system" / ".gupkg"})
+    roots = make_catalog(system, tmp_path, elevated=True)[1]
+    write_toml(roots["system"] / ".gupkg" / "state.toml", {"adhoc": [{"path": str(adhoc), "mode": "system"}]})
+
+    listing = make_catalog(system, tmp_path)[0].list()
+
+    assert listing.views == ()
+    assert any("Did not read" in warning for warning in listing.warnings)
+
+
+def test_package_named_by_an_ad_hoc_entry_inside_a_configured_root_is_listed_once(system, tmp_path: Path) -> None:
+    """An ``[[adhoc]]`` path inside a configured root does not duplicate the package in ``list`` or make it ambiguous."""
+    roots = make_catalog(system, tmp_path)[1]
+    write_version(roots["user"] / "foo", "1.0")
+    write_toml(roots["user"] / ".gupkg" / "state.toml", {"adhoc": [{"path": str(roots["user"] / "foo"), "mode": "portable"}]})
+    catalog = make_catalog(system, tmp_path)[0]
+
+    listing = catalog.list()
+
+    assert [(view.name, view.mode) for view in listing.views] == [("foo", "user")]
+    assert catalog.resolve("foo", for_mutation=True).view.mode == "user"
+
+
+def test_package_with_only_invalid_versions_says_so_instead_of_asking_for_check_updates(system, tmp_path: Path) -> None:
+    """Install of a package whose every version is invalid names the invalid versions."""
+    roots = make_catalog(system, tmp_path)[1]
+    write_version(roots["user"] / "foo", "1.0", text="format = 1\n")
+    catalog = make_catalog(system, tmp_path)[0]
+
+    with pytest.raises(NoValidVersion, match="no valid version; see the invalid version problems: 1.0"):
+        catalog.install_candidate(catalog.describe("foo"))
+
+
+@pytest.mark.parametrize("elevated", [False, True], ids=["normal", "elevated"])
+def test_extended_length_path_resolves_to_the_same_package(tmp_path: Path, elevated: bool) -> None:
+    """A path written with the extended-length prefix selects the package by its folder name, as the plain spelling does."""
+    system = FakeSystem(tmp_path / "machine", elevated=elevated)
+    roots = make_catalog(system, tmp_path, elevated=elevated)[1]
+    write_version(roots["system"] / "foo", "1.0")
+    catalog = make_catalog(system, tmp_path)[0]
+
+    plain = catalog.resolve(str(roots["system"] / "foo"))
+    prefixed = catalog.resolve("\\\\?\\" + str(roots["system"] / "foo"))
+
+    assert prefixed.view.name == plain.view.name == "foo"
+    assert prefixed.version == "1.0"
+
+
+@pytest.mark.parametrize("child", ["version", "app"])
+def test_junction_version_or_app_inside_an_admin_only_system_package_is_a_problem(tmp_path: Path, child: str) -> None:
+    """In an elevated run a version directory or ``App`` that is a junction is reported invalid and never counted as valid or populated."""
+    system = FakeSystem(tmp_path / "machine", elevated=True)
+    roots = make_catalog(system, tmp_path, elevated=True)[1]
+    package = roots["system"] / "foo"
+    write_version(package, "1.0")
+    outside = tmp_path / "outside"
+    write_version(outside, "payload", populated=True)
+    if child == "version":
+        system.create_junction(package / "2.0", outside / "payload")
+    else:
+        system.create_junction(package / "1.0" / "App", outside / "payload" / "App")
+
+    view = make_catalog(system, tmp_path)[0].describe("foo")
+
+    flagged = view.local.version("2.0" if child == "version" else "1.0")
+    assert not flagged.valid and any("link" in problem for problem in flagged.problems)
+    assert not flagged.populated

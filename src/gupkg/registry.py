@@ -290,7 +290,7 @@ def sync_registry(
             # A trusted Git can name the remote revision without transferring it.
             git = trusted_git(system) if is_git_source(source) else None
             if git is not None and current.tree_path is not None:
-                remote = _git_remote_revision(system, git, source)
+                remote = git_remote_revision(system, git, source)
                 if remote is not None and remote == current.revision:
                     validate_registry_tree(current.tree_path)
                     _write_state(registry_root, current, source=source, last_failure=None)
@@ -375,18 +375,18 @@ def trusted_git(system: System) -> str | None:
     return None
 
 
-def _git_environment() -> dict[str, str]:
+def git_environment() -> dict[str, str]:
     """Return a child environment that ignores user Git settings and never prompts."""
     environment = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
     environment.update(GIT_TERMINAL_PROMPT="0", GIT_CONFIG_GLOBAL=os.devnull)
     return environment
 
 
-def _git_remote_revision(system: System, git: str, source: str) -> str | None:
+def git_remote_revision(system: System, git: str, source: str) -> str | None:
     """Return the remote ``HEAD`` commit of *source* without cloning, or ``None`` on failure."""
     result = system.run(
         [git, "-c", "protocol.allow=never", "-c", "protocol.https.allow=always", "ls-remote", source, "HEAD"],
-        env=_git_environment(), timeout=60, on_line=subprocess_lines([git]),
+        env=git_environment(), timeout=60, on_line=subprocess_lines([git]),
     )
     match = re.match(r"([0-9a-f]{40})\s", result.stdout) if result.returncode == 0 else None
     return match.group(1) if match else None
@@ -402,12 +402,12 @@ def _obtain_registry(source: str, git: str | None, work: Path, system: System) -
             "-c", "core.symlinks=false", "-c", f"core.hooksPath={os.devnull}",
             "clone", "--depth", "1", "--single-branch", "--no-tags", "--quiet", source, str(destination),
         ]
-        result = system.run(command, env=_git_environment(), timeout=600, on_line=subprocess_lines(command))
+        result = system.run(command, env=git_environment(), timeout=600, on_line=subprocess_lines(command))
         if result.returncode != 0:
             raise ConfigValidationError(f"git clone failed: {result.stderr.strip()}")
         head = system.run(
             [git, "-C", str(destination), "rev-parse", "HEAD"],
-            env=_git_environment(), on_line=subprocess_lines([git]),
+            env=git_environment(), on_line=subprocess_lines([git]),
         )
         revision = head.stdout.strip().lower()
         if not re.fullmatch(r"[0-9a-f]{40}", revision):
@@ -416,8 +416,8 @@ def _obtain_registry(source: str, git: str | None, work: Path, system: System) -
 
     archive_path = work / "registry.zip"
     _download(archive_url(source), archive_path, system)
-    revision = _archive_revision(archive_path)
-    return _extract_archive(archive_path, work / "archive"), revision
+    revision = archive_revision(archive_path)
+    return extract_archive(archive_path, work / "archive"), revision
 
 
 def archive_url(source: str) -> str:
@@ -448,7 +448,7 @@ def _download(source: str, destination: Path, system: System) -> None:
     download_file(system, source, destination, label="Downloading registry")
 
 
-def _archive_revision(archive_path: Path) -> str:
+def archive_revision(archive_path: Path) -> str:
     """Return a stable 40-hex revision for a registry archive.
 
     GitHub archives record their commit ID in the ZIP comment; any other
@@ -461,7 +461,7 @@ def _archive_revision(archive_path: Path) -> str:
     return file_sha256(archive_path)[:40]
 
 
-def _extract_archive(archive_path: Path, destination: Path) -> Path:
+def extract_archive(archive_path: Path, destination: Path) -> Path:
     """Extract a registry archive safely and return the folder that holds the packages.
 
     Entries that are absolute, climb out with ``..``, are symlinks, or are named
