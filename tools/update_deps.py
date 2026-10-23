@@ -295,6 +295,12 @@ def resolve_lock(runtime: Path, roots: tuple[str, ...], python: str | None = Non
     The build machine's pip resolves for the bundled CPython (platform and
     interpreter flags), so the runtime itself needs no pip.
 
+    Note that pip evaluates environment markers (``sys_platform``, ``python_version``
+    and so on) against the *host* interpreter, not the cross-target, so a dependency
+    whose marker differs between the host and the bundled CPython could be resolved
+    differently from what the bundle needs. The staged import probe and the build
+    probe catch a missing package; review the plan when a new dependency appears.
+
     Returns
     -------
     list of LockedRequirement

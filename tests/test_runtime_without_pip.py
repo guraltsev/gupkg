@@ -316,3 +316,24 @@ def test_no_shipped_file_starts_or_imports_pip() -> None:
 def test_the_shipped_tree_scan_recognises_pip_use(text: str) -> None:
     """The pattern behind the shipped-tree scan matches each way of starting or importing pip."""
     assert PIP_USE.search(text)
+
+
+def test_import_names_ignore_top_level_record_entries_that_are_not_code(tmp_path: Path) -> None:
+    """A stray LICENSE (or an empty directory) in a RECORD is not an import name; packages and .py/.pyd modules are."""
+    site = tmp_path / "site-packages"
+    (site / "pkg").mkdir(parents=True)
+    (site / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+    (site / "emptydir").mkdir()
+    (site / "single.py").write_text("", encoding="utf-8")
+    (site / "native.cp312-win_amd64.pyd").write_bytes(b"")
+    (site / "LICENSE").write_text("text", encoding="utf-8")
+    info = site / "dep-1.0.dist-info"
+    info.mkdir()
+    (info / "RECORD").write_text(
+        "pkg/__init__.py,,\nemptydir/x.txt,,\nsingle.py,,\nnative.cp312-win_amd64.pyd,,\nLICENSE,,\ndep-1.0.dist-info/RECORD,,\n",
+        encoding="utf-8",
+    )
+    lock = tmp_path / "lock"
+    lock.write_text(f"dep==1.0 --hash=sha256:{'a' * 64}\n", encoding="utf-8")
+
+    assert build_standalone.import_names(site, lock) == ["native", "pkg", "single"]

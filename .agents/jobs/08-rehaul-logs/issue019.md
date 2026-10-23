@@ -45,3 +45,8 @@ tests/test_update_deps_tool.py, new tests/test_runtime_without_pip.py, tests/man
 ## Acceptance criteria -> coverage
 
 See the final report.
+
+## Follow-ups for later issues
+
+Issues 023 (migration tool), 029 and 030 (new UI packages) must add their modules to `PROBE_MODULES` /
+`OPTIONAL_PROBE_PACKAGES` in `tools/build_standalone.py`.

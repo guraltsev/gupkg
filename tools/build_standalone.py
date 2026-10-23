@@ -267,7 +267,15 @@ def import_names(site_packages: Path, lock: Path) -> list[str]:
             first = entry.replace("\\", "/").split(",", 1)[0].split("/", 1)[0]
             if first.endswith((".dist-info", ".data")) or first in {"", "..", "bin", "__pycache__"}:
                 continue
-            module = first.removesuffix(".py")
+            # Only code counts: a package directory with __init__.py, or a .py/.pyd module file.
+            # A stray LICENSE or README at the top of the RECORD is not a module.
+            path = site_packages / first
+            if path.is_dir() and (path / "__init__.py").is_file():
+                module = first
+            elif path.is_file() and first.endswith((".py", ".pyd")):
+                module = first.split(".", 1)[0]
+            else:
+                continue
             if module.isidentifier():
                 found.add(module)
         if not found:
