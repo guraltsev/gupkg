@@ -179,6 +179,7 @@ class FakeSystem(WindowsLinks):
     fetch_log: list[str] = field(default_factory=list)
     request_log: list[RecordedRequest] = field(default_factory=list)
     process_log: list[list[str]] = field(default_factory=list)
+    regex_log: list[str] = field(default_factory=list)
     real_programs: dict[str, Path] = field(default_factory=dict)
     _env: dict[str, dict[str, tuple[str, EnvValue]]] = field(
         default_factory=lambda: {"user": {}, "system": {}}
@@ -376,6 +377,26 @@ class FakeSystem(WindowsLinks):
                 [str(target), *command[1:]], cwd, env, on_line, input_text=input_text, timeout=timeout, watch=watch
             )
         raise UnexpectedCall(f"FakeSystem has no process double for {command[0]!r}: {command}")
+
+    def regex_worker(
+        self,
+        request: str,
+        timeout: float,
+        *,
+        on_line: Callable[[str], None] | None = None,
+    ) -> ProcessResult:
+        """Run the regex worker for real (it only computes), unless a ``regex-worker`` double is registered.
+
+        A double receives the request as ``input_text`` and returns the :class:`ProcessResult`
+        to use, so a test can simulate a crashed, garbled or oversized worker; a double that
+        raises ``TimeoutError`` simulates a deadline. Every request is kept in ``regex_log``.
+        """
+        self._maybe_fail("regex_worker")
+        self.regex_log.append(request)
+        double = self.processes.get("regex-worker")
+        if double is not None:
+            return double(ProcessCall(("regex-worker",), None, None, request))
+        return WindowsSystem().regex_worker(request, timeout, on_line=on_line)
 
     # -- network -----------------------------------------------------------------
 

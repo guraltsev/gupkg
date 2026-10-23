@@ -256,6 +256,25 @@ class System(Protocol):
         raised with that text (how a caller bounds what a child writes to disk).
         """
 
+    def regex_worker(
+        self,
+        request: str,
+        timeout: float,
+        *,
+        on_line: Callable[[str], None] | None = None,
+    ) -> ProcessResult:
+        """Run the isolated regular-expression worker on *request* and return its status and output.
+
+        The worker is ``gupkg/system/regex_worker.py`` started with the running interpreter and
+        ``-I -s -B -S``, a minimal environment and an empty temporary folder as its working
+        directory. *request* is sent on standard input; ``stdout`` of the result is the answer
+        (see the worker for the protocol). When the worker is still running *timeout* seconds
+        after it reported that it is up (its first line, ``pid <number>``, so a slow process
+        start does not count) its whole process tree is killed and ``TimeoutError`` is raised,
+        so a pattern that makes ``re`` run for ever costs the caller about *timeout* seconds. ``on_line``
+        receives each line the worker writes, the first being ``pid <number>``.
+        """
+
     # -- network -----------------------------------------------------------
 
     def fetch(

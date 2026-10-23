@@ -522,6 +522,146 @@ def test_a_watcher_that_raises_stops_the_run_at_once_and_its_error_reaches_the_c
     assert time.monotonic() - started < 15
 
 
+GRANDCHILD_SCRIPT = (
+    "import subprocess, sys; "
+    "subprocess.Popen([sys.executable, '-c', "
+    "\"import time, pathlib; time.sleep(3); pathlib.Path(r'%s').write_text('alive')\"]); "
+)
+
+
+@pytest.mark.windows_integration
+@windows_only
+@pytest.mark.parametrize("how", [pytest.param("raises", id="the-final-poll-raises"), pytest.param("aborts", id="the-final-poll-names-a-reason")])
+def test_a_helper_that_outlived_a_finished_child_is_killed_when_the_last_watcher_poll_fails(tmp_path: Path, how: str) -> None:
+    """The child exits at once leaving a helper; the final poll fails: the helper is killed (job object) and the call is quick."""
+    marker = tmp_path / "survivor.txt"
+    script = GRANDCHILD_SCRIPT % marker.as_posix()
+    state = {"polls": 0}
+
+    def watch() -> str | None:
+        """Let the child start its helper and finish, then fail on the final look."""
+        state["polls"] += 1
+        time.sleep(0.5) if state["polls"] == 1 else None
+        if how == "raises":
+            raise RuntimeError("watcher broke")
+        return "stop"
+
+    started = time.monotonic()
+    with pytest.raises(RuntimeError if how == "raises" else ProcessAborted):
+        WindowsSystem().run([sys.executable, "-c", script], tmp_path, None, None, watch=watch)
+    elapsed = time.monotonic() - started
+    time.sleep(5)
+
+    assert not marker.exists() and elapsed < 3
+
+
+@pytest.mark.windows_integration
+@windows_only
+def test_a_helper_started_by_a_normal_run_is_left_running_when_nothing_went_wrong(tmp_path: Path) -> None:
+    """The job object kills nothing on a clean finish: a helper that is meant to outlive its parent keeps running."""
+    marker = tmp_path / "survivor.txt"
+    script = GRANDCHILD_SCRIPT % marker.as_posix()
+
+    result = WindowsSystem().run([sys.executable, "-c", script], tmp_path, None, None)
+    time.sleep(6)
+
+    assert result.returncode == 0 and marker.read_text() == "alive"
+
+
+@pytest.mark.windows_integration
+@windows_only
+def test_a_child_that_never_reads_its_input_cannot_keep_the_call_past_its_timeout(tmp_path: Path) -> None:
+    """Two megabytes of input to a child that sleeps: the timeout still fires (input is fed from its own thread)."""
+    started = time.monotonic()
+
+    with pytest.raises(TimeoutError):
+        WindowsSystem().run(
+            [sys.executable, "-c", "import time; time.sleep(30)"], tmp_path, None, None,
+            input_text="x" * 2_000_000, timeout=1.0,
+        )
+
+    assert time.monotonic() - started < 8
+
+
+REQUEST = '{"op":"search","pattern":"(?P<v>\\\\d+)","flags":32,"texts":["tool 42"],"limit":1,"cap":1000}'
+HANGING = '{"op":"search","pattern":"(a+)+$","flags":32,"texts":["%s!"],"limit":1,"cap":1000}' % ("a" * 40)
+
+
+def _alive(pid: int) -> bool:
+    """Return whether a process with this id is running (``tasklist`` lists it)."""
+    import subprocess
+
+    listing = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"], capture_output=True, text=True, timeout=30)
+    return f'"{pid}"' in listing.stdout
+
+
+def test_the_regex_worker_answers_a_request_in_isolation(machine: System, tmp_path: Path) -> None:
+    """A benign request gets an `ok` answer with the match; the first line on standard error is the worker's pid."""
+    lines: list[str] = []
+
+    result = machine.regex_worker(REQUEST, 20, on_line=lines.append)
+
+    assert result.returncode == 0 and lines[0].startswith("pid ")
+    assert '"ok":true' in result.stdout and '"42"' in result.stdout
+
+
+def test_the_regex_worker_is_killed_at_its_deadline_and_is_gone(machine: System) -> None:
+    """A catastrophic pattern raises TimeoutError about a second after the worker is up, and its process no longer exists."""
+    lines: list[str] = []
+    started = time.monotonic()
+
+    with pytest.raises(TimeoutError):
+        machine.regex_worker(HANGING, 1.0, on_line=lines.append)
+
+    assert time.monotonic() - started < 1.0 + 0.5 + 4  # the deadline, a poll, and a slow process start
+    pid = int(lines[0].split()[1])
+    time.sleep(0.5)
+    assert not _alive(pid)
+
+
+PROBE = (
+    "import json, os, sys\n"
+    "sys.stderr.write('pid %d\\n' % os.getpid()); sys.stderr.flush()\n"
+    "print(json.dumps({'isolated': sys.flags.isolated, 'no_site': sys.flags.no_site, 'no_bytecode': sys.flags.dont_write_bytecode,\n"
+    "                  'no_user_site': sys.flags.no_user_site, 'env': sorted(os.environ), 'cwd': os.getcwd(), 'stdin': sys.stdin.read()}))\n"
+)
+
+
+@pytest.mark.windows_integration
+@windows_only
+def test_the_regex_worker_runs_isolated_with_a_minimal_environment_in_an_empty_temporary_folder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The worker is started with -I -s -B -S, only SystemRoot in its environment, and an empty temporary folder as cwd."""
+    import json
+
+    probe = tmp_path / "probe.py"
+    probe.write_text(PROBE, encoding="utf-8")
+    monkeypatch.setattr("gupkg.system.windows._REGEX_WORKER", probe)
+    monkeypatch.setenv("GITHUB_TOKEN", "secret-token")
+
+    result = WindowsSystem().regex_worker("the request", 20)
+
+    seen = json.loads(result.stdout)
+    assert seen["isolated"] == seen["no_site"] == seen["no_bytecode"] == seen["no_user_site"] == 1
+    assert [name.upper() for name in seen["env"]] == ["SYSTEMROOT"] and seen["stdin"] == "the request"
+    assert "gupkg-regex-" in seen["cwd"] and "secret-token" not in result.stdout
+
+
+@pytest.mark.windows_integration
+@windows_only
+def test_a_regex_worker_that_never_starts_is_stopped(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A worker that does not report within the start limit is killed and reported as a timeout, not waited for."""
+    silent = tmp_path / "silent.py"
+    silent.write_text("import time\ntime.sleep(60)\n", encoding="utf-8")  # never prints the pid line
+    monkeypatch.setattr("gupkg.system.windows._REGEX_WORKER", silent)
+    monkeypatch.setattr("gupkg.system.windows._WORKER_START_SECONDS", 1.0)
+    started = time.monotonic()
+
+    with pytest.raises(TimeoutError, match="did not start"):
+        WindowsSystem().regex_worker(REQUEST, 20)
+
+    assert time.monotonic() - started < 15
+
+
 def test_a_child_that_finishes_at_once_is_still_judged_by_one_last_look_of_the_watcher(machine: System, tmp_path: Path) -> None:
     """A watcher that only objects after the child ended still aborts the run, on the fake and on Windows alike."""
     command = _watched_command(machine, "pass")

@@ -39,6 +39,8 @@ import re
 import socket
 import struct
 import subprocess
+import sys
+import tempfile
 import threading
 import time
 import urllib.error
@@ -63,6 +65,9 @@ from .port import (
     ScopeFolders,
     ShortcutSpec,
 )
+
+_REGEX_WORKER = Path(__file__).with_name("regex_worker.py")
+_WORKER_START_SECONDS = 30.0  # how long a regex worker may take to say it is up
 
 if os.name == "nt":
     import winreg
@@ -406,14 +411,27 @@ class WindowsSystem(WindowsLinks):
         for reader in readers:
             reader.start()
 
-        # Feed standard input, then wait; a timeout kills the whole child.
+        # Every process the child starts is tracked by a job object, so a kill reaches a helper
+        # that outlived its parent (``taskkill /T`` cannot find the children of a dead process).
+        job = _ProcessJob.around(process)
+
+        # Feed standard input from its own thread, so a child that never reads it cannot
+        # keep this call from enforcing the timeout; then wait. A timeout kills the whole child.
+        feeder = None
         try:
             if input_text is not None:
-                try:
-                    process.stdin.write(input_text.encode(locale.getpreferredencoding(False), errors="replace"))
-                    process.stdin.close()
-                except OSError:
-                    pass
+                payload = input_text.encode(locale.getpreferredencoding(False), errors="replace")
+
+                def feed() -> None:
+                    """Write the input and close the pipe; a child that is gone closes it for us."""
+                    try:
+                        process.stdin.write(payload)
+                        process.stdin.close()
+                    except OSError:
+                        pass
+
+                feeder = threading.Thread(target=feed, daemon=True)
+                feeder.start()
             # Wait in short slices when a watcher is given, so it can stop a runaway child.
             started = time.monotonic()
             while True:
@@ -425,27 +443,68 @@ class WindowsSystem(WindowsLinks):
                     break
                 except subprocess.TimeoutExpired:
                     if timeout is not None and time.monotonic() - started >= timeout:
-                        _kill_tree(process)
-                        process.wait()
                         raise TimeoutError(f"{command[0]} did not finish within {timeout} seconds") from None
                     reason = watch() if watch is not None else None
                     if reason is not None:
-                        _kill_tree(process)
-                        process.wait()
                         raise ProcessAborted(reason) from None
             # Like the test double, ask the watcher once more after the child has finished.
             reason = watch() if watch is not None else None
             if reason is not None:
                 raise ProcessAborted(reason)
         except BaseException:
-            # A raising watcher, Ctrl-C or any other failure must not leave the child running,
-            # because the reader threads below would wait for it.
-            _kill_tree(process)
+            # A timeout, an abort, a raising watcher, Ctrl-C or any other failure must not leave the
+            # child (or a helper it started, even one that outlived it) running, because the
+            # reader threads below would wait for it.
+            _kill_tree(process, job)
+            process.wait()
             raise
         finally:
             for reader in readers:
                 reader.join()
+            if feeder is not None:
+                feeder.join(5)
+            if job is not None:
+                job.close()
         return ProcessResult(returncode, "".join(collected["stdout"]), "".join(collected["stderr"]))
+
+    def regex_worker(
+        self,
+        request: str,
+        timeout: float,
+        *,
+        on_line: Callable[[str], None] | None = None,
+    ) -> ProcessResult:
+        """Run ``regex_worker.py`` on *request* in an isolated child with a hard deadline (see the port).
+
+        The deadline counts from the moment the worker reports ``pid <n>`` (the interpreter and its
+        imports are up), so a slow process start (antivirus, a cold disk) is not mistaken for a slow
+        pattern; the start itself has its own generous limit. The watcher polls five times a second,
+        so the kill happens within about 0.2 seconds of the deadline.
+        """
+        command = [sys.executable, "-I", "-s", "-B", "-S", str(_REGEX_WORKER)]
+        environment = {"SystemRoot": os.environ.get("SystemRoot", r"C:\Windows")}
+        began = time.monotonic()
+        ready: list[float] = []
+
+        def heard(line: str) -> None:
+            """Note when the worker says it is up, and pass the line on."""
+            if not ready and line.startswith("pid "):
+                ready.append(time.monotonic())
+            if on_line is not None:
+                on_line(line)
+
+        def late() -> str | None:
+            """Return a reason once the worker has overrun its start limit or its deadline."""
+            now = time.monotonic()
+            if not ready:
+                return "the regex worker did not start" if now - began > _WORKER_START_SECONDS else None
+            return "the regex worker passed its deadline" if now - ready[0] > timeout else None
+
+        with tempfile.TemporaryDirectory(prefix="gupkg-regex-", ignore_cleanup_errors=True) as folder:
+            try:
+                return self.run(command, Path(folder), environment, heard, input_text=request, watch=late)
+            except ProcessAborted as error:
+                raise TimeoutError(f"{error} ({timeout:g} seconds)") from None
 
     # -- network -----------------------------------------------------------
 
@@ -907,11 +966,65 @@ def _response_parts(response: Any, requested: str) -> tuple[int, str, dict[str, 
     return int(status), requested, collected
 
 
-def _kill_tree(process: "subprocess.Popen[bytes]") -> None:
-    """Kill *process* and every process it started (``taskkill /T``), then the process itself.
+class _ProcessJob:
+    """A Windows job object holding a child process and every process it starts.
+
+    ``TerminateJobObject`` ends all of them, including a helper whose parent has already exited,
+    which ``taskkill /T`` cannot find. The job does not kill anything when it is closed, so a
+    helper that is meant to outlive a normal run keeps running. A process started in the instant
+    before it is assigned to the job is the one gap; the child needs far longer than that to
+    start a helper of its own.
+    """
+
+    _PROCESS_SET_QUOTA = 0x0100
+    _PROCESS_TERMINATE = 0x0001
+
+    def __init__(self, handle: Any, kernel32: Any) -> None:
+        """Hold the job *handle* of the ``kernel32`` library."""
+        self._handle, self._kernel32 = handle, kernel32
+
+    @classmethod
+    def around(cls, process: "subprocess.Popen[bytes]") -> "_ProcessJob | None":
+        """Put *process* in a new job; ``None`` when Windows refuses (the caller falls back to ``taskkill``)."""
+        if os.name != "nt":
+            return None
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        kernel32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        kernel32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        job = kernel32.CreateJobObjectW(None, None)
+        if not job:
+            return None
+        member = kernel32.OpenProcess(cls._PROCESS_SET_QUOTA | cls._PROCESS_TERMINATE, False, process.pid)
+        assigned = bool(member) and bool(kernel32.AssignProcessToJobObject(job, member))
+        if member:
+            kernel32.CloseHandle(member)
+        if not assigned:
+            kernel32.CloseHandle(job)
+            return None
+        return cls(job, kernel32)
+
+    def terminate(self) -> bool:
+        """End every process of the job; report whether Windows did it."""
+        return bool(self._kernel32.TerminateJobObject(self._handle, 1))
+
+    def close(self) -> None:
+        """Release the job handle; processes still in the job keep running."""
+        self._kernel32.CloseHandle(self._handle)
+
+
+def _kill_tree(process: "subprocess.Popen[bytes]", job: "_ProcessJob | None" = None) -> None:
+    """Kill *process* and every process it started: through its job object when it has one, else ``taskkill /T``, then the process itself.
 
     ``Popen.kill`` ends only the child, so a script that started a helper would leave it running.
     """
+    if job is not None and job.terminate():
+        process.kill()
+        return
     try:
         subprocess.run(
             [os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "taskkill.exe"),
