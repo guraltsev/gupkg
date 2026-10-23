@@ -39,16 +39,18 @@ from .core import (
     log_warning,
     normalize_path,
 )
-from .windows import create_junction, get_junction_target, is_junction
+from .system.port import ScopeFolders, System
 
 
-def resolve_input_path(raw_path: Path) -> Tuple[PackageIdentity, bool]:
+def resolve_input_path(raw_path: Path, system: System) -> Tuple[PackageIdentity, bool]:
     """Resolve a user-supplied path to one concrete package version.
 
     Parameters
     ----------
     raw_path : Path
         A version directory, a ``current`` junction, or a package root.
+    system : System
+        Boundary used to read ``current`` junctions.
 
     Returns
     -------
@@ -73,7 +75,7 @@ def resolve_input_path(raw_path: Path) -> Tuple[PackageIdentity, bool]:
     if is_package_directory(candidate):
         package_root = candidate.parent
         identity = PackageIdentity.from_version_path(
-            package_root, candidate, is_current=_current_target(package_root) == normalize_path(candidate)
+            package_root, candidate, is_current=_current_target(package_root, system) == normalize_path(candidate)
         )
         return identity, False
 
@@ -81,7 +83,7 @@ def resolve_input_path(raw_path: Path) -> Tuple[PackageIdentity, bool]:
         if not candidate.exists():
             raise ValueError(f'"current" path does not exist: {candidate}')
         return PackageIdentity.from_version_path(
-            candidate.parent, _read_current(candidate), is_current=True
+            candidate.parent, _read_current(candidate, system), is_current=True
         ), True
 
     if not candidate.is_dir():
@@ -89,7 +91,7 @@ def resolve_input_path(raw_path: Path) -> Tuple[PackageIdentity, bool]:
     current_path = candidate / "current"
     if os.path.lexists(current_path):
         return PackageIdentity.from_version_path(
-            candidate, _read_current(current_path), is_current=True
+            candidate, _read_current(current_path, system), is_current=True
         ), True
 
     # An uninstalled package root is still usable when it holds exactly one
@@ -116,13 +118,15 @@ class CurrentInspection:
     diagnostics: tuple[str, ...] = field(default_factory=tuple)
 
 
-def inspect_current(package_root: Path) -> CurrentInspection:
+def inspect_current(package_root: Path, system: System) -> CurrentInspection:
     """Inspect ``current`` without selecting a fallback version directory.
 
     Parameters
     ----------
     package_root : Path
         Package root whose activation entry should be inspected.
+    system : System
+        Boundary used to read the junction.
 
     Returns
     -------
@@ -138,9 +142,9 @@ def inspect_current(package_root: Path) -> CurrentInspection:
         """Report an unusable activation entry."""
         return CurrentInspection("broken", diagnostics=(message,))
 
-    if not is_junction(current_path):
+    if not system.is_link(current_path):
         return broken(f'"current" is not a junction: {current_path}')
-    target = get_junction_target(current_path)
+    target = system.read_link(current_path)
     if target is None:
         return broken(f'Could not resolve "current": {current_path}')
     try:
@@ -157,7 +161,7 @@ def inspect_current(package_root: Path) -> CurrentInspection:
 
 
 def update_current_junction_if_needed(
-    identity: PackageIdentity, *, allow_downgrade: bool = False
+    identity: PackageIdentity, system: System, *, allow_downgrade: bool = False
 ) -> bool:
     r"""Point ``<package>\current`` at *identity* unless a newer version should win.
 
@@ -168,6 +172,8 @@ def update_current_junction_if_needed(
     ----------
     identity : PackageIdentity
         Package version that should become or remain ``current``.
+    system : System
+        Boundary that creates, reads and removes the junctions.
     allow_downgrade : bool
         Whether to replace ``current`` when it already points to a newer
         version.
@@ -194,9 +200,9 @@ def update_current_junction_if_needed(
     # Inspect the existing activation: it must be a junction inside this
     # package root, and a newer active version wins without --allow-downgrade.
     if os.path.lexists(current_path):
-        if not is_junction(current_path):
+        if not system.is_link(current_path):
             raise ValueError(f"{current_path} exists but is not a junction. Aborting all operations.")
-        current_target = get_junction_target(current_path)
+        current_target = system.read_link(current_path)
         if current_target is None:
             raise ValueError(f"{current_path} is a junction but its target is not resolvable. Aborting.")
         current_target = current_target.resolve()
@@ -221,8 +227,8 @@ def update_current_junction_if_needed(
     new_path = current_path.with_name(f"current.__new__.{suffix}")
     old_path = current_path.with_name(f"current.__old__.{suffix}")
     try:
-        create_junction(new_path, desired_target)
-        new_target = get_junction_target(new_path)
+        system.create_junction(new_path, desired_target)
+        new_target = system.read_link(new_path)
         if new_target is None or normalize_path(new_target) != normalize_path(desired_target):
             raise RuntimeError(
                 f"Temporary junction verification failed: expected {desired_target}, got {new_target}"
@@ -231,12 +237,12 @@ def update_current_junction_if_needed(
             os.replace(current_path, old_path)
         os.replace(new_path, current_path)
         if os.path.lexists(old_path):
-            os.rmdir(old_path)
+            system.remove_link(old_path)
     finally:
         if os.path.lexists(new_path):
             try:
-                os.rmdir(new_path)
-            except OSError:
+                system.remove_link(new_path)
+            except (OSError, ValueError):
                 pass
         if os.path.lexists(old_path) and not os.path.lexists(current_path):
             try:
@@ -247,13 +253,15 @@ def update_current_junction_if_needed(
     return True
 
 
-def compute_scope_paths(scope: Scope) -> Dict[str, Path]:
+def compute_scope_paths(scope: Scope, system: System) -> Dict[str, Path]:
     """Resolve the default shortcut and wrapper locations for one install scope.
 
     Parameters
     ----------
     scope : Scope
         ``Scope.USER`` or ``Scope.MACHINE``.
+    system : System
+        Boundary that knows where the scope's Start Menu and ``bin`` live.
 
     Returns
     -------
@@ -263,27 +271,11 @@ def compute_scope_paths(scope: Scope) -> Dict[str, Path]:
     Raises
     ------
     ValueError
-        If a required environment variable such as ``APPDATA`` is missing.
+        If the machine does not identify a required location.
 
     """
-    def env(name: str, purpose: str) -> str:
-        """Return a required environment variable or explain why it is needed."""
-        value = os.environ.get(name)
-        if not value:
-            raise ValueError(f"{name} is not set; cannot compute {purpose}.")
-        return value
-
-    start_menu = Path("Microsoft") / "Windows" / "Start Menu" / "opt"
-    if scope == Scope.USER:
-        return {
-            "shortcut_root": Path(env("APPDATA", "User-scope shortcut directory")) / start_menu,
-            "bin_dir": Path(env("USERPROFILE", "User-scope bin directory")) / "bin",
-        }
-    shortcut_root = Path(env("PROGRAMDATA", "Machine-scope shortcut directory")) / start_menu
-    system_drive = env("SYSTEMDRIVE", "Machine-scope bin directory")
-    if len(system_drive) == 2 and system_drive[0].isalpha() and system_drive[1] == ":":
-        system_drive += "\\"
-    return {"shortcut_root": shortcut_root, "bin_dir": Path(system_drive) / "bin"}
+    folders: ScopeFolders = system.scope_folders(scope)
+    return {"shortcut_root": folders.shortcut_root, "bin_dir": folders.bin_dir}
 
 
 def warn_if_output_path_is_unusual(
@@ -333,14 +325,14 @@ def warn_if_output_path_is_unusual(
         )
 
 
-def _read_current(current_path: Path) -> Path:
+def _read_current(current_path: Path, system: System) -> Path:
     """Return the version directory an existing ``current`` junction targets."""
-    if not is_junction(current_path):
+    if not system.is_link(current_path):
         raise ValueError(
             f'"current" path exists but is not a valid junction: {current_path}; '
             f"exists={current_path.exists()}, is_dir={current_path.is_dir()}, parent={current_path.parent}"
         )
-    target = get_junction_target(current_path)
+    target = system.read_link(current_path)
     if target is None:
         raise ValueError(f'Could not resolve "current" junction target: {current_path}')
     resolved_target = normalize_path(target)
@@ -352,12 +344,12 @@ def _read_current(current_path: Path) -> Path:
     return resolved_target
 
 
-def _current_target(package_root: Path) -> Path | None:
+def _current_target(package_root: Path, system: System) -> Path | None:
     """Return the normalized target of a package root's ``current``, if readable."""
     current_path = package_root / "current"
-    if not current_path.exists() or not is_junction(current_path):
+    if not current_path.exists() or not system.is_link(current_path):
         return None
-    target = get_junction_target(current_path)
+    target = system.read_link(current_path)
     try:
         return normalize_path(target) if target is not None else None
     except OSError:

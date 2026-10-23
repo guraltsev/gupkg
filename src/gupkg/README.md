@@ -9,8 +9,16 @@ domains used by the `gupkg.cli` command boundary and package workflows:
 
 - `core.py`: shared result models, package identity, logging, expansion, and
   atomic file writes
-- `windows.py`: shortcuts, junctions, registry access, elevation, and console
-  integration
+- `system/`: the one side-effect boundary. `port.py` defines the `System`
+  protocol (links, environment and `PATH`, shortcuts, elevation, processes,
+  downloads); `windows.py` implements it for a real machine (junctions, registry,
+  Shell COM shortcuts, `WM_SETTINGCHANGE`, child processes, HTTP); `fake.py` is
+  the in-memory implementation behind the tests and `gupkg --sandbox DIR`. Only
+  `system/windows.py` and `selfmgmt/` use `winreg`, `ctypes`, `urlopen` or start
+  processes; every workflow receives a `System` explicitly.
+- `selfmgmt/`: the elevated-run trust checks (`elevation.py`: elevation signals,
+  access-control reading and the admin-only policy). `bootstrap.py` loads it by
+  file path before the package is importable, so it stays self-contained.
 - `layout.py`: package-path resolution and `current` activation
 - `configuration.py`: canonical `pkg.toml` normalization and validation
 - `metadata.py`: structure-preserving metadata synchronization and the

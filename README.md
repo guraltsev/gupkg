@@ -413,6 +413,7 @@ they have an effect.
 | --- | --- |
 | `--scope auto\|user\|system` | Selects installation scope; defaults to `auto`. |
 | `--format human\|toml` | Selects human output or one parseable TOML result document. |
+| `--sandbox <dir>` | Runs against a pretend machine kept in `<dir>`: environment variables, `PATH`, shortcuts and elevation are recorded in `<dir>\system.json` and below `<dir>` instead of the registry and Start Menu. Package files and downloads stay real. Only `git` and the bundled 7-Zip may start as child processes (identified by the resolved executable, not by name); any other program, such as a package script, fails. `git` and 7-Zip run for real, with whatever the `git` on `PATH` is and its configuration; the sandbox keeps the install's machine integration off the real machine and is not a security boundary for trusted code. Default package and config roots are not redirected: a package given by path is installed where it is. Elevation is the `"elevated"` flag in `system.json`. |
 | `--allow-downgrade` | For `install`, permits replacing `current` when it already targets a newer version. |
 | `--refresh-app` | For `Install`, replaces `App` from `[origin]`, even when it is populated. |
 | `--no-checksum` | Bypasses configured origin or update checksum verification and emits a warning. |

@@ -27,7 +27,7 @@ def color_capable(monkeypatch: pytest.MonkeyPatch) -> None:
     """Pretend the platform console already understands ANSI colors."""
     monkeypatch.delenv("NO_COLOR", raising=False)
     monkeypatch.delenv("TERM", raising=False)
-    monkeypatch.setattr("gupkg.core._enable_virtual_terminal", lambda _fileno: True)
+    monkeypatch.setattr("gupkg.core.enable_virtual_terminal", lambda _fileno: True)
     monkeypatch.setattr(_Terminal, "fileno", lambda self: 1, raising=False)
 
 

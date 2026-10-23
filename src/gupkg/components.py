@@ -36,14 +36,7 @@ from .core import (
 )
 from .layout import warn_if_output_path_is_unusual
 from .tomlio import dumps
-from .windows import (
-    broadcast_environment_change,
-    create_shortcut,
-    environment_registry_location,
-    read_registry_value,
-    require_winreg,
-    write_registry_value,
-)
+from .system.port import ShortcutSpec, System
 
 
 # Runtime DLLs and notices that must sit beside every dynamically linked shim.
@@ -64,6 +57,7 @@ def install_components(
     scope: Scope,
     scope_paths: Dict[str, Any],
     runtime_config: Dict[str, Any],
+    system: System,
 ) -> StepResult:
     """Run the fixed install sequence for one package version.
 
@@ -82,6 +76,8 @@ def install_components(
         ``collection_root`` for the selected scope.
     runtime_config : dict[str, Any]
         Canonical normalized runtime config derived from ``pkg.toml``.
+    system : System
+        Boundary that writes shortcuts, environment values and ``PATH``.
 
     Returns
     -------
@@ -106,23 +102,23 @@ def install_components(
     # and PATH entries can rely on them.
     if runtime_config["shortcut"]:
         run("Creating shortcuts...", lambda: install_shortcuts(
-            runtime_config["shortcut"], identity, scope_paths
+            runtime_config["shortcut"], identity, scope_paths, system
         ))
     if runtime_config["environment"]:
         run("Setting environment variables...", lambda: install_environment_variables(
-            runtime_config["environment"], identity, scope, scope_paths
+            runtime_config["environment"], identity, scope, scope_paths, system
         ))
 
     # Wrappers need the scope bin directory on PATH; package-specific PATH
     # entries follow it. Wrapper files are emitted last so they target
     # directories and PATH entries prepared earlier in the sequence.
     if runtime_config["bin"]:
-        run("Managing PATH...", lambda: ensure_bin_in_path(scope_paths, identity, scope))
+        run("Managing PATH...", lambda: ensure_bin_in_path(scope_paths, identity, scope, system))
     if runtime_config["path"]:
         if not runtime_config["bin"]:
             log_info("")
             log_info("Managing PATH...")
-        path_result = add_to_path(runtime_config["path"], identity, scope, scope_paths)
+        path_result = add_to_path(runtime_config["path"], identity, scope, system, scope_paths)
         combined.ok = combined.ok and path_result.ok
         combined.changed = combined.changed or path_result.changed
         combined.errors.extend(path_result.errors)
@@ -142,6 +138,7 @@ def install_shortcuts(
     shortcuts: List[Dict[str, str]],
     identity: PackageIdentity,
     scope_paths: Dict[str, Any],
+    system: System,
 ) -> StepResult:
     """Create every ``[[shortcut]]`` below the scope's Start Menu root.
 
@@ -153,6 +150,8 @@ def install_shortcuts(
         Package identity used for variable expansion.
     scope_paths : Dict[str, Any]
         Scope-specific locations; ``shortcut_root`` receives the shortcuts.
+    system : System
+        Boundary that writes the shortcuts.
 
     Returns
     -------
@@ -182,14 +181,15 @@ def install_shortcuts(
             if shortcut_path.suffix.lower() != ".lnk":
                 shortcut_path = shortcut_path.with_suffix(".lnk")
             warn_if_output_path_is_unusual("shortcut", shortcut_root, name, shortcut_path)
-            shortcut_path.parent.mkdir(parents=True, exist_ok=True)
-            create_shortcut(
+            system.write_shortcut(
                 shortcut_path,
-                target,
-                arguments=fields["arguments"],
-                working_directory=fields["workingDirectory"],
-                icon_location=fields["iconLocation"],
-                description=fields["description"],
+                ShortcutSpec(
+                    target_path=target,
+                    arguments=fields["arguments"],
+                    working_directory=fields["workingDirectory"],
+                    icon_location=fields["iconLocation"],
+                    description=fields["description"],
+                ),
             )
             log_info(f"SHORTCUT: created: {shortcut_path.name}")
             result.changed = True
@@ -208,7 +208,8 @@ def install_environment_variables(
     environment_entries: List[Dict[str, str]],
     identity: PackageIdentity,
     scope: Scope,
-    install_context: Dict[str, Any] | None = None,
+    install_context: Dict[str, Any] | None,
+    system: System,
 ) -> StepResult:
     """Write every ``[[environment]]`` row as an expandable registry string.
 
@@ -222,6 +223,8 @@ def install_environment_variables(
         Target install scope for registry writes.
     install_context : dict, optional
         Scope paths that supply ``$ScopeRoot`` and ``$Bin``.
+    system : System
+        Boundary that stores the values.
 
     Returns
     -------
@@ -236,8 +239,7 @@ def install_environment_variables(
             if not name:
                 raise ValueError("entry is missing Name")
             value = _expand(entry.get("Value", ""), identity, install_context, f"environment variable '{name}'")
-            root, subkey = environment_registry_location(scope)
-            write_registry_value(root, subkey, name, value, require_winreg().REG_EXPAND_SZ)
+            system.set_env(scope, name, value, True)
             log_info(f"ENVIRONMENT: setting {scope.value} scope: {name} = {value}")
             result.changed = True
         except PermissionError:
@@ -247,12 +249,12 @@ def install_environment_variables(
             result.ok = False
             result.errors.append(f"Failed to set environment variable '{name or entry}': {exc}")
     if result.changed:
-        _broadcast_environment_change()
+        _broadcast_environment_change(system)
     return result
 
 
 def ensure_bin_in_path(
-    scope_paths: Dict[str, Any], identity: PackageIdentity, scope: Scope
+    scope_paths: Dict[str, Any], identity: PackageIdentity, scope: Scope, system: System
 ) -> StepResult:
     """Create the scope's wrapper directory and make sure it is on PATH.
 
@@ -264,6 +266,8 @@ def ensure_bin_in_path(
         Package identity passed through to PATH expansion.
     scope : Scope
         Installation scope whose PATH should include ``bin_dir``.
+    system : System
+        Boundary that reads and writes ``PATH``.
 
     Returns
     -------
@@ -276,7 +280,7 @@ def ensure_bin_in_path(
         bin_dir.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         return StepResult(ok=False, errors=[f"Failed to create bin directory {bin_dir}: {exc}"])
-    result = add_to_path([str(bin_dir)], identity, scope, scope_paths)
+    result = add_to_path([str(bin_dir)], identity, scope, system, scope_paths)
     result.changed = result.changed or created
     return result
 
@@ -285,6 +289,7 @@ def add_to_path(
     new_entries: List[str],
     identity: PackageIdentity,
     scope: Scope,
+    system: System,
     install_context: Dict[str, Any] | None = None,
 ) -> StepResult:
     """Append directories to the scope PATH, skipping entries already present.
@@ -299,6 +304,8 @@ def add_to_path(
         Package identity used for expansion.
     scope : Scope
         Installation scope whose PATH should be updated.
+    system : System
+        Boundary that reads and writes ``PATH``; this is the only registry read an install makes.
     install_context : dict, optional
         Scope paths that supply ``$ScopeRoot`` and ``$Bin``.
 
@@ -326,7 +333,7 @@ def add_to_path(
     # Read, extend, and rewrite PATH in one guarded step: a PATH that cannot
     # be read must never be replaced by only the new entries.
     try:
-        current_path = get_current_path(scope)
+        current_path = system.get_path(scope)
         existing_keys = {_path_key(item) for item in current_path}
         added: List[str] = []
         for entry in valid_entries:
@@ -336,11 +343,8 @@ def add_to_path(
                 log_info(f"PATH: adding to {scope.value} scope: {entry}")
         if not added:
             return result
-        root, subkey = environment_registry_location(scope)
-        write_registry_value(
-            root, subkey, "Path", ";".join(current_path + added), require_winreg().REG_EXPAND_SZ
-        )
-        _broadcast_environment_change()
+        system.set_path(scope, current_path + added)
+        _broadcast_environment_change(system)
         result.changed = True
     except PermissionError:
         result.ok = False
@@ -351,40 +355,15 @@ def add_to_path(
     return result
 
 
-def get_current_path(scope: Scope) -> List[str]:
-    """Read the scope's registry PATH entries; a missing value is an empty PATH.
-
-    Parameters
-    ----------
-    scope : Scope
-        Installation scope whose PATH should be read.
-
-    Returns
-    -------
-    List[str]
-        Non-empty PATH components in registry order.
-
-    """
-    try:
-        root, subkey = environment_registry_location(scope)
-        value, reg_type = read_registry_value(root, subkey, "Path")
-    except FileNotFoundError:
-        return []
-    reg = require_winreg()
-    if reg_type not in (reg.REG_EXPAND_SZ, reg.REG_SZ):
-        return []
-    return [item.strip() for item in str(value).split(";") if item.strip()]
-
-
 def _path_key(path_value: str) -> str:
     """Normalize a PATH entry for case-insensitive de-duplication."""
     return os.path.normcase(os.path.normpath(path_value)).rstrip("\\/")
 
 
-def _broadcast_environment_change() -> None:
+def _broadcast_environment_change(system: System) -> None:
     """Notify running applications of environment changes, warning on failure."""
     try:
-        broadcast_environment_change()
+        system.broadcast_environment_change()
     except Exception as exc:
         log_warning(f"failed to broadcast environment change notification: {exc}")
 

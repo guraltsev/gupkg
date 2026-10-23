@@ -28,13 +28,16 @@ from . import commands
 from ._version import __version__
 from .core import Scope
 from .outcome import Outcome, format_human
+from .system.port import System
 
 
-def run_tui(package_path: str = "", *, forced_scope: Scope | None = None) -> int:
+def run_tui(system: System, package_path: str = "", *, forced_scope: Scope | None = None) -> int:
     """Run the interactive Textual interface.
 
     Parameters
     ----------
+    system : System
+        Boundary for every machine side effect the interface triggers.
     package_path : str, default=""
         Initially selected package root; an empty value uses the current directory.
     forced_scope : Scope, optional
@@ -119,7 +122,7 @@ def run_tui(package_path: str = "", *, forced_scope: Scope | None = None) -> int
 
         def _read_summary(self) -> None:
             """Read the package summary shown above the action list."""
-            summary = commands.describe_package(self.path)
+            summary = commands.describe_package(self.path, system)
             self.title, self.description, self.warning = summary.title, summary.description, summary.warning
 
         def compose(self) -> ComposeResult:
@@ -197,7 +200,7 @@ def run_tui(package_path: str = "", *, forced_scope: Scope | None = None) -> int
             self.output = ""
             self.flags: set[str] = {"import-shortcuts"} if action == "config-fix" else set()
             self.shim_linkage = "dynamic"
-            detected = commands.automatic_scope(home_screen.path)
+            detected = commands.automatic_scope(home_screen.path, system)
             self.scope, self.system_available = detected or (Scope.USER, False)
             if forced_scope is not None:
                 self.scope, self.system_available = forced_scope, False
@@ -349,6 +352,7 @@ def run_tui(package_path: str = "", *, forced_scope: Scope | None = None) -> int
             """Run the operation on a worker thread, streaming its progress lines."""
             outcome = commands.run_package_command(
                 self.request,
+                system,
                 output=commands.LineStream(self._progress, on_transient=self._transient),
             )
             self.app.call_from_thread(self._finish, outcome)
@@ -451,5 +455,5 @@ def run_tui(package_path: str = "", *, forced_scope: Scope | None = None) -> int
     if app.open_manager:
         from .manager_tui import run_manager_tui
 
-        return max(app.result_code, run_manager_tui())
+        return max(app.result_code, run_manager_tui(system))
     return app.result_code

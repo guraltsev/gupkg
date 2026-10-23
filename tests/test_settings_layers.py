@@ -9,7 +9,7 @@ and a hint.
 
 Real: ``gupkg.settingsload.load_settings`` and the model, on settings files written
 under pytest's temporary folder, and (one ``windows_integration`` test) the real
-administrator-only folder check. Mocked: that check (``trust_check``) in the other tests,
+administrator-only folder check. Fake: ``FakeSystem`` answers that check in the other tests,
 which would otherwise need an administrator-owned folder. Out of scope: the
 ``gupkg settings show`` command itself.
 """
@@ -21,9 +21,10 @@ from pathlib import Path
 
 import pytest
 
-from gupkg.elevation import UntrustedLocationError
 from gupkg.model.settings import SettingsError, default_layer, merge_layers
 from gupkg.settingsload import load_settings, settings_file
+from gupkg.system.fake import FakeSystem
+from gupkg.system.windows import WindowsSystem
 
 
 class World:
@@ -74,11 +75,14 @@ class World:
             return None
 
     def load(self, *, elevated: bool = False, system_mode: bool = False, settings_path: Path | None = None,
-             trust=lambda folder: None):
+             untrusted: bool = False):
         """Load settings for a run on this machine."""
+        # FakeSystem treats every folder as admin-only unless it is listed as untrusted.
+        system = FakeSystem(self.base / "fake", untrusted_dirs={self.base} if untrusted else set())
         return load_settings(
+            system=system,
             env=self.env, elevated=elevated, system_mode=system_mode, app_dir=self.app,
-            settings_path=settings_path, read_text=self.read_text, trust_check=trust,
+            settings_path=settings_path, read_text=self.read_text,
         )
 
 
@@ -203,21 +207,15 @@ def test_elevated_and_system_runs_refuse_a_layer_in_a_folder_that_is_not_admin_o
     """A settings file in a folder a standard user can change stops the run instead of being trusted."""
     world.system_file('schema = 3\n[ui]\ncolor = "never"\n')
 
-    def untrusted(folder: Path) -> None:
-        raise UntrustedLocationError(f"{folder} is writable by Users")
-
     with pytest.raises(SettingsError, match="Refusing the"):
-        world.load(trust=untrusted, **flags)
+        world.load(untrusted=True, **flags)
 
 
 def test_normal_run_does_not_need_admin_only_folders(world: World) -> None:
     """A non-elevated user-mode run reads layers from any folder without the admin-only check."""
     world.system_file('schema = 3\n[ui]\ncolor = "never"\n')
 
-    def untrusted(folder: Path) -> None:
-        raise UntrustedLocationError("never asked")
-
-    assert world.load(trust=untrusted).settings["ui.color"] == "never"
+    assert world.load(untrusted=True).settings["ui.color"] == "never"
 
 
 def test_nothing_is_read_from_appdata_or_programdata(world: World) -> None:
@@ -293,22 +291,16 @@ def test_the_folder_is_checked_before_the_file_is_read(world: World, flags: dict
     """In elevated and system-mode runs a file in an untrusted folder is refused without having been read."""
     system_file = world.system_file('schema = 3\n[ui]\ncolor = "never"\n')
 
-    def untrusted(folder: Path) -> None:
-        raise UntrustedLocationError("writable by Users")
-
     with pytest.raises(SettingsError, match="Refusing"):
-        world.load(trust=untrusted, **flags)
+        world.load(untrusted=True, **flags)
 
     assert system_file not in world.reads
 
 
 def test_a_missing_layer_in_an_untrusted_folder_is_still_refused_in_strict_runs(world: World) -> None:
     """The folder check covers a settings file that does not exist yet, judged by its nearest existing parent."""
-    def untrusted(folder: Path) -> None:
-        raise UntrustedLocationError("writable by Users")
-
     with pytest.raises(SettingsError, match="Refusing"):
-        world.load(trust=untrusted, system_mode=True)
+        world.load(untrusted=True, system_mode=True)
 
 
 def test_unreadable_and_undecodable_files_are_errors_not_skipped_layers(world: World) -> None:
@@ -323,7 +315,10 @@ def test_unreadable_and_undecodable_files_are_errors_not_skipped_layers(world: W
         raise PermissionError("denied")
 
     with pytest.raises(SettingsError, match="cannot read the app settings"):
-        load_settings(env=world.env, elevated=False, system_mode=False, app_dir=world.app, read_text=broken)
+        load_settings(
+            system=FakeSystem(world.base / "fake"), env=world.env, elevated=False, system_mode=False, app_dir=world.app,
+            read_text=broken,
+        )
 
 
 def test_invalid_toml_names_the_file(world: World) -> None:
@@ -342,5 +337,5 @@ def test_real_admin_only_check_refuses_a_user_writable_system_layer(world: World
 
     with pytest.raises(SettingsError, match="Refusing the system settings"):
         load_settings(
-            env=world.env, elevated=False, system_mode=True, app_dir=None, installed_system_root=world.system,
+            system=WindowsSystem(), env=world.env, elevated=False, system_mode=True, app_dir=None, installed_system_root=world.system,
         )

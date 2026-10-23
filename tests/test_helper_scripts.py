@@ -1,8 +1,10 @@
 """Cover user-visible output from package migration helper scripts.
 
-Checked-in legacy fixtures and temporary TOML files are real. Windows shortcut
-inspection and subprocess boundaries are mocked where required. Exact helper
-call graphs and internal normalization structures are out of scope.
+Checked-in legacy fixtures and temporary TOML files are real; the converted
+package is installed against a ``FakeSystem`` and real ``.lnk`` files are
+written and read through ``WindowsSystem`` below temporary directories. Windows
+shortcut inspection is mocked where required. Exact helper call graphs and
+internal normalization structures are out of scope.
 """
 
 from __future__ import annotations
@@ -19,6 +21,11 @@ from pathlib import Path
 import unittest
 from contextlib import redirect_stdout
 from unittest import mock
+
+from gupkg.core import Scope
+from gupkg.system.fake import FakeSystem
+from gupkg.system.port import ShortcutSpec
+from gupkg.system.windows import WindowsSystem
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = ROOT / "src"
@@ -146,29 +153,22 @@ class LegacyConverterTests(unittest.TestCase):
             self.assertEqual(parsed["bin"][0]["name"], "good.cmd")
             self.assertIn("$App\\good.exe", parsed["bin"][0]["content"])
 
-            env = {
-                "APPDATA": str(Path(tmpdir) / "AppData"),
-                "USERPROFILE": str(Path(tmpdir) / "UserProfile"),
-            }
             (version_dir / "App").mkdir()
             (version_dir / "App" / "good.exe").write_text("", encoding="utf-8")
-            with mock.patch.dict(os.environ, env, clear=False):
-                with mock.patch.object(
-                    module, "update_current_junction_if_needed", return_value=True
-                ):
-                    with mock.patch.object(
-                        module,
-                        "install_components",
-                        return_value=mock.Mock(
-                            ok=True, changed=False, warnings=[], errors=[]
-                        ),
-                    ) as install_components_mock:
-                        code, output = self.run_main(
-                            module, ["install", str(version_dir)]
-                        )
+            system = FakeSystem(Path(tmpdir) / "machine")
+            output = io.StringIO()
+            with redirect_stdout(output):
+                code = module.main(["--scope", "user", "install", str(version_dir)], system=system)
 
-            self.assertEqual(code, module.EXIT_SUCCESS, msg=output)
-            install_components_mock.assert_called_once()
+            self.assertEqual(code, module.EXIT_SUCCESS, msg=output.getvalue())
+            self.assertEqual(
+                system.env_values(Scope.USER)["GOODAPP_HOME"].value,
+                str(version_dir.parent / "current" / "App"),
+            )
+            self.assertEqual(
+                [path.name for path in system.shortcuts()], ["Good App.lnk"]
+            )
+            self.assertTrue((system.scope_folders(Scope.USER).bin_dir / "good.cmd").is_file())
 
     def test_converter_can_infer_metadata_from_directory_name(self) -> None:
         """Converter can infer metadata from directory name."""
@@ -486,15 +486,13 @@ class ShortcutImporterTests(unittest.TestCase):
     def test_shortcut_reader_reads_a_real_lnk_with_spaces_in_its_path(self) -> None:
         """The reader returns the stored fields of a real shortcut whose path has spaces."""
 
-        from gupkg.shell_link import ShellLink, write_shell_link
-
         importer = load_shortcut_importer_module()
         with tempfile.TemporaryDirectory() as tmp:
             shortcut_path = Path(tmp) / "Commander Keen" / "Commander Keen.lnk"
             shortcut_path.parent.mkdir()
-            write_shell_link(
+            WindowsSystem().write_shortcut(
                 shortcut_path,
-                ShellLink(
+                ShortcutSpec(
                     target_path=r"C:\games\CommanderKeen\App\keen.exe",
                     arguments="-fast",
                     description="Keen",
@@ -529,8 +527,6 @@ class ShortcutImporterTests(unittest.TestCase):
     def test_importer_turns_real_lnk_files_into_toml_with_and_without_icons(self) -> None:
         """Real shortcuts become shortcut tables; a shortcut with no icon gets an empty icon, not ",0"."""
 
-        from gupkg.shell_link import ShellLink, write_shell_link
-
         importer = load_shortcut_importer_module()
         with tempfile.TemporaryDirectory() as tmpdir:
             version_dir = Path(tmpdir) / "Game" / "1.0.0.local.1"
@@ -541,9 +537,9 @@ class ShortcutImporterTests(unittest.TestCase):
             (version_dir / "pkg.toml").write_text(
                 'name = "Game"\nversion = "1.0.0"\nlocalVersion = 1\n', encoding="utf-8"
             )
-            write_shell_link(
+            WindowsSystem().write_shortcut(
                 shortcuts_dir / "With Icon.lnk",
-                ShellLink(
+                ShortcutSpec(
                     target_path=str(version_dir / "App" / "game.exe"),
                     arguments="--go",
                     working_directory=str(version_dir / "App"),
@@ -551,9 +547,9 @@ class ShortcutImporterTests(unittest.TestCase):
                     description="Has icon",
                 ),
             )
-            write_shell_link(
+            WindowsSystem().write_shortcut(
                 shortcuts_dir / "No Icon.lnk",
-                ShellLink(target_path=str(version_dir / "App" / "tool.exe")),
+                ShortcutSpec(target_path=str(version_dir / "App" / "tool.exe")),
             )
 
             rendered, shortcuts = importer.import_shortcuts(version_dir)

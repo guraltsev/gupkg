@@ -1,9 +1,10 @@
 """Cover package-operation TUI scope labels, operation routing, and status handoff.
 
-The package layout and Textual test driver are real; administrator detection
-and the core package operation (``gupkg.commands.run_package_command``) are
-mocked at their boundaries, so these tests protect what the user selects and the
-exit status they get back. Manager-mode presentation is out of scope.
+The package layout and Textual test driver are real; administrator detection is
+a ``FakeSystem`` flag and the core package operation
+(``gupkg.commands.run_package_command``) is mocked at its boundary, so these
+tests protect what the user selects and the exit status they get back.
+Manager-mode presentation is out of scope.
 """
 
 from __future__ import annotations
@@ -35,7 +36,7 @@ def operations(monkeypatch: pytest.MonkeyPatch) -> list[commands.PackageRequest]
     """Record each package request the TUI runs and answer with a failing status 7."""
     requests: list[commands.PackageRequest] = []
 
-    def run(request, *, output=None):
+    def run(request, system, *, output=None):
         requests.append(request)
         return Outcome(request.command, ActionResult(False, errors=["failed"], exit_code=7))
 
@@ -60,11 +61,11 @@ def _drive(monkeypatch: pytest.MonkeyPatch, steps) -> None:
 
 
 def test_administrator_install_shows_system_scope_and_requests_it(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operations
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operations, system
 ) -> None:
     """An administrator install displays System and runs the install with system scope."""
     version = _package_version(tmp_path)
-    monkeypatch.setattr("gupkg.windows.is_current_user_admin", lambda: True)
+    system.elevated = True
 
     async def steps(app, pilot) -> None:
         await pilot.press("enter")
@@ -75,17 +76,16 @@ def test_administrator_install_shows_system_scope_and_requests_it(
         assert "--scope system install" in str(app.screen.query_one("Label").render())
 
     _drive(monkeypatch, steps)
-    run_tui(str(version))
+    run_tui(system, str(version))
 
     assert [(r.command, r.scope) for r in operations] == [("install", Scope.MACHINE)]
 
 
 def test_update_selection_runs_a_full_update_and_returns_its_status(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operations
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operations, system
 ) -> None:
     """The update selection runs the full update and the process status is the operation's."""
     version = _package_version(tmp_path)
-    monkeypatch.setattr("gupkg.windows.is_current_user_admin", lambda: False)
 
     async def steps(app, pilot) -> None:
         # Home order is Install, update check, update download, update.
@@ -94,7 +94,7 @@ def test_update_selection_runs_a_full_update_and_returns_its_status(
 
     _drive(monkeypatch, steps)
 
-    assert run_tui(str(version)) == 7
+    assert run_tui(system, str(version)) == 7
     [request] = operations
     assert (request.command, request.check_only, request.download_only) == ("update", False, False)
     assert request.scope == Scope.USER
@@ -102,7 +102,7 @@ def test_update_selection_runs_a_full_update_and_returns_its_status(
 
 
 def test_manager_selected_system_scope_stays_locked(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operations
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operations, system
 ) -> None:
     """A manager handoff displays its system scope as locked and runs with it."""
     version = _package_version(tmp_path)
@@ -115,7 +115,7 @@ def test_manager_selected_system_scope_stays_locked(
         assert "--scope system install" in str(app.screen.query_one("Label").render())
 
     _drive(monkeypatch, steps)
-    run_tui(str(version), forced_scope=Scope.MACHINE)
+    run_tui(system, str(version), forced_scope=Scope.MACHINE)
 
     assert [(r.command, r.scope) for r in operations] == [("install", Scope.MACHINE)]
 
@@ -144,12 +144,12 @@ async def _wait_until(pilot, condition, *, seconds: float = 5.0) -> None:
 
 
 def test_long_output_follows_new_lines_and_shows_the_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, system
 ) -> None:
     """Output taller than the screen stays scrolled to its end, including the final failure text."""
     version = _package_version(tmp_path)
 
-    def run(request, *, output=None):
+    def run(request, system, *, output=None):
         for number in range(50):
             output.write(f"progress line {number}\n")
         return Outcome(request.command, ActionResult(False, errors=["the final failure"], exit_code=7))
@@ -166,16 +166,16 @@ def test_long_output_follows_new_lines_and_shows_the_failure(
         assert "the final failure" in str(view.query_one("#output-text").render())
 
     _drive_sized(monkeypatch, (60, 8), steps)
-    run_tui(str(version))
+    run_tui(system, str(version))
 
 
 def test_output_with_markup_characters_is_shown_literally(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, system
 ) -> None:
     """Bracketed text from a package is displayed as written and never breaks the screen."""
     version = _package_version(tmp_path)
 
-    def run(request, *, output=None):
+    def run(request, system, *, output=None):
         output.write("ERROR: [bold] hook [/x] failed [update.check]\n")
         return Outcome(request.command, ActionResult(True, exit_code=0))
 
@@ -189,11 +189,11 @@ def test_output_with_markup_characters_is_shown_literally(
         )
 
     _drive_sized(monkeypatch, (80, 8), steps)
-    run_tui(str(version))
+    run_tui(system, str(version))
 
 
 def test_transient_progress_appears_on_the_status_line_not_in_the_output(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, system
 ) -> None:
     """Live download progress replaces itself on the status line and only the final line joins the output."""
     import threading
@@ -201,7 +201,7 @@ def test_transient_progress_appears_on_the_status_line_not_in_the_output(
     version = _package_version(tmp_path)
     release = threading.Event()
 
-    def run(request, *, output=None):
+    def run(request, system, *, output=None):
         output.write("Downloading update: 1.0 MiB / 2.0 MiB (50%)\r")
         release.wait(5)
         output.write("Downloading update: 2.0 MiB / 2.0 MiB (100%)\r\n")
@@ -220,4 +220,4 @@ def test_transient_progress_appears_on_the_status_line_not_in_the_output(
         assert text().count("(100%)") == 1
 
     _drive_sized(monkeypatch, (80, 8), steps)
-    run_tui(str(version))
+    run_tui(system, str(version))

@@ -61,3 +61,8 @@ See the final report.
 - apply_plan is transactional: copy, atomic swap, launchers backed up, rename last, undo on failure.
 - Comments of the 0.17 files are not preserved in the converted file (the .bak keeps them); the tool says so.
 - settingsload checks the folder before reading, also for a missing file (nearest existing parent), and wraps read and decode errors.
+
+## Merge of main with issue 021
+
+- Import conflicts resolved by keeping both sides (components drops its old .windows imports).
+- settingsload takes a System and calls directory_untrusted_reason before reading; migrate shortcuts read through System.read_shortcut (WindowsSystem by default, FakeSystem in tests, real .lnk variants are windows_integration).

@@ -9,7 +9,7 @@ renames the imported files to ``.lnk.imported``. This is 0.17's
 A shortcut's Start Menu name comes from its place under ``_shortcuts``, not from fields
 inside the file. Paths below the version's ``App``, ``Icons`` and ``Shortcuts`` folders (or
 the package's ``current`` junction) are turned back into ``$App`` and ``$VersionRoot``
-paths; other paths are kept as they are. Reading a ``.lnk`` file needs Windows.
+paths; other paths are kept as they are. Reading a ``.lnk`` file goes through the ``System`` boundary.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from typing import Any
 
 from gupkg.core import write_text_atomic
 from gupkg.model.manifest import ManifestError, ManifestKind, manifest_to_toml, parse_manifest_data
-from gupkg.shell_link import read_shell_link
+from gupkg.system.port import System
 
 SHORTCUTS_DIR_NAME = "_shortcuts"
 
@@ -77,13 +77,15 @@ def _normalize_icon(value: str, prefixes: list[tuple[str, str]]) -> str:
     return _normalize(match.group("path"), prefixes) + (match.group("suffix") or "")
 
 
-def plan_shortcuts(directory: Path, *, shortcuts_dir_name: str = SHORTCUTS_DIR_NAME) -> ShortcutPlan:
+def plan_shortcuts(directory: Path, system: System, *, shortcuts_dir_name: str = SHORTCUTS_DIR_NAME) -> ShortcutPlan:
     """Plan the import of a version directory's shortcut files.
 
     Parameters
     ----------
     directory : Path
         A version directory with a format 2 ``pkg.toml``.
+    system : System
+        The boundary that reads a ``.lnk`` file (``WindowsSystem``, or ``FakeSystem`` in tests).
     shortcuts_dir_name : str, optional
         The folder of ``.lnk`` files, relative to *directory*.
 
@@ -112,7 +114,7 @@ def plan_shortcuts(directory: Path, *, shortcuts_dir_name: str = SHORTCUTS_DIR_N
     prefixes = _prefixes(directory)
     for path in files:
         try:
-            link = read_shell_link(path)
+            link = system.read_shortcut(path)
         except OSError as exc:
             plan.errors.append(f"cannot read {path}: {exc}")
             continue

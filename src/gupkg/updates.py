@@ -29,10 +29,8 @@ import hashlib
 import importlib.util
 import re
 import shutil
-import subprocess
 import sys
 import urllib.parse
-import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PureWindowsPath
 from typing import Any, Dict, Optional, Tuple
@@ -48,7 +46,7 @@ from .core import (
     read_toml_file,
     write_text_atomic,
 )
-from .downloads import download_response, file_sha256
+from .downloads import download_file, file_sha256
 from .github_releases import check_update as check_github_release
 from .metadata import sync_config_metadata_text
 from .origin import (
@@ -58,6 +56,7 @@ from .origin import (
     safe_extract_zip,
 )
 from .tomlio import write_toml
+from .system.port import System, run_checked
 
 
 def update_paths(root: Path) -> Dict[str, Path]:
@@ -175,6 +174,7 @@ def check_update(
     identity: PackageIdentity,
     config: Dict[str, Any],
     state: Dict[str, Any],
+    system: System,
 ) -> Tuple[str, Optional[Dict[str, Any]]]:
     """Discover the current or next upstream state without changing ``App``.
 
@@ -186,6 +186,8 @@ def check_update(
         Normalized package configuration containing the update declaration.
     state : Dict[str, Any]
         Mutable package-owned update state used for candidate continuity.
+    system : System
+        Boundary for network and Git access.
 
     Returns
     -------
@@ -194,7 +196,7 @@ def check_update(
     """
     check = config["update"]["check"]
     if check["mode"] == "git":
-        return _check_git(identity, config, state)
+        return _check_git(identity, config, state, system)
 
     # GitHub and module checks share the hook context; the built-in GitHub
     # checker additionally receives its repository and asset settings.
@@ -215,6 +217,8 @@ def check_update(
             "payload": identity.version_path / "App",
         },
         "state": dict(state),
+        # Hooks read the network only through the system boundary.
+        "fetch_text": system.fetch_text,
     }
     if check["mode"] == "github":
         context.update({
@@ -222,7 +226,7 @@ def check_update(
             "assetName": check["assetName"],
             "tagPrefix": check.get("tagPrefix"),
         })
-        callback = check_github_release
+        callback = lambda hook_context: check_github_release(hook_context, system)  # noqa: E731
     else:
         context["channel"] = check["channel"]
         callback = _hook(identity, check["module"], "check_update")
@@ -236,6 +240,7 @@ def git_origin_candidate(
     identity: PackageIdentity,
     config: Dict[str, Any],
     state: Dict[str, Any],
+    system: System,
 ) -> Dict[str, Any]:
     """Resolve the exact candidate declared by a configured Git origin.
 
@@ -247,6 +252,8 @@ def git_origin_candidate(
         Normalized configuration containing matching Git origin and check refs.
     state : Dict[str, Any]
         Mutable update state used to reuse assigned candidate versions.
+    system : System
+        Boundary for Git access.
 
     Returns
     -------
@@ -258,12 +265,12 @@ def git_origin_candidate(
         raise ConfigValidationError("Git bootstrap requires a configured Git origin")
     if origin["ref"] != config["update"]["check"]["ref"]:
         raise ConfigValidationError("Git origin and update check must use the same ref")
-    commit = _git("ls-remote", "--exit-code", origin["url"], origin["ref"]).split()[0]
+    commit = _git(system, "ls-remote", "--exit-code", origin["url"], origin["ref"]).split()[0]
     return _git_candidate(identity, state, origin["url"], origin["ref"], commit)
 
 
 def _check_git(
-    identity: PackageIdentity, config: Dict[str, Any], state: Dict[str, Any]
+    identity: PackageIdentity, config: Dict[str, Any], state: Dict[str, Any], system: System
 ) -> Tuple[str, Optional[Dict[str, Any]]]:
     """Compare a Git checkout's ``HEAD`` with its upstream ref."""
     check = config["update"]["check"]
@@ -275,8 +282,8 @@ def _check_git(
     # simply a repairable payload rather than an error.
     origin = config.get("origin")
     if origin is not None and origin.get("mode") == "git":
-        candidate = git_origin_candidate(identity, config, state)
-        if app.is_dir() and _git("-C", str(app), "rev-parse", "HEAD") == candidate["commit"]:
+        candidate = git_origin_candidate(identity, config, state, system)
+        if app.is_dir() and _git(system, "-C", str(app), "rev-parse", "HEAD") == candidate["commit"]:
             return "current", None
         return "available", candidate
 
@@ -285,9 +292,9 @@ def _check_git(
         raise ConfigValidationError(
             "Git update check cannot inspect a missing App without a Git [origin]"
         )
-    local = _git("-C", str(app), "rev-parse", "HEAD")
-    url = _git("-C", str(app), "remote", "get-url", check["remote"])
-    remote = _git("ls-remote", "--exit-code", url, check["ref"]).split()[0]
+    local = _git(system, "-C", str(app), "rev-parse", "HEAD")
+    url = _git(system, "-C", str(app), "remote", "get-url", check["remote"])
+    remote = _git(system, "ls-remote", "--exit-code", url, check["ref"]).split()[0]
     if local == remote:
         return "current", None
     return "available", _git_candidate(identity, state, url, check["ref"], remote)
@@ -307,11 +314,9 @@ def _git_candidate(
     }
 
 
-def _git(*arguments: str) -> str:
+def _git(system: System, *arguments: str) -> str:
     """Run one Git command and return its stripped standard output."""
-    return subprocess.run(
-        ["git", *arguments], capture_output=True, text=True, check=True
-    ).stdout.strip()
+    return run_checked(system, ["git", *arguments])
 
 
 def _candidate_version(state: Dict[str, Any], candidate_id: str, package_root: Path) -> str:
@@ -410,6 +415,7 @@ def prepare_update(
     config: Dict[str, Any],
     candidate: Dict[str, Any],
     work: Path,
+    system: System,
     *,
     no_checksum: bool,
 ) -> Path:
@@ -425,6 +431,8 @@ def prepare_update(
         Validated update candidate to stage.
     work : Path
         Isolated, empty workspace that receives the staged version.
+    system : System
+        Boundary for downloads and Git.
     no_checksum : bool
         Whether applicable payload checksum verification may be bypassed.
 
@@ -457,12 +465,10 @@ def prepare_update(
     payload = config["update"]["payload"]
     artifact: Optional[Path] = None
     if payload["mode"] == "git":
-        subprocess.run(["git", "clone", "--no-checkout", candidate["url"], str(stage_app)], check=True)
-        subprocess.run(
-            ["git", "-C", str(stage_app), "checkout", "--detach", candidate["commit"]], check=True
-        )
+        run_checked(system, ["git", "clone", "--no-checkout", candidate["url"], str(stage_app)])
+        run_checked(system, ["git", "-C", str(stage_app), "checkout", "--detach", candidate["commit"]])
     else:
-        artifact = _download_candidate(candidate, payload, work, no_checksum=no_checksum)
+        artifact = _download_candidate(candidate, payload, work, system, no_checksum=no_checksum)
         if payload["mode"] == "zip":
             _unpack_zip_payload(artifact, candidate, payload, work, stage_app)
             _apply_payload_renames(stage_app, payload.get("rename", []), staged_identity)
@@ -481,7 +487,7 @@ def prepare_update(
 
 
 def _download_candidate(
-    candidate: Dict[str, Any], payload: Dict[str, Any], work: Path, *, no_checksum: bool
+    candidate: Dict[str, Any], payload: Dict[str, Any], work: Path, system: System, *, no_checksum: bool
 ) -> Path:
     """Download a candidate artifact into *work* and verify its SHA-256 digest."""
     url = candidate["url"]
@@ -504,9 +510,7 @@ def _download_candidate(
     download = work / "download"
     download.mkdir()
     artifact = download / "payload.part"
-    request = urllib.request.Request(url, headers=headers or {})
-    with urllib.request.urlopen(request, timeout=60) as response:
-        download_response(response, artifact, label="Downloading update")
+    download_file(system, url, artifact, label="Downloading update", headers=headers)
 
     # A checksum is mandatory unless the invocation or the package explicitly
     # opts out; an opt-out is always reported.

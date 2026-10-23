@@ -27,6 +27,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 
 from .model.version import compare_versions, is_version_name
+from .system.port import Scope
+from .system.windows import enable_virtual_terminal
 
 
 __copyright__ = "Copyright (C) 2025 Gennady Uraltsev. All rights reserved."
@@ -55,20 +57,6 @@ class ConfigValidationError(ValueError):
     package configuration, such as unsupported keys, invalid block shapes, or
     missing required fields.
     """
-
-
-class Scope(Enum):
-    """Installation scope supported by ``gupkg``.
-
-    ``AUTO`` selects machine scope for administrators when the package permits
-    it and user scope otherwise. ``USER`` targets per-user configuration
-    locations. ``MACHINE`` targets machine-wide configuration locations and
-    therefore usually requires Administrator privileges.
-    """
-
-    AUTO = "auto"
-    USER = "user"
-    MACHINE = "system"
 
 
 @dataclass
@@ -267,24 +255,8 @@ def supports_color(stream: Any) -> bool:
     except (OSError, ValueError, AttributeError):
         return False
     if key not in _vt_enabled:
-        _vt_enabled[key] = _enable_virtual_terminal(key)
+        _vt_enabled[key] = enable_virtual_terminal(key)
     return _vt_enabled[key]
-
-
-def _enable_virtual_terminal(fileno: int) -> bool:
-    """Turn on ANSI processing for a Windows console handle; report success."""
-    import ctypes
-    import msvcrt
-
-    try:
-        kernel32 = ctypes.windll.kernel32
-        handle = msvcrt.get_osfhandle(fileno)
-        mode = ctypes.c_uint32()
-        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
-            return False
-        return bool(kernel32.SetConsoleMode(handle, mode.value | 0x0004))
-    except (OSError, AttributeError):
-        return False
 
 
 def colorize(text: str, role: str, stream: Any = None) -> str:

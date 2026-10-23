@@ -34,9 +34,11 @@ from . import commands
 from ._version import __version__
 from .core import ConfigValidationError, Scope
 from .manager import ManagedTarget, ManagerConfig, ManagerInventory, UpgradePlan, scope_name
+from .system.port import System
 
 
 def run_manager_tui(
+    system: System,
     config: ManagerConfig | None = None,
     inventory: ManagerInventory | None = None,
 ) -> int:
@@ -44,6 +46,8 @@ def run_manager_tui(
 
     Parameters
     ----------
+    system : System
+        Boundary for every machine side effect the interface triggers.
     config : ManagerConfig, optional
         Validated manager configuration whose roots are displayed and scanned.
         When omitted, the standard locations are searched and, if nothing is
@@ -71,10 +75,12 @@ def run_manager_tui(
     # standard configuration before presenting the initialization screen.
     if config is None and inventory is None:
         try:
-            config = commands.load_manager()
+            config = commands.load_manager(system)
         except ConfigValidationError:
             config = None
-    current_inventory = inventory or (commands.discover_manager(config) if config is not None else None)
+    current_inventory = inventory or (
+        commands.discover_manager(config, system) if config is not None else None
+    )
 
     # Where the user left the browser when opening a package, so the next
     # manager app can reopen it there.  ``active`` is set only by that handoff.
@@ -102,7 +108,7 @@ def run_manager_tui(
     def refresh_inventory() -> None:
         """Rebuild the local inventory so screens never show stale versions."""
         nonlocal current_inventory
-        current_inventory = commands.discover_manager(config)
+        current_inventory = commands.discover_manager(config, system)
 
     class MissingConfigScreen(Screen):
         """Offer the only safe action when manager mode has no configuration."""
@@ -425,7 +431,7 @@ def run_manager_tui(
             description = ""
             if target.local_version:
                 description = commands.describe_package(
-                    str(target.package.root / target.local_version)
+                    str(target.package.root / target.local_version), system
                 ).description
             with VerticalScroll():
                 yield Label(target.target_id, markup=False)
@@ -500,6 +506,7 @@ def run_manager_tui(
             """Check targets one at a time on a worker thread, streaming progress."""
             results = commands.refresh_update_status(
                 current_inventory,
+                system,
                 on_progress=self._progress,
                 cancel_requested=lambda: self.cancel_requested,
             )
@@ -571,7 +578,7 @@ def run_manager_tui(
         def _plan(self) -> None:
             """Check every installed target on a worker thread, streaming progress."""
             plan: UpgradePlan = commands.plan_updates(
-                current_inventory, "auto", on_progress=self._progress
+                current_inventory, "auto", system, on_progress=self._progress
             )
             self.app.call_from_thread(self._finish, plan)
 
@@ -667,10 +674,11 @@ def run_manager_tui(
 
             # Elevation is resolved before any mixed-scope mutation; declining
             # it leaves every package unchanged.
-            if await asyncio.to_thread(commands.needs_elevation, self.plan):
+            if await asyncio.to_thread(commands.needs_elevation, self.plan, system):
                 accepted = await asyncio.to_thread(
                     commands.relaunch_elevated_update,
                     config,
+                    system,
                     no_checksum=self.no_checksum,
                 )
                 refresh_inventory()
@@ -689,6 +697,7 @@ def run_manager_tui(
                 commands.execute_updates,
                 self.plan,
                 config,
+                system,
                 no_checksum=self.no_checksum,
                 cancel_requested=lambda: self.cancel_requested,
                 on_progress=lambda target_id, state: states.__setitem__(target_id, state),
@@ -800,7 +809,9 @@ def run_manager_tui(
         selected = ManagerApp().run()
         if selected is None:
             return result_code
-        result_code = max(result_code, run_tui(str(selected.package.root), forced_scope=selected.scope))
+        result_code = max(
+            result_code, run_tui(system, str(selected.package.root), forced_scope=selected.scope)
+        )
         # Rebuild the local records before returning to the browser so newly
         # activated versions and repaired health state are immediately visible.
         refresh_inventory()

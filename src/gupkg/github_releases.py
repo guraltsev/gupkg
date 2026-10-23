@@ -8,7 +8,7 @@ can remove a publisher-specific tag namespace before version parsing.
 
 Usage and API
 -------------
-Call ``check_update(context)`` with the repository URL, mandatory
+Call ``check_update(context, system)`` with the repository URL, mandatory
 ``assetName``, optional ``tagPrefix``, and current package identity. The
 package update coordinator uses this function for ``[update.check].mode =
 "github"``.
@@ -26,14 +26,15 @@ from __future__ import annotations
 import json
 import re
 import urllib.parse
-import urllib.request
 from typing import Any
+
+from .system.port import System
 
 
 PKG_MODULE_API = 1
 
 
-def check_update(context: dict[str, Any]) -> dict[str, str] | None:
+def check_update(context: dict[str, Any], system: System) -> dict[str, str] | None:
     """Return the latest GitHub release asset when an update is available.
 
     Parameters
@@ -43,6 +44,8 @@ def check_update(context: dict[str, Any]) -> dict[str, str] | None:
         optional ``tagPrefix``, and the current package version and payload
         readiness. ``assetName`` may contain one or more ``${version}``
         placeholders for the latest release version.
+    system : System
+        Boundary that performs the release API request.
 
     Returns
     -------
@@ -105,17 +108,13 @@ def check_update(context: dict[str, Any]) -> dict[str, str] | None:
         f"{urllib.parse.quote(owner, safe='')}/"
         f"{urllib.parse.quote(repository, safe='')}/releases/latest"
     )
-    request = urllib.request.Request(
-        api_url,
-        headers={
-            "Accept": "application/vnd.github+json",
-            "User-Agent": "gupkg-github-release-check/1",
-            "X-GitHub-Api-Version": "2022-11-28",
-        },
-    )
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "gupkg-github-release-check/1",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            release = json.load(response)
+        release = json.loads(system.fetch_text(api_url, headers, timeout=30))
     except (OSError, ValueError) as exc:
         raise RuntimeError(f"Could not read the latest GitHub release: {exc}") from exc
 

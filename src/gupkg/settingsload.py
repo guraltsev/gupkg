@@ -16,7 +16,7 @@ system layer has been merged, because the system layer may change ``[roots]``.
 Nothing is ever read from AppData or ProgramData. The user layer is skipped when the
 run is elevated or in system mode, ``--settings`` in an elevated run must lie inside
 the system root, and in those runs every file must sit in an admin-only folder
-(``elevation.require_trusted_directory``): a layer that fails that check stops the
+(``System.directory_untrusted_reason``): a layer that fails that check stops the
 run, because an elevated run must not trust a folder a standard user can change.
 Reading goes through an injectable function so that tests never touch a real machine.
 """
@@ -30,7 +30,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from .elevation import UntrustedLocationError, require_trusted_directory
+from .system.port import System
 from .model.settings import (
     LAYER_APP,
     LAYER_CLI,
@@ -109,6 +109,7 @@ def _check_roots(settings: Settings, env: Mapping[str, str]) -> None:
 
 def load_settings(
     *,
+    system: System,
     env: Mapping[str, str],
     elevated: bool,
     system_mode: bool,
@@ -116,7 +117,6 @@ def load_settings(
     installed_system_root: Path | None = None,
     settings_path: Path | None = None,
     read_text: Callable[[Path], str | None] = read_text_file,
-    trust_check: Callable[[Path], None] = require_trusted_directory,
 ) -> LoadedSettings:
     """Read the layers a run may use and merge them.
 
@@ -135,10 +135,11 @@ def load_settings(
         when omitted.
     settings_path : Path, optional
         The ``--settings`` file.
+    system : System
+        The boundary that says whether a folder is admin-only
+        (``directory_untrusted_reason``); a ``FakeSystem`` in tests.
     read_text : callable, optional
         Returns a file's text, or ``None`` when it does not exist.
-    trust_check : callable, optional
-        Raises ``UntrustedLocationError`` unless a folder is admin-only.
 
     Returns
     -------
@@ -163,10 +164,9 @@ def load_settings(
             folder = path.parent
             while not folder.exists() and folder.parent != folder:
                 folder = folder.parent
-            try:
-                trust_check(folder)
-            except UntrustedLocationError as exc:
-                raise SettingsError(f"Refusing the {name} settings {path} for this run: {exc}") from exc
+            reason = system.directory_untrusted_reason(folder)
+            if reason is not None:
+                raise SettingsError(f"Refusing the {name} settings {path} for this run: {folder} is not admin-only: {reason}")
 
         # Any failure to read is an error, never a silently skipped layer.
         try:

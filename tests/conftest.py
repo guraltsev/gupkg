@@ -156,3 +156,21 @@ def derive_zip():
 def runtime_zip_factory():
     """Return ``write_runtime_zip``: ``factory(destination, extra=None)`` writes a stand-in CPython ZIP, returning its SHA-256."""
     return write_runtime_zip
+
+
+# ---------------------------------------------------------------------------
+# The machine boundary
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def system(tmp_path: Path):
+    """A ``FakeSystem`` whose pretend machine (Start Menu, bin folders, shortcut records) is ``tmp_path/machine``.
+
+    Registry values live in memory, links and files are real but confined to the
+    temporary directory, elevation is off, and any URL or process that a test
+    does not register raises, so nothing reaches the real machine.
+    """
+    from gupkg.system.fake import FakeSystem
+
+    return FakeSystem(tmp_path / "machine")

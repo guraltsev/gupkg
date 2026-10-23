@@ -26,6 +26,7 @@ sys.path[:0] = [sys.argv[1]]
 from pathlib import Path
 from gupkg.pkgcheck import check_directory
 from gupkg.settingsload import load_settings
+from gupkg.system.fake import FakeSystem
 from gupkg.model.manifest import ManifestKind, TrackResult, parse_manifest, render_pinned
 
 root = Path(sys.argv[2])
@@ -34,7 +35,7 @@ old = check_directory(root / "old" / "1.0")
 tracker = parse_manifest((root / "tool" / "_check_updates" / "pkg.toml").read_text(), ManifestKind.TRACKER)
 pinned = render_pinned(tracker, TrackResult("2.0"))
 settings = load_settings(
-    env={"USERPROFILE": str(root / "home")}, elevated=False, system_mode=False, app_dir=None,
+    system=FakeSystem(root / 'fake'), env={"USERPROFILE": str(root / "home")}, elevated=False, system_mode=False, app_dir=None,
     installed_system_root=root / "sys",
 ).settings
 try:

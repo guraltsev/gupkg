@@ -22,6 +22,7 @@ import pytest
 
 from gupkg.manager import load_manager_config
 from gupkg.settingsload import load_settings, settings_file
+from gupkg.system.fake import FakeSystem
 from gupkg_migrate.cli import main
 
 
@@ -56,7 +57,7 @@ def machine(tmp_path: Path) -> dict:
 def load(machine: dict):
     """Load the settings of a normal run on the fake machine."""
     return load_settings(
-        env=machine["env"], elevated=False, system_mode=False, app_dir=None, installed_system_root=machine["system"]
+        system=FakeSystem(machine["system"].parent / "fake-machine"), env=machine["env"], elevated=False, system_mode=False, app_dir=None, installed_system_root=machine["system"]
     )
 
 

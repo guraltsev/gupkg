@@ -24,8 +24,9 @@ from unittest import mock
 
 import pytest
 
-from gupkg import elevation
-from gupkg.elevation import AccessEntry, DirectorySecurity, UntrustedLocationError
+from gupkg.selfmgmt import elevation
+from gupkg.selfmgmt.elevation import AccessEntry, DirectorySecurity, UntrustedLocationError
+from gupkg.system.windows import WindowsSystem
 
 ADMINS = "S-1-5-32-544"
 SYSTEM = "S-1-5-18"
@@ -252,13 +253,11 @@ def test_elevated_trust_check_covers_the_version_directory_and_the_whole_bundled
 @pytest.mark.skipif(os.name != "nt", reason="uses the Windows shell relaunch")
 def test_elevated_relaunch_goes_through_the_isolated_launcher() -> None:
     """The elevated update relaunch starts gupkg.cmd, never `python -m gupkg` in the caller's directory."""
-    from gupkg import windows
-
     shell_execute = mock.Mock(return_value=42)
     fake_windll = types.SimpleNamespace(shell32=types.SimpleNamespace(ShellExecuteW=shell_execute))
 
     with mock.patch("ctypes.windll", fake_windll, create=True):
-        accepted = windows.relaunch_elevated(["manager", "update", "--yes"])
+        accepted = WindowsSystem().relaunch_elevated(["manager", "update", "--yes"])
 
     assert accepted is True
     _, verb, program, parameters, directory, _ = shell_execute.call_args.args
@@ -361,7 +360,8 @@ def test_bootstrap_applies_the_admin_only_checks_exactly_for_elevated_runs(
         mock.patch.object(bootstrap, "_load_elevation", return_value=elevation),
         mock.patch.object(sys, "executable", str(python)),
         mock.patch.object(sys, "flags", types.SimpleNamespace(isolated=1, no_site=1)),
-        mock.patch.object(elevation, "is_elevated", return_value=admin_signal),
+        mock.patch.object(elevation, "_admin_signal", return_value=admin_signal),
+        mock.patch.object(elevation, "_token_elevation_signal", return_value=False),
         mock.patch.object(elevation, "require_trusted_directory", side_effect=refuse) as trusted,
         mock.patch.dict(sys.modules, {"gupkg.cli": cli}),
     ):

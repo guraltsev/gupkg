@@ -21,6 +21,9 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from gupkg.system.port import System
+from gupkg.system.windows import WindowsSystem
+
 from .package import PackagePlan, apply_plan, plan_package
 from .settings import apply_settings, plan_settings
 from .shortcuts import apply_shortcuts, plan_shortcuts
@@ -28,13 +31,15 @@ from .shortcuts import apply_shortcuts, plan_shortcuts
 _SKIPPED_NAMES = frozenset({"current", "data"})
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(argv: Sequence[str] | None = None, *, system: System | None = None) -> int:
     """Run one migration command and return its exit status.
 
     Parameters
     ----------
     argv : sequence of str, optional
         The command line without the program name; ``sys.argv[1:]`` by default.
+    system : System, optional
+        The machine boundary used to read shortcuts; ``WindowsSystem()`` by default.
 
     Returns
     -------
@@ -43,6 +48,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     """
     parser = _parser()
     args = parser.parse_args(list(sys.argv[1:] if argv is None else argv))
+    args.system = system if system is not None else WindowsSystem()
     return int(args.run(args))
 
 
@@ -161,7 +167,7 @@ def _run_settings(args: argparse.Namespace) -> int:
 
 def _run_shortcuts(args: argparse.Namespace) -> int:
     """Import the shortcut files of one version directory."""
-    plan = plan_shortcuts(args.directory)
+    plan = plan_shortcuts(args.directory, args.system)
     for error in plan.errors:
         print(f"[error] {error}", file=sys.stderr)
     if not plan.ok:

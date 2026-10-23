@@ -297,7 +297,7 @@ Following `_docs/tests.md`:
 
 ## 9. Implementation notes and deviations
 
-- Modules: `gupkg.elevation` (detection and ACL policy), `gupkg.locked_deps`
+- Modules: `gupkg.selfmgmt.elevation` (detection and ACL policy), `gupkg.locked_deps`
   (lockfile, staged install, `repair-deps`, `update-deps`),
   `gupkg.dependency_notices` (advisory warning).
 - **Launcher detection.** Since issue 018, `gupkg.cmd` no longer probes for
