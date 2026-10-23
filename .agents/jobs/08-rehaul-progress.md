@@ -19,7 +19,7 @@ on `main` before dispatching the first worker.
 | 017 | Shortcuts and junctions without PowerShell or `cmd` | — | merged | rehaul/issue017 | e23a94c | 277 passed (+20), 0 failed, 0 skipped | 017-1 Explorer Properties dialog; 017-2 TUI and elevated system-scope install; 017-3 optional timing |
 | 018 | Remove system-Python autodetection | 016 | in review | rehaul/issue018 | | | |
 | 019 | The bundled Python ships without pip | 016 | merged | rehaul/issue019 | 5c922cb | 331 passed, 0 failed, 0 skipped | 019-1 real build; 019-2 clean-VM pip-less run; 019-3 update_deps --repair no-diff |
-| 021 | System boundary, FakeSystem, and sandbox mode | 016–019 | in progress | rehaul/issue021 | | | |
+| 021 | System boundary, FakeSystem, and sandbox mode | 016–019 | in review | rehaul/issue021 | | | |
 | 022 | Event stream, console renderer, and standard logs | 021 | waiting | | | | |
 | 023 | `pkg.toml` format 2, settings model, and migration tool | 019 (and D35) | in review | rehaul/issue023 | | | |
 | 024 | Catalog and package state model | 023 | waiting | | | | |
@@ -72,3 +72,4 @@ None blocking. For information:
 - Stale text noted by the 018 worker: `docs/elevated-runtime-design.md` "Dependencies ship in the bundle" bullet still says the lock pins pip and that update/repair run pip from the bundled runtime (stale after 019); fix in issue 032's docs pass.
 - 2026-10-22: 0.18 prepared locally (see Releases). Dispatched workers for 021 and 023 (stage 1).
 - 2026-10-22: 023 worker done (4 commits, 553 passed); reviewer started. Worker deferred 'adoption of 0.17 installs' (reviewer to judge).
+- 2026-10-22: 021 worker done (3 commits, 408 passed); reviewer started (incl. trial merge with 023 branch and 018 security-regression check).
