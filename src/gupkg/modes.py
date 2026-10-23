@@ -456,18 +456,31 @@ def _portable_root(
 
 
 def _check_portable_root(root: Path, configured: Mapping[str, Path]) -> None:
-    """Refuse a portable root that is, contains, or lies in the system root (portable is never machine-wide, 6.3)."""
-    system_root = configured[MODE_SYSTEM]
-    if canonical_path(root) == canonical_path(system_root) or is_inside(root, system_root) or is_inside(system_root, root):
-        raise ModeRefused(
-            f"A portable root must not be the system root or lie inside it: {root}. Portable state that "
-            "every user can reach inside the system root would let a standard user gain administrator rights."
-        )
+    """Refuse a portable root that could be machine-wide or that user-mode scanning would also see.
 
-    # A portable root that is the user root (or nested in it) would make one folder two modes.
-    user_root = configured[MODE_USER]
-    if canonical_path(root) == canonical_path(user_root) or is_inside(root, user_root) or is_inside(user_root, root):
-        raise ModeRefused(f"A portable root must not be the user root or nested with it: {root}.")
+    Forbidden: a root that is the system root, lies inside it, or contains it (portable is never
+    machine-wide, 6.3), and a root that is the user root or lies inside it (one folder, two modes).
+    A root that merely contains the user root, such as the profile folder, is allowed.
+    """
+    system_root, user_root = configured[MODE_SYSTEM], configured[MODE_USER]
+    same_system = canonical_path(root) == canonical_path(system_root)
+    reasons = (
+        (same_system, f"is the system root ({system_root})"),
+        (is_inside(root, system_root), f"lies inside the system root ({system_root})"),
+        (is_inside(system_root, root), f"contains the system root ({system_root})"),
+    )
+    for fired, text in reasons:
+        if fired:
+            raise ModeRefused(
+                f"The portable root {root} {text}. Portable is never machine-wide: state kept inside the system "
+                "root would be shared, writable state next to code that an elevated gupkg runs."
+            )
+    if canonical_path(root) == canonical_path(user_root) or is_inside(root, user_root):
+        relation = "is" if canonical_path(root) == canonical_path(user_root) else "lies inside"
+        raise ModeRefused(
+            f"The portable root {root} {relation} the user root ({user_root}); packages there are user-mode "
+            "packages. Choose a folder outside the user root (a folder that contains it is fine)."
+        )
 
 
 # ---------------------------------------------------------------------------

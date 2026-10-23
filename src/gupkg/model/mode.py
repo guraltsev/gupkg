@@ -32,6 +32,7 @@ gupkg.model.settings : the ``[roots]`` and ``[integration.*]`` tables the contex
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -59,6 +60,7 @@ ENV_MACHINE = "HKLM"
 ENV_USER = "HKCU"
 
 AUTO_ELEVATED = "auto: elevated"
+_UNSAFE_PART = re.compile(r'[<>:"|?*\\]')
 NORMAL_SHELL_HINT = "Run it from a normal (non-elevated) shell."
 
 
@@ -144,8 +146,19 @@ class ModeContext:
         return self.data_dir / "logs"
 
     def package_dir(self, name: str) -> Path:
-        """Return the package root of *name* in this context's root."""
-        return self.root.joinpath(*name.split("/"))
+        """Return the package root of *name* in this context's root.
+
+        Raises
+        ------
+        ValueError
+            If a part of *name* (folders are joined by ``/``) is empty, ``.`` or ``..``, or holds a path
+            separator, a drive colon or another character Windows does not allow in a name.
+        """
+        parts = name.split("/")
+        for part in parts:
+            if part in ("", ".", "..") or _UNSAFE_PART.search(part) or part != part.rstrip(" ."):
+                raise ValueError(f"'{name}' is not a safe package name: it would leave the root or is not a valid folder name")
+        return self.root.joinpath(*parts)
 
     def package_log_dir(self, name: str) -> Path:
         """Return the log folder of one package, ``<root>\\<name>\\.gupkg\\logs`` (D26)."""

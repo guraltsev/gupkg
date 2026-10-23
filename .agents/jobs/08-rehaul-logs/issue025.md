@@ -48,3 +48,37 @@ removed by 021), design 6/11/12 text, `_docs/operations.md` (why no portable in 
 ## Acceptance criteria -> coverage
 
 See the final report.
+
+## Review round 1
+
+- `copy_distribution` is hardened against a source that changes while it is read: a directory is listed only after it is
+  shown to be a plain directory inside the source and the listing counts only if `lstat` is unchanged afterwards; a file is
+  opened first and the handle must be the file the path names (`fstat` vs `lstat` identity, regular file, not a link) and
+  the path's real path must still lie inside the source; the destination is re-checked to be inside the staging folder.
+  Tests swap a directory, and a parent folder, for a junction between check and use (by wrapping `os.scandir` / `os.open`).
+  Weaker than asked: the final path is checked through the real path of the *path* after `open`, not through
+  `GetFinalPathNameByHandle` (that needs ctypes outside `system/windows.py`, which the 021 acceptance rule forbids, or a new
+  `System` method). A swap back between the open and the real-path check is therefore not excluded; the sources of
+  the copy are data and are never executed.
+- Hostile names (trailing dot or space, reserved device names with or without extension, superscript digits, stream
+  syntax, illegal characters) are `DistributionRefused` up front, for the package and version names and for every entry.
+  `DistributionRefused` subclasses `ModeRefused` (exit code 2).
+- A refused or failed copy removes the work folder and any of root, `.gupkg`, `.gupkg\work` that the call created.
+- `copy_distribution(required=ModeChoice)` checks the staged `pkg.toml`'s `modes` before anything is moved into the root
+  (same `ModeRefused` text as `check_supported`).
+- Portable root rule (controller decision): refused when it is the system root, inside it, or contains it; refused when it
+  is the user root or inside it; allowed when it only contains the user root. The message names the rule that fired.
+- The `GUPKG_ELEVATED` pin is an autouse fixture in `tests/mode_support.py`, imported by every mode test module.
+- `ModeContext.package_dir` validates the name (no `..`, empty, separators, colon, trailing dot).
+- Design: portable refused under elevation (6.2, 9.4, D31); the default portable root is a scanned location, not a `--mode
+  portable` target (6.1).
+- `scope_context(system=None)` (used by `self status` without a system) now raises `SettingsError` (a `ValueError`) when
+  `USERPROFILE` or another `%VAR%` of the built-in defaults is undefined; the old `_user_bin` fell back to the home folder.
+
+### Handoff to 028 and 029
+
+- Nothing is wired to a command yet: `resolve_mode`, `ensure_elevation` and `copy_distribution` are called by no CLI path.
+- 029 must always set `ModeRequest.relaunched` in the argv of the elevated child (the child is stricter only if told)
+  and test that the relaunched child refuses a folder outside every root.
+- 028 writes `CopyResult.source_marked` into the receipt, passes `required=ModeChoice` to `copy_distribution`, and installs from
+  the copy. `resolve_mode` returns the folder to copy as `ResolvedMode.source`.

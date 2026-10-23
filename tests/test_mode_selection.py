@@ -15,6 +15,7 @@ from __future__ import annotations
 import pytest
 
 from gupkg.model.mode import ModeRefused, select_mode
+from tests.mode_support import pin_no_ambient_elevation  # noqa: F401
 
 
 @pytest.mark.parametrize(

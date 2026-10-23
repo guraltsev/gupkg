@@ -24,7 +24,7 @@ from gupkg.model.settings import SettingsError, default_layer, merge_layers
 from gupkg.modes import default_folders, scope_context
 from gupkg.settingsload import settings_file
 from gupkg.system.port import Scope
-from tests.mode_support import Machine
+from tests.mode_support import Machine, pin_no_ambient_elevation  # noqa: F401
 
 ENV = {"USERPROFILE": "C:\\Users\\pat", "APPDATA": "C:\\Users\\pat\\AppData\\Roaming", "ProgramData": "C:\\ProgramData"}
 
@@ -203,3 +203,24 @@ def test_the_manager_destinations_are_a_mode_context_with_the_managers_roots_and
     assert system.bin_dir == machine.fake.scope_folders(Scope.MACHINE).bin_dir
     with pytest.raises(ValueError, match="explicit scope"):
         installation_context(config, Scope.AUTO, machine.fake)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        pytest.param("..\evil", id="dotdot-with-separator"),
+        pytest.param("../evil", id="dotdot-with-slash"),
+        pytest.param("a/../../evil", id="dotdot-inside-groups"),
+        pytest.param("C:evil", id="drive-colon"),
+        pytest.param("", id="empty"),
+        pytest.param("tool.", id="trailing-dot"),
+    ],
+)
+def test_a_package_name_cannot_leave_the_root(name: str) -> None:
+    """``package_dir`` (and so the log and data folders) refuses a name that would leave the root or is not a folder name."""
+    context = builtin("user")
+
+    with pytest.raises(ValueError, match="not a safe package name"):
+        context.package_dir(name)
+    with pytest.raises(ValueError, match="not a safe package name"):
+        context.package_log_dir(name)

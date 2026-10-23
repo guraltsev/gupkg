@@ -15,8 +15,8 @@ of the running gupkg, the system root's ``.gupkg\\settings.toml``, the user root
 system layer has been merged, because the system layer may change ``[roots]``.
 Nothing is ever read from AppData or ProgramData. A portable run reads the portable root's
 layer in place of the user layer, and no elevated or system-mode run may be given a portable
-root. The user layer is skipped when the run is elevated or in system mode,``--settings`` in an elevated run must lie inside
-the system root, and in those runs every file must sit in an admin-only folder
+root. The user layer is skipped when the run is elevated or in system mode, ``--settings`` in an
+elevated run must lie inside the system root, and in those runs every file must sit in an admin-only folder
 (``System.directory_untrusted_reason``): a layer that fails that check stops the
 run, because an elevated run must not trust a folder a standard user can change.
 Reading goes through an injectable function so that tests never touch a real machine.

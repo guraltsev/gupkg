@@ -27,15 +27,9 @@ from gupkg.catalog.catalog import CatalogError
 from gupkg.model.mode import InputNeeded, ModeRefused
 from gupkg.modes import ModeRequest, resolve_mode
 from tests.catalog_support import build_registry, version_text
-from tests.mode_support import Machine, tree_snapshot
+from tests.mode_support import Machine, pin_no_ambient_elevation, tree_snapshot  # noqa: F401
 
 DEFAULT_MODES_WITH_PORTABLE = '["system", "user", "portable"]'
-
-
-@pytest.fixture(autouse=True)
-def _no_ambient_elevation_marker(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The launcher's ``GUPKG_ELEVATED`` marker is pinned off so elevation comes only from the fake machine."""
-    monkeypatch.delenv("GUPKG_ELEVATED", raising=False)
 
 
 def resolve(machine: Machine, selector: str, **options):
@@ -477,30 +471,42 @@ def test_without_the_portable_flag_a_name_version_folder_is_not_installed_in_pla
 
 
 @pytest.mark.parametrize(
-    "where",
+    ("relation", "message"),
     [
-        pytest.param("asked-inside", id="asked-root-inside-the-system-root"),
-        pytest.param("asked-the-root", id="asked-root-is-the-system-root"),
-        pytest.param("in-place-above", id="in-place-root-contains-the-system-root"),
+        pytest.param("system-is", "is the system root", id="portable-is-the-system-root"),
+        pytest.param("system-inside", "lies inside the system root", id="portable-inside-the-system-root"),
+        pytest.param("system-contains", "contains the system root", id="portable-contains-the-system-root"),
+        pytest.param("user-is", "is the user root", id="portable-is-the-user-root"),
+        pytest.param("user-inside", "lies inside the user root", id="portable-inside-the-user-root"),
     ],
 )
-def test_a_portable_root_is_never_the_system_root_or_inside_it(tmp_path: Path, where: str) -> None:
-    """Portable state is never machine-wide: a portable root that is, lies in, or contains the system root is refused."""
+def test_a_portable_root_that_is_machine_wide_or_ambiguous_is_refused_with_the_rule_that_fired(
+    tmp_path: Path, relation: str, message: str
+) -> None:
+    """A portable root that is, lies in, or contains the system root, or is or lies in the user root, is refused."""
     machine = Machine(tmp_path, portable_configured=False)
     registry_package(machine, modes=DEFAULT_MODES_WITH_PORTABLE)
-    if where == "in-place-above":
-        folder = tmp_path / "sys" / "tool" / "1.0.0"
-        folder.mkdir(parents=True)
-        (folder / "pkg.toml").write_text(
-            version_text("1.0.0").replace("format = 2\n", f"format = 2\nmodes = {DEFAULT_MODES_WITH_PORTABLE}\n", 1), encoding="utf-8"
-        )
-        selector, options = str(folder), {}
-    else:
-        answer = machine.system_root / "port" if where == "asked-inside" else machine.system_root
-        selector, options = "tool", {"ask_portable_root": lambda: answer}
+    answers = {
+        "system-is": machine.system_root, "system-inside": machine.system_root / "port",
+        "system-contains": machine.system_root.parent, "user-is": machine.user_root,
+        "user-inside": machine.user_root / "port",
+    }
 
-    with pytest.raises(ModeRefused, match="must not be the system root or lie inside it"):
-        resolve(machine, selector, explicit_mode="portable", **options)
+    with pytest.raises(ModeRefused, match=message):
+        resolve(machine, "tool", explicit_mode="portable", ask_portable_root=lambda: answers[relation])
+
+
+def test_a_portable_root_that_merely_contains_the_user_root_is_allowed(tmp_path: Path) -> None:
+    """A portable root that contains the user root (the profile folder) is allowed, as for an in-place folder there."""
+    machine = Machine(tmp_path)
+    folder = machine.distribution("tool", "1.0.0", modes=DEFAULT_MODES_WITH_PORTABLE)
+    home_folder = tmp_path / "home" / "tool" / "1.0.0"
+    home_folder.parent.mkdir(parents=True)
+    folder.rename(home_folder)
+
+    result = resolve(machine, str(home_folder), explicit_mode="portable")
+
+    assert result.context.root == tmp_path / "home" and result.context.in_place
 
 
 def test_a_portable_run_reads_the_settings_of_its_portable_root(tmp_path: Path) -> None:

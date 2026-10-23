@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from gupkg.catalog.record import write_install_record
 from gupkg.model.state import InstallRecord
 from gupkg.modes import settings_loader
@@ -17,6 +19,15 @@ from gupkg.settingsload import read_text_file
 from gupkg.system.fake import FakeSystem
 
 from tests.catalog_support import activate, version_text, write_version
+
+
+@pytest.fixture(autouse=True)
+def pin_no_ambient_elevation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the launcher's ``GUPKG_ELEVATED`` marker off, so elevation comes only from the fake machine.
+
+    A test module opts in by importing this fixture (``from tests.mode_support import pin_no_ambient_elevation``).
+    """
+    monkeypatch.delenv("GUPKG_ELEVATED", raising=False)
 
 
 class Machine:

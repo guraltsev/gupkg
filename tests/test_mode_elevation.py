@@ -22,6 +22,7 @@ from gupkg.model.mode import InputNeeded, ModeChoice, build_mode_context
 from gupkg.model.settings import default_layer, merge_layers
 from gupkg.relaunch import ElevationRefused, ensure_elevation
 from gupkg.system.fake import FakeSystem
+from tests.mode_support import pin_no_ambient_elevation  # noqa: F401
 
 ENV = {"USERPROFILE": "C:\\Users\\pat", "APPDATA": "C:\\Users\\pat\\AppData\\Roaming", "ProgramData": "C:\\ProgramData"}
 ARGV = ["install", "tool", "--mode", "system"]
