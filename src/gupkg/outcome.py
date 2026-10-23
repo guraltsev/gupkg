@@ -22,11 +22,11 @@ fixed order, which keeps output deterministic.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from typing import Any
 
 from .core import EXIT_USER_ERROR, ActionResult
+from .tomlio import dumps
 
 
 @dataclass
@@ -111,37 +111,40 @@ def format_human(outcome: Outcome) -> tuple[str, str]:
 def format_toml(outcome: Outcome) -> str:
     """Format an outcome as one deterministic, versioned TOML document."""
     result = outcome.result
-    lines = [
-        "output_schema = 1",
-        f"command = {_toml_value(outcome.command)}",
-        f"ok = {_toml_value(result.ok)}",
-        f"changed = {_toml_value(result.changed)}",
-        f"status = {_toml_value(outcome.status)}",
-        f"exit_code = {result.exit_code}",
-        f"warnings = {_toml_value(result.warnings)}",
-        f"errors = {_toml_value(result.errors)}",
-    ]
+    document: dict[str, Any] = {
+        "output_schema": 1,
+        "command": str(outcome.command),
+        "ok": result.ok,
+        "changed": result.changed,
+        "status": str(outcome.status),
+        "exit_code": result.exit_code,
+        "warnings": [str(item) for item in result.warnings],
+        "errors": [str(item) for item in result.errors],
+    }
 
-    def table(header: str, values: dict[str, Any]) -> None:
-        """Append one table, omitting unset values."""
-        lines.append(f"\n{header}")
-        lines.extend(f"{key} = {_toml_value(value)}" for key, value in values.items() if value is not None)
+    def table(values: dict[str, Any]) -> dict[str, Any]:
+        """Return one table's values, omitting unset ones."""
+        return {key: _toml_value(value) for key, value in values.items() if value is not None}
 
     for section in _TABLE_SECTIONS:
         if isinstance(outcome.data.get(section), dict):
-            table(f"[{section}]", outcome.data[section])
+            document.setdefault(section, {}).update(table(outcome.data[section]))
     for key, header, _ in _ARRAY_SECTIONS:
-        for record in outcome.data.get(key, []):
-            table(f"[[{header}]]", record)
-    return "\n".join(lines) + "\n"
+        records = [table(record) for record in outcome.data.get(key, [])]
+        if records:
+            # A dotted header such as ``registry.package`` is an array inside the ``registry`` table.
+            *parents, leaf = header.split(".")
+            parent = document
+            for name in parents:
+                parent = parent.setdefault(name, {})
+            parent.setdefault(leaf, []).extend(records)
+    return dumps(document)
 
 
-def _toml_value(value: Any) -> str:
-    """Render one scalar or list as TOML; other values become strings."""
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, int):
-        return str(value)
+def _toml_value(value: Any) -> Any:
+    """Return a bool, an int or a list of strings as is; any other value becomes a string."""
+    if isinstance(value, (bool, int)):
+        return value
     if isinstance(value, list):
-        return "[" + ", ".join(_toml_value(str(item)) for item in value) + "]"
-    return json.dumps(str(value), ensure_ascii=False)
+        return [str(item) for item in value]
+    return str(value)

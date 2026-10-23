@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import re
 import subprocess
 import sys
@@ -16,6 +17,17 @@ import pytest
 SOURCE_ROOT = Path(__file__).resolve().parents[1] / "src"
 if str(SOURCE_ROOT) not in sys.path:
     sys.path.insert(0, str(SOURCE_ROOT))
+
+# tomli_w is the one TOML writer (issue 019 locks it). A dev .venv made before that lock
+# lacks it, so load the very copy the release bundle ships, and only that package.
+if importlib.util.find_spec("tomli_w") is None:
+    _shipped = SOURCE_ROOT / "gupkg" / "python" / "Lib" / "site-packages" / "tomli_w" / "__init__.py"
+    _spec = importlib.util.spec_from_file_location(
+        "tomli_w", _shipped, submodule_search_locations=[str(_shipped.parent)]
+    )
+    _module = importlib.util.module_from_spec(_spec)
+    sys.modules["tomli_w"] = _module
+    _spec.loader.exec_module(_module)
 
 # The maintainer tools are plain scripts in ``tools/``; their tests import them by name.
 TOOLS_ROOT = Path(__file__).resolve().parents[1] / "tools"
@@ -58,18 +70,24 @@ class ReleaseBundle(NamedTuple):
     commit: str
 
 
-def write_runtime_zip(destination: Path, extra: dict[str, bytes | str] | None = None) -> str:
+def write_runtime_zip(
+    destination: Path, extra: dict[str, bytes | str] | None = None, packages: tuple[str, ...] = ()
+) -> str:
     """Zip this checkout's committed CPython (without ``Lib/site-packages``) and return the ZIP's SHA-256.
 
     The archive stands in for the downloaded embeddable CPython, so a build can run
     the real ``python.exe`` without network access. *extra* adds ``{path: content}``
-    entries, for example a planted ``Lib/site-packages/pip/__init__.py``.
+    entries, for example a planted ``Lib/site-packages/pip/__init__.py``. *packages* names
+    committed ``site-packages`` folders to keep, such as ``tomli_w``, which the CLI needs
+    to start (a ``--skip-deps`` build installs no dependency itself).
     """
     runtime = Path(__file__).resolve().parents[1] / "src" / "gupkg" / "python"
     with zipfile.ZipFile(destination, "w", zipfile.ZIP_STORED) as archive:
         for path in sorted(runtime.rglob("*")):
             relative = path.relative_to(runtime)
-            if path.is_file() and "__pycache__" not in path.parts and relative.parts[:2] != ("Lib", "site-packages"):
+            if not path.is_file() or "__pycache__" in path.parts:
+                continue
+            if relative.parts[:2] != ("Lib", "site-packages") or relative.parts[2] in packages:
                 archive.write(path, relative)
         for name, content in (extra or {}).items():
             archive.writestr(name, content)
@@ -88,7 +106,7 @@ def release_bundle(tmp_path_factory: pytest.TempPathFactory) -> ReleaseBundle:
     """
     work = tmp_path_factory.mktemp("release-bundle")
     runtime_zip = work / "runtime.zip"
-    runtime_sha256 = write_runtime_zip(runtime_zip)
+    runtime_sha256 = write_runtime_zip(runtime_zip, packages=("tomli_w",))
     output = work / "bundle.zip"
     tool = Path(__file__).resolve().parents[1] / "tools" / "build_standalone.py"
     version = re.search(

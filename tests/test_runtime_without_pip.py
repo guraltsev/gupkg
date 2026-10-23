@@ -88,7 +88,7 @@ def build(tmp_path: Path, build_python: str, runtime_zip_factory, lock_text: str
         skip_deps=skip_deps,
         find_links=find_links,
         python=build_python,
-        probe_modules=("gupkg.cli",),
+        probe_modules=("gupkg.core",),
     )
     return output
 

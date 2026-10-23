@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import contextlib
 import io
-import json
 import os
 import re
 import urllib.parse
@@ -52,6 +51,7 @@ from .core import (
 )
 from .layout import compute_scope_paths, inspect_current
 from .registry import OFFICIAL_SOURCE
+from .tomlio import dumps
 
 
 @dataclass(frozen=True)
@@ -307,24 +307,17 @@ def manager_config_text(config: ManagerConfig) -> str:
     user_bin = config.user_bin or compute_scope_paths(Scope.USER)["bin_dir"]
     system_bin = config.system_bin or compute_scope_paths(Scope.MACHINE)["bin_dir"]
     def toml_path(value: Path) -> str:
-        """Render a Windows path as a TOML literal string."""
-        return "'" + str(value).replace("\\", "/").replace("'", "''") + "'"
+        """Render a Windows path with forward slashes, which TOML and Windows both accept."""
+        return str(value).replace("\\", "/")
 
-    return (
-        'mode = "manager"\n'
-        "schema_version = 2\n\n"
-        "[packages]\n"
-        f"system = {toml_path(config.system_root)}\n"
-        f"user = {toml_path(config.user_root)}\n\n"
-        "[bin]\n"
-        f"system = {toml_path(system_bin)}\n"
-        f"user = {toml_path(user_bin)}\n\n"
-        "[registry]\n"
-        f"cache = {toml_path(config.registry_cache)}\n"
-        f"source = {json.dumps(config.registry_source)}\n\n"
-        "[shims]\n"
-        f'linkage = "{config.shim_linkage}"\n'
-    )
+    return dumps({
+        "mode": "manager",
+        "schema_version": 2,
+        "packages": {"system": toml_path(config.system_root), "user": toml_path(config.user_root)},
+        "bin": {"system": toml_path(system_bin), "user": toml_path(user_bin)},
+        "registry": {"cache": toml_path(config.registry_cache), "source": config.registry_source},
+        "shims": {"linkage": config.shim_linkage},
+    })
 
 
 def default_manager_config(path: Path | None = None) -> ManagerConfig:

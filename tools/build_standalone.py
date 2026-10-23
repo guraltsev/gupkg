@@ -60,7 +60,8 @@ ROOT = Path(__file__).resolve().parents[1]
 PROBE_MODULES = ("gupkg.cli", "gupkg.manager", "gupkg.tui", "gupkg.manager_tui")
 OPTIONAL_PROBE_PACKAGES = ("gupkg_ui", "gupkg_tui", "gupkg_manager")
 # Modules of the base probe that need no third-party package (used by --skip-deps builds).
-BARE_PROBE_MODULES = ("gupkg.cli",)
+# ``gupkg.cli`` is not among them any more: the CLI writes TOML with tomli_w (issue 023).
+BARE_PROBE_MODULES = ("gupkg.core", "gupkg.model.version", "gupkg.model.settings")
 
 
 def main(argv: list[str] | None = None) -> int:
