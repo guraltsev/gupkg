@@ -20,11 +20,11 @@ on `main` before dispatching the first worker.
 | 018 | Remove system-Python autodetection | 016 | in review | rehaul/issue018 | | | |
 | 019 | The bundled Python ships without pip | 016 | merged | rehaul/issue019 | 5c922cb | 331 passed, 0 failed, 0 skipped | 019-1 real build; 019-2 clean-VM pip-less run; 019-3 update_deps --repair no-diff |
 | 021 | System boundary, FakeSystem, and sandbox mode | 016–019 | merged | rehaul/issue021 | 2fcf02c | 419 passed, 0 failed, 0 skipped | 021-1 sandbox vs real HKCU/Start Menu; 021-2 WM_SETTINGCHANGE; 021-3 UAC relaunch; 021-4 admin detection and --scope auto |
-| 022 | Event stream, console renderer, and standard logs | 021 | in progress (4th fix round approved) | rehaul/issue022 (tip 7f6abfe, includes main at f08a5fc) | | 949 passed on the branch (3 ambient environments), 0 skipped | 022-1..022-5 in tests/manual_smoke.md |
+| 022 | Event stream, console renderer, and standard logs | 021 | merged | rehaul/issue022 | 8aba71e | 965 passed, 0 failed, 0 skipped (also under 3 ambient environments) | 022-1 real console; 022-2 icacls on log dirs; 022-3 elevated hostile --events-file; 022-4 real TUI git failure; 022-5 legacy code page |
 | 023 | `pkg.toml` format 2, settings model, and migration tool | 019 (and D35) | merged (part B pending, see notes) | rehaul/issue023 | 8e384cd | 642 passed, 0 failed, 0 skipped | 023-1 launchers refuse elevated; 023-2 elevated settings layers; 023-3 run tool on a copy of a real 0.17 C:/opt |
 | 024 | Catalog and package state model | 023 | merged | rehaul/issue024 | f08a5fc | 821 passed, 0 failed, 0 skipped | none |
 | 025 | First-class install modes | 021, 023 | in review | rehaul/issue025 | | | |
-| 026 | Built-in services replacing hook scripts | 021, 022, 023 | waiting | | | | |
+| 026 | Built-in services replacing hook scripts | 021, 022, 023 | in progress | rehaul/issue026 | | | |
 | 027 | Checksum policy | 023, 026 | waiting | | | | |
 | 028 | Execution engine | 021, 022, 024, 025, 026, 027 | waiting | | | | |
 | 029 | Unified command-line interface and machine interface | 028 | waiting | | | | |
@@ -97,3 +97,4 @@ For information (not a question):
 - Notes from 024 for later issues: 029 deletes `layout.identity_from_path`/`installed_version` and the renamed 0.17 adapters, after moving the shared registry transports and `ConfigValidationError` out of `gupkg.registry`/`gupkg.core` (catalog/registry.py imports them); 031 names `_registry.toml [fingerprints]` as the fingerprint location; 027/028 compute and verify fingerprints; `[[adhoc]]` in state.toml is `{path, mode}` (028 writes it); 028 defines the effect kinds the install record verifies; the 0.17 reviewer-confirmed intentional changes are in the issue 024 status line. Minor: `current` -> `_bootstrap` now refused (0.17 exited 0), not listed in the worker's log.
 - 2026-10-23: 022 review round 3 found one major defect (quadratic clean_line on unterminated device-string openers). Three rounds without a clean review: issue 022 is blocked and the question is in Owner questions. Branch rehaul/issue022 (tip 7f6abfe) and its worktree are kept. 025 continues.
 - 2026-10-23: OWNER ANSWERED question 1: option A (one more fix round for 022, limited to the clean_line regex and its test, then a short review). Question 1 closed. 025 worker done (b6cbf79, 944 passed); reviewer started (incl. trial merge with the 022 branch).
+- 2026-10-23: 022 merged (8aba71e) after 4 review rounds (the 4th was approved by the owner: round 3 found a quadratic clean_line regex, fixed and re-reviewed clean). Suite on main: 965 passed. Dispatched 026.
