@@ -28,6 +28,12 @@ from gupkg.services.prepare import PrepareError, run_prepare
 from gupkg.system.fake import FakeSystem
 
 
+@pytest.fixture(autouse=True)
+def not_marked_elevated(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make these tests independent of an ambient GUPKG_ELEVATED marker (it makes hook loading strict)."""
+    monkeypatch.delenv("GUPKG_ELEVATED", raising=False)
+
+
 @pytest.fixture
 def app(tmp_path: Path) -> Path:
     """A staged `App` with a few files and an `outside` folder next to it that no step may touch."""

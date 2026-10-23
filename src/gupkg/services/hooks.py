@@ -12,7 +12,8 @@ like any other invalid hook.
 
 Usage and API
 -------------
-``load_hook(root, "pkg.local/name.py")`` imports a hook and checks its API version.
+``load_hook(root, "pkg.local/name.py", system)`` imports a hook and checks its API version; in an
+elevated run it first refuses a folder that is not admin-only (``require_trusted_code``).
 ``call_track``, ``call_unpack``, ``call_prepare`` and ``call_populate`` run an entry point
 and check what it returns. ``HookContext.to_json()`` is the document a non-Python populate
 script receives on standard input. ``gupkg.hooklib`` re-exports the helpers hooks use.
@@ -41,7 +42,7 @@ from typing import Any
 from ..extractors import find_7z
 from ..model.manifest import LOCAL_DIR, TrackResult
 from ..report.events import Step, Warning, emit, subprocess_lines
-from ..system.port import System, run_checked
+from ..system.port import System, is_elevated_run, run_checked
 from .http import HttpClient
 from .safepath import UnsafePath, confine
 
@@ -153,7 +154,30 @@ class HookContext:
         )
 
 
-def load_hook(root: Path, reference: str) -> ModuleType:
+def require_trusted_code(system: System, root: Path) -> None:
+    """Refuse to run package code from *root* in an elevated run unless only administrators can change it.
+
+    An elevated gupkg runs no code that a standard user can modify (decision D19). The check
+    fails closed: when the run is elevated (or marked so) and *root*, its ``pkg.local`` folder or
+    one of their parents is not admin-only, or cannot be read, nothing is imported or started.
+    A normal run is not restricted: the code is the user's own.
+
+    Raises
+    ------
+    HookError
+        In an elevated run, if the folder is not admin-only.
+    """
+    if not is_elevated_run(system):
+        return
+    for folder in (Path(root), Path(root) / LOCAL_DIR):
+        reason = system.directory_untrusted_reason(folder)
+        if reason is not None:
+            raise HookError(
+                f"Refusing to run code from {folder} in an elevated run: it is not admin-only ({reason})"
+            )
+
+
+def load_hook(root: Path, reference: str, system: System) -> ModuleType:
     """Import the hook module *reference* (``pkg.local/name.py``) found below *root*.
 
     Parameters
@@ -162,6 +186,9 @@ def load_hook(root: Path, reference: str) -> ModuleType:
         The version directory or tracker directory that owns ``pkg.local``.
     reference : str
         The module path relative to *root*; it must be a ``.py`` file below ``pkg.local``.
+    system : System
+        The boundary that answers whether the run is elevated and whether *root* is admin-only;
+        in an elevated run an untrusted folder is refused before anything is imported.
 
     Returns
     -------
@@ -171,9 +198,11 @@ def load_hook(root: Path, reference: str) -> ModuleType:
     Raises
     ------
     HookError
-        If the path leaves ``pkg.local`` or crosses a link, the file is missing, it cannot be
-        imported, or it declares another API version.
+        If the folder is untrusted in an elevated run, the path leaves ``pkg.local`` or crosses a
+        link, the file is missing, its top-level code raises anything, or it declares another API
+        version.
     """
+    require_trusted_code(system, Path(root))
     normal = reference.replace("\\", "/")
     if not normal.startswith(f"{LOCAL_DIR}/") or not normal.lower().endswith(".py"):
         raise HookError(f"{reference} must be a .py file below {LOCAL_DIR}/")
@@ -206,6 +235,8 @@ def load_hook(root: Path, reference: str) -> ModuleType:
             f"{reference} cannot import {error.name or error!s}; hooks may import only the standard "
             f"library, what the gupkg bundle ships, and modules in their own {LOCAL_DIR} folder"
         ) from error
+    except Exception as error:  # noqa: BLE001 - a hook's import-time code may fail in any way
+        raise HookError(f"{reference} failed while loading: {type(error).__name__}: {error}") from error
     finally:
         sys.dont_write_bytecode = previous
         for imported in list(sys.modules):

@@ -28,7 +28,7 @@ from pathlib import Path
 from ..model.manifest import Manifest
 from ..report.events import subprocess_lines
 from ..system.port import System
-from .hooks import HookContext, HookError, call_populate, load_hook
+from .hooks import HookContext, HookError, call_populate, load_hook, require_trusted_code
 from .prepare import run_prepare
 from .safepath import UnsafePath, confine, remove_tree
 from .unpack import Limits, UnpackReport, plan_from_source, unpack_artifact, unpack_git
@@ -135,8 +135,9 @@ def run_custom_populate(context: HookContext, script: str, timeout: float | None
     """
     root = context.paths.version_root
     if script.lower().endswith(".py"):
-        call_populate(load_hook(root, script), context)
+        call_populate(load_hook(root, script, context.system), context)
         return
+    require_trusted_code(context.system, root)
     try:
         path = confine(root, script)
     except UnsafePath as error:

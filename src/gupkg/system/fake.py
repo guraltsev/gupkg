@@ -117,6 +117,7 @@ class RecordedRequest:
     headers: Mapping[str, str]
     timeout: float
     max_bytes: int | None = None
+    total_timeout: float | None = None
 
 
 @dataclass(frozen=True)
@@ -425,13 +426,16 @@ class FakeSystem(WindowsLinks):
         method: str = "GET",
         timeout: float = 60,
         max_bytes: int | None = None,
+        total_timeout: float | None = None,
     ) -> HttpResponse:
         """Answer from the fixture for *url* (a ``HEAD`` gets no body); no redirect is followed."""
         self._maybe_fail("http_request")
-        self.request_log.append(RecordedRequest(method, url, dict(headers or {}), timeout, max_bytes))
+        self.request_log.append(RecordedRequest(method, url, dict(headers or {}), timeout, max_bytes, total_timeout))
         if url not in self.urls and self.delegate is not None:
             self.fetch_log.append(url)
-            return self.delegate.http_request(url, headers, method=method, timeout=timeout, max_bytes=max_bytes)
+            return self.delegate.http_request(
+                url, headers, method=method, timeout=timeout, max_bytes=max_bytes, total_timeout=total_timeout
+            )
         fixture = self._http_fixture(url, headers)
         body = fixture.body if isinstance(fixture.body, bytes) else fixture.body.encode("utf-8")
         if max_bytes is not None and len(body) > max_bytes and method != "HEAD" and max_bytes > 0:
@@ -450,14 +454,16 @@ class FakeSystem(WindowsLinks):
         timeout: float = 60,
         append: bool = False,
         on_headers: Callable[[int, Mapping[str, str]], None] | None = None,
+        total_timeout: float | None = None,
     ) -> DownloadResponse:
         """Write the fixture for *url* to *dest*, honouring ``Range`` when the fixture allows it."""
         self._maybe_fail("http_download")
-        self.request_log.append(RecordedRequest("GET", url, dict(headers or {}), timeout))
+        self.request_log.append(RecordedRequest("GET", url, dict(headers or {}), timeout, None, total_timeout))
         if url not in self.urls and self.delegate is not None:
             self.fetch_log.append(url)
             return self.delegate.http_download(
-                url, headers, dest, on_progress, timeout=timeout, append=append, on_headers=on_headers
+                url, headers, dest, on_progress, timeout=timeout, append=append, on_headers=on_headers,
+                total_timeout=total_timeout,
             )
         fixture = self._http_fixture(url, headers)
         body = fixture.body if isinstance(fixture.body, bytes) else fixture.body.encode("utf-8")

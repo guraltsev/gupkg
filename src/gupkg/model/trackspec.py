@@ -40,6 +40,11 @@ SELECTS = ("max", "first", "unique")
 MAX_LEVELS = 6
 MAX_STEPS = 8
 _HEADER_NAME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
+# Headers the transport owns or that change how a message is framed or routed: a manifest may not set them.
+FORBIDDEN_HEADERS = frozenset({
+    "host", "content-length", "transfer-encoding", "connection", "keep-alive", "upgrade", "te", "trailer",
+    "expect", "accept-encoding", "content-encoding", "range", "if-range", "via", "forwarded",
+})
 _GITHUB_REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 _STRFTIME_DIRECTIVES = frozenset("YmdyHMSj%")
 _SHA256 = re.compile(r"[0-9A-Fa-f]{64}")
@@ -228,7 +233,8 @@ def check_header_map(headers: Mapping[str, str] | None, where: str = "headers") 
     Raises
     ------
     ValueError
-        If a name is not an HTTP token, or a name or value has a control character.
+        If a name is not an HTTP token, is a framing or hop-by-hop header (``Host``,
+        ``Content-Length``, ``Connection``, ``Proxy-*``...), or a name or value has a control character.
     """
     checked: dict[str, str] = {}
     for name, value in (headers or {}).items():
@@ -236,6 +242,8 @@ def check_header_map(headers: Mapping[str, str] | None, where: str = "headers") 
             raise ValueError(f"{where}: names and values must be strings")
         if not _HEADER_NAME.fullmatch(name):
             raise ValueError(f"{where}: {name!r} is not a valid header name")
+        if name.lower() in FORBIDDEN_HEADERS or name.lower().startswith("proxy-"):
+            raise ValueError(f"{where}: {name!r} is set by gupkg's transport and cannot be given here")
         if any((ord(character) < 32 and character != "\t") or ord(character) == 127 for character in value):
             raise ValueError(f"{where}: the value of {name!r} has a control character")
         checked[name] = value

@@ -28,6 +28,14 @@ URL = "https://example.org/team/tool.git"
 EPOCH = 1728720930  # 2024-10-12 08:15:30 UTC
 
 
+def subcommand(argv: tuple[str, ...]) -> list[str]:
+    """Return the arguments after `git` and its `-c name=value` settings."""
+    words = list(argv[1:])
+    while words[:1] == ["-c"]:
+        words = words[2:]
+    return words
+
+
 class FakeGit:
     """A scripted ``git``: records calls and answers `ls-remote`, `fetch`, `log`, `rev-parse` and `checkout`."""
 
@@ -40,7 +48,7 @@ class FakeGit:
     def __call__(self, call: ProcessCall) -> ProcessResult:
         """Answer one git command."""
         self.calls.append(call)
-        words = call.argv[1:]
+        words = subcommand(call.argv)
         if words[0] == "ls-remote":
             return ProcessResult(0, f"{self.listed}\t{words[-1]}\n") if self.listed else ProcessResult(2)
         if words[0] == "log":
@@ -58,7 +66,7 @@ class FakeGit:
 
     def words(self) -> list[str]:
         """Return the first word after `git` of each recorded call."""
-        return [call.argv[1] for call in self.calls]
+        return [subcommand(call.argv)[0] for call in self.calls]
 
 
 def machine(tmp_path: Path, git: FakeGit) -> FakeSystem:
@@ -99,8 +107,30 @@ def test_git_runs_with_prompts_off_safe_transports_and_double_dash_before_untrus
     for call in git.calls:
         assert call.env["GIT_TERMINAL_PROMPT"] == "0"
         assert call.env["GIT_ALLOW_PROTOCOL"] == "https:http:ssh:git"
-    listing = git.calls[0].argv
-    assert listing[listing.index("--") + 1 :] == (URL, "refs/heads/main")
+    listing = subcommand(git.calls[0].argv)
+    assert listing[listing.index("--") + 1 :] == [URL, "refs/heads/main"]
+
+
+def test_git_gets_a_scrubbed_environment_and_safe_settings_whatever_the_user_has_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """User Git variables never reach git: configuration points at the null device, hooks and helpers are off."""
+    for name, value in (("GIT_SSH_COMMAND", "evil"), ("GIT_EXEC_PATH", "evil-path"), ("GIT_DIR", "evil-path"),
+                        ("GIT_TEMPLATE_DIR", "evil-path"), ("GIT_ASKPASS", "evil"), ("GIT_PROXY_COMMAND", "evil"),
+                        ("HTTPS_PROXY", "http://evil"), ("GITHUB_TOKEN", "t0ken"), ("USERPROFILE", "someone")):
+        monkeypatch.setenv(name, value)
+    git = FakeGit()
+    system = machine(tmp_path, git)
+
+    run_tracker(parse_manifest(tracker(), ManifestKind.TRACKER), environment(system, tmp_path))
+
+    for call in git.calls:
+        assert call.env["GIT_CONFIG_GLOBAL"] == "NUL" and call.env["GIT_CONFIG_SYSTEM"] == "NUL"
+        assert call.env["GIT_CONFIG_NOSYSTEM"] == "1" and call.env["GIT_ASKPASS"] == ""
+        for leaked in ("GIT_SSH_COMMAND", "GIT_EXEC_PATH", "GIT_DIR", "GIT_TEMPLATE_DIR", "GIT_PROXY_COMMAND",
+                       "HTTPS_PROXY", "GITHUB_TOKEN", "USERPROFILE"):
+            assert leaked not in call.env
+        assert "core.hooksPath=NUL" in call.argv and "credential.helper=" in call.argv
 
 
 def test_a_ref_that_resolves_to_nothing_is_a_track_error(tmp_path: Path) -> None:

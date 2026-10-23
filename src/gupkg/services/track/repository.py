@@ -21,7 +21,6 @@ unvalidated dictionary.
 
 from __future__ import annotations
 
-import os
 import re
 import shutil
 from datetime import datetime, timezone
@@ -30,16 +29,12 @@ from pathlib import Path
 from ...model.manifest import TrackResult
 from ...model.trackspec import GitSpec, ModuleSpec
 from ...system.port import ProcessFailed, run_checked
+from ..gitenv import git_command, git_environment
 from ..hooks import HookContext, HookPaths, call_track, load_hook
 from ..safepath import remove_tree
 from .common import TrackEnvironment, TrackError, valid_version
 
 _SHA = re.compile(r"[0-9a-f]{40}")
-_GIT_ENVIRONMENT = {
-    "GIT_TERMINAL_PROMPT": "0",
-    "GIT_ALLOW_PROTOCOL": "https:http:ssh:git",
-    "GIT_CONFIG_NOSYSTEM": "1",
-}
 
 
 def track_git(spec: GitSpec, env: TrackEnvironment) -> TrackResult:
@@ -52,12 +47,12 @@ def track_git(spec: GitSpec, env: TrackEnvironment) -> TrackResult:
     """
     if env.work_dir is None:
         raise TrackError("The git provider needs a scratch folder")
-    environment = {**os.environ, **_GIT_ENVIRONMENT}
+    environment = git_environment()
 
     def git(*arguments: str, cwd: Path | None = None) -> str:
         """Run one Git command and return its stripped output."""
         try:
-            return run_checked(env.system, ["git", *arguments], cwd=cwd, env=environment, timeout=120)
+            return run_checked(env.system, git_command(*arguments), cwd=cwd, env=environment, timeout=120)
         except (ProcessFailed, OSError, TimeoutError) as error:
             raise TrackError(f"git {arguments[0]} failed: {error}") from error
 
@@ -106,7 +101,7 @@ def track_module(spec: ModuleSpec, env: TrackEnvironment) -> TrackResult:
         options=dict(env.extra),
     )
     try:
-        module = load_hook(Path(env.directory), spec.module)
+        module = load_hook(Path(env.directory), spec.module, env.system)
         result = call_track(module, context)
     except TrackError:
         raise

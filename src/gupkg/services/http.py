@@ -48,7 +48,8 @@ from typing import Any
 
 from .._version import __version__
 from ..report.events import Progress, Step, emit
-from ..system.port import HttpResponse, ResponseTooLarge, System
+from ..model.trackspec import check_header_map
+from ..system.port import HttpResponse, ResponseTooLarge, System, is_elevated_run
 from .safepath import safe_file_name
 
 DEFAULT_TIMEOUT = 30.0
@@ -65,7 +66,10 @@ _RETRY_STATUSES = (429, 500, 502, 503, 504)
 _CREDENTIAL_HEADERS = frozenset({"authorization", "cookie", "proxy-authorization"})
 # The only hosts that receive the GITHUB_TOKEN, and only over HTTPS.
 _GITHUB_HOSTS = frozenset({"api.github.com", "github.com", "uploads.github.com"})
-_HEADER_NAME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
+# Names that carry secrets in practice; they are dropped on a cross-host redirect like Authorization.
+_SECRET_WORDS = ("auth", "key", "token", "secret", "password", "cookie", "session", "credential")
+DEFAULT_REQUEST_DEADLINE = 120.0
+DEFAULT_DOWNLOAD_DEADLINE = 3600.0
 
 
 class HttpError(OSError):
@@ -113,27 +117,6 @@ class Download:
     from_cache: bool = False
 
 
-def check_header_map(headers: Mapping[str, str] | None, where: str = "headers") -> dict[str, str]:
-    """Return *headers* as a plain dict after rejecting names and values that could split a request.
-
-    Raises
-    ------
-    ValueError
-        If a name is not an HTTP token, or a name or value has a control character
-        (header injection).
-    """
-    checked: dict[str, str] = {}
-    for name, value in (headers or {}).items():
-        if not isinstance(name, str) or not isinstance(value, str):
-            raise ValueError(f"{where}: names and values must be strings")
-        if not _HEADER_NAME.fullmatch(name):
-            raise ValueError(f"{where}: {name!r} is not a valid header name")
-        if any(ord(character) < 32 and character != "\t" or ord(character) == 127 for character in value):
-            raise ValueError(f"{where}: the value of {name!r} has a control character")
-        checked[name] = value
-    return checked
-
-
 def parse_content_disposition(value: str | None) -> str | None:
     """Return the file name of a ``Content-Disposition`` header value, or ``None``.
 
@@ -150,6 +133,23 @@ def parse_content_disposition(value: str | None) -> str | None:
     except (LookupError, ValueError):
         return None
     return name or None
+
+
+def github_environment(system: System, environ: Mapping[str, str]) -> dict[str, str]:
+    """Return the part of *environ* that the HTTP client may use: ``GITHUB_TOKEN``, unless the run is elevated.
+
+    An elevated gupkg ignores the user's environment (decision D19), so the token is dropped there.
+    The caller passes the mapping explicitly; the services never read ``os.environ`` themselves.
+    """
+    if is_elevated_run(system) or not environ.get("GITHUB_TOKEN"):
+        return {}
+    return {"GITHUB_TOKEN": environ["GITHUB_TOKEN"]}
+
+
+def _looks_secret(name: str) -> bool:
+    """Return whether a header name suggests a credential (``Authorization``, ``X-Api-Key``, ``Cookie``...)."""
+    lowered = name.lower()
+    return lowered in _CREDENTIAL_HEADERS or any(word in lowered for word in _SECRET_WORDS)
 
 
 def _host(url: str) -> str:
@@ -178,11 +178,18 @@ class HttpClient:
     cache_dir : Path, optional
         Where downloads are kept. Required by ``download`` only.
     env : mapping, optional
-        The environment to read ``GITHUB_TOKEN`` from; ``os.environ`` when omitted.
+        The environment to read ``GITHUB_TOKEN`` from, given explicitly by the caller (see
+        ``github_environment``); an empty mapping, so no token, when omitted.
     sleep : callable, optional
         Replaces ``time.sleep`` so tests need not wait.
     max_text_bytes : int
         Largest accepted body of a text, JSON or header request.
+    request_deadline, download_deadline : float
+        Seconds a whole request (all hops and retries) or a whole download may take; the
+        socket ``timeout`` alone only bounds idle time, not a server that trickles bytes.
+    allow_unc_file_urls : bool
+        Whether ``file:`` URLs that name a network host or a UNC share may be fetched. Off by
+        default: reading one makes Windows authenticate to that server (decision for 027/028).
     """
 
     def __init__(
@@ -198,6 +205,9 @@ class HttpClient:
         env: Mapping[str, str] | None = None,
         sleep: Callable[[float], None] = time.sleep,
         max_text_bytes: int = MAX_TEXT_BYTES,
+        request_deadline: float = DEFAULT_REQUEST_DEADLINE,
+        download_deadline: float = DEFAULT_DOWNLOAD_DEADLINE,
+        allow_unc_file_urls: bool = False,
     ) -> None:
         """Store the policy; no request is made."""
         self.system = system
@@ -208,8 +218,11 @@ class HttpClient:
         self.headers = check_header_map(headers)
         self.cache_dir = Path(cache_dir) if cache_dir is not None else None
         self.max_text_bytes = max_text_bytes
-        self._env = env if env is not None else os.environ
+        self._env = env if env is not None else {}
         self._sleep = sleep
+        self.request_deadline = request_deadline
+        self.download_deadline = download_deadline
+        self.allow_unc_file_urls = allow_unc_file_urls
 
     def derive(self, headers: Mapping[str, str] | None = None) -> "HttpClient":
         """Return a client with the same policy whose default headers also include *headers*."""
@@ -217,7 +230,8 @@ class HttpClient:
         clone = HttpClient(
             self.system, user_agent=self.user_agent, timeout=self.timeout, retries=self.retries,
             backoff=self.backoff, headers=merged, cache_dir=self.cache_dir, env=self._env,
-            sleep=self._sleep, max_text_bytes=self.max_text_bytes,
+            sleep=self._sleep, max_text_bytes=self.max_text_bytes, request_deadline=self.request_deadline,
+            download_deadline=self.download_deadline, allow_unc_file_urls=self.allow_unc_file_urls,
         )
         return clone
 
@@ -255,11 +269,13 @@ class HttpClient:
             larger than allowed.
         """
         limit = self.max_text_bytes if max_bytes is None else max_bytes
+        self._refuse_unc(url)
         current = url
         extra = check_header_map(headers)
         origin = _host(url)
+        deadline = time.monotonic() + self.request_deadline
         for _hop in range(MAX_REDIRECTS + 1):
-            response = self._attempt(current, extra, method, limit, _host(current) != origin)
+            response = self._attempt(current, extra, method, limit, _host(current) != origin, deadline)
             if not follow or response.status not in _REDIRECT_STATUSES:
                 return HttpResponse(response.status, current, response.headers, response.body)
             current = self.redirect_target(current, response)
@@ -341,6 +357,7 @@ class HttpClient:
         """
         if self.cache_dir is None:
             raise HttpError("This client has no cache directory, so it cannot download")
+        self._refuse_unc(url)
         expected = expected_sha256.lower() if expected_sha256 else None
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         key = hashlib.sha256(f"{url}\n{expected or ''}".encode("utf-8")).hexdigest()[:40]
@@ -399,21 +416,27 @@ class HttpClient:
         # Later layers replace earlier ones regardless of letter case.
         for layer in (self.headers, extra):
             for name, value in layer.items():
-                if foreign and name.lower() in _CREDENTIAL_HEADERS:
+                if foreign and _looks_secret(name):
                     continue
                 for existing in [key for key in headers if key.lower() == name.lower()]:
                     del headers[existing]
                 headers[name] = value
         return headers
 
-    def _attempt(self, url: str, extra: Mapping[str, str], method: str, max_bytes: int, foreign: bool = False) -> HttpResponse:
-        """Send one hop, retrying a 5xx, 429 or network failure with doubling backoff."""
+    def _attempt(self, url: str, extra: Mapping[str, str], method: str, max_bytes: int, foreign: bool = False,
+                 deadline: float | None = None) -> HttpResponse:
+        """Send one hop, retrying a 5xx, 429 or network failure with doubling backoff, within *deadline*."""
         delay = self.backoff
         last_error: HttpError | None = None
         for attempt in range(self.retries + 1):
+            remaining = None if deadline is None else deadline - time.monotonic()
+            if remaining is not None and remaining <= 0:
+                raise HttpError(f"{url} took longer than the allowed {self.request_deadline:g} seconds in total")
             try:
                 response = self.system.http_request(
-                    url, self._policy_headers(url, extra, foreign), method=method, timeout=self.timeout, max_bytes=max_bytes
+                    url, self._policy_headers(url, extra, foreign), method=method,
+                    timeout=self.timeout if remaining is None else min(self.timeout, remaining),
+                    max_bytes=max_bytes, total_timeout=remaining,
                 )
             except ResponseTooLarge as error:
                 raise HttpError(f"{url} is larger than the allowed {max_bytes} bytes") from error
@@ -436,6 +459,16 @@ class HttpClient:
         if value.isdigit():
             return min(float(value), _MAX_RETRY_AFTER)
         return current
+
+    def _refuse_unc(self, url: str) -> None:
+        """Refuse a ``file:`` URL that names a network host or UNC share unless the client allows it."""
+        if self.allow_unc_file_urls:
+            return
+        parts = urllib.parse.urlsplit(url)
+        if parts.scheme.lower() != "file":
+            return
+        if parts.netloc not in ("", "localhost") or parts.path.startswith(("//", "\\\\")) or url.lower().startswith("file:////"):
+            raise HttpError(f"{url[:80]} names a network share; reading it would make Windows authenticate to that server")
 
     def redirect_target(self, url: str, response: HttpResponse) -> str:
         """Return the redirect target of *response*, or raise when the policy refuses it."""
@@ -460,6 +493,7 @@ class HttpClient:
         """
         current = url
         throttle = {"last": time.monotonic()}
+        deadline = time.monotonic() + self.download_deadline
 
         def on_progress(received: int, total: int | None) -> None:
             """Cap the file size, and report progress at most five times a second."""
@@ -497,14 +531,20 @@ class HttpClient:
                 if not offset:
                     part.unlink(missing_ok=True)
                 extra = {**wanted, "Range": f"bytes={offset}-", "If-Range": validator} if offset else dict(wanted)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise HttpError(f"{url} took longer than the allowed {self.download_deadline:g} seconds in total")
                 try:
                     response = self.system.http_download(
                         current, self._policy_headers(current, extra, _host(current) != _host(url)), part, on_progress,
-                        timeout=self.timeout, append=bool(offset), on_headers=remember,
+                        timeout=min(self.timeout, remaining), append=bool(offset), on_headers=remember,
+                        total_timeout=remaining,
                     )
                 except HttpError:
                     raise
                 except OSError as error:
+                    if time.monotonic() >= deadline:
+                        raise HttpError(f"{url} took longer than the allowed {self.download_deadline:g} seconds in total") from error
                     if attempt == self.retries:
                         raise HttpError(f"Could not download {current}: {error}") from error
                     self._sleep(delay)

@@ -225,3 +225,22 @@ def test_missing_directory_and_missing_manifest_are_errors(tmp_path: Path) -> No
 
     assert not check_directory(tmp_path / "nope").ok
     assert any("Cannot read" in e for e in check_directory(tmp_path / "1.0").errors)
+
+
+@pytest.mark.parametrize(
+    "hook",
+    [
+        pytest.param("PKG_MODULE_API = 1\ndef populate(context):\n    pass\n", id="api-1"),
+        pytest.param("def populate(context):\n    pass\n", id="no-declaration"),
+        pytest.param("PKG_MODULE_API = '2'\ndef populate(ctx):\n    pass\n", id="api-as-a-string"),
+        pytest.param("import sys\nPKG_MODULE_API = int(sys.argv[0] and 2)\n", id="api-computed-at-import"),
+    ],
+)
+def test_a_hook_that_does_not_declare_api_2_is_rejected(tmp_path: Path, hook: str) -> None:
+    """A version directory's hook with API 1, no declaration or a non-literal declaration fails with the plain API message."""
+    report = check_directory(make_dir(
+        tmp_path, "1.0", '[source]\nscript = "pkg.local/populate.py"\n', files={"pkg.local/populate.py": hook},
+    ))
+
+    assert not report.ok
+    assert "pkg.local/populate.py must declare PKG_MODULE_API = 2" in report.errors

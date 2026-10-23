@@ -84,6 +84,9 @@ def test_the_whole_0_17_registry_converts_to_valid_format_2(registry: Path, caps
         report = check_directory(directory)
         leftover = [error for error in report.errors if not error.endswith("must declare PKG_MODULE_API = 2")]
         assert leftover == [], f"{directory.relative_to(registry)}: {leftover}"
+        if directory.parent.name == "firefox":
+            # The filter above must not be vacuous: firefox keeps 0.17 hooks, and they are reported.
+            assert any("PKG_MODULE_API" in error for error in report.errors)
 
 
 def test_converted_registry_keeps_the_meaning_of_representative_packages(registry: Path) -> None:

@@ -37,6 +37,12 @@ from gupkg.system.port import ProcessResult
 from tests.http_fixtures import environment
 
 
+@pytest.fixture(autouse=True)
+def not_elevated(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make these tests independent of an ambient GUPKG_ELEVATED marker; the elevated cases set it themselves."""
+    monkeypatch.delenv("GUPKG_ELEVATED", raising=False)
+
+
 def write_hook(root: Path, name: str, body: str, *, api: int | None = 2) -> str:
     """Write ``pkg.local/<name>`` below *root* (with ``PKG_MODULE_API = api``) and return its manifest reference."""
     folder = root / "pkg.local"
@@ -57,22 +63,22 @@ def make_context(system: FakeSystem, root: Path, **paths) -> HookContext:
 # ---------------------------------------------------------------------------
 
 
-def test_a_hook_declaring_api_2_loads_and_exposes_its_entry_point(tmp_path: Path) -> None:
+def test_a_hook_declaring_api_2_loads_and_exposes_its_entry_point(tmp_path: Path, system: FakeSystem) -> None:
     """`PKG_MODULE_API = 2` loads, and the module's functions are callable."""
     reference = write_hook(tmp_path, "x.py", "def unpack(ctx):\n    return 'done'\n")
 
-    module = load_hook(tmp_path, reference)
+    module = load_hook(tmp_path, reference, system)
 
     assert module.unpack(None) == "done"
 
 
 @pytest.mark.parametrize("api", [1, 3, None], ids=["api-1", "api-3", "no-declaration"])
-def test_a_hook_with_another_api_version_is_rejected_like_any_invalid_hook(tmp_path: Path, api: int | None) -> None:
+def test_a_hook_with_another_api_version_is_rejected_like_any_invalid_hook(tmp_path: Path, system: FakeSystem, api: int | None) -> None:
     """Version 1 (and anything but 2) is refused with the same plain message; core says nothing about migration (D33)."""
     reference = write_hook(tmp_path, "old.py", "def check_update(context):\n    return None\n", api=api)
 
     with pytest.raises(HookError) as raised:
-        load_hook(tmp_path, reference)
+        load_hook(tmp_path, reference, system)
 
     assert str(raised.value) == "pkg.local/old.py must declare PKG_MODULE_API = 2"
 
@@ -86,7 +92,7 @@ def test_a_hook_with_another_api_version_is_rejected_like_any_invalid_hook(tmp_p
         pytest.param("pkg.local/missing.py", id="missing"),
     ],
 )
-def test_a_hook_path_that_is_not_a_python_file_inside_pkg_local_is_refused(tmp_path: Path, reference: str) -> None:
+def test_a_hook_path_that_is_not_a_python_file_inside_pkg_local_is_refused(tmp_path: Path, system: FakeSystem, reference: str) -> None:
     """Only existing `.py` files below `pkg.local` can be loaded as hooks."""
     (tmp_path / "escape.py").write_text("PKG_MODULE_API = 2\n", encoding="utf-8")
     (tmp_path / "elsewhere").mkdir()
@@ -94,7 +100,7 @@ def test_a_hook_path_that_is_not_a_python_file_inside_pkg_local_is_refused(tmp_p
     write_hook(tmp_path, "present.py", "")
 
     with pytest.raises(HookError):
-        load_hook(tmp_path, reference)
+        load_hook(tmp_path, reference, system)
 
 
 def test_a_hook_cannot_be_a_junction_to_a_file_outside(tmp_path: Path, system: FakeSystem) -> None:
@@ -107,26 +113,26 @@ def test_a_hook_cannot_be_a_junction_to_a_file_outside(tmp_path: Path, system: F
     system.create_junction(version / "pkg.local", outside)
 
     with pytest.raises(HookError, match="link or junction"):
-        load_hook(version, "pkg.local/x.py")
+        load_hook(version, "pkg.local/x.py", system)
 
 
-def test_a_hook_may_import_a_sibling_module_and_leaves_no_bytecode(tmp_path: Path) -> None:
+def test_a_hook_may_import_a_sibling_module_and_leaves_no_bytecode(tmp_path: Path, system: FakeSystem) -> None:
     """Relative imports of the hook's own folder work; nothing is written beside the files and nothing leaks into `sys.modules`."""
     write_hook(tmp_path, "helper.py", "VALUE = 41\n", api=None)
     reference = write_hook(tmp_path, "main.py", "from . import helper\n\ndef unpack(ctx):\n    return helper.VALUE + 1\n")
 
-    module = load_hook(tmp_path, reference)
+    module = load_hook(tmp_path, reference, system)
 
     assert module.unpack(None) == 42
     assert not (tmp_path / "pkg.local" / "__pycache__").exists()
 
 
-def test_a_hook_that_imports_something_unavailable_fails_with_an_explanation(tmp_path: Path) -> None:
+def test_a_hook_that_imports_something_unavailable_fails_with_an_explanation(tmp_path: Path, system: FakeSystem) -> None:
     """An import that cannot be satisfied is reported with the allowed sources, and nothing is installed."""
     reference = write_hook(tmp_path, "x.py", "import module_that_does_not_exist_anywhere\n")
 
     with pytest.raises(HookError, match="module_that_does_not_exist_anywhere.*gupkg installs nothing|standard library"):
-        load_hook(tmp_path, reference)
+        load_hook(tmp_path, reference, system)
 
 
 # ---------------------------------------------------------------------------
@@ -143,11 +149,11 @@ def test_a_track_hook_must_return_a_track_result(tmp_path: Path, system: FakeSys
     bad = write_hook(tmp_path, "bad.py", "def track(ctx):\n    return {'version': '2.0'}\n")
     context = make_context(system, tmp_path)
 
-    assert call_track(load_hook(tmp_path, good), context) == TrackResult(
+    assert call_track(load_hook(tmp_path, good, system), context) == TrackResult(
         "2.0", {"download_url": "https://example.org/t.zip"}, DiscoveredChecksum("a" * 64, "vendor-sums")
     )
     with pytest.raises(HookError, match="must return a TrackResult"):
-        call_track(load_hook(tmp_path, bad), context)
+        call_track(load_hook(tmp_path, bad, system), context)
 
 
 def test_a_hook_without_the_requested_entry_point_is_an_error(tmp_path: Path, system: FakeSystem) -> None:
@@ -155,7 +161,7 @@ def test_a_hook_without_the_requested_entry_point_is_an_error(tmp_path: Path, sy
     reference = write_hook(tmp_path, "x.py", "def track(ctx):\n    pass\n")
 
     with pytest.raises(HookError, match=r"does not define unpack\(ctx\)"):
-        call_unpack(load_hook(tmp_path, reference), make_context(system, tmp_path))
+        call_unpack(load_hook(tmp_path, reference, system), make_context(system, tmp_path))
 
 
 def test_the_module_provider_runs_a_tracker_hook_through_run_tracker(tmp_path: Path, system: FakeSystem) -> None:
@@ -205,7 +211,7 @@ def test_a_version_directory_hook_gets_the_shared_client_with_the_user_agent_and
     system.urls["https://example.org/payload.txt"] = "fetched"
     context = make_context(system, version, app=version / "App")
 
-    call_populate(load_hook(version, reference), context)
+    call_populate(load_hook(version, reference, system), context)
 
     request = system.request_log[0]
     assert (version / "App" / "payload.txt").read_text() == "fetched"

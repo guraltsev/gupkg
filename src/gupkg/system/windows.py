@@ -478,11 +478,13 @@ class WindowsSystem(WindowsLinks):
         method: str = "GET",
         timeout: float = 60,
         max_bytes: int | None = None,
+        total_timeout: float | None = None,
     ) -> HttpResponse:
         """Send one request without following redirects and return the response of any status."""
+        deadline = time.monotonic() + total_timeout if total_timeout else None
         with _open_without_redirects(url, headers, method, timeout) as response:
             status, final_url, response_headers = _response_parts(response, url)
-            body = _read_limited(response, max_bytes)
+            body = _read_limited(response, max_bytes, deadline)
         return HttpResponse(status, final_url, response_headers, body)
 
     def http_download(
@@ -495,8 +497,10 @@ class WindowsSystem(WindowsLinks):
         timeout: float = 60,
         append: bool = False,
         on_headers: Callable[[int, Mapping[str, str]], None] | None = None,
+        total_timeout: float | None = None,
     ) -> DownloadResponse:
         """Stream a 2xx response into *dest* (appending a 206 answer when asked); write nothing otherwise."""
+        deadline = time.monotonic() + total_timeout if total_timeout else None
         with _open_without_redirects(url, headers, "GET", timeout) as response:
             status, final_url, response_headers = _response_parts(response, url)
             if on_headers is not None:
@@ -514,11 +518,13 @@ class WindowsSystem(WindowsLinks):
                 on_progress(already, total)
             received = already
             with open(dest, "ab" if resumed else "wb") as handle:
-                while chunk := response.read(64 * 1024):
+                while chunk := _read_some(response):
                     handle.write(chunk)
                     received += len(chunk)
                     if on_progress is not None:
                         on_progress(received, total)
+                    if deadline is not None and time.monotonic() > deadline:
+                        raise TimeoutError(f"{url} took longer than {total_timeout} seconds in total")
         return DownloadResponse(status, final_url, response_headers, received - already, resumed)
 
 
@@ -713,14 +719,28 @@ def _response_parts(response: Any, requested: str) -> tuple[int, str, dict[str, 
     return int(status), requested, collected
 
 
-def _read_limited(response: Any, max_bytes: int | None) -> bytes:
-    """Read the body, failing with ``ResponseTooLarge`` when it exceeds *max_bytes*."""
-    if max_bytes is None:
-        return response.read()
-    body = response.read(max_bytes + 1) if max_bytes > 0 else b""
-    if len(body) > max_bytes:
-        raise ResponseTooLarge(f"The response is larger than {max_bytes} bytes")
-    return body
+def _read_some(response: Any) -> bytes:
+    """Return up to 64 KiB as soon as some bytes are available (``read1``), so a deadline can be checked between reads."""
+    reader = getattr(response, "read1", None)
+    return reader(64 * 1024) if reader is not None else response.read(64 * 1024)
+
+
+def _read_limited(response: Any, max_bytes: int | None, deadline: float | None = None) -> bytes:
+    """Read the body in blocks, failing with ``ResponseTooLarge`` past *max_bytes* and ``TimeoutError`` past *deadline*."""
+    if max_bytes == 0:
+        return b""
+    pieces: list[bytes] = []
+    size = 0
+    while True:
+        block = _read_some(response)
+        if not block:
+            return b"".join(pieces)
+        size += len(block)
+        if max_bytes is not None and size > max_bytes:
+            raise ResponseTooLarge(f"The response is larger than {max_bytes} bytes")
+        pieces.append(block)
+        if deadline is not None and time.monotonic() > deadline:
+            raise TimeoutError("The response took longer than its total time limit")
 
 
 def _content_length(response: Any) -> int | None:

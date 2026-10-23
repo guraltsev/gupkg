@@ -287,13 +287,15 @@ class System(Protocol):
         method: str = "GET",
         timeout: float = 60,
         max_bytes: int | None = None,
+        total_timeout: float | None = None,
     ) -> HttpResponse:
         """Send one request and return the response of any status, without following redirects.
 
         Only ``http://``, ``https://`` and ``file://`` URLs are served. At most
         *max_bytes* of the body are read; a longer body raises
         ``ResponseTooLarge``, and ``max_bytes=0`` returns the headers only. Network
-        failures raise ``OSError``. Redirect, retry and header policy belong to
+        failures raise ``OSError``; *timeout* is the idle time of each socket operation and
+        *total_timeout* the time the whole answer may take (``TimeoutError``). Redirect, retry and header policy belong to
         ``gupkg.services.http``, which calls this method once per hop.
         """
 
@@ -307,6 +309,7 @@ class System(Protocol):
         timeout: float = 60,
         append: bool = False,
         on_headers: Callable[[int, Mapping[str, str]], None] | None = None,
+        total_timeout: float | None = None,
     ) -> DownloadResponse:
         """Stream one response body into *dest* and report how it went; redirects are not followed.
 
@@ -324,6 +327,21 @@ class System(Protocol):
 # ---------------------------------------------------------------------------
 # Shared patterns
 # ---------------------------------------------------------------------------
+
+
+# The only variables a child process such as git inherits: machine-level paths, never user settings.
+_SAFE_ENVIRONMENT_NAMES = ("PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC", "TEMP", "TMP", "PROGRAMDATA")
+
+
+def safe_process_environment(extra: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Return a minimal environment for a child process: machine-level variables plus *extra*.
+
+    Nothing of the user's own settings is passed on (decision D19: an elevated gupkg ignores them,
+    and a normal one gives a child process no more than it needs).
+    """
+    kept = {name: value for name, value in os.environ.items() if name.upper() in _SAFE_ENVIRONMENT_NAMES}
+    kept.update(extra or {})
+    return kept
 
 
 def is_elevated_run(system: System) -> bool:
