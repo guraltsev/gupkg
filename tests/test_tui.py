@@ -17,6 +17,7 @@ import pytest
 from gupkg import commands
 from gupkg.core import ActionResult, Scope
 from gupkg.outcome import Outcome
+from gupkg.report.events import Error, Progress, Step, SubprocessLine, emit
 from gupkg.tui import run_tui
 
 
@@ -36,7 +37,7 @@ def operations(monkeypatch: pytest.MonkeyPatch) -> list[commands.PackageRequest]
     """Record each package request the TUI runs and answer with a failing status 7."""
     requests: list[commands.PackageRequest] = []
 
-    def run(request, system, *, output=None):
+    def run(request, system):
         requests.append(request)
         return Outcome(request.command, ActionResult(False, errors=["failed"], exit_code=7))
 
@@ -149,9 +150,10 @@ def test_long_output_follows_new_lines_and_shows_the_failure(
     """Output taller than the screen stays scrolled to its end, including the final failure text."""
     version = _package_version(tmp_path)
 
-    def run(request, system, *, output=None):
+    def run(request, system):
         for number in range(50):
-            output.write(f"progress line {number}\n")
+            emit(Step(f"progress line {number}"))
+        emit(Error("the final failure"))
         return Outcome(request.command, ActionResult(False, errors=["the final failure"], exit_code=7))
 
     monkeypatch.setattr(commands, "run_package_command", run)
@@ -163,7 +165,7 @@ def test_long_output_follows_new_lines_and_shows_the_failure(
         view = app.screen.query_one("#output")
         assert view.is_vertical_scroll_end
         assert view.max_scroll_y > 0
-        assert "the final failure" in str(view.query_one("#output-text").render())
+        assert "ERROR: the final failure" in str(view.query_one("#output-text").render())
 
     _drive_sized(monkeypatch, (60, 8), steps)
     run_tui(system, str(version))
@@ -175,8 +177,9 @@ def test_output_with_markup_characters_is_shown_literally(
     """Bracketed text from a package is displayed as written and never breaks the screen."""
     version = _package_version(tmp_path)
 
-    def run(request, system, *, output=None):
-        output.write("ERROR: [bold] hook [/x] failed [update.check]\n")
+    def run(request, system):
+        emit(Error("[bold] hook [/x] failed [update.check]"))
+        emit(SubprocessLine("git", "fatal: [red]not a repository[/red]"))
         return Outcome(request.command, ActionResult(True, exit_code=0))
 
     monkeypatch.setattr(commands, "run_package_command", run)
@@ -184,11 +187,11 @@ def test_output_with_markup_characters_is_shown_literally(
     async def steps(app, pilot) -> None:
         await pilot.press("enter", "enter")
         await _wait_until(pilot, lambda: "Completed successfully" in str(app.screen.query_one("#status").render()))
-        assert "ERROR: [bold] hook [/x] failed [update.check]" in str(
-            app.screen.query_one("#output-text").render()
-        )
+        text = str(app.screen.query_one("#output-text").render())
+        assert "ERROR: [bold] hook [/x] failed [update.check]" in text
+        assert "[git] fatal: [red]not a repository[/red]" in text
 
-    _drive_sized(monkeypatch, (80, 8), steps)
+    _drive_sized(monkeypatch, (80, 12), steps)
     run_tui(system, str(version))
 
 
@@ -201,10 +204,10 @@ def test_transient_progress_appears_on_the_status_line_not_in_the_output(
     version = _package_version(tmp_path)
     release = threading.Event()
 
-    def run(request, system, *, output=None):
-        output.write("Downloading update: 1.0 MiB / 2.0 MiB (50%)\r")
+    def run(request, system):
+        emit(Progress("Downloading update", 1024 * 1024, 2 * 1024 * 1024))
         release.wait(5)
-        output.write("Downloading update: 2.0 MiB / 2.0 MiB (100%)\r\n")
+        emit(Progress("Downloading update", 2 * 1024 * 1024, 2 * 1024 * 1024))
         return Outcome(request.command, ActionResult(True, exit_code=0))
 
     monkeypatch.setattr(commands, "run_package_command", run)
@@ -219,5 +222,26 @@ def test_transient_progress_appears_on_the_status_line_not_in_the_output(
         await _wait_until(pilot, lambda: "(100%)" in text())
         assert text().count("(100%)") == 1
 
-    _drive_sized(monkeypatch, (80, 8), steps)
+    _drive_sized(monkeypatch, (80, 12), steps)
     run_tui(system, str(version))
+
+
+def test_a_tui_session_leaves_a_log_and_shows_the_log_path_in_its_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, system
+) -> None:
+    """An install started from the TUI is logged like a CLI run: the package's log holds its phases and the screen ends with the log path."""
+    version = _package_version(tmp_path)
+
+    async def steps(app, pilot) -> None:
+        await pilot.press("enter", "enter")
+        await _wait_until(pilot, lambda: "Completed successfully" in str(app.screen.query_one("#status").render()))
+        text = str(app.screen.query_one("#output-text").render())
+        assert "==> Resolve" in text
+        assert text.rstrip().splitlines()[-1].startswith("Log of ScopeApp: ")
+
+    _drive_sized(monkeypatch, (100, 30), steps)
+    assert run_tui(system, str(version)) == 0
+
+    [log] = (tmp_path / "ScopeApp" / ".gupkg" / "logs").glob("2*-install.log")
+    assert "==> Resolve" in log.read_text(encoding="utf-8")
+    assert list((tmp_path / ".gupkg" / "logs").glob("2*-install-ScopeApp.log")), "the run log is in the root"

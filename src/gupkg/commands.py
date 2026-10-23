@@ -20,20 +20,18 @@ Manager operations: ``load_manager(...)``, ``init_manager(...)``,
 Implementation Approach
 -----------------------
 Operations take plain values and return outcomes instead of printing or
-exiting. Workflows that log progress run with standard output redirected to a
-caller-supplied stream, so a front end can discard it (machine output) or show
-it live (a TUI). Exceptions at the boundary become failed outcomes carrying the
-documented exit codes.
+exiting. Workflows report their progress as events (:mod:`gupkg.report.events`)
+to whichever reporters the front end installed, so a front end shows them live
+(console, TUI), logs them, or both. Exceptions at the boundary become failed
+outcomes carrying the documented exit codes.
 """
 
 from __future__ import annotations
 
-import contextlib
-import io
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, TextIO
+from typing import Any, Callable
 
 from . import gupkg as package_workflows
 from .selfmgmt.elevation import UntrustedLocationError
@@ -74,6 +72,7 @@ from .manager import (
     plan_upgrade_all,
 )
 from .outcome import Outcome, failure
+from .report.events import emit_problems, package_scope, phase
 from .registry import registry_status, resolve_selector, search_registry, sync_registry
 from .system.port import System, is_elevated_run, require_admin_only
 
@@ -83,10 +82,12 @@ from .system.port import System, is_elevated_run, require_admin_only
 # ---------------------------------------------------------------------------
 
 
-def run_guarded(
-    command: str, operation: Callable[[], ActionResult], output: TextIO | None = None
-) -> Outcome:
+def run_guarded(command: str, operation: Callable[[], ActionResult]) -> Outcome:
     """Run a workflow, mapping exceptions to documented exit codes.
+
+    The workflow reports its progress as events to the installed reporter.
+    Its warnings and errors are reported once more here as events, which the
+    event stream drops when the workflow already reported them live.
 
     Parameters
     ----------
@@ -94,14 +95,9 @@ def run_guarded(
         Command name reported in the outcome.
     operation : callable
         Workflow returning an :class:`ActionResult`.
-    output : TextIO, optional
-        Stream that receives the workflow's progress text; ``None`` leaves
-        standard output untouched.
     """
-    redirect = contextlib.redirect_stdout(output) if output is not None else contextlib.nullcontext()
     try:
-        with redirect:
-            result = operation()
+        result = operation()
     except (ConfigValidationError, ValueError, FileNotFoundError) as exc:
         result = ActionResult(ok=False, errors=[str(exc)], exit_code=EXIT_USER_ERROR)
     except OSError as exc:
@@ -110,6 +106,7 @@ def run_guarded(
         result = ActionResult(
             ok=False, errors=[f"Unexpected internal error: {exc}"], exit_code=EXIT_INTERNAL_ERROR
         )
+    emit_problems(result.warnings, result.errors)
     return Outcome(command, result)
 
 
@@ -176,61 +173,6 @@ class PackageRequest:
         return " ".join(parts)
 
 
-class LineStream(io.TextIOBase):
-    """Text stream that hands each completed line to a callback.
-
-    Pass it as the ``output`` of an operation to show progress live (for
-    example in a TUI) instead of discarding or buffering it.
-
-    Parameters
-    ----------
-    on_line : callable
-        Receives every committed line, without its line ending.
-    on_transient : callable, optional
-        Receives text terminated by a carriage return, which a terminal would
-        overwrite with later text. When given, the stream declares
-        ``accepts_transient`` so progress reporters send intermediate updates;
-        a following newline commits the latest transient text as a line.
-    """
-
-    def __init__(
-        self,
-        on_line: Callable[[str], None],
-        on_transient: Callable[[str], None] | None = None,
-    ) -> None:
-        self._on_line = on_line
-        self._on_transient = on_transient
-        self.accepts_transient = on_transient is not None
-        self._pending = ""
-        self._transient = ""
-
-    def writable(self) -> bool:
-        """Report that the stream accepts text."""
-        return True
-
-    def write(self, text: str) -> int:
-        """Buffer *text*; emit each complete line and each transient update."""
-        for char in text:
-            if char == "\r":
-                if self._pending:
-                    self._transient = self._pending
-                    self._pending = ""
-                    if self._on_transient is not None:
-                        self._on_transient(self._transient)
-            elif char == "\n":
-                self._on_line(self._pending or self._transient)
-                self._pending = self._transient = ""
-            else:
-                self._pending += char
-        return len(text)
-
-    def flush(self) -> None:
-        """Emit any trailing partial line."""
-        if self._pending:
-            self._on_line(self._pending)
-            self._pending = self._transient = ""
-
-
 def resolve_package(
     path: Path | None, system: System, *, command: str, allow_legacy_directory: bool = False
 ) -> tuple[Path | None, PackageIdentity | None, Outcome | None]:
@@ -289,9 +231,7 @@ def resolve_package(
     return candidate, None, None
 
 
-def run_package_command(
-    request: PackageRequest, system: System, *, output: TextIO | None = None
-) -> Outcome:
+def run_package_command(request: PackageRequest, system: System) -> Outcome:
     """Run one package operation and describe its result.
 
     Parameters
@@ -300,13 +240,13 @@ def run_package_command(
         The operation and its options.
     system : System
         Boundary for every machine side effect the operation has.
-    output : TextIO, optional
-        Receives progress text while the operation runs (see :func:`run_guarded`).
 
     Returns
     -------
     Outcome
-        Result with a ``package`` or ``config`` record for display.
+        Result with a ``package`` or ``config`` record for display. The
+        operation's events are reported inside the package's scope, so the
+        package's log receives them.
     """
     command = request.command
     directory, identity, error = resolve_package(
@@ -316,6 +256,24 @@ def run_package_command(
         return error
     assert directory is not None
 
+    # A legacy folder without an identity has no package of its own; every
+    # other operation reports inside its package's scope, so the package's
+    # log (and the run log's link to it) receives the events.
+    if identity is None:
+        return _run_resolved(request, system, directory, identity)
+    with package_scope(
+        identity.name, identity.package_root, root=identity.package_root.parent, sole=True
+    ) as scope:
+        outcome = _run_resolved(request, system, directory, identity)
+        scope.result.update(ok=outcome.result.ok, status=outcome.status)
+    return outcome
+
+
+def _run_resolved(
+    request: PackageRequest, system: System, directory: Path, identity: PackageIdentity | None
+) -> Outcome:
+    """Run the operation of *request* on the package already resolved at *directory*."""
+    command = request.command
     if command == "config-fix":
         return run_guarded_outcome(
             lambda: fix_package_config(
@@ -326,11 +284,10 @@ def run_package_command(
                 output=request.output,
             ),
             command,
-            output,
         )
     if command == "config-check":
         outcome = run_guarded(
-            command, lambda: package_workflows.health_check_package(directory, system, scope=request.scope), output
+            command, lambda: package_workflows.health_check_package(directory, system, scope=request.scope)
         )
         outcome.data["config"] = {"path": _path_text(directory), "operation": "check"}
         return outcome
@@ -360,23 +317,21 @@ def run_package_command(
         )
     else:
         return failure(command, f"Unsupported package command: {command}")
-    outcome = run_guarded(command, operation, output)
+    outcome = run_guarded(command, operation)
     outcome.data["package"] = _command_package_record(directory, request.scope, system)
     return outcome
 
 
-def run_guarded_outcome(
-    operation: Callable[[], Outcome], command: str, output: TextIO | None = None
-) -> Outcome:
-    """Run an operation that already returns an outcome, with progress redirected."""
-    redirect = contextlib.redirect_stdout(output) if output is not None else contextlib.nullcontext()
+def run_guarded_outcome(operation: Callable[[], Outcome], command: str) -> Outcome:
+    """Run an operation that already returns an outcome, mapping exceptions to failed outcomes."""
     try:
-        with redirect:
-            return operation()
+        outcome = operation()
     except OSError as exc:
-        return failure(command, str(exc), EXIT_MUTATION_ERROR)
+        outcome = failure(command, str(exc), EXIT_MUTATION_ERROR)
     except Exception as exc:  # pragma: no cover - defensive process boundary
-        return failure(command, f"Unexpected internal error: {exc}", EXIT_INTERNAL_ERROR)
+        outcome = failure(command, f"Unexpected internal error: {exc}", EXIT_INTERNAL_ERROR)
+    emit_problems(outcome.result.warnings, outcome.result.errors)
+    return outcome
 
 
 def _command_package_record(path: Path, scope: Scope, system: System) -> dict[str, Any]:
@@ -873,15 +828,17 @@ def elevated_update_arguments(config: ManagerConfig, *, no_checksum: bool) -> li
 # ---------------------------------------------------------------------------
 
 
-def registry_sync_outcome(
-    config: ManagerConfig, system: System, output: TextIO | None = None
-) -> Outcome:
+def _sync_registry_phase(config: ManagerConfig, system: System) -> ActionResult:
+    """Sync the configured registry cache, reported as the ``Sync registry`` phase."""
+    with phase("Sync registry") as syncing:
+        return syncing.settle(
+            sync_registry(config.registry_cache, system, source=config.registry_source)
+        )
+
+
+def registry_sync_outcome(config: ManagerConfig, system: System) -> Outcome:
     """Download the latest registry archive into the configured cache."""
-    outcome = run_guarded(
-        "manager.registry.sync",
-        lambda: sync_registry(config.registry_cache, system, source=config.registry_source),
-        output,
-    )
+    outcome = run_guarded("manager.registry.sync", lambda: _sync_registry_phase(config, system))
     outcome.data["registry"] = {"cache": _path_text(config.registry_cache), "source": config.registry_source}
     return outcome
 
@@ -905,7 +862,7 @@ def registry_status_outcome(config: ManagerConfig, system: System) -> Outcome:
 
 
 def _ensure_registry(
-    command: str, config: ManagerConfig, system: System, offline: bool, output: TextIO | None
+    command: str, config: ManagerConfig, system: System, offline: bool
 ) -> Outcome | None:
     """Make sure a cached registry exists, downloading only when allowed.
 
@@ -919,19 +876,15 @@ def _ensure_registry(
         return None
     if offline:
         return failure(command, "--offline requires a usable cached registry tree")
-    sync = run_guarded(
-        command,
-        lambda: sync_registry(config.registry_cache, system, source=config.registry_source),
-        output,
-    )
+    sync = run_guarded(command, lambda: _sync_registry_phase(config, system))
     return None if sync.result.ok else sync
 
 
 def registry_search_outcome(
-    config: ManagerConfig, system: System, query: str, *, offline: bool, output: TextIO | None = None
+    config: ManagerConfig, system: System, query: str, *, offline: bool
 ) -> Outcome:
     """Search the registry by name, downloading it first only when none is cached."""
-    problem = _ensure_registry("manager.search", config, system, offline, output)
+    problem = _ensure_registry("manager.search", config, system, offline)
     if problem is not None:
         return problem
     try:
@@ -960,7 +913,6 @@ def install_registry_package(
     scope: Scope,
     *,
     offline: bool = False,
-    output: TextIO | None = None,
 ) -> Outcome:
     """Install one registry package by exact name into the configured root.
 
@@ -986,7 +938,7 @@ def install_registry_package(
     ):
         return failure(command, "Registry selectors cannot be paths")
     try:
-        problem = _ensure_registry(command, config, system, offline, output)
+        problem = _ensure_registry(command, config, system, offline)
         if problem is not None:
             return problem
         package = resolve_selector(config.registry_cache, system, selector)
@@ -1001,17 +953,18 @@ def install_registry_package(
         return failure(command, str(exc))
     except OSError as exc:
         return failure(command, str(exc), EXIT_MUTATION_ERROR)
-    outcome = run_guarded(
-        command,
-        lambda: package_workflows.install_package(
-            target,
-            system,
-            scope=scope,
-            install_context=installation_context(config, scope, system),
-            shim_linkage=config.shim_linkage,
-        ),
-        output,
-    )
+    with package_scope(package.selector, target.parent, root=config.root(scope), sole=True) as package_run:
+        outcome = run_guarded(
+            command,
+            lambda: package_workflows.install_package(
+                target,
+                system,
+                scope=scope,
+                install_context=installation_context(config, scope, system),
+                shim_linkage=config.shim_linkage,
+            ),
+        )
+        package_run.result.update(ok=outcome.result.ok, status=outcome.status)
     outcome.data["manager"] = {"selector": package.selector, "scope": scope.value, "path": _path_text(target)}
     return outcome
 
@@ -1028,7 +981,6 @@ def self_outcome(
     *,
     scope: Scope = Scope.USER,
     shim_linkage: str | None = None,
-    output: TextIO | None = None,
 ) -> Outcome:
     """Report on (``status``), repair (``repair``) or update (``update``) gupkg itself."""
     from .distribution import repair_self, self_status, update_self
@@ -1066,7 +1018,6 @@ def self_outcome(
                 scope=scope,
                 install_context=installation_context(config, scope, system, shim_linkage=shim_linkage),
             ),
-            output,
         )
         outcome.data = {"self": {"operation": action}}
         return outcome
@@ -1079,7 +1030,6 @@ def self_outcome(
             scope=scope,
             install_context=installation_context(config, scope, system, shim_linkage=shim_linkage),
         ),
-        output,
     )
     try:
         outcome.data = _self_record(self_status(), operation=action)
@@ -1121,7 +1071,6 @@ def _self_record(report: dict[str, Any], *, operation: str | None = None) -> dic
 
 __all__ = [
     "PackageRequest",
-    "LineStream",
     "PackageSummary",
     "automatic_scope",
     "decline_updates",

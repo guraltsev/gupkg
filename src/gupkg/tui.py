@@ -28,7 +28,11 @@ from . import commands
 from ._version import __version__
 from .core import Scope
 from .outcome import Outcome, format_human
-from .system.port import System
+from .report.console import LineReporter
+from .report.events import emit_problems
+from .report.logfile import running_gupkg_logs_base
+from .report.session import RunSession
+from .system.port import System, is_elevated_run
 
 
 def run_tui(system: System, package_path: str = "", *, forced_scope: Scope | None = None) -> int:
@@ -350,11 +354,19 @@ def run_tui(system: System, package_path: str = "", *, forced_scope: Scope | Non
 
         def _run(self) -> None:
             """Run the operation on a worker thread, streaming its progress lines."""
-            outcome = commands.run_package_command(
-                self.request,
-                system,
-                output=commands.LineStream(self._progress, on_transient=self._transient),
+            session = RunSession(
+                command=self.request.command,
+                argv=["tui", self.request.command_line()],
+                mode=self.request.scope.value,
+                elevated=is_elevated_run(system),
+                version=__version__,
+                reporters=[LineReporter(self._progress, self._transient)],
+                fallback_base=running_gupkg_logs_base(),
             )
+            with session:
+                outcome = commands.run_package_command(self.request, system)
+                emit_problems(outcome.result.warnings, outcome.result.errors)
+                session.finish(format_human(outcome), outcome.result.exit_code)
             self.app.call_from_thread(self._finish, outcome)
 
         def _progress(self, line: str) -> None:
@@ -373,8 +385,7 @@ def run_tui(system: System, package_path: str = "", *, forced_scope: Scope | Non
 
         def _finish(self, outcome: Outcome) -> None:
             """Show the final outcome and record its exit status."""
-            text, problems = format_human(outcome)
-            self.query_one(OutputView).set_lines(["\n".join(self.lines + [text + problems]).strip()])
+            self.query_one(OutputView).set_lines(self.lines)
             self.app.result_code = outcome.result.exit_code
             succeeded = outcome.result.exit_code == 0
             self.query_one("#status", Static).update(Content.styled(

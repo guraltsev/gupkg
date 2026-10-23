@@ -32,7 +32,9 @@ gupkg.system.port : the protocol this class implements.
 from __future__ import annotations
 
 import ctypes
+import locale
 import os
+import re
 import struct
 import subprocess
 import threading
@@ -363,8 +365,6 @@ class WindowsSystem(WindowsLinks):
             stderr=subprocess.PIPE,
             cwd=str(cwd) if cwd is not None else None,
             env=dict(env) if env is not None else None,
-            text=True,
-            errors="replace",
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
 
@@ -375,11 +375,11 @@ class WindowsSystem(WindowsLinks):
 
         def read(name: str, stream: Any) -> None:
             """Collect one stream line by line and forward each line."""
-            for line in stream:
+            for line, terminated, continued in _output_lines(stream):
                 with lock:
-                    collected[name].append(line)
+                    collected[name].append(line + ("\n" if terminated else ""))
                     if on_line is not None:
-                        on_line(line.rstrip("\r\n"))
+                        on_line(line + (" [line continues]" if continued else ""))
 
         readers = [
             threading.Thread(target=read, args=(name, stream), daemon=True)
@@ -392,7 +392,7 @@ class WindowsSystem(WindowsLinks):
         try:
             if input_text is not None:
                 try:
-                    process.stdin.write(input_text)
+                    process.stdin.write(input_text.encode(locale.getpreferredencoding(False), errors="replace"))
                     process.stdin.close()
                 except OSError:
                     pass
@@ -502,6 +502,83 @@ def _system_tool(name: str) -> str:
     if elevation.elevated_mode():
         raise OSError(f"Cannot find {name} under %SystemRoot%; elevated runs do not search PATH")
     return name
+
+
+def _decode_output(data: bytes) -> str:
+    """Decode one line of child output: UTF-8 when it is valid, else the system code page.
+
+    Modern tools (Git, Python) write UTF-8 whatever the code page is; older
+    console tools write the code page. Invalid bytes become replacement
+    characters instead of failing the run.
+    """
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data.decode(locale.getpreferredencoding(False), errors="replace")
+
+
+# Longest piece of a child's line that is reported at once; a longer line is split.
+_MAX_LINE = 64 * 1024
+# What ends a line of child output: a line feed or a carriage return.
+_LINE_END = re.compile(rb"[\r\n]")
+
+
+def _output_lines(stream: Any) -> Iterator[tuple[str, bool, bool]]:
+    """Yield ``(line, terminated, continued)`` for a child's binary output stream, as soon as each line is complete.
+
+    A line ends at a line feed, a carriage return plus line feed, or a lone
+    carriage return (the way progress meters redraw), so carriage-return
+    updates arrive as separate lines at once. The last line may have no
+    terminator. A line longer than 64 KiB is cut into pieces (never inside a
+    UTF-8 character); every piece but the last has ``continued`` true and no
+    terminator, so the pieces concatenate to the original line. Each read is
+    scanned once, so a very long line costs time proportional to its length.
+    """
+    pending = bytearray()
+    index = 0
+    while True:
+        chunk = stream.read1(8192)
+        final = not chunk
+        pending += chunk
+
+        # Report every complete line; ``index`` is where scanning resumes, so
+        # bytes seen before are never searched again.
+        start = 0
+        while True:
+            match = _LINE_END.search(pending, index)
+            end = match.start() if match else len(pending)
+
+            # Cut a very long line into bounded pieces, backing up so a UTF-8
+            # character is never split between two pieces.
+            while end - start > _MAX_LINE:
+                # A UTF-8 character has at most 4 bytes, so backing up 3 at most
+                # finds its start; bytes that are not UTF-8 are cut as they are.
+                cut, back = start + _MAX_LINE, 0
+                while back < 3 and pending[cut] & 0xC0 == 0x80:
+                    cut -= 1
+                    back += 1
+                yield _decode_output(bytes(pending[start:cut])), False, True
+                start = cut
+            if match is None:
+                index = len(pending)
+                break
+
+            # A carriage return at the end of the data waits for the next
+            # read, because a line feed may follow it.
+            if pending[end] == 13 and end + 1 >= len(pending) and not final:
+                index = end
+                break
+            yield _decode_output(bytes(pending[start:end])), True, False
+            follows_lf = pending[end] == 13 and pending[end + 1 : end + 2] == b"\n"
+            index = start = end + (2 if follows_lf else 1)
+
+        # Keep only the unreported tail; it is shorter than one piece.
+        del pending[:start]
+        index -= start
+        if final:
+            if pending:
+                yield _decode_output(bytes(pending)), False, False
+            return
 
 
 def _script_command(argv: Sequence[str]) -> list[str]:
