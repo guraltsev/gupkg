@@ -58,7 +58,10 @@ ROOT = Path(__file__).resolve().parents[1]
 # creates (issues 029-030) are probed too as soon as their package directories exist
 # beside ``gupkg`` in the version directory. The migration tool (issue 023) is one of them
 # and is always present, so it is probed unconditionally.
-PROBE_MODULES = ("gupkg.cli", "gupkg.manager", "gupkg.tui", "gupkg.manager_tui", "gupkg_migrate.cli")
+PROBE_MODULES = (
+    "gupkg.cli", "gupkg.manager", "gupkg.tui", "gupkg.manager_tui", "gupkg_migrate.cli",
+    "gupkg.services.track", "gupkg.services.unpack", "gupkg.services.prepare", "gupkg.hooklib",
+)
 OPTIONAL_PROBE_PACKAGES = ("gupkg_ui", "gupkg_tui", "gupkg_manager")
 # Modules of the base probe that need no third-party package (used by --skip-deps builds).
 # ``gupkg.cli`` is not among them any more: the CLI writes TOML with tomli_w (issue 023).
