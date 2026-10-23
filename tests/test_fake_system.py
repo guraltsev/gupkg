@@ -235,15 +235,8 @@ def test_sandbox_state_persists_in_system_json_across_runs(tmp_path: Path) -> No
     assert json.loads((sandbox / "system.json").read_text(encoding="utf-8"))["env"]["user"]["Path"]["expandable"] is True
 
 
-def test_sandbox_install_leaves_the_real_machine_alone_and_records_what_it_would_have_done(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """``gupkg --sandbox DIR install`` records its shortcut, environment value and PATH change in DIR and touches no machine integration.
-
-    The real Windows implementation is swapped for one that fails on every
-    registry, shortcut, broadcast or elevation call, so reaching the machine
-    would fail the run.
-    """
+def _arm_trap(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make ``cli`` use a real-system stand-in that fails on every machine-integration call."""
     class Trap(WindowsSystem):
         """Fail on any call that would change or read the real machine's integration points."""
 
@@ -259,6 +252,18 @@ def test_sandbox_install_leaves_the_real_machine_alone_and_records_what_it_would
     monkeypatch.setattr(cli, "WindowsSystem", Trap)
     with pytest.raises(AssertionError, match="reached the real machine"):
         Trap().get_path(Scope.USER)  # the trap is armed
+
+
+def test_sandbox_install_leaves_the_real_machine_alone_and_records_what_it_would_have_done(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``gupkg --sandbox DIR install`` records its shortcut, environment value and PATH change in DIR and touches no machine integration.
+
+    The real Windows implementation is swapped for one that fails on every
+    registry, shortcut, broadcast or elevation call, so reaching the machine
+    would fail the run.
+    """
+    _arm_trap(monkeypatch)
     version = _package_with_every_component(tmp_path)
     sandbox = tmp_path / "sandbox"
 
@@ -275,6 +280,51 @@ def test_sandbox_install_leaves_the_real_machine_alone_and_records_what_it_would
     assert [record.name for record in shortcut_records] == ["Tool.lnk.json"]
     assert json.loads(shortcut_records[0].read_text(encoding="utf-8"))["spec"]["target_path"] == app + "\\tool.exe"
     assert (sandbox / "bin" / "user" / "tool.cmd").is_file()
+
+
+def test_sandbox_machine_scope_install_follows_the_elevated_flag_in_system_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A system-scope sandbox install is refused until ``system.json`` says elevated, then records machine-scope state.
+
+    Elevation in the sandbox is the flag in ``system.json``, never the real token.
+    """
+    _arm_trap(monkeypatch)
+    version = _package_with_every_component(tmp_path)
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+
+    refused = cli.main(["--sandbox", str(sandbox), "--scope", "system", "install", str(version)])
+    assert refused != 0
+    assert "administrator" in (lambda c: c.out + c.err)(capsys.readouterr()).lower()
+
+    (sandbox / "system.json").write_text('{"elevated": true}\n', encoding="utf-8")
+    code = cli.main(["--sandbox", str(sandbox), "--scope", "system", "install", str(version)])
+
+    state = json.loads((sandbox / "system.json").read_text(encoding="utf-8"))
+    assert code == 0
+    assert "TOOL_HOME" in state["env"]["system"] and state["env"]["user"] == {}
+    assert (sandbox / "bin" / "system" / "tool.cmd").is_file()
+
+
+def test_a_program_outside_the_allow_list_raises_in_a_sandbox_run(tmp_path: Path) -> None:
+    """In sandbox mode only git and 7-Zip may run; any other program, such as a package script, raises ``UnexpectedCall``."""
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    system = FakeSystem.sandbox(sandbox, WindowsSystem())
+    marker = tmp_path / "ran.txt"
+    script = tmp_path / "script.cmd"
+    script.write_text(f'@echo off\r\necho x> "{marker}"\r\n', encoding="ascii")
+
+    with pytest.raises(UnexpectedCall):
+        system.run([str(script)])
+    with pytest.raises(UnexpectedCall):
+        system.run(["cmd", "/c", f"echo x> {marker}"])
+
+    assert not marker.exists()
+    assert system.run(["git", "--version"]).returncode == 0
+    if os.name == "nt":
+        assert system.run([str(find_7z()), "i"]).returncode == 0
 
 
 # ---------------------------------------------------------------------------

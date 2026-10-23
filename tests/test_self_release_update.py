@@ -199,3 +199,13 @@ def test_check_update_rejects_a_release_row_without_a_digest(system: FakeSystem)
 
     with pytest.raises(RuntimeError, match="without a SHA-256"):
         hook.check_update({"current": {"version": "0.18.0"}, "fetch_text": system.fetch_text})
+
+
+def test_check_update_without_fetch_text_asks_for_a_newer_gupkg() -> None:
+    """A context from an older engine (no ``fetch_text``) fails with a clear message instead of a KeyError."""
+    spec = importlib.util.spec_from_file_location("check_update_under_test", REPO / "src" / "pkg.local" / "check_update.py")
+    hook = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hook)
+
+    with pytest.raises(RuntimeError, match="too old for this package; update gupkg"):
+        hook.check_update({"current": {"version": "0.18.0"}})

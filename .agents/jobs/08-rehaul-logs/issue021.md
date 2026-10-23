@@ -62,3 +62,14 @@ See the final report.
   read as excluding the vendored `src/gupkg/python/` tree.
 - The issue lists no uninstall command in this codebase; the D38 behaviour test therefore
   covers install and update.
+
+## Review round 1
+
+- Sandbox processes: allow-list is git plus 7-Zip; no blanket delegate (network keeps the
+  real delegate). The issue names no sandbox allow-list, so package origin/hook scripts
+  fail in a sandbox: open question for the controller.
+- Roots are not redirected (the issue does not ask for it); documented in README and smoke.
+- check_update.py: a missing fetch_text gives a clear RuntimeError.
+- Controller note: port.py module docstring now lists the protocol additions
+  (scope_folders, directory_untrusted_reason, run's input_text/timeout, script expansion
+  inside WindowsSystem).
