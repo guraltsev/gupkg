@@ -430,7 +430,7 @@ def run_manager_tui(
             target = self.target
             description = ""
             if target.local_version:
-                description = commands.describe_package(
+                description = commands.package_summary(
                     str(target.package.root / target.local_version), system
                 ).description
             with VerticalScroll():

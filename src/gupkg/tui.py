@@ -122,7 +122,7 @@ def run_tui(system: System, package_path: str = "", *, forced_scope: Scope | Non
 
         def _read_summary(self) -> None:
             """Read the package summary shown above the action list."""
-            summary = commands.describe_package(self.path, system)
+            summary = commands.package_summary(self.path, system)
             self.title, self.description, self.warning = summary.title, summary.description, summary.warning
 
         def compose(self) -> ComposeResult:

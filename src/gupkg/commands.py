@@ -8,7 +8,7 @@ formatters in :mod:`gupkg.outcome`; they contain no workflow logic of their own.
 Usage and API
 -------------
 Package operations: build a :class:`PackageRequest` and call
-``run_package_command(...)``; ``describe_package(...)`` and
+``run_package_command(...)``; ``package_summary(...)`` and
 ``automatic_scope(...)`` supply the summary and scope a UI shows.
 
 Manager operations: ``load_manager(...)``, ``init_manager(...)``,
@@ -52,7 +52,7 @@ from .core import (
     read_toml_file,
     write_text_atomic,
 )
-from .layout import inspect_current, resolve_input_path
+from .layout import identity_from_path, installed_version
 from .legacy_to_gupkg_toml import pick_legacy_metadata_files
 from .manager import (
     ManagedTarget,
@@ -256,7 +256,7 @@ def resolve_package(
     """
     candidate = (path or Path.cwd()).expanduser()
     try:
-        identity, _ = resolve_input_path(candidate, system)
+        identity, _ = identity_from_path(candidate, system)
         return identity.version_path, identity, None
     except OSError as exc:
         return None, None, failure(command, str(exc))
@@ -361,7 +361,7 @@ def run_package_command(
     else:
         return failure(command, f"Unsupported package command: {command}")
     outcome = run_guarded(command, operation, output)
-    outcome.data["package"] = _package_record(directory, request.scope, system)
+    outcome.data["package"] = _command_package_record(directory, request.scope, system)
     return outcome
 
 
@@ -379,19 +379,18 @@ def run_guarded_outcome(
         return failure(command, f"Unexpected internal error: {exc}", EXIT_INTERNAL_ERROR)
 
 
-def _package_record(path: Path, scope: Scope, system: System) -> dict[str, Any]:
+def _command_package_record(path: Path, scope: Scope, system: System) -> dict[str, Any]:
     """Describe a package after a command: the selected version and what ``current`` activates."""
     try:
-        identity, _ = resolve_input_path(path, system)
+        identity, _ = identity_from_path(path, system)
     except (OSError, ValueError):
         return {"path": _path_text(path), "scope": scope.value}
-    current = inspect_current(identity.package_root, system)
     return {
         "path": _path_text(identity.version_path),
         "identity": identity.name,
         "scope": scope.value,
         "version": identity.version_string,
-        "installed_version": current.version_path.name if current.version_path else None,
+        "installed_version": installed_version(identity.package_root, system),
     }
 
 
@@ -404,19 +403,13 @@ class PackageSummary:
     warning: str
 
 
-def describe_package(path_text: str, system: System) -> PackageSummary:
+def package_summary(path_text: str, system: System) -> PackageSummary:
     """Summarize the package at *path_text* (empty means the current directory)."""
     try:
-        identity, _ = resolve_input_path(Path(path_text or ".").expanduser(), system)
+        identity, _ = identity_from_path(Path(path_text or ".").expanduser(), system)
         config_path = identity.version_path / "pkg.toml"
         config = read_toml_file(config_path) if config_path.exists() else {}
-        installed = "not installed"
-        try:
-            current_identity, _ = resolve_input_path(identity.package_root, system)
-            if current_identity.is_current:
-                installed = current_identity.version_string
-        except (OSError, ValueError):
-            pass
+        installed = installed_version(identity.package_root, system) or "not installed"
         conflicts = check_metadata_consistency(identity, config)
         description = config.get("description", "")
         return PackageSummary(
@@ -431,7 +424,7 @@ def describe_package(path_text: str, system: System) -> PackageSummary:
 def automatic_scope(path_text: str, system: System) -> tuple[Scope, bool] | None:
     """Return the scope ``auto`` would pick for a package, and whether System is available."""
     try:
-        identity, _ = resolve_input_path(Path(path_text or ".").expanduser(), system)
+        identity, _ = identity_from_path(Path(path_text or ".").expanduser(), system)
     except (OSError, ValueError):
         return None
     system_available = system.is_elevated() and not identity.only_portable_by_name
@@ -1132,7 +1125,7 @@ __all__ = [
     "PackageSummary",
     "automatic_scope",
     "decline_updates",
-    "describe_package",
+    "package_summary",
     "diagnostic_lines",
     "filter_targets",
     "needs_elevation",
