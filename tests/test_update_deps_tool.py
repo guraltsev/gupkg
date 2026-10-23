@@ -3,9 +3,11 @@
 Behavior covered: lock file reading and writing, that ``--repair`` replaces the
 runtime's ``Lib/site-packages`` only after a verified staged install, that an
 update shows a plan and changes nothing unless it is confirmed and succeeds, and
-the command-line behavior without a terminal.
+the command-line behavior without a terminal, and that the runtime has no pip: the
+installing interpreter (the build machine's) does the work, pip is never locked,
+resolved or staged.
 
-Mocked boundaries: the subprocess that runs the runtime's pip (a fake pip creates
+Mocked boundaries: the subprocess that runs pip and the probe (a fake pip creates
 files in the requested target and writes a resolution report). Real: the
 filesystem, the lock format, and the staging and swap logic. Out of scope: real
 network access and real wheels, and the shipped gupkg (which never runs this tool).
@@ -27,13 +29,16 @@ from update_deps import LockedRequirement
 HASH_A = "a" * 64
 HASH_B = "b" * 64
 HASH_C = "c" * 64
-OLD_LOCK = f"textual==1.0.0 --hash=sha256:{HASH_A}\npip==24.0 --hash=sha256:{HASH_B}\n"
+OLD_LOCK = f"textual==1.0.0 --hash=sha256:{HASH_A}\ntomli_w==1.2.0 --hash=sha256:{HASH_B}\n"
 
 
 class FakePip:
     """Stand in for the runtime interpreter: install into --target, resolve, and probe."""
 
-    def __init__(self, *, fail_install: bool = False, fail_probe: bool = False, report=None, fail_resolve=False) -> None:
+    def __init__(
+        self, *, fail_install: bool = False, fail_probe: bool = False, report=None, fail_resolve=False, plant=None
+    ) -> None:
+        self.plant = plant
         self.fail_install = fail_install
         self.fail_probe = fail_probe
         self.fail_resolve = fail_resolve
@@ -56,6 +61,9 @@ class FakePip:
             target = Path(command[command.index("--target") + 1])
             lock_text = Path(command[command.index("-r") + 1]).read_text(encoding="utf-8")
             (target / "installed.lock").write_text(lock_text, encoding="utf-8")
+            if self.plant:
+                (target / self.plant).mkdir()
+                (target / self.plant / "__init__.py").write_text("", encoding="utf-8")
             return ok
         if "-c" in command:
             if self.fail_probe:
@@ -79,6 +87,7 @@ def checkout(tmp_path: Path) -> tuple[Path, Path]:
     live = runtime / "Lib" / "site-packages"
     live.mkdir(parents=True)
     (runtime / "python.exe").touch()
+    (runtime / "python312._pth").write_text("python312.zip\n", encoding="ascii")
     (live / "old.txt").write_text("old", encoding="utf-8")
     lock = tmp_path / "gupkg-deps.lock"
     lock.write_text(OLD_LOCK, encoding="utf-8")
@@ -140,7 +149,7 @@ def test_failed_repair_leaves_the_live_directory_untouched(checkout, failure: di
 def test_update_shows_the_plan_and_changes_nothing_when_declined(checkout) -> None:
     """Declining the plan leaves both the live directory and the lock as they were."""
     runtime, lock = checkout
-    pip = FakePip(report=[_release("textual", "2.0.0", HASH_C), _release("pip", "24.0", HASH_B)])
+    pip = FakePip(report=[_release("textual", "2.0.0", HASH_C), _release("tomli_w", "1.2.0", HASH_B)])
     shown: list[list[str]] = []
 
     def decline(lines: list[str]) -> bool:
@@ -154,13 +163,13 @@ def test_update_shows_the_plan_and_changes_nothing_when_declined(checkout) -> No
     assert any("textual 1.0.0 -> 2.0.0" in line for line in shown[0])
     assert lock.read_text(encoding="utf-8") == OLD_LOCK
     assert (runtime / "Lib" / "site-packages" / "old.txt").exists()
-    assert not any("--target" in command for command in pip.commands)
+    assert not any("--target" in command and "--report" not in command for command in pip.commands)
 
 
 def test_confirmed_update_installs_the_new_pins_and_rewrites_the_lock(checkout) -> None:
     """After confirmation the new versions are installed from a temporary lock and then recorded."""
     runtime, lock = checkout
-    pip = FakePip(report=[_release("textual", "2.0.0", HASH_C), _release("pip", "24.0", HASH_B), _release("rich", "1.0", HASH_A)])
+    pip = FakePip(report=[_release("textual", "2.0.0", HASH_C), _release("tomli_w", "1.2.0", HASH_B), _release("rich", "1.0", HASH_A)])
 
     with mock.patch.object(update_deps.subprocess, "run", pip):
         applied = update_deps.update_deps(runtime, lock, confirm=lambda lines: True, progress=lambda line: None)
@@ -175,7 +184,7 @@ def test_confirmed_update_installs_the_new_pins_and_rewrites_the_lock(checkout) 
 def test_failed_update_install_does_not_change_the_lock(checkout) -> None:
     """If the new set cannot be installed, neither the live directory nor the lock changes."""
     runtime, lock = checkout
-    pip = FakePip(report=[_release("textual", "2.0.0", HASH_C), _release("pip", "24.0", HASH_B)], fail_install=True)
+    pip = FakePip(report=[_release("textual", "2.0.0", HASH_C), _release("tomli_w", "1.2.0", HASH_B)], fail_install=True)
 
     with mock.patch.object(update_deps.subprocess, "run", pip), pytest.raises(RuntimeError):
         update_deps.update_deps(runtime, lock, confirm=lambda lines: True, progress=lambda line: None)
@@ -209,7 +218,7 @@ def test_update_refuses_releases_that_are_not_plain_stable_versions(checkout) ->
 def test_command_line_needs_yes_when_it_cannot_ask(checkout) -> None:
     """Without --yes and without a terminal, an update plan is refused rather than applied."""
     runtime, lock = checkout
-    pip = FakePip(report=[_release("textual", "2.0.0", HASH_C), _release("pip", "24.0", HASH_B)])
+    pip = FakePip(report=[_release("textual", "2.0.0", HASH_C), _release("tomli_w", "1.2.0", HASH_B)])
 
     with (
         mock.patch.object(update_deps.subprocess, "run", pip),
@@ -219,7 +228,7 @@ def test_command_line_needs_yes_when_it_cannot_ask(checkout) -> None:
         update_deps.main(["--runtime", str(runtime), "--lock", str(lock)])
 
     assert lock.read_text(encoding="utf-8") == OLD_LOCK
-    assert not any("--target" in command for command in pip.commands)
+    assert not any("--target" in command and "--report" not in command for command in pip.commands)
 
 
 def test_command_line_reports_a_missing_runtime(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -231,3 +240,69 @@ def test_command_line_reports_a_missing_runtime(tmp_path: Path, capsys: pytest.C
 
     assert status == 1
     assert "fetch_runtime.py" in capsys.readouterr().err
+
+
+def test_the_installing_interpreter_runs_pip_and_the_runtime_only_probes(checkout) -> None:
+    """Pip runs in the interpreter the maintainer names, cross-targeted at the bundled CPython; the runtime only imports."""
+    runtime, lock = checkout
+    pip = FakePip()
+    with mock.patch.object(update_deps.subprocess, "run", pip):
+        update_deps.repair_deps(runtime, lock, progress=lambda line: None, python="C:/dev/.venv/python.exe")
+
+    runtime_python = str(runtime / "python.exe")
+    install = next(command for command in pip.commands if "--target" in command)
+    assert install[0] == "C:/dev/.venv/python.exe"
+    assert install[install.index("--platform") + 1] == "win_amd64"
+    assert install[install.index("--python-version") + 1] == "3.12"
+    assert install[install.index("--abi") + 1] == "cp312"
+    for command in pip.commands:
+        if command[0] == runtime_python:
+            assert "pip" not in command and "-c" in command
+
+
+def test_update_resolves_only_the_roots_without_pip_and_never_locks_it(checkout) -> None:
+    """The resolution asks for textual and tomli_w only, and the rewritten lock has no pip line."""
+    runtime, lock = checkout
+    pip = FakePip(report=[_release("textual", "2.0.0", HASH_C), _release("tomli_w", "1.2.0", HASH_B)])
+    with mock.patch.object(update_deps.subprocess, "run", pip):
+        update_deps.update_deps(runtime, lock, confirm=lambda lines: True, progress=lambda line: None)
+
+    resolve = next(command for command in pip.commands if "--report" in command)
+    assert resolve[-2:] == ["textual", "tomli_w"]
+    assert resolve[resolve.index("--python-version") + 1] == "3.12"
+    assert update_deps.LOCK_ROOTS == ("textual", "tomli_w")
+    assert "pip" not in [item.name.casefold() for item in update_deps.read_lock(lock)]
+
+
+def test_update_refuses_a_resolution_that_brings_pip_back(checkout) -> None:
+    """A transitive pip or setuptools in the resolution aborts before anything is installed or relocked."""
+    runtime, lock = checkout
+    pip = FakePip(report=[_release("textual", "2.0.0", HASH_C), _release("pip", "26.2.1", HASH_B)])
+
+    with mock.patch.object(update_deps.subprocess, "run", pip), pytest.raises(RuntimeError, match="pip"):
+        update_deps.update_deps(runtime, lock, confirm=lambda lines: True, progress=lambda line: None)
+
+    assert lock.read_text(encoding="utf-8") == OLD_LOCK
+    assert not any("--target" in command and "--report" not in command for command in pip.commands)
+
+
+@pytest.mark.parametrize("installer", ["pip", "setuptools", "_distutils_hack", "ensurepip"])
+def test_a_staged_install_that_contains_an_installer_is_refused(checkout, installer: str) -> None:
+    """If the installed wheels bring pip or setuptools along, the swap does not happen and the live tree stays."""
+    runtime, lock = checkout
+    with (
+        mock.patch.object(update_deps.subprocess, "run", FakePip(plant=installer)),
+        pytest.raises(RuntimeError, match=installer),
+    ):
+        update_deps.repair_deps(runtime, lock, progress=lambda line: None)
+
+    live = runtime / "Lib" / "site-packages"
+    assert (live / "old.txt").exists() and not (live / installer).exists()
+
+
+def test_the_real_lock_lists_tomli_w_and_no_pip() -> None:
+    """tools/gupkg-deps.lock pins tomli_w as a runtime dependency and has no pip (or setuptools) line."""
+    names = [item.name.casefold().replace("_", "-") for item in update_deps.read_lock(update_deps.DEFAULT_LOCK)]
+
+    assert "tomli-w" in names
+    assert not {"pip", "setuptools"} & set(names)

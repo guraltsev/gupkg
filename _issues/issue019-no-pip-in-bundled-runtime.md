@@ -1,5 +1,7 @@
 # Issue 019: The bundled Python ships without pip
 
+> **Status (2026-10-22):** Implemented. Merged in 5c922cb. Manual checks still owed: `tests/manual_smoke.md`, "A bundled Python without pip (issue 019)": 019-1 (real `scriptsuild-standalone.cmd` build), 019-2 (clean VM: `-I -m pip` fails; install, update, manager and both TUIs work), 019-3 (`update_deps.py --repair` leaves no change). Issues 023, 029 and 030 must add the migration tool and the new UI packages to `PROBE_MODULES` / `OPTIONAL_PROBE_PACKAGES` in `tools/build_standalone.py`.
+
 Date: 2026-10-22
 Priority: High
 Change type: Runtime contents, dependency lock, build tooling; removes code

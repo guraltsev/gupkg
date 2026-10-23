@@ -13,7 +13,9 @@ section 9.
 > status` checks the installed files against `MANIFEST.sha256`. The elevated
 > trust rules below (bundled interpreter only, isolated mode, admin-only
 > directories) still apply unchanged. The text below is kept as the record of
-> the original design.
+> the original design. Issue 019 also removed pip from the bundle and from the
+> lock: the build machine's pip installs the wheels, and a build probe checks the
+> staged tree.
 
 ## 1. Problem
 
@@ -309,7 +311,11 @@ Following `_docs/tests.md`:
   hold a write, delete, or permission-changing right or own the directory.
   Ancestors are checked for the rights that allow renaming or replacing the
   directory. The check cannot vouch for the launcher and bootstrap files that
-  perform it; the root of trust is the admin-only install location.
+  perform it; the root of trust is the admin-only install location. The python
+  directory is trusted at interpreter start: `python.exe`, `python312.dll` and the
+  `.pyd` files load from it before any Python code runs, so the install location
+  must be admin-only before launch, and the elevated check is a refusal gate for
+  later imports, not a defence against a hostile python directory.
 - **Dependencies ship in the bundle.** `tools/build_standalone.py` installs the
   locked wheels into `python\Lib\site-packages` and writes the `._pth` file, so
   an elevated first run needs no installation. The lock also pins `pip`,

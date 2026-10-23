@@ -1,4 +1,5 @@
-# Development environment for scripts\*.cmd:
+# Development environment for the scripts in scripts\. Create .venv with `python -m venv`
+# (it includes pip, which the build scripts and tools\update_deps.py use; the bundle has no pip):
 #   <python> -m venv .venv && .venv\Scripts\pip install -r requirements-dev.txt
 # The runtime packages below match tools\gupkg-deps.lock (tests/test_dev_environment.py checks it),
 # so tests import the versions the release bundle ships.
@@ -11,4 +12,5 @@ platformdirs==4.13.3
 Pygments==2.21.0
 rich==15.0.0
 textual==8.2.8
+tomli_w==1.2.0
 typing_extensions==4.16.0

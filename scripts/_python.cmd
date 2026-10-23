@@ -8,6 +8,7 @@ if exist "%REPO_ROOT%\.venv\Scripts\python.exe" set "PY="%REPO_ROOT%\.venv\Scrip
 if not defined PY (
     >&2 echo [scripts] The development environment is missing: %REPO_ROOT%\.venv
     >&2 echo [scripts] Create it: ^<python^> -m venv .venv ^&^& .venv\Scripts\pip install -r requirements-dev.txt
+    >&2 echo [scripts] python -m venv includes the pip that the build scripts and update_deps.py need.
     exit /b 9009
 )
 exit /b 0

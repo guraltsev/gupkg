@@ -17,8 +17,8 @@ on `main` before dispatching the first worker.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 016 | One self-contained release ZIP | — | merged | rehaul/issue016 | 07d20ba | 296 passed (+39 incl. 017), 0 failed, 0 skipped | 016-1..016-5 in tests/manual_smoke.md (VM user/system bootstrap, self update, edited-file status, release tool on a throwaway fork) |
 | 017 | Shortcuts and junctions without PowerShell or `cmd` | — | merged | rehaul/issue017 | e23a94c | 277 passed (+20), 0 failed, 0 skipped | 017-1 Explorer Properties dialog; 017-2 TUI and elevated system-scope install; 017-3 optional timing |
-| 018 | Remove system-Python autodetection | 016 | in progress | rehaul/issue018 | | | |
-| 019 | The bundled Python ships without pip | 016 | in progress | rehaul/issue019 | | | |
+| 018 | Remove system-Python autodetection | 016 | in review | rehaul/issue018 | | | |
+| 019 | The bundled Python ships without pip | 016 | merged | rehaul/issue019 | 5c922cb | 331 passed, 0 failed, 0 skipped | 019-1 real build; 019-2 clean-VM pip-less run; 019-3 update_deps --repair no-diff |
 | 021 | System boundary, FakeSystem, and sandbox mode | 016–019 | waiting | | | | |
 | 022 | Event stream, console renderer, and standard logs | 021 | waiting | | | | |
 | 023 | `pkg.toml` format 2, settings model, and migration tool | 019 (and D35) | waiting | | | | |
@@ -61,3 +61,8 @@ None.
 - 2026-10-22: 016 worker done (4 commits, 271 passed on its branch); reviewer started (also trial-merge vs main with 017).
 - 2026-10-22: 016 merged (07d20ba) after 2 review rounds (round 1: blocking .pyc-in-manifest build defect, __pycache__ exemption hole; round 2 clean). Suite on main: 296 passed. Dispatched workers for 018 and 019.
 - Known minor follow-ups from 016 review (non-blocking, for 018/019/033/032 to pick up): (m1) bootstrap reuse check compares an existing folder with its own manifest, not the verified payload's manifest (issue 033 reworks the bootstrap); (m2) `integrity.py` does not list planted junctions/symlinks as extra (elevated path also runs the ACL trust check).
+- 2026-10-22: 018 worker done (9ec691d, 306 passed); reviewer started.
+- 2026-10-22: 018 review round 1: 2 major security findings (sys.path/ctypes before ACL check; is_elevated fails open) sent back to worker. 019 worker done (b64a120, f4ef00a; 330 passed); reviewer started.
+- 2026-10-22: 019 merged (5c922cb) after 1 review round + small fixes. Suite on main: 331 passed. Stale ignored `pip/` bytecode directory in the main checkout's committed runtime caused 3 spurious failures right after the merge; removed (local state only, not tracked).
+- 2026-10-22: 018 review round 3 clean (round 1: sys.path/ctypes ahead of ACL check + fail-open is_elevated; round 2: code beside interpreter ran via `_pth`/`site` before the check; fixed with `-S` and a minimal `_pth`). 018 now merges main (conflicts with 019 expected in operations.md, manual_smoke.md, requirements-dev.txt, `_pth`/fetch_runtime/test_runtime_tools, test_launcher).
+- Owner note (D13 text): worker 018 edited `_docs/rehaul_design.md` D13 and the 018 row to say the launcher flags are `-I -s -B -S` (the added `-S`). It is a text fix for an implementation consequence, not a change of the decision; please confirm. Also: the elevated ACL check is not recursive over the runtime tree (D30 wants recursion) and the python dir is trusted at interpreter start (inherent limit); recursion is routed to issue 033, and the limit should be stated in the elevated-runtime doc (issue 032).

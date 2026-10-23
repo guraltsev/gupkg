@@ -155,3 +155,26 @@ One interpreter (issue 018):
 2. In a fresh clone, run `scripts\test.cmd` before creating `.venv` (expect exit
    9009 and the creation command), then create `.venv` from `requirements-dev.txt`
    and run it again. Why manual: needs a network install of the dev packages.
+
+## A bundled Python without pip (issue 019)
+
+These steps need the network (PyPI and python.org), a real build, and a clean VM,
+which the automated tests avoid: they build offline with stand-in wheels and run
+the probe on the committed runtime.
+
+1. **Real build and probe.** In a dev checkout whose `.venv` has pip, run
+   `scripts\build-standalone.cmd` (network needed for the pinned CPython and the
+   locked wheels). The build prints no probe failure and writes the ZIP. Unzip it
+   into an empty folder and confirm `gupkg\python\Lib\site-packages` has no `pip*`,
+   `setuptools*`, `_distutils_hack` or `bin` entry and does have `tomli_w`. Why
+   manual: the real wheels and the real CPython archive come from the network.
+2. **No pip in an installed release.** On the clean VM of the issue 016 steps,
+   run `gupkg\python\python.exe -I -m pip --version` from the installed version
+   folder. It fails with `No module named pip`. Then run an install, an update,
+   `gupkg manager`, `gupkg tui` and the package TUI from the installed release;
+   all work. Why manual: it needs the real release ZIP on a machine without Python.
+3. **Refreshing the runtime.** In the dev checkout run
+   `.venv\Scripts\python tools\update_deps.py --repair`. It reports
+   `Dependencies repaired`, `git status` shows no change under
+   `src\gupkg\python`, and the folder has no `pip*` entry. Why manual: it
+   downloads the locked wheels from PyPI.

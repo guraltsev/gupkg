@@ -284,10 +284,12 @@ update with the module's name. The earlier design is recorded in
 Every routine job has a script in `scripts\`, so no Python needs to be typed.
 They use the repository's `.venv` only and never search for another Python; without
 it they exit 9009 and print how to create it
-(`<python> -m venv .venv && .venv\Scripts\pip install -r requirements-dev.txt`).
+(`<python> -m venv .venv && .venv\Scripts\pip install -r requirements-dev.txt`;
+`python -m venv` puts pip into the `.venv`).
 `scripts\run.cmd` runs `src\gupkg\gupkg.cmd`, so a manual test uses the bundled
-Python like a user does. (The build script still switches to the committed runtime,
-which has the pip it needs; issue 019 removes that.) These are development-tree tools: none ships in the
+Python like a user does. The committed runtime has no pip, and neither does any
+release: the build scripts and `tools\update_deps.py` need the pip of the
+repository's `.venv`. These are development-tree tools: none ships in the
 release ZIP and gupkg cannot reach them.
 
 | Script | What it does |
