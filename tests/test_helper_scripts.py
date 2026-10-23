@@ -482,43 +482,91 @@ class LegacyConverterTests(unittest.TestCase):
 
 
 class ShortcutImporterTests(unittest.TestCase):
-    def test_shortcut_reader_passes_the_lnk_path_through_stdin_json(self) -> None:
-        """The reader passes shortcut paths with spaces through stdin JSON."""
+    @unittest.skipUnless(os.name == "nt", "reading .lnk files requires Windows")
+    def test_shortcut_reader_reads_a_real_lnk_with_spaces_in_its_path(self) -> None:
+        """The reader returns the stored fields of a real shortcut whose path has spaces."""
+
+        from gupkg.shell_link import ShellLink, write_shell_link
 
         importer = load_shortcut_importer_module()
-        shortcut_path = Path(
-            r"C:\games\CommanderKeen\1.4_42493.local.1\_shortcuts\Commander Keen.lnk"
-        )
-        payload = {
-            "TargetPath": r"C:\games\CommanderKeen\1.4_42493.local.1\App\keen.exe",
-            "Arguments": "",
-            "WorkingDirectory": "",
-            "IconLocation": "",
-            "Description": "",
-        }
-        completed = subprocess.CompletedProcess(
-            args=[],
-            returncode=0,
-            stdout=json.dumps(payload),
-            stderr="",
-        )
+        with tempfile.TemporaryDirectory() as tmp:
+            shortcut_path = Path(tmp) / "Commander Keen" / "Commander Keen.lnk"
+            shortcut_path.parent.mkdir()
+            write_shell_link(
+                shortcut_path,
+                ShellLink(
+                    target_path=r"C:\games\CommanderKeen\App\keen.exe",
+                    arguments="-fast",
+                    description="Keen",
+                ),
+            )
 
-        with mock.patch.object(importer.os, "name", "nt"):
-            with mock.patch.object(
-                importer.subprocess, "run", return_value=completed
-            ) as run_mock:
-                self.assertEqual(importer.read_windows_shortcut(shortcut_path), payload)
+            self.assertEqual(
+                importer.read_windows_shortcut(shortcut_path),
+                {
+                    "TargetPath": r"C:\games\CommanderKeen\App\keen.exe",
+                    "Arguments": "-fast",
+                    "WorkingDirectory": "",
+                    "IconLocation": "",
+                    "Description": "Keen",
+                },
+            )
 
-        command = run_mock.call_args.args[0]
-        self.assertIn("[Console]::In.ReadToEnd() | ConvertFrom-Json", command[5])
-        self.assertIn(
-            "$shell.CreateShortcut([string]$inputObject.ShortcutPath)", command[5]
-        )
-        self.assertNotIn("$args[0]", command[5])
-        self.assertEqual(
-            json.loads(run_mock.call_args.kwargs["input"]),
-            {"ShortcutPath": str(shortcut_path)},
-        )
+    @unittest.skipUnless(os.name == "nt", "reading .lnk files requires Windows")
+    def test_shortcut_reader_names_the_file_it_cannot_read(self) -> None:
+        """A missing shortcut is reported as one error line that names the file."""
+
+        importer = load_shortcut_importer_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / "missing.lnk"
+            with self.assertRaises(RuntimeError) as caught:
+                importer.read_windows_shortcut(missing)
+
+        self.assertIn(str(missing), str(caught.exception))
+        self.assertNotIn("\n", str(caught.exception))
+
+    @unittest.skipUnless(os.name == "nt", "reading .lnk files requires Windows")
+    def test_importer_turns_real_lnk_files_into_toml_with_and_without_icons(self) -> None:
+        """Real shortcuts become shortcut tables; a shortcut with no icon gets an empty icon, not ",0"."""
+
+        from gupkg.shell_link import ShellLink, write_shell_link
+
+        importer = load_shortcut_importer_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            version_dir = Path(tmpdir) / "Game" / "1.0.0.local.1"
+            shortcuts_dir = version_dir / "_shortcuts"
+            (version_dir / "App").mkdir(parents=True)
+            (version_dir / "Icons").mkdir()
+            shortcuts_dir.mkdir()
+            (version_dir / "pkg.toml").write_text(
+                'name = "Game"\nversion = "1.0.0"\nlocalVersion = 1\n', encoding="utf-8"
+            )
+            write_shell_link(
+                shortcuts_dir / "With Icon.lnk",
+                ShellLink(
+                    target_path=str(version_dir / "App" / "game.exe"),
+                    arguments="--go",
+                    working_directory=str(version_dir / "App"),
+                    icon_location=f"{version_dir / 'Icons' / 'game.ico'},2",
+                    description="Has icon",
+                ),
+            )
+            write_shell_link(
+                shortcuts_dir / "No Icon.lnk",
+                ShellLink(target_path=str(version_dir / "App" / "tool.exe")),
+            )
+
+            rendered, shortcuts = importer.import_shortcuts(version_dir)
+
+        parsed = {item["name"]: item for item in tomllib.loads(rendered)["shortcut"]}
+        self.assertEqual(len(shortcuts), 2)
+        with_icon = parsed["With Icon"]
+        self.assertEqual(with_icon["targetPath"], "$App\\game.exe")
+        self.assertEqual(with_icon["arguments"], "--go")
+        self.assertEqual(with_icon["workingDirectory"], "$App")
+        self.assertEqual(with_icon["iconLocation"], "$Icons\\game.ico,2")
+        self.assertEqual(with_icon["description"], "Has icon")
+        self.assertEqual(parsed["No Icon"].get("iconLocation", ""), "")
 
     def test_importer_overwrites_matching_shortcuts_and_preserves_other_config(
         self,

@@ -15,8 +15,8 @@ on `main` before dispatching the first worker.
 
 | Issue | Title | Depends on | Status | Branch | Merge commit | Tests | Manual checks pending |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 016 | One self-contained release ZIP | — | in progress | rehaul/issue016 | | | |
-| 017 | Shortcuts and junctions without PowerShell or `cmd` | — | in progress | rehaul/issue017 | | | |
+| 016 | One self-contained release ZIP | — | in review | rehaul/issue016 | | | |
+| 017 | Shortcuts and junctions without PowerShell or `cmd` | — | merged | rehaul/issue017 | e23a94c | 277 passed (+20), 0 failed, 0 skipped | 017-1 Explorer Properties dialog; 017-2 TUI and elevated system-scope install; 017-3 optional timing |
 | 018 | Remove system-Python autodetection | 016 | waiting | | | | |
 | 019 | The bundled Python ships without pip | 016 | waiting | | | | |
 | 021 | System boundary, FakeSystem, and sandbox mode | 016–019 | waiting | | | | |
@@ -56,3 +56,6 @@ None.
 
 - 2026-10-22: job prepared; not started.
 - 2026-10-22: baseline recorded (257 passed). Dispatched workers for 016 and 017.
+- 2026-10-22: 017 worker done (d09427f, 271 passed); reviewer started.
+- 2026-10-22: 017 merged (e23a94c) after 2 review rounds (round 1: HRESULT overflow, wrong RPC_E_CHANGED_MODE constant; round 2 clean). Suite on main: 277 passed. Issue file moves to `_issues/_closed/` when all of stage 0 is merged.
+- 2026-10-22: 016 worker done (4 commits, 271 passed on its branch); reviewer started (also trial-merge vs main with 017).

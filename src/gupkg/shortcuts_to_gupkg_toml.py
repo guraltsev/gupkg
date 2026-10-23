@@ -15,7 +15,6 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import sys
 import tomllib
 from dataclasses import dataclass
@@ -193,8 +192,8 @@ def main() -> int:
 # Section: Shortcut reading
 # ------------------------------------------
 #
-# Python's standard library cannot parse Shell Link files. On Windows, WScript
-# exposes the fields that ``gupkg`` needs and keeps this helper dependency-free.
+# Python's standard library cannot parse Shell Link files. ``gupkg.shell_link``
+# reads them through the Shell COM API without starting a process.
 
 
 def read_shortcut_directory(
@@ -263,37 +262,31 @@ def archive_imported_shortcuts(shortcuts_dir: Path) -> None:
 
 
 def read_windows_shortcut(shortcut_path: Path) -> dict[str, str]:
-    """Read shortcut fields with Windows Script Host."""
+    """Read shortcut fields through the Shell COM API."""
 
     if os.name != "nt":
         raise RuntimeError("reading .lnk files requires Windows")
 
-    script = r"""
-$ErrorActionPreference = 'Stop'
-$inputObject = [Console]::In.ReadToEnd() | ConvertFrom-Json
-$shell = New-Object -ComObject WScript.Shell
-$shortcut = $shell.CreateShortcut([string]$inputObject.ShortcutPath)
-[pscustomobject]@{
-  TargetPath = [string]$shortcut.TargetPath
-  Arguments = [string]$shortcut.Arguments
-  WorkingDirectory = [string]$shortcut.WorkingDirectory
-  IconLocation = [string]$shortcut.IconLocation
-  Description = [string]$shortcut.Description
-} | ConvertTo-Json -Compress
-"""
-    result = subprocess.run(
-        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
-        input=json.dumps({"ShortcutPath": str(shortcut_path)}),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        error_text = (
-            result.stderr or result.stdout or "unknown PowerShell shortcut error"
-        ).strip()
-        raise RuntimeError(f"failed to read {shortcut_path}: {error_text}")
-    return json.loads(result.stdout)
+    # This file also runs as a standalone script, where the package import is
+    # unavailable; ``shell_link`` needs only the standard library, so load the
+    # sibling file directly in that case.
+    try:
+        from gupkg.shell_link import read_shell_link
+    except ImportError:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from shell_link import read_shell_link  # type: ignore[no-redef]
+
+    try:
+        link = read_shell_link(shortcut_path)
+    except OSError as exc:
+        raise RuntimeError(f"failed to read {shortcut_path}: {exc}") from exc
+    return {
+        "TargetPath": link.target_path,
+        "Arguments": link.arguments,
+        "WorkingDirectory": link.working_directory,
+        "IconLocation": link.icon_location,
+        "Description": link.description,
+    }
 
 
 # ------------------------------------------
