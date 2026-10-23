@@ -237,6 +237,46 @@ def test_an_xz_file_that_needs_more_memory_than_the_limit_fails_cleanly(tmp_path
     assert not (tmp_path / "out.bin").exists() and XZ_MEMORY_LIMIT == 256 * 1024 * 1024
 
 
+@pytest.mark.parametrize(
+    ("tail", "expected"),
+    [
+        pytest.param(b"", b"AAAABBBB", id="two-streams"),
+        pytest.param(bytes(4), b"AAAABBBB", id="padding-after-the-last-stream"),
+        pytest.param(bytes(12), b"AAAABBBB", id="more-padding"),
+        pytest.param(bytes(3), None, id="padding-not-a-multiple-of-four"),
+        pytest.param(b"junk", None, id="trailing-junk"),
+        pytest.param(bytes(4) + b"junk", None, id="junk-after-padding"),
+    ],
+)
+def test_concatenated_xz_streams_are_all_decompressed_and_trailing_junk_is_refused(tmp_path: Path, tail: bytes, expected: bytes | None) -> None:
+    """Two streams give both contents (padding allowed); a bad padding length or leftover bytes fail instead of truncating."""
+    source = tmp_path / "multi.xz"
+    source.write_bytes(lzma.compress(b"AAAA") + bytes(4) + lzma.compress(b"BBBB") + tail)
+    target = tmp_path / "out.bin"
+
+    if expected is None:
+        with pytest.raises(UnpackError, match="cannot be decompressed"):
+            decompress_capped(source, target, MIB_TEN)
+        assert not target.exists()
+    else:
+        assert decompress_capped(source, target, MIB_TEN) == len(expected)
+        assert target.read_bytes() == expected
+
+
+def test_padding_between_two_xz_streams_must_be_a_multiple_of_four_bytes(tmp_path: Path) -> None:
+    """Three zero bytes between two streams are refused; none and eight are fine."""
+    for padding, valid in ((0, True), (8, True), (3, False), (5, False)):
+        source = tmp_path / f"gap{padding}.xz"
+        source.write_bytes(lzma.compress(b"AAAA") + bytes(padding) + lzma.compress(b"BBBB"))
+        target = tmp_path / f"gap{padding}.bin"
+
+        if valid:
+            assert decompress_capped(source, target, MIB_TEN) == 8 and target.read_bytes() == b"AAAABBBB"
+        else:
+            with pytest.raises(UnpackError, match="cannot be decompressed"):
+                decompress_capped(source, target, MIB_TEN)
+
+
 def test_an_ordinary_xz_still_decompresses_and_a_cut_short_one_fails(tmp_path: Path) -> None:
     """The memory limit does not disturb a normal file; a truncated stream is an UnpackError."""
     good = tmp_path / "ok.xz"

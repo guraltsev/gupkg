@@ -18,7 +18,7 @@ Usage and API
 -------------
 ``compile_pattern(pattern, groups=...)`` returns a compiled pattern or raises ``PatternError``;
 the *groups* must be named groups of the pattern. ``scan(compiled, text)`` returns the bounded
-list of matches over the prepared text (a match that would span two windows is not found), and
+list of matches over the prepared text (a match may run into the next three lines past a window), and
 ``prepare_text(text)`` is the same preparation on its own. ``escape_template(pattern, values)``
 substitutes ``${name}`` references inside a pattern with escaped values.
 
@@ -52,6 +52,7 @@ MAX_SCAN_BYTES = 1024 * 1024
 MAX_RUN = 1024
 MAX_MATCHES = 10_000
 _UNBOUNDED = 1000
+_MULTI = 4  # a repeat that can run this many times or more gets the nesting and alternation checks
 _MAX_BROAD = 3
 _MAX_UNBOUNDED = 24
 _MAX_STREAK = 6
@@ -59,6 +60,7 @@ _MAX_STREAK = 6
 # windows below are a few lines long, so the time budget is checked every few milliseconds.
 MAX_LINE = 1024
 WINDOW = 4096
+OVERLAP_LINES = 3  # lines a match that starts near the end of a window may run on into
 SCAN_SECONDS = 1.0
 
 _REFERENCE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
@@ -164,7 +166,8 @@ def scan(compiled: re.Pattern[str], text: str, limit: int = MAX_MATCHES, budget:
 
     The prepared text is scanned in line-aligned windows of about ``WINDOW`` characters. The time
     spent is checked after each window, so a page that is expensive for the pattern is refused
-    after about *budget* seconds. A match that would span two windows is not found.
+    after about *budget* seconds. A match that begins in one window may run on for ``OVERLAP_LINES``
+    lines into the next; a longer one is cut at that point.
 
     Raises
     ------
@@ -175,11 +178,16 @@ def scan(compiled: re.Pattern[str], text: str, limit: int = MAX_MATCHES, budget:
     prepared = prepare_text(text)
     deadline = time.monotonic() + budget
     found: list[re.Match[str]] = []
-    start, size = 0, len(prepared)
+    start, size, resume = 0, len(prepared), 0
     while start < size:
         end = _window_end(prepared, start)
-        for match in compiled.finditer(prepared, start, end):
+        # A match may begin in this window and run on into the next lines, so the search may look a
+        # few lines past ``end``; only matches that begin before ``end`` belong to this window.
+        for match in compiled.finditer(prepared, max(start, resume), _overlap_end(prepared, end)):
+            if match.start() >= end:
+                break
             found.append(match)
+            resume = match.end()
             if len(found) >= limit:
                 return found
         if time.monotonic() > deadline:
@@ -195,6 +203,17 @@ def _window_end(text: str, start: int) -> int:
         return len(text)
     newline = text.find("\n", end, end + MAX_LINE + 1)
     return newline + 1 if newline != -1 else end
+
+
+def _overlap_end(text: str, end: int) -> int:
+    """Return the end of the look-ahead that follows a window ending at *end*: ``OVERLAP_LINES`` more lines."""
+    stop = end
+    for _ in range(OVERLAP_LINES):
+        newline = text.find("\n", stop, stop + MAX_LINE + 1)
+        if newline == -1:
+            return min(len(text), stop + MAX_LINE) if stop < len(text) else len(text)
+        stop = newline + 1
+    return stop
 
 
 def escape_template(pattern: str, values: Mapping[str, str]) -> str:
@@ -232,14 +251,79 @@ def _unsafe_reason(pattern: str) -> str | None:
         return None
     repeats = (_sre_constants.MAX_REPEAT, _sre_constants.MIN_REPEAT, getattr(_sre_constants, "POSSESSIVE_REPEAT", None))
 
-    def repeats_inside(sub: Any, guard: str | None) -> bool:
-        """Return whether *sub* holds a repeat, able to run more than once, that could also consume *guard*."""
-        for operation, argument in sub.data:
-            if operation in repeats and argument[1] > 1 and _may_match(argument[2], guard):
-                return True
-            if any(repeats_inside(child, guard) for child in _children(argument)):
-                return True
-        return False
+    fold = bool(getattr(getattr(tree, "state", None), "flags", 0) & re.IGNORECASE)
+
+    def disjoint(left: frozenset[str], right: frozenset[str]) -> bool:
+        """Return whether no character is in both sets (case-insensitively under ``(?i)``)."""
+        if fold:
+            left, right = _fold(left), _fold(right)
+        return left.isdisjoint(right)
+
+    def first_chars(sub: Any) -> tuple[frozenset[str], bool]:
+        """Return the characters *sub* can start with and whether it can match the empty string."""
+        chars: set[str] = set()
+        for item in flatten(sub):
+            operation, argument = item
+            if operation in (_sre_constants.AT, _sre_constants.ASSERT, _sre_constants.ASSERT_NOT):
+                continue
+            if operation in repeats:
+                inner, nullable = first_chars(argument[2])
+                chars |= inner
+                if argument[0] == 0 or nullable:
+                    continue
+                return frozenset(chars), False
+            if operation == _sre_constants.BRANCH:
+                nullable = False
+                for alternative in argument[1]:
+                    inner, empty = first_chars(alternative)
+                    chars |= inner
+                    nullable = nullable or empty
+                if nullable:
+                    continue
+                return frozenset(chars), False
+            chars |= _item_chars(item)
+            return frozenset(chars), False
+        return frozenset(chars), True
+
+    def distinct_starts(alternatives: Any) -> bool:
+        """Return whether the alternatives start with pairwise different characters and none can be empty."""
+        seen: frozenset[str] = frozenset()
+        for alternative in alternatives:
+            chars, nullable = first_chars(alternative)
+            if nullable or not disjoint(seen, chars):
+                return False
+            seen |= chars
+        return True
+
+    def inner_repeat_chars(sub: Any) -> list[frozenset[str]]:
+        """Return, for the repeats directly in *sub*, the characters each can consume (optional wrappers are looked through)."""
+        found: list[frozenset[str]] = []
+        for operation, argument in flatten(sub):
+            if operation in repeats:
+                deeper = inner_repeat_chars(argument[2]) if argument[1] == 1 else []
+                found += deeper or [_sub_chars(argument[2])]
+            elif operation == _sre_constants.BRANCH:
+                for alternative in argument[1]:
+                    found += inner_repeat_chars(alternative)
+        return found
+
+    def ambiguous(body: Any) -> bool:
+        """Return whether iterations of a repeated *body* with repeats inside can be split in many ways.
+
+        It is safe only when the repeats inside consume pairwise different characters and the body begins
+        or ends with a required single character that none of them can consume (``\\.`` in
+        ``(?:\\d{1,3}\\.){1,5}``, ``[._]`` in ``(?:[._]\\d+)*``): the delimiter fixes where each iteration ends.
+        """
+        inner = inner_repeat_chars(body)
+        if not inner:
+            return False
+        if any(not disjoint(inner[i], inner[j]) for i in range(len(inner)) for j in range(i + 1, len(inner))):
+            return True
+        union = frozenset().union(*inner)
+        items = list(flatten(body))
+        edges = (items[0], items[-1]) if items else ()
+        singles = (_sre_constants.LITERAL, _sre_constants.IN, _sre_constants.NOT_LITERAL)
+        return not any(item[0] in singles and disjoint(_item_chars(item), union) for item in edges)
 
     unbounded = {"count": 0, "broad": 0, "any": 0}
     reasons: list[str] = []
@@ -278,16 +362,6 @@ def _unsafe_reason(pattern: str) -> str | None:
             return True
         return first[0] == _sre_constants.IN and any(op == _sre_constants.NEGATE for op, _arg in first[1])
 
-    def distinct_literals(alternatives: Any) -> bool:
-        """Return whether every alternative starts with a different literal character."""
-        starts = []
-        for alternative in alternatives:
-            first = next(flatten(alternative), None)
-            if first is None or first[0] != _sre_constants.LITERAL:
-                return False
-            starts.append(first[1])
-        return len(set(starts)) == len(starts)
-
     def streak(sub: Any) -> int:
         """Return the most unbounded repeats in a row, with no required literal between, inside *sub*.
 
@@ -307,25 +381,23 @@ def _unsafe_reason(pattern: str) -> str | None:
         return best
 
     def walk(sub: Any, inside: bool) -> None:
-        """Collect the reasons why repeats in *sub* are unsafe; *inside* means within an unbounded repeat."""
+        """Collect the reasons why repeats in *sub* are unsafe; *inside* means within a repeat of four or more."""
         for operation, argument in sub.data:
             if operation in repeats:
                 body = argument[2]
-                unlimited = argument[1] >= _UNBOUNDED
-                if unlimited:
+                multi = argument[1] >= _MULTI
+                if argument[1] >= _UNBOUNDED:
                     unbounded["count"] += 1
                     unbounded["broad"] += is_broad(body)
                     unbounded["any"] += is_any(body)
-                    first = next(flatten(body), None)
-                    guard = chr(first[1]) if first is not None and first[0] == _sre_constants.LITERAL else None
-                    if repeats_inside(body, guard):
-                        reasons.append("it repeats a repeated group without a bound, which can take exponential time on a hostile page")
-                    if body.getwidth()[0] == 0:
-                        reasons.append("it repeats, without a bound, something that can match nothing")
-                walk(body, inside or unlimited)
+                if multi and ambiguous(body):
+                    reasons.append("it repeats a repeated group that can be split in many ways, which can take exponential time on a hostile page")
+                if multi and body.getwidth()[0] == 0:
+                    reasons.append("it repeats something that can match nothing, which can take exponential time on a hostile page")
+                walk(body, inside or multi)
             elif operation == _sre_constants.BRANCH:
-                if inside and not distinct_literals(argument[1]):
-                    reasons.append("it has alternatives that can overlap inside an unbounded repeat, which can take exponential time")
+                if inside and not distinct_starts(argument[1]):
+                    reasons.append("it has alternatives that can overlap inside a repeat, which can take exponential time")
                 for alternative in argument[1]:
                     walk(alternative, inside)
             else:
@@ -341,6 +413,8 @@ def _unsafe_reason(pattern: str) -> str | None:
     leading_broad = first is not None and first[0] in repeats and first[1][1] >= _UNBOUNDED and is_broad(first[1][2])
     if unbounded["any"] and unbounded["count"] > unbounded["any"]:
         reasons.append("it has an unbounded '.' repeat next to other unbounded repeats, which is quadratic or worse on a long line")
+    if unbounded["any"] > 1:
+        reasons.append("it has more than one unbounded '.' repeat, which is cubic or worse on a long line")
     if leading_broad and unbounded["count"] > 1:
         reasons.append("it starts with an unbounded wildcard and has more unbounded repeats, which is quadratic on a long line")
     if unbounded["broad"] > _MAX_BROAD:
@@ -352,44 +426,75 @@ def _unsafe_reason(pattern: str) -> str | None:
     return reasons[0] if reasons else None
 
 
-def _may_match(item: Any, guard: str | None) -> bool:
-    """Return whether the repeated *item* can consume the character *guard* (``None`` means any)."""
-    if guard is None or _sre_constants is None:
+# The characters used to compare what two parts of a pattern can consume: ASCII plus a few that
+# ``\w``, ``\d``, ``\s`` and case folding treat specially. Sets are compared, never enumerated
+# over the text, so this is only a model of "which parts could compete for the same character".
+_ALPHABET = frozenset(map(chr, range(128))) | frozenset("é٣ İK")
+
+
+def _fold(chars: frozenset[str]) -> frozenset[str]:
+    """Return *chars* with the upper and lower case of each character added."""
+    return frozenset(chars | {c.lower() for c in chars} | {c.upper() for c in chars})
+
+
+def _category_matches(name: str, char: str) -> bool:
+    """Return whether the regex category *name* (``CATEGORY_DIGIT``, ``CATEGORY_NOT_SPACE``...) matches *char*."""
+    if "DIGIT" in name:
+        matched = char.isdecimal()
+    elif "SPACE" in name:
+        matched = char.isspace()
+    elif "WORD" in name:
+        matched = char.isalnum() or char == "_"
+    else:
         return True
-    code = ord(guard)
-    for operation, argument in item.data[:1]:
-        if operation == _sre_constants.LITERAL:
-            return argument == code
-        if operation == _sre_constants.NOT_LITERAL:
-            return argument != code
-        if operation == _sre_constants.IN:
-            return _class_may_match(argument, guard)
-    return True
+    return matched != ("NOT" in name)
 
 
-def _class_may_match(members: Any, guard: str) -> bool:
-    """Return whether a parsed character class can match *guard*; unknown members count as matching."""
-    code = ord(guard)
-    negated = False
-    hit = False
-    for operation, argument in members:
-        if operation == _sre_constants.NEGATE:
-            negated = True
-        elif operation == _sre_constants.LITERAL:
-            hit = hit or argument == code
-        elif operation == _sre_constants.RANGE:
-            hit = hit or argument[0] <= code <= argument[1]
-        elif operation == _sre_constants.CATEGORY:
-            name = str(argument)
-            if "DIGIT" in name:
-                matched = guard.isdigit()
-            elif "SPACE" in name:
-                matched = guard.isspace()
-            elif "WORD" in name:
-                matched = guard.isalnum() or guard == "_"
-            else:
-                return True
-            hit = hit or (matched != ("NOT" in name))
-        else:
-            return True
-    return hit != negated
+def _class_chars(members: Any) -> frozenset[str]:
+    """Return the characters of the alphabet that a parsed character class matches; unknown members match everything."""
+    negated = any(operation == _sre_constants.NEGATE for operation, _argument in members)
+    matching: set[str] = set()
+    for char in _ALPHABET:
+        hit = False
+        for operation, argument in members:
+            if operation == _sre_constants.LITERAL:
+                hit = hit or ord(char) == argument
+            elif operation == _sre_constants.RANGE:
+                hit = hit or argument[0] <= ord(char) <= argument[1]
+            elif operation == _sre_constants.CATEGORY:
+                hit = hit or _category_matches(str(argument), char)
+            elif operation != _sre_constants.NEGATE:
+                return _ALPHABET
+        if hit != negated:
+            matching.add(char)
+    return frozenset(matching)
+
+
+def _sub_chars(sub: Any) -> frozenset[str]:
+    """Return every character that any part of the parsed pattern *sub* can consume."""
+    chars: set[str] = set()
+    for item in sub.data:
+        chars |= _item_chars(item)
+    return frozenset(chars)
+
+
+def _item_chars(item: Any) -> frozenset[str]:
+    """Return every character one parsed element can consume (anywhere inside it); zero-width elements consume none."""
+    operation, argument = item
+    if operation == _sre_constants.LITERAL:
+        return frozenset({chr(argument)})
+    if operation == _sre_constants.NOT_LITERAL:
+        return _ALPHABET - {chr(argument)}
+    if operation == _sre_constants.IN:
+        return _class_chars(argument)
+    if operation == _sre_constants.SUBPATTERN:
+        return _sub_chars(argument[3])
+    if operation == _sre_constants.BRANCH:
+        return frozenset().union(*(_sub_chars(alternative) for alternative in argument[1]))
+    if operation in (_sre_constants.MAX_REPEAT, _sre_constants.MIN_REPEAT, getattr(_sre_constants, "POSSESSIVE_REPEAT", None)):
+        return _sub_chars(argument[2])
+    if operation == getattr(_sre_constants, "ATOMIC_GROUP", None):
+        return _sub_chars(argument)
+    if operation in (_sre_constants.AT, _sre_constants.ASSERT, _sre_constants.ASSERT_NOT):
+        return frozenset()
+    return _ALPHABET

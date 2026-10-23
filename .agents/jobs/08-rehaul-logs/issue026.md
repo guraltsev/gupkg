@@ -126,3 +126,13 @@ fixtures (explicit 031 acceptance item and manual check 1) and a committed real 
 M1 regex guard: lines cut to 1 KiB, 4 KiB line-aligned windows, a 1 s budget between windows; text and design now say the guard is a mitigation, not a bound (worst of the 20 patterns x 7 hostile pages: 1.05 s; each pair refused or under 2 s in a child process with a 60 s timeout). M2 groups are looked through at any depth; an unbounded dot repeat only when sole. M3 the `file:` UNC gate decides on the decoded and converted path (12 spellings plus 4 local ones tested). M4 `System.run(watch=)` contract tests on FakeSystem and WindowsSystem (process tree killed). m1 absolute header deadline and `HTTPException` mapping (loopback hostile server). m2 truncated bodies and non-identity Content-Encoding are refused. m3 all 50 registry regexes validate. m4 docs reworded. m5 the watcher does not follow junctions (`windows_integration` test). m6 `tests/test_unpack_guards.py`; a 31-mutant run left no survivor. m7 trust also judges the script file and parent chain; `sys.exit` at hook import is a `HookError`. m9 xz memory limit 256 MiB with a crafted 4 GiB-dictionary test.
 
 Owed to 028 (m8): git and ssh are resolved through the inherited PATH; elevated runs must resolve git from machine or admin-only paths. Also owed: the subprocess regex runner (the guard is not a bound).
+
+## Review round 3 (one fix round)
+
+1. Bounded repeats: nesting, empty-body and alternative-overlap checks now run for every repeat of four or more; iterations with inner repeats are accepted only with a required first or last character no inner repeat can consume (character sets, case folding included). All 13 reviewer cases are refused (subprocess tests); `(?P<v>\d+(?:[._]\d+)*)` is accepted; 50 of 50 registry patterns pass. A random fuzz of 4000 shapes accepted 1022, none slower than 0.3 s on five hostile short pages.
+2. More than one unbounded dot repeat is refused.
+3. Scan windows overlap by three lines (a match is found once); tests pin the 1 KiB cut and the overlap. Also found and fixed: `_cut_long_lines` copied the line at every cut (quadratic).
+4. Concatenated xz streams are decompressed; padding must be a multiple of four zero bytes; junk is refused.
+5. `WindowsSystem.run` kills the process tree on any exception from the wait loop (a raising watcher, Ctrl-C).
+6. 304, 204, 1xx and HEAD answers skip the length check; headers cut by a closed connection are an error; Windows asks the watcher once more after the child exits, like the fake.
+7. Documented: bodies without a length are accepted; sibling hook modules are covered only by the directory check; entry-point `sys.exit` is a HookError; `file://LOCALHOST` is case-insensitive.

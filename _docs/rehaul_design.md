@@ -804,9 +804,12 @@ manifest is parsed (`gupkg.model.trackspec`).
 - **Safety.** Responses are data: a page over 8 MiB is refused. Validation rejects patterns that
   repeat a repeated group, an empty-matching body, or overlapping alternatives inside an unbounded
   repeat, a leading unbounded wildcard combined with other unbounded repeats, more than three wildcard
-  (`.`, `[^x]`) repeats (an unbounded `.` repeat only when it is the sole unbounded repeat), and more
-  than 24 unbounded repeats or 6 in a row without a literal between them; groups are looked through at
-  any depth. Before matching, runs of word characters or of one character are cut to 1024, lines to
+  (`.`, `[^x]`) repeats (an unbounded `.` repeat only when it is the sole unbounded repeat, and never
+  more than one), and more than 24 unbounded repeats or 6 in a row without a literal between them;
+  groups are looked through at any depth. The nesting, empty-body and overlapping-alternative rules
+  apply to every repeat that can run four times or more, bounded or not; an iteration that holds an
+  inner repeat is accepted only when it begins or ends with a required character that no inner repeat
+  can consume (`(?:\d{1,3}\.){1,5}`, `\d+(?:[._]\d+)*`), judged by comparing character sets. Before matching, runs of word characters or of one character are cut to 1024, lines to
   1 KiB, and at most a mebibyte is scanned, in 4 KiB line-aligned windows with a one-second budget
   checked between windows (an over-budget page is refused). This is a mitigation, **not a bound**:
   Python's `re` cannot be interrupted, so a pattern that passes validation is not proven linear and a
@@ -818,6 +821,10 @@ manifest is parsed (`gupkg.model.trackspec`).
   cookie or session are dropped when the host changes. A manifest `headers` table may not set
   `Host`, `Content-Length`, `Connection`, `Transfer-Encoding`, `Upgrade`, `TE`, `Proxy-*` and similar.
   Every request and download has a total deadline (120 s and one hour), not only an idle timeout.
+  A body that ends before its `Content-Length`, a connection closed in the middle of the headers and
+  a non-identity `Content-Encoding` are errors (a 204, 304, 1xx or HEAD answer has no body to check).
+  A body with no length (HTTP/1.0 or `Connection: close`) cannot be verified and is accepted, like a
+  browser does; the checksum rules cover integrity.
   `file:` URLs naming a network host or UNC share are refused unless the client is built with
   `allow_unc_file_urls` (Windows would authenticate to that server). `GITHUB_TOKEN` goes only to
   `api.github.com`, `github.com` and `uploads.github.com` over HTTPS and is read from an explicit
@@ -859,7 +866,10 @@ apply in this order, each addressing the tree as it is at that point: `nested`, 
   not followed, and 7-Zip is killed within one poll of the limit being passed, not at the moment it is
   passed). A bomb that declares its size is caught earlier, by the check of the listing; the watcher
   is for archives that declare nothing or lie. Package code is trusted per file as well as per folder
-  (script and parent chain), and a `sys.exit` at hook import is a `HookError`. The
+  (script and parent chain), and a `sys.exit` at hook import or inside an entry point is a
+  `HookError`. Residual: sibling modules that a hook imports from `pkg.local` are covered only by the
+  whole-directory check, not one by one. Concatenated xz streams are all decompressed (zero padding
+  in multiples of four bytes allowed); anything else after a stream is an error. The
   finished tree is walked again for links and special files. The tree appears under its final name by
   one rename, so a failed unpack leaves no `App` and no scratch folder.
 

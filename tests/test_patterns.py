@@ -106,8 +106,6 @@ PAGES = {
 # the manifest is validated; the second must be scanned within the time bound.
 REFUSED = [
     pytest.param(r".*(?P<version>\d+\.\d+)", "href-repeated", id="leading-dot-star-with-a-version"),
-    pytest.param(r'<a[^>]*href="([^"]*)"[^>]*>(?:[^<]|<(?!/a))*</a>', "anchors", id="anchor-with-alternation-in-a-repeat"),
-    pytest.param(r"(?P<version>(?:\d+\.)+\d+)$", "ones-dot", id="repeated-digit-groups-then-end"),
     pytest.param(r".*.*.*x", "a-run", id="three-leading-wildcards"),
     pytest.param(r"(?:a|a)+b", "a-run", id="overlapping-alternatives"),
     pytest.param(r"(?:a|aa)+b", "a-run", id="prefix-alternatives"),
@@ -124,6 +122,9 @@ BOUNDED = [
     pytest.param(r"(?P<version>\d+)\.zip", "'-' * 5_000_000", id="dashes-5mb"),
     pytest.param(r"Version: (?P<version>\d+(?:\.\d+)+)", "'Version: ' * 400_000", id="repeated-prefix"),
     pytest.param(r'href="[^"]*(?P<version>\d+)[^"]*\.zip"', "anchors", id="two-wildcards-around-a-version"),
+    # Accepted now that iterations are compared by character sets (disjoint alternatives, a delimiter).
+    pytest.param(r'<a[^>]*href="([^"]*)"[^>]*>(?:[^<]|<(?!/a))*</a>', "anchors", id="anchor-with-disjoint-alternatives-in-a-repeat"),
+    pytest.param(r"(?P<version>(?:\d+\.)+\d+)$", "ones-dot", id="repeated-digit-groups-then-end"),
 ]
 
 

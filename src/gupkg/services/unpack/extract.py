@@ -4,8 +4,8 @@ Zip archives are read in process so that every member name, type, size and byte 
 judged before and while it is written. Gzip, bzip2 and xz wrappers of a tarball are
 decompressed in process with a byte cap, so a bomb stops at the cap. Every other format goes
 through 7-Zip: the table of contents is read and judged first (``gupkg.services.unpack.sevenzip``),
-7-Zip unpacks into the folder while a watcher measures that folder and kills 7-Zip the moment a
-limit is crossed, and the finished tree is walked again for links and size. A tarball takes two
+7-Zip unpacks into the folder while a watcher measures that folder and kills 7-Zip within one poll
+of a limit being crossed, and the finished tree is walked again for links and size. A tarball takes two
 passes: decompress to a tar, then unpack the tar (decision D39).
 
 Usage and API
@@ -215,21 +215,51 @@ def decompress_capped(source: Path, destination: Path, limit: int) -> int:
     return written
 
 
+def _xz_blocks(source: Path):
+    """Yield the content of every xz stream in *source*, in blocks of at most ``_COPY_BLOCK`` bytes.
+
+    The xz format allows several streams one after the other, separated or followed by *stream
+    padding* (zero bytes, a multiple of four in all). Anything else after a stream is an error: it
+    must be the header of another valid stream, which the decoder checks.
+    """
+
+    def fresh() -> lzma.LZMADecompressor:
+        """Return a decoder for one stream with the memory limit."""
+        return lzma.LZMADecompressor(format=lzma.FORMAT_XZ, memlimit=XZ_MEMORY_LIMIT)
+
+    with open(source, "rb") as reader:
+        decompressor = fresh()
+        pending = b""
+        while True:
+            if decompressor.eof:
+                rest, padding = decompressor.unused_data, 0
+                while True:
+                    stripped = rest.lstrip(b"\0")
+                    padding += len(rest) - len(stripped)
+                    if stripped:
+                        break
+                    rest = reader.read(_COPY_BLOCK)
+                    if not rest:
+                        if padding % 4:
+                            raise EOFError("the xz stream padding is not a multiple of four bytes")
+                        return
+                if padding % 4:
+                    raise EOFError("the xz stream padding is not a multiple of four bytes")
+                decompressor, pending = fresh(), stripped
+            elif decompressor.needs_input and not pending:
+                pending = reader.read(_COPY_BLOCK)
+                if not pending:
+                    raise EOFError("the xz stream is cut short")
+            block = decompressor.decompress(pending, max_length=_COPY_BLOCK)
+            pending = b""
+            if block:
+                yield block
+
+
 def _decompressed_blocks(source: Path, head: bytes):
     """Yield the decompressed content of *source* in blocks of at most ``_COPY_BLOCK`` bytes."""
     if head.startswith(b"\xfd7zXZ\x00"):
-        decompressor = lzma.LZMADecompressor(format=lzma.FORMAT_XZ, memlimit=XZ_MEMORY_LIMIT)
-        with open(source, "rb") as reader:
-            pending = b""
-            while not decompressor.eof:
-                if decompressor.needs_input:
-                    pending = reader.read(_COPY_BLOCK)
-                    if not pending:
-                        raise EOFError("the xz stream is cut short")
-                block = decompressor.decompress(pending, max_length=_COPY_BLOCK)
-                pending = b""
-                if block:
-                    yield block
+        yield from _xz_blocks(source)
         return
     opener = next(open_ for signature, open_ in _DECOMPRESSORS if head.startswith(signature))
     with opener(source, "rb") as reader:
