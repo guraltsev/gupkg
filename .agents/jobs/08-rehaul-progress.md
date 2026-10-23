@@ -35,7 +35,7 @@ on `main` before dispatching the first worker.
 
 ## Releases
 
-- **0.18:** prepared locally 2026-10-22. Version bumped (0a4a63f), tag `v0.18.0` on 0a4a63f, `RELEASES.md` row committed in the "Release 0.18.0" commit, ZIP `dist/gupkg-0.18.0-win-amd64.zip` (sha256 `240d4ace40059a6ca65d85241459881f7692aa4029ff084408f16823f437d124`, built from a real fetch with pinned digests; the build probe passed). **Nothing was pushed, published or uploaded.** The owner must: push the branch and tag (`git push github main` and `git push github v0.18.0`; the tool printed `origin`, but this repo's remote is `github`), then create the GitHub release `v0.18.0` with the ZIP as asset (`gh release create v0.18.0 dist\gupkg-0.18.0-win-amd64.zip --title "gupkg 0.18.0" --notes ...`). The `RELEASES.md` row's digest must stay equal to the uploaded bytes: upload this exact file. The ZIP was built with `toolsuild_standalone.py --python <base Python with pip>` because the repo `.venv` is uv-made and has no pip (see Owner questions); the real-network build is otherwise manual check 019-1.
+- **0.18:** prepared locally 2026-10-22. Version bumped (0a4a63f), tag `v0.18.0` on 0a4a63f, `RELEASES.md` row committed in the "Release 0.18.0" commit, ZIP `dist/gupkg-0.18.0-win-amd64.zip` (sha256 `240d4ace40059a6ca65d85241459881f7692aa4029ff084408f16823f437d124`, built from a real fetch with pinned digests; the build probe passed). **Nothing was pushed, published or uploaded.** The owner must: push the branch and tag (`git push github main` and `git push github v0.18.0`; the tool printed `origin`, but this repo's remote is `github`), then create the GitHub release `v0.18.0` with the ZIP as asset (`gh release create v0.18.0 dist\gupkg-0.18.0-win-amd64.zip --title "gupkg 0.18.0" --notes ...`). The `RELEASES.md` row's digest must stay equal to the uploaded bytes: upload this exact file. The ZIP was built with `tools/build_standalone.py --python <base Python with pip>` because the repo `.venv` is uv-made and has no pip (see Owner questions); the real-network build is otherwise manual check 019-1.
 - **1.0:** not prepared (issue 032).
 
 ## Owner checks pending
@@ -52,7 +52,7 @@ on `main` before dispatching the first worker.
 
 None blocking. For information:
 
-- The repo `.venv` was created by `uv` and has no pip, but 018/019 made the build tools (`scriptsuild-standalone.cmd`, `release.cmd`, `update_deps.py`) use the `.venv`'s pip. `scriptselease.cmd` therefore fails with "No module named pip" until the `.venv` is recreated with `python -m venv` and `pip install -r requirements-dev.txt` (the docs now say so). The controller worked around it for 0.18 with `--python`. 1.0 will need the same unless the `.venv` is recreated.
+- The repo `.venv` was created by `uv` and has no pip, but 018/019 made the build tools (`scripts/build-standalone.cmd`, `release.cmd`, `update_deps.py`) use the `.venv`'s pip. `scripts/release.cmd` therefore fails with "No module named pip" until the `.venv` is recreated with `python -m venv` and `pip install -r requirements-dev.txt` (the docs now say so). The controller worked around it for 0.18 with `--python`. 1.0 will need the same unless the `.venv` is recreated.
 
 ## Log
 
