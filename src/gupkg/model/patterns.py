@@ -149,12 +149,13 @@ def _cut_long_lines(text: str) -> str:
         return text
     cut: list[str] = []
     for line in lines:
-        while len(line) > MAX_LINE:
-            window = line[:MAX_LINE]
-            point = max(window.rfind(">", MAX_LINE // 2), window.rfind(" ", MAX_LINE // 2)) + 1 or MAX_LINE
-            cut.append(line[:point])
-            line = line[point:]
-        cut.append(line)
+        start = 0
+        while len(line) - start > MAX_LINE:
+            end = start + MAX_LINE
+            point = max(line.rfind(">", start + MAX_LINE // 2, end), line.rfind(" ", start + MAX_LINE // 2, end)) + 1 or end
+            cut.append(line[start:point])
+            start = point
+        cut.append(line[start:])
     return "\n".join(cut)
 
 
