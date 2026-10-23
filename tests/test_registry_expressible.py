@@ -1,7 +1,7 @@
 """Show that eleven registry packages need no hook: their trackers validate, run and populate ``App``.
 
 For each package the committed format 2 tracker (``tests/fixtures/registry2``) is validated
-with ``check_directory`` (no error, no warning, no ``pkg.local``), run against the recorded
+with ``check_directory`` (no error, no warning, no ``pkg.local``), run against the fixture
 vendor responses, rendered to a pinned version directory that validates too, and then used to
 populate an ``App`` from an archive built with the vendor's layout. Real services run
 (providers, client, unpack, prepare); only the network is replaced. Two packages (obsidian and
@@ -134,7 +134,7 @@ def test_the_package_is_expressed_with_no_hook_and_populates_its_app(
     assert report.errors == () and report.warnings == (), (report.errors, report.warnings)
     assert not (directory / "pkg.local").exists()
 
-    # Discover the newest version from the recorded responses and write the pinned manifest.
+    # Discover the newest version from the fixture responses and write the pinned manifest.
     serve(system, *cases)
     manifest = tracker_manifest(package)
     result = run_tracker(manifest, environment(system, tmp_path, package=package))

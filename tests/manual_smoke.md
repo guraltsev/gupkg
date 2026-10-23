@@ -310,11 +310,13 @@ The automated tests replay synthetic HTTP fixtures, build archives at test time 
 7-Zip for real, but they cannot reach vendor sites or build NSIS installers. These steps cover
 what only real sites and real installers show.
 
-1. **Re-record the HTTP fixtures.** The files under `tests/fixtures/http` are marked
-   `"recorded": null`: they were written from the layout the registry hooks expected, because
-   the worker had no network. With a network, run `python tools/record_http_fixtures.py` and
-   run the suite. Review the diff: a case that fails shows a vendor page that changed (or a
-   pattern that was wrong). Commit the recorded files. Why manual: needs the real vendor sites.
+1. **Re-record the HTTP fixtures (owed to issue 031).** The files under `tests/fixtures/http` are
+   synthetic fixtures modelled on the registry hooks' regular expressions, marked
+   `"recorded": null`, because the worker had no network. With a network, run `python
+   tools/record_http_fixtures.py`: it runs each tracker against the live site and records the whole
+   walk, the date and the `expected` block. Review the diff (a changed `expected` is a vendor
+   change, a failing case is a pattern that was wrong) and commit the recorded files. Why
+   manual: needs the real vendor sites.
 2. **Real NSIS installers.** In a sandbox (`gupkg --sandbox <dir> install`) install the
    obsidian and pidgin trackers of `tests/fixtures/registry2` after copying them into a test
    registry with a real downloaded installer (`kind = "nsis"`). Confirm `App` holds the

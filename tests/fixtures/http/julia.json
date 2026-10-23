@@ -1,8 +1,15 @@
 {
  "case": "julia",
+ "tracker": "julia",
  "provider": "json (records, filter, key)",
  "recorded": null,
- "origin": "synthetic: written from the layout that the registry hook's regular expression was written for (gupkg-registry/julia/_bootstrap/pkg.local/check_update.py); not recorded from the live site. Re-record with tools/record_http_fixtures.py.",
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/julia/_bootstrap/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "1.11.0",
+  "download_url": "https://julialang-s3.julialang.org/bin/winnt/x64/1.11/julia-1.11.0-win64.zip",
+  "sha256": "f4139253eb370069937c12c4019c43b1e57ab5fc938d36f878791d43db0ed860",
+  "sha256_from": "vendor-sums"
+ },
  "responses": [
   {
    "url": "https://julialang-s3.julialang.org/bin/versions.json",

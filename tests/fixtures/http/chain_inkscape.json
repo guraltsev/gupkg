@@ -1,8 +1,15 @@
 {
  "case": "chain_inkscape",
+ "tracker": "inkscape",
  "provider": "chain (release page, file page, digest)",
  "recorded": null,
- "origin": "synthetic: written from the layout that the registry hook's regular expression was written for (gupkg-registry/inkscape/_bootstrap/pkg.local/check_update.py); not recorded from the live site. Re-record with tools/record_http_fixtures.py.",
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/inkscape/_bootstrap/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "1.4",
+  "download_url": "https://inkscape.org/gallery/item/53697/inkscape-1.4_2024-10-11_86a8ad7-x64.7z",
+  "sha256": "f9593190b7ed8fef57675e3a2d29f4d490612544bbc31de02ce784e6817b4c0c",
+  "sha256_from": "vendor-sums"
+ },
  "responses": [
   {
    "url": "https://inkscape.org/release/all/windows/64-bit/compressed-7z/",

@@ -51,6 +51,7 @@ from ..report.events import Progress, Step, emit
 from ..model.trackspec import check_header_map
 from ..system.port import HttpResponse, ResponseTooLarge, System, is_elevated_run
 from .safepath import safe_file_name
+from .values import file_name_from_url
 
 DEFAULT_TIMEOUT = 30.0
 DEFAULT_RETRIES = 3
@@ -362,7 +363,7 @@ class HttpClient:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         key = hashlib.sha256(f"{url}\n{expected or ''}".encode("utf-8")).hexdigest()[:40]
         final, part, meta = (self.cache_dir / f"{key}{suffix}" for suffix in (".file", ".part", ".meta.json"))
-        shown = label or safe_file_name(urllib.parse.unquote(urllib.parse.urlsplit(url).path), "download")
+        shown = label or file_name_from_url(url)
 
         # A finished file for exactly this URL and digest needs no network.
         if expected is not None and final.is_file():
@@ -510,7 +511,7 @@ class HttpClient:
                 return
             old = _read_meta(meta)
             name = parse_content_disposition(headers.get("content-disposition"))
-            filename = safe_file_name(name or urllib.parse.unquote(urllib.parse.urlsplit(current).path), "download")
+            filename = safe_file_name(name or "", "") or file_name_from_url(current)
             fresh = {
                 "url": url, "final_url": current, "filename": filename if name or "filename" not in old else old["filename"],
                 "etag": headers.get("etag", ""), "last_modified": headers.get("last-modified", ""),

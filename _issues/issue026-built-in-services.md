@@ -150,3 +150,16 @@ other.
 ## Out of scope
 
 Converting the registry. That is issue 031, which uses these services.
+
+## Closing notes
+
+- **Accepted as delivered (owner decision):** the provider fixtures under `tests/fixtures/http/` are
+  synthetic, modelled on the registry hooks' regular expressions and marked `"recorded": null`, and the
+  NSIS and MSI kinds are tested with a 7-Zip process double. Each fixture carries its own `expected` block;
+  `tools/record_http_fixtures.py` records the whole tracker walk against the live sites and rewrites it.
+- **Owed to issue 031 and the owner:** (1) record the fixtures with `tools/record_http_fixtures.py` and
+  review the diff (an explicit acceptance item of issue 031, plus manual check 1 of `tests/manual_smoke.md`);
+  (2) commit a small real NSIS sample when the owner provides one, and replace the NSIS process double.
+- **Owed to issue 028:** a subprocess regex runner with a deadline (Python's `re` cannot be interrupted;
+  the interim guards are listed in design section 8.1), and the elevated-run use of the trust checks of
+  `gupkg.services.hooks.require_trusted_code` and `gupkg.services.http.github_environment`.

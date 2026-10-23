@@ -110,11 +110,11 @@ def map_extract(root: Path, rules: Sequence[ExtractRule], scratch: Path) -> None
             if contents:
                 if not source.is_dir():
                     raise UnpackError(f"extract: {rule.src!r} ends in '/' but {source.name!r} is not a folder")
-                _copy_tree(source, target_root)
+                _copy_unique(source, target_root, rule.src)
             elif source.is_dir():
-                _copy_tree(source, target_root / source.name)
+                _copy_unique(source, target_root / source.name, rule.src)
             else:
-                shutil.copyfile(source, target_root / source.name)
+                _copy_unique(source, target_root / source.name, rule.src)
     for child in list(root.iterdir()):
         remove_tree(child)
     for child in list(mapped.iterdir()):
@@ -237,9 +237,28 @@ def _inside(path: Path, root: Path) -> bool:
     return real == base or real.startswith(base.rstrip("\\/") + os.sep)
 
 
-def _copy_tree(source: Path, destination: Path) -> None:
-    """Copy a folder tree, merging into *destination* (files only: the tree has no links)."""
-    shutil.copytree(source, destination, symlinks=True, dirs_exist_ok=True)
+def _copy_unique(source: Path, destination: Path, rule: str) -> None:
+    """Copy a file or a folder tree to *destination*, refusing to overwrite a file an earlier rule wrote.
+
+    Two rules, or two matches of one rule, that map to the same destination file are an error: the
+    result must not depend on the order in which the glob matches came.
+    """
+    if source.is_file():
+        files = [(source, destination)]
+    else:
+        files = [
+            (Path(current) / name, destination / Path(current).relative_to(source) / name)
+            for current, _folders, names in os.walk(source, followlinks=False) for name in names
+        ]
+        destination.mkdir(parents=True, exist_ok=True)
+        for current, folders, _names in os.walk(source, followlinks=False):
+            for folder in folders:
+                (destination / Path(current).relative_to(source) / folder).mkdir(parents=True, exist_ok=True)
+    for origin, target in files:
+        if os.path.lexists(target):
+            raise UnpackError(f"extract: {rule!r} maps {origin.name!r} to a destination that already exists")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(origin, target)
 
 
 def _sha256(path: Path) -> str:

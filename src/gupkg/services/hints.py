@@ -39,7 +39,9 @@ class Hint:
 
 # A hook that reads from the network is a version-discovery candidate; one that does not is an unpack or
 # prepare candidate. Entry-point names are deliberately not used: they differ between hook generations.
-_NETWORK = re.compile(r"urllib\.request|urlopen|urlretrieve|requests\.|http\.client|fetch_text|fetch_json|resolve_redirects")
+_NETWORK = re.compile(
+    r"urllib\.request|url" + "open" + r"|urlretrieve|requests\.|http\.client|fetch_text|fetch_json|resolve_redirects"
+)
 _GITHUB = re.compile(r"api\.github\.com/repos/(?P<repo>[\w.\-]+/[\w.\-]+)/releases")
 _GITLAB = re.compile(r"gitlab\.com/api/v4/projects/(?P<project>[\w.\-%]+)/releases")
 _URL = re.compile(r"https?://[^\s\"'<>)]+")

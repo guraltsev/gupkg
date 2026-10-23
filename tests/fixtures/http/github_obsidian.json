@@ -1,8 +1,15 @@
 {
  "case": "github_obsidian",
+ "tracker": "obsidian",
  "provider": "github latest, exact asset",
  "recorded": null,
- "origin": "synthetic: written from the layout that the registry hook's regular expression was written for (gupkg-registry/obsidian/_bootstrap/pkg.toml); not recorded from the live site. Re-record with tools/record_http_fixtures.py.",
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/obsidian/_bootstrap/pkg.toml); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "1.7.4",
+  "download_url": "https://github.com/o/r/releases/download/v1.7.4/Obsidian-1.7.4.exe",
+  "sha256": "f27fbd5183b5b4b4db87b896fb15acb2112ce5dc7ecce4a8e859c85e88db569b",
+  "sha256_from": "github-digest"
+ },
  "responses": [
   {
    "url": "https://api.github.com/repos/obsidianmd/obsidian-releases/releases/latest",

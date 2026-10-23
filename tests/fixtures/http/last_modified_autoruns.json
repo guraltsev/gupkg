@@ -1,8 +1,15 @@
 {
  "case": "last_modified_autoruns",
+ "tracker": "autoruns",
  "provider": "last_modified",
  "recorded": null,
- "origin": "synthetic: written from the layout that the registry hook's regular expression was written for (gupkg-registry/autoruns/_bootstrap/pkg.local/check_update.py); not recorded from the live site. Re-record with tools/record_http_fixtures.py.",
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/autoruns/_bootstrap/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "20240911",
+  "download_url": "https://download.sysinternals.com/files/Autoruns.zip",
+  "sha256": null,
+  "sha256_from": null
+ },
  "responses": [
   {
    "url": "https://download.sysinternals.com/files/Autoruns.zip",

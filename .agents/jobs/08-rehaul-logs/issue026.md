@@ -70,3 +70,52 @@ from the worktree; the whole suite takes about 4 to 6 minutes).
   safety rules). The SFX test uses the bundled `7z.exe` as the stub of a real 7z archive built at test time.
 - The custom-script runner of design section 12 (`populate/`) is only `run_custom_populate` here; the built-in download
   script (download, verify, activate) is issues 027 and 028.
+
+## Review round 1 (after the merge of main with issue 025)
+
+Merged main (025) with no conflicts. Fixes, by the reviewer's numbers:
+
+1. Unpacking is bounded while it runs: gzip/bzip2/xz wrappers are decompressed in process with a byte cap
+   (`decompress_capped`); every 7-Zip run gets a folder watcher through the new `System.run(watch=...)`
+   (`ProcessAborted`), which measures the staging folder and kills 7-Zip past the size or entry limit; limits are one
+   `Budget` shared by an artifact and its nested archives; default entry limit 200,000. Tests: `test_unpack_bombs.py`
+   (bz2 and gzip bombs, gzip with a lying trailer: the partial output is never larger than the cap, a watcher kill,
+   cumulative nested limits).
+2. Regex guard (interim): overlapping alternatives, empty-matching body, a leading wildcard with other unbounded
+   repeats, more than 3 wildcard repeats or 8 unbounded repeats are refused at validation; lines are cut to 8 KiB.
+   The reviewer's pairs are tests run in a child process with a hard timeout: all refused or finished under 2 s.
+   **Not bounded (for 028's runner):** any pattern that passes validation is not proven linear; text inside one
+   8 KiB line can still cost O(line^2) for two or three wildcard repeats (about 0.5 s per MiB at worst in my
+   runs); a page designed against one accepted pattern can cost seconds; nothing can interrupt `re`.
+3. `pkgcheck` rejects API 1, no declaration, a string and a computed declaration (test); the migrate test now
+   asserts the error exists for firefox before filtering it.
+4. `load_hook`, `run_custom_populate` and the `[[prepare]] module` step take the `System` and, in an elevated run
+   or with `GUPKG_ELEVATED=1`, refuse a version directory or `pkg.local` that is not admin-only before importing or
+   starting anything (`require_trusted_code`, tests in `test_hook_trust.py`). For 027/028: call them with the real
+   System; the engine must treat `HookError` from this check as a refusal to run package code, not as a package bug.
+   `file:` URLs naming a network host or UNC share (`file:////server/share`, `file://host/x`) are refused by
+   `HttpClient` unless `allow_unc_file_urls=True` (default refuse; decide in 027/028). The real transport still
+   opens any `file:` URL it is given: the client is the gate.
+5. Header names (`Host`, `Content-Length`, `Connection`, `Transfer-Encoding`, `Upgrade`, `TE`, `Proxy-*`,
+   `Accept-Encoding`, `Range`...) are refused in manifests; names containing auth/key/token/secret/password/cookie/
+   session are dropped on a cross-host redirect; every request and download has a total deadline enforced by the
+   transport (`total_timeout`, `read1` so a trickling server cannot hide behind the idle timeout).
+6. `HttpClient` reads no environment (`env` is an explicit mapping; `github_environment(system, environ)` drops the
+   token in an elevated run); `git` runs through `services/gitenv.py`: allow-listed machine variables only, null
+   config files, `core.hooksPath=NUL`, no credential helper, no prompts, no `GIT_SSH_COMMAND`/`GIT_DIR`/... (test).
+7. Any exception in a hook's import-time code is a `HookError`; `run_prepare` reports it as a `PrepareError`.
+8. `test_catalog_registry` pins the exact set of dropped trackers (the 48 packages of the 0.17 fixture that have a
+   `pkg.local`) and their exact problem lines; the swap from firefox to czkawka stays because firefox is among the
+   dropped (czkawka is the surviving tracker-only package).
+9. Nits: `check_member_set(repeats=False)` for 7-Zip file entries (a tar repeating a name is refused); `[[source.extract]]`
+   refuses two matches mapping to one destination; the boundary grep is a test (`test_service_details.py`) and the
+   hint regex builds the opener name from pieces; a case-only rename is allowed; file names derive from the final URL
+   skipping `/download` (`file_name_from_url`, used by downloads and the redirect provider); the fixture omissions:
+   restored firefox's profile-manager shortcut and msys2's five shortcuts. The committed 0.17 snapshot of msys2 has
+   no `config.default` step (if the live registry has one, `[[prepare]] write`/`copy` expresses it).
+
+Owner decisions applied: provider fixtures stay synthetic; wording says "synthetic fixtures modelled on the registry
+hooks' regexes, marked recorded: null, to be re-recorded by tools/record_http_fixtures.py"; a test asserts the marker;
+expected values live in each fixture's `expected` block; `record_case` runs the real tracker and records the whole
+walk (index walks, chains, redirect hops) and rewrites `expected`. **Owed to 031 / the owner:** recording the
+fixtures (explicit 031 acceptance item and manual check 1) and a committed real NSIS sample.

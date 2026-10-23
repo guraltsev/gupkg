@@ -1,8 +1,15 @@
 {
  "case": "page_graphviz",
+ "tracker": "graphviz",
  "provider": "page (backreference, max)",
  "recorded": null,
- "origin": "synthetic: written from the layout that the registry hook's regular expression was written for (gupkg-registry/graphviz/_bootstrap/pkg.local/check_update.py); not recorded from the live site. Re-record with tools/record_http_fixtures.py.",
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/graphviz/_bootstrap/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "12.1.2",
+  "download_url": "https://gitlab.com/api/v4/projects/4207231/packages/generic/graphviz-releases/12.1.2/windows_10_cmake_Release_Graphviz-12.1.2-win64.zip",
+  "sha256": null,
+  "sha256_from": null
+ },
  "responses": [
   {
    "url": "https://graphviz.org/download/",

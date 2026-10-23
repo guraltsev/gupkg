@@ -1,8 +1,15 @@
 {
  "case": "vscode",
+ "tracker": "vscode",
  "provider": "json ($[0])",
  "recorded": null,
- "origin": "synthetic: written from the layout that the registry hook's regular expression was written for (gupkg-registry/vscode/_bootstrap/pkg.local/check_update.py); not recorded from the live site. Re-record with tools/record_http_fixtures.py.",
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/vscode/_bootstrap/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "1.94.2",
+  "download_url": "https://update.code.visualstudio.com/1.94.2/win32-x64-archive/stable",
+  "sha256": null,
+  "sha256_from": null
+ },
  "responses": [
   {
    "url": "https://update.code.visualstudio.com/api/releases/stable",

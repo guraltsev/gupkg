@@ -320,6 +320,7 @@ def _judge(listing: Listing, budget: Budget) -> None:
     if len(entries) > budget.entries_left:
         raise UnpackError(f"The archive has {len(entries)} entries; at most {limits.max_entries} are allowed")
     check_member_set(entry.path for entry in entries)
+    check_member_set((entry.path for entry in entries if not entry.is_dir), repeats=False)
     for entry in entries:
         if entry.encrypted:
             raise UnpackError("The archive is encrypted")

@@ -26,6 +26,7 @@ from collections.abc import Mapping
 from ..model.patterns import PatternError, compile_pattern, escape_template
 from ..model.template import TemplateError, references, render
 from ..model.version import is_version_name
+from .safepath import safe_file_name
 
 MAX_VERSION_LENGTH = 64
 MAX_URL_LENGTH = 4096
@@ -93,3 +94,15 @@ def compile_runtime(text: str, values: Mapping[str, str]) -> re.Pattern[str]:
         return compile_pattern(escape_template(text, values))
     except PatternError as error:
         raise TrackError(str(error)) from error
+
+
+def file_name_from_url(url: str) -> str:
+    """Return a harmless file name for the artifact at *url*.
+
+    The last path segment is used, except that a trailing ``download`` or ``dl`` marker (SourceForge
+    serves ``.../CrystalDiskInfo9_4_2.zip/download``) is skipped in favour of the segment before it.
+    """
+    segments = [urllib.parse.unquote(segment) for segment in urllib.parse.urlsplit(url).path.split("/") if segment]
+    while len(segments) > 1 and segments[-1].lower() in ("download", "dl"):
+        segments.pop()
+    return safe_file_name(segments[-1] if segments else "", "download")

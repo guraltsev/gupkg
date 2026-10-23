@@ -1,8 +1,15 @@
 {
  "case": "chain_winscp",
+ "tracker": "winscp",
  "provider": "chain (page, then mirror page)",
  "recorded": null,
- "origin": "synthetic: written from the layout that the registry hook's regular expression was written for (gupkg-registry/winscp/_bootstrap/pkg.local/check_update.py); not recorded from the live site. Re-record with tools/record_http_fixtures.py.",
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/winscp/_bootstrap/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "6.3.5",
+  "download_url": "https://cdn.winscp.net/files/WinSCP-6.3.5-Portable.zip?secure=abc123&expires=1700000000",
+  "sha256": null,
+  "sha256_from": null
+ },
  "responses": [
   {
    "url": "https://winscp.net/eng/downloads.php",

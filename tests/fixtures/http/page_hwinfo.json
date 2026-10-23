@@ -1,8 +1,15 @@
 {
  "case": "page_hwinfo",
+ "tracker": "hwinfo",
  "provider": "page (two-digit major, headers)",
  "recorded": null,
- "origin": "synthetic: written from the layout that the registry hook's regular expression was written for (gupkg-registry/hwinfo/_bootstrap/pkg.local/check_update.py); not recorded from the live site. Re-record with tools/record_http_fixtures.py.",
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/hwinfo/_bootstrap/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "10.02",
+  "download_url": "https://www.hwinfo.com/files/hwi_1002.zip",
+  "sha256": null,
+  "sha256_from": null
+ },
  "responses": [
   {
    "url": "https://www.hwinfo.com/download/",

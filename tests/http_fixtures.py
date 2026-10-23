@@ -1,9 +1,9 @@
-"""Load recorded HTTP cases and registry-2 manifests, and build the service environment, for tests.
+"""Load HTTP fixture cases and registry-2 manifests, and build the service environment, for tests.
 
 ``tests/fixtures/http/<case>.json`` holds the responses of one registry package's provider
-(see ``tools/record_http_fixtures.py``). ``tests/fixtures/registry2/<package>/_check_updates``
+(synthetic fixtures modelled on the registry hooks' regexes, marked ``recorded: null``, to be re-recorded by ``tools/record_http_fixtures.py``). ``tests/fixtures/registry2/<package>/_check_updates``
 holds the format 2 tracker that expresses that package with no hook. The helpers here turn
-them into a ``FakeSystem`` that serves the recorded answers, a shared ``HttpClient`` that
+them into a ``FakeSystem`` that serves the fixture answers, a shared ``HttpClient`` that
 never sleeps and never reads the ambient environment, and a parsed tracker manifest.
 """
 
@@ -24,7 +24,7 @@ REGISTRY2 = FIXTURES / "registry2"
 
 
 def load_case(name: str) -> dict[str, FakeHttp]:
-    """Return ``{url: FakeHttp}`` for the recorded case *name*."""
+    """Return ``{url: FakeHttp}`` for the fixture case *name*."""
     document = json.loads((HTTP_CASES / f"{name}.json").read_text(encoding="utf-8"))
     return {
         entry["url"]: FakeHttp(entry.get("body", ""), entry.get("status", 200), entry.get("headers", {}))
@@ -33,7 +33,7 @@ def load_case(name: str) -> dict[str, FakeHttp]:
 
 
 def serve(system: FakeSystem, *cases: str) -> FakeSystem:
-    """Make *system* serve every response of the recorded *cases*; return it."""
+    """Make *system* serve every response of the fixture *cases*; return it."""
     for case in cases:
         system.urls.update(load_case(case))
     return system

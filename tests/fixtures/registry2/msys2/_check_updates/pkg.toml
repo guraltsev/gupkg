@@ -23,3 +23,28 @@ value = "$App"
 [[shim]]
 name = "env"
 target = "$App\\usr\\bin\\env.exe"
+
+[[shortcut]]
+name = "MSYS2\MSYS2 CLang64"
+target = "$App\clang64.exe"
+working_dir = "%USERPROFILE%"
+
+[[shortcut]]
+name = "MSYS2\MSYS2 CLangARM64"
+target = "$App\clangarm64.exe"
+working_dir = "%USERPROFILE%"
+
+[[shortcut]]
+name = "MSYS2\MSYS2 MingW64"
+target = "$App\MingW64.exe"
+working_dir = "%USERPROFILE%"
+
+[[shortcut]]
+name = "MSYS2\MSYS2"
+target = "$App\msys2.exe"
+working_dir = "%USERPROFILE%"
+
+[[shortcut]]
+name = "MSYS2\MSYS2 UCRT64"
+target = "$App\UCRT64.exe"
+working_dir = "%USERPROFILE%"

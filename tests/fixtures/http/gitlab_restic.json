@@ -1,8 +1,15 @@
 {
  "case": "gitlab_restic",
+ "tracker": "restic-backup-gx",
  "provider": "gitlab releases",
  "recorded": null,
- "origin": "synthetic: written from the layout that the registry hook's regular expression was written for (gupkg-registry/restic-backup-gx/_bootstrap/pkg.local/check_update.py); not recorded from the live site. Re-record with tools/record_http_fixtures.py.",
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/restic-backup-gx/_bootstrap/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "1.4.0",
+  "download_url": "https://gitlab.com/stormking/resticguigx/-/releases/v1.4.0/downloads/ResticGUIx-1.4.0-win64.zip",
+  "sha256": null,
+  "sha256_from": null
+ },
  "responses": [
   {
    "url": "https://gitlab.com/api/v4/projects/stormking%2Fresticguigx/releases?per_page=100",

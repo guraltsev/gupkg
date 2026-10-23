@@ -103,14 +103,16 @@ def check_member_name(name: str) -> str:
     return "/".join(segments)
 
 
-def check_member_set(names: Iterable[str]) -> list[str]:
-    """Normalise every member name and reject duplicates and case collisions.
+def check_member_set(names: Iterable[str], repeats: bool = True) -> list[str]:
+    """Normalise every member name and reject case collisions, and duplicates when *repeats* is false.
 
     Parameters
     ----------
     names : iterable of str
-        Member names of one archive, files and directories alike. A name may repeat
-        as a directory entry (``a/`` then ``a/b``); two entries for the same file may not.
+        Member names of one archive. With ``repeats=True`` an identical name may appear more than
+        once (a zip may list a directory entry twice); the zip extractor then creates each file
+        exclusively, so a repeated file still fails. With ``repeats=False`` an identical name twice
+        is refused here: use it for the file entries of a 7-Zip listing, where nothing else would.
 
     Returns
     -------
@@ -120,8 +122,8 @@ def check_member_set(names: Iterable[str]) -> list[str]:
     Raises
     ------
     UnsafePath
-        If any name is unsafe, or two different names fold to the same path on a
-        case-insensitive file system.
+        If any name is unsafe, two different names fold to the same path on a
+        case-insensitive file system, or (with ``repeats=False``) a name repeats.
     """
     seen: dict[str, str] = {}
     result: list[str] = []
@@ -131,6 +133,8 @@ def check_member_set(names: Iterable[str]) -> list[str]:
         previous = seen.get(key)
         if previous is not None and previous != normal:
             raise UnsafePath(f"unsafe archive: {previous!r} and {normal!r} are the same name on Windows")
+        if previous is not None and not repeats:
+            raise UnsafePath(f"unsafe archive: {normal!r} appears more than once")
         seen[key] = normal
         result.append(normal)
     return result

@@ -28,3 +28,10 @@ description = "Mozilla Firefox web browser"
 name = "firefox"
 target = "$App\\firefox.exe"
 type = "gui"
+
+[[shortcut]]
+name = "Firefox profile manager"
+target = "$App\firefox.exe"
+arguments = "-ProfileManager"
+working_dir = "%USERPROFILE%"
+description = "Mozilla Firefox profile manager"

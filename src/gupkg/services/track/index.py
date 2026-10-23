@@ -29,6 +29,7 @@ from ...model.manifest import TrackResult
 from ...model.trackspec import IndexSpec, RedirectSpec
 from ...system.port import HttpResponse
 from ..http import MAX_REDIRECTS, HttpError, decode_body
+from ..values import file_name_from_url
 from .common import (
     TrackEnvironment,
     TrackError,
@@ -137,7 +138,7 @@ def track_redirect(spec: RedirectSpec, env: TrackEnvironment) -> TrackResult:
         raise TrackError(f"{spec.check_url} redirects more than {MAX_REDIRECTS} times")
 
     # The address itself carries the version; the file name is offered as a capture.
-    name = urllib.parse.unquote(urllib.parse.urlsplit(final).path.rstrip("/").rsplit("/", 1)[-1])
+    name = file_name_from_url(final)
     captures: dict[str, str] = {"page_url": spec.check_url, "final_url": final, "download_url": final, "file_name": name}
     if spec.match is not None:
         found = candidates_from_text(spec.match, final, captures)

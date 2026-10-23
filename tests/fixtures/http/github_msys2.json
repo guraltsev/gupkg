@@ -1,8 +1,15 @@
 {
  "case": "github_msys2",
+ "tracker": "msys2",
  "provider": "github newest-matching with tag_pattern",
  "recorded": null,
- "origin": "synthetic: written from the layout that the registry hook's regular expression was written for (gupkg-registry/msys2/_bootstrap/pkg.local/check_update.py); not recorded from the live site. Re-record with tools/record_http_fixtures.py.",
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/msys2/_bootstrap/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "20240925",
+  "download_url": "https://github.com/o/r/releases/download/2024-09-25/msys2-base-x86_64-20240925.tar.xz",
+  "sha256": "b13ff2690fe78f264ffd8e77a9d9f112a2aae38e65ae5be1931515d8ace09ecd",
+  "sha256_from": "github-digest"
+ },
  "responses": [
   {
    "url": "https://api.github.com/repos/msys2/msys2-installer/releases?per_page=100",

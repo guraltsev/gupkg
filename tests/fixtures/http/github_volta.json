@@ -1,8 +1,15 @@
 {
  "case": "github_volta",
+ "tracker": "volta",
  "provider": "github latest, exact asset",
  "recorded": null,
- "origin": "synthetic: written from the layout that the registry hook's regular expression was written for (gupkg-registry/volta/_bootstrap/pkg.toml); not recorded from the live site. Re-record with tools/record_http_fixtures.py.",
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/volta/_bootstrap/pkg.toml); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "2.0.1",
+  "download_url": "https://github.com/o/r/releases/download/v2.0.1/volta-2.0.1-windows.zip",
+  "sha256": "9ce45e2deeb806d62a504075f992a4c5de66873173c2e403a49a3de9126fa5d3",
+  "sha256_from": "github-digest"
+ },
  "responses": [
   {
    "url": "https://api.github.com/repos/volta-cli/volta/releases/latest",

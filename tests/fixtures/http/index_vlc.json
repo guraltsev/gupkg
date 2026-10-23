@@ -1,8 +1,15 @@
 {
  "case": "index_vlc",
+ "tracker": "vlc",
  "provider": "index (one level)",
  "recorded": null,
- "origin": "synthetic: written from the layout that the registry hook's regular expression was written for (gupkg-registry/vlc/_bootstrap/pkg.local/check_update.py); not recorded from the live site. Re-record with tools/record_http_fixtures.py.",
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/vlc/_bootstrap/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "3.0.21",
+  "download_url": "https://download.videolan.org/pub/videolan/vlc/3.0.21/win64/vlc-3.0.21-win64.zip",
+  "sha256": "465dbf9d87fd5bd2cd8edfb72b50fd679af890f81593852a5e664c077b228feb",
+  "sha256_from": "vendor-sums"
+ },
  "responses": [
   {
    "url": "https://download.videolan.org/pub/videolan/vlc/",

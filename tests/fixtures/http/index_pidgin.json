@@ -1,8 +1,15 @@
 {
  "case": "index_pidgin",
+ "tracker": "pidgin",
  "provider": "index (backtracks to a folder with the file)",
  "recorded": null,
- "origin": "synthetic: written from the layout that the registry hook's regular expression was written for (gupkg-registry/pidgin/_bootstrap/pkg.local/check_update.py); not recorded from the live site. Re-record with tools/record_http_fixtures.py.",
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/pidgin/_bootstrap/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "2.14.13",
+  "download_url": "https://sourceforge.net/projects/pidgin/files/Pidgin/2.14.13/pidgin-2.14.13-offline.exe/download",
+  "sha256": null,
+  "sha256_from": null
+ },
  "responses": [
   {
    "url": "https://sourceforge.net/projects/pidgin/files/Pidgin/",

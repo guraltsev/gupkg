@@ -1,8 +1,15 @@
 {
  "case": "github_bcu",
+ "tracker": "bulkcrapuninstaller",
  "provider": "github latest, digest, asset_pattern",
  "recorded": null,
- "origin": "synthetic: written from the layout that the registry hook's regular expression was written for (gupkg-registry/bulkcrapuninstaller/_bootstrap/pkg.local/check_update.py); not recorded from the live site. Re-record with tools/record_http_fixtures.py.",
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/bulkcrapuninstaller/_bootstrap/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "5.8.2",
+  "download_url": "https://github.com/o/r/releases/download/v5.8.2/BCUninstaller_5.8.2_portable.7z",
+  "sha256": "5c77c0fded08ffe00dea0ebdd9aeffa697b9ebe65a1be7c92c82d2e15be182a3",
+  "sha256_from": "github-digest"
+ },
  "responses": [
   {
    "url": "https://api.github.com/repos/BCUninstaller/Bulk-Crap-Uninstaller/releases/latest",

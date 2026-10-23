@@ -1,8 +1,15 @@
 {
  "case": "page_lockhunter",
+ "tracker": "lockhunter",
  "provider": "page (download template with filter)",
  "recorded": null,
- "origin": "synthetic: written from the layout that the registry hook's regular expression was written for (gupkg-registry/lockhunter/_bootstrap/pkg.local/check_update.py); not recorded from the live site. Re-record with tools/record_http_fixtures.py.",
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/lockhunter/_bootstrap/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "3.4.3",
+  "download_url": "https://lockhunter.com/assets/exe/lockhuntersetup_portable_3-4-3.zip",
+  "sha256": null,
+  "sha256_from": null
+ },
  "responses": [
   {
    "url": "https://lockhunter.com/download.htm",

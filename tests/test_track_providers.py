@@ -1,9 +1,11 @@
-"""Cover version discovery by every ``[track]`` provider against recorded vendor responses.
+"""Cover version discovery by every ``[track]`` provider against fixture vendor responses.
 
 Each case runs a committed format 2 tracker (``tests/fixtures/registry2``) through
-``run_tracker`` and ``render_pinned`` with a ``FakeSystem`` that serves the recorded
-responses of ``tests/fixtures/http``: the pinned version directory that comes out is what
-``gupkg check-updates`` would write. The HTTP client, the providers, the checksum discovery
+``run_tracker`` and ``render_pinned`` with a ``FakeSystem`` that serves the responses of
+``tests/fixtures/http``: the pinned version directory that comes out is what
+``gupkg check-updates`` would write. The fixtures are synthetic models of the registry hooks'
+regular expressions, marked ``recorded: null`` (a test asserts the marker); they are re-recorded
+by ``tools/record_http_fixtures.py``, and each carries its own `expected` block. The HTTP client, the providers, the checksum discovery
 and the manifest renderer are real. Network, processes and the clock are the only things
 replaced. Out of scope: comparing versions with installed ones (the catalog), downloading and
 verifying the artifact (issue 027), and the safety of archives (``test_unpack``).
@@ -11,8 +13,8 @@ verifying the artifact (issue 027), and the safety of archives (``test_unpack``)
 
 from __future__ import annotations
 
-import hashlib
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -23,12 +25,7 @@ from gupkg.services.checksum import ChecksumDiscoveryError
 from gupkg.services.http import HttpClient
 from gupkg.services.track import TrackEnvironment, TrackError, run_tracker
 from gupkg.system.fake import FakeHttp, FakeSystem
-from tests.http_fixtures import environment, serve, tracker_manifest
-
-
-def digest(text: str) -> str:
-    """Return the SHA-256 the fixture generator derived from *text*."""
-    return hashlib.sha256(text.encode()).hexdigest()
+from tests.http_fixtures import HTTP_CASES, REGISTRY2, environment, serve, tracker_manifest
 
 
 def discover(system: FakeSystem, tmp_path: Path, package: str):
@@ -38,86 +35,42 @@ def discover(system: FakeSystem, tmp_path: Path, package: str):
     return result, render_pinned(manifest, result)
 
 
-GITHUB = "https://github.com/o/r/releases/download"
-
-# package, recorded cases, discovered version, pinned download_url, discovered sha256 (or None), its origin
-CASES = [
-    pytest.param("firefox", ["firefox"], "131.0.2",
-                 "https://archive.mozilla.org/pub/firefox/releases/131.0.2/win64/en-US/Firefox%20Setup%20131.0.2.exe",
-                 digest("firefox-win64-131.0.2"), "vendor-sums", id="firefox-json-and-sums-file"),
-    pytest.param("julia", ["julia"], "1.11.0",
-                 "https://julialang-s3.julialang.org/bin/winnt/x64/1.11/julia-1.11.0-win64.zip",
-                 digest("julia-1.11.0-win64-zip"), "vendor-sums", id="julia-json-records-filter-and-key"),
-    pytest.param("vscode", ["vscode"], "1.94.2",
-                 "https://update.code.visualstudio.com/1.94.2/win32-x64-archive/stable", None, None, id="vscode-json-first-element"),
-    pytest.param("qbittorrent", ["qbittorrent"], "5.0.0",
-                 "https://sourceforge.net/projects/qbittorrent/files/qBittorrent/qbittorrent-5.0.0/qbittorrent_5.0.0_x64_setup.exe/download",
-                 None, None, id="qbittorrent-json-path-and-match"),
-    pytest.param("bulkcrapuninstaller", ["github_bcu"], "5.8.2", f"{GITHUB}/v5.8.2/BCUninstaller_5.8.2_portable.7z",
-                 digest("BCUninstaller_5.8.2_portable.7zv5.8.2"), "github-digest", id="github-asset-pattern-with-digest"),
-    pytest.param("obsidian", ["github_obsidian"], "1.7.4", f"{GITHUB}/v1.7.4/Obsidian-1.7.4.exe",
-                 digest("Obsidian-1.7.4.exev1.7.4"), "github-digest", id="github-exact-asset"),
-    pytest.param("keypirinha", ["github_keypirinha"], "2.26", f"{GITHUB}/v2.26/keypirinha-2.26-x64-portable.7z",
-                 digest("keypirinha-2.26-x64-portable.7zv2.26"), "github-digest", id="github-asset-with-version"),
-    pytest.param("volta", ["github_volta"], "2.0.1", f"{GITHUB}/v2.0.1/volta-2.0.1-windows.zip",
-                 digest("volta-2.0.1-windows.zipv2.0.1"), "github-digest", id="github-windows-zip"),
-    pytest.param("msys2", ["github_msys2"], "20240925", f"{GITHUB}/2024-09-25/msys2-base-x86_64-20240925.tar.xz",
-                 digest("msys2-base-x86_64-20240925.tar.xz2024-09-25"), "github-digest", id="github-newest-matching-dated-tags"),
-    pytest.param("restic-backup-gx", ["gitlab_restic"], "1.4.0",
-                 "https://gitlab.com/stormking/resticguigx/-/releases/v1.4.0/downloads/ResticGUIx-1.4.0-win64.zip",
-                 None, None, id="gitlab-release-link"),
-    pytest.param("graphviz", ["page_graphviz"], "12.1.2",
-                 "https://gitlab.com/api/v4/projects/4207231/packages/generic/graphviz-releases/12.1.2/windows_10_cmake_Release_Graphviz-12.1.2-win64.zip",
-                 None, None, id="page-backreference"),
-    pytest.param("hwinfo", ["page_hwinfo"], "10.02", "https://www.hwinfo.com/files/hwi_1002.zip", None, None,
-                 id="page-two-digit-major-formats-correctly"),
-    pytest.param("lockhunter", ["page_lockhunter"], "3.4.3", "https://lockhunter.com/assets/exe/lockhuntersetup_portable_3-4-3.zip",
-                 None, None, id="page-download-template-with-filter"),
-    pytest.param("testdisk", ["page_testdisk"], "7.2", "https://www.cgsecurity.org/testdisk-7.2.win64.zip", None, None,
-                 id="page-skips-the-wip-prerelease"),
-    pytest.param("vlc", ["index_vlc"], "3.0.21",
-                 "https://download.videolan.org/pub/videolan/vlc/3.0.21/win64/vlc-3.0.21-win64.zip",
-                 digest("vlc-3.0.21-win64.zip"), "vendor-sums", id="index-one-level-and-sidecar"),
-    pytest.param("python", ["index_python"], "3.13.0", "https://www.python.org/ftp/python/3.13.0/python-3.13.0-embed-amd64.zip",
-                 None, None, id="index-probe-skips-an-incomplete-newest-folder"),
-    pytest.param("gimp", ["index_gimp"], "3.0.2", "https://download.gimp.org/gimp/v3.0/gimp-3.0.2-setup.exe", None, None,
-                 id="index-two-levels-with-a-key-template"),
-    pytest.param("pidgin", ["index_pidgin"], "2.14.13",
-                 "https://sourceforge.net/projects/pidgin/files/Pidgin/2.14.13/pidgin-2.14.13-offline.exe/download", None, None,
-                 id="index-backtracks-to-the-folder-that-has-the-file"),
-    pytest.param("crystaldiskinfo", ["redirect_crystaldiskinfo"], "9.4.2",
-                 "https://sourceforge.net/projects/crystaldiskinfo/files/9.4.2/CrystalDiskInfo9_4_2.zip/download", None, None,
-                 id="redirect-unwraps-the-url-parameter"),
-    pytest.param("zotero", ["redirect_zotero"], "7.0.8", "https://download.zotero.org/client/release/7.0.8/Zotero-7.0.8_win-x64.zip",
-                 None, None, id="redirect-final-address"),
-    pytest.param("autoruns", ["last_modified_autoruns"], "20240911", "https://download.sysinternals.com/files/Autoruns.zip",
-                 None, None, id="last-modified-date-as-version"),
-    pytest.param("netio-gui", ["rss_netio"], "1.10", "https://sourceforge.net/projects/netiogui/files/netio-gui_v1.10_portable.zip/download",
-                 None, None, id="rss-feed-newest-entry"),
-    pytest.param("winscp", ["chain_winscp"], "6.3.5", "https://cdn.winscp.net/files/WinSCP-6.3.5-Portable.zip?secure=abc123&expires=1700000000",
-                 None, None, id="chain-page-then-mirror-page"),
-    pytest.param("inkscape", ["chain_inkscape"], "1.4", "https://inkscape.org/gallery/item/53697/inkscape-1.4_2024-10-11_86a8ad7-x64.7z",
-                 digest("inkscape-1.4-x64"), "vendor-sums", id="chain-three-pages-and-a-digest-file"),
-    pytest.param("shutter-encoder", ["chain_shutter"], "18.4", "https://www.shutterencoder.com/sdc_download/1234/?key=abcDEF123",
-                 None, None, id="chain-version-from-a-response-header"),
-]
+CASES = sorted(HTTP_CASES.glob("*.json"))
 
 
-@pytest.mark.parametrize(("package", "cases", "version", "download_url", "sha256", "origin"), CASES)
-def test_each_registry_tracker_discovers_its_version_and_download_from_recorded_responses(
-    system: FakeSystem, tmp_path: Path, package: str, cases: list[str], version: str,
-    download_url: str, sha256: str | None, origin: str | None,
+@pytest.mark.parametrize("case", [pytest.param(path, id=path.stem) for path in CASES])
+def test_each_tracker_discovers_its_version_and_download_from_the_fixture_responses(
+    system: FakeSystem, tmp_path: Path, case: Path
 ) -> None:
-    """A tracker finds the newest version, the pinned manifest has the expanded download address and any discovered digest."""
-    serve(system, *cases)
+    """A tracker finds the newest version; the pinned manifest has the expanded download address and any discovered digest.
 
-    result, pinned = discover(system, tmp_path, package)
+    The expected values live in the fixture's own `expected` block, so re-recording a case needs no code edit.
+    """
+    document = json.loads(case.read_text(encoding="utf-8"))
+    expected = document["expected"]
+    serve(system, case.stem)
 
-    assert result.version == version
-    assert pinned.source.download_url == download_url
-    assert pinned.source.sha256 == sha256
-    assert pinned.source.sha256_from == origin
+    result, pinned = discover(system, tmp_path, document["tracker"])
+
+    assert result.version == expected["version"]
+    assert pinned.source.download_url == expected["download_url"]
+    assert pinned.source.sha256 == expected["sha256"]
+    assert pinned.source.sha256_from == expected["sha256_from"]
     assert pinned.kind is ManifestKind.VERSION and pinned.track is None
+
+
+def test_synthetic_fixtures_say_so_and_no_fixture_claims_a_recording_it_does_not_have() -> None:
+    """A fixture is either a synthetic model marked `recorded: null`, or carries a recording date, never both or neither."""
+    assert len(CASES) == 25
+    for case in CASES:
+        document = json.loads(case.read_text(encoding="utf-8"))
+        if document["recorded"] is None:
+            assert document["origin"].startswith("synthetic fixture modelled on the registry hook"), case.name
+            assert "to be re-recorded by tools/record_http_fixtures.py" in document["origin"], case.name
+        else:
+            assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", document["recorded"]), case.name
+            assert document["origin"].startswith("recorded from the live sites"), case.name
+        assert (REGISTRY2 / document["tracker"] / "_check_updates" / "pkg.toml").is_file(), case.name
 
 
 def test_the_page_provider_sends_the_package_headers_on_its_request(system: FakeSystem, tmp_path: Path) -> None:

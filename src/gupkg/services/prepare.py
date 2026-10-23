@@ -112,7 +112,8 @@ def _rename(root: Path, step: PrepareRename) -> None:
     """Rename the one match of ``from`` to ``to``, never overwriting."""
     source = _only_match(root, step.source)
     target = confine(root, step.target)
-    if os.path.lexists(target):
+    # A case-only rename (``Foo.exe`` to ``foo.exe``) names the same file and is allowed.
+    if os.path.lexists(target) and not _same_file(source, target):
         raise PrepareError(f"{step.target!r} already exists; rename never overwrites")
     target.parent.mkdir(parents=True, exist_ok=True)
     os.rename(source, target)
@@ -188,6 +189,14 @@ def _only_match(root: Path, pattern: str) -> Path:
     if len(found) != 1:
         raise PrepareError(f"{pattern!r} matches {len(found)} items; exactly one is required")
     return found[0]
+
+
+def _same_file(first: Path, second: Path) -> bool:
+    """Return whether two paths name the same file (a case-insensitive spelling of one another)."""
+    try:
+        return os.path.samefile(first, second)
+    except OSError:
+        return False
 
 
 def _inside(path: Path, root: Path) -> bool:

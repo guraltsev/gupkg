@@ -801,13 +801,24 @@ manifest is parsed (`gupkg.model.trackspec`).
   **`chain`** steps have `url`, `match`, `select`, `headers`, and `header` (match a response
   header such as `Content-Disposition` instead of the body); `${capture}` in a later step's `url`
   and `match` come from earlier steps, and a `sha256` group becomes the discovered checksum.
-- **Safety.** Responses are data: a page over 8 MiB is refused, patterns that repeat a repeated
-  group without a bound are rejected, long runs of word characters or one repeated character
-  are cut before matching, and at most a mebibyte is scanned. Python's `re` cannot be
-  interrupted, so a page crafted against one specific pattern can still keep a check busy for
-  seconds; it can never run code. Redirects are followed by the client: HTTPS to HTTP and any
-  non-http(s) target are refused, and `Authorization`/`Cookie` are dropped when the host changes.
-  `GITHUB_TOKEN` goes only to `api.github.com`, `github.com` and `uploads.github.com` over HTTPS.
+- **Safety.** Responses are data: a page over 8 MiB is refused. Validation rejects patterns that
+  repeat a repeated group, an empty-matching body, or overlapping alternatives inside an unbounded
+  repeat, a leading unbounded wildcard combined with other unbounded repeats, more than three wildcard
+  (`.`, `[^x]`) repeats and more than eight unbounded repeats. Before matching, runs of word
+  characters or of one character are cut to 1024, lines to 8 KiB, and at most a mebibyte is scanned.
+  Python's `re` cannot be interrupted: a pattern that passes validation is *not* proven linear, so a
+  page crafted against it can still cost seconds (never code execution). A subprocess regex runner
+  with a deadline is the complete fix and is planned with the execution engine (issue 028).
+  Redirects are followed by the client: HTTPS to HTTP and any non-http(s) target are refused, and
+  `Authorization`, `Cookie` and any header whose name contains auth, key, token, secret, password,
+  cookie or session are dropped when the host changes. A manifest `headers` table may not set
+  `Host`, `Content-Length`, `Connection`, `Transfer-Encoding`, `Upgrade`, `TE`, `Proxy-*` and similar.
+  Every request and download has a total deadline (120 s and one hour), not only an idle timeout.
+  `file:` URLs naming a network host or UNC share are refused unless the client is built with
+  `allow_unc_file_urls` (Windows would authenticate to that server). `GITHUB_TOKEN` goes only to
+  `api.github.com`, `github.com` and `uploads.github.com` over HTTPS and is read from an explicit
+  mapping (dropped in an elevated run), never from `os.environ`; `git` runs with a scrubbed
+  environment, null Git configuration files, no hooks, no credential helper and no prompts.
 
 ### 8.2 Unpacking (`[source]`)
 
@@ -836,9 +847,13 @@ apply in this order, each addressing the tree as it is at that point: `nested`, 
   `dest = ""` drops the rest of the installer). The inner archive file is deleted once unpacked.
 - Names are judged before anything is written: absolute paths, drives, `..`, `:` (streams),
   Windows device names, a trailing dot or space, link entries, encryption and names that differ only by
-  letter case are refused, and so are archives over 1,000,000 entries, 8 GiB in total or 4 GiB in one
-  file (zip bombs). The finished tree is walked again for links and special files. The tree appears under
-  its final name by one rename, so a failed unpack leaves no `App` and no scratch folder.
+  letter case are refused, and so are archives over 200,000 entries, 8 GiB in total or 4 GiB in one
+  file (zip bombs); the limits are one budget shared by the artifact and every archive nested in it.
+  Declared sizes are only a hint, so the limits are enforced while data is written: gzip, bzip2 and xz
+  wrappers are decompressed in process with a byte cap, and every 7-Zip run is watched (the staging
+  folder is measured about five times a second and 7-Zip is killed when it passes the limit). The
+  finished tree is walked again for links and special files. The tree appears under its final name by
+  one rename, so a failed unpack leaves no `App` and no scratch folder.
 
 `sfx` covers only self-extractors whose codecs the bundled 7-Zip supports.
 Firefox and Zotero extract; MSYS2's `.sfx.exe` uses Zstandard and does not
@@ -925,7 +940,10 @@ The entry points are `track(ctx) -> TrackResult` (trackers only), `unpack(ctx)`,
 `paths` (`package_root`, `version_root`, `app`, `artifact`, `work`, `cache`), `options`,
 `captures` and a `reporter`; the helpers of `gupkg.hooklib` take it as their first argument
 (`fetch_text(ctx, url)`). A module that does not declare `PKG_MODULE_API = 2` is rejected like any
-other invalid hook.
+other invalid hook. **Trust:** `load_hook`, `run_custom_populate` and the `[[prepare]] module` step
+take the `System` and, in an elevated run (or with `GUPKG_ELEVATED=1`), refuse a version directory or
+`pkg.local` that is not admin-only before importing or starting anything (decision D19). Any
+exception from a hook's import-time code is a `HookError`.
 
 Every hook's context carries the shared HTTP client, so proxy, TLS,
 retries and the GitHub token behave the same everywhere. Hooks may also
