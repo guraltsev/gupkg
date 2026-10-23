@@ -19,7 +19,8 @@ A download is kept only after its SHA-256 equals the pinned value; a mismatch
 deletes it and stops. Dependencies are installed with the running interpreter's
 pip, targeted at the embeddable runtime, with ``--require-hashes
 --only-binary=:all: --no-deps`` so only the pinned wheels can land and no build
-script can run. The lock pins pip itself, so pip arrives from its pinned wheel.
+script can run. The lock does not contain pip: the bundle has no installer, and the
+build machine's pip (the development ``.venv``) does the install.
 """
 
 from __future__ import annotations
@@ -121,8 +122,93 @@ def write_pth(runtime: Path) -> None:
     pth_files[0].write_text(f"python{tag}.zip\n.\n..\nLib/site-packages\n\nimport site\n", encoding="ascii")
 
 
-def install_locked_dependencies(runtime: Path, lock: Path, python: str | None = None) -> None:
-    """Install the locked wheels into *runtime*'s ``Lib/site-packages``.
+# Installers and build tools never belong in the bundle: nothing may install packages at run time.
+# Names are compared case-insensitively against the entries of ``site-packages`` (and ``Lib``).
+FORBIDDEN_PREFIXES = ("pip", "setuptools", "_distutils_hack", "ensurepip")
+
+
+def runtime_tag(runtime: Path) -> str:
+    """Return the interpreter tag (for example ``312``) from the runtime's single ``python*._pth``."""
+    pth_files = sorted(runtime.glob("python*._pth"))
+    if len(pth_files) != 1:
+        raise SystemExit(f"Need exactly one python*._pth in {runtime}, found {len(pth_files)}")
+    return pth_files[0].name[len("python") : -len("._pth")]
+
+
+def locked_names(lock: Path) -> list[str]:
+    """Return the distribution names of a lock file's ``name==version`` lines."""
+    names = []
+    for line in lock.read_text(encoding="utf-8").replace("\\\n", " ").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            names.append(line.split("==", 1)[0].strip())
+    return names
+
+
+def installer_entries(runtime: Path) -> list[str]:
+    """Return the pip, setuptools and ensurepip entries found in *runtime* (empty when it is clean).
+
+    Looks at ``Lib/site-packages`` and ``Lib`` (package directories, ``*.dist-info``
+    folders and single-file modules) and at ``python*.zip``, which holds the standard library.
+    """
+    found = []
+    for folder in (runtime / "Lib" / "site-packages", runtime / "Lib"):
+        if folder.is_dir():
+            for entry in sorted(folder.iterdir()):
+                stem = entry.name.casefold().split("-", 1)[0].removesuffix(".py").removesuffix(".dist")
+                if stem in FORBIDDEN_PREFIXES:
+                    found.append(entry.relative_to(runtime).as_posix())
+    for archive_path in sorted(runtime.glob("python*.zip")):
+        try:
+            with zipfile.ZipFile(archive_path) as archive:
+                tops = {name.split("/", 1)[0].casefold().removesuffix(".pyc").removesuffix(".py") for name in archive.namelist()}
+        except zipfile.BadZipFile:
+            continue
+        found.extend(f"{archive_path.name}/{name}" for name in sorted(tops & set(FORBIDDEN_PREFIXES)))
+    return found
+
+
+def tidy_site_packages(site_packages: Path) -> None:
+    """Remove what ``pip --target`` writes that the bundle must not carry.
+
+    The ``bin`` folder of console-script launchers goes, and so do the ``RECORD``
+    entries of every ``*.dist-info`` that point at it (or outside the folder).
+    """
+    shutil.rmtree(site_packages / "bin", ignore_errors=True)
+    for record in site_packages.glob("*.dist-info/RECORD"):
+        kept = [
+            line
+            for line in record.read_text(encoding="utf-8").splitlines()
+            if line.replace("\\", "/").split(",", 1)[0].split("/", 1)[0] not in {"bin", ".."}
+        ]
+        record.write_text("\n".join(kept) + "\n", encoding="utf-8", newline="\n")
+
+
+def wheel_install_command(
+    site_packages: Path, lock: Path, tag: str, python: str | None = None, find_links: Path | None = None
+) -> list[str]:
+    """Return the pip command that installs the locked wheels into *site_packages*.
+
+    The build machine's pip does the work: wheels only, hashes required, no
+    dependency resolution, targeted at the bundled interpreter's version rather than
+    the interpreter running this script. *find_links* replaces the package index with
+    a local folder of wheels (offline builds); hashes are still required.
+    """
+    command = [
+        python or sys.executable, "-I", "-B", "-m", "pip", "install", "--isolated", "--disable-pip-version-check",
+        "--no-input", "--target", str(site_packages), "--no-compile", "--require-hashes", "--only-binary=:all:",
+        "--no-deps", "--upgrade", "--platform", "win_amd64", "--implementation", "cp",
+        "--python-version", f"{tag[0]}.{tag[1:]}", "--abi", f"cp{tag}", "-r", str(lock),
+    ]
+    if find_links is not None:
+        command[command.index("-r") : command.index("-r")] = ["--no-index", "--find-links", str(find_links)]
+    return command
+
+
+def install_locked_dependencies(
+    runtime: Path, lock: Path, python: str | None = None, find_links: Path | None = None
+) -> None:
+    """Install the locked wheels into *runtime*'s ``Lib/site-packages``, with the build machine's pip.
 
     Parameters
     ----------
@@ -132,31 +218,26 @@ def install_locked_dependencies(runtime: Path, lock: Path, python: str | None = 
         Lock file of ``name==version --hash=sha256:...`` lines.
     python : str, optional
         Interpreter whose pip does the install; defaults to the running one.
+    find_links : Path, optional
+        Folder of wheels to install from instead of the package index (offline builds).
 
     Raises
     ------
     SystemExit
-        If the lock is missing or pip fails (for example, a hash mismatch).
+        If the lock is missing or lists pip, pip fails (for example, a hash
+        mismatch), or the installed tree contains an installer (see ``installer_entries``).
     """
-    pth_files = sorted(runtime.glob("python*._pth"))
-    if len(pth_files) != 1 or not lock.is_file():
-        raise SystemExit(f"Need exactly one python*._pth in {runtime} and a lock file at {lock}")
-    tag = pth_files[0].name[len("python") : -len("._pth")]
+    tag = runtime_tag(runtime)
+    if not lock.is_file():
+        raise SystemExit(f"No lock file at {lock}")
+    banned = [name for name in locked_names(lock) if name.casefold().replace("_", "-") in FORBIDDEN_PREFIXES]
+    if banned:
+        raise SystemExit(f"{lock.name} lists {', '.join(banned)}; the bundle must not contain pip or setuptools")
 
-    # Wheels only, hashes required, targeted at the bundled interpreter's
-    # version rather than at the interpreter running this script.
     site_packages = runtime / "Lib" / "site-packages"
-    command = [
-        python or sys.executable, "-m", "pip", "install", "--isolated", "--disable-pip-version-check", "--no-input",
-        "--target", str(site_packages), "--no-compile", "--require-hashes", "--only-binary=:all:", "--no-deps",
-        "--platform", "win_amd64", "--implementation", "cp", "--python-version", f"{tag[0]}.{tag[1:]}",
-        "--abi", f"cp{tag}", "-r", str(lock),
-    ]
-    if subprocess.run(command, check=False).returncode != 0:
+    if subprocess.run(wheel_install_command(site_packages, lock, tag, python, find_links), check=False).returncode != 0:
         raise SystemExit("Installing the locked dependencies into the runtime failed")
-
-    # pip --target also writes console-script launchers; the bundle needs none.
-    shutil.rmtree(site_packages / "bin", ignore_errors=True)
+    tidy_site_packages(site_packages)
 
 
 def _download(url: str, destination: Path) -> None:

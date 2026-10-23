@@ -4,9 +4,8 @@ rem Fetches the pinned embeddable Python once (SHA-256 verified, kept in dist\ca
 rem hash-locked dependencies into it, writes MANIFEST.sha256, and builds
 rem dist\gupkg-<version>-win-amd64.zip unless an output path is given. The ZIP's SHA-256 is printed.
 setlocal EnableExtensions
+rem The build machine's pip (the development .venv) installs the wheels; the bundle itself has no pip.
 call "%~dp0_python.cmd" || exit /b %ERRORLEVEL%
-rem The bundle build needs pip, which the committed runtime provides (a plain venv may not).
-if exist "%REPO_ROOT%\src\gupkg\python\python.exe" set "PY="%REPO_ROOT%\src\gupkg\python\python.exe""
 pushd "%REPO_ROOT%"
 
 set "OUTPUT=%~1"
