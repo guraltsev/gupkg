@@ -9,7 +9,6 @@ mode = "module"
 
 [update.payload]
 mode = "module"
-ignore_checksum = true
 
 [[shortcut]]
 name = "gupkg manager"

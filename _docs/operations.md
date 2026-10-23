@@ -37,49 +37,55 @@ It runs on stock Windows PowerShell 5.1:
 gupkg-bootstrap.cmd                      :: auto: system scope if elevated, otherwise user
 gupkg-bootstrap.cmd -Scope user          :: force per-user, even when elevated
 gupkg-bootstrap.cmd -Scope system        :: force all users, elevated shell required
-gupkg-bootstrap.cmd -Source \\server\share\gupkg-0.12.0.zip -Sha256 <digest>
+gupkg-bootstrap.cmd -Source \\server\share\gupkg-0.18.0-win-amd64.zip -Sha256 <digest>
 ```
 
 What it does, in order: choose the root (`%USERPROFILE%\opt` or `C:\opt`, or
-`-Root`); fetch the archive from `-Source` (a URL, ZIP, or folder; default: the
-newest release in `RELEASES.md` of the official repository) and verify `-Sha256` when given;
-place it at `<root>\gupkg\<version>`, reusing a matching folder unless
-`-Force`; run `gupkg install` on it, which creates the `current` junction, the
-`gupkg` and `gupkg-tui` commands, and the PATH entry; and run
-`gupkg manager init` unless `-SkipManagerInit` (an existing configuration is
-left untouched). Every step is repeatable. It needs no Python in advance: the
-first run of gupkg downloads a SHA-256-verified embedded Python when none is
-installed. Keep the version directory immutable; repairs and upgrades should
-replace or activate a complete version rather than editing the runtime in place.
+`-Root`); fetch the release ZIP from `-Source` (a URL, ZIP, or extracted folder;
+default: the newest row of `RELEASES.md` of the official repository, whose asset
+URL is derived from the version) and verify the download against `-Sha256` (for
+the default source, the digest in that same `RELEASES.md` row; a `-Source` ZIP
+without `-Sha256` prints a warning); refuse a payload without
+`gupkg\python\python.exe`; check every file against `gupkg\MANIFEST.sha256` and
+stop on any modified, missing or extra file; place it at `<root>\gupkg\<version>`,
+reusing a matching folder unless `-Force`; run `gupkg install` on it, which
+creates the `current` junction, the `gupkg` and `gupkg-tui` commands, and the
+PATH entry; and run `gupkg manager init` unless `-SkipManagerInit` (an existing
+configuration is left untouched). Every step is repeatable. It needs no Python in
+advance, and the only downloads are `RELEASES.md` and the ZIP. Keep the version
+directory immutable; repairs and upgrades replace or activate a complete version
+rather than editing the runtime in place.
 
-Release archives contain a version directory with the application payload, the
-embedded Python runtime, package metadata, and the native shim files. They ship
+There is one distribution: the release ZIP `gupkg-<version>-win-amd64.zip`. It
+contains a version directory with the embedded CPython, the hash-locked
+dependencies, the native shims, the application, package metadata, the update
+hooks, `gupkg\RELEASE.txt` (version and commit) and `gupkg\MANIFEST.sha256` (one
+`<sha256>  <relative path>` line for every other file, sorted by path). It ships
 no manager configuration: roots and registry settings belong to the
 administrator and are created by `manager init`.
 
-The repository-side assembly tool is:
+The ZIP and every digest that verifies it are produced by the build, never by
+installed code:
 
 ```bat
-python tools\build_standalone.py ^
-  --runtime C:\release-inputs\cpython-3.12.10-embed-amd64.zip ^
-  --runtime-sha256 <64-hex-digest> ^
-  --source src\gupkg ^
-  --manifest src\gupkg\pkg.toml ^
-  --output dist\gupkg-0.12.0.zip
+scripts\build-standalone.cmd              :: dist\gupkg-<version>-win-amd64.zip, SHA-256 printed
 ```
 
-The runtime archive and digest are explicit inputs. The script verifies the
-digest, excludes a source-checkout `python` directory, copies the audited
-native shims/configuration, injects the runtime under the payload, and writes a
-versioned ZIP. It does not silently download or trust an arbitrary Python
-runtime. The outer release bootstrap executable is a release packaging concern;
-the ZIP is the repository build output.
+The build (`tools\build_standalone.py`) verifies the CPython archive against the
+digest pinned in `tools\fetch_runtime.py` (the only place the URL and digest
+live), installs the locked wheels with `--require-hashes`, assembles the tree,
+writes `RELEASE.txt` and then `MANIFEST.sha256`, zips it, and prints and saves
+(`<zip>.sha256`) the ZIP's SHA-256. `tools\release.py` uploads the ZIP as the
+asset of GitHub release `v<version>` and records that digest in `RELEASES.md`.
+`MANIFEST.sha256` is protected in transit by the ZIP digest in `RELEASES.md`, and
+at rest by the admin-only folder permissions that a system-scope install sets;
+signing it is out of scope.
 
-For a source checkout, the existing `src\gupkg.cmd` launcher remains available
-for development. It selects a packaged `gupkg\gupkg.exe` when present and
-otherwise delegates to the adjacent `gupkg\gupkg.cmd` bootstrap. The bootstrap
-may use `GUPKG_PYTHON`, `gupkg.python`, a local `python\python.exe`, Python on
-`PATH`, or the Windows `py -3` launcher.
+For a source checkout, the `src\gupkg.cmd` launcher remains available for
+development. It selects a packaged `gupkg\gupkg.exe` when present and otherwise
+delegates to the adjacent `gupkg\gupkg.cmd`, which runs the committed
+`src\gupkg\python` like any other install: there is no system Python, `PATH`
+lookup, `GUPKG_PYTHON` override or download, not even for development.
 
 ## Manager configuration
 
@@ -194,7 +200,7 @@ source. Local package paths never contact the registry.
 
 ## Self-health and recovery
 
-The self commands inspect the embedded runtime, bootstrap metadata, and the
+The self commands inspect the bundled runtime, the installed files, and the
 scope-specific shim/configuration pair:
 
 ```bat
@@ -204,13 +210,24 @@ gupkg --scope system manager self repair
 gupkg --scope user manager self update
 ```
 
-`manager self status` is read-only. `manager self repair` restores missing or inconsistent
-standalone launch metadata and shims from the installed version. `self update`
-uses the same self-package path as repair; a newer release must be present in
-the configured release/update source before it can be activated. System scope
-requires elevation. If the embedded runtime itself is missing or corrupted,
-reinstall the complete standalone release rather than copying individual
-Python files.
+`manager self status` is read-only and report-only. It checks every file of the
+running version against its `MANIFEST.sha256` and lists the modified, missing and
+extra files (`gupkg\gupkg-config.toml`, `App`, `Icons`, `Shortcuts` and
+`__pycache__` folders are installation state, not release content). Exit status
+`3` means the install is damaged. `manager self repair` restores missing or
+inconsistent launch metadata and shims from the installed version. `manager self
+update` finds the newest row of `RELEASES.md`, downloads that release ZIP,
+verifies the ZIP against the row's SHA-256 and the unpacked tree against its own
+manifest, and activates the new version with its own `python\`; nothing of the
+previous runtime is carried over, and a failed check leaves the active version
+unchanged. When the newest release is major version 1 or later, `self update`
+installs nothing and names the bootstrap command to run instead. System scope
+requires elevation.
+
+A missing or damaged runtime is an installation error with one fix: install the
+release ZIP again with `gupkg-bootstrap.cmd` (`-Source` with a ZIP and `-Sha256`
+for a vetted copy, `-Force` to replace the folder). gupkg does not download or
+repair a runtime itself.
 
 ## Routine recovery
 
@@ -235,72 +252,80 @@ scope elevation must leave user packages unchanged.
 An elevated (Administrator) `gupkg` executes only code that non-administrators
 cannot modify. `gupkg.cmd` detects elevation and then:
 
-- runs only the bundled `python\python.exe`, in isolated mode (`-I -s -B`), and
-  ignores `GUPKG_PYTHON`, `gupkg.python`, `python`, `py`, and `PYTHONPATH`;
-- verifies that the package folder, the runtime and every directory on the
-  import path are writable by Administrators and SYSTEM only, and refuses
-  otherwise, printing the offending principal and an `icacls` command;
-- never runs `pip` implicitly and never downloads a runtime.
+- runs only the bundled `python\python.exe`, in isolated mode (`-I -s -B`), as
+  every launch does; `GUPKG_PYTHON`, `gupkg.python`, `python`, `py`, and
+  `PYTHONPATH` are never consulted;
+- verifies that the version folder, the package folder, the runtime and its
+  `Lib\site-packages`, and every directory on the import path are writable by
+  Administrators and SYSTEM only, and refuses otherwise, printing the offending
+  principal and an `icacls` command;
+- never runs `pip` and never downloads a runtime, in any run.
 
 `gupkg-bootstrap.ps1 -Scope system` installs under `%SystemDrive%\opt` and
 restricts `opt\gupkg` accordingly. For any other location, run the printed
 `icacls` command from an elevated prompt. A folder created under the root of
 `C:` is writable by Authenticated Users until it is restricted.
 
-Runtime dependencies are pinned with hashes in `gupkg\gupkg-deps.lock` and ship
-inside the release bundle. From an elevated prompt:
-
-```bat
-gupkg manager self repair-deps          :: reinstall exactly what the lock pins
-gupkg manager self update-deps          :: resolve newer releases, show the plan, ask
-gupkg manager self update-deps --yes    :: apply without asking (required in scripts)
-```
-
-Both install wheels only into a staging folder, verify hashes, import the
-result in a child process, and only then swap it into
-`python\Lib\site-packages`; a failure leaves the live folder and the lock
-unchanged. Elevated runs and `manager self status` warn when a pinned
-dependency has a newer stable release; disable that with `dependency_update_check = false`
-under `[self]` in `gupkg-config.toml`, or `GUPKG_NO_DEPENDENCY_UPDATE_CHECK=1`.
-Non-elevated runs keep installing the newest dependencies into
-`%LOCALAPPDATA%\gupkg`. After `gupkg update` installs a version with a
-different lock, run `repair-deps` once. The design is in
+The dependencies are installed by the build, from the hash-pinned
+`tools\gupkg-deps.lock`, and ship inside the release ZIP. An `ImportError` in
+gupkg itself therefore means a damaged install, and `manager self status` finds
+the file. Dependency freshness is a maintainer concern (see the development
+guide): `tools\check_deps.py` compares the pins with PyPI and
+`tools\update_deps.py` updates the lock and the committed runtime. Package-local
+update hooks run once and may import only the standard library, what the bundle
+ships and modules in their own `pkg.local` folder; a missing import fails the
+update with the module's name. The earlier design is recorded in
 `docs/elevated-runtime-design.md`.
 
 ## Maintenance scripts
 
 Every routine job has a script in `scripts\`, so no Python needs to be typed.
-They use the repository's `.venv` if present, otherwise the bundled runtime in
-`src\gupkg\python`.
+They use the repository's `.venv` if present, otherwise the runtime committed in
+`src\gupkg\python` (the build scripts always use the committed runtime, which
+has the pip they need). These are development-tree tools: none ships in the
+release ZIP and gupkg cannot reach them.
 
 | Script | What it does |
 |---|---|
 | `test.cmd [pytest args]` | Run the test suite. |
 | `bump.cmd <version>` | Set the version in `_version.py` and both `pkg.toml` files and commit. |
-| `release.cmd "notes" [--no-push]` | Test, add the `RELEASES.md` row, tag, and push branch and tag. |
-| `build-standalone.cmd [output.zip]` | Build the release bundle in `dist\` with the pinned, verified Python. |
+| `release.cmd "notes" [--no-push]` | Test, build the ZIP, tag, upload it to GitHub release `v<version>`, add the `RELEASES.md` row (with the ZIP's SHA-256), and push the branch. `--no-push` keeps everything local. |
+| `build-standalone.cmd [output.zip]` | Build the release ZIP in `dist\` with the pinned, verified Python and the locked dependencies, and print its SHA-256. |
+| `fetch-runtime.cmd [--destination DIR] [--force]` | Fetch the pinned embeddable CPython, verify it, write `._pth` and install the locked dependencies (default destination: the committed `src\gupkg\python`). |
+
+Dependency maintenance runs the tools directly: `python tools\update_deps.py`
+(resolve newer releases, show the plan, ask; `--yes`, `--repair`) and
+`python tools\check_deps.py` (report newer releases; exit 1 when there are any).
 
 ## Releasing gupkg itself
 
 `RELEASES.md` is the release registry: a table of version, full commit hash,
-date, and notes, newest first. gupkg's own `pkg.local/check_update.py` reads it
-from `main`, so `gupkg update` on the gupkg package installs the commit's source
-archive as a new `<version>` folder, and `gupkg-bootstrap.ps1` installs the
-newest row on a fresh machine. The archive's embedded commit must equal the
-listed one.
+date, SHA-256 and notes, newest first. The SHA-256 is that of the release ZIP
+`gupkg-<version>-win-amd64.zip`, attached to the GitHub release `v<version>`.
+gupkg's own `pkg.local/check_update.py` reads the table from `main`, so
+`gupkg manager self update` finds the newest row, downloads the asset, and has
+its normal download verification compare it with that digest; then
+`unpack_app.py` checks the unpacked tree against `MANIFEST.sha256` and the
+recorded commit before the new `<version>` folder is committed. A row without a
+digest (written before ZIPs had digests) is an error for the updater, and
+`gupkg-bootstrap.ps1` installs the newest row on a fresh machine the same way.
 
-To release (from a clean, committed tree):
+To release (from a clean, committed tree, with the GitHub CLI `gh` signed in):
 
 ```bat
 scripts\bump.cmd 0.14.0
 scripts\release.cmd "one-line notes"
 ```
 
-`scripts\release.cmd` runs the tests, records the release, and pushes the branch
-and the `v<version>` tag to the first Git remote (`--no-push` skips the push).
-`tools\release.py` refuses a dirty tree, mismatched versions, or a version that
-is already listed. It records `HEAD` as the release, commits the new row, and
-tags the released commit `v<version>`. Nothing is published until you push.
+`scripts\release.cmd` runs the tests, then `tools\release.py`, then pushes the
+branch to the first Git remote (`--no-push` keeps everything local and uploads
+nothing). `tools\release.py` refuses a dirty tree, a version that is already
+listed, and a ZIP that was not built from `HEAD` (the commit is recorded in the
+ZIP as `gupkg\RELEASE.txt`). It builds the ZIP, tags the released commit
+`v<version>`, pushes the tag, creates the GitHub release with the ZIP as its
+asset, and commits the new row naming `HEAD` as the release and the ZIP's
+SHA-256. The row is committed after the upload, so `RELEASES.md` never advertises
+a release that was not published; the branch push makes it visible.
 
 ## Release and validation checks
 

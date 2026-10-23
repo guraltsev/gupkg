@@ -48,7 +48,6 @@ from .core import (
     read_toml_file,
     write_text_atomic,
 )
-from .dependencies import run_with_missing_dependencies
 from .downloads import download_response, file_sha256
 from .github_releases import check_update as check_github_release
 from .metadata import sync_config_metadata_text
@@ -182,8 +181,6 @@ def check_update(
     identity: PackageIdentity,
     config: Dict[str, Any],
     state: Dict[str, Any],
-    *,
-    local_deps_autoinstall: bool = False,
 ) -> Tuple[str, Optional[Dict[str, Any]]]:
     """Discover the current or next upstream state without changing ``App``.
 
@@ -195,8 +192,6 @@ def check_update(
         Normalized package configuration containing the update declaration.
     state : Dict[str, Any]
         Mutable package-owned update state used for candidate continuity.
-    local_deps_autoinstall : bool, default=False
-        Whether trusted package-local hooks may install missing imports.
 
     Returns
     -------
@@ -236,8 +231,8 @@ def check_update(
         callback = check_github_release
     else:
         context["channel"] = check["channel"]
-        callback = _hook(identity, check["module"], "check_update", local_deps_autoinstall)
-    raw = run_with_missing_dependencies(callback, context, autoinstall=local_deps_autoinstall)
+        callback = _hook(identity, check["module"], "check_update")
+    raw = callback(context)
     if raw is None:
         return "current", None
     return "available", _normalize_update_candidate(raw, identity, state)
@@ -423,7 +418,6 @@ def prepare_update(
     work: Path,
     *,
     no_checksum: bool,
-    local_deps_autoinstall: bool = False,
 ) -> Path:
     """Build a complete new version tree under *work* for a single final rename.
 
@@ -439,8 +433,6 @@ def prepare_update(
         Isolated, empty workspace that receives the staged version.
     no_checksum : bool
         Whether applicable payload checksum verification may be bypassed.
-    local_deps_autoinstall : bool, default=False
-        Whether trusted package-local hooks may install missing imports.
 
     Returns
     -------
@@ -481,22 +473,14 @@ def prepare_update(
             _unpack_zip_payload(artifact, candidate, payload, work, stage_app)
             _apply_payload_renames(stage_app, payload.get("rename", []), staged_identity)
         else:
-            unpack = _hook(identity, payload["module"], "unpack_app", local_deps_autoinstall)
-            run_with_missing_dependencies(
-                unpack,
-                _stage_context(candidate, artifact, stage, stage_app),
-                autoinstall=local_deps_autoinstall,
-            )
+            unpack = _hook(identity, payload["module"], "unpack_app")
+            unpack(_stage_context(candidate, artifact, stage, stage_app))
 
     # Package-authored install steps run only against the staged tree, so a
     # failing step never touches the live version.
     for step in config["update"]["steps"][1:]:
-        install_step = _hook(identity, step["module"], "install_step", local_deps_autoinstall)
-        run_with_missing_dependencies(
-            install_step,
-            _stage_context(candidate, artifact, stage, stage_app),
-            autoinstall=local_deps_autoinstall,
-        )
+        install_step = _hook(identity, step["module"], "install_step")
+        install_step(_stage_context(candidate, artifact, stage, stage_app))
     if not (stage_app.is_dir() and any(stage_app.iterdir())):
         raise RuntimeError("Prepared update App directory is missing or empty")
     return stage
@@ -691,12 +675,36 @@ def load_package_module(identity: PackageIdentity, reference: str):
     return module
 
 
-def _hook(identity: PackageIdentity, reference: str, function: str, autoinstall: bool):
-    """Load a package-local module and return its required hook function."""
-    module = run_with_missing_dependencies(
-        load_package_module, identity, reference, autoinstall=autoinstall
-    )
+def _hook(identity: PackageIdentity, reference: str, function: str):
+    """Load a package-local module and return its hook, run once and never retried.
+
+    Hooks may import only the standard library, modules the gupkg bundle ships,
+    and modules in their own ``pkg.local`` folder. Nothing is ever installed on
+    their behalf, so a missing import fails the hook with the module's name.
+    """
+    def unavailable(error: ImportError) -> RuntimeError:
+        """Describe an unavailable import in terms the person can act on."""
+        module_name = error.name or str(error)
+        return RuntimeError(
+            f"{reference} cannot import {module_name!r}, and gupkg installs nothing for hooks. "
+            "Hooks may import only the standard library, what the gupkg bundle ships, and "
+            "modules in their own pkg.local folder."
+        )
+
+    # Loading runs the module's top-level imports, so guard it as well as the call.
+    try:
+        module = load_package_module(identity, reference)
+    except ImportError as error:
+        raise unavailable(error) from error
     callback = getattr(module, function, None)
     if not callable(callback):
         raise ConfigValidationError(f"{reference} must define {function}(context)")
-    return callback
+
+    def run(context: Dict[str, Any]) -> Any:
+        """Run the hook once, translating an unavailable import into a plain failure."""
+        try:
+            return callback(context)
+        except ImportError as error:
+            raise unavailable(error) from error
+
+    return run

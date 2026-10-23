@@ -1,20 +1,19 @@
-"""Install and update gupkg's runtime dependencies from a hash-pinned lockfile.
+"""Update or refresh the locked runtime dependencies of a gupkg checkout.
 
-The lockfile ``gupkg-deps.lock`` beside the ``gupkg`` package pins every
-distribution (including transitive ones) that the bundled Python needs, with
-SHA-256 hashes. ``repair_deps`` reinstalls exactly that set into the bundled
-``python\\Lib\\site-packages`` directory; ``update_deps`` resolves newer stable
-releases, shows a plan, asks for confirmation, and then installs and rewrites
-the lockfile. Both refuse to run unless the process is elevated and every
-directory it trusts is admin-only. A failed run leaves the live directory and
-the lockfile untouched.
+This is a maintainer tool for the development tree; it is never shipped and
+gupkg never runs it. ``tools/gupkg-deps.lock`` pins every distribution
+(including transitive ones) that the bundled Python needs, with SHA-256 hashes.
+``update_deps`` resolves newer stable releases, shows the plan, asks for
+confirmation, then installs them into the committed runtime's
+``Lib/site-packages`` and rewrites the lock. ``repair_deps`` reinstalls exactly
+the pinned set. It only touches the checkout, so it needs no elevation.
 
 Usage and API
 -------------
-Call ``repair_deps(...)`` or ``update_deps(...)``; the command line exposes them
-as ``gupkg manager self repair-deps`` and ``gupkg manager self update-deps``.
-``read_lock``, ``format_lock`` and ``plan_changes`` are available for tools that
-inspect or generate lockfiles.
+``python tools/update_deps.py`` shows the plan and asks; ``--yes`` applies it
+without asking; ``--repair`` reinstalls the current lock. ``read_lock``,
+``format_lock`` and ``plan_changes`` are available for tools that inspect or
+generate lock files.
 
 Implementation Approach
 -----------------------
@@ -24,36 +23,37 @@ Probe imports run in an isolated child process against the staging directory.
 Only after they pass is the live directory renamed to a backup and the staging
 directory renamed into place, so each step either completes or leaves the live
 install as it was. New versions are resolved with ``pip install --dry-run
---report`` in the bundled interpreter, which also yields the wheel hashes.
+--report`` in the committed interpreter, which also yields the wheel hashes.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from .dependencies import _IMPORT_PROBES, _RUNTIME_DEPENDENCIES
-from .elevation import elevated_mode, enforce_elevated_runtime, require_trusted_directory
+ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_RUNTIME = ROOT / "src" / "gupkg" / "python"
+DEFAULT_LOCK = Path(__file__).resolve().parent / "gupkg-deps.lock"
 
-LOCK_NAME = "gupkg-deps.lock"
+# Distributions whose closure the lock must contain: gupkg's text interface, and
+# pip, which the staged install and the resolution step run.
+LOCK_ROOTS = ("textual", "pip")
 
-# Distributions the lockfile must always contain besides gupkg's own features:
-# pip is needed to repair or update, and the swap replaces the whole directory.
-_EXTRA_ROOTS = ("pip",)
+# A bare top-level import can succeed for an empty or damaged package directory
+# (it becomes a namespace package), so these imports prove the install is usable.
+IMPORT_PROBES = {"textual": "textual.app"}
 
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _VERSION = re.compile(r"^[0-9]+(?:\.[0-9]+)*$")
-
-
-class NotElevatedError(RuntimeError):
-    """Report that a dependency command was run without administrator rights."""
 
 
 @dataclass(frozen=True)
@@ -67,7 +67,7 @@ class LockedRequirement:
 
 @dataclass(frozen=True)
 class PlanEntry:
-    """Describe how one distribution changes between two lockfiles."""
+    """Describe how one distribution changes between two lock files."""
 
     name: str
     old: str | None
@@ -83,20 +83,40 @@ class PlanEntry:
         return f"  update  {self.name} {self.old} -> {self.new}"
 
 
-# ---------------------------------------------------------------------------
-# Public commands
-# ---------------------------------------------------------------------------
+def main(argv: list[str] | None = None) -> int:
+    """Run the update (or ``--repair``) against the committed runtime and lock."""
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--repair", action="store_true", help="reinstall exactly the pinned set")
+    parser.add_argument("--yes", action="store_true", help="apply the plan without asking")
+    parser.add_argument("--runtime", type=Path, default=DEFAULT_RUNTIME)
+    parser.add_argument("--lock", type=Path, default=DEFAULT_LOCK)
+    args = parser.parse_args(argv)
+
+    def confirm(lines: list[str]) -> bool:
+        """Show the plan and decide whether to apply it."""
+        for line in lines:
+            print(line)
+        if args.yes:
+            return True
+        if not sys.stdin.isatty():
+            raise SystemExit("Refusing to apply a plan without --yes when there is no terminal")
+        return input("Apply these changes? [y/N] ").strip().casefold() in {"y", "yes"}
+
+    try:
+        if args.repair:
+            repair_deps(args.runtime, args.lock)
+        else:
+            update_deps(args.runtime, args.lock, confirm=confirm)
+    except RuntimeError as error:
+        print(f"[update-deps] {error}", file=sys.stderr)
+        return 1
+    return 0
 
 
-def repair_deps(package_directory: Path | None = None, progress: Callable[[str], None] = print) -> list[LockedRequirement]:
-    """Reinstall exactly the distributions pinned by the lockfile.
-
-    Parameters
-    ----------
-    package_directory : Path, optional
-        Directory of the ``gupkg`` package; defaults to the running package.
-    progress : callable, default=print
-        Receives one status line at a time.
+def repair_deps(
+    runtime: Path = DEFAULT_RUNTIME, lock: Path = DEFAULT_LOCK, progress: Callable[[str], None] = print
+) -> list[LockedRequirement]:
+    """Reinstall exactly the distributions pinned by the lock.
 
     Returns
     -------
@@ -106,21 +126,22 @@ def repair_deps(package_directory: Path | None = None, progress: Callable[[str],
     Raises
     ------
     RuntimeError
-        If the run is not elevated and trusted, or any install step fails.
-        The live directory and the lockfile are unchanged in that case.
+        If the runtime is missing or any install step fails; the live
+        directory and the lock are unchanged in that case.
     """
-    package = _checked_package_directory(package_directory)
-    requirements = read_lock(package / LOCK_NAME)
+    _require_runtime(runtime)
+    requirements = read_lock(lock)
     if not requirements:
-        raise RuntimeError(f"{package / LOCK_NAME} lists no distributions; nothing to install")
-    progress(f"[gupkg] Installing {len(requirements)} locked distributions with hash verification")
-    _install_and_swap(package, package / LOCK_NAME)
-    progress("[gupkg] Dependencies repaired")
+        raise RuntimeError(f"{lock} lists no distributions; nothing to install")
+    progress(f"[update-deps] Installing {len(requirements)} locked distributions with hash verification")
+    _install_and_swap(runtime, lock)
+    progress("[update-deps] Dependencies repaired")
     return requirements
 
 
 def update_deps(
-    package_directory: Path | None = None,
+    runtime: Path = DEFAULT_RUNTIME,
+    lock: Path = DEFAULT_LOCK,
     *,
     confirm: Callable[[list[str]], bool],
     progress: Callable[[str], None] = print,
@@ -129,12 +150,8 @@ def update_deps(
 
     Parameters
     ----------
-    package_directory : Path, optional
-        Directory of the ``gupkg`` package; defaults to the running package.
     confirm : callable
         Receives the plan lines and returns whether to proceed.
-    progress : callable, default=print
-        Receives one status line at a time.
 
     Returns
     -------
@@ -145,56 +162,45 @@ def update_deps(
     Raises
     ------
     RuntimeError
-        If the run is not elevated and trusted, versions cannot be resolved
-        (for example, PyPI is unreachable), or an install step fails.
-        The live directory and the lockfile are unchanged in that case.
+        If versions cannot be resolved (for example, PyPI is unreachable) or an
+        install step fails. The live directory and the lock are unchanged then.
     """
-    package = _checked_package_directory(package_directory)
-    current = read_lock(package / LOCK_NAME)
+    _require_runtime(runtime)
+    current = read_lock(lock)
 
-    # Resolve with the bundled interpreter so environment markers match it.
-    progress("[gupkg] Resolving the newest stable releases from PyPI")
-    candidate = resolve_lock(package, _lock_roots())
+    # Resolve with the committed interpreter so environment markers match it.
+    progress("[update-deps] Resolving the newest stable releases from PyPI")
+    candidate = resolve_lock(runtime, LOCK_ROOTS)
     plan = plan_changes(current, candidate)
     if not plan:
-        progress("[gupkg] Dependencies are already current")
+        progress("[update-deps] Dependencies are already current")
         return []
 
     # Nothing is installed until the person has seen exactly what changes.
     lines = ["Planned dependency changes:", *(entry.description for entry in plan)]
     if not confirm(lines):
-        progress("[gupkg] Update cancelled; nothing was changed")
+        progress("[update-deps] Update cancelled; nothing was changed")
         return []
 
     # Install from a temporary lock; the real one changes only after the swap.
-    pending = package / (LOCK_NAME + ".new")
+    pending = lock.with_name(lock.name + ".new")
     pending.write_text(format_lock(candidate), encoding="utf-8", newline="\n")
     try:
-        _install_and_swap(package, pending)
-        os.replace(pending, package / LOCK_NAME)
+        _install_and_swap(runtime, pending)
+        os.replace(pending, lock)
     finally:
         pending.unlink(missing_ok=True)
-    progress("[gupkg] Dependencies updated and lockfile rewritten")
+    progress("[update-deps] Dependencies updated and lock rewritten")
     return plan
 
 
 # ---------------------------------------------------------------------------
-# Lockfile format
+# Lock file format
 # ---------------------------------------------------------------------------
 
 
 def read_lock(path: Path) -> list[LockedRequirement]:
-    """Read a lockfile of ``name==version --hash=sha256:...`` lines.
-
-    Parameters
-    ----------
-    path : Path
-        Lockfile to read.
-
-    Returns
-    -------
-    list of LockedRequirement
-        Entries in file order.
+    """Read a lock file of ``name==version --hash=sha256:...`` lines.
 
     Raises
     ------
@@ -204,7 +210,7 @@ def read_lock(path: Path) -> list[LockedRequirement]:
     try:
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
-        raise RuntimeError(f"Could not read the dependency lockfile {path}: {exc}") from exc
+        raise RuntimeError(f"Could not read the dependency lock {path}: {exc}") from exc
 
     # Join backslash-continued lines, then parse one requirement per line.
     requirements = []
@@ -230,8 +236,8 @@ def read_lock(path: Path) -> list[LockedRequirement]:
 
 
 def format_lock(requirements: list[LockedRequirement]) -> str:
-    """Render requirements in the canonical lockfile format, sorted by name."""
-    lines = ["# Generated by gupkg; edit with 'gupkg manager self update-deps'."]
+    """Render requirements in the canonical lock format, sorted by name."""
+    lines = ["# Generated by tools/update_deps.py; do not edit by hand."]
     for item in sorted(requirements, key=lambda entry: _canonical(entry.name)):
         hashes = " ".join(f"--hash=sha256:{digest}" for digest in item.hashes)
         lines.append(f"{item.name}=={item.version} {hashes}")
@@ -252,71 +258,14 @@ def plan_changes(old: list[LockedRequirement], new: list[LockedRequirement]) -> 
     return plan
 
 
-def _printable(text: str) -> str:
-    """Drop control characters from subprocess text before it reaches the terminal."""
-    return "".join(char for char in text if char == "\n" or char.isprintable())
-
-
 def _canonical(name: str) -> str:
     """Normalize a distribution name the way package indexes compare them."""
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
-# ---------------------------------------------------------------------------
-# Preconditions and subprocess helpers
-# ---------------------------------------------------------------------------
-
-
-def _lock_roots() -> tuple[str, ...]:
-    """Return the distributions whose closure the lockfile must contain."""
-    roots = [name for names in _RUNTIME_DEPENDENCIES.values() for name in names]
-    return tuple(dict.fromkeys([*roots, *_EXTRA_ROOTS]))
-
-
-def _checked_package_directory(package_directory: Path | None) -> Path:
-    """Return the package directory after proving the run may modify dependencies."""
-    package = Path(package_directory or Path(__file__).resolve().parent).resolve()
-
-    # Dependency management is an administrator-only action on trusted paths.
-    if not elevated_mode():
-        raise NotElevatedError("This command must be run from an elevated (Administrator) prompt")
-    if package_directory is None:
-        enforce_elevated_runtime(package)
-    runtime = package / "python"
-    if not (runtime / "python.exe").is_file():
-        raise RuntimeError(
-            f"The bundled Python {runtime / 'python.exe'} is missing; "
-            "reinstall gupkg from an elevated prompt"
-        )
-    for directory in (package, runtime):
-        require_trusted_directory(directory)
-    return package
-
-
-def _python(package: Path) -> str:
-    """Return the bundled interpreter path."""
-    return str(package / "python" / "python.exe")
-
-
-def _clean_environment() -> dict[str, str]:
-    """Return a child environment without Python or pip variables the user controls."""
-    return {
-        key: value
-        for key, value in os.environ.items()
-        if not key.upper().startswith(("PYTHON", "PIP_"))
-    }
-
-
-def _run(command: list[str], package: Path) -> subprocess.CompletedProcess[str]:
-    """Run one isolated bundled-interpreter command with captured text output."""
-    return subprocess.run(
-        command,
-        cwd=str(package / "python"),
-        env=_clean_environment(),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+def _printable(text: str) -> str:
+    """Drop control characters from subprocess text before it reaches the terminal."""
+    return "".join(char for char in text if char == "\n" or char.isprintable())
 
 
 # ---------------------------------------------------------------------------
@@ -324,15 +273,8 @@ def _run(command: list[str], package: Path) -> subprocess.CompletedProcess[str]:
 # ---------------------------------------------------------------------------
 
 
-def resolve_lock(package: Path, roots: tuple[str, ...]) -> list[LockedRequirement]:
+def resolve_lock(runtime: Path, roots: tuple[str, ...]) -> list[LockedRequirement]:
     """Resolve the newest stable wheels for *roots* and their dependencies.
-
-    Parameters
-    ----------
-    package : Path
-        Directory of the ``gupkg`` package whose bundled Python resolves.
-    roots : tuple of str
-        Distribution names to resolve.
 
     Returns
     -------
@@ -344,19 +286,19 @@ def resolve_lock(package: Path, roots: tuple[str, ...]) -> list[LockedRequiremen
     RuntimeError
         If pip cannot resolve (for example, offline) or reports no hash.
     """
-    with tempfile.TemporaryDirectory(prefix="gupkg-resolve-", dir=package / "python") as scratch:
+    with tempfile.TemporaryDirectory(prefix="gupkg-resolve-") as scratch:
         report_path = Path(scratch) / "report.json"
         command = [
-            _python(package), "-I", "-B", "-m", "pip", "install", "--isolated",
+            _python(runtime), "-I", "-B", "-m", "pip", "install", "--isolated",
             "--dry-run", "--ignore-installed", "--only-binary=:all:", "--disable-pip-version-check",
             "--no-input", "--quiet", "--report", str(report_path), *roots,
         ]
-        result = _run(command, package)
+        result = _run(command, runtime)
         if result.returncode != 0 or not report_path.is_file():
             detail = [_printable(line) for line in (result.stderr or result.stdout).strip().splitlines()[-1:]] or ["no output"]
             raise RuntimeError(
                 f"Could not resolve dependency versions (is PyPI reachable?): {detail[0]}. "
-                "The existing install and lockfile are unchanged."
+                "The existing install and lock are unchanged."
             )
         report = json.loads(report_path.read_text(encoding="utf-8"))
     return requirements_from_report(report)
@@ -391,9 +333,9 @@ def requirements_from_report(report: dict) -> list[LockedRequirement]:
 # ---------------------------------------------------------------------------
 
 
-def _install_and_swap(package: Path, lock_path: Path) -> None:
+def _install_and_swap(runtime: Path, lock_path: Path) -> None:
     """Install *lock_path* into staging, probe it, then swap it into place."""
-    live = package / "python" / "Lib" / "site-packages"
+    live = runtime / "Lib" / "site-packages"
     staging = live.with_name("site-packages.staging")
     backup = live.with_name("site-packages.old")
 
@@ -404,11 +346,11 @@ def _install_and_swap(package: Path, lock_path: Path) -> None:
         # Wheels only, hashes required, no dependency resolution: nothing but
         # the pinned files can land, and no build script can run.
         command = [
-            _python(package), "-I", "-B", "-m", "pip", "install", "--isolated",
+            _python(runtime), "-I", "-B", "-m", "pip", "install", "--isolated",
             "--target", str(staging), "--require-hashes", "--only-binary=:all:", "--no-deps",
             "--disable-pip-version-check", "--no-input", "--upgrade", "-r", str(lock_path),
         ]
-        result = _run(command, package)
+        result = _run(command, runtime)
         if result.returncode != 0:
             tail = _printable("\n".join((result.stderr or result.stdout).strip().splitlines()[-4:]))
             raise RuntimeError(
@@ -417,7 +359,7 @@ def _install_and_swap(package: Path, lock_path: Path) -> None:
             )
 
         # Prove the staged copy imports before it replaces anything.
-        _probe_staging(package, staging)
+        _probe_staging(runtime, staging)
 
         # Swap: if the second rename fails, put the original back.
         shutil.rmtree(backup, ignore_errors=True)
@@ -434,10 +376,10 @@ def _install_and_swap(package: Path, lock_path: Path) -> None:
         shutil.rmtree(staging, ignore_errors=True)
 
 
-def _probe_staging(package: Path, staging: Path) -> None:
+def _probe_staging(runtime: Path, staging: Path) -> None:
     """Import each root distribution's probe module from *staging* in an isolated child."""
     # Roots pull in their transitive closure, so importing them exercises it.
-    names = [_IMPORT_PROBES.get(root.replace("-", "_"), root.replace("-", "_")) for root in _lock_roots()]
+    names = [IMPORT_PROBES.get(root.replace("-", "_"), root.replace("-", "_")) for root in LOCK_ROOTS]
     code = (
         "import importlib, sys\n"
         "sys.path.append(sys.argv[1])\n"
@@ -450,9 +392,34 @@ def _probe_staging(package: Path, staging: Path) -> None:
         "print('; '.join(failed))\n"
         "raise SystemExit(1 if failed else 0)\n"
     )
-    result = _run([_python(package), "-I", "-B", "-c", code, str(staging), *names], package)
+    result = _run([_python(runtime), "-I", "-B", "-c", code, str(staging), *names], runtime)
     if result.returncode != 0:
         raise RuntimeError(
             f"The staged dependencies failed their import check ({result.stdout.strip()}); "
             "the live install is unchanged."
         )
+
+
+def _require_runtime(runtime: Path) -> None:
+    """Fail clearly when the committed runtime that does the installing is missing."""
+    if not (runtime / "python.exe").is_file():
+        raise RuntimeError(f"The runtime {runtime / 'python.exe'} is missing; run tools/fetch_runtime.py first")
+
+
+def _python(runtime: Path) -> str:
+    """Return the runtime's interpreter path."""
+    return str(runtime / "python.exe")
+
+
+def _run(command: list[str], runtime: Path) -> subprocess.CompletedProcess[str]:
+    """Run one isolated runtime-interpreter command with captured text output."""
+    environment = {
+        key: value for key, value in os.environ.items() if not key.upper().startswith(("PYTHON", "PIP_"))
+    }
+    return subprocess.run(
+        command, cwd=str(runtime), env=environment, capture_output=True, text=True, check=False
+    )
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

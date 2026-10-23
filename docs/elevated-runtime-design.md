@@ -4,6 +4,17 @@ Status: implemented. Where the implementation differs from the original
 proposal, the text below has been updated and the difference is listed in
 section 9.
 
+> **Superseded in part by issue 016.** gupkg no longer installs, repairs or
+> checks dependencies at run time, and it never probes for another Python:
+> `gupkg manager self repair-deps` / `update-deps`, the dependency advisory
+> notice and `gupkg.dependencies` were removed. The dependency lock now lives in
+> `tools/gupkg-deps.lock` and is maintained with `tools/update_deps.py` and
+> `tools/check_deps.py`; the release build installs it, and `gupkg manager self
+> status` checks the installed files against `MANIFEST.sha256`. The elevated
+> trust rules below (bundled interpreter only, isolated mode, admin-only
+> directories) still apply unchanged. The text below is kept as the record of
+> the original design.
+
 ## 1. Problem
 
 gupkg installs its own runtime dependencies (currently `textual`, for the TUI)

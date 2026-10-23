@@ -30,9 +30,7 @@ from .core import Scope
 from .outcome import Outcome, format_human
 
 
-def run_tui(
-    package_path: str = "", *, forced_scope: Scope | None = None, notices: tuple[str, ...] = ()
-) -> int:
+def run_tui(package_path: str = "", *, forced_scope: Scope | None = None) -> int:
     """Run the interactive Textual interface.
 
     Parameters
@@ -43,9 +41,6 @@ def run_tui(
         Manager-selected scope that is displayed and locked for this package
         operation.  When omitted, package-local automatic scope selection is
         unchanged.
-    notices : tuple of str, optional
-        Advisory lines (for example, a newer pinned dependency) shown as
-        warning notifications when the interface opens.
 
     Returns
     -------
@@ -76,16 +71,14 @@ def run_tui(
         "allow-downgrade": "Allow downgrade",
         "refresh-app": "Refresh App from origin",
         "no-checksum": "Skip checksum verification",
-        "allow-hook-dependency-install": "Allow hook dependency installation",
         "import-shortcuts": "Import and archive _shortcuts",
         "no-backup": "Skip config backup",
     }
     # The settings each action offers, in display order.
     action_flags = {
-        "install": ("allow-downgrade", "refresh-app", "no-checksum", "allow-hook-dependency-install"),
-        "update-check": ("allow-hook-dependency-install",),
-        "update-download": ("no-checksum", "allow-hook-dependency-install"),
-        "update": ("no-checksum", "allow-hook-dependency-install"),
+        "install": ("allow-downgrade", "refresh-app", "no-checksum"),
+        "update-download": ("no-checksum",),
+        "update": ("no-checksum",),
         "config-fix": ("import-shortcuts", "no-backup"),
     }
 
@@ -107,7 +100,6 @@ def run_tui(
             allow_downgrade="allow-downgrade" in flags,
             refresh_app="refresh-app" in flags,
             no_checksum="no-checksum" in flags,
-            allow_hook_dependency_install="allow-hook-dependency-install" in flags,
             shim_linkage=shim_linkage,
             backup="no-backup" not in flags,
             import_shortcuts="import-shortcuts" in flags,
@@ -446,10 +438,8 @@ def run_tui(
             self.result_code = 0
 
         def on_mount(self) -> None:
-            """Start at the action list and show any advisory notices."""
+            """Start at the action list."""
             self.push_screen(HomeScreen(self.initial_path))
-            for notice in notices:
-                self.notify(notice, severity="warning", timeout=20)
 
         def action_back(self) -> None:
             """Return one screen when the current screen does not handle Back."""

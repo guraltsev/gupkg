@@ -112,8 +112,26 @@ Update work, locks, timing state, and receipts are manager-owned data beneath
 the package root's `.gupkg/` directory. A finalized version directory contains
 only package-authored files and its completed `App/` payload.
 
-Standalone release assembly is intentionally separate from runtime startup.
-`tools/build_standalone.py` receives an explicit, digest-verified embedded
-runtime and creates the versioned payload; release automation supplies the
-outer bootstrap executable. This keeps source checkouts from becoming an
-implicit runtime dependency and makes runtime provenance auditable.
+### One distribution, built in the development tree
+
+gupkg is distributed as one self-contained release ZIP,
+`gupkg-<version>-win-amd64.zip`. Everything that acquires or verifies its
+contents at build time lives in `tools/` and `scripts/` of the development tree
+and is never shipped or reachable from `gupkg`; installed code only *checks*
+integrity data:
+
+| Tool | Role |
+| --- | --- |
+| `tools/fetch_runtime.py` (`scripts\fetch-runtime.cmd`) | The only place that pins the embeddable CPython URL and SHA-256. Fetches and verifies it, writes `._pth`, installs `tools/gupkg-deps.lock` with `--require-hashes --only-binary=:all: --no-deps`. |
+| `tools/update_deps.py` | Resolves newer releases, shows the plan, rewrites the lock and refreshes the committed runtime's `site-packages` (`--repair` reinstalls the lock). |
+| `tools/check_deps.py` | Compares the lock with PyPI (exit 1 when pins are stale). |
+| `tools/build_standalone.py` (`scripts\build-standalone.cmd`) | Verifies the inputs, assembles the version tree, writes `gupkg/RELEASE.txt` and `gupkg/MANIFEST.sha256`, zips it and prints the ZIP's SHA-256. |
+| `tools/release.py` (`scripts\release.cmd`) | Builds, tags, uploads the ZIP to GitHub release `v<version>` and records the digest in `RELEASES.md`. |
+
+At run time the launcher starts only `python\python.exe` from its own folder
+(`-I -s -B`); there is no system-Python lookup, no run-time pip and no
+dependency probe. `gupkg.integrity` is the checking half of the manifest:
+`manager self status`, the self-update hook (`pkg.local/unpack_app.py`) and the
+tests use it. `src/gupkg/python/` stays committed so a checkout runs without a
+build step. The ZIP digest in `RELEASES.md` covers the manifest in transit; after
+installation it relies on admin-only folder permissions.

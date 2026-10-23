@@ -32,7 +32,7 @@ gupkg manager self status       :: is gupkg's own installation healthy?
 | --- | --- |
 | `Machine scope requires administrator privileges` | Open an elevated terminal, or use `--scope user`. |
 | `Refusing to run elevated: ... is not admin-only` | Run the `icacls` command in the message from an elevated prompt, or install gupkg under an admin-only folder (see "Elevated runs" in the operations guide). |
-| `Dependency 'textual' is missing or damaged` (elevated run) | From an elevated prompt run `gupkg manager self repair-deps`. |
+| `The bundled Python is missing: ...` or an `ImportError` in gupkg itself | The install is damaged. Run `gupkg manager self status` to see which files differ from `MANIFEST.sha256`, then install the release ZIP again with `gupkg-bootstrap.cmd`; gupkg never repairs or downloads its runtime. |
 | `only_portable packages cannot be installed system-wide` | The package stores settings in its own folder (`-portable` in the name). Use `--scope user`. |
 | `Origin population failed: ...` | `App` was empty and the download or script failed; the reason follows. Fix and rerun `install`; nothing half-installed is left. |
 | `[origin].checksum did not match downloaded file` | The download is corrupt or the file changed upstream. Retry; if upstream really changed, update the checksum. `--no-checksum` skips verification with a warning (avoid). |
@@ -49,7 +49,7 @@ gupkg manager self status       :: is gupkg's own installation healthy?
 | `Cannot stage update because its immutable version already exists` | A version folder with this number exists, from a different release. Compare it with what you expect; delete the folder and the matching file in `.gupkg\receipts\` to restage. |
 | `Update candidate is older than the active version` | Upstream's latest is older than what you run. Nothing to do. |
 | `No downloaded upgrade is waiting to be installed` | You asked to activate a staged update, but there is none newer than the active version. Run `gupkg update <package> --download-only`. |
-| `Package-local dependency unavailable: X` | A package's own update script needs Python module X. Install it, or rerun with `--allow-hook-dependency-install` (those scripts are trusted code, so only for packages you trust). |
+| `<hook> cannot import 'X', and gupkg installs nothing for hooks` | A package's own update script imports module X, which is not available. Hooks may import only the standard library, what the gupkg bundle ships, and modules in their own `pkg.local` folder. Fix or replace the package's hook; nothing was installed or changed. |
 | `Updates are not configured for this package` | The `pkg.toml` has no `[update]` table. This is a warning, not an error. |
 | `fatal: ... Filename too long` while cloning (Git packages) | Enable long paths: `git config --global core.longpaths true`, and keep the package root path short. |
 

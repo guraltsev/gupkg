@@ -3,16 +3,17 @@
     Installs gupkg itself, then sets up manager mode, in one step.
 
 .DESCRIPTION
-    Downloads (or copies) a gupkg archive, optionally verifies its SHA-256,
-    places it at <Root>\gupkg\<version>, and runs "gupkg install" on it so the
+    Downloads (or copies) the self-contained gupkg release ZIP, verifies its
+    SHA-256, checks every file against the release's MANIFEST.sha256, places it
+    at <Root>\gupkg\<version>, and runs "gupkg install" on it so the
     'current' junction, the gupkg / gupkg-tui commands, and PATH are created.
     It then runs "gupkg manager init" to write a default gupkg-config.toml (in the gupkg folder, admin-only for a system install) and
     create the package folders. Every step is safe to repeat: an existing
     version folder is reused, and install re-applies the Windows integration.
 
     Needs Windows PowerShell 5.1 or newer. No Python, Git, or pip is required in
-    advance: gupkg downloads a verified embedded Python the first time it runs
-    when none is installed.
+    advance: the release ZIP carries its own Python, the locked dependencies and
+    the native launchers. The only downloads are RELEASES.md and the ZIP.
 
 .PARAMETER Scope
     auto (default): system when the shell is elevated, otherwise user.
@@ -21,14 +22,14 @@
     Administrators and SYSTEM can modify it, as elevated gupkg runs require.
 
 .PARAMETER Source
-    A ZIP archive (https:// URL or local path) or a folder containing gupkg.
-    Accepts a release bundle produced by tools\build_standalone.py or a
-    repository archive that contains src\gupkg. By default the newest release
-    in RELEASES.md of the official repository is installed.
+    A release ZIP (https:// URL or local path) or an extracted release folder,
+    as produced by tools\build_standalone.py. By default the newest release
+    in RELEASES.md of the official repository is installed, checked against the
+    SHA-256 listed in the same row.
 
 .PARAMETER Sha256
-    Expected SHA-256 of the archive. Strongly recommended for anything but the
-    default source; the script stops if it does not match.
+    Expected SHA-256 of the ZIP. Needed for any source but the default one (the
+    script warns when it is missing); the script stops if it does not match.
 
 .PARAMETER Root
     Package root to install under. Defaults to %USERPROFILE%\opt for user scope
@@ -48,7 +49,7 @@
     Installs gupkg for the current user and sets up manager mode.
 
 .EXAMPLE
-    .\gupkg-bootstrap.ps1 -Scope system -Source C:\drop\gupkg-0.12.0.zip -Sha256 <digest>
+    .\gupkg-bootstrap.ps1 -Scope system -Source C:\drop\gupkg-0.18.0-win-amd64.zip -Sha256 <digest>
     Installs a vetted release bundle for all users (run from an elevated shell).
 #>
 [CmdletBinding()]
@@ -70,15 +71,75 @@ $ProgressPreference = 'SilentlyContinue'
 
 function Step([string]$Message) { Write-Host "[gupkg] $Message" }
 
-function Get-LatestReleaseSource {
-    # RELEASES.md lists releases newest first: | version | `commit` | date | notes |
+function Get-LatestRelease {
+    # RELEASES.md lists releases newest first:
+    # | version | `commit` | date | sha256 | notes |
     $url = 'https://raw.githubusercontent.com/guraltsev/gupkg/main/RELEASES.md'
     Step "Reading $url"
     $text = (Invoke-WebRequest -UseBasicParsing -Uri $url).Content
-    $found = [regex]::Match($text, '(?m)^\|\s*(\d+(?:\.\d+)*)\s*\|\s*`?([0-9a-fA-F]{40})`?\s*\|')
-    if (-not $found.Success) { throw "RELEASES.md lists no release." }
-    Step "Latest release: $($found.Groups[1].Value) ($($found.Groups[2].Value.Substring(0, 7)))"
-    return "https://github.com/guraltsev/gupkg/archive/$($found.Groups[2].Value).zip"
+    $found = [regex]::Match($text, '(?m)^\|\s*(\d+(?:\.\d+)*)\s*\|\s*`?([0-9a-fA-F]{40})`?\s*\|[^|]*\|\s*`?([0-9a-fA-F]{64})`?\s*\|')
+    if (-not $found.Success) { throw "RELEASES.md lists no release with a SHA-256 digest." }
+    $version = $found.Groups[1].Value
+    Step "Latest release: $version ($($found.Groups[2].Value.Substring(0, 7)))"
+    return [pscustomobject]@{
+        Url    = "https://github.com/guraltsev/gupkg/releases/download/v$version/gupkg-$version-win-amd64.zip"
+        Sha256 = $found.Groups[3].Value
+    }
+}
+
+function Expand-ZipSafely([string]$Archive, [string]$Destination) {
+    # Windows PowerShell 5.1's Expand-Archive does not guard '..' entries, so
+    # every entry is checked to stay below the destination before extracting.
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $root = [IO.Path]::GetFullPath($Destination).TrimEnd('\') + '\'
+    New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+    $zip = [IO.Compression.ZipFile]::OpenRead($Archive)
+    try {
+        foreach ($entry in $zip.Entries) {
+            $target = [IO.Path]::GetFullPath((Join-Path $Destination $entry.FullName))
+            if (-not $target.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { throw "The archive contains an unsafe path: $($entry.FullName)" }
+            if ($entry.FullName.EndsWith('/')) { New-Item -ItemType Directory -Force -Path $target | Out-Null; continue }
+            New-Item -ItemType Directory -Force -Path (Split-Path $target) | Out-Null
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $target, $true)
+        }
+    } finally { $zip.Dispose() }
+}
+
+function Test-ReleaseManifest([string]$Folder, [switch]$InstalledCopy) {
+    # The release carries gupkg\MANIFEST.sha256: "<sha256>  <relative path>" for every
+    # other file of the version folder. Every file must match, and none may be
+    # missing or extra; a payload that fails is never installed.
+    $manifestPath = Join-Path $Folder 'gupkg\MANIFEST.sha256'
+    if (-not (Test-Path -LiteralPath $manifestPath)) { throw "The release has no gupkg\MANIFEST.sha256; reinstall from an official release ZIP." }
+    $expected = @{}
+    foreach ($line in [IO.File]::ReadAllLines($manifestPath)) {
+        $entry = [regex]::Match($line, '^([0-9a-f]{64})  (\S(?:.*\S)?)$')
+        if (-not $entry.Success) { throw "Malformed line in MANIFEST.sha256: $line" }
+        $relative = $entry.Groups[2].Value
+        if ($expected.ContainsKey($relative)) { throw "Duplicate path in MANIFEST.sha256: $relative" }
+        $parts = $relative -split '/'
+        if ($relative.StartsWith('/') -or $relative.Contains(':') -or $relative.Contains('\') -or ($parts -contains '..') -or ($parts -contains '')) {
+            throw "Unsafe path in MANIFEST.sha256: $relative"
+        }
+        $expected[$relative] = $entry.Groups[1].Value
+    }
+    $base = (Get-Item -LiteralPath $Folder).FullName.TrimEnd('\')
+    $actual = @{}
+    foreach ($file in Get-ChildItem -LiteralPath $Folder -Recurse -File -Force) {
+        $relative = $file.FullName.Substring($base.Length + 1).Replace('\', '/')
+        if ($relative -eq 'gupkg/MANIFEST.sha256') { continue }
+        # An installed copy also holds installation state, which is not release content.
+        if ($InstalledCopy -and ($relative -match '^(App|Icons|Shortcuts)/' -or $relative -eq 'gupkg/gupkg-config.toml')) { continue }
+        $actual[$relative] = $file.FullName
+    }
+    $modified = @($expected.Keys | Where-Object { $actual.ContainsKey($_) -and (Get-FileHash -Algorithm SHA256 -LiteralPath $actual[$_]).Hash.ToLower() -ne $expected[$_] } | Sort-Object)
+    $missing = @($expected.Keys | Where-Object { -not $actual.ContainsKey($_) } | Sort-Object)
+    $extra = @($actual.Keys | Where-Object { -not $expected.ContainsKey($_) } | Sort-Object)
+    if ($modified.Count + $missing.Count + $extra.Count -gt 0) {
+        $first = @($modified | ForEach-Object { "modified: $_" }) + @($missing | ForEach-Object { "missing: $_" }) + @($extra | ForEach-Object { "extra: $_" })
+        throw "The release does not match its MANIFEST.sha256 ($($modified.Count) modified, $($missing.Count) missing, $($extra.Count) extra; first: $($first[0]))."
+    }
+    Step "Checked $($expected.Count) files against MANIFEST.sha256"
 }
 
 function Find-GupkgFolder([string]$Folder) {
@@ -90,49 +151,6 @@ function Find-GupkgFolder([string]$Folder) {
         Select-Object -First 1
     if (-not $found) { throw "No gupkg folder (pkg.toml plus gupkg\cli.py) was found in: $Source" }
     return $found.FullName
-}
-
-function Install-BundledRuntime([string]$PackageDir) {
-    # Elevated gupkg runs use only a bundled Python and never install anything,
-    # so a system-scope install provisions the runtime here, from verified
-    # downloads: the embeddable CPython (pinned SHA-256, the same as gupkg.cmd
-    # uses) and the hash-pinned wheels listed in gupkg-deps.lock.
-    $pythonUrl = 'https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip'
-    $pythonSha = '4ACBED6DD1C744B0376E3B1CF57CE906F9DC9E95E68824584C8099A63025A3C3'
-    $lock = Join-Path $PackageDir 'gupkg-deps.lock'
-    if (-not (Test-Path -LiteralPath $lock)) { throw "Missing dependency lock: $lock" }
-    $stage = Join-Path $work 'runtime'
-    New-Item -ItemType Directory -Force -Path $stage | Out-Null
-
-    Step 'Downloading embedded Python 3.12.10'
-    $zip = Join-Path $work 'python-embed.zip'
-    Invoke-WebRequest -UseBasicParsing -Uri $pythonUrl -OutFile $zip
-    if ((Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash -ne $pythonSha) { throw 'Downloaded Python archive failed SHA-256 verification.' }
-    Expand-Archive -LiteralPath $zip -DestinationPath $stage -Force
-    $pth = "python312.zip`n.`n..`nLib/site-packages`n`nimport site`n"
-    [IO.File]::WriteAllText((Join-Path $stage 'python312._pth'), $pth, [Text.Encoding]::ASCII)
-
-    # The embeddable Python has no pip. Fetch the wheel the lock pins (matched by
-    # its hash, not by name), unpack it, and let it install the locked set.
-    $pin = [regex]::Match((Get-Content -LiteralPath $lock -Raw), '(?m)^pip==(\S+)\s+--hash=sha256:([0-9a-f]{64})')
-    if (-not $pin.Success) { throw "$lock does not pin pip." }
-    $meta = Invoke-RestMethod -UseBasicParsing -Uri "https://pypi.org/pypi/pip/$($pin.Groups[1].Value)/json"
-    $wheel = $meta.urls | Where-Object { $_.packagetype -eq 'bdist_wheel' -and $_.digests.sha256 -eq $pin.Groups[2].Value } | Select-Object -First 1
-    if (-not $wheel) { throw 'PyPI lists no pip wheel with the locked hash.' }
-    $pipZip = Join-Path $work 'pip.zip'
-    Invoke-WebRequest -UseBasicParsing -Uri $wheel.url -OutFile $pipZip
-    if ((Get-FileHash -Algorithm SHA256 -LiteralPath $pipZip).Hash.ToLower() -ne $pin.Groups[2].Value) { throw 'Downloaded pip wheel failed SHA-256 verification.' }
-    $sitePackages = Join-Path $stage 'Lib\site-packages'
-    Expand-Archive -LiteralPath $pipZip -DestinationPath $sitePackages -Force
-
-    Step 'Installing locked dependencies (hashes required, wheels only)'
-    & (Join-Path $stage 'python.exe') -I -m pip install --isolated --disable-pip-version-check --no-input --no-warn-script-location --upgrade --target $sitePackages --require-hashes --only-binary=:all: --no-deps -r $lock | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "Installing the locked dependencies failed (pip exit $LASTEXITCODE)." }
-    Remove-Item -LiteralPath (Join-Path $sitePackages 'bin') -Recurse -Force -ErrorAction SilentlyContinue
-
-    $destination = Join-Path $PackageDir 'python'
-    if (Test-Path -LiteralPath $destination) { Remove-Item -LiteralPath $destination -Recurse -Force }
-    Copy-Item -LiteralPath $stage -Destination $destination -Recurse
 }
 
 $work = Join-Path ([IO.Path]::GetTempPath()) ("gupkg-bootstrap-" + [Guid]::NewGuid().ToString('N'))
@@ -155,7 +173,11 @@ try {
     $scopeNote = if ($Scope -eq 'system') { 'all users' } else { 'current user only' }
     Step "Install scope: $Scope ($scopeNote; $why); package root: $Root"
     New-Item -ItemType Directory -Force -Path $work | Out-Null
-    if (-not $Source) { $Source = Get-LatestReleaseSource }
+    if (-not $Source) {
+        $latest = Get-LatestRelease
+        $Source = $latest.Url
+        $Sha256 = $latest.Sha256
+    }
 
     # 2. Get the archive (or folder) and verify it before unpacking anything.
     if (Test-Path -LiteralPath $Source -PathType Container) {
@@ -180,11 +202,16 @@ try {
             Write-Warning 'No -Sha256 given: the download is not verified.'
         }
         $tree = Join-Path $work 'unpacked'
-        Expand-Archive -LiteralPath $archive -DestinationPath $tree -Force
+        Expand-ZipSafely $archive $tree
     }
 
-    # 3. Place it at <Root>\gupkg\<version>, reusing an existing copy.
+    # 3. Place it at <Root>\gupkg\<version>, reusing an existing copy. The release
+    #    must carry its own Python and match its manifest exactly.
     $payload = Find-GupkgFolder $tree
+    if (-not (Test-Path -LiteralPath (Join-Path $payload 'gupkg\python\python.exe'))) {
+        throw "This is not a self-contained gupkg release: gupkg\python\python.exe is missing. Use a release ZIP."
+    }
+    Test-ReleaseManifest $payload
     # The runtime module is the one place the release number is declared.
     $versionModule = Get-Content -LiteralPath (Join-Path $payload 'gupkg\_version.py') -Raw
     if ($versionModule -notmatch '(?m)^__version__\s*=\s*"([^"]+)"') { throw "gupkg\_version.py in $payload declares no version." }
@@ -195,16 +222,12 @@ try {
         Remove-Item -LiteralPath $target -Recurse -Force
     }
     if (Test-Path -LiteralPath $target) {
+        Test-ReleaseManifest $target -InstalledCopy
         Step "Version $version is already at $target; reusing it"
     } else {
         Step "Installing gupkg $version to $target"
         New-Item -ItemType Directory -Force -Path (Split-Path $target) | Out-Null
         Copy-Item -LiteralPath $payload -Destination $target -Recurse
-    }
-    # A system-scope install runs elevated, which needs the bundled runtime.
-    $packageDir = Join-Path $target 'gupkg'
-    if ($Scope -eq 'system' -and -not (Test-Path -LiteralPath (Join-Path $packageDir 'python\python.exe'))) {
-        Install-BundledRuntime $packageDir
     }
     # A system-scope install is run elevated, and elevated runs execute only code
     # that non-administrators cannot modify. Restrict the gupkg package folder

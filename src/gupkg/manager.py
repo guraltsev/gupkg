@@ -67,7 +67,6 @@ class ManagerConfig:
     registry_source: str = OFFICIAL_SOURCE
     shim_linkage: str = "dynamic"
     schema_version: int = 2
-    dependency_update_check: bool = True
 
     def root(self, scope: Scope) -> Path:
         """Return the configured package root that owns *scope*."""
@@ -247,10 +246,9 @@ def load_manager_config(path: Path) -> ManagerConfig:
     _exact_table_keys(registry, set(), "[registry]", optional={"cache", "source"})
     shims = raw.get("shims", {"linkage": "dynamic"})
     _exact_table_keys(shims, {"linkage"}, "[shims]")
-    self_table = raw.get("self", {})
-    _exact_table_keys(self_table, set(), "[self]", optional={"dependency_update_check"})
-    if not isinstance(self_table.get("dependency_update_check", True), bool):
-        raise ConfigValidationError("[self].dependency_update_check must be true or false")
+    # Configurations written before 0.18 may carry [self] dependency_update_check.
+    # The advisory check no longer exists, so the table is accepted and ignored.
+    _exact_table_keys(raw.get("self", {}), set(), "[self]", optional={"dependency_update_check"})
     roots = {name: _expand_manager_path(value, path.parent, f"packages.{name}") for name, value in raw["packages"].items()}
     bins = {name: _expand_manager_path(value, path.parent, f"bin.{name}") for name, value in raw["bin"].items()}
     cache = (
@@ -289,7 +287,6 @@ def load_manager_config(path: Path) -> ManagerConfig:
         registry_cache=cache,
         registry_source=source,
         shim_linkage=shims["linkage"],
-        dependency_update_check=self_table.get("dependency_update_check", True),
     )
 
 
@@ -313,8 +310,6 @@ def manager_config_text(config: ManagerConfig) -> str:
         """Render a Windows path as a TOML literal string."""
         return "'" + str(value).replace("\\", "/").replace("'", "''") + "'"
 
-    # The optional [self] table is written only when the advisory check is off.
-    self_section = "" if config.dependency_update_check else "\n[self]\ndependency_update_check = false\n"
     return (
         'mode = "manager"\n'
         "schema_version = 2\n\n"
@@ -329,7 +324,6 @@ def manager_config_text(config: ManagerConfig) -> str:
         f"source = {json.dumps(config.registry_source)}\n\n"
         "[shims]\n"
         f'linkage = "{config.shim_linkage}"\n'
-        + self_section
     )
 
 
@@ -688,7 +682,7 @@ def _exception_result(exc: Exception) -> ActionResult:
 # ---------------------------------------------------------------------------
 
 
-def manager_update_target(target: ManagedTarget, *, allow_dependencies: bool = False) -> ActionResult:
+def manager_update_target(target: ManagedTarget) -> ActionResult:
     """Refresh one managed target's update status through the package workflow.
 
     Parameters
@@ -696,8 +690,6 @@ def manager_update_target(target: ManagedTarget, *, allow_dependencies: bool = F
     target : ManagedTarget
         Target whose active (or newest local) manifest should be checked; its
         ``update_status`` and ``candidate_version`` are updated.
-    allow_dependencies : bool, default=False
-        Whether trusted package-local hooks may install missing imports.
 
     Returns
     -------
@@ -713,7 +705,7 @@ def manager_update_target(target: ManagedTarget, *, allow_dependencies: bool = F
     if manifest is None:
         result = ActionResult(False, errors=["No manifest is available for the local version"], exit_code=EXIT_USER_ERROR)
     else:
-        result = _quiet(lambda: check_package_update(manifest.version_path, local_deps_autoinstall=allow_dependencies))
+        result = _quiet(lambda: check_package_update(manifest.version_path))
     if result.ok and result.status in {"available", "current", "not-configured"}:
         target.update_status = result.status
     else:
@@ -767,7 +759,6 @@ def manager_upgrade_target(
     config: ManagerConfig,
     *,
     no_checksum: bool = False,
-    allow_dependencies: bool = False,
     shim_linkage: str | None = None,
 ) -> ActionResult:
     """Check, stage, and activate one managed target's update.
@@ -780,8 +771,6 @@ def manager_upgrade_target(
         Manager configuration whose bin and package roots receive the install.
     no_checksum : bool, default=False
         Skip an applicable payload checksum.
-    allow_dependencies : bool, default=False
-        Permit trusted package-local hooks to install missing imports.
     shim_linkage : {"dynamic", "static"}, optional
         Native wrapper linkage; defaults to the configured linkage.
 
@@ -797,7 +786,6 @@ def manager_upgrade_target(
         target.package.root,
         scope=target.scope,
         no_checksum=no_checksum,
-        local_deps_autoinstall=allow_dependencies,
         shim_linkage=linkage,
         install_context=installation_context(config, target.scope, shim_linkage=linkage),
     ))
@@ -807,7 +795,6 @@ def manager_download_target(
     target: ManagedTarget,
     *,
     no_checksum: bool = False,
-    allow_dependencies: bool = False,
 ) -> ActionResult:
     """Stage one managed package update without activating it.
 
@@ -820,8 +807,6 @@ def manager_download_target(
         Managed package whose configured update should be staged.
     no_checksum : bool, default=False
         Skip an applicable payload checksum while staging the update.
-    allow_dependencies : bool, default=False
-        Permit trusted package-local hooks to install missing imports.
 
     Returns
     -------
@@ -831,7 +816,7 @@ def manager_download_target(
     from .gupkg import download_package_update
 
     return _quiet(lambda: download_package_update(
-        target.package.root, no_checksum=no_checksum, local_deps_autoinstall=allow_dependencies
+        target.package.root, no_checksum=no_checksum
     ))
 
 

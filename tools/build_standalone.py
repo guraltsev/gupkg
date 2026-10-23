@@ -1,14 +1,28 @@
-"""Assemble a relocatable standalone source package for release automation.
+"""Build the self-contained gupkg release ZIP and the integrity data that verifies it.
 
-The script deliberately does not download Python or execute package-local
-hooks. CI supplies a verified embedded-Python archive and its SHA-256 digest,
-then this script copies the application and release metadata into a versioned
-payload for the native bootstrap artifact.
+This is a build tool for the development tree; it is never shipped. A release
+is one ZIP, ``gupkg-<version>-win-amd64.zip``, that already contains everything
+gupkg needs to run: the embedded CPython, the locked dependencies, the native
+shims and the application. Hashes are computed here, once, and published with
+the bundle; installed code only checks them.
 
-The bundled runtime is made self-sufficient for elevated runs, which never
-install anything: the script installs the hash-pinned wheels from
-``gupkg-deps.lock`` into ``python/Lib/site-packages`` and writes the runtime's
-``._pth`` file. Pass ``--skip-deps`` only for offline test builds.
+Usage and API
+-------------
+``python tools/build_standalone.py [--runtime ZIP] [--output ZIP]`` builds the
+bundle (the pinned CPython is fetched and verified when ``--runtime`` is not
+given), writes ``<zip>.sha256`` next to it and prints the ZIP's SHA-256.
+``build_bundle(...)`` is the same operation for ``release.py``.
+
+Implementation Approach
+-----------------------
+1. The CPython archive is verified against the pinned digest and the wheels
+   are installed with ``--require-hashes`` (see ``fetch_runtime.py``); a
+   mismatch stops the build.
+2. The version-directory tree is assembled in a temporary folder.
+3. ``gupkg/RELEASE.txt`` records the version and the commit, and
+   ``gupkg/MANIFEST.sha256`` lists ``<sha256>  <relative path>`` for every
+   other file in the tree, sorted by path. The manifest is written last.
+4. The tree is zipped and the ZIP's SHA-256 is reported.
 """
 
 from __future__ import annotations
@@ -23,8 +37,168 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fetch_runtime  # noqa: E402  (a sibling script, not an installed package)
 
-def _source_version(source: Path) -> str:
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Build the release ZIP from a checked-out source tree and report its digest."""
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--runtime", type=Path, help="embeddable CPython ZIP (default: fetch the pinned one)")
+    parser.add_argument("--runtime-sha256", default=fetch_runtime.PYTHON_SHA256, help="digest the runtime must have")
+    parser.add_argument("--source", type=Path, default=ROOT / "src" / "gupkg")
+    parser.add_argument("--manifest", type=Path, default=ROOT / "src" / "gupkg" / "pkg.toml")
+    parser.add_argument("--version", help="assert the version declared in _version.py")
+    parser.add_argument("--commit", help="commit recorded in RELEASE.txt (default: HEAD)")
+    parser.add_argument("--output", type=Path, help="default: dist/gupkg-<version>-win-amd64.zip")
+    parser.add_argument("--deps-lock", type=Path, default=fetch_runtime.DEFAULT_LOCK)
+    parser.add_argument("--skip-deps", action="store_true", help="do not install locked dependencies (offline test builds)")
+    args = parser.parse_args(argv)
+
+    # The runtime module owns the release number; an optional command-line
+    # value is only an assertion for release scripts, never an override.
+    release_version = source_version(args.source)
+    if args.version is not None and args.version != release_version:
+        raise SystemExit(f"--version {args.version!r} does not match the runtime version {release_version!r}")
+    output = args.output or ROOT / "dist" / f"gupkg-{release_version}-win-amd64.zip"
+    runtime = args.runtime or fetch_runtime.download_runtime_archive(ROOT / "dist" / "cache")
+
+    # Record the commit the bundle is built from, so a release can refuse a stale ZIP.
+    commit = args.commit or subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    digest = build_bundle(
+        source=args.source,
+        manifest=args.manifest,
+        runtime_zip=runtime,
+        runtime_sha256=args.runtime_sha256,
+        output=output,
+        commit=commit,
+        deps_lock=args.deps_lock,
+        skip_deps=args.skip_deps,
+    )
+    print(f"[build] {output}")
+    print(f"[build] sha256 {digest}")
+    return 0
+
+
+def build_bundle(
+    *,
+    source: Path,
+    manifest: Path,
+    runtime_zip: Path,
+    runtime_sha256: str,
+    output: Path,
+    commit: str,
+    deps_lock: Path,
+    skip_deps: bool = False,
+) -> str:
+    """Assemble the release ZIP at *output* and return its SHA-256.
+
+    Parameters
+    ----------
+    source : Path
+        The ``gupkg`` package directory (``src/gupkg``).
+    manifest : Path
+        The ``pkg.toml`` that becomes the version directory's manifest.
+    runtime_zip : Path
+        Embeddable CPython archive; verified against *runtime_sha256*.
+    commit : str
+        Commit recorded in ``gupkg/RELEASE.txt``.
+    deps_lock : Path
+        Hash-pinned dependency lock, installed unless *skip_deps*.
+    skip_deps : bool, default=False
+        Leave the runtime without dependencies (offline test builds only).
+
+    Returns
+    -------
+    str
+        Lower-case SHA-256 of the written ZIP; also saved in ``<output>.sha256``.
+    """
+    # Step 1: the interpreter must be exactly the pinned (or stated) archive.
+    actual = hashlib.sha256(runtime_zip.read_bytes()).hexdigest()
+    if actual.casefold() != runtime_sha256.casefold():
+        raise SystemExit("embedded runtime digest does not match --runtime-sha256")
+    version = source_version(source)
+
+    # Step 2: assemble the version-directory tree in a temporary folder.
+    with tempfile.TemporaryDirectory(prefix="gupkg-standalone-") as temporary:
+        root = Path(temporary) / f"gupkg-{version}"
+        payload = root / "gupkg"
+        payload.mkdir(parents=True)
+
+        # Install-specific and generated files never belong in a release.
+        ignored = shutil.ignore_patterns("python", "__pycache__", "*.pyc", "gupkg-config.toml", "digest.txt")
+        shutil.copytree(source, payload, dirs_exist_ok=True, ignore=ignored)
+
+        # Materialize the audited native launchers and their relocatable
+        # relative configurations as package-owned support files.
+        shim = source / "shim" / "shim-console.exe"
+        if shim.is_file():
+            shutil.copy2(shim, payload / "gupkg.exe")
+            shutil.copy2(shim, payload / "gupkg-tui.exe")
+        for command in ("gupkg", "gupkg-tui"):
+            (payload / f"{command}.config.toml").write_text(
+                'target = "%COMSPEC%"\nforward_arguments = true\nelevate = false\n\n'
+                '[[argument]]\nvalue = "/d"\n\n[[argument]]\nvalue = "/s"\n\n[[argument]]\nvalue = "/c"\n\n'
+                f'[[argument]]\nvalue = "{command}.cmd"\n',
+                encoding="utf-8",
+            )
+        for wrapper_name in ("gupkg.cmd", "gupkg-tui.cmd"):
+            wrapper = source.parent / wrapper_name
+            if wrapper.is_file():
+                shutil.copy2(wrapper, root / wrapper_name)
+        shutil.copy2(manifest, root / "pkg.toml")
+
+        # The update hooks sit beside the manifest, not inside the payload.
+        hooks = source.parent / "pkg.local"
+        if hooks.is_dir():
+            shutil.copytree(hooks, root / "pkg.local", ignore=shutil.ignore_patterns("__pycache__"))
+
+        # The interpreter, configured to import from its own site-packages,
+        # then the locked dependencies (every wheel is hash-checked by pip).
+        with zipfile.ZipFile(runtime_zip) as archive:
+            archive.extractall(payload / "python")
+        fetch_runtime.write_pth(payload / "python")
+        if not skip_deps:
+            fetch_runtime.install_locked_dependencies(payload / "python", deps_lock)
+
+        # No bytecode ships: it is not release content, installed Python runs with -B,
+        # and a stale .pyc would be trusted by its source's size and mtime alone.
+        for leftover in list(payload.rglob("__pycache__")):
+            shutil.rmtree(leftover, ignore_errors=True)
+        for leftover in list(root.rglob("*.pyc")):
+            leftover.unlink()
+
+        # Step 3: record where the bundle came from, then its manifest, last.
+        (payload / "RELEASE.txt").write_text(f"gupkg {version}\ncommit {commit}\n", encoding="utf-8", newline="\n")
+        write_manifest(root)
+
+        # Step 4: zip the tree in a fixed order and report the ZIP's digest.
+        output.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for path in sorted(root.rglob("*")):
+                if path.is_file():
+                    archive.write(path, path.relative_to(root.parent))
+    zip_digest = hashlib.sha256(output.read_bytes()).hexdigest()
+    output.with_name(output.name + ".sha256").write_text(f"{zip_digest}  {output.name}\n", encoding="ascii")
+    return zip_digest
+
+
+def write_manifest(root: Path) -> None:
+    """Write ``gupkg/MANIFEST.sha256`` for every other file below *root*, sorted by path."""
+    manifest = root / "gupkg" / "MANIFEST.sha256"
+    entries = []
+    for path in root.rglob("*"):
+        if path.is_file() and path != manifest:
+            entries.append((path.relative_to(root).as_posix(), hashlib.sha256(path.read_bytes()).hexdigest()))
+    lines = [f"{digest}  {relative}" for relative, digest in sorted(entries)]
+    manifest.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+
+
+def source_version(source: Path) -> str:
     """Read the release value from the runtime's single version module."""
     version_source = source / "_version.py"
     tree = ast.parse(version_source.read_text(encoding="utf-8"))
@@ -36,97 +210,6 @@ def _source_version(source: Path) -> str:
                     if isinstance(value, str):
                         return value
     raise ValueError(f"No string __version__ found in {version_source}")
-
-
-def _install_locked_dependencies(runtime: Path, lock: Path) -> None:
-    """Install the locked wheels into the extracted runtime and enable its site-packages."""
-    # The embeddable archive names its search-path file after the interpreter
-    # version (python312._pth); the same name identifies the wheel tags.
-    pth_files = sorted(runtime.glob("python*._pth"))
-    if len(pth_files) != 1 or not lock.is_file():
-        raise SystemExit(f"Need exactly one python*._pth in the runtime and a lockfile at {lock}")
-    tag = pth_files[0].name[len("python") : -len("._pth")]
-    pth_files[0].write_text(f"python{tag}.zip\n.\n..\nLib/site-packages\n\nimport site\n", encoding="ascii")
-
-    # Wheels only, hashes required, targeted at the bundled interpreter rather
-    # than the interpreter running this script.
-    site_packages = runtime / "Lib" / "site-packages"
-    command = [
-        sys.executable, "-m", "pip", "install", "--isolated", "--disable-pip-version-check", "--no-input",
-        "--target", str(site_packages), "--require-hashes", "--only-binary=:all:", "--no-deps",
-        "--platform", "win_amd64", "--implementation", "cp", "--python-version", f"{tag[0]}.{tag[1:]}",
-        "--abi", f"cp{tag}", "-r", str(lock),
-    ]
-    if subprocess.run(command, check=False).returncode != 0:
-        raise SystemExit("Installing the locked dependencies into the runtime failed")
-    # pip --target also writes console-script launchers; the bundle needs none.
-    shutil.rmtree(site_packages / "bin", ignore_errors=True)
-
-
-def main() -> int:
-    """Build a standalone ZIP from a checked-out source tree and runtime ZIP."""
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--runtime", type=Path, required=True)
-    parser.add_argument("--runtime-sha256", required=True)
-    parser.add_argument("--source", type=Path, default=Path("src/gupkg"))
-    parser.add_argument("--manifest", type=Path, default=Path("src/gupkg/pkg.toml"))
-    parser.add_argument("--version")
-    parser.add_argument("--output", type=Path, help="default: dist/gupkg-<version>.zip")
-    parser.add_argument("--deps-lock", type=Path, help="default: gupkg-deps.lock inside --source")
-    parser.add_argument("--skip-deps", action="store_true", help="do not install locked dependencies")
-    args = parser.parse_args()
-    # The runtime module owns the release number; an optional command-line
-    # value is only an assertion for release scripts, never an override.
-    release_version = _source_version(args.source)
-    if args.version is not None and args.version != release_version:
-        raise SystemExit(
-            f"--version {args.version!r} does not match the runtime version {release_version!r}"
-        )
-    if args.output is None:
-        args.output = Path("dist") / f"gupkg-{release_version}.zip"
-    digest = hashlib.sha256(args.runtime.read_bytes()).hexdigest()
-    if digest.casefold() != args.runtime_sha256.casefold():
-        raise SystemExit("embedded runtime digest does not match --runtime-sha256")
-    with tempfile.TemporaryDirectory(prefix="gupkg-standalone-") as temporary:
-        root = Path(temporary) / f"v{release_version}"
-        payload = root / "gupkg"
-        payload.mkdir(parents=True)
-        shutil.copytree(args.source, payload, dirs_exist_ok=True, ignore=shutil.ignore_patterns("python", "__pycache__"))
-        # Materialize the audited native launchers and their relocatable
-        # relative configurations as package-owned support files.
-        shim = args.source / "shim" / "shim-console.exe"
-        if shim.is_file():
-            shutil.copy2(shim, payload / "gupkg.exe")
-            shutil.copy2(shim, payload / "gupkg-tui.exe")
-        (payload / "gupkg.config.toml").write_text(
-            'target = "%COMSPEC%"\nforward_arguments = true\nelevate = false\n\n[[argument]]\nvalue = "/d"\n\n[[argument]]\nvalue = "/s"\n\n[[argument]]\nvalue = "/c"\n\n[[argument]]\nvalue = "gupkg.cmd"\n',
-            encoding="utf-8",
-        )
-        # No gupkg-config.toml is shipped: manager settings belong to the
-        # administrator ('gupkg manager init'), never inside the immutable version.
-        (payload / "gupkg-tui.config.toml").write_text(
-            'target = "%COMSPEC%"\nforward_arguments = true\nelevate = false\n\n[[argument]]\nvalue = "/d"\n\n[[argument]]\nvalue = "/s"\n\n[[argument]]\nvalue = "/c"\n\n[[argument]]\nvalue = "gupkg-tui.cmd"\n',
-            encoding="utf-8",
-        )
-        for wrapper_name in ("gupkg.cmd", "gupkg-tui.cmd"):
-            wrapper = args.source.parent / wrapper_name
-            if wrapper.is_file():
-                shutil.copy2(wrapper, root / wrapper_name)
-        shutil.copy2(args.manifest, root / "pkg.toml")
-        # The update hooks sit beside the manifest, not inside the payload.
-        hooks = args.source.parent / "pkg.local"
-        if hooks.is_dir():
-            shutil.copytree(hooks, root / "pkg.local", ignore=shutil.ignore_patterns("__pycache__"))
-        with zipfile.ZipFile(args.runtime) as runtime_zip:
-            runtime_zip.extractall(payload / "python")
-        if not args.skip_deps:
-            _install_locked_dependencies(payload / "python", args.deps_lock or args.source / "gupkg-deps.lock")
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(args.output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            for path in root.rglob("*"):
-                if path.is_file():
-                    archive.write(path, path.relative_to(root.parent))
-    return 0
 
 
 if __name__ == "__main__":

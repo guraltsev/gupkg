@@ -39,7 +39,6 @@ from .manager import ManagedTarget, ManagerConfig, ManagerInventory, UpgradePlan
 def run_manager_tui(
     config: ManagerConfig | None = None,
     inventory: ManagerInventory | None = None,
-    notices: tuple[str, ...] = (),
 ) -> int:
     """Run the manager browser and open selected targets in package operations.
 
@@ -52,8 +51,6 @@ def run_manager_tui(
     inventory : ManagerInventory, optional
         Initial inventory, normally supplied by the dispatcher to avoid a
         duplicate scan before the home screen appears.
-    notices : tuple of str, optional
-        Advisory lines shown as warning notifications when the browser opens.
 
     Returns
     -------
@@ -605,7 +602,6 @@ def run_manager_tui(
         def __init__(self, plan: UpgradePlan) -> None:
             super().__init__()
             self.plan = plan
-            self.local_deps = False
             self.no_checksum = False
 
         def _options(self) -> list[Option]:
@@ -613,7 +609,6 @@ def run_manager_tui(
                 Option("Run planned updates", id="run"),
                 Option("Scope: All", id="scope", disabled=True),
                 Option(f"Checksum: {'Skip' if self.no_checksum else 'Verify'}", id="checksum"),
-                Option(f"Dependency auto-install: {'On' if self.local_deps else 'Off'}", id="deps"),
             ]
 
         def compose(self) -> ComposeResult:
@@ -630,12 +625,10 @@ def run_manager_tui(
             """Act on the selected option."""
             selected = event.option.id
             if selected == "run":
-                self.app.push_screen(ExecutionScreen(self.plan, self.local_deps, self.no_checksum))
+                self.app.push_screen(ExecutionScreen(self.plan, self.no_checksum))
                 return
             if selected == "checksum":
                 self.no_checksum = not self.no_checksum
-            elif selected == "deps":
-                self.local_deps = not self.local_deps
             self.query_one("#confirm-actions", OptionList).set_options(self._options())
 
         def action_back(self) -> None:
@@ -647,10 +640,9 @@ def run_manager_tui(
 
         BINDINGS = [("escape", "back", "Back")]
 
-        def __init__(self, plan: UpgradePlan, local_deps: bool, no_checksum: bool) -> None:
+        def __init__(self, plan: UpgradePlan, no_checksum: bool) -> None:
             super().__init__()
             self.plan = plan
-            self.local_deps = local_deps
             self.no_checksum = no_checksum
             self.cancel_requested = False
 
@@ -679,7 +671,6 @@ def run_manager_tui(
                 accepted = await asyncio.to_thread(
                     commands.relaunch_elevated_update,
                     config,
-                    allow_hook_dependency_install=self.local_deps,
                     no_checksum=self.no_checksum,
                 )
                 refresh_inventory()
@@ -699,7 +690,6 @@ def run_manager_tui(
                 self.plan,
                 config,
                 no_checksum=self.no_checksum,
-                allow_hook_dependency_install=self.local_deps,
                 cancel_requested=lambda: self.cancel_requested,
                 on_progress=lambda target_id, state: states.__setitem__(target_id, state),
             ))
@@ -780,7 +770,7 @@ def run_manager_tui(
             yield Label("MANAGER MODE", id="manager-mode-header")
 
         def on_mount(self) -> None:
-            """Start at the manager home screen and show any advisory notices."""
+            """Start at the manager home screen."""
             self.push_screen(HomeScreen() if config is not None else MissingConfigScreen())
 
             # Returning from a package operation reopens the browser where the
@@ -791,8 +781,6 @@ def run_manager_tui(
                     str(resume.get("status_filter", "All")),
                     str(resume["target_id"]) if resume.get("target_id") else None,
                 ))
-            for notice in notices:
-                self.notify(notice, severity="warning", timeout=20)
 
         def action_quit(self) -> None:
             """Exit from any manager screen."""

@@ -190,31 +190,10 @@ class GupkgCliBehaviorTests(unittest.TestCase):
         tui = ModuleType("gupkg.tui")
         tui.run_tui = mock.Mock(return_value=0)
 
-        with (
-            mock.patch.dict(sys.modules, {"gupkg.tui": tui}),
-            mock.patch("gupkg.dependencies.ensure_runtime_dependencies"),
-        ):
+        with mock.patch.dict(sys.modules, {"gupkg.tui": tui}):
             code, _ = self.run_main(module, ["tui", str(FIXTURES / "GoodApp" / "1.2.3.local.1")])
 
         self.assertEqual(code, 0)
-        tui.run_tui.assert_called_once_with(str(FIXTURES / "GoodApp" / "1.2.3.local.1"))
-
-    def test_tui_provisions_its_declared_runtime_dependencies(self) -> None:
-        """The tui command provisions its gupkg-owned dependencies before launch."""
-        module = load_gupkg_module()
-        tui = ModuleType("gupkg.tui")
-        tui.run_tui = mock.Mock(return_value=0)
-
-        with (
-            mock.patch.dict(sys.modules, {"gupkg.tui": tui}),
-            mock.patch(
-                "gupkg.dependencies.ensure_runtime_dependencies"
-            ) as ensure_dependencies,
-        ):
-            code, _ = self.run_main(module, ["tui", str(FIXTURES / "GoodApp" / "1.2.3.local.1")])
-
-        self.assertEqual(code, 0)
-        ensure_dependencies.assert_called_once_with("tui")
         tui.run_tui.assert_called_once_with(str(FIXTURES / "GoodApp" / "1.2.3.local.1"))
 
     def test_short_help_hides_bootstrap_and_removed_flags(self) -> None:

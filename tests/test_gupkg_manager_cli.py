@@ -88,7 +88,6 @@ def test_manager_tui_owns_format_and_pause(tmp_path: Path, monkeypatch: pytest.M
     (tmp_path / "user").mkdir()
     pause = mock.Mock()
     monkeypatch.setattr(cli, "wait_for_keypress", pause)
-    monkeypatch.setattr("gupkg.dependencies.ensure_runtime_dependencies", lambda feature: None)
     monkeypatch.setattr("gupkg.manager_tui.run_manager_tui", lambda *args, **kwargs: 7)
 
     output = io.StringIO()

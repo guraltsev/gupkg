@@ -79,12 +79,6 @@ def _build_parser() -> tuple[argparse.ArgumentParser, argparse.ArgumentParser]:
     parser.add_argument(
         "--pause", action="store_true", help="wait for a keypress before exiting"
     )
-    parser.add_argument(
-        "--allow-hook-dependency-install",
-        action="store_true",
-        help="let a package's own update scripts pip-install missing imports "
-        "(off by default; those scripts are trusted code)",
-    )
     commands = parser.add_subparsers(dest="command", required=True, metavar="<command>")
 
     def package_command(
@@ -265,18 +259,14 @@ def _build_parser() -> tuple[argparse.ArgumentParser, argparse.ArgumentParser]:
     )
     self_parser = manager_commands.add_parser("self", help="check or repair gupkg's own installation")
     self_commands = self_parser.add_subparsers(dest="self_command", required=True, metavar="<action>")
-    self_commands.add_parser("status", help="report runtime and command-shim health")
-    for name, text in (("repair", "reinstall gupkg's shims and PATH entries"), ("update", "same as repair")):
-        shim_linkage(self_commands.add_parser(name, help=text), None)
     self_commands.add_parser(
-        "repair-deps",
-        help="(elevated) reinstall exactly the hash-pinned runtime dependencies from gupkg-deps.lock",
+        "status", help="verify the installed files against MANIFEST.sha256 and report shim health"
     )
-    update_deps = self_commands.add_parser(
-        "update-deps",
-        help="(elevated) show newer dependency releases and install them after confirmation",
-    )
-    update_deps.add_argument("--yes", action="store_true", help="apply the plan without asking")
+    for name, text in (
+        ("repair", "reinstall gupkg's shims and PATH entries"),
+        ("update", "install the newest verified release, or report that gupkg is current"),
+    ):
+        shim_linkage(self_commands.add_parser(name, help=text), None)
     return parser, manager
 
 
@@ -322,16 +312,12 @@ def _dispatch(args: argparse.Namespace) -> Outcome:
     if args.command == "manager":
         return _dispatch_manager(args)
     if args.command == "tui":
-        from .dependencies import ensure_runtime_dependencies
         from .tui import run_tui
 
         directory, _, error = commands.resolve_package(args.path, command="tui")
         if error is not None:
             return error
-        ensure_runtime_dependencies("tui")
-        notices = commands.dependency_notices_for()
-        code = run_tui(str(directory), notices=notices) if notices else run_tui(str(directory))
-        return _interactive("tui", code)
+        return _interactive("tui", run_tui(str(directory)))
 
     request = commands.PackageRequest(
         command=args.command,
@@ -342,7 +328,6 @@ def _dispatch(args: argparse.Namespace) -> Outcome:
         allow_downgrade=getattr(args, "allow_downgrade", False),
         refresh_app=getattr(args, "refresh_app", False),
         no_checksum=getattr(args, "no_checksum", False),
-        allow_hook_dependency_install=args.allow_hook_dependency_install,
         shim_linkage=getattr(args, "shim_linkage", "dynamic"),
         backup=getattr(args, "backup", True),
         import_shortcuts=getattr(args, "import_shortcuts", "true") == "true",
@@ -359,15 +344,6 @@ def _dispatch_manager(args: argparse.Namespace) -> Outcome:
     if sub == "init":
         return commands.manager_init_outcome(args.config, force=args.force)
 
-    # Dependency maintenance needs only the elevated, trusted runtime, so a
-    # missing manager configuration cannot block repairing a damaged install.
-    if sub == "self" and args.self_command in {"repair-deps", "update-deps"}:
-        return commands.dependency_outcome(
-            args.self_command,
-            assume_yes=getattr(args, "yes", False),
-            interactive=sys.stdin.isatty() and args.format != "toml",
-            output=_progress_stream(args),
-        )
     try:
         config = commands.load_manager(args.config)
     except (ConfigValidationError, OSError, ValueError) as exc:
@@ -379,8 +355,7 @@ def _dispatch_manager(args: argparse.Namespace) -> Outcome:
     # missing or inaccessible package root cannot hide them.
     if sub == "install":
         return commands.install_registry_package(
-            config, args.selector, scope, offline=args.offline,
-            allow_hook_dependency_install=args.allow_hook_dependency_install, output=progress,
+            config, args.selector, scope, offline=args.offline, output=progress,
         )
     if sub == "registry":
         if args.registry_command == "sync":
@@ -389,9 +364,6 @@ def _dispatch_manager(args: argparse.Namespace) -> Outcome:
     if sub == "search":
         return commands.registry_search_outcome(config, args.query or "", offline=args.offline, output=progress)
     if sub == "self":
-        if args.self_command == "status":
-            for notice in commands.dependency_notices_for(config):
-                print(notice, file=sys.stderr)
         return commands.self_outcome(
             config, args.self_command, scope=scope, shim_linkage=getattr(args, "shim_linkage", None), output=progress
         )
@@ -401,25 +373,28 @@ def _dispatch_manager(args: argparse.Namespace) -> Outcome:
     except (OSError, ValueError, ConfigValidationError) as exc:
         return failure("manager", str(exc))
     if sub == "tui":
-        from .dependencies import ensure_runtime_dependencies
         from .manager_tui import run_manager_tui
 
-        ensure_runtime_dependencies("tui")
-        notices = commands.dependency_notices_for(config)
-        if notices:
-            return _interactive("manager.tui", run_manager_tui(config, inventory, notices=notices))
         return _interactive("manager.tui", run_manager_tui(config, inventory))
     if sub == "update":
         return _manager_update(args, config, inventory)
-    return commands.list_outcome(
+    outcome = commands.list_outcome(
         inventory, args.scope, doctor=sub == "doctor", filter_name=getattr(args, "filter", "all")
     )
+
+    # Doctor also checks gupkg's own installed files against their manifest.
+    if sub == "doctor":
+        problems = commands.self_integrity_problems()
+        if problems:
+            outcome.result.ok = False
+            outcome.result.exit_code = EXIT_USER_ERROR
+            outcome.result.errors.extend(problems + ["Reinstall gupkg from a release ZIP (gupkg-bootstrap.cmd)."])
+    return outcome
 
 
 def _manager_update(args: argparse.Namespace, config: Any, inventory: Any) -> Outcome:
     """Plan, confirm (full updates only), execute, and report a bulk update."""
-    hooks = args.allow_hook_dependency_install
-    plan = commands.plan_updates(inventory, args.scope, allow_hook_dependency_install=hooks)
+    plan = commands.plan_updates(inventory, args.scope)
     mode = "checked" if args.check_only else ("downloaded" if args.download_only else "updated")
 
     # Only a full update may ask for confirmation; checks and staging remain
@@ -440,7 +415,6 @@ def _manager_update(args: argparse.Namespace, config: Any, inventory: Any) -> Ou
             config,
             download_only=args.download_only,
             no_checksum=args.no_checksum,
-            allow_hook_dependency_install=hooks,
             shim_linkage=args.shim_linkage,
         )
     return commands.update_outcome(plan, mode=mode, scope=args.scope)
