@@ -15,8 +15,8 @@ on `main` before dispatching the first worker.
 
 | Issue | Title | Depends on | Status | Branch | Merge commit | Tests | Manual checks pending |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 016 | One self-contained release ZIP | — | ready | | | | |
-| 017 | Shortcuts and junctions without PowerShell or `cmd` | — | ready | | | | |
+| 016 | One self-contained release ZIP | — | in progress | rehaul/issue016 | | | |
+| 017 | Shortcuts and junctions without PowerShell or `cmd` | — | in progress | rehaul/issue017 | | | |
 | 018 | Remove system-Python autodetection | 016 | waiting | | | | |
 | 019 | The bundled Python ships without pip | 016 | waiting | | | | |
 | 021 | System boundary, FakeSystem, and sandbox mode | 016–019 | waiting | | | | |
@@ -55,3 +55,4 @@ None.
 ## Log
 
 - 2026-10-22: job prepared; not started.
+- 2026-10-22: baseline recorded (257 passed). Dispatched workers for 016 and 017.
