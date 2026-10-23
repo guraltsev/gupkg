@@ -82,7 +82,7 @@ class _Options:
     link_name: str | None = None
     prerelease: bool = False
     extra: Mapping[str, Any] = field(default_factory=dict)
-    regex: RegexRunner | None = None
+    regex: "_Matches | None" = None
 
 
 def track_github(spec: GithubSpec, env: TrackEnvironment) -> TrackResult:
@@ -105,7 +105,7 @@ def track_github(spec: GithubSpec, env: TrackEnvironment) -> TrackResult:
         raise TrackError(f"Could not read the releases of {spec.repo}: {error}") from error
     releases = [release for release in (_github_release(row) for row in rows) if release is not None]
     options = _Options(spec.asset, spec.asset_pattern, spec.version_from, spec.tag_pattern, spec.tag_prefix,
-                       spec.version, prerelease=spec.prerelease, regex=env.regex)
+                       spec.version, prerelease=spec.prerelease, regex=_Matches(env.regex))
     return _checked_best(releases, options, f"GitHub repository {spec.repo}", strict=spec.release == "latest")
 
 
@@ -125,7 +125,7 @@ def track_gitlab(spec: GitlabSpec, env: TrackEnvironment) -> TrackResult:
     rows = data if isinstance(data, list) else []
     releases = [release for release in (_gitlab_release(row) for row in rows) if release is not None]
     options = _Options(None, spec.asset_pattern, "tag", spec.tag_pattern, spec.tag_prefix, spec.version,
-                       link_name=spec.link_name, regex=env.regex)
+                       link_name=spec.link_name, regex=_Matches(env.regex))
     return _checked_best(releases, options, f"GitLab project {spec.project}", strict=False)
 
 
@@ -173,9 +173,51 @@ def _gitlab_release(row: Any) -> Release | None:
 # ---------------------------------------------------------------------------
 
 
+class _Matches:
+    """Match patterns against tags and asset names through the regex worker, asking for each (pattern, text) once.
+
+    A run over many releases would otherwise start a worker per release and per asset list. ``many``
+    matches all the texts it has not seen in one call, and ``_prime`` asks for all tags and all asset
+    names up front (when the pattern does not depend on the release), so a run needs two calls instead of
+    two per release. Results are the worker's, unchanged.
+    """
+
+    def __init__(self, runner: RegexRunner) -> None:
+        """Remember the runner."""
+        self._runner = runner
+        self._known: dict[tuple[str, int, str], Any] = {}
+
+    def many(self, pattern: re.Pattern[str], texts: list[str], what: str) -> list[Any]:
+        """Return, for every text, the match of *pattern* against the whole of it or ``None``."""
+        missing = [text for text in dict.fromkeys(texts) if (pattern.pattern, pattern.flags, text) not in self._known]
+        if missing:
+            for text, found in zip(missing, self._runner.fullmatch_many(pattern, missing, what=what)):
+                self._known[(pattern.pattern, pattern.flags, text)] = found
+        return [self._known[(pattern.pattern, pattern.flags, text)] for text in texts]
+
+    def one(self, pattern: re.Pattern[str], text: str, what: str) -> Any:
+        """Return the match of *pattern* against the whole of *text*, or ``None``."""
+        return self.many(pattern, [text], what)[0]
+
+
+def _prime(options: _Options, releases: list[Release]) -> None:
+    """Match every tag, and every asset name when the asset pattern is the same for all releases, in one call each."""
+    considered = [release for release in releases if options.prerelease or not release.prerelease]
+    if options.tag_pattern is not None and considered:
+        options.regex.many(options.tag_pattern, [release.tag for release in considered], "the release tags")
+    uses_pattern = options.asset_pattern is not None and (
+        options.version_from == "asset" or (options.asset is None and options.link_name is None)
+    )
+    if uses_pattern and "${" not in (options.asset_pattern or ""):
+        names = [asset.name for release in considered for asset in release.assets]
+        if names:
+            options.regex.many(compile_runtime(options.asset_pattern or "", {}), names, "the asset names of the releases")
+
+
 def _checked_best(releases: list[Release], options: _Options, where: str, *, strict: bool) -> TrackResult:
     """Run ``_best``; a failure of the regex worker stops the whole provider (fail closed), it never skips a release."""
     try:
+        _prime(options, releases)
         return _best(releases, options, where, strict=strict)
     except PatternError as error:
         raise TrackError(str(error)) from error
@@ -221,7 +263,7 @@ def _from_release(release: Release, options: _Options) -> TrackResult:
     # Choose the asset first when the version comes from its name.
     if options.version_from == "asset":
         pattern = compile_runtime(options.asset_pattern or "", {**captures, "version": groups.get("version", "")})
-        verdicts = options.regex.fullmatch_many(pattern, [item.name for item in release.assets], what=f"the assets of release {release.tag}")
+        verdicts = options.regex.many(pattern, [item.name for item in release.assets], f"the assets of release {release.tag}")
         found = list(zip(release.assets, verdicts))
         found = [(item, match) for item, match in found if match]
         if len(found) != 1:
@@ -239,7 +281,7 @@ def _from_release(release: Release, options: _Options) -> TrackResult:
             found = [item for item in release.assets if item.name == wanted]
         else:
             pattern = compile_runtime(options.asset_pattern or "", captures)
-            verdicts = options.regex.fullmatch_many(pattern, [item.name for item in release.assets], what=f"the assets of release {release.tag}")
+            verdicts = options.regex.many(pattern, [item.name for item in release.assets], f"the assets of release {release.tag}")
             matches = list(zip(release.assets, verdicts))
             found = [item for item, match in matches if match]
             for _item, match in matches:
@@ -267,7 +309,7 @@ def _tag_groups(tag: str, options: _Options) -> dict[str, str]:
         If the tag does not fit ``tag_prefix`` or ``tag_pattern``.
     """
     if options.tag_pattern is not None:
-        match = options.regex.fullmatch(options.tag_pattern, tag, what=f"the tag {tag[:60]!r}")
+        match = options.regex.one(options.tag_pattern, tag, f"the tag {tag[:60]!r}")
         if match is None:
             raise TrackError(f"the tag {tag!r} does not match tag_pattern")
         return {key: value for key, value in match.groupdict().items() if value is not None}

@@ -182,4 +182,3 @@ def test_alternatives_inside_a_repeat_must_start_with_different_characters_and_n
 def test_alternatives_with_disjoint_first_characters_inside_a_repeat_are_accepted(pattern: str) -> None:
     """Deterministic alternatives cannot multiply the ways to match, so they pass the filter."""
     assert compile_pattern(pattern)
-

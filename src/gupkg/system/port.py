@@ -112,6 +112,10 @@ class ProcessAborted(OSError):
     """Report a child process that gupkg killed because its watcher asked for it."""
 
 
+class WorkerDidNotStart(TimeoutError):
+    """Report that the regex worker never said it was up within its start limit (not a slow pattern)."""
+
+
 class ProcessFailed(RuntimeError):
     """Report that a child process that had to succeed exited with a failure status."""
 

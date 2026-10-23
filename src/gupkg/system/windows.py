@@ -61,6 +61,7 @@ from .port import (
     ProcessAborted,
     ProcessResult,
     ResponseTooLarge,
+    WorkerDidNotStart,
     Scope,
     ScopeFolders,
     ShortcutSpec,
@@ -380,6 +381,21 @@ class WindowsSystem(WindowsLinks):
             seconds pass first (the process is killed); ``ProcessAborted`` when *watch*
             returns a reason (the process is killed).
         """
+        return self._run(argv, cwd, env, on_line, input_text=input_text, timeout=timeout, watch=watch, kill_on_close=False)
+
+    def _run(
+        self,
+        argv: Sequence[str],
+        cwd: Path | None,
+        env: Mapping[str, str] | None,
+        on_line: Callable[[str], None] | None,
+        *,
+        input_text: str | None,
+        timeout: float | None,
+        watch: Callable[[], str | None] | None,
+        kill_on_close: bool,
+    ) -> ProcessResult:
+        """Implement ``run``; with *kill_on_close* the child's job object also ends it (and its helpers) when the job handle closes, even if this process is killed first."""
         command = _script_command(argv)
         process = subprocess.Popen(
             command,
@@ -411,14 +427,15 @@ class WindowsSystem(WindowsLinks):
         for reader in readers:
             reader.start()
 
-        # Every process the child starts is tracked by a job object, so a kill reaches a helper
-        # that outlived its parent (``taskkill /T`` cannot find the children of a dead process).
-        job = _ProcessJob.around(process)
-
         # Feed standard input from its own thread, so a child that never reads it cannot
         # keep this call from enforcing the timeout; then wait. A timeout kills the whole child.
+        job: _ProcessJob | None = None
         feeder = None
         try:
+            # Every process the child starts is tracked by a job object, so a kill reaches a helper
+            # that outlived its parent (``taskkill /T`` cannot find the children of a dead process).
+            # A failure here is inside the try: the child is killed and the error reaches the caller.
+            job = _ProcessJob.around(process, kill_on_close=kill_on_close)
             if input_text is not None:
                 payload = input_text.encode(locale.getpreferredencoding(False), errors="replace")
 
@@ -497,14 +514,19 @@ class WindowsSystem(WindowsLinks):
             """Return a reason once the worker has overrun its start limit or its deadline."""
             now = time.monotonic()
             if not ready:
-                return "the regex worker did not start" if now - began > _WORKER_START_SECONDS else None
-            return "the regex worker passed its deadline" if now - ready[0] > timeout else None
+                return "start" if now - began > _WORKER_START_SECONDS else None
+            return "deadline" if now - ready[0] > timeout else None
 
         with tempfile.TemporaryDirectory(prefix="gupkg-regex-", ignore_cleanup_errors=True) as folder:
             try:
-                return self.run(command, Path(folder), environment, heard, input_text=request, watch=late)
+                return self._run(
+                    command, Path(folder), environment, heard,
+                    input_text=request, timeout=None, watch=late, kill_on_close=True,
+                )
             except ProcessAborted as error:
-                raise TimeoutError(f"{error} ({timeout:g} seconds)") from None
+                if str(error) == "start":
+                    raise WorkerDidNotStart(f"the regex worker did not start within {_WORKER_START_SECONDS:g} seconds") from None
+                raise TimeoutError(f"the regex worker was still running {timeout:g} seconds after it started") from None
 
     # -- network -----------------------------------------------------------
 
@@ -966,15 +988,56 @@ def _response_parts(response: Any, requested: str) -> tuple[int, str, dict[str, 
     return int(status), requested, collected
 
 
+class _JobBasicLimits(ctypes.Structure):
+    """``JOBOBJECT_BASIC_LIMIT_INFORMATION``."""
+
+    _fields_ = [
+        ("PerProcessUserTimeLimit", ctypes.c_int64),
+        ("PerJobUserTimeLimit", ctypes.c_int64),
+        ("LimitFlags", wintypes.DWORD),
+        ("MinimumWorkingSetSize", ctypes.c_size_t),
+        ("MaximumWorkingSetSize", ctypes.c_size_t),
+        ("ActiveProcessLimit", wintypes.DWORD),
+        ("Affinity", ctypes.c_size_t),
+        ("PriorityClass", wintypes.DWORD),
+        ("SchedulingClass", wintypes.DWORD),
+    ]
+
+
+class _JobIoCounters(ctypes.Structure):
+    """``IO_COUNTERS``."""
+
+    _fields_ = [(name, ctypes.c_uint64) for name in (
+        "ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
+        "ReadTransferCount", "WriteTransferCount", "OtherTransferCount")]
+
+
+class _JobExtendedLimits(ctypes.Structure):
+    """``JOBOBJECT_EXTENDED_LIMIT_INFORMATION``."""
+
+    _fields_ = [
+        ("BasicLimitInformation", _JobBasicLimits),
+        ("IoInfo", _JobIoCounters),
+        ("ProcessMemoryLimit", ctypes.c_size_t),
+        ("JobMemoryLimit", ctypes.c_size_t),
+        ("PeakProcessMemoryUsed", ctypes.c_size_t),
+        ("PeakJobMemoryUsed", ctypes.c_size_t),
+    ]
+
+
 class _ProcessJob:
     """A Windows job object holding a child process and every process it starts.
 
     ``TerminateJobObject`` ends all of them, including a helper whose parent has already exited,
-    which ``taskkill /T`` cannot find. The job does not kill anything when it is closed, so a
-    helper that is meant to outlive a normal run keeps running. A process started in the instant
-    before it is assigned to the job is the one gap; the child needs far longer than that to
-    start a helper of its own.
+    which ``taskkill /T`` cannot find. By default the job does not kill anything when it is closed,
+    so a helper that is meant to outlive a normal run keeps running; with ``kill_on_close`` closing
+    the last handle (also when this process is killed) ends everything in the job, which is what
+    the regex worker wants. A process started in the instant before it is assigned to the job is
+    the one gap; the child needs far longer than that to start a helper of its own.
     """
+
+    _KILL_ON_JOB_CLOSE = 0x2000
+    _EXTENDED_LIMIT_INFORMATION = 9
 
     _PROCESS_SET_QUOTA = 0x0100
     _PROCESS_TERMINATE = 0x0001
@@ -984,8 +1047,12 @@ class _ProcessJob:
         self._handle, self._kernel32 = handle, kernel32
 
     @classmethod
-    def around(cls, process: "subprocess.Popen[bytes]") -> "_ProcessJob | None":
-        """Put *process* in a new job; ``None`` when Windows refuses (the caller falls back to ``taskkill``)."""
+    def around(cls, process: "subprocess.Popen[bytes]", *, kill_on_close: bool = False) -> "_ProcessJob | None":
+        """Put *process* in a new job; ``None`` when Windows refuses (the caller falls back to ``taskkill``).
+
+        With *kill_on_close* the job ends all its processes when its last handle closes. If that
+        limit cannot be set the job is not used (``None``): the caller must not believe in a guarantee it lacks.
+        """
         if os.name != "nt":
             return None
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -996,9 +1063,18 @@ class _ProcessJob:
         kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
         kernel32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
         kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD]
         job = kernel32.CreateJobObjectW(None, None)
         if not job:
             return None
+        if kill_on_close:
+            limits = _JobExtendedLimits()
+            limits.BasicLimitInformation.LimitFlags = cls._KILL_ON_JOB_CLOSE
+            if not kernel32.SetInformationJobObject(
+                job, cls._EXTENDED_LIMIT_INFORMATION, ctypes.byref(limits), ctypes.sizeof(limits)
+            ):
+                kernel32.CloseHandle(job)
+                return None
         member = kernel32.OpenProcess(cls._PROCESS_SET_QUOTA | cls._PROCESS_TERMINATE, False, process.pid)
         assigned = bool(member) and bool(kernel32.AssignProcessToJobObject(job, member))
         if member:
@@ -1013,7 +1089,7 @@ class _ProcessJob:
         return bool(self._kernel32.TerminateJobObject(self._handle, 1))
 
     def close(self) -> None:
-        """Release the job handle; processes still in the job keep running."""
+        """Release the job handle; processes still in the job keep running unless the job was made with ``kill_on_close``."""
         self._kernel32.CloseHandle(self._handle)
 
 

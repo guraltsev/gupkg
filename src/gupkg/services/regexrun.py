@@ -42,10 +42,13 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from ..model.patterns import MAX_MATCHES, PatternError, prepare_text
-from ..system.port import System
+from ..system.port import System, WorkerDidNotStart
 
 PER_CALL_SECONDS = 2.0
 TOTAL_SECONDS = 10.0
+# A separate cap on the wall-clock time of all calls of one runner, process starts included: a run over
+# many releases starts a worker per call, and this stops it with a clear error instead of running on.
+WALL_SECONDS = 120.0
 MAX_ANSWER_CHARACTERS = 1_000_000
 _ANSWER_ALLOWANCE = 8_000_000  # the parent refuses an answer larger than this before parsing it
 
@@ -138,6 +141,8 @@ class RegexRunner:
     total : float
         Seconds all calls of this runner may take together; further calls fail at once. A runner
         belongs to one provider run, so one slow page cannot starve the next package.
+    wall : float
+        Seconds of wall-clock time all calls may take together, process starts included (``WALL_SECONDS``).
     clock : callable
         Replaces ``time.monotonic`` in tests.
     """
@@ -148,13 +153,16 @@ class RegexRunner:
         *,
         per_call: float = PER_CALL_SECONDS,
         total: float = TOTAL_SECONDS,
+        wall: float = WALL_SECONDS,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         """Remember the boundary and the limits; no process is started."""
         self.system = system
         self.per_call = per_call
         self.total = total
+        self.wall = wall
         self.spent = 0.0
+        self.elapsed = 0.0
         self._clock = clock
 
     def finditer(self, compiled: re.Pattern[str], text: str, *, limit: int = MAX_MATCHES, what: str = "") -> list[RemoteMatch]:
@@ -205,13 +213,19 @@ class RegexRunner:
         remaining = self.total - self.spent
         if remaining <= 0:
             raise RegexTimeout(f"regular expressions have used their {self.total:g} seconds for this run{where}; the pattern {compiled.pattern!r} was not run")
+        if self.elapsed >= self.wall:
+            raise RegexTimeout(
+                f"regular expressions have taken {self.wall:g} seconds of wall-clock time for this run{where}, "
+                f"starting a worker for each call; the pattern {compiled.pattern!r} was not run"
+            )
         deadline = min(self.per_call, remaining)
+        prepared = [prepare_text(text) for text in texts]
         request = json.dumps(
             {
                 "op": operation,
                 "pattern": compiled.pattern,
                 "flags": compiled.flags,
-                "texts": [prepare_text(text) for text in texts],
+                "texts": prepared,
                 "limit": limit,
                 "cap": MAX_ANSWER_CHARACTERS,
             },
@@ -221,17 +235,23 @@ class RegexRunner:
         started = self._clock()
         try:
             result = self.system.regex_worker(request, deadline)
+        except WorkerDidNotStart as error:
+            self.elapsed += self._clock() - started
+            raise RegexError(f"the regular expression worker did not start{where}: {error}") from error
         except TimeoutError as error:
+            self.elapsed += self._clock() - started
             self.spent += deadline
             raise RegexTimeout(
                 f"the pattern {compiled.pattern!r} took longer than {deadline:g} seconds{where} and was stopped; "
                 "it is too slow on this text (a hostile page can do this to a pattern that is slow in the worst case)"
             ) from error
         except OSError as error:
+            self.elapsed += self._clock() - started
             self.spent += self._clock() - started
             raise RegexError(f"could not run the regular expression worker{where}: {error}") from error
         elapsed = self._clock() - started
-        converted, matching = self._checked(result.returncode, result.stdout, compiled, len(texts), where)
+        self.elapsed += elapsed
+        converted, matching = self._checked(result.returncode, result.stdout, compiled, [len(text) for text in prepared], where)
         # The budget counts the time the matching took (as the worker measured it, within what the wall clock
         # allows), not the time to start a process, which is slow on some machines and no fault of the pattern.
         self.spent += min(elapsed, matching) if matching is not None else elapsed
@@ -239,7 +259,7 @@ class RegexRunner:
 
     @staticmethod
     def _checked(
-        returncode: int, stdout: str, compiled: re.Pattern[str], count: int, where: str
+        returncode: int, stdout: str, compiled: re.Pattern[str], lengths: list[int], where: str
     ) -> tuple[list[list[RemoteMatch]], float | None]:
         """Parse and validate the worker's answer into matches and the matching time; anything unexpected is a ``RegexError``."""
         pattern = compiled.pattern
@@ -257,18 +277,18 @@ class RegexRunner:
         names, results = document.get("names"), document.get("results")
         if (
             not isinstance(names, dict)
-            or not all(isinstance(name, str) and isinstance(index, int) and 0 < index <= compiled.groups for name, index in names.items())
+            or not all(isinstance(name, str) and type(index) is int and 0 < index <= compiled.groups for name, index in names.items())
             or not isinstance(results, list)
-            or len(results) != count
+            or len(results) != len(lengths)
         ):
             raise RegexError(f"the regular expression worker for {pattern!r} gave a malformed answer{where}")
         converted: list[list[RemoteMatch]] = []
-        for one_text in results:
+        for one_text, length in zip(results, lengths):
             if not isinstance(one_text, list):
                 raise RegexError(f"the regular expression worker for {pattern!r} gave a malformed answer{where}")
             matches: list[RemoteMatch] = []
             for item in one_text:
-                if not RegexRunner._well_formed(item, compiled.groups):
+                if not RegexRunner._well_formed(item, compiled.groups, length):
                     raise RegexError(f"the regular expression worker for {pattern!r} gave a malformed match{where}")
                 matches.append(RemoteMatch(item[0], item[1], item[2], names))
             converted.append(matches)
@@ -276,14 +296,14 @@ class RegexRunner:
         return converted, float(seconds) if isinstance(seconds, (int, float)) and not isinstance(seconds, bool) and seconds >= 0 else None
 
     @staticmethod
-    def _well_formed(item: Any, groups: int) -> bool:
-        """Return whether *item* is ``[start, end, [group texts]]`` with one text per group and the whole match."""
+    def _well_formed(item: Any, groups: int, length: int) -> bool:
+        """Return whether *item* is ``[start, end, [group texts]]`` inside a text of *length* characters, with one text per group and the whole match."""
         return (
             isinstance(item, list)
             and len(item) == 3
-            and isinstance(item[0], int)
-            and isinstance(item[1], int)
-            and 0 <= item[0] <= item[1]
+            and type(item[0]) is int
+            and type(item[1]) is int
+            and 0 <= item[0] <= item[1] <= length
             and isinstance(item[2], list)
             and len(item[2]) == groups + 1
             and item[2][0] is not None

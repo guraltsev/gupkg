@@ -150,3 +150,5 @@ The static regex guard cannot bound `re` (the reviewer found `(?:\w+\s?){3}z`, `
 - `WindowsSystem.run`: stdin is fed from a thread (a child that never reads it no longer blocks the timeout), every child is in a job object so a kill also reaches a helper whose parent already exited (the failing final watcher poll), and the job kills nothing on a clean finish.
 
 Not covered: memory, OS-enforced no network, a long-lived worker (one process per call; a start takes 50 to 400 ms here, and the deadline starts after it).
+
+Last touches after the runner review: the job object of a regex worker is made with kill-on-close (a hard-killed parent leaves no worker); job creation is inside the try (a failure kills the child); the worker deadline counts from the `pid` line (test with a late line); a start-limit overrun is `WorkerDidNotStart` with its own message; the no-leak test counts only processes of its own uniquely named copy of the worker; release runs match all tags and all asset names in two calls (`_Matches`); a runner stops after 120 s of wall-clock time; `_well_formed` rejects booleans and spans beyond the text.

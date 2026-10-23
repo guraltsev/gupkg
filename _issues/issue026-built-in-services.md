@@ -166,4 +166,10 @@ Converting the registry. That is issue 031, which uses these services.
   The runner does not cap memory. Issue 028 only wires an elevated run: the trust checks of
   `gupkg.services.hooks.require_trusted_code` and `gupkg.services.http.github_environment`, and resolving
   the version-control and ssh programs from machine or admin-only paths (they are found through the
-  inherited `PATH` today).
+  inherited `PATH` today). Also owed to 028: in an elevated run the worker's interpreter
+  (`sys.executable`) and `gupkg/system/regex_worker.py` (found today as `Path(__file__)` beside
+  `windows.py`) must come from an admin-only location, with that trust checked before the worker is
+  launched, the same rule as for package code.
+- **Runner cost:** one worker process per call (50 to 400 ms to start here); a release run is two calls
+  (all tags, all asset names) when the asset pattern does not depend on the release, and a runner stops
+  with a clear error after 120 s of wall-clock time (`WALL_SECONDS`), separate from its 10 s of matching.

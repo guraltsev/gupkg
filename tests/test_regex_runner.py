@@ -15,25 +15,30 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
+import threading
 import time
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
 from gupkg.model.jsonpath import parse_path
+from gupkg.model.manifest import ManifestKind, parse_manifest
 from gupkg.model.patterns import PatternError, scan
 from gupkg.services.checksum import ChecksumDiscoveryError
 from gupkg.services.regexrun import RegexError, RegexRunner, RegexTimeout, RemoteMatch
 from gupkg.services.track import TrackError, run_tracker
-from gupkg.system.fake import FakeSystem, ProcessCall
-from gupkg.system.port import ProcessResult
+from gupkg.system.fake import FakeHttp, FakeSystem, ProcessCall
+from gupkg.system.port import ProcessResult, WorkerDidNotStart
 from tests.http_fixtures import HTTP_CASES, environment, serve, tracker_manifest
 
 HERE = Path(__file__).resolve().parent
 REAL = json.loads((HERE / "fixtures" / "registry_patterns.json").read_text(encoding="utf-8"))
 DEADLINE = 0.8
+WORKER_SOURCE = HERE.parent / "src" / "gupkg" / "system" / "regex_worker.py"
 # A process start is slow on some machines (antivirus, the venv launcher) and spikes to seconds; the
 # deadline counts from the worker's first line, so tests allow the start on top of deadline plus one second.
 START_ALLOWANCE = 3.0
@@ -184,22 +189,47 @@ def test_large_hostile_pages_return_or_time_out_within_the_deadline(system: Fake
     assert time.monotonic() - started < DEADLINE + 1.0 + START_ALLOWANCE
 
 
+def _count_processes_of(script_name: str) -> int:
+    """Return how many python processes on the machine have *script_name* in their command line."""
+    listing = subprocess.run(
+        ["powershell", "-NoProfile", "-Command",
+         f"(Get-CimInstance Win32_Process | Where-Object {{ $_.Name -like 'python*' -and $_.CommandLine -like '*{script_name}*' }} | Measure-Object).Count"],
+        capture_output=True, text=True, timeout=60,
+    )
+    return int(listing.stdout.strip())
+
+
 @pytest.mark.windows_integration
-def test_no_worker_process_is_left_after_the_hostile_corpus(system: FakeSystem) -> None:
-    """After several kills no process of the worker script is still running."""
+def test_no_worker_process_is_left_after_the_hostile_corpus(system: FakeSystem, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """After several kills no process of this test's own copy of the worker is running (other runs are not counted)."""
+    unique = f"regex_worker_{uuid.uuid4().hex}.py"
+    copy = tmp_path / unique
+    shutil.copyfile(WORKER_SOURCE, copy)
+    monkeypatch.setattr("gupkg.system.windows._REGEX_WORKER", copy)
+    hostile = json.dumps({"op": "search", "pattern": "(a+)+$", "flags": 32, "texts": ["a" * 40 + "!"], "limit": 1, "cap": 100})
+    lines: list[str] = []
+    outcome: list[BaseException] = []
+
+    def hang() -> None:
+        """Run a worker that never finishes and note how it ends."""
+        try:
+            system.regex_worker(hostile, 3.0, on_line=lines.append)
+        except TimeoutError as error:
+            outcome.append(error)
+
+    thread = threading.Thread(target=hang)
+    thread.start()
+    while not lines:
+        time.sleep(0.05)
+    running = _count_processes_of(unique)  # the positive control: the query does see a live worker
+    thread.join(30)
     runner = deadline_runner(system)
     for pattern, page in (("(a+)+$", "a" * 40 + "!"), (r"\d+\d+\d+x", "1" * 1000), (r"(?:x+x+x+){3}y", "x" * 1000)):
         with pytest.raises(RegexTimeout):
             runner.finditer(re.compile(pattern), page)
     time.sleep(0.5)
 
-    listing = subprocess.run(
-        ["powershell", "-NoProfile", "-Command",
-         "(Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'python*' -and $_.CommandLine -like '*regex_worker.py*' } | Measure-Object).Count"],
-        capture_output=True, text=True, timeout=60,
-    )
-
-    assert listing.stdout.strip() == "0"
+    assert running >= 1 and outcome and _count_processes_of(unique) == 0
 
 
 def test_the_total_budget_of_a_runner_is_a_hard_cap(system: FakeSystem) -> None:
@@ -370,3 +400,105 @@ def test_a_json_filter_with_a_regular_expression_is_decided_by_the_worker(system
 
     assert kept == ["tool-1.zip", "tool-2.zip"] and len(system.regex_log) == 1
     assert json.loads(system.regex_log[0])["texts"] == ["tool-1.zip", "other", "tool-2.zip"]
+
+
+# -- cost and strictness ---------------------------------------------------------------------------
+
+
+def test_the_wall_clock_cap_stops_a_run_that_starts_too_many_workers(tmp_path: Path) -> None:
+    """Calls whose process starts add up past `wall` seconds: the next one fails with a clear error and starts nothing."""
+    ticks = iter(range(0, 10_000, 100))
+    ok = ProcessResult(0, json.dumps({"ok": True, "names": {}, "results": [[]], "seconds": 0.0}))
+    system = FakeSystem(tmp_path / "machine", processes={"regex-worker": lambda call: ok})
+    runner = RegexRunner(system, wall=150.0, clock=lambda: float(next(ticks)))
+
+    runner.finditer(re.compile("x"), "y")
+    runner.finditer(re.compile("x"), "y")
+    with pytest.raises(RegexTimeout, match="150 seconds of wall-clock time"):
+        runner.finditer(re.compile("x"), "y", what="the third call")
+
+    assert len(system.regex_log) == 2
+
+
+def test_a_worker_that_did_not_start_is_reported_as_that_not_as_a_slow_pattern(tmp_path: Path) -> None:
+    """The message names the start failure, never 'took longer than 2 seconds'."""
+
+    def never_started(call: ProcessCall) -> ProcessResult:
+        """Report the start limit."""
+        raise WorkerDidNotStart("the regex worker did not start within 30 seconds")
+
+    system = FakeSystem(tmp_path / "machine", processes={"regex-worker": never_started})
+
+    with pytest.raises(RegexError, match="did not start") as caught:
+        RegexRunner(system).search(re.compile("x"), "x")
+
+    assert not isinstance(caught.value, RegexTimeout) and "took longer" not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        pytest.param([0, 5, ["abcde"]], id="span-longer-than-the-text"),
+        pytest.param([True, 1, ["x"]], id="boolean-start"),
+        pytest.param([0, True, ["x"]], id="boolean-end"),
+        pytest.param([0.0, 1, ["x"]], id="float-start"),
+    ],
+)
+def test_a_match_outside_the_text_or_with_non_integer_positions_is_rejected(tmp_path: Path, item: list) -> None:
+    """The text sent is one character long; a span past it, a boolean or a float position is a malformed match."""
+    answer = ProcessResult(0, json.dumps({"ok": True, "names": {}, "results": [[item]]}))
+    system = FakeSystem(tmp_path / "machine", processes={"regex-worker": lambda call: answer})
+
+    with pytest.raises(RegexError, match="malformed match"):
+        RegexRunner(system).finditer(re.compile(r"x"), "x")
+
+
+def test_a_boolean_group_number_in_the_names_is_rejected(tmp_path: Path) -> None:
+    """`true` is not a group number even though it is an int in Python."""
+    answer = ProcessResult(0, json.dumps({"ok": True, "names": {"a": True}, "results": [[]]}))
+    system = FakeSystem(tmp_path / "machine", processes={"regex-worker": lambda call: answer})
+
+    with pytest.raises(RegexError, match="malformed answer"):
+        RegexRunner(system).finditer(re.compile(r"(?P<a>x)"), "x")
+
+
+RELEASES_TOML = """
+format = 2
+description = "x"
+project_url = "https://example.com/"
+
+[track]
+provider = "github"
+repo = "o/r"
+release = "newest-matching"
+tag_pattern = 'v(?P<version>\\d+\\.\\d+)'
+asset_pattern = 'tool-\\d+\\.\\d+\\.zip'
+
+[source]
+download_url = "${asset_url}"
+"""
+
+
+def test_a_release_run_needs_two_worker_calls_not_two_per_release_and_finds_the_same_version(system: FakeSystem, tmp_path: Path) -> None:
+    """Thirty releases: one call matches all tags, one all asset names; the newest release with its asset is found."""
+    base = "https://github.com/o/r/releases"
+    rows = [
+        {
+            "tag_name": f"v1.{number}",
+            "draft": False,
+            "prerelease": False,
+            "html_url": f"{base}/tag/v1.{number}",
+            "assets": [
+                {"name": f"tool-1.{number}.zip", "state": "uploaded", "browser_download_url": f"{base}/download/v1.{number}/tool-1.{number}.zip"},
+                {"name": f"tool-1.{number}.zip.sig", "state": "uploaded", "browser_download_url": f"{base}/download/v1.{number}/tool-1.{number}.zip.sig"},
+            ],
+        }
+        for number in range(30)
+    ]
+    system.urls["https://api.github.com/repos/o/r/releases?per_page=100"] = FakeHttp(json.dumps(rows), 200, {"Content-Type": "application/json"})
+    manifest = parse_manifest(RELEASES_TOML, ManifestKind.TRACKER)
+
+    result = run_tracker(manifest, environment(system, tmp_path))
+
+    assert result.version == "1.29" and result.captures["asset_name"] == "tool-1.29.zip"
+    assert len(system.regex_log) == 2

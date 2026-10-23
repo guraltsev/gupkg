@@ -14,7 +14,9 @@ answers; the fake's own bookkeeping is covered in ``tests/test_fake_system.py``.
 
 from __future__ import annotations
 
+import json
 import os
+import subprocess
 import sys
 import time
 import uuid
@@ -24,8 +26,8 @@ from typing import Iterator
 import pytest
 
 from gupkg.system.fake import FakeSystem
-from gupkg.system.port import EnvValue, ProcessAborted, ProcessResult, Scope, ShortcutSpec, System
-from gupkg.system.windows import WindowsSystem
+from gupkg.system.port import EnvValue, ProcessAborted, ProcessResult, Scope, ShortcutSpec, System, WorkerDidNotStart
+from gupkg.system.windows import WindowsSystem, _ProcessJob
 
 windows_only = pytest.mark.skipif(os.name != "nt", reason="needs Windows")
 
@@ -589,8 +591,6 @@ HANGING = '{"op":"search","pattern":"(a+)+$","flags":32,"texts":["%s!"],"limit":
 
 def _alive(pid: int) -> bool:
     """Return whether a process with this id is running (``tasklist`` lists it)."""
-    import subprocess
-
     listing = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"], capture_output=True, text=True, timeout=30)
     return f'"{pid}"' in listing.stdout
 
@@ -631,8 +631,6 @@ PROBE = (
 @windows_only
 def test_the_regex_worker_runs_isolated_with_a_minimal_environment_in_an_empty_temporary_folder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The worker is started with -I -s -B -S, only SystemRoot in its environment, and an empty temporary folder as cwd."""
-    import json
-
     probe = tmp_path / "probe.py"
     probe.write_text(PROBE, encoding="utf-8")
     monkeypatch.setattr("gupkg.system.windows._REGEX_WORKER", probe)
@@ -644,6 +642,137 @@ def test_the_regex_worker_runs_isolated_with_a_minimal_environment_in_an_empty_t
     assert seen["isolated"] == seen["no_site"] == seen["no_bytecode"] == seen["no_user_site"] == 1
     assert [name.upper() for name in seen["env"]] == ["SYSTEMROOT"] and seen["stdin"] == "the request"
     assert "gupkg-regex-" in seen["cwd"] and "secret-token" not in result.stdout
+
+
+@pytest.mark.windows_integration
+@windows_only
+def test_the_regex_deadline_counts_from_the_pid_line_not_from_the_process_start(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A worker that is slow to say it is up (1.5 s) but quick afterwards is not timed out by a 0.5 s deadline."""
+    slow = tmp_path / "slow_start.py"
+    slow.write_text(
+        "import os, sys, time\ntime.sleep(1.5)\nsys.stderr.write('pid %d\\n' % os.getpid()); sys.stderr.flush()\n"
+        "print('{\"ok\":true,\"names\":{},\"results\":[[]]}')\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("gupkg.system.windows._REGEX_WORKER", slow)
+
+    result = WindowsSystem().regex_worker(REQUEST, 0.5)
+
+    assert result.returncode == 0 and '"ok":true' in result.stdout
+
+
+@pytest.mark.windows_integration
+@windows_only
+def test_a_worker_that_overruns_its_start_limit_is_reported_as_not_started_with_that_limit(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The error names the start limit, not the (shorter) matching deadline."""
+    silent = tmp_path / "silent2.py"
+    silent.write_text("import time\ntime.sleep(60)\n", encoding="utf-8")
+    monkeypatch.setattr("gupkg.system.windows._REGEX_WORKER", silent)
+    monkeypatch.setattr("gupkg.system.windows._WORKER_START_SECONDS", 1.0)
+
+    with pytest.raises(WorkerDidNotStart, match="did not start within 1 seconds"):
+        WindowsSystem().regex_worker(REQUEST, 0.5)
+
+
+@pytest.fixture
+def job_closes(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Count the calls of ``_ProcessJob.close`` (one per job handle released)."""
+    closed: list[int] = []
+    original = _ProcessJob.close
+
+    def spy(self: _ProcessJob) -> None:
+        """Record the release, then do it."""
+        closed.append(1)
+        original(self)
+
+    monkeypatch.setattr(_ProcessJob, "close", spy)
+    return closed
+
+
+@pytest.mark.windows_integration
+@windows_only
+@pytest.mark.parametrize("path", ["finishes", "times-out", "watcher-raises", "worker-deadline"])
+def test_the_job_handle_is_closed_on_every_path(job_closes: list[int], tmp_path: Path, path: str) -> None:
+    """A clean finish, a timeout, a raising watcher and a regex deadline each release their job handle exactly once."""
+    system = WindowsSystem()
+    sleeper = [sys.executable, "-c", "import time; time.sleep(30)"]
+
+    if path == "finishes":
+        system.run([sys.executable, "-c", "pass"], tmp_path)
+    elif path == "times-out":
+        with pytest.raises(TimeoutError):
+            system.run(sleeper, tmp_path, timeout=0.5)
+    elif path == "watcher-raises":
+        with pytest.raises(RuntimeError):
+            system.run(sleeper, tmp_path, watch=lambda: (_ for _ in ()).throw(RuntimeError("broke")))
+    else:
+        with pytest.raises(TimeoutError):
+            system.regex_worker(HANGING, 0.5)
+
+    assert job_closes == [1]
+
+
+@pytest.mark.windows_integration
+@windows_only
+def test_a_failure_to_create_the_job_kills_the_child_and_reaches_the_caller(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """If the job object code raises, the child is killed (no leaked process or reader thread) and the error is raised."""
+    lines: list[str] = []
+
+    def broken(process: object, *, kill_on_close: bool = False) -> None:
+        """Fail the way a ctypes problem would."""
+        raise OSError("job objects are unavailable")
+
+    monkeypatch.setattr(_ProcessJob, "around", broken)
+    started = time.monotonic()
+
+    with pytest.raises(OSError, match="job objects are unavailable"):
+        WindowsSystem().run(
+            [sys.executable, "-c", "import os, time; print(os.getpid(), flush=True); time.sleep(30)"], tmp_path, None, lines.append
+        )
+
+    assert time.monotonic() - started < 10
+    time.sleep(0.5)
+    assert not _alive(int(lines[0])) if lines else True
+
+
+@pytest.mark.windows_integration
+@windows_only
+def test_the_regex_worker_runs_in_a_kill_on_close_job_and_an_ordinary_child_does_not(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Only the regex worker's job ends its processes when the handle closes; a normal run's helpers may outlive it."""
+    asked: list[bool] = []
+    original = _ProcessJob.around.__func__
+
+    def spy(cls: type, process: object, *, kill_on_close: bool = False) -> object:
+        """Record the flag, then create the job as usual."""
+        asked.append(kill_on_close)
+        return original(cls, process, kill_on_close=kill_on_close)
+
+    monkeypatch.setattr(_ProcessJob, "around", classmethod(spy))
+
+    WindowsSystem().regex_worker(REQUEST, 20)
+    WindowsSystem().run([sys.executable, "-c", "pass"], tmp_path)
+
+    assert asked == [True, False]
+
+
+@pytest.mark.windows_integration
+@windows_only
+def test_closing_a_kill_on_close_job_ends_the_process_in_it(tmp_path: Path) -> None:
+    """With kill_on_close the process dies when the job handle is closed (as it would if the parent were killed); without it, it lives."""
+    mortal = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    spared = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        _ProcessJob.around(mortal, kill_on_close=True).close()
+        _ProcessJob.around(spared).close()
+
+        assert mortal.wait(timeout=10) is not None
+        time.sleep(0.5)
+        assert spared.poll() is None
+    finally:
+        spared.kill()
+        mortal.kill()
+        spared.wait()
+        mortal.wait()
 
 
 @pytest.mark.windows_integration
