@@ -1,3 +1,3 @@
 """Expose the single release version used by runtime and packaging."""
 
-__version__ = "0.17.0"
+__version__ = "0.18.0"
