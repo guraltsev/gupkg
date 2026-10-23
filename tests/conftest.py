@@ -174,3 +174,33 @@ def system(tmp_path: Path):
     from gupkg.system.fake import FakeSystem
 
     return FakeSystem(tmp_path / "machine")
+
+
+# ---------------------------------------------------------------------------
+# The environment that decides how output looks
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def neutral_console_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Remove the variables that change colour, width and encoding of output before every test.
+
+    A developer's shell may set NO_COLOR, TERM, COLUMNS, WT_SESSION or Python's
+    encoding variables; none of them may decide whether a test passes. A test
+    that depends on one sets it itself.
+    """
+    for name in (
+        "NO_COLOR", "FORCE_COLOR", "TERM", "COLORTERM", "COLUMNS", "LINES", "WT_SESSION",
+        "PYTHONIOENCODING", "PYTHONUTF8", "JUPYTER_COLUMNS", "TTY_COMPATIBLE", "TTY_INTERACTIVE",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def no_ambient_elevation_marker(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Remove the launcher's ``GUPKG_ELEVATED`` marker before every test, so elevation comes only from the test's own system.
+
+    ``is_elevated_run`` counts the marker as elevated; a developer's elevated shell may carry it. A test that needs an
+    elevated environment sets it itself.
+    """
+    monkeypatch.delenv("GUPKG_ELEVATED", raising=False)

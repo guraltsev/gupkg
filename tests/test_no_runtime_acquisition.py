@@ -14,6 +14,7 @@ the build-time tools that do install dependencies (``tools/``).
 from __future__ import annotations
 
 import io
+import shutil
 from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
@@ -60,6 +61,10 @@ def test_a_gupkg_run_creates_no_local_state_and_starts_no_pip(tmp_path: Path, mo
     monkeypatch.setenv("LOCALAPPDATA", str(local_app_data))
     started: list[object] = []
 
+    # A run writes its logs next to the package it acts on, so use a copy.
+    package = tmp_path / "GoodApp"
+    shutil.copytree(FIXTURES / "GoodApp", package)
+
     def refuse(*args: object, **kwargs: object) -> None:
         started.append(args[0] if args else kwargs)
         raise AssertionError("no process may be started")
@@ -69,7 +74,7 @@ def test_a_gupkg_run_creates_no_local_state_and_starts_no_pip(tmp_path: Path, mo
         mock.patch("subprocess.Popen", side_effect=refuse),
         redirect_stdout(io.StringIO()),
     ):
-        code = cli.main(["config-check", str(FIXTURES / "GoodApp" / "1.2.3.local.1")])
+        code = cli.main(["config-check", str(package / "1.2.3.local.1")])
 
     assert code == 0
     assert started == []

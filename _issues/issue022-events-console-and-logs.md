@@ -1,5 +1,7 @@
 # Issue 022: Event stream, console renderer, and standard logs
 
+> **Status (2026-10-23):** Implemented. Merged in 8aba71e. Manual checks still owed: `tests/manual_smoke.md`, "Event stream, console and logs (issue 022)": 1 (real console rendering in Windows Terminal and conhost, NO_COLOR, redirection), 2 (`icacls` on `C:\opt\.gupkg\logs` and package logs), 3 (elevated run with hostile `--events-file` and a planted junction/hardlink), 4 (real TUI with an unreachable git origin), 5 (legacy code page). Follow-ups: `[logs]` retention is a writer parameter to be fed from settings (025/029); `--events-file` forwarding to elevated children and the `--json` result document belong to 029; `gupkg logs <target>` and the receipt log path belong to 028/029; `SubprocessLine.stream` is always "output" in this release.
+
 Date: 2026-10-22
 Priority: High
 Epic: 020. Design: `_docs/rehaul_design.md` §14. Supersedes the output parts of issue 015.
@@ -35,7 +37,7 @@ Epic: 020. Design: `_docs/rehaul_design.md` §14. Supersedes the output parts of
    - `install_package`, `components.install_components` (its `run(title, step)`
      helper becomes `PhaseStart`/`PhaseEnd`), the update session, registry
      sync and self repair emit `PhaseStart` and `PhaseEnd`.
-   - `downloads.download_response` emits `Progress(done, total)` events
+   - `downloads.download_file` emits `Progress(done, total)` events
      instead of formatted text.
 3. **Subprocess output is streamed.** All subprocesses run through
    `System.run(..., on_line=...)` (issue 021) and emit `SubprocessLine`.

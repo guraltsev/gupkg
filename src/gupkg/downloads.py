@@ -1,9 +1,9 @@
-"""Download URLs to files while reporting download progress.
+"""Download URLs to files while reporting download progress as events.
 
 The helper (``download_file``) is shared by package origins, update payloads and
-the registry, so human-facing workflows expose the expected size when the server
-provides it and still report received bytes when the server omits
-``Content-Length``. Downloaded files are verified with the streaming
+the registry. It emits ``Progress`` events with the expected size when the server
+provides it, and with received bytes only when the server omits
+``Content-Length``; the last event of every download has ``done == total``. Downloaded files are verified with the streaming
 ``file_sha256(...)`` digest.
 """
 
@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 from typing import Mapping
 
-from .core import log_info, log_progress
+from .report.events import Progress, emit
 from .system.port import System
 
 
@@ -52,40 +52,26 @@ def download_file(
     int
         Number of bytes written to ``destination``.
     """
-    def report(received: int, total: int | None, *, final: bool = False) -> None:
-        """Show one progress line in the known-size or unknown-size form."""
-        if total is None:
-            text = f"{label}: {_format_bytes(received)} received"
-        else:
-            percentage = min(received / total * 100, 100) if total else 100
-            text = (
-                f"{label}: {_format_bytes(received)} / {_format_bytes(total)} "
-                f"({percentage:.0f}%)"
-            )
-        log_progress(text, final=final)
-
     # Report by elapsed time, not by size, so slow and fast connections both
-    # update smoothly; the first call announces the size, and the final report
-    # is always committed as a lasting line.
-    state = {"last_report": time.monotonic(), "total": None}
+    # update smoothly; the first call announces the size (or its absence).
+    state = {"last_report": time.monotonic(), "completed": False}
 
     def on_progress(received: int, total: int | None) -> None:
         """Announce the size once, then report at most every ``_REPORT_INTERVAL`` seconds."""
-        state["total"] = total
         if received == 0:
-            if total is None:
-                log_info(f"{label}: total size unknown")
-            else:
-                log_info(f"{label}: total size {_format_bytes(total)}")
-                report(0, total)
+            emit(Progress(label, 0, total))
             return
         now = time.monotonic()
         if now - state["last_report"] >= _REPORT_INTERVAL:
-            report(received, total)
+            emit(Progress(label, received, total))
             state["last_report"] = now
+            state["completed"] = total is not None and received >= total
 
+    # The last event always has ``done == total`` (the size is known by now),
+    # unless the throttled reports already ended with exactly that event.
     received = system.fetch(url, headers, destination, on_progress)
-    report(received, state["total"], final=True)
+    if not state["completed"]:
+        emit(Progress(label, received, received))
     return received
 
 
@@ -107,15 +93,3 @@ def file_sha256(path: Path) -> str:
         while chunk := file_handle.read(_CHUNK_SIZE):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def _format_bytes(value: int) -> str:
-    """Render bytes compactly for terminal progress lines."""
-    if value < 1024:
-        return f"{value} B"
-    amount = float(value)
-    for unit in ("KiB", "MiB", "GiB"):
-        amount /= 1024
-        if amount < 1024:
-            return f"{amount:.1f} {unit}"
-    return f"{amount / 1024:.1f} TiB"
