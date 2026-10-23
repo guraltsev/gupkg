@@ -19,9 +19,9 @@ on `main` before dispatching the first worker.
 | 017 | Shortcuts and junctions without PowerShell or `cmd` | — | merged | rehaul/issue017 | e23a94c | 277 passed (+20), 0 failed, 0 skipped | 017-1 Explorer Properties dialog; 017-2 TUI and elevated system-scope install; 017-3 optional timing |
 | 018 | Remove system-Python autodetection | 016 | in review | rehaul/issue018 | | | |
 | 019 | The bundled Python ships without pip | 016 | merged | rehaul/issue019 | 5c922cb | 331 passed, 0 failed, 0 skipped | 019-1 real build; 019-2 clean-VM pip-less run; 019-3 update_deps --repair no-diff |
-| 021 | System boundary, FakeSystem, and sandbox mode | 016–019 | waiting | | | | |
+| 021 | System boundary, FakeSystem, and sandbox mode | 016–019 | in progress | rehaul/issue021 | | | |
 | 022 | Event stream, console renderer, and standard logs | 021 | waiting | | | | |
-| 023 | `pkg.toml` format 2, settings model, and migration tool | 019 (and D35) | waiting | | | | |
+| 023 | `pkg.toml` format 2, settings model, and migration tool | 019 (and D35) | in progress | rehaul/issue023 | | | |
 | 024 | Catalog and package state model | 023 | waiting | | | | |
 | 025 | First-class install modes | 021, 023 | waiting | | | | |
 | 026 | Built-in services replacing hook scripts | 021, 022, 023 | waiting | | | | |
@@ -70,3 +70,4 @@ None blocking. For information:
 - Owner note (D13 text): worker 018 edited `_docs/rehaul_design.md` D13 and the 018 row to say the launcher flags are `-I -s -B -S` (the added `-S`). It is a text fix for an implementation consequence, not a change of the decision; please confirm. Also: the elevated ACL check is not recursive over the runtime tree (D30 wants recursion) and the python dir is trusted at interpreter start (inherent limit); recursion is routed to issue 033, and the limit should be stated in the elevated-runtime doc (issue 032).
 - 2026-10-22: 018 merged (1f4e085) after 3 review rounds (round 3 clean) and a merge of main (019). Suite on main: 355 passed. Stage 0 (016-019) is fully merged.
 - Stale text noted by the 018 worker: `docs/elevated-runtime-design.md` "Dependencies ship in the bundle" bullet still says the lock pins pip and that update/repair run pip from the bundled runtime (stale after 019); fix in issue 032's docs pass.
+- 2026-10-22: 0.18 prepared locally (see Releases). Dispatched workers for 021 and 023 (stage 1).
