@@ -14,7 +14,11 @@ test and inspect ``registry_log``, ``env_values(...)``, ``shortcuts()``,
 ``broadcasts`` and ``relaunches`` afterwards. ``FakeSystem.sandbox(directory,
 delegate)`` is what ``--sandbox DIR`` uses: it keeps its registry state in
 ``DIR/system.json`` across runs and sends network and process calls that have
-no fixture to the real ``delegate``; processes never go there (only ``git`` and 7-Zip run for real).
+no fixture to the real ``delegate``. Child processes reach the real system only
+when the command is one allowed *by identity*: ``git`` (a bare ``git`` or the exact
+resolved ``git.exe`` found on ``PATH``) and the bundled 7-Zip (the exact path
+``find_7z()`` returns). Any other command, including a script or a copy named
+``git.exe`` or ``7z.exe``, raises ``UnexpectedCall``.
 
 Implementation Approach
 -----------------------
@@ -38,8 +42,20 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
+from ..extractors import find_7z
 from .port import EnvValue, ProcessResult, Scope, ScopeFolders, ShortcutSpec, System
 from .windows import WindowsLinks, WindowsSystem
+
+
+def _find_on_path(name: str) -> Path | None:
+    """Return the executable *name* on ``PATH`` (never the working directory), fully resolved."""
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        folder = entry.strip().strip('"')
+        for candidate in (name + ".exe", name):
+            path = Path(folder) / candidate if folder else None
+            if path is not None and path.is_file():
+                return Path(os.path.realpath(path))
+    return None
 
 
 class UnexpectedCall(OSError):
@@ -122,6 +138,7 @@ class FakeSystem(WindowsLinks):
     relaunches: list[list[str]] = field(default_factory=list)
     fetch_log: list[str] = field(default_factory=list)
     process_log: list[list[str]] = field(default_factory=list)
+    real_programs: dict[str, Path] = field(default_factory=dict)
     _env: dict[str, dict[str, tuple[str, EnvValue]]] = field(
         default_factory=lambda: {"user": {}, "system": {}}
     )
@@ -143,8 +160,9 @@ class FakeSystem(WindowsLinks):
         """
         directory = Path(directory)
         sandbox = cls(directory, delegate=delegate, state_file=directory / "system.json")
-        # Processes stay on an allow-list: git (a package may clone its origin) and,
-        # through ``real_7zip``, 7-Zip. Any other program raises ``UnexpectedCall``.
+        # Processes stay on an identity allow-list: git (a package may clone its
+        # origin) and, through ``real_7zip``, the bundled 7-Zip. Any other command
+        # raises ``UnexpectedCall``.
         sandbox.allow_real("git")
         return sandbox
 
@@ -169,14 +187,14 @@ class FakeSystem(WindowsLinks):
     def allow_real(self, *programs: str) -> None:
         """Let the named programs run for real, for example ``git`` against a local fixture repository.
 
-        Each name joins the process allow-list as a pass-through double; any
-        other program still raises ``UnexpectedCall``.
+        Each name is resolved once, on ``PATH`` and never in the working
+        directory, to one executable file. Afterwards only that identity runs: a
+        bare name, or exactly that path. A name that is not found is not allowed.
         """
-        real = WindowsSystem()
         for program in programs:
-            self.processes[program.lower()] = lambda call, real=real: real.run(
-                call.argv, call.cwd, call.env, None, input_text=call.input_text
-            )
+            found = _find_on_path(program)
+            if found is not None:
+                self.real_programs[program.lower()] = found
 
     # -- links: real links below the temporary root (inherited) --------------
 
@@ -304,12 +322,12 @@ class FakeSystem(WindowsLinks):
                     on_line(line)
             return result
 
-        # 7-Zip may really run when it exists, since extraction touches only files.
-        if self.real_7zip and program.stem.lower() in {"7z", "7za", "7zr"} and (
-            program.is_file() or shutil.which(command[0])
-        ):
+        # Only an allowed identity (git on PATH, the bundled 7-Zip) runs for real,
+        # and it runs from its resolved path, so nothing named like it can stand in.
+        target = self._real_target(command[0])
+        if target is not None:
             return (self.delegate or WindowsSystem()).run(
-                command, cwd, env, on_line, input_text=input_text, timeout=timeout
+                [str(target), *command[1:]], cwd, env, on_line, input_text=input_text, timeout=timeout
             )
         raise UnexpectedCall(f"FakeSystem has no process double for {command[0]!r}: {command}")
 
@@ -371,6 +389,26 @@ class FakeSystem(WindowsLinks):
         if isinstance(content, str):
             return content.encode("utf-8"), True
         return bytes(content), True
+
+    def _real_target(self, program: str) -> Path | None:
+        """Return the executable that *program* may run as, or ``None`` when it is not an allowed identity."""
+        # Only executables: a script or any other suffix is never "the real git".
+        if Path(program).suffix.lower() not in ("", ".exe"):
+            return None
+
+        # A bare name means the program resolved when it was allowed.
+        if not any(separator in program for separator in "\\/"):
+            return self.real_programs.get(Path(program).stem.lower())
+
+        # A path must be exactly an allowed executable.
+        allowed = list(self.real_programs.values())
+        if self.real_7zip:
+            try:
+                allowed.append(Path(os.path.realpath(find_7z())))
+            except FileNotFoundError:
+                pass
+        given = os.path.normcase(os.path.realpath(program))
+        return next((path for path in allowed if os.path.normcase(str(path)) == given), None)
 
     def _maybe_fail(self, method: str) -> None:
         """Raise (once) the exception configured for *method*."""
