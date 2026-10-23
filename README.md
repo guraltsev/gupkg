@@ -432,9 +432,12 @@ they have an effect.
 Exit status is `0` for success, `2` for a user/configuration error, `3` for a
 mutation failure, and `4` for an unexpected internal error.
 
-The convenience scripts call the same `gupkg.cli:main` entry point. The
-console script and `python -m gupkg` therefore use identical parsing and
-version information.
+The convenience scripts call the same `gupkg.cli:main` entry point and use
+identical parsing and version information. gupkg runs only on its bundled
+Python: `python -m gupkg` or `bootstrap.py` on any other interpreter, or without
+`-I`, exits with `Start gupkg through gupkg.cmd or gupkg.exe; it runs only on its
+bundled Python.` In a source checkout use `scripts\run.cmd`; the development
+scripts use `.venv` only (`requirements-dev.txt`).
 
 The internal `src\gupkg\gupkg.cmd` runs only `python\python.exe` from its own
 folder, as `python.exe -I -s -B bootstrap.py`. It never consults `GUPKG_PYTHON`,

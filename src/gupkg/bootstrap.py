@@ -13,16 +13,15 @@ Call ``main(...)`` from the launcher. It forwards the remaining arguments to
 Implementation Approach
 -----------------------
 The bootstrap makes the sibling package importable from its own location and
-hands the original command arguments to the Python CLI. An elevated run
-(requested with ``--elevated`` or detected from the process token) first
-verifies that the interpreter is the isolated bundled one and that every
-directory it imports from, which includes the whole bundled runtime, is
-admin-only, and refuses otherwise.
+hands the original command arguments to the Python CLI. Every run first
+verifies that the interpreter is the isolated bundled one and refuses
+otherwise. An elevated run (detected from the process token) also verifies
+that every directory it imports from, which includes the whole bundled
+runtime, is admin-only.
 """
 
 from __future__ import annotations
 
-import argparse
 import importlib.util
 import os
 import sys
@@ -40,37 +39,36 @@ def main(argv: Sequence[str] | None = None) -> int:
     Parameters
     ----------
     argv : sequence of str, optional
-        Bootstrap options followed by the arguments intended for ``gupkg``.
+        The arguments intended for ``gupkg``; ``sys.argv[1:]`` when omitted.
 
     Returns
     -------
     int
         The exit status returned by the public CLI.
     """
-    parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("--elevated", action="store_true")
-    options, command_args = parser.parse_known_args(argv)
+    command_args = list(sys.argv[1:] if argv is None else argv)
 
-    # Make the sibling package importable regardless of the caller's cwd.
+    # -I drops the script directory and PYTHONPATH from sys.path, so make the
+    # sibling package importable from this file's own location.
     package_parent = Path(__file__).resolve().parent.parent
     if sys.path[:1] != [str(package_parent)]:
         sys.path.insert(0, str(package_parent))
 
-    # An elevated process, whether the launcher said so or the token shows it,
-    # must pass the trust check before anything else is imported.
+    # Every run must be the isolated bundled interpreter, and an elevated run
+    # must also import only admin-only code, before anything else is imported.
     elevation = _load_elevation()
-    if options.elevated or elevation.is_elevated():
-        try:
-            elevation.enforce_elevated_runtime(Path(__file__).resolve().parent)
-        except elevation.UntrustedLocationError as error:
-            print(f"[gupkg] {error}", file=sys.stderr)
-            return 1
+    elevated = elevation.elevated_mode()
+    try:
+        elevation.enforce_bundled_runtime(Path(__file__).resolve().parent, elevated=elevated)
+    except elevation.UntrustedLocationError as error:
+        print(f"[gupkg] {error}", file=sys.stderr)
+        return 1
+    if elevated:
         os.environ["GUPKG_ELEVATED"] = "1"
 
-    # Keep bootstrap-only flags out of the public command parser.
     from gupkg.cli import main as cli_main
 
-    return int(cli_main(list(command_args)))
+    return int(cli_main(command_args))
 
 
 def _load_elevation() -> types.ModuleType:

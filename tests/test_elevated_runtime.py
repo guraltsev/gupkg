@@ -2,8 +2,8 @@
 
 Behavior covered: which directories an elevated run accepts or refuses, that the
 trust check covers the whole active version directory (including the bundled
-runtime and its dependency folder), that the bootstrap refuses an elevated run on
-an untrusted interpreter, and that an elevated update relaunch goes through the
+runtime and its dependency folder), that the bootstrap refuses any run on
+a non-bundled interpreter, and that an elevated update relaunch goes through the
 isolated launcher.
 
 Mocked boundaries: the Windows security-descriptor reader (replaced by synthetic
@@ -145,18 +145,51 @@ def test_real_system_folder_is_trusted_and_user_temp_folder_is_not() -> None:
         elevation.require_trusted_directory(Path(os.environ["TEMP"]))
 
 
-def test_elevated_runtime_refuses_an_interpreter_that_is_not_the_bundled_one(tmp_path: Path) -> None:
-    """An elevated run on any interpreter other than the package's bundled Python is refused."""
+@pytest.mark.parametrize("elevated", [False, True], ids=["ordinary", "elevated"])
+def test_runtime_refuses_an_interpreter_that_is_not_the_bundled_one(tmp_path: Path, elevated: bool) -> None:
+    """A run on any interpreter other than the package's bundled Python is refused, elevated or not."""
     package = tmp_path / "gupkg"
     (package / "python").mkdir(parents=True)
     (package / "python" / "python.exe").touch()
 
-    with pytest.raises(UntrustedLocationError, match="bundled Python"):
-        elevation.enforce_elevated_runtime(package)
+    with pytest.raises(UntrustedLocationError, match="runs only on its bundled Python"):
+        elevation.enforce_bundled_runtime(package, elevated=elevated)
 
 
-def test_bootstrap_refuses_an_elevated_run_without_importing_the_cli(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """The bootstrap exits with an error instead of running the CLI when the elevated runtime is untrusted."""
+def test_runtime_refuses_the_bundled_interpreter_started_without_isolation(tmp_path: Path) -> None:
+    """The bundled python.exe started without -I (so PYTHON* variables count) is refused even for an ordinary run."""
+    package = tmp_path / "gupkg"
+    (package / "python").mkdir(parents=True)
+    python = package / "python" / "python.exe"
+    python.touch()
+
+    with (
+        mock.patch.object(sys, "executable", str(python)),
+        mock.patch.object(sys, "flags", types.SimpleNamespace(isolated=0)),
+        pytest.raises(UntrustedLocationError, match="runs only on its bundled Python"),
+    ):
+        elevation.enforce_bundled_runtime(package)
+
+
+def test_ordinary_run_on_the_isolated_bundled_interpreter_needs_no_admin_only_folders(tmp_path: Path) -> None:
+    """An ordinary run passes on the isolated bundled Python without reading any folder's access-control list."""
+    package = tmp_path / "gupkg"
+    (package / "python").mkdir(parents=True)
+    python = package / "python" / "python.exe"
+    python.touch()
+
+    with (
+        mock.patch.object(sys, "executable", str(python)),
+        mock.patch.object(sys, "flags", types.SimpleNamespace(isolated=1)),
+        mock.patch.object(elevation, "require_trusted_directory") as trusted,
+    ):
+        elevation.enforce_bundled_runtime(package)
+
+    trusted.assert_not_called()
+
+
+def test_bootstrap_refuses_a_run_on_the_wrong_interpreter_without_importing_the_cli(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """The bootstrap exits 1 with the bundled-Python message instead of running the CLI when the interpreter is not the bundled one."""
     spec = importlib.util.spec_from_file_location("bootstrap_elevated_under_test", SRC / "bootstrap.py")
     bootstrap = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(bootstrap)
@@ -170,7 +203,7 @@ def test_bootstrap_refuses_an_elevated_run_without_importing_the_cli(tmp_path: P
         mock.patch.object(bootstrap, "__file__", str(package / "bootstrap.py")),
         mock.patch.dict(sys.modules, {"gupkg.cli": cli}),
     ):
-        status = bootstrap.main(["--elevated", "list"])
+        status = bootstrap.main(["list"])
 
     assert status == 1
     assert "bundled Python" in capsys.readouterr().err
@@ -190,14 +223,14 @@ def test_elevated_trust_check_covers_the_version_directory_and_the_whole_bundled
     site_packages.mkdir(parents=True)
     python = package / "python" / "python.exe"
     python.touch()
-    isolated = types.SimpleNamespace(ignore_environment=1, no_user_site=1)
+    isolated = types.SimpleNamespace(isolated=1)
 
     with (
         mock.patch.object(sys, "executable", str(python)),
         mock.patch.object(sys, "flags", isolated),
         mock.patch.object(elevation, "require_trusted_directory") as trusted,
     ):
-        elevation.enforce_elevated_runtime(package)
+        elevation.enforce_bundled_runtime(package, elevated=True)
 
     checked = {Path(call.args[0]).resolve() for call in trusted.call_args_list}
     assert {version_root.resolve(), package.resolve(), (package / "python").resolve(), site_packages.resolve()} <= checked

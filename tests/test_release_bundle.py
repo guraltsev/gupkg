@@ -202,7 +202,7 @@ def test_manager_self_status_reports_the_edited_file(installed: Path, tmp_path: 
         f"[registry]\ncache = '{tmp_path / 'registry'}'\n\n[shims]\nlinkage = 'dynamic'\n",
         encoding="utf-8",
     )
-    environment = {key: value for key, value in os.environ.items() if key != "GUPKG_FORCE_ELEVATED"}
+    environment = os.environ.copy()
     command = [str(installed / "gupkg" / "gupkg.cmd"), "manager", "--config", str(config), "self", "status"]
 
     healthy = subprocess.run(command, capture_output=True, text=True, env=environment, timeout=120)

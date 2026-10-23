@@ -3,14 +3,16 @@
 Behavior covered: the launcher always runs the bundled interpreter in isolated
 mode, never a Python found through ``GUPKG_PYTHON``, a ``gupkg.python`` file,
 ``python`` on ``PATH`` or the ``py`` launcher; a missing bundled interpreter stops
-the launch with the reinstall message; an elevated launch additionally passes
-the elevation flag.
+the launch with the reinstall message; ordinary and elevated launches start the
+same interpreter with the same arguments; the bootstrap refuses to run on any
+other interpreter or without ``-I``.
 
-Real: the Windows ``cmd`` launcher and the checked-in native shim, which stands
-in for ``python.exe`` and records what it was started with. The elevated branch
-is selected with the launcher's strictness-only switch ``GUPKG_FORCE_ELEVATED``
-because a real administrator token is not available to tests. Out of scope: the
-Python-side trust check (covered in ``test_elevated_runtime.py``).
+Real: the Windows ``cmd`` launcher, the checked-in native shim (which stands in
+for ``python.exe`` and records what it was started with) and, for the bootstrap
+refusal, the test interpreter. Elevation is selected with ``GUPKG_ELEVATED``,
+which can only make a run stricter, because a real administrator token is not
+available to tests. Out of scope: the access-control trust check (covered in
+``test_elevated_runtime.py``).
 """
 
 from __future__ import annotations
@@ -74,14 +76,20 @@ def _run(package: Path, *arguments: str, env: dict[str, str]) -> subprocess.Comp
     )
 
 
-def test_launch_runs_only_the_bundled_python_isolated_and_ignores_every_override(tmp_path: Path) -> None:
-    """A launch uses -I -s -B on the bundled interpreter even with GUPKG_PYTHON, gupkg.python and PATH Pythons set."""
+@pytest.mark.parametrize("elevated", [False, True], ids=["ordinary", "elevated"])
+def test_launch_runs_only_the_bundled_python_isolated_and_ignores_every_override(tmp_path: Path, elevated: bool) -> None:
+    """Ordinary and elevated launches both run the bundled python.exe with -I -s -B and identical arguments despite every override."""
     package, log = _package(tmp_path)
     decoys, decoy_log = _decoy_python(tmp_path)
     (package / "gupkg.python").write_text(str(decoys / "python.cmd"), encoding="ascii")
     env = os.environ.copy()
-    env.pop("GUPKG_FORCE_ELEVATED", None)
-    env.update(GUPKG_PYTHON=str(decoys / "python.cmd"), PATH=f"{decoys};{env['PATH']}")
+    env.update(
+        GUPKG_PYTHON=str(decoys / "python.cmd"),
+        PYTHONPATH=str(decoys),
+        PATH=f"{decoys};{env['PATH']}",
+    )
+    if elevated:
+        env["GUPKG_ELEVATED"] = "1"
 
     result = _run(package, "manager", "list", env=env)
 
@@ -89,22 +97,8 @@ def test_launch_runs_only_the_bundled_python_isolated_and_ignores_every_override
     arguments = ast.literal_eval(log.read_text(encoding="utf-8"))
     assert arguments[:3] == ["-I", "-s", "-B"]
     assert arguments[3].endswith("bootstrap.py")
-    assert arguments[4:] in (["manager", "list"], ["--elevated", "manager", "list"])
+    assert arguments[4:] == ["manager", "list"]
     assert not decoy_log.exists()
-
-
-def test_elevated_launch_passes_the_elevation_flag(tmp_path: Path) -> None:
-    """GUPKG_FORCE_ELEVATED makes the launch strict: the bootstrap is told with --elevated."""
-    package, log = _package(tmp_path)
-    env = os.environ.copy()
-    env["GUPKG_FORCE_ELEVATED"] = "1"
-
-    result = _run(package, "manager", "list", env=env)
-
-    assert result.returncode == 0, result.stderr or result.stdout
-    arguments = ast.literal_eval(log.read_text(encoding="utf-8"))
-    assert arguments[:3] == ["-I", "-s", "-B"]
-    assert arguments[4:] == ["--elevated", "manager", "list"]
 
 
 @pytest.mark.parametrize("elevated", [False, True], ids=["ordinary", "elevated"])
@@ -114,10 +108,9 @@ def test_launch_without_the_bundled_python_stops_with_the_reinstall_message(tmp_
     (package / "python" / "python.exe").unlink()
     decoys, decoy_log = _decoy_python(tmp_path)
     env = os.environ.copy()
-    env.pop("GUPKG_FORCE_ELEVATED", None)
     env.update(GUPKG_PYTHON=str(decoys / "python.cmd"), PATH=f"{decoys};{env['PATH']}")
     if elevated:
-        env["GUPKG_FORCE_ELEVATED"] = "1"
+        env["GUPKG_ELEVATED"] = "1"
 
     result = _run(package, "list", env=env)
 
@@ -125,3 +118,31 @@ def test_launch_without_the_bundled_python_stops_with_the_reinstall_message(tmp_
     assert "bundled Python is missing" in result.stderr
     assert "Reinstall gupkg from a release ZIP" in result.stderr
     assert not decoy_log.exists() and not log.exists()
+
+
+@pytest.mark.parametrize("isolated", [False, True], ids=["without -I", "with -I"])
+def test_bootstrap_refuses_to_run_on_another_interpreter(tmp_path: Path, isolated: bool) -> None:
+    """Running bootstrap.py on any interpreter but the bundled one exits 1 with the bundled-Python message, isolated or not."""
+    command = [sys.executable, *(["-I"] if isolated else []), "-B", str(SRC / "gupkg" / "bootstrap.py"), "--version"]
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(SRC)
+
+    result = subprocess.run(command, cwd=str(tmp_path), env=env, capture_output=True, text=True, check=False)
+
+    assert result.returncode == 1
+    assert "Start gupkg through gupkg.cmd or gupkg.exe" in result.stderr
+    assert "runs only on its bundled Python" in result.stderr
+
+
+def test_python_dash_m_gupkg_refuses_a_foreign_interpreter(tmp_path: Path) -> None:
+    """`python -m gupkg` from a checkout with the test interpreter exits 1 with the bundled-Python message."""
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(SRC)
+
+    result = subprocess.run(
+        [sys.executable, "-B", "-m", "gupkg", "--version"],
+        cwd=str(tmp_path), env=env, capture_output=True, text=True, check=False,
+    )
+
+    assert result.returncode == 1
+    assert "runs only on its bundled Python" in result.stderr

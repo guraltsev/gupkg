@@ -293,12 +293,12 @@ Following `_docs/tests.md`:
 - Modules: `gupkg.elevation` (detection and ACL policy), `gupkg.locked_deps`
   (lockfile, staged install, `repair-deps`, `update-deps`),
   `gupkg.dependency_notices` (advisory warning).
-- **Launcher detection.** `gupkg.cmd` decides elevation with `fltmc.exe` and
-  passes `--elevated` to `bootstrap.py`. Python independently checks the process
-  token, so an elevated process started any other way (`GUPKG_PYTHON`,
-  `python -m gupkg`) is refused unless it is the isolated bundled interpreter.
-  `GUPKG_FORCE_ELEVATED=1` selects the elevated branch for testing; it can only
-  make a launch stricter.
+- **Launcher detection.** Since issue 018, `gupkg.cmd` no longer probes for
+  elevation (no `fltmc.exe`, no `--elevated`, no `GUPKG_FORCE_ELEVATED`).
+  `bootstrap.py` checks the process token (`GUPKG_ELEVATED=1` can only make a run
+  stricter), and every run, elevated or not, must be the isolated bundled
+  interpreter (`enforce_bundled_runtime`); only the admin-only directory checks
+  are limited to elevated runs.
 - **What is checked.** Every directory on `sys.path`, the package directories,
   the runtime directory and `python\Lib\site-packages`: no non-administrator may
   hold a write, delete, or permission-changing right or own the directory.

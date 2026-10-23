@@ -9,7 +9,7 @@ interpreter, or bundled dependency directory is writable by anyone but
 Usage and API
 -------------
 Call ``is_elevated()`` or ``elevated_mode()`` to choose between the user-scoped
-and the trusted behavior. Call ``enforce_elevated_runtime(...)`` once at process
+and the trusted behavior. Call ``enforce_bundled_runtime(...)`` once at process
 start, and ``require_trusted_directory(...)`` before importing from or writing
 to a single directory. Failures raise ``UntrustedLocationError`` with a message
 that names the directory, the offending principal, and a repair command.
@@ -124,37 +124,40 @@ def elevated_mode() -> bool:
 # ---------------------------------------------------------------------------
 
 
-def enforce_elevated_runtime(package_directory: Path) -> None:
-    """Refuse an elevated run that is not the isolated, bundled, admin-only runtime.
+def enforce_bundled_runtime(package_directory: Path, elevated: bool = False) -> None:
+    """Refuse any run that is not the isolated bundled interpreter; also check admin-only paths when elevated.
 
     Parameters
     ----------
     package_directory : Path
         Directory of the ``gupkg`` package that is running.
+    elevated : bool, optional
+        Also require that every directory the run imports from is admin-only.
 
     Raises
     ------
     UntrustedLocationError
-        If the interpreter is not the bundled one, is not isolated, or if any
-        directory on the import path or the bundled dependency directory is
-        writable by a non-administrator.
+        If the interpreter is not ``<package>\\python\\python.exe`` or is not
+        isolated (``-I``), or, for an elevated run, if any directory on the
+        import path or the bundled dependency directory is writable by a
+        non-administrator.
     """
     package_directory = Path(package_directory).resolve()
     runtime_directory = package_directory / "python"
 
-    # The launcher starts the bundled interpreter with -I -s; any other way of
-    # reaching an elevated process would honor user-controlled variables.
+    # gupkg.cmd starts the bundled interpreter with -I -s -B; any other way of
+    # reaching gupkg would honor the caller's Python, variables and site-packages.
     expected = runtime_directory / "python.exe"
-    if os.path.normcase(os.path.realpath(sys.executable)) != os.path.normcase(str(expected.resolve())):
+    if (
+        os.path.normcase(os.path.realpath(sys.executable)) != os.path.normcase(str(expected.resolve()))
+        or not sys.flags.isolated
+    ):
         raise UntrustedLocationError(
-            f"Elevated runs use only the bundled Python at {expected}, not {sys.executable}. "
-            "Start gupkg through its gupkg.cmd launcher from an elevated prompt."
+            "Start gupkg through gupkg.cmd or gupkg.exe; it runs only on its bundled Python "
+            f"({expected}, started in isolated mode), not {sys.executable}."
         )
-    if not (sys.flags.ignore_environment and sys.flags.no_user_site):
-        raise UntrustedLocationError(
-            "Elevated runs must start Python in isolated mode (-I -s) so PYTHON* "
-            "variables and the user site are ignored. Start gupkg through its gupkg.cmd launcher."
-        )
+    if not elevated:
+        return
 
     # Every directory the interpreter can import from, plus the bundled
     # dependency directory that is added to the path later.
