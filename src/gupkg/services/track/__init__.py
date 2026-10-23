@@ -108,5 +108,5 @@ def run_tracker(manifest: Manifest, env: TrackEnvironment) -> TrackResult:
     values["version"] = result.version
     if manifest.source.download_url is not None:
         values["download_url"] = render(manifest.source.download_url, values)
-    checksum = discover_checksum(env.http, declared, values)
+    checksum = discover_checksum(env.http, declared, values, env.regex)
     return replace(result, checksum=checksum)

@@ -160,6 +160,10 @@ Converting the registry. That is issue 031, which uses these services.
 - **Owed to issue 031 and the owner:** (1) record the fixtures with `tools/record_http_fixtures.py` and
   review the diff (an explicit acceptance item of issue 031, plus manual check 1 of `tests/manual_smoke.md`);
   (2) commit a small real NSIS sample when the owner provides one, and replace the NSIS process double.
-- **Owed to issue 028:** a subprocess regex runner with a deadline (Python's `re` cannot be interrupted;
-  the interim guards are listed in design section 8.1), and the elevated-run use of the trust checks of
-  `gupkg.services.hooks.require_trusted_code` and `gupkg.services.http.github_environment`.
+- **Delivered here, not in 028 (owner decision):** the subprocess regex runner. Every manifest pattern applied to
+  fetched text runs in `gupkg/system/regex_worker.py` through `System.regex_worker` with a hard deadline
+  (kill of the process tree, fail closed; design section 8.1). The static guard is only a first filter.
+  The runner does not cap memory. Issue 028 only wires an elevated run: the trust checks of
+  `gupkg.services.hooks.require_trusted_code` and `gupkg.services.http.github_environment`, and resolving
+  the version-control and ssh programs from machine or admin-only paths (they are found through the
+  inherited `PATH` today).

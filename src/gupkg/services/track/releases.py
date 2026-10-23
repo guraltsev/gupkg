@@ -29,9 +29,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ...model.manifest import DiscoveredChecksum, TrackResult
+from ...model.patterns import PatternError
 from ...model.trackspec import GithubSpec, GitlabSpec
 from ...model.version import compare_versions
 from ..http import HttpError
+from ..regexrun import RegexRunner
 from .common import (
     TrackEnvironment,
     TrackError,
@@ -80,6 +82,7 @@ class _Options:
     link_name: str | None = None
     prerelease: bool = False
     extra: Mapping[str, Any] = field(default_factory=dict)
+    regex: RegexRunner | None = None
 
 
 def track_github(spec: GithubSpec, env: TrackEnvironment) -> TrackResult:
@@ -102,8 +105,8 @@ def track_github(spec: GithubSpec, env: TrackEnvironment) -> TrackResult:
         raise TrackError(f"Could not read the releases of {spec.repo}: {error}") from error
     releases = [release for release in (_github_release(row) for row in rows) if release is not None]
     options = _Options(spec.asset, spec.asset_pattern, spec.version_from, spec.tag_pattern, spec.tag_prefix,
-                       spec.version, prerelease=spec.prerelease)
-    return _best(releases, options, f"GitHub repository {spec.repo}", strict=spec.release == "latest")
+                       spec.version, prerelease=spec.prerelease, regex=env.regex)
+    return _checked_best(releases, options, f"GitHub repository {spec.repo}", strict=spec.release == "latest")
 
 
 def track_gitlab(spec: GitlabSpec, env: TrackEnvironment) -> TrackResult:
@@ -122,8 +125,8 @@ def track_gitlab(spec: GitlabSpec, env: TrackEnvironment) -> TrackResult:
     rows = data if isinstance(data, list) else []
     releases = [release for release in (_gitlab_release(row) for row in rows) if release is not None]
     options = _Options(None, spec.asset_pattern, "tag", spec.tag_pattern, spec.tag_prefix, spec.version,
-                       link_name=spec.link_name)
-    return _best(releases, options, f"GitLab project {spec.project}", strict=False)
+                       link_name=spec.link_name, regex=env.regex)
+    return _checked_best(releases, options, f"GitLab project {spec.project}", strict=False)
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +173,14 @@ def _gitlab_release(row: Any) -> Release | None:
 # ---------------------------------------------------------------------------
 
 
+def _checked_best(releases: list[Release], options: _Options, where: str, *, strict: bool) -> TrackResult:
+    """Run ``_best``; a failure of the regex worker stops the whole provider (fail closed), it never skips a release."""
+    try:
+        return _best(releases, options, where, strict=strict)
+    except PatternError as error:
+        raise TrackError(str(error)) from error
+
+
 def _best(releases: list[Release], options: _Options, where: str, *, strict: bool) -> TrackResult:
     """Return the result for the newest release that satisfies *options*.
 
@@ -210,7 +221,8 @@ def _from_release(release: Release, options: _Options) -> TrackResult:
     # Choose the asset first when the version comes from its name.
     if options.version_from == "asset":
         pattern = compile_runtime(options.asset_pattern or "", {**captures, "version": groups.get("version", "")})
-        found = [(asset_item, pattern.fullmatch(asset_item.name)) for asset_item in release.assets]
+        verdicts = options.regex.fullmatch_many(pattern, [item.name for item in release.assets], what=f"the assets of release {release.tag}")
+        found = list(zip(release.assets, verdicts))
         found = [(item, match) for item, match in found if match]
         if len(found) != 1:
             raise TrackError(f"expected one asset matching {options.asset_pattern!r}, found {len(found)}")
@@ -227,7 +239,8 @@ def _from_release(release: Release, options: _Options) -> TrackResult:
             found = [item for item in release.assets if item.name == wanted]
         else:
             pattern = compile_runtime(options.asset_pattern or "", captures)
-            matches = [(item, pattern.fullmatch(item.name)) for item in release.assets]
+            verdicts = options.regex.fullmatch_many(pattern, [item.name for item in release.assets], what=f"the assets of release {release.tag}")
+            matches = list(zip(release.assets, verdicts))
             found = [item for item, match in matches if match]
             for _item, match in matches:
                 if match:
@@ -254,7 +267,7 @@ def _tag_groups(tag: str, options: _Options) -> dict[str, str]:
         If the tag does not fit ``tag_prefix`` or ``tag_pattern``.
     """
     if options.tag_pattern is not None:
-        match = options.tag_pattern.fullmatch(tag)
+        match = options.regex.fullmatch(options.tag_pattern, tag, what=f"the tag {tag[:60]!r}")
         if match is None:
             raise TrackError(f"the tag {tag!r} does not match tag_pattern")
         return {key: value for key, value in match.groupdict().items() if value is not None}

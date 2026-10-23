@@ -9,7 +9,7 @@ verifying the downloaded file, belong to the checksum policy (issue 027).
 
 Usage and API
 -------------
-``discover_checksum(client, checksum, values)`` returns a ``DiscoveredChecksum`` or raises
+``discover_checksum(client, checksum, values, regex=None)`` returns a ``DiscoveredChecksum`` or raises
 ``ChecksumDiscoveryError``. ``find_digest(text, name)`` reads a digest out of sums-file
 text and is re-exported to hooks as ``gupkg.hooklib.find_digest``.
 
@@ -28,8 +28,9 @@ from collections.abc import Mapping
 
 from ..model.jsonpath import JsonPathError, parse_path
 from ..model.manifest import Checksum, DiscoveredChecksum
-from ..model.patterns import PatternError, scan
+from ..model.patterns import PatternError
 from .http import HttpClient, decode_body
+from .regexrun import RegexRunner
 from .values import TrackError, absolute_url, compile_runtime, expand
 
 _HEX = re.compile(r"(?<![0-9A-Fa-f])[0-9A-Fa-f]{64}(?![0-9A-Fa-f])")
@@ -42,7 +43,9 @@ class ChecksumDiscoveryError(RuntimeError):
     """Report that a configured checksum source could not supply a digest."""
 
 
-def discover_checksum(client: HttpClient, checksum: Checksum, values: Mapping[str, str]) -> DiscoveredChecksum:
+def discover_checksum(
+    client: HttpClient, checksum: Checksum, values: Mapping[str, str], regex: RegexRunner | None = None
+) -> DiscoveredChecksum:
     """Fetch the digest *checksum* describes, expanding its templates from *values*.
 
     Parameters
@@ -65,6 +68,7 @@ def discover_checksum(client: HttpClient, checksum: Checksum, values: Mapping[st
     ChecksumDiscoveryError
         If the source cannot be read or does not contain a usable digest.
     """
+    runner = regex or RegexRunner(client.system)
     try:
         if checksum.sidecar is not None:
             url = absolute_url(expand(checksum.sidecar, values))
@@ -81,7 +85,7 @@ def discover_checksum(client: HttpClient, checksum: Checksum, values: Mapping[st
         elif checksum.json is not None:
             url = absolute_url(expand(checksum.json, values))
             document = client.json(url)
-            nodes = parse_path(expand(checksum.path or "", values)).values(document)
+            nodes = parse_path(expand(checksum.path or "", values)).values(document, runner.fullmatches)
             digest = next((_clean(str(node)) for node in nodes if isinstance(node, str) and _HEX.search(_clean(node))), None)
             where = url
         else:
@@ -90,7 +94,7 @@ def discover_checksum(client: HttpClient, checksum: Checksum, values: Mapping[st
                 raise ChecksumDiscoveryError("page_match needs a provider that reads a page; this one has none")
             text = _text(client, page)
             pattern = compile_runtime(checksum.page_match or "", values)
-            found = scan(pattern, text, 100)
+            found = runner.finditer(pattern, text, limit=100, what=page)
             digest = None
             for match in found:
                 groups = match.groupdict()

@@ -1,43 +1,38 @@
 """Compile and run the regular expressions of a ``pkg.toml`` against untrusted text.
 
 Patterns come from administrator-written manifests, but the text they scan comes from the
-network. Python's ``re`` backtracks and cannot be interrupted, so this module is a *mitigation*,
-not a bound: a pattern is refused at validation time when its shape is known to blow up
-(nested or empty-matching unbounded repeats, overlapping alternatives inside a repeat, several
-wildcards, long runs of unbounded repeats with no literal between them), the scanned text has long
-runs of one character class and long lines cut, and the scan itself runs over small line-aligned
-windows with a time budget checked between windows, so a page that makes an accepted pattern slow
-fails with an error after about a second instead of running for minutes.
-
-What is NOT bounded: a single window can still cost as much as its pattern allows (a pattern with
-exponential behavior that the shape rules miss can hang inside one window, and no window can be
-interrupted); the budget is checked between windows only. The complete fix is a subprocess regex
-runner with a deadline, which is owed to the execution engine (issue 028).
+network. Python's ``re`` backtracks and cannot be interrupted, so **nothing in this module is the
+safety property**. The safety property is the deadline of the worker process that runs every
+match on untrusted text (``gupkg.services.regexrun`` and ``gupkg.system.regex_worker``): the
+worker is killed when the deadline passes and the call fails. This module is a cheap first filter
+in front of it: a pattern is refused when its shape is known to blow up (nested or
+empty-matching repeats, overlapping alternatives inside a repeat, several wildcards, long runs of
+repeats with no literal between them) so that the author gets a clear message at validation time
+instead of a timeout later. A pattern that passes can still be slow, and that is expected.
 
 Usage and API
 -------------
-``compile_pattern(pattern, groups=...)`` returns a compiled pattern or raises ``PatternError``;
-the *groups* must be named groups of the pattern. ``scan(compiled, text)`` returns the bounded
-list of matches over the prepared text (a match may run into the next three lines past a window), and
-``prepare_text(text)`` is the same preparation on its own. ``escape_template(pattern, values)``
-substitutes ``${name}`` references inside a pattern with escaped values.
+``compile_pattern(pattern, groups=..., flags=...)`` returns a compiled pattern or raises
+``PatternError``; the *groups* must be named groups of the pattern. ``prepare_text(text)`` shrinks
+long runs of one character class (the runner applies it before sending a text to the worker).
+``scan(compiled, text)`` is the in-process reference implementation, for trusted text and for
+tests only: it has no deadline. ``escape_template(pattern, values)`` substitutes ``${name}``
+references inside a pattern with escaped values.
 
 Implementation Approach
 -----------------------
-Validation walks the parsed pattern tree: nested and empty-matching unbounded repeats, alternation
-inside a repeat, ``.``-style repeats that are not the only unbounded repeat, and the longest run of
-unbounded repeats not separated by a required literal are measured. Preparation cuts word runs
-and single-character runs to ``MAX_RUN`` and breaks lines at ``MAX_LINE``. Scanning uses
-``finditer(text, pos, endpos)`` over windows of about ``WINDOW`` characters that end at line
-breaks. The module is pure: no input or output.
+Validation walks the parsed pattern tree (with the flags, so ``(?i)`` and ``re.X`` are honoured):
+nested and empty-matching repeats, alternation inside a repeat, ``.``-style repeats, and the
+longest run of unbounded repeats not separated by a required literal are measured, comparing the
+character sets that two parts of the pattern can consume. Preparation cuts word runs and
+single-character runs to ``MAX_RUN``. The module is pure: no input or output.
 """
 
 from __future__ import annotations
 
 import re
-import time
 from collections.abc import Iterator, Mapping
-from itertools import groupby
+from itertools import groupby, islice
 from typing import Any
 
 try:  # Python 3.11 and later
@@ -56,12 +51,6 @@ _MULTI = 4  # a repeat that can run this many times or more gets the nesting and
 _MAX_BROAD = 3
 _MAX_UNBOUNDED = 24
 _MAX_STREAK = 6
-# Lines are cut to 1 KiB: the cost of a quadratic pattern per line is about 5 ms there, and the
-# windows below are a few lines long, so the time budget is checked every few milliseconds.
-MAX_LINE = 1024
-WINDOW = 4096
-OVERLAP_LINES = 3  # lines a match that starts near the end of a window may run on into
-SCAN_SECONDS = 1.0
 
 _REFERENCE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 # A run of word characters can only start where the previous character is not one, so the
@@ -105,7 +94,7 @@ def compile_pattern(pattern: str, groups: tuple[str, ...] = (), flags: int = 0) 
     missing = [name for name in groups if name not in compiled.groupindex]
     if missing:
         raise PatternError(f"{pattern!r} must define the named group(s) {', '.join('(?P<%s>...)' % n for n in missing)}")
-    reason = _unsafe_reason(pattern)
+    reason = _unsafe_reason(pattern, flags)
     if reason is not None:
         raise PatternError(f"{pattern!r} is refused: {reason}")
     return compiled
@@ -131,89 +120,24 @@ def prepare_text(text: str) -> str:
             count = sum(1 for _ in group)
             pieces.append(character * min(count, MAX_RUN))
         text = "".join(pieces)
-    text = _cut_long_lines(text)
     if len(text) > MAX_SCAN_BYTES:
         raise PatternError(f"the text is {len(text)} characters long; at most {MAX_SCAN_BYTES} are scanned")
     return text
 
 
-def _cut_long_lines(text: str) -> str:
-    """Break every line longer than ``MAX_LINE`` into lines of at most that length.
+def scan(compiled: re.Pattern[str], text: str, limit: int = MAX_MATCHES) -> list[re.Match[str]]:
+    """Return up to *limit* matches of *compiled* in the prepared *text*, in process and with no deadline.
 
-    A line is broken after the last ``>`` or space of its last half-window when there is one, so
-    a tag or a word is rarely split; a match that spans a break is lost, which only happens on
-    minified pages whose single line is longer than the window.
-    """
-    if len(text) <= MAX_LINE:
-        return text
-    lines = text.split("\n")
-    if max(map(len, lines)) <= MAX_LINE:
-        return text
-    cut: list[str] = []
-    for line in lines:
-        start = 0
-        while len(line) - start > MAX_LINE:
-            end = start + MAX_LINE
-            point = max(line.rfind(">", start + MAX_LINE // 2, end), line.rfind(" ", start + MAX_LINE // 2, end)) + 1 or end
-            cut.append(line[start:point])
-            start = point
-        cut.append(line[start:])
-    return "\n".join(cut)
-
-
-def scan(compiled: re.Pattern[str], text: str, limit: int = MAX_MATCHES, budget: float = SCAN_SECONDS) -> list[re.Match[str]]:
-    """Return up to *limit* matches of *compiled* in a bounded version of *text*.
-
-    The prepared text is scanned in line-aligned windows of about ``WINDOW`` characters. The time
-    spent is checked after each window, so a page that is expensive for the pattern is refused
-    after about *budget* seconds. A match that begins in one window may run on for ``OVERLAP_LINES``
-    lines into the next; a longer one is cut at that point.
+    This is the reference the worker process is tested against and a convenience for trusted text.
+    Untrusted text goes through ``gupkg.services.regexrun.RegexRunner`` instead, because ``re``
+    cannot be interrupted.
 
     Raises
     ------
     PatternError
-        If the text is longer than ``MAX_SCAN_BYTES`` characters after preparation, or the scan
-        used more than *budget* seconds.
+        If the text is longer than ``MAX_SCAN_BYTES`` characters after preparation.
     """
-    prepared = prepare_text(text)
-    deadline = time.monotonic() + budget
-    found: list[re.Match[str]] = []
-    start, size, resume = 0, len(prepared), 0
-    while start < size:
-        end = _window_end(prepared, start)
-        # A match may begin in this window and run on into the next lines, so the search may look a
-        # few lines past ``end``; only matches that begin before ``end`` belong to this window.
-        for match in compiled.finditer(prepared, max(start, resume), _overlap_end(prepared, end)):
-            if match.start() >= end:
-                break
-            found.append(match)
-            resume = match.end()
-            if len(found) >= limit:
-                return found
-        if time.monotonic() > deadline:
-            raise PatternError(f"scanning took longer than {budget:g} seconds; the page is refused for this pattern")
-        start = end
-    return found
-
-
-def _window_end(text: str, start: int) -> int:
-    """Return where the scan window that begins at *start* ends: the next line break after ``WINDOW`` characters."""
-    end = start + WINDOW
-    if end >= len(text):
-        return len(text)
-    newline = text.find("\n", end, end + MAX_LINE + 1)
-    return newline + 1 if newline != -1 else end
-
-
-def _overlap_end(text: str, end: int) -> int:
-    """Return the end of the look-ahead that follows a window ending at *end*: ``OVERLAP_LINES`` more lines."""
-    stop = end
-    for _ in range(OVERLAP_LINES):
-        newline = text.find("\n", stop, stop + MAX_LINE + 1)
-        if newline == -1:
-            return min(len(text), stop + MAX_LINE) if stop < len(text) else len(text)
-        stop = newline + 1
-    return stop
+    return list(islice(compiled.finditer(prepare_text(text)), limit))
 
 
 def escape_template(pattern: str, values: Mapping[str, str]) -> str:
@@ -241,12 +165,12 @@ def _children(value: Any) -> Iterator[Any]:
             yield from _children(item)
 
 
-def _unsafe_reason(pattern: str) -> str | None:
+def _unsafe_reason(pattern: str, flags: int = 0) -> str | None:
     """Return why the shape of *pattern* is unsafe, or ``None`` (``None`` also when it cannot be analysed)."""
     if _sre_parser is None or _sre_constants is None:
         return None
     try:
-        tree = _sre_parser.parse(pattern)
+        tree = _sre_parser.parse(pattern, flags)
     except (re.error, RecursionError):
         return None
     repeats = (_sre_constants.MAX_REPEAT, _sre_constants.MIN_REPEAT, getattr(_sre_constants, "POSSESSIVE_REPEAT", None))

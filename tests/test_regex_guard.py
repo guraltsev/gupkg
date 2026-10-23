@@ -1,11 +1,11 @@
-"""Cover the regex guard against the registry's own patterns and a reviewer's matrix of hostile pages.
+"""Cover the static regex guard (the cheap first filter) against the registry's own patterns and nasty shapes.
 
 The 50 distinct regular expressions that the 0.17 registry hooks use (extracted once into
-``tests/fixtures/registry_patterns.json``) must all pass validation. Twenty plausible patterns are
-scanned over hostile one-mebibyte pages in a child interpreter with a hard timeout: each pair is
-refused at validation, refused by the scan budget, or finishes quickly; a hang fails the test by the
-child's timeout. The guard is a mitigation and not a bound (see ``gupkg.model.patterns``); these tests
-pin what it does achieve. Out of scope: how providers use the matches.
+``tests/fixtures/registry_patterns.json``) must all pass validation. The refusals pin each rule: wildcards
+hidden in groups, bounded repeats that can blow up (checked in a child with a hard timeout, so a
+regression fails instead of hanging), delimiters compared by character sets, alternatives that start
+alike. The guard is not the safety property, the worker deadline is (``test_regex_runner``). Out of
+scope: how providers use the matches.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from gupkg.model.patterns import PatternError, compile_pattern, prepare_text, scan
+from gupkg.model.patterns import PatternError, compile_pattern
 
 SOURCE = Path(__file__).resolve().parents[1] / "src"
 REAL = json.loads((Path(__file__).resolve().parent / "fixtures" / "registry_patterns.json").read_text(encoding="utf-8"))
@@ -156,116 +156,30 @@ def test_more_than_one_unbounded_dot_repeat_is_refused_even_between_literals() -
     assert compile_pattern(r"title=(?P<t>.*)$")
 
 
-PATTERNS = [
-    r"(?P<version>\d+(?:\.\d+)*)-setup\.exe",
-    r"(?P<version>\d+(?:\.\d+)+)\.win64\.zip",
-    r'href="(?P<u>[^"]+)"[^>]*>[^<]*download',
-    r"(?P<n>[A-Za-z]+(?:-[A-Za-z]+)*)-win64\.zip",
-    r"(?P<v>[\d.]+)-(?P<w>[\d.]+)-end",
-    r"(?P<v>[\w.-]+)@(?P<w>[\w.-]+)\.zip",
-    r"(?P<v>\d+(?:\.\d+)+)(?!\.zip)-",
-    r"(?P<v>\d{1,2000}(?:\.\d{1,5}){1,900})-q",
-    r"(?P<a>.*)=(?P<b>.*)!",
-    r".*(?P<version>\d+\.\d+)",
-    r'<a[^>]*href="([^"]*)"[^>]*>(?:[^<]|<(?!/a))*</a>',
-    r"(?P<version>(?:\d+\.)+\d+)$",
-    r".*.*.*x",
-    r"(?:a|a)+b",
-    r"(?:a|aa)+b",
-    r"Download\s+7-Zip\s+(?P<version>\d+(?:\.\d+)+)\s*\([^)]*\)\s*for\s+Windows\s+x64",
-    r"(?P<version>\d+(?:\.\d+)+)",
-    r'href="(?P<h>[^"]+)"',
-    r"v(?P<version>\d+\.\d+\.\d+)",
-    r"(?P<v>[0-9a-f]{64})",
-]
-PAGES = {
-    "dots-8000": '("1." * 4000 + "\\n") * 140',
-    "href-open": '"<a href=\\"" * 110_000',
-    "a-run": '"a" * (1 << 20)',
-    "dashes-dots": '("1.1.1.1.1.1.-" * 70 + "\\n") * 1000',
-    "equals-lines": '("=" * 1000 + "\\n") * 1000',
-    "at-words": '("a.b-c@" * 140 + "\\n") * 1000',
-    "tag-soup": '("<a href=\\"x\\" class=\\"y\\" " * 40 + "\\n") * 1000',
-}
-BOUND_SECONDS = 2.0
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        pytest.param(r"(?:ab|[ac]d){4,}x", id="first-letters-overlap-through-a-class"),
+        pytest.param(r"(?:[a-c]x|[b-d]y)+z", id="overlapping-ranges"),
+        pytest.param(r"(?:a|[^b]){4}x", id="literal-and-a-negated-class"),
+        pytest.param(r"(?:x|(?:y|x)z){1,9}", id="overlap-hidden-in-a-group"),
+    ],
+)
+def test_alternatives_inside_a_repeat_must_start_with_different_characters_and_none_may_be_empty(pattern: str) -> None:
+    """Each shape fails only because two alternatives can start with the same character, or one can be empty."""
+    with pytest.raises(PatternError, match="alternatives that can overlap"):
+        compile_pattern(pattern)
 
 
-@pytest.mark.parametrize("pattern", [pytest.param(pattern, id=f"{index:02d}") for index, pattern in enumerate(PATTERNS)])
-def test_a_plausible_pattern_on_every_hostile_page_is_refused_or_finishes_in_about_a_second(pattern: str) -> None:
-    """Refused at validation, or each of seven megabyte-scale hostile pages is scanned or refused in under two seconds."""
-    code = textwrap.dedent(
-        f"""
-        import sys, time
-        sys.path.insert(0, {str(SOURCE)!r})
-        from gupkg.model.patterns import PatternError, compile_pattern, scan
-        try:
-            compiled = compile_pattern({pattern!r})
-        except PatternError:
-            print("refused")
-            sys.exit(0)
-        for name, expression in {PAGES!r}.items():
-            page = eval(expression)
-            started = time.monotonic()
-            try:
-                scan(compiled, page)
-            except PatternError:
-                pass
-            print(name, round(time.monotonic() - started, 2))
-        """
-    )
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        pytest.param(r"(?:ab|cd){4,}x", id="two-literal-words"),
+        pytest.param(r"(?:a|b|[0-9]){4}", id="letters-and-a-digit-class"),
+        pytest.param(r"(?:[ab]x|[cd]y){4}z", id="two-classes"),
+    ],
+)
+def test_alternatives_with_disjoint_first_characters_inside_a_repeat_are_accepted(pattern: str) -> None:
+    """Deterministic alternatives cannot multiply the ways to match, so they pass the filter."""
+    assert compile_pattern(pattern)
 
-    done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)
-
-    assert done.returncode == 0, done.stderr
-    lines = done.stdout.split()
-    assert lines == ["refused"] or all(float(value) < BOUND_SECONDS for value in lines[1::2])
-
-
-def test_the_scan_budget_refuses_a_page_that_is_too_costly_for_an_accepted_pattern() -> None:
-    """An accepted pattern that is slow on a hostile page raises PatternError after the budget instead of running on."""
-    compiled = compile_pattern(r"(?P<v>[\w.-]+)@(?P<w>[\w.-]+)\.zip")
-    page = ("1.1.1.1.1.1.-" * 78 + "\n") * 1000
-
-    with pytest.raises(PatternError, match="took longer than 0.2 seconds"):
-        scan(compiled, page, budget=0.2)
-
-
-def test_a_match_that_runs_over_a_window_boundary_is_found_once() -> None:
-    """Two-line matches placed all over a multi-window page are all found, none twice (the windows overlap)."""
-    lines = []
-    for index in range(300):
-        lines += [f"key{index}", f"value{index}", "x" * (40 + index % 37)]
-    page = "\n".join(lines) + "\n"
-
-    found = scan(compile_pattern(r"key(?P<n>\d+)\nvalue(?P=n)\n"), page)
-
-    assert [match["n"] for match in found] == [str(index) for index in range(300)]
-    assert len(page) > 5 * 4096
-
-
-def test_a_match_that_starts_exactly_at_the_last_line_of_a_window_is_found_and_matches_never_overlap() -> None:
-    """Lines of 100 characters put the window end after line 41: a pair of lines straddles it; pairs are not found twice."""
-    line = "a" * 99 + "\n"
-    straddling = "".join([line] * 40) + "key0" + "x" * 110 + "\nvalue0\n" + "".join([line] * 10)
-
-    assert [match["n"] for match in scan(compile_pattern(r"key(?P<n>\d+)x*\nvalue(?P=n)\n"), straddling)] == ["0"]
-    assert len(scan(compile_pattern(r"[a-z]+\n[a-z]+\n"), line * 200)) == 100
-
-
-def test_a_long_line_is_cut_at_one_kibibyte_and_the_cut_keeps_the_matches_inside_each_piece() -> None:
-    """A 5000-character line of tags becomes lines of at most 1 KiB, and a tag on each piece is still found."""
-    page = "<b>item</b>" * 500
-
-    prepared = prepare_text(page)
-
-    assert max(len(line) for line in prepared.split("\n")) <= 1024 and prepared.count("\n") >= 4
-    assert len(scan(compile_pattern(r"<b>item</b>"), page)) >= 490
-
-
-def test_matches_are_found_across_windows_and_ordinary_pages_are_unchanged() -> None:
-    """A page much larger than one window still yields every match, in order."""
-    page = "".join(f"<li>tool-1.{index}.zip</li>\n" for index in range(5000))
-
-    found = scan(compile_pattern(r"tool-(?P<v>\d+\.\d+)\.zip"), page)
-
-    assert [match["v"] for match in found] == [f"1.{index}" for index in range(5000)]

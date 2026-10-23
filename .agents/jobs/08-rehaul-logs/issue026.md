@@ -133,6 +133,20 @@ Owed to 028 (m8): git and ssh are resolved through the inherited PATH; elevated 
 2. More than one unbounded dot repeat is refused.
 3. Scan windows overlap by three lines (a match is found once); tests pin the 1 KiB cut and the overlap. Also found and fixed: `_cut_long_lines` copied the line at every cut (quadratic).
 4. Concatenated xz streams are decompressed; padding must be a multiple of four zero bytes; junk is refused.
+   (Round 4, below, supersedes the regex parts of items 1 to 3: the guard is a first filter, the runner is the bound.)
 5. `WindowsSystem.run` kills the process tree on any exception from the wait loop (a raising watcher, Ctrl-C).
 6. 304, 204, 1xx and HEAD answers skip the length check; headers cut by a closed connection are an error; Windows asks the watcher once more after the child exits, like the fake.
 7. Documented: bodies without a length are accepted; sibling hook modules are covered only by the directory check; entry-point `sys.exit` is a HookError; `file://LOCALHOST` is case-insensitive.
+
+## Review round 4 (final fix round): the regex runner is in 026
+
+The static regex guard cannot bound `re` (the reviewer found `(?:\w+\s?){3}z`, `\d+\d+\d+x`, `(?:a+){3}b` and more that pass it and hang). The owner decided that the real fix goes into 026. Delivered:
+
+- `gupkg/system/regex_worker.py`: a stdlib-only script (json, os, re, sys, time) run by `System.regex_worker` (a new port method; `WindowsSystem` and `FakeSystem`: the fake runs it for real unless a `regex-worker` double is registered, and logs requests in `regex_log`) with `-I -s -B -S`, an environment of only SystemRoot, an empty temporary folder as cwd, and the request as ASCII JSON on stdin.
+- `gupkg.services.regexrun.RegexRunner`: a per-call deadline of 2 s counted from the worker's first line (`pid <n>`), 10 s total of matching per provider run (the worker reports how long it matched), a kill of the process tree on expiry (job object), `RegexTimeout` and `RegexError` (both `PatternError`), strict validation of the answer, fail closed. `RemoteMatch` offers group, groups, groupdict, start, end and span. Batches: `fullmatch_many`, `finditer_many`, `fullmatches` (the matcher that `model/jsonpath` now takes for `=~`; one call per condition per node set).
+- Wired in: `candidates_from_text(s)` (page, rss, chain, index, redirect and json providers), checksum `page_match` and the JSON-path checksum, the GitHub and GitLab tag and asset patterns (a regex failure stops the provider, it never skips a release), JSON filters. `TrackEnvironment.regex` gives each provider run its own runner.
+- `scan()` is now the plain in-process reference (no windows, no line cuts, no budget; the final empty match is returned, which fixes the 99 against 100 nit); the 1 KiB line cut, the windows and the overlap were removed because the deadline makes them unnecessary.
+- `compile_pattern(..., flags=)` parses with the flags; the alternatives rule has its own tests.
+- `WindowsSystem.run`: stdin is fed from a thread (a child that never reads it no longer blocks the timeout), every child is in a job object so a kill also reaches a helper whose parent already exited (the failing final watcher poll), and the job kills nothing on a clean finish.
+
+Not covered: memory, OS-enforced no network, a long-lived worker (one process per call; a start takes 50 to 400 ms here, and the deadline starts after it).

@@ -22,9 +22,11 @@ whitelisted ``strftime`` pattern.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from datetime import timezone
 from email.utils import parsedate_to_datetime
 
+from ...model.patterns import PatternError
 from ...model.jsonpath import JsonPathError, Node, evaluate_condition, parse_condition
 from ...model.manifest import DiscoveredChecksum, TrackResult
 from ...model.trackspec import JsonSpec, LastModifiedSpec
@@ -43,9 +45,17 @@ def track_json(spec: JsonSpec, env: TrackEnvironment) -> TrackResult:
     TrackError
         If the document cannot be read, a path is unusable, or no record yields a version.
     """
+
+    def matcher(pattern: re.Pattern[str], texts: Sequence[str]) -> list[bool]:
+        """Decide a ``=~`` filter in the worker process; a failure of the worker is a ``TrackError`` (fail closed)."""
+        try:
+            return env.regex.fullmatches(pattern, texts)
+        except PatternError as error:
+            raise TrackError(str(error)) from error
+
     try:
         document = env.http.json(spec.check_url, spec.headers)
-        records = spec.records.select(document)
+        records = spec.records.select(document, matcher)
     except (OSError, JsonPathError) as error:
         raise TrackError(str(error)) from error
 
@@ -53,13 +63,13 @@ def track_json(spec: JsonSpec, env: TrackEnvironment) -> TrackResult:
     candidates: list[tuple[str, dict[str, str], DiscoveredChecksum | None]] = []
     for record in records:
         # A record that fails any filter condition is skipped entirely.
-        if not all(evaluate_condition(condition, record) for condition in conditions):
+        if not all(evaluate_condition(condition, record, matcher) for condition in conditions):
             continue
-        for value in _texts(spec.version.select_from(record)):
+        for value in _texts(spec.version.select_from(record, matcher)):
             captures: dict[str, str] = {"page_url": spec.check_url}
             version = value
             if spec.match is not None:
-                matched = candidates_from_text(spec.match, value, captures)
+                matched = candidates_from_text(env.regex, spec.match, value, captures, spec.check_url)
                 if not matched:
                     continue
                 captures = dict(matched[0][0])
@@ -67,16 +77,16 @@ def track_json(spec: JsonSpec, env: TrackEnvironment) -> TrackResult:
             else:
                 captures["version"] = version
             for name, path in spec.captures.items():
-                first = next(iter(_texts(path.select_from(record))), None)
+                first = next(iter(_texts(path.select_from(record, matcher))), None)
                 if first is not None:
                     captures[name] = first
             if spec.download is not None:
-                link = next(iter(_texts(spec.download.select_from(record))), None)
+                link = next(iter(_texts(spec.download.select_from(record, matcher))), None)
                 if link is not None:
                     captures["download_url"] = absolute_url(link, spec.check_url)
             checksum = None
             if spec.checksum is not None:
-                digest = next(iter(_texts(spec.checksum.select_from(record))), "")
+                digest = next(iter(_texts(spec.checksum.select_from(record, matcher))), "")
                 digest = digest.removeprefix("sha256:")
                 if _SHA256.fullmatch(digest):
                     checksum = DiscoveredChecksum(digest.lower(), "vendor-sums")

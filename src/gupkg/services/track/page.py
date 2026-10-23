@@ -35,6 +35,7 @@ from .common import (
     TrackEnvironment,
     TrackError,
     candidates_from_text,
+    candidates_from_texts,
     choose,
     compile_runtime,
     expand,
@@ -57,7 +58,7 @@ def track_page(spec: PageSpec, env: TrackEnvironment) -> TrackResult:
         ``select = "unique"``.
     """
     response = _read(env, spec.check_url, spec.headers)
-    found = candidates_from_text(spec.match, decode_body(response), {"page_url": response.url})
+    found = candidates_from_text(env.regex, spec.match, decode_body(response), {"page_url": response.url}, response.url)
     captures, _key = choose(versioned(found, spec.version), spec.select, f"The pattern on {response.url}")
     return finish(captures, spec.version, spec.download, response.url)
 
@@ -73,9 +74,7 @@ def track_rss(spec: RssSpec, env: TrackEnvironment) -> TrackResult:
     """
     response = _read(env, spec.check_url, spec.headers)
     strings = feed_strings(decode_body(response))
-    found = []
-    for text in strings:
-        found.extend(candidates_from_text(spec.match, text, {"page_url": response.url}))
+    found = candidates_from_texts(env.regex, spec.match, list(strings), {"page_url": response.url}, response.url)
     captures, _key = choose(versioned(found, spec.version), spec.select, f"The pattern on the feed {response.url}")
     return finish(captures, spec.version, spec.download, response.url)
 
@@ -110,7 +109,7 @@ def track_chain(spec: ChainSpec, env: TrackEnvironment) -> TrackResult:
             last_url = response.url
             continue
         pattern = compile_runtime(step.match_text, values)
-        found = candidates_from_text(pattern, text, captures)
+        found = candidates_from_text(env.regex, pattern, text, captures, f"step {position} of the chain ({url})")
         chosen, _key = choose(found, step.select, f"Step {position} of the chain ({url})")
         captures = dict(chosen)
         last_url = response.url

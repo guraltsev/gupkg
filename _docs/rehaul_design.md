@@ -801,21 +801,30 @@ manifest is parsed (`gupkg.model.trackspec`).
   **`chain`** steps have `url`, `match`, `select`, `headers`, and `header` (match a response
   header such as `Content-Disposition` instead of the body); `${capture}` in a later step's `url`
   and `match` come from earlier steps, and a `sha256` group becomes the discovered checksum.
-- **Safety.** Responses are data: a page over 8 MiB is refused. Validation rejects patterns that
-  repeat a repeated group, an empty-matching body, or overlapping alternatives inside an unbounded
-  repeat, a leading unbounded wildcard combined with other unbounded repeats, more than three wildcard
-  (`.`, `[^x]`) repeats (an unbounded `.` repeat only when it is the sole unbounded repeat, and never
-  more than one), and more than 24 unbounded repeats or 6 in a row without a literal between them;
-  groups are looked through at any depth. The nesting, empty-body and overlapping-alternative rules
-  apply to every repeat that can run four times or more, bounded or not; an iteration that holds an
-  inner repeat is accepted only when it begins or ends with a required character that no inner repeat
-  can consume (`(?:\d{1,3}\.){1,5}`, `\d+(?:[._]\d+)*`), judged by comparing character sets. Before matching, runs of word characters or of one character are cut to 1024, lines to
-  1 KiB, and at most a mebibyte is scanned, in 4 KiB line-aligned windows with a one-second budget
-  checked between windows (an over-budget page is refused). This is a mitigation, **not a bound**:
-  Python's `re` cannot be interrupted, so a pattern that passes validation is not proven linear and a
-  page crafted against it (or one slow window) can still cost seconds (never code execution). A
-  subprocess regex runner with a deadline is the complete fix and is planned with the execution
-  engine (issue 028).
+- **Safety.** Responses are data: a page over 8 MiB is refused. **The safety property for regular
+  expressions is a deadline, not a check of the pattern.** Python's `re` backtracks and cannot be
+  interrupted, so every match of a manifest pattern against fetched text (page, index, redirect, RSS and
+  chain providers, `page_match`, `=~` filters on JSON values, tag and asset names) runs in a worker process
+  (`gupkg/system/regex_worker.py`, started through `System.regex_worker` with the running interpreter's
+  `-I -s -B -S`, a minimal environment holding only `SystemRoot`, and an empty temporary folder as its
+  working directory). The parent (`gupkg.services.regexrun.RegexRunner`) sends the pattern, flags, prepared
+  texts and operation as ASCII JSON on standard input and reads the matches (spans and groups, size-capped)
+  from standard output. Each call has a deadline (2 s, counted from the worker's first line so a slow
+  process start is not blamed on the pattern) and each provider run a total (10 s of matching); past the
+  deadline the worker's whole process tree is killed (job object) and the call raises `RegexTimeout`
+  naming the pattern and the address or field. The runner fails closed: a worker that crashes, prints
+  something malformed or oversized, or is refused is an error, never "no match", so a hostile page cannot
+  turn into "no version found". What it does not give: a memory cap (a worker can allocate during its
+  deadline), and no network access is enforced by the operating system (the worker never opens a socket).
+  The static guard is only a cheap first filter that refuses obviously dangerous shapes early with a clear
+  message; it is **not** the safety property and a pattern that passes it can still be slow. It rejects
+  patterns that repeat a repeated group, an empty-matching body, or overlapping alternatives inside a repeat
+  of four or more, an unbounded `.` repeat next to another unbounded repeat (and more than one), more than
+  three wildcard (`.`, `[^x]`) repeats, and more than 24 unbounded repeats or 6 in a row without a literal
+  between them; groups are looked through at any depth, flags (`(?i)`, `re.X`) are honoured, and an
+  iteration that holds an inner repeat is accepted only when it begins or ends with a required character
+  that no inner repeat can consume (`(?:\d{1,3}\.){1,5}`, `\d+(?:[._]\d+)*`), judged by comparing character
+  sets. Runs of word characters or of one character in a text are cut to 1024 and at most a mebibyte is sent.
   Redirects are followed by the client: HTTPS to HTTP and any non-http(s) target are refused, and
   `Authorization`, `Cookie` and any header whose name contains auth, key, token, secret, password,
   cookie or session are dropped when the host changes. A manifest `headers` table may not set

@@ -82,7 +82,7 @@ def track_index(spec: IndexSpec, env: TrackEnvironment) -> TrackResult:
         level = spec.levels[level_number]
         text, page_url = request_page(url)
         pattern = compile_runtime(level.match_text, captures)
-        found = candidates_from_text(pattern, text, captures)
+        found = candidates_from_text(env.regex, pattern, text, captures, page_url)
         if level.key is not None:
             found = [(values, expand(level.key, values)) for values, _key in found]
         for values, _key in ordered(found, level.select):
@@ -141,7 +141,7 @@ def track_redirect(spec: RedirectSpec, env: TrackEnvironment) -> TrackResult:
     name = file_name_from_url(final)
     captures: dict[str, str] = {"page_url": spec.check_url, "final_url": final, "download_url": final, "file_name": name}
     if spec.match is not None:
-        found = candidates_from_text(spec.match, final, captures)
+        found = candidates_from_text(env.regex, spec.match, final, captures, final)
         if not found:
             raise TrackError(f"The final address {final} does not match the pattern")
         captures = dict(found[0][0])

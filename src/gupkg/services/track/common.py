@@ -18,8 +18,8 @@ Implementation Approach
 -----------------------
 Everything read from a response is treated as data: versions must be safe directory
 names, URLs must be http or https, and capture values are stripped of markup entities
-but never interpreted. Patterns are scanned through ``gupkg.model.patterns`` so size and
-match counts are bounded.
+but never interpreted. Patterns are applied through ``gupkg.services.regexrun``, in a worker
+process with a deadline, so a hostile page cannot hang the run.
 """
 
 from __future__ import annotations
@@ -33,10 +33,11 @@ from pathlib import Path
 from typing import Any
 
 from ...model.manifest import DiscoveredChecksum, TrackResult
-from ...model.patterns import PatternError, scan
+from ...model.patterns import PatternError
 from ...model.version import compare_versions
 from ...system.port import System
 from ..http import HttpClient
+from ..regexrun import RegexRunner
 from ..values import TrackError, absolute_url, compile_runtime, expand, valid_version
 
 _SHA256 = re.compile(r"[0-9A-Fa-f]{64}")
@@ -60,6 +61,9 @@ class TrackEnvironment:
         The package name, for messages and hook contexts.
     extra : mapping
         Free-form values passed on to a ``module`` provider's hook context.
+    regex : RegexRunner, optional
+        Runs the manifest patterns in a worker process with a deadline; one is created for the
+        environment when omitted, so its total time budget belongs to this provider run.
     """
 
     system: System
@@ -68,6 +72,12 @@ class TrackEnvironment:
     directory: Path | None = None
     package: str = ""
     extra: Mapping[str, Any] = field(default_factory=dict)
+    regex: RegexRunner | None = None
+
+    def __post_init__(self) -> None:
+        """Give the provider run its own regex runner (and so its own total time budget) unless one was passed."""
+        if self.regex is None:
+            object.__setattr__(self, "regex", RegexRunner(self.system))
 
 
 @dataclass(frozen=True)
@@ -80,15 +90,32 @@ class Candidate:
 
 
 def candidates_from_text(
-    pattern: re.Pattern[str], text: str, base_captures: Mapping[str, str] | None = None
+    regex: RegexRunner,
+    pattern: re.Pattern[str],
+    text: str,
+    base_captures: Mapping[str, str] | None = None,
+    what: str = "",
 ) -> list[tuple[Mapping[str, str], str]]:
     """Return ``(captures, order_key)`` for every match of *pattern* in *text*.
 
-    Captures hold the non-empty named groups, HTML entities decoded. The order key is
-    the ``version`` group when there is one, else the first group, else the match text.
+    The match runs in a worker process with a deadline (*regex*), because *text* comes from the
+    network. Captures hold the non-empty named groups, HTML entities decoded. The order key is
+    the ``version`` group when there is one, else the first group, else the match text. *what*
+    names the field or address for an error message.
     """
+    return candidates_from_texts(regex, pattern, [text], base_captures, what)
+
+
+def candidates_from_texts(
+    regex: RegexRunner,
+    pattern: re.Pattern[str],
+    texts: list[str],
+    base_captures: Mapping[str, str] | None = None,
+    what: str = "",
+) -> list[tuple[Mapping[str, str], str]]:
+    """Return ``(captures, order_key)`` for every match of *pattern* in each of *texts*, in order (one worker serves all)."""
     try:
-        matches = scan(pattern, text)
+        matches = [match for one in regex.finditer_many(pattern, texts, what=what) for match in one]
     except PatternError as error:
         raise TrackError(str(error)) from error
     found: list[tuple[Mapping[str, str], str]] = []

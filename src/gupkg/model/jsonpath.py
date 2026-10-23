@@ -25,12 +25,25 @@ compared with a literal.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from .patterns import PatternError, compile_pattern
 
 MAX_NODES = 100_000
+
+# Decides ``=~`` conditions for a batch of strings: (compiled pattern, texts) -> one verdict per text.
+# The default runs ``fullmatch`` in this process, which is only right for text you trust; services
+# pass ``RegexRunner.fullmatches`` so that the match runs in a worker with a deadline.
+Matcher = Callable[[Any, Sequence[str]], Sequence[bool]]
+
+
+def _in_process(pattern: Any, texts: Sequence[str]) -> list[bool]:
+    """Return whether *pattern* matches the whole of each text, in process and with no deadline."""
+    return [pattern.fullmatch(text) is not None for text in texts]
+
+
 _NAME = re.compile(r"[A-Za-z0-9_\-]+")
 _NUMBER = re.compile(r"-?\d+(\.\d+)?")
 
@@ -64,23 +77,26 @@ class JsonPath:
     steps: tuple[tuple[str, Any], ...]
     wants_key: bool = False
 
-    def select(self, root: Any) -> list[Node]:
+    def select(self, root: Any, matcher: "Matcher | None" = None) -> list[Node]:
         """Return the nodes selected from *root*, in document order.
+
+        *matcher* decides ``=~`` conditions (see ``Matcher``); services pass the one that runs
+        patterns in a worker process, because the values come from the network.
 
         Raises
         ------
         JsonPathError
             If more than ``MAX_NODES`` nodes would be produced.
         """
-        return self.select_from(Node(None, root))
+        return self.select_from(Node(None, root), matcher)
 
-    def select_from(self, start: Node) -> list[Node]:
+    def select_from(self, start: Node, matcher: "Matcher | None" = None) -> list[Node]:
         """Return the nodes selected from the node *start*, whose key a ``~`` path can yield."""
         nodes = [start]
         for kind, argument in self.steps:
             following: list[Node] = []
             for node in nodes:
-                following.extend(_apply(kind, argument, node))
+                following.extend(_apply(kind, argument, node, matcher or _in_process))
                 if len(following) > MAX_NODES:
                     raise JsonPathError(f"the path selects more than {MAX_NODES} nodes")
             nodes = following
@@ -88,9 +104,9 @@ class JsonPath:
             return [Node(node.key, node.key) for node in nodes]
         return nodes
 
-    def values(self, root: Any) -> list[Any]:
+    def values(self, root: Any, matcher: "Matcher | None" = None) -> list[Any]:
         """Return the values selected from *root* (the keys when the path ends in ``~``)."""
-        return [node.value for node in self.select(root)]
+        return [node.value for node in self.select(root, matcher)]
 
 
 def parse_path(text: str) -> JsonPath:
@@ -146,7 +162,7 @@ def parse_path(text: str) -> JsonPath:
     return JsonPath(tuple(steps), wants_key)
 
 
-def condition_holds(text: str, node: Any) -> bool:
+def condition_holds(text: str, node: Any, matcher: Matcher | None = None) -> bool:
     """Return whether the condition *text* (``path==literal``, ``!=`` or ``=~``) holds for the value *node*.
 
     A path that selects nothing makes ``==`` and ``=~`` false and ``!=`` true.
@@ -156,12 +172,12 @@ def condition_holds(text: str, node: Any) -> bool:
     JsonPathError
         If *text* is not a valid condition.
     """
-    return evaluate_condition(parse_condition(text), node)
+    return evaluate_condition(parse_condition(text), node, matcher)
 
 
-def evaluate_condition(condition: "_Condition", node: Any) -> bool:
+def evaluate_condition(condition: "_Condition", node: Any, matcher: Matcher | None = None) -> bool:
     """Evaluate a condition parsed by ``parse_condition`` on a node, so a loop parses it once."""
-    return _evaluate(condition, node)
+    return _evaluate_many(condition, [node], matcher or _in_process)[0]
 
 
 def parse_condition(text: str) -> _Condition:
@@ -277,7 +293,7 @@ def _children(node: Node) -> list[Node]:
     return []
 
 
-def _apply(kind: str, argument: Any, node: Node) -> list[Node]:
+def _apply(kind: str, argument: Any, node: Node, matcher: Matcher) -> list[Node]:
     """Apply one step to one node."""
     value = node.value
     if kind == "key":
@@ -290,7 +306,15 @@ def _apply(kind: str, argument: Any, node: Node) -> list[Node]:
         return []
     if kind == "all":
         return _children(node)
-    return [child for child in _children(node) if all(_evaluate(condition, child) for condition in argument)]
+    # Each condition is decided for every remaining child at once, so a worker process (see
+    # ``Matcher``) is asked once per condition, not once per child.
+    kept = _children(node)
+    for condition in argument:
+        if not kept:
+            break
+        verdicts = _evaluate_many(condition, kept, matcher)
+        kept = [child for child, holds in zip(kept, verdicts) if holds]
+    return kept
 
 
 def _same(value: Any, literal: Any) -> bool:
@@ -302,12 +326,14 @@ def _same(value: Any, literal: Any) -> bool:
     return value == literal
 
 
-def _evaluate(condition: _Condition, node: Any) -> bool:
-    """Evaluate a parsed condition on a node (or on a raw value)."""
-    target = node if isinstance(node, Node) else Node(None, node)
-    selected = [item.value for item in condition.path.select_from(target)]
+def _evaluate_many(condition: _Condition, nodes: Sequence[Any], matcher: Matcher) -> list[bool]:
+    """Evaluate a parsed condition on each node (or raw value); the ``=~`` texts go to *matcher* in one batch."""
+    targets = [node if isinstance(node, Node) else Node(None, node) for node in nodes]
+    selected = [[item.value for item in condition.path.select_from(target, matcher)] for target in targets]
     if condition.operator == "==":
-        return any(_same(item, condition.literal) for item in selected)
+        return [any(_same(item, condition.literal) for item in items) for items in selected]
     if condition.operator == "!=":
-        return not any(_same(item, condition.literal) for item in selected)
-    return any(isinstance(item, (str, int, float)) and condition.pattern.fullmatch(str(item)) for item in selected)
+        return [not any(_same(item, condition.literal) for item in items) for items in selected]
+    texts = [str(item) for items in selected for item in items if isinstance(item, (str, int, float))]
+    verdicts = iter(matcher(condition.pattern, texts) if texts else [])
+    return [any([next(verdicts) for item in items if isinstance(item, (str, int, float))]) for items in selected]
