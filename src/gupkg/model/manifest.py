@@ -43,6 +43,7 @@ from .template import (
     references,
     render,
 )
+from .trackspec import TrackSpecError, check_header_map, parse_spec
 from .version import TRACKER_DIR_NAME, is_version_name
 
 FORMAT = 2
@@ -62,7 +63,7 @@ _TOP_KEYS = (
 )
 _SOURCE_KEYS = (
     "download_url", "script", "shipped", "sha256", "sha256_from", "kind", "strip", "subdir",
-    "require", "verify_manifest", "checksum", "installer", "git", "nested", "extract",
+    "require", "verify_manifest", "checksum", "installer", "git", "nested", "extract", "headers",
 )
 _CHECKSUM_KEYS = ("sidecar", "sums_file", "entry", "json", "path", "page_match")
 _SHORTCUT_KEYS = ("name", "target", "arguments", "working_dir", "icon_location", "description")
@@ -70,19 +71,20 @@ _SHIM_KEYS = ("name", "target", "type", "arguments", "forward_args", "elevate", 
 _PREPARE_KEYS = ("remove", "rename", "copy", "write", "module")
 
 # ``[track]``: the keys every provider takes, and the provider-specific ones of design
-# section 8.1. Issue 026 adds the per-provider validation of the values.
+# section 8.1, extended by issue 026 with ``version``, ``download``, ``headers`` and the
+# json and chain helpers. ``gupkg.model.trackspec`` validates the values.
 _TRACK_COMMON = ("provider", "check_url", "repo", "repo_url")
 _TRACK_PROVIDERS: dict[str, tuple[str, ...]] = {
-    "github": ("asset", "asset_pattern", "version_from", "tag_pattern", "tag_prefix", "release", "prerelease"),
-    "gitlab": ("project", "link_name", "asset_pattern"),
+    "github": ("asset", "asset_pattern", "version_from", "tag_pattern", "tag_prefix", "release", "prerelease", "version"),
+    "gitlab": ("project", "link_name", "asset_pattern", "tag_pattern", "tag_prefix", "version"),
     "page": ("match", "select", "version", "download", "headers"),
-    "index": ("level",),
-    "redirect": ("match", "unwrap_query"),
-    "json": ("version", "download", "filter"),
-    "last_modified": ("format",),
-    "rss": ("match",),
+    "index": ("level", "version", "download", "headers"),
+    "redirect": ("match", "unwrap_query", "version", "download", "headers"),
+    "json": ("records", "filter", "version", "match", "download", "checksum", "captures", "select", "headers"),
+    "last_modified": ("format", "headers"),
+    "rss": ("match", "select", "version", "download", "headers"),
     "git": ("ref",),
-    "chain": ("fetch",),
+    "chain": ("fetch", "version", "download"),
     "module": ("module",),
 }
 # Which of the three location keys a provider takes (and needs one of).
@@ -199,6 +201,7 @@ class Source:
     git: GitSource | None = None
     nested: tuple[NestedArchive, ...] = ()
     extract: tuple[ExtractRule, ...] = ()
+    headers: Mapping[str, str] = field(default_factory=dict)
 
     @property
     def populate(self) -> str:
@@ -231,7 +234,7 @@ class Source:
 class Track:
     """How a tracker finds newer versions (``[track]``, ``_check_updates`` only).
 
-    ``options`` holds the provider-specific keys; issue 026 validates their values.
+    ``options`` holds the provider-specific keys; ``gupkg.model.trackspec`` validates their values.
     """
 
     provider: str
@@ -789,6 +792,15 @@ def _parse_source(collector: _Collector, raw: Any, modes: tuple[str, ...]) -> So
     verify_manifest = collector.string(table, "verify_manifest", "source")
     if verify_manifest is not None:
         verify_manifest = _relative_path(collector, verify_manifest, "source.verify_manifest")
+    headers: dict[str, str] = {}
+    if table.get("headers") is not None:
+        if not isinstance(table["headers"], dict):
+            collector.error("source.headers", "must be a table of header names and values")
+        else:
+            try:
+                headers = check_header_map(table["headers"], "source.headers")
+            except ValueError as exc:
+                collector.error("source.headers", str(exc))
 
     # Sub-tables and arrays of tables are parsed by their own functions.
     checksum = _parse_checksum(collector, table.get("checksum"))
@@ -810,7 +822,7 @@ def _parse_source(collector: _Collector, raw: Any, modes: tuple[str, ...]) -> So
         unpack_only = {
             "kind": kind, "strip": strip, "subdir": subdir, "checksum": checksum, "installer": installer,
             "git": git, "sha256": sha256, "sha256_from": sha256_from,
-            "nested": nested or None, "extract": extract or None,
+            "nested": nested or None, "extract": extract or None, "headers": headers or None,
         }
         for key, value in unpack_only.items():
             if value is not None:
@@ -828,7 +840,7 @@ def _parse_source(collector: _Collector, raw: Any, modes: tuple[str, ...]) -> So
         download_url=download_url, script=script, shipped_declared=shipped, sha256=sha256,
         sha256_from=sha256_from, kind=kind, strip=strip, subdir=subdir, require=require,
         verify_manifest=verify_manifest, checksum=checksum, installer=installer, git=git,
-        nested=nested, extract=extract,
+        nested=nested, extract=extract, headers=headers,
     )
 
 
@@ -971,6 +983,12 @@ def _parse_track(collector: _Collector, raw: Any) -> Track | None:
             normal = _local_script(collector, module, "track.module", suffixes=(".py",))
             if normal is not None:
                 options["module"] = normal
+    # The shape is right; now check the values (patterns, paths, templates, choices).
+    try:
+        parse_spec(provider, {key: values.get(key) for key in ("check_url", "repo", "repo_url")}, options)
+    except TrackSpecError as exc:
+        for key, message in exc.problems:
+            collector.error(key, message)
     return Track(provider, values.get("check_url"), values.get("repo"), values.get("repo_url"), options)
 
 
@@ -1221,6 +1239,8 @@ def _source_to_data(source: Source) -> dict[str, Any]:
         data["nested"] = [{"path": n.path, "dest": n.dest, "replace": n.replace} for n in source.nested]
     if source.extract:
         data["extract"] = [{"src": e.src, "dest": e.dest} for e in source.extract]
+    if source.headers:
+        data["headers"] = dict(source.headers)
     return _drop_empty(data)
 
 
