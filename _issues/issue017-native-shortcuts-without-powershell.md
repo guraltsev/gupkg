@@ -1,5 +1,7 @@
 # Issue 017: Create and read shortcuts through COM, not PowerShell
 
+> **Status (2026-10-22):** Implemented. Merged in e23a94c. Manual checks still owed: `tests/manual_smoke.md`, "Shortcut and junction checks (issue 017)" (1: Explorer Properties dialog; 2: install from `gupkg tui` and from an elevated system-scope shell; 3: optional 10-shortcut install timing).
+
 Date: 2026-10-22
 Priority: Medium
 Change type: Windows boundary (`windows.py`, `shortcuts_to_gupkg_toml.py`); no
