@@ -112,8 +112,7 @@ files are already present.
 - Supports GitHub Releases and trusted package-local Python update hooks.
 
 Git is needed only by packages that declare a Git origin or Git updates; gupkg itself, including
-the package registry, downloads plain ZIP files with Python's standard library. PowerShell is used to
-create Windows shortcuts. Network access is required only when a configured
+the package registry, downloads plain ZIP files with Python's standard library. Network access is required only when a configured
 origin or update source is contacted.
 
 ## Architecture and organization

@@ -145,3 +145,8 @@ This issue is **stage 0** of the rehaul. Its decisions stand.
   package in 1.0. Core carries no migration code (decision D33), so it
   moves out of core into the separate migration tool (issue 023), called
   as `gupkg migrate shortcuts` (D45). It keeps using `read_shell_link`.
+
+## Timings (recorded 2026-10-22)
+
+Ten `create_shortcut` calls into a temporary directory: 6.75 s with
+PowerShell, 0.15 s through COM.

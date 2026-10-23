@@ -6,8 +6,9 @@ mixing platform mechanics into configuration or orchestration.
 
 Implementation Approach
 -----------------------
-The module uses standard Windows APIs where available and small subprocess
-fallbacks where Windows exposes the required behavior through system tools.
+The module calls Windows APIs through ``ctypes`` and the standard library.
+Shortcuts go through the Shell COM API (see ``shell_link``) and junctions
+through ``DeviceIoControl``; neither starts a child process.
 """
 
 from __future__ import annotations
@@ -31,7 +32,8 @@ def system_tool(name: str) -> str:
     Parameters
     ----------
     name : {"powershell", "cmd"}
-        Tool to locate under ``%SystemRoot%``.
+        Tool to locate under ``%SystemRoot%``. ``"powershell"`` is used only to
+        run package-authored ``.ps1`` origin scripts.
 
     Returns
     -------
@@ -73,45 +75,6 @@ def require_winreg() -> Any:
     return winreg
 
 
-def _run_hidden(command: List[str]) -> subprocess.CompletedProcess:
-    """Run one Windows command without opening a console window.
-
-    Parameters
-    ----------
-    command : List[str]
-        Command-line tokens to execute.
-
-    Returns
-    -------
-    subprocess.CompletedProcess
-        The completed subprocess result.
-
-    """
-    return subprocess.run(
-        command,
-        capture_output=True,
-        text=True,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-    )
-
-
-def _escape_powershell_single_quoted(value: str) -> str:
-    """Escape text for a PowerShell single-quoted string literal.
-
-    Parameters
-    ----------
-    value : str
-        Text that will be embedded in PowerShell.
-
-    Returns
-    -------
-    str
-        The same text with apostrophes doubled.
-
-    """
-    return value.replace("'", "''")
-
-
 def create_shortcut(
     shortcut_path: Path,
     target_path: str,
@@ -121,14 +84,14 @@ def create_shortcut(
     icon_location: str = "",
     description: str = "",
 ) -> None:
-    """Create one ``.lnk`` file through PowerShell automation.
+    """Create or replace one ``.lnk`` file through the Windows Shell COM API.
 
     Parameters
     ----------
     shortcut_path : Path
         Full ``.lnk`` path to create.
     target_path : str
-        Executable path the shortcut should launch.
+        Executable path the shortcut should launch, stored unresolved.
     arguments : str
         Optional command-line arguments.
     working_directory : str
@@ -140,34 +103,22 @@ def create_shortcut(
 
     Raises
     ------
-    RuntimeError
-        If PowerShell reports a shortcut-creation failure.
+    OSError
+        If the shortcut cannot be written. The error names ``shortcut_path``.
 
     """
-    ps_command = f"""
-$WshShell = New-Object -ComObject WScript.Shell
-$Shortcut = $WshShell.CreateShortcut('{_escape_powershell_single_quoted(str(shortcut_path))}')
-$Shortcut.TargetPath = '{_escape_powershell_single_quoted(target_path)}'
-$Shortcut.Arguments = '{_escape_powershell_single_quoted(arguments)}'
-$Shortcut.WorkingDirectory = '{_escape_powershell_single_quoted(working_directory)}'
-$Shortcut.IconLocation = '{_escape_powershell_single_quoted(icon_location)}'
-$Shortcut.Description = '{_escape_powershell_single_quoted(description)}'
-$Shortcut.Save()
-"""
-    result = _run_hidden(
-        [
-            system_tool("powershell"),
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            ps_command,
-        ]
+    from .shell_link import ShellLink, write_shell_link
+
+    write_shell_link(
+        shortcut_path,
+        ShellLink(
+            target_path=target_path,
+            arguments=arguments,
+            working_directory=working_directory,
+            icon_location=icon_location,
+            description=description,
+        ),
     )
-    if result.returncode != 0:
-        error_text = (
-            result.stderr or result.stdout or "unknown PowerShell shortcut error"
-        ).strip()
-        raise RuntimeError(error_text)
 
 
 def create_junction(source: Path, target: Path) -> None:
@@ -199,10 +150,116 @@ def create_junction(source: Path, target: Path) -> None:
                 f"{source} already exists and is not a junction; refusing to overwrite."
             )
 
-    result = _run_hidden([system_tool("cmd"), "/c", "mklink", "/J", str(source), str(target)])
-    if result.returncode != 0:
-        error_text = (result.stderr or result.stdout or "mklink /J failed").strip()
-        raise RuntimeError(error_text)
+    # Create the empty directory, then turn it into a mount-point reparse point.
+    # A failure after creation removes the directory so no half-made junction
+    # is left behind.
+    try:
+        _win_make_junction(source, target)
+    except OSError as exc:
+        raise RuntimeError(f"Cannot create junction {source} -> {target}: {exc}") from exc
+
+
+def _win_make_junction(source: Path, target: Path) -> None:
+    r"""Create *source* as an NTFS junction to *target* without a child process.
+
+    Parameters
+    ----------
+    source : Path
+        Path that must not exist yet.
+    target : Path
+        Existing directory the junction references.
+
+    Raises
+    ------
+    OSError
+        If the directory or the reparse point cannot be created.
+
+    """
+    import ctypes
+    import struct
+    from ctypes import wintypes
+
+    generic_write = 0x40000000
+    open_existing = 3
+    file_share_all = 0x00000007
+    file_flag_open_reparse_point = 0x00200000
+    file_flag_backup_semantics = 0x02000000
+    fsctl_set_reparse_point = 0x000900A4
+    io_reparse_tag_mount_point = 0xA0000003
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateDirectoryW.argtypes = [wintypes.LPCWSTR, wintypes.LPVOID]
+    kernel32.CreateDirectoryW.restype = wintypes.BOOL
+    kernel32.CreateFileW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    kernel32.CreateFileW.restype = wintypes.HANDLE
+    kernel32.DeviceIoControl.argtypes = [
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+        wintypes.LPVOID,
+    ]
+    kernel32.DeviceIoControl.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+    # Build the MOUNT_POINT_REPARSE_BUFFER: the substitute name is the NT path
+    # ``\??\<absolute target>``, the print name is the plain absolute path.
+    absolute = os.path.abspath(str(target)).rstrip("\\")
+    substitute = ("\\??\\" + absolute).encode("utf-16-le")
+    printed = absolute.encode("utf-16-le")
+    path_buffer = substitute + b"\0\0" + printed + b"\0\0"
+    header = struct.pack("<HHHH", 0, len(substitute), len(substitute) + 2, len(printed))
+    data = header + path_buffer
+    buffer = struct.pack("<IHH", io_reparse_tag_mount_point, len(data), 0) + data
+
+    # Create the directory that will carry the reparse point.
+    if not kernel32.CreateDirectoryW(str(source), None):
+        raise ctypes.WinError(ctypes.get_last_error())
+
+    # Open the new directory itself (not what it would point to) and attach it.
+    handle = kernel32.CreateFileW(
+        str(source),
+        generic_write,
+        file_share_all,
+        None,
+        open_existing,
+        file_flag_open_reparse_point | file_flag_backup_semantics,
+        None,
+    )
+    if handle == wintypes.HANDLE(-1).value or handle is None:
+        error = ctypes.WinError(ctypes.get_last_error())
+        os.rmdir(str(source))
+        raise error
+    try:
+        returned = wintypes.DWORD(0)
+        ok = kernel32.DeviceIoControl(
+            handle,
+            fsctl_set_reparse_point,
+            buffer,
+            len(buffer),
+            None,
+            0,
+            ctypes.byref(returned),
+            None,
+        )
+        error = None if ok else ctypes.WinError(ctypes.get_last_error())
+    finally:
+        kernel32.CloseHandle(handle)
+    if error is not None:
+        os.rmdir(str(source))
+        raise error
 
 
 def _win_get_reparse_tag(path: Path) -> Optional[int]:

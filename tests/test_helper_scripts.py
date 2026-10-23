@@ -482,43 +482,48 @@ class LegacyConverterTests(unittest.TestCase):
 
 
 class ShortcutImporterTests(unittest.TestCase):
-    def test_shortcut_reader_passes_the_lnk_path_through_stdin_json(self) -> None:
-        """The reader passes shortcut paths with spaces through stdin JSON."""
+    @unittest.skipUnless(os.name == "nt", "reading .lnk files requires Windows")
+    def test_shortcut_reader_reads_a_real_lnk_with_spaces_in_its_path(self) -> None:
+        """The reader returns the stored fields of a real shortcut whose path has spaces."""
+
+        from gupkg.shell_link import ShellLink, write_shell_link
 
         importer = load_shortcut_importer_module()
-        shortcut_path = Path(
-            r"C:\games\CommanderKeen\1.4_42493.local.1\_shortcuts\Commander Keen.lnk"
-        )
-        payload = {
-            "TargetPath": r"C:\games\CommanderKeen\1.4_42493.local.1\App\keen.exe",
-            "Arguments": "",
-            "WorkingDirectory": "",
-            "IconLocation": "",
-            "Description": "",
-        }
-        completed = subprocess.CompletedProcess(
-            args=[],
-            returncode=0,
-            stdout=json.dumps(payload),
-            stderr="",
-        )
+        with tempfile.TemporaryDirectory() as tmp:
+            shortcut_path = Path(tmp) / "Commander Keen" / "Commander Keen.lnk"
+            shortcut_path.parent.mkdir()
+            write_shell_link(
+                shortcut_path,
+                ShellLink(
+                    target_path=r"C:\games\CommanderKeen\App\keen.exe",
+                    arguments="-fast",
+                    description="Keen",
+                ),
+            )
 
-        with mock.patch.object(importer.os, "name", "nt"):
-            with mock.patch.object(
-                importer.subprocess, "run", return_value=completed
-            ) as run_mock:
-                self.assertEqual(importer.read_windows_shortcut(shortcut_path), payload)
+            self.assertEqual(
+                importer.read_windows_shortcut(shortcut_path),
+                {
+                    "TargetPath": r"C:\games\CommanderKeen\App\keen.exe",
+                    "Arguments": "-fast",
+                    "WorkingDirectory": "",
+                    "IconLocation": "",
+                    "Description": "Keen",
+                },
+            )
 
-        command = run_mock.call_args.args[0]
-        self.assertIn("[Console]::In.ReadToEnd() | ConvertFrom-Json", command[5])
-        self.assertIn(
-            "$shell.CreateShortcut([string]$inputObject.ShortcutPath)", command[5]
-        )
-        self.assertNotIn("$args[0]", command[5])
-        self.assertEqual(
-            json.loads(run_mock.call_args.kwargs["input"]),
-            {"ShortcutPath": str(shortcut_path)},
-        )
+    @unittest.skipUnless(os.name == "nt", "reading .lnk files requires Windows")
+    def test_shortcut_reader_names_the_file_it_cannot_read(self) -> None:
+        """A missing shortcut is reported as one error line that names the file."""
+
+        importer = load_shortcut_importer_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / "missing.lnk"
+            with self.assertRaises(RuntimeError) as caught:
+                importer.read_windows_shortcut(missing)
+
+        self.assertIn(str(missing), str(caught.exception))
+        self.assertNotIn("\n", str(caught.exception))
 
     def test_importer_overwrites_matching_shortcuts_and_preserves_other_config(
         self,
