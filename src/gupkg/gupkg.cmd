@@ -26,5 +26,5 @@ goto :collect_forward_args
 
 rem Run isolated (-I: ignore PYTHON* variables, the script directory and the
 rem current directory; -s: no user site; -B: write no bytecode).
-"%GUPKG_PY%" -I -s -B "%GUPKG_SCRIPT_DIR%bootstrap.py" %GUPKG_FORWARD_ARGS%
+"%GUPKG_PY%" -I -s -B -S "%GUPKG_SCRIPT_DIR%bootstrap.py" %GUPKG_FORWARD_ARGS%
 exit /b %ERRORLEVEL%

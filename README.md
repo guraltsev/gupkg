@@ -440,7 +440,7 @@ bundled Python.` In a source checkout use `scripts\run.cmd`; the development
 scripts use `.venv` only (`requirements-dev.txt`).
 
 The internal `src\gupkg\gupkg.cmd` runs only `python\python.exe` from its own
-folder, as `python.exe -I -s -B bootstrap.py`. It never consults `GUPKG_PYTHON`,
+folder, as `python.exe -I -s -B -S bootstrap.py`. It never consults `GUPKG_PYTHON`,
 a `gupkg.python` file, `python` on `PATH` or the `py` launcher, and it downloads
 nothing. When `python\python.exe` is missing it exits with status 1 and tells
 you to reinstall gupkg from a release ZIP.

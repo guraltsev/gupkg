@@ -16,8 +16,6 @@ elevated process, which needs an administrator token.
 from __future__ import annotations
 
 import importlib.util
-import shutil
-import subprocess
 import os
 import sys
 import types
@@ -158,8 +156,13 @@ def test_runtime_refuses_an_interpreter_that_is_not_the_bundled_one(tmp_path: Pa
         elevation.enforce_bundled_runtime(package, elevated=elevated)
 
 
-def test_runtime_refuses_the_bundled_interpreter_started_without_isolation(tmp_path: Path) -> None:
-    """The bundled python.exe started without -I (so PYTHON* variables count) is refused even for an ordinary run."""
+@pytest.mark.parametrize(
+    "flags",
+    [types.SimpleNamespace(isolated=0, no_site=1), types.SimpleNamespace(isolated=1, no_site=0)],
+    ids=["without -I", "without -S"],
+)
+def test_runtime_refuses_the_bundled_interpreter_started_without_isolation_or_with_site(tmp_path: Path, flags) -> None:
+    """The bundled python.exe started without -I (PYTHON* variables count) or without -S (site, sitecustomize and .pth run) is refused."""
     package = tmp_path / "gupkg"
     (package / "python").mkdir(parents=True)
     python = package / "python" / "python.exe"
@@ -167,7 +170,7 @@ def test_runtime_refuses_the_bundled_interpreter_started_without_isolation(tmp_p
 
     with (
         mock.patch.object(sys, "executable", str(python)),
-        mock.patch.object(sys, "flags", types.SimpleNamespace(isolated=0)),
+        mock.patch.object(sys, "flags", flags),
         pytest.raises(UntrustedLocationError, match="runs only on its bundled Python"),
     ):
         elevation.enforce_bundled_runtime(package)
@@ -182,7 +185,7 @@ def test_ordinary_run_on_the_isolated_bundled_interpreter_needs_no_admin_only_fo
 
     with (
         mock.patch.object(sys, "executable", str(python)),
-        mock.patch.object(sys, "flags", types.SimpleNamespace(isolated=1)),
+        mock.patch.object(sys, "flags", types.SimpleNamespace(isolated=1, no_site=1)),
         mock.patch.object(elevation, "require_trusted_directory") as trusted,
     ):
         elevation.enforce_bundled_runtime(package)
@@ -218,14 +221,16 @@ def test_bootstrap_refuses_a_run_on_the_wrong_interpreter_without_importing_the_
 
 
 def test_elevated_trust_check_covers_the_version_directory_and_the_whole_bundled_runtime(tmp_path: Path) -> None:
-    """An elevated run on the bundled Python demands admin-only access to the version folder, python\\ and its site-packages."""
+    """An elevated run on the bundled Python demands admin-only access to the version folder, python\\ and its site-packages, python.exe and the ._pth file."""
     version_root = tmp_path / "0.18.0"
     package = version_root / "gupkg"
     site_packages = package / "python" / "Lib" / "site-packages"
     site_packages.mkdir(parents=True)
     python = package / "python" / "python.exe"
     python.touch()
-    isolated = types.SimpleNamespace(isolated=1)
+    search_path_file = package / "python" / "python312._pth"
+    search_path_file.touch()
+    isolated = types.SimpleNamespace(isolated=1, no_site=1)
 
     with (
         mock.patch.object(sys, "executable", str(python)),
@@ -236,6 +241,7 @@ def test_elevated_trust_check_covers_the_version_directory_and_the_whole_bundled
 
     checked = {Path(call.args[0]).resolve() for call in trusted.call_args_list}
     assert {version_root.resolve(), package.resolve(), (package / "python").resolve(), site_packages.resolve()} <= checked
+    assert {python.resolve(), search_path_file.resolve()} <= checked
 
 
 # ---------------------------------------------------------------------------
@@ -354,7 +360,7 @@ def test_bootstrap_applies_the_admin_only_checks_exactly_for_elevated_runs(
         mock.patch.object(bootstrap, "__file__", str(package / "bootstrap.py")),
         mock.patch.object(bootstrap, "_load_elevation", return_value=elevation),
         mock.patch.object(sys, "executable", str(python)),
-        mock.patch.object(sys, "flags", types.SimpleNamespace(isolated=1)),
+        mock.patch.object(sys, "flags", types.SimpleNamespace(isolated=1, no_site=1)),
         mock.patch.object(elevation, "is_elevated", return_value=admin_signal),
         mock.patch.object(elevation, "require_trusted_directory", side_effect=refuse) as trusted,
         mock.patch.dict(sys.modules, {"gupkg.cli": cli}),
@@ -392,23 +398,20 @@ def test_bootstrap_adds_nothing_to_sys_path_until_the_checks_pass(tmp_path: Path
     assert sys.path == before
 
 
-def test_planted_stdlib_look_alikes_never_run_before_the_check_refuses(tmp_path: Path) -> None:
-    """Running a copy of the bootstrap whose parent folder holds ctypes.py, struct.py and dataclasses.py refuses without executing any of them."""
-    folder = tmp_path / "gupkg"
-    folder.mkdir()
-    shutil.copy2(SRC / "bootstrap.py", folder / "bootstrap.py")
-    shutil.copy2(SRC / "elevation.py", folder / "elevation.py")
-    marker = tmp_path / "planted-ran.txt"
-    for name in ("ctypes", "struct", "dataclasses", "wintypes", "pathlib"):
-        (tmp_path / f"{name}.py").write_text(f"open({str(marker)!r}, 'a').write({name!r})\n", encoding="utf-8")
-    environment = {key: value for key, value in os.environ.items() if not key.startswith("PYTHON")}
-    environment["GUPKG_ELEVATED"] = "1"
+def test_bootstrap_reports_a_runtime_without_ctypes_and_exits_1(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """If a module the check needs cannot be imported, the bootstrap prints a reinstall message and exits 1 instead of a traceback."""
+    package, _ = _bundled_package(tmp_path)
+    bootstrap = _bootstrap_module()
+    cli = types.ModuleType("gupkg.cli")
+    cli.main = mock.Mock(return_value=0)
 
-    result = subprocess.run(
-        [sys.executable, "-I", "-B", str(folder / "bootstrap.py"), "list"],
-        cwd=str(folder), env=environment, capture_output=True, text=True, check=False,
-    )
+    with (
+        mock.patch.object(bootstrap, "__file__", str(package / "bootstrap.py")),
+        mock.patch.object(bootstrap, "_load_elevation", side_effect=ImportError("No module named 'ctypes'")),
+        mock.patch.dict(sys.modules, {"gupkg.cli": cli}),
+    ):
+        status = bootstrap.main(["list"])
 
-    assert result.returncode == 1, result.stderr
-    assert "runs only on its bundled Python" in result.stderr
-    assert not marker.exists()
+    assert status == 1
+    assert "Reinstall gupkg from a release ZIP" in capsys.readouterr().err
+    cli.main.assert_not_called()

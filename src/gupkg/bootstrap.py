@@ -51,7 +51,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Run the checks before sys.path gains any entry: elevation.py is loaded by
     # file path and imports everything it needs on load, so nothing in the
     # package directory can shadow a module that the check itself uses.
-    elevation = _load_elevation()
+    try:
+        elevation = _load_elevation()
+    except ImportError as error:
+        # The runtime lacks a module the check needs (for example ctypes): fail closed.
+        print(f"[gupkg] The bundled Python is incomplete ({error}). Reinstall gupkg from a release ZIP.", file=sys.stderr)
+        return 1
     elevated = elevation.elevated_mode()
     try:
         elevation.enforce_bundled_runtime(Path(__file__).resolve().parent, elevated=elevated)
@@ -75,7 +80,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 def _load_elevation() -> types.ModuleType:
     """Load the self-contained elevation module without importing the gupkg package."""
     # elevation.py has no package-relative imports, so the trust check can run
-    # before any other gupkg code is imported.
+    # before any other gupkg code is imported. The package later imports the same
+    # file again as ``gupkg.elevation``; the two copies are separate modules, so
+    # exception classes must be caught from the module that raised them.
     spec = importlib.util.spec_from_file_location("_gupkg_elevation", _ELEVATION_SOURCE)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module

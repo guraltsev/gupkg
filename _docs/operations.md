@@ -253,7 +253,7 @@ An elevated (Administrator) `gupkg` executes only code that non-administrators
 cannot modify. `gupkg.cmd` is the same for every run; `bootstrap.py` detects
 elevation itself (the process token) and then:
 
-- requires the bundled `python\python.exe` in isolated mode (`-I -s -B`), as for
+- requires the bundled `python\python.exe` in isolated mode (`-I -s -B -S`), as for
   every run (an ordinary run is refused too on any other interpreter, so `python -m
   gupkg` works only on the bundled Python; use `scripts\run.cmd` in a checkout);
   `GUPKG_PYTHON`, `gupkg.python`, `python`, `py`, and `PYTHONPATH` are never consulted;

@@ -176,23 +176,24 @@ def enforce_bundled_runtime(package_directory: Path, elevated: bool = False) -> 
     ------
     UntrustedLocationError
         If the interpreter is not ``<package>\\python\\python.exe`` or is not
-        isolated (``-I``), or, for an elevated run, if any directory on the
+        isolated (``-I``) and without ``site`` (``-S``), or, for an elevated run, if any directory on the
         import path or the bundled dependency directory is writable by a
         non-administrator.
     """
     package_directory = Path(package_directory).resolve()
     runtime_directory = package_directory / "python"
 
-    # gupkg.cmd starts the bundled interpreter with -I -s -B; any other way of
+    # gupkg.cmd starts the bundled interpreter with -I -s -B -S; any other way of
     # reaching gupkg would honor the caller's Python, variables and site-packages.
     expected = runtime_directory / "python.exe"
     if (
         os.path.normcase(os.path.realpath(sys.executable)) != os.path.normcase(str(expected.resolve()))
         or not sys.flags.isolated
+        or not sys.flags.no_site
     ):
         raise UntrustedLocationError(
             "Start gupkg through gupkg.cmd or gupkg.exe; it runs only on its bundled Python "
-            f"({expected}, started in isolated mode), not {sys.executable}."
+            f"({expected}, started with -I and -S), not {sys.executable}."
         )
     if not elevated:
         return
@@ -201,6 +202,10 @@ def enforce_bundled_runtime(package_directory: Path, elevated: bool = False) -> 
     # dependency directory that is added to the path later.
     directories = {package_directory, package_directory.parent, runtime_directory}
     directories.add(runtime_directory / "Lib" / "site-packages")
+    # The interpreter and its search-path file decide what loads before any of our
+    # code; check them as files too, in case their own entries differ from the folder's.
+    directories.add(expected)
+    directories.update(runtime_directory.glob("python*._pth"))
     for entry in sys.path:
         if entry and os.path.isdir(entry):
             directories.add(Path(entry).resolve())

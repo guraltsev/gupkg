@@ -129,7 +129,7 @@ integrity data:
 | `tools/release.py` (`scripts\release.cmd`) | Builds, tags, uploads the ZIP to GitHub release `v<version>` and records the digest in `RELEASES.md`. |
 
 At run time the launcher starts only `python\python.exe` from its own folder
-(`-I -s -B`); there is no system-Python lookup, no run-time pip and no
+(`-I -s -B -S`); there is no system-Python lookup, no run-time pip and no
 dependency probe. `gupkg.integrity` is the checking half of the manifest:
 `manager self status`, the self-update hook (`pkg.local/unpack_app.py`) and the
 tests use it. `src/gupkg/python/` stays committed so a checkout runs without a

@@ -42,3 +42,16 @@ Branch: rehaul/issue018 (from main 3760ff7). Baseline: 296 passed, 0 failed, 0 s
 - _docs/development_guide.md: "Development environment" section. getting_started and
   troubleshooting have no relevant text.
 - NOT done, routed to later issues: the ACL check is not recursive over the runtime tree (D30).
+
+## Review round 2
+
+- Probed on a copy of the real bundled layout: with the old _pth (".", "..", "import site") a planted
+  sitecustomize in python\ and a .pth in site-packages ran before bootstrap. An "import site" line in the
+  _pth overrides -S, so both changes are needed: launcher -I -s -B -S, and a _pth of only
+  python312.zip, ".", Lib/site-packages (src/gupkg/python/python312._pth, tools/fetch_runtime.write_pth).
+- enforce_bundled_runtime also requires sys.flags.no_site, and in an elevated run checks python.exe and
+  the python*._pth file as well as their folders.
+- The old planted-module test is replaced by real-layout tests in test_launcher.py; the sys.path-order test
+  fails on the old order. ImportError while loading elevation.py prints a reinstall message, exit 1.
+- Imports of the bundled runtime verified under -S (textual, rich, markdown_it, ssl, sqlite3, ...).
+- Docs and rehaul_design flag text updated to -I -s -B -S. Issue 018's own text still says -I -s -B.

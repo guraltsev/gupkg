@@ -118,7 +118,10 @@ def write_pth(runtime: Path) -> None:
     if len(pth_files) != 1:
         raise SystemExit(f"Expected exactly one python*._pth in {runtime}, found {len(pth_files)}")
     tag = pth_files[0].name[len("python") : -len("._pth")]
-    pth_files[0].write_text(f"python{tag}.zip\n.\n..\nLib/site-packages\n\nimport site\n", encoding="ascii")
+    # No ``..`` (the package folder) and no ``import site``: the interpreter imports
+    # nothing but its zip, its own folder and its site-packages, and never runs a
+    # sitecustomize or .pth file before the bootstrap's trust check.
+    pth_files[0].write_text(f"python{tag}.zip\n.\nLib/site-packages\n", encoding="ascii")
 
 
 def install_locked_dependencies(runtime: Path, lock: Path, python: str | None = None) -> None:

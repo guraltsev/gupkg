@@ -96,12 +96,17 @@ When elevated, the launcher:
    not verified (the existing bootstrap download is kept for non-elevated
    runs, and elevated users run a non-elevated first launch or the explicit
    repair command from 3.5).
-2. Starts the interpreter with `-I -s -B`: isolated mode (ignores `PYTHON*`
+2. Starts the interpreter with `-I -s -B -S`: isolated mode (ignores `PYTHON*`
    variables, user site, and the script directory on `sys.path`), no user
-   site, no `.pyc` writing.
+   site, no `.pyc` writing, and no `site` import (so no `sitecustomize` and no
+   `.pth` file runs before the trust check; issue 018).
 3. Does not export the caller's `PYTHONPATH`. The embeddable package's
-   `python312._pth` file already restricts the search path to the lines it
-   lists (`.`, `..`, `Lib/site-packages`); `bootstrap.py` already writes it.
+   `python312._pth` file restricts the search path to the lines it lists. Since
+   issue 018 these are only `python312.zip`, `.` (the python folder) and
+   `Lib/site-packages`, with no `..` and no `import site` line (a `import site`
+   line would override `-S`); `tools/fetch_runtime.py` writes it. The python
+   folder, `python.exe`, the `._pth` file and `site-packages` are all checked
+   admin-only in an elevated run.
    The extra `PYTHONPATH` handling in `gupkg.cmd` is skipped when elevated.
 4. Resolves `powershell.exe` and similar helpers by absolute path under
    `%SystemRoot%` (already the case for the download step).
@@ -225,7 +230,7 @@ open. That is implemented in `src\pkg.toml` and `src\gupkg\pkg.toml`.
 | | Non-elevated | Elevated |
 |---|---|---|
 | Interpreter | bundled, else `GUPKG_PYTHON`, `python`, `py`; bootstrap may download | bundled only |
-| Interpreter flags | default | `-I -s -B` |
+| Interpreter flags | default | `-I -s -B -S` |
 | `PYTHONPATH` | honored | ignored |
 | Dependency directory | `%LOCALAPPDATA%\gupkg\embedded\site-packages` | `<package>\python\Lib\site-packages` |
 | Implicit `pip install` | yes (probe-based, `--upgrade`) | never |
@@ -280,7 +285,7 @@ Following `_docs/tests.md`:
 
 ## 8. Implementation order
 
-1. Launcher: elevated branch with bundled interpreter, `-I -s -B`, and no
+1. Launcher: elevated branch with bundled interpreter, `-I -s -B -S`, and no
    `PYTHONPATH`; `is_elevated()`.
 2. Trusted-location ACL check.
 3. Lockfile format, `repair-deps`, and staged install with swap.
