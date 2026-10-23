@@ -1,0 +1,25 @@
+only_portable = false
+description = "Source code and text editor."
+homepage = "https://notepad-plus-plus.org/"
+
+[origin]
+url = "https://github.com/notepad-plus-plus/notepad-plus-plus"
+
+[update]
+
+[update.check]
+mode = "github"
+assetName = "npp.${version}.portable.x64.zip"
+
+[update.payload]
+mode = "zip"
+
+[[shortcut]]
+name = "Notepad++"
+targetPath = "$App\\notepad++.exe"
+description = "Text and source code editor"
+
+[[bin]]
+name = "notepad++"
+target = "$App\\notepad++.exe"
+type = "gui"

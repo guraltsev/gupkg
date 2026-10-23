@@ -179,6 +179,32 @@ the probe on the committed runtime.
    `src\gupkg\python`, and the folder has no `pip*` entry. Why manual: it
    downloads the locked wheels from PyPI.
 
+## Format 2, settings layers and the migration tool (issue 023)
+
+The automated tests cover the model, the validator, the settings layers (with the
+admin-only check replaced by a stand-in) and the migration tool over the real 0.17
+registry manifests. These steps need a real administrator token or a real 0.17 install.
+
+1. **Elevated launchers refuse.** Convert a version directory with
+   `gupkg-migrate package <dir>`, open an administrator shell, and run the generated
+   `install.cmd` and `gupkg-tui.cmd` in it. Each prints "This launcher does not run
+   elevated" and exits 1 without starting any gupkg. Run them from a normal shell and
+   confirm they start the root forwarder or the bundled gupkg. Why manual: the
+   automated launcher tests run in a normal shell, and elevation needs a real token.
+2. **Elevated settings layers.** In an administrator shell, with a `settings.toml` placed
+   in `<user root>\.gupkg\` that sets `ui.color = "never"`, run the command that shows the
+   settings once issue 029 adds it, and confirm the user layer is ignored. Then point
+   `--settings` at a file outside `C:\opt` and confirm it is ignored, and at a file inside
+   `C:\opt\.gupkg\` and confirm it is used. Also make `C:\opt\.gupkg` writable by `Users`
+   and confirm the elevated run refuses the layer. Why manual: it needs a real
+   administrator token and real access-control lists (automation uses a stand-in check).
+3. **A real 0.17 `C:\opt` tree.** On a copy of a real 0.17 root, run
+   `gupkg-migrate package <root>` with `--check` and then without it, and confirm every
+   package and `_bootstrap` converts or is reported with its error. Run
+   `gupkg-migrate settings <gupkg-config.toml>` and compare the roots, `bin` folders and
+   registry with the old file. Adoption of the installed packages (an install record per
+   package, no reinstall) is checked here once issues 024 and 028 land. Why manual: it
+   needs a real installed 0.17 root.
 ## The system boundary and sandbox mode (issue 021)
 
 The contract tests run the real `WindowsSystem` against throwaway locations. These

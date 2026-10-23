@@ -1,0 +1,22 @@
+only_portable = false
+description = "GitHub's official command-line tool."
+homepage = "https://cli.github.com/"
+
+[origin]
+url = "https://github.com/cli/cli"
+
+[update]
+
+[update.check]
+mode = "github"
+assetName = "gh_${version}_windows_amd64.zip"
+
+[update.payload]
+mode = "zip"
+
+[[path]]
+value = "$App\\bin"
+
+[[bin]]
+name = "gh"
+target = "$App\\bin\\gh.exe"

@@ -1,0 +1,18 @@
+only_portable = false
+description = "Reference manager for collecting and citing research."
+homepage = "https://www.zotero.org/"
+
+[update]
+
+[update.check]
+mode = "module"
+
+[update.payload]
+mode = "module"
+# The publisher provides no checksum for this release asset.
+ignore_checksum = true
+
+[[shortcut]]
+name = "Zotero"
+targetPath = "$App\\core\\zotero.exe"
+description = "Reference manager"

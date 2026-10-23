@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 
 from .report.events import Error, Step, Warning, emit
+from .model.version import compare_versions, is_version_name
 from .system.port import Scope
 
 
@@ -40,11 +41,6 @@ EXIT_INTERNAL_ERROR = 4
 # folder name. Text after the first ``.local.`` is the local revision, itself
 # any string, so ``1.2.3.local.000002`` is upstream ``1.2.3`` with local ``000002``.
 LOCAL_VERSION_MARKER = ".local."
-
-# Names that can never be version directories: the activation junction (and
-# its ``current.__new__``/``current.__old__`` swap entries) and hidden folders.
-_RESERVED_DIR_PREFIXES = ("current", ".")
-_UNSAFE_DIR_CHARACTERS = re.compile(r'[<>:"/\\|?*]|[\x00-\x1f]')
 
 # The one directory name that holds a package's update template. It is not a
 # version: promoting it creates the first real version directory.
@@ -271,14 +267,11 @@ def is_version_directory_name(name: str) -> bool:
     -------
     bool
         ``True`` for a non-empty, path-safe name that is not reserved
-        (``current``, ``_bootstrap``, or a hidden name).
+        (``current``, ``_check_updates``, ``data``, or a name starting with
+        ``.`` or ``_``, which includes ``_bootstrap``).
 
     """
-    if not name or name != name.strip() or name.endswith("."):
-        return False
-    if name == BOOTSTRAP_DIR_NAME or _UNSAFE_DIR_CHARACTERS.search(name):
-        return False
-    return not name.lower().startswith(_RESERVED_DIR_PREFIXES)
+    return is_version_name(name)
 
 
 def is_version_directory(path: Path) -> bool:
@@ -339,130 +332,7 @@ def compare_package_versions(version1: str, version2: str) -> int:
 
     """
 
-    def parse_identifier(token: str) -> Union[int, str]:
-        """Parse one dotted version token into a comparable value.
-
-        Parameters
-        ----------
-        token : str
-            One version token, for example ``42`` or ``beta``.
-
-        Returns
-        -------
-        Union[int, str]
-            An ``int`` when the token is numeric; otherwise a lower-cased
-            string.
-
-        """
-        token = token.strip()
-        if token.isdigit():
-            return int(token)
-        return token.lower()
-
-    def parse_upstream(
-        upstream: str,
-    ) -> Tuple[List[Union[int, str]], Optional[List[Union[int, str]]]]:
-        """Parse the upstream portion of a version string.
-
-        Parameters
-        ----------
-        upstream : str
-            Upstream version without the ``.local.`` revision.
-
-        Returns
-        -------
-        Tuple[List[Union[int, str]], Optional[List[Union[int, str]]]]
-            A tuple ``(main_identifiers, prerelease_identifiers)`` where the
-            prerelease part is ``None`` for stable releases.
-
-        """
-        upstream = upstream.strip()
-        if "+" in upstream:
-            upstream = upstream.split("+", 1)[0]
-        if "-" in upstream:
-            main_part, prerelease_part = upstream.split("-", 1)
-            prerelease = [
-                parse_identifier(part)
-                for part in prerelease_part.split(".")
-                if part != ""
-            ]
-        else:
-            main_part = upstream
-            prerelease = None
-        main = [parse_identifier(part) for part in main_part.split(".") if part != ""]
-        return main, prerelease
-
-    def compare_identifier_lists(
-        left: List[Union[int, str]],
-        right: List[Union[int, str]],
-        *,
-        pad_numeric: bool,
-    ) -> int:
-        """Compare parsed identifier lists.
-
-        Parameters
-        ----------
-        left : List[Union[int, str]]
-            Parsed identifiers for the left-hand version.
-        right : List[Union[int, str]]
-            Parsed identifiers for the right-hand version.
-        pad_numeric : bool
-            Whether to treat missing trailing numeric identifiers as
-                zero when one side runs out of tokens.
-
-        Returns
-        -------
-        int
-            ``1`` if *left* is newer, ``-1`` if *right* is newer, or ``0`` if
-            they compare equal.
-
-        """
-        max_len = max(len(left), len(right))
-        for index in range(max_len):
-            left_value = (
-                left[index] if index < len(left) else (0 if pad_numeric else None)
-            )
-            right_value = (
-                right[index] if index < len(right) else (0 if pad_numeric else None)
-            )
-            if left_value == right_value:
-                continue
-            if left_value is None:
-                return -1
-            if right_value is None:
-                return 1
-            if isinstance(left_value, int) and isinstance(right_value, int):
-                return 1 if left_value > right_value else -1
-            if isinstance(left_value, int) and isinstance(right_value, str):
-                return -1
-            if isinstance(left_value, str) and isinstance(right_value, int):
-                return 1
-            return 1 if str(left_value) > str(right_value) else -1
-        return 0
-
-    upstream1, local1 = split_package_version(version1)
-    upstream2, local2 = split_package_version(version2)
-    main1, prerelease1 = parse_upstream(upstream1)
-    main2, prerelease2 = parse_upstream(upstream2)
-    main_comparison = compare_identifier_lists(main1, main2, pad_numeric=True)
-    if main_comparison != 0:
-        return main_comparison
-    if prerelease1 is None and prerelease2 is not None:
-        return 1
-    if prerelease1 is not None and prerelease2 is None:
-        return -1
-    if prerelease1 is not None and prerelease2 is not None:
-        prerelease_comparison = compare_identifier_lists(
-            prerelease1, prerelease2, pad_numeric=False
-        )
-        if prerelease_comparison != 0:
-            return prerelease_comparison
-    # A version without a local revision sorts before one that has it.
-    return compare_identifier_lists(
-        [parse_identifier(part) for part in local1.split(".") if part != ""],
-        [parse_identifier(part) for part in local2.split(".") if part != ""],
-        pad_numeric=False,
-    )
+    return compare_versions(version1, version2)
 
 
 def normalize_path(path: Union[str, Path]) -> Path:

@@ -20,7 +20,6 @@ the individual outcomes into one install-step result.
 
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 from typing import Any, Dict, List
@@ -37,6 +36,7 @@ from .core import (
 )
 from .layout import warn_if_output_path_is_unusual
 from .report.events import phase
+from .tomlio import dumps
 from .system.port import ShortcutSpec, System
 
 
@@ -486,16 +486,15 @@ def _shim_outputs(
         _expand(argument, identity, scope_paths, f"{label} argument") for argument in entry.get("arguments", [])
     ]
 
-    # JSON strings are valid TOML basic strings.
-    config_lines = [
-        f"target = {json.dumps(target, ensure_ascii=False)}",
-        f"forward_arguments = {str(entry.get('forward_args', True)).lower()}",
-        f"elevate = {str(entry.get('elevate', False)).lower()}",
-    ]
+    config: Dict[str, Any] = {
+        "target": target,
+        "forward_arguments": bool(entry.get("forward_args", True)),
+        "elevate": bool(entry.get("elevate", False)),
+    }
     if working_dir:
-        config_lines.append(f"working_dir = {json.dumps(working_dir, ensure_ascii=False)}")
-    for argument in arguments:
-        config_lines.extend(["", "[[argument]]", f"value = {json.dumps(argument, ensure_ascii=False)}"])
+        config["working_dir"] = working_dir
+    if arguments:
+        config["argument"] = [{"value": argument} for argument in arguments]
 
     linkage = scope_paths.get("shim_linkage", "dynamic")
     if linkage not in {"dynamic", "static"}:
@@ -509,7 +508,7 @@ def _shim_outputs(
         (wrapper_path, launcher.read_bytes(), True),
         (
             wrapper_path.with_name(f"{wrapper_path.stem}.config.toml"),
-            ("\n".join(config_lines) + "\n").encode("utf-8"),
+            dumps(config).encode("utf-8"),
             True,
         ),
     ]
