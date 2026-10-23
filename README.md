@@ -413,6 +413,7 @@ they have an effect.
 | --- | --- |
 | `--scope auto\|user\|system` | Selects installation scope; defaults to `auto`. |
 | `--format human\|toml` | Selects human output or one parseable TOML result document. |
+| `--sandbox <dir>` | Runs against a pretend machine kept in `<dir>`: environment variables, `PATH`, shortcuts and elevation are recorded in `<dir>\system.json` and below `<dir>` instead of the registry and Start Menu. Package files, downloads and package scripts stay real. |
 | `--allow-downgrade` | For `install`, permits replacing `current` when it already targets a newer version. |
 | `--refresh-app` | For `Install`, replaces `App` from `[origin]`, even when it is populated. |
 | `--no-checksum` | Bypasses configured origin or update checksum verification and emits a warning. |
