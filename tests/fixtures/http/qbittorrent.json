@@ -1,0 +1,17 @@
+{
+ "case": "qbittorrent",
+ "provider": "json (path + match)",
+ "recorded": null,
+ "origin": "synthetic: written from the layout that the registry hook's regular expression was written for (gupkg-registry/qbittorrent/5.2.3/pkg.local/check_update.py); not recorded from the live site. Re-record with tools/record_http_fixtures.py.",
+ "responses": [
+  {
+   "url": "https://sourceforge.net/projects/qbittorrent/best_release.json",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"platform_releases\": {\"windows\": {\"filename\": \"/qBittorrent/qbittorrent-5.0.0/qbittorrent_5.0.0_x64_setup.exe\", \"bytes\": 33000000, \"mime_type\": \"application/x-msdownload\"}, \"mac\": {\"filename\": \"/qBittorrent/qbittorrent-5.0.0/qbittorrent-5.0.0.dmg\"}}, \"release\": {\"filename\": \"/qBittorrent/qbittorrent-5.0.0/qbittorrent-5.0.0.tar.xz\"}}"
+  }
+ ]
+}

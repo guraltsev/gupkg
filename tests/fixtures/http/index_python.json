@@ -1,0 +1,33 @@
+{
+ "case": "index_python",
+ "provider": "index with probe",
+ "recorded": null,
+ "origin": "synthetic: written from the layout that the registry hook's regular expression was written for (gupkg-registry/python/_bootstrap/pkg.local/check_update.py); not recorded from the live site. Re-record with tools/record_http_fixtures.py.",
+ "responses": [
+  {
+   "url": "https://www.python.org/ftp/python/",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/html"
+   },
+   "body": "<html><head><title>Index of /</title></head><body><h1>Index of /</h1><table><tr><td><a href=\"../\">../</a></td><td>2024-09-30 12:00</td><td>-</td></tr>\n<tr><td><a href=\"3.12.7/\">3.12.7/</a></td><td>2024-09-30 12:00</td><td>-</td></tr>\n<tr><td><a href=\"3.13.0/\">3.13.0/</a></td><td>2024-09-30 12:00</td><td>-</td></tr>\n<tr><td><a href=\"3.14.0/\">3.14.0/</a></td><td>2024-09-30 12:00</td><td>-</td></tr>\n<tr><td><a href=\"2.7.18/\">2.7.18/</a></td><td>2024-09-30 12:00</td><td>-</td></tr></table></body></html>"
+  },
+  {
+   "url": "https://www.python.org/ftp/python/3.14.0/python-3.14.0-embed-amd64.zip",
+   "method": "HEAD",
+   "status": 404,
+   "headers": {},
+   "body": ""
+  },
+  {
+   "url": "https://www.python.org/ftp/python/3.13.0/python-3.13.0-embed-amd64.zip",
+   "method": "HEAD",
+   "status": 200,
+   "headers": {
+    "Content-Length": "11000000"
+   },
+   "body": ""
+  }
+ ]
+}

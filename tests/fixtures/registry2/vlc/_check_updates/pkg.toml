@@ -1,0 +1,19 @@
+format = 2
+description = "VLC media player."
+project_url = "https://www.videolan.org/vlc/"
+
+[track]
+provider = "index"
+check_url = "https://download.videolan.org/pub/videolan/vlc/"
+download = "https://download.videolan.org/pub/videolan/vlc/${version}/win64/vlc-${version}-win64.zip"
+
+[[track.level]]
+match = 'href="(?P<version>\d+(?:\.\d+)+)/"'
+probe = "${version}/win64/vlc-${version}-win64.zip"
+
+[source]
+download_url = "${download_url}"
+strip = "auto"
+
+[source.checksum]
+sidecar = "${download_url}.sha256"

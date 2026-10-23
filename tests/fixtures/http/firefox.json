@@ -1,0 +1,26 @@
+{
+ "case": "firefox",
+ "provider": "json + sums_file",
+ "recorded": null,
+ "origin": "synthetic: written from the layout that the registry hook's regular expression was written for (gupkg-registry/firefox/_bootstrap/pkg.local/check_update.py); not recorded from the live site. Re-record with tools/record_http_fixtures.py.",
+ "responses": [
+  {
+   "url": "https://product-details.mozilla.org/1.0/firefox_versions.json",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\n \"FIREFOX_AURORA\": \"\",\n \"FIREFOX_DEVEDITION\": \"132.0b4\",\n \"FIREFOX_ESR\": \"128.3.1esr\",\n \"FIREFOX_ESR115\": \"115.16.1esr\",\n \"FIREFOX_NIGHTLY\": \"133.0a1\",\n \"LAST_MERGE_DATE\": \"2024-09-30\",\n \"LAST_RELEASE_DATE\": \"2024-10-08\",\n \"LATEST_FIREFOX_DEVEL_VERSION\": \"132.0b4\",\n \"LATEST_FIREFOX_OLDER_VERSION\": \"3.6.28\",\n \"LATEST_FIREFOX_RELEASED_DEVEL_VERSION\": \"132.0b4\",\n \"LATEST_FIREFOX_VERSION\": \"131.0.2\"\n}"
+  },
+  {
+   "url": "https://archive.mozilla.org/pub/firefox/releases/131.0.2/SHA256SUMS",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/plain"
+   },
+   "body": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb  win32/en-US/Firefox Setup 131.0.2.exe\nbc5b7e5de106573eab77ccac43c1cee29702da56acc66474112c241f7d94d78d  win64/en-US/Firefox Setup 131.0.2.exe\n2e7d2c03a9507ae265ecf5b5356885a53393a2029d241394997265a1a25aefc6  win64/de/Firefox Setup 131.0.2.exe\n"
+  }
+ ]
+}

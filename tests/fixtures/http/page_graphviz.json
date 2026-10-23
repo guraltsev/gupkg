@@ -1,0 +1,17 @@
+{
+ "case": "page_graphviz",
+ "provider": "page (backreference, max)",
+ "recorded": null,
+ "origin": "synthetic: written from the layout that the registry hook's regular expression was written for (gupkg-registry/graphviz/_bootstrap/pkg.local/check_update.py); not recorded from the live site. Re-record with tools/record_http_fixtures.py.",
+ "responses": [
+  {
+   "url": "https://graphviz.org/download/",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/html; charset=utf-8"
+   },
+   "body": "<!DOCTYPE html><html><head><title>Download | Graphviz</title></head><body>\n<h2>Windows</h2><ul>\n<li><a href=\"https://gitlab.com/api/v4/projects/4207231/packages/generic/graphviz-releases/12.1.2/windows_10_cmake_Release_Graphviz-12.1.2-win64.zip\">64-bit ZIP archive</a></li>\n<li><a href=\"https://gitlab.com/api/v4/projects/4207231/packages/generic/graphviz-releases/12.1.2/windows_10_cmake_Release_Graphviz-12.1.2-win32.zip\">32-bit ZIP archive</a></li>\n<li><a href=\"https://gitlab.com/api/v4/projects/4207231/packages/generic/graphviz-releases/12.1.1/windows_10_cmake_Release_Graphviz-12.1.1-win64.zip\">older</a></li>\n<li><a href=\"https://gitlab.com/api/v4/projects/4207231/packages/generic/graphviz-releases/9.0.0/windows_10_cmake_Release_Graphviz-9.0.0-win64.zip\">older</a></li>\n</ul></body></html>"
+  }
+ ]
+}

@@ -1,0 +1,17 @@
+{
+ "case": "github_obsidian",
+ "provider": "github latest, exact asset",
+ "recorded": null,
+ "origin": "synthetic: written from the layout that the registry hook's regular expression was written for (gupkg-registry/obsidian/_bootstrap/pkg.toml); not recorded from the live site. Re-record with tools/record_http_fixtures.py.",
+ "responses": [
+  {
+   "url": "https://api.github.com/repos/obsidianmd/obsidian-releases/releases/latest",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"tag_name\": \"v1.7.4\", \"name\": \"v1.7.4\", \"draft\": false, \"prerelease\": false, \"html_url\": \"https://github.com/o/r/releases/tag/v1.7.4\", \"assets\": [{\"name\": \"Obsidian-1.7.4.exe\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/o/r/releases/download/v1.7.4/Obsidian-1.7.4.exe\", \"digest\": \"sha256:f27fbd5183b5b4b4db87b896fb15acb2112ce5dc7ecce4a8e859c85e88db569b\"}, {\"name\": \"Obsidian-1.7.4-arm64.exe\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/o/r/releases/download/v1.7.4/Obsidian-1.7.4-arm64.exe\", \"digest\": \"sha256:fb2776b672d70b474da5124149cabc95677402296399a2b7f12393770ee1aa85\"}, {\"name\": \"obsidian-1.7.4.tar.gz\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/o/r/releases/download/v1.7.4/obsidian-1.7.4.tar.gz\", \"digest\": \"sha256:224abe0eddda0cd1c1baea2510777ebe94f57a23d2f2823b93f46d9a25df19c6\"}]}"
+  }
+ ]
+}

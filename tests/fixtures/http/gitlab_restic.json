@@ -1,0 +1,17 @@
+{
+ "case": "gitlab_restic",
+ "provider": "gitlab releases",
+ "recorded": null,
+ "origin": "synthetic: written from the layout that the registry hook's regular expression was written for (gupkg-registry/restic-backup-gx/_bootstrap/pkg.local/check_update.py); not recorded from the live site. Re-record with tools/record_http_fixtures.py.",
+ "responses": [
+  {
+   "url": "https://gitlab.com/api/v4/projects/stormking%2Fresticguigx/releases?per_page=100",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "[{\"tag_name\": \"v1.4.0\", \"name\": \"1.4.0\", \"assets\": {\"count\": 2, \"sources\": [], \"links\": [{\"id\": 1, \"name\": \"ResticGUIx-1.4.0-win64.zip\", \"url\": \"https://gitlab.com/stormking/resticguigx/-/package_files/9/download\", \"direct_asset_url\": \"https://gitlab.com/stormking/resticguigx/-/releases/v1.4.0/downloads/ResticGUIx-1.4.0-win64.zip\", \"link_type\": \"package\"}, {\"id\": 2, \"name\": \"ResticGUIx-1.4.0-linux.tar.gz\", \"url\": \"https://gitlab.com/x/linux\", \"link_type\": \"other\"}]}, \"_links\": {\"self\": \"https://gitlab.com/stormking/resticguigx/-/releases/v1.4.0\"}}, {\"tag_name\": \"v1.3.2\", \"name\": \"1.3.2\", \"assets\": {\"count\": 1, \"sources\": [], \"links\": [{\"id\": 3, \"name\": \"ResticGUIx-1.3.2-win64.zip\", \"url\": \"https://gitlab.com/stormking/resticguigx/-/releases/v1.3.2/downloads/ResticGUIx-1.3.2-win64.zip\"}]}, \"_links\": {\"self\": \"https://gitlab.com/stormking/resticguigx/-/releases/v1.3.2\"}}]"
+  }
+ ]
+}

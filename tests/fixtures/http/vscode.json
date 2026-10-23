@@ -1,0 +1,17 @@
+{
+ "case": "vscode",
+ "provider": "json ($[0])",
+ "recorded": null,
+ "origin": "synthetic: written from the layout that the registry hook's regular expression was written for (gupkg-registry/vscode/_bootstrap/pkg.local/check_update.py); not recorded from the live site. Re-record with tools/record_http_fixtures.py.",
+ "responses": [
+  {
+   "url": "https://update.code.visualstudio.com/api/releases/stable",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "[\"1.94.2\", \"1.94.1\", \"1.94.0\", \"1.93.1\", \"1.93.0\"]"
+  }
+ ]
+}

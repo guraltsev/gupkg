@@ -1,0 +1,17 @@
+{
+ "case": "page_lockhunter",
+ "provider": "page (download template with filter)",
+ "recorded": null,
+ "origin": "synthetic: written from the layout that the registry hook's regular expression was written for (gupkg-registry/lockhunter/_bootstrap/pkg.local/check_update.py); not recorded from the live site. Re-record with tools/record_http_fixtures.py.",
+ "responses": [
+  {
+   "url": "https://lockhunter.com/download.htm",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/html"
+   },
+   "body": "<html><body><div class=\"download\"><h3>LockHunter Portable</h3>\n<p>Version: 3.4.3 &nbsp; Size: 3.2 MB</p>\n<a href=\"/assets/exe/lockhuntersetup_portable_3-4-3.zip\">Download</a>\n<p>Version: 3.4.2 (previous)</p></div></body></html>"
+  }
+ ]
+}

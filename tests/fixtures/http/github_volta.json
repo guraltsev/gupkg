@@ -1,0 +1,17 @@
+{
+ "case": "github_volta",
+ "provider": "github latest, exact asset",
+ "recorded": null,
+ "origin": "synthetic: written from the layout that the registry hook's regular expression was written for (gupkg-registry/volta/_bootstrap/pkg.toml); not recorded from the live site. Re-record with tools/record_http_fixtures.py.",
+ "responses": [
+  {
+   "url": "https://api.github.com/repos/volta-cli/volta/releases/latest",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"tag_name\": \"v2.0.1\", \"name\": \"v2.0.1\", \"draft\": false, \"prerelease\": false, \"html_url\": \"https://github.com/o/r/releases/tag/v2.0.1\", \"assets\": [{\"name\": \"volta-2.0.1-windows.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/o/r/releases/download/v2.0.1/volta-2.0.1-windows.zip\", \"digest\": \"sha256:9ce45e2deeb806d62a504075f992a4c5de66873173c2e403a49a3de9126fa5d3\"}, {\"name\": \"volta-2.0.1-windows-arm64.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/o/r/releases/download/v2.0.1/volta-2.0.1-windows-arm64.zip\", \"digest\": \"sha256:c3eb0e5eb23770de029256725cdbd33321b9e677b029a47a1236e797fdbf5182\"}, {\"name\": \"volta-2.0.1-linux.tar.gz\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/o/r/releases/download/v2.0.1/volta-2.0.1-linux.tar.gz\", \"digest\": \"sha256:85ff388bc6a0b3d251fc2cbbde5011b737f967ff67bb9b4458950de2a43f6ab8\"}]}"
+  }
+ ]
+}

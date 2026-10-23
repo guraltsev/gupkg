@@ -1,0 +1,26 @@
+{
+ "case": "redirect_zotero",
+ "provider": "redirect (two hops)",
+ "recorded": null,
+ "origin": "synthetic: written from the layout that the registry hook's regular expression was written for (gupkg-registry/zotero/_bootstrap/pkg.local/check_update.py); not recorded from the live site. Re-record with tools/record_http_fixtures.py.",
+ "responses": [
+  {
+   "url": "https://www.zotero.org/download/client/dl?channel=release&platform=win-x64",
+   "method": "HEAD",
+   "status": 302,
+   "headers": {
+    "Location": "https://download.zotero.org/client/release/7.0.8/Zotero-7.0.8_win-x64.zip"
+   },
+   "body": ""
+  },
+  {
+   "url": "https://download.zotero.org/client/release/7.0.8/Zotero-7.0.8_win-x64.zip",
+   "method": "HEAD",
+   "status": 200,
+   "headers": {
+    "Content-Length": "160000000"
+   },
+   "body": ""
+  }
+ ]
+}

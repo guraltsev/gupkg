@@ -1,0 +1,17 @@
+{
+ "case": "page_testdisk",
+ "provider": "page (WIP pre-release excluded)",
+ "recorded": null,
+ "origin": "synthetic: written from the layout that the registry hook's regular expression was written for (gupkg-registry/testdisk/_bootstrap/pkg.local/check_update.py); not recorded from the live site. Re-record with tools/record_http_fixtures.py.",
+ "responses": [
+  {
+   "url": "https://www.cgsecurity.org/wiki/TestDisk_Download",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/html"
+   },
+   "body": "<html><body><ul>\n<li><a href=\"/download/testdisk-7.3-WIP.win64.zip\">TestDisk 7.3-WIP</a></li>\n<li><a href=\"/download/testdisk-7.2.win64.zip\">TestDisk 7.2</a></li>\n<li><a href=\"/download/testdisk-7.1.win64.zip\">TestDisk 7.1</a></li></ul></body></html>"
+  }
+ ]
+}

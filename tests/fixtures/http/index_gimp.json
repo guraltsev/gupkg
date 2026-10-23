@@ -1,0 +1,26 @@
+{
+ "case": "index_gimp",
+ "provider": "index (two levels, key template)",
+ "recorded": null,
+ "origin": "synthetic: written from the layout that the registry hook's regular expression was written for (gupkg-registry/gimp/_bootstrap/pkg.local/check_update.py); not recorded from the live site. Re-record with tools/record_http_fixtures.py.",
+ "responses": [
+  {
+   "url": "https://download.gimp.org/gimp/",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/html"
+   },
+   "body": "<a href=\"v2.10/\">v2.10/</a> <a href=\"v3.0/\">v3.0/</a> <a href=\"v2.8/\">v2.8/</a> <a href=\"gimp-help-2.0.html\">x</a>"
+  },
+  {
+   "url": "https://download.gimp.org/gimp/v3.0/",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/html"
+   },
+   "body": "<a href=\"gimp-3.0.0-setup.exe\">gimp-3.0.0-setup.exe</a> <a href=\"gimp-3.0.2-setup.exe\">gimp-3.0.2-setup.exe</a> <a href=\"gimp-3.0.2-setup-1.exe\">gimp-3.0.2-setup-1.exe</a> <a href=\"gimp-3.0.1-setup.exe\">gimp-3.0.1-setup.exe</a>"
+  }
+ ]
+}

@@ -82,7 +82,7 @@ def test_shipped_version_with_a_source_recovers_a_missing_app_with_a_warning(tmp
 def test_custom_populate_script_in_pkg_local_validates(tmp_path: Path, suffix: str) -> None:
     """A version whose source names a Python, PowerShell, cmd, bat or executable script that exists validates."""
     script = f"pkg.local/populate.{suffix}"
-    report = check_directory(make_dir(tmp_path, "1.0", f'[source]\nscript = "{script}"\n', files={script: "x"}))
+    report = check_directory(make_dir(tmp_path, "1.0", f'[source]\nscript = "{script}"\n', files={script: "PKG_MODULE_API = 2\n"}))
 
     assert report.ok, report.errors
     assert report.app_kind == "script-populated"
@@ -98,7 +98,7 @@ def test_populate_script_that_does_not_exist_is_an_error(tmp_path: Path) -> None
 
 def test_version_hook_that_imports_urllib_validates_without_a_warning(tmp_path: Path) -> None:
     """Network use by a version-directory script is allowed: no error and no warning for `urllib` (decision D28)."""
-    hook = "import urllib.request\n\ndef run(context):\n    return urllib.request.urlopen('https://example.org').read()\n"
+    hook = "PKG_MODULE_API = 2\nimport urllib.request\n\ndef populate(context):\n    return urllib.request.urlopen('https://example.org').read()\n"
     report = check_directory(make_dir(
         tmp_path, "1.0", '[source]\nscript = "pkg.local/populate.py"\n', files={"pkg.local/populate.py": hook},
     ))
@@ -192,7 +192,7 @@ def test_tracker_with_a_module_provider_needs_its_module_file(tmp_path: Path) ->
 
     missing = check_directory(make_dir(tmp_path / "a", "_check_updates", manifest))
     present = check_directory(make_dir(
-        tmp_path / "b", "_check_updates", manifest, files={"pkg.local/check_update.py": "def track(ctx):\n    pass\n"},
+        tmp_path / "b", "_check_updates", manifest, files={"pkg.local/check_update.py": "PKG_MODULE_API = 2\ndef track(ctx):\n    pass\n"},
     ))
 
     assert any("pkg.local/check_update.py is named in pkg.toml but does not exist" in e for e in missing.errors)

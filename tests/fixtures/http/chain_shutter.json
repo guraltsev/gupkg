@@ -1,0 +1,26 @@
+{
+ "case": "chain_shutter",
+ "provider": "chain (version from a response header)",
+ "recorded": null,
+ "origin": "synthetic: written from the layout that the registry hook's regular expression was written for (gupkg-registry/shutter-encoder/_bootstrap/pkg.local/check_update.py); not recorded from the live site. Re-record with tools/record_http_fixtures.py.",
+ "responses": [
+  {
+   "url": "https://www.shutterencoder.com/",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/html"
+   },
+   "body": "<a class=\"btn\" href=\"https://www.shutterencoder.com/sdc_download/1234/?key=abcDEF123\">Windows 64 bits</a>"
+  },
+  {
+   "url": "https://www.shutterencoder.com/sdc_download/1234/?key=abcDEF123",
+   "method": "HEAD",
+   "status": 200,
+   "headers": {
+    "Content-Disposition": "attachment; filename=\"Shutter Encoder 18.4 Windows 64bits.zip\""
+   },
+   "body": ""
+  }
+ ]
+}

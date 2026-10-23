@@ -1,0 +1,26 @@
+{
+ "case": "chain_winscp",
+ "provider": "chain (page, then mirror page)",
+ "recorded": null,
+ "origin": "synthetic: written from the layout that the registry hook's regular expression was written for (gupkg-registry/winscp/_bootstrap/pkg.local/check_update.py); not recorded from the live site. Re-record with tools/record_http_fixtures.py.",
+ "responses": [
+  {
+   "url": "https://winscp.net/eng/downloads.php",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/html"
+   },
+   "body": "<a href=\"/download/WinSCP-6.3.5-Portable.zip\">Portable</a> <a href=\"/download/WinSCP-6.3.5-Portable.zip-sig\">sig</a> <a href=\"/download/WinSCP-6.3.4-Portable.zip\">old</a>"
+  },
+  {
+   "url": "https://winscp.net/download/WinSCP-6.3.5-Portable.zip/download",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/html"
+   },
+   "body": "<a href=\"https://cdn.winscp.net/files/WinSCP-6.3.5-Portable.zip?secure=abc123&amp;expires=1700000000\">Direct</a>"
+  }
+ ]
+}

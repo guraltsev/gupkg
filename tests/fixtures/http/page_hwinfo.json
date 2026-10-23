@@ -1,0 +1,17 @@
+{
+ "case": "page_hwinfo",
+ "provider": "page (two-digit major, headers)",
+ "recorded": null,
+ "origin": "synthetic: written from the layout that the registry hook's regular expression was written for (gupkg-registry/hwinfo/_bootstrap/pkg.local/check_update.py); not recorded from the live site. Re-record with tools/record_http_fixtures.py.",
+ "responses": [
+  {
+   "url": "https://www.hwinfo.com/download/",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/html"
+   },
+   "body": "<html><body><h1>HWiNFO Download</h1>\n<table><tr><td>HWiNFO32 / HWiNFO64 Portable</td>\n<td><a href=\"https://www.hwinfo.com/files/hwi_854.zip\" rel=\"nofollow\" class=\"dl\">  Local (U.S.)</a></td>\n<td><a href=\"https://www.sac.sk/download/utildiag/hwi_854.zip\" class=\"dl\">Local (Europe)</a></td></tr>\n<tr><td>Previous</td><td><a href=\"https://www.hwinfo.com/files/hwi_842.zip\" class=\"dl\">Local (U.S.)</a></td></tr>\n<tr><td>Future two-digit major</td><td><a href=\"https://www.hwinfo.com/files/hwi_1002.zip\" class=\"dl\">Local (U.S.)</a></td></tr>\n</table></body></html>"
+  }
+ ]
+}

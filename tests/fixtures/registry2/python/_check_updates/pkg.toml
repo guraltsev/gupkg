@@ -1,0 +1,15 @@
+format = 2
+description = "Python, embeddable package."
+project_url = "https://www.python.org/"
+
+[track]
+provider = "index"
+check_url = "https://www.python.org/ftp/python/"
+download = "https://www.python.org/ftp/python/${version}/python-${version}-embed-amd64.zip"
+
+[[track.level]]
+match = 'href="(?P<version>3\.\d+\.\d+)/"'
+probe = "${version}/python-${version}-embed-amd64.zip"
+
+[source]
+download_url = "${download_url}"

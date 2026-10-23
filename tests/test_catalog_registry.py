@@ -217,11 +217,14 @@ def test_whole_converted_0_17_registry_is_a_valid_registry_of_trackers(system, t
     catalog = make_catalog(system, tmp_path)[0]
     snapshot = load_registry("main", registry_cache_dir(roots["user"], "main"), system)
 
-    assert result.ok and result.problems == ()
-    assert len(snapshot.entries) == len([path for path in REGISTRY_017.iterdir() if path.is_dir()]) == 79
+    # A tracker that still points at a 0.17 hook is dropped (hook API 2 only); the rest syncs.
+    hooked = {problem.split(":")[0].split("/")[0] for problem in result.problems}
+    assert result.ok and all("PKG_MODULE_API = 2" in problem or problem.endswith("skipped") for problem in result.problems)
+    assert len(snapshot.entries) == len([path for path in REGISTRY_017.iterdir() if path.is_dir()]) - len(hooked) > 20
+    assert "firefox" in hooked and "czkawka" not in hooked
     with pytest.raises(NoVersionKnown):
-        catalog.install_candidate(catalog.describe("firefox"))
-    assert catalog.tracker_sync(catalog.describe("firefox")).action == "copy"
+        catalog.install_candidate(catalog.describe("czkawka"))
+    assert catalog.tracker_sync(catalog.describe("czkawka")).action == "copy"
     assert catalog.install_candidate(catalog.describe("gh")).version == "2.50.0"
 
 

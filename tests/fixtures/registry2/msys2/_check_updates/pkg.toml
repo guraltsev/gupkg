@@ -1,0 +1,25 @@
+format = 2
+description = "A self-contained MSYS2 environment for Windows."
+project_url = "https://www.msys2.org/"
+
+[track]
+provider = "github"
+repo = "msys2/msys2-installer"
+release = "newest-matching"
+tag_pattern = '(?P<year>\d{4})-(?P<month>\d{2})-(?P<day>\d{2})'
+version = "${year}${month}${day}"
+asset = "msys2-base-x86_64-${version}.tar.xz"
+
+[source]
+download_url = "${asset_url}"
+kind = "tar"
+strip = 1
+require = ["usr/bin/bash.exe"]
+
+[[env]]
+name = "MSYS2_INSTALL_PATH"
+value = "$App"
+
+[[shim]]
+name = "env"
+target = "$App\\usr\\bin\\env.exe"

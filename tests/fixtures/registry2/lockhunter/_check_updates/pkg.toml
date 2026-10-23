@@ -1,0 +1,24 @@
+format = 2
+description = "Shows and unlocks the processes that lock a file."
+project_url = "https://lockhunter.com/"
+
+[track]
+provider = "page"
+check_url = "https://lockhunter.com/download.htm"
+match = 'Version: (?P<version>\d+(?:\.\d+)+)'
+download = "https://lockhunter.com/assets/exe/lockhuntersetup_portable_${version|replace:.:-}.zip"
+
+[track.headers]
+User-Agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) gupkg-update-check/1"
+Accept = "text/html,application/xhtml+xml,*/*"
+
+[source]
+download_url = "${download_url}"
+
+[[prepare]]
+rename = { from = "lockhuntersetup_portable_*.exe", to = "LockHunter.exe" }
+
+[[shortcut]]
+name = "LockHunter"
+target = "$App\\LockHunter.exe"
+description = "File unlocker"

@@ -1,0 +1,35 @@
+{
+ "case": "chain_inkscape",
+ "provider": "chain (release page, file page, digest)",
+ "recorded": null,
+ "origin": "synthetic: written from the layout that the registry hook's regular expression was written for (gupkg-registry/inkscape/_bootstrap/pkg.local/check_update.py); not recorded from the live site. Re-record with tools/record_http_fixtures.py.",
+ "responses": [
+  {
+   "url": "https://inkscape.org/release/all/windows/64-bit/compressed-7z/",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/html"
+   },
+   "body": "<a href=\"/release/inkscape-1.3.2/\">1.3.2</a><a href=\"/en/release/inkscape-1.4/\">1.4</a>"
+  },
+  {
+   "url": "https://inkscape.org/en/release/inkscape-1.4/windows/64-bit/compressed-7z/dl/",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/html"
+   },
+   "body": "<a href=\"/gallery/item/53697/inkscape-1.4_2024-10-11_86a8ad7-x64.7z\">Download</a><a href=\"https://media.inkscape.org/dl/resources/file/inkscape-1.4_2024-10-11_86a8ad7-x64.7z.sha256\">sha256</a>"
+  },
+  {
+   "url": "https://media.inkscape.org/dl/resources/file/inkscape-1.4_2024-10-11_86a8ad7-x64.7z.sha256",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/plain"
+   },
+   "body": "f9593190b7ed8fef57675e3a2d29f4d490612544bbc31de02ce784e6817b4c0c  inkscape-1.4_2024-10-11_86a8ad7-x64.7z\n"
+  }
+ ]
+}

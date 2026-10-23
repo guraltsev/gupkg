@@ -1,0 +1,35 @@
+{
+ "case": "index_pidgin",
+ "provider": "index (backtracks to a folder with the file)",
+ "recorded": null,
+ "origin": "synthetic: written from the layout that the registry hook's regular expression was written for (gupkg-registry/pidgin/_bootstrap/pkg.local/check_update.py); not recorded from the live site. Re-record with tools/record_http_fixtures.py.",
+ "responses": [
+  {
+   "url": "https://sourceforge.net/projects/pidgin/files/Pidgin/",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/html"
+   },
+   "body": "<a href=\"/projects/pidgin/files/Pidgin/2.14.12/\">2.14.12</a><a href=\"/projects/pidgin/files/Pidgin/2.14.14/\">2.14.14</a><a href=\"/projects/pidgin/files/Pidgin/2.14.13/\">2.14.13</a><a href=\"/projects/pidgin/files/Pidgin/2.9.0/\">2.9.0</a>"
+  },
+  {
+   "url": "https://sourceforge.net/projects/pidgin/files/Pidgin/2.14.14/",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/html"
+   },
+   "body": "<a href=\"/projects/pidgin/files/Pidgin/2.14.14/pidgin-2.14.14.tar.bz2/download\">source only</a>"
+  },
+  {
+   "url": "https://sourceforge.net/projects/pidgin/files/Pidgin/2.14.13/",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/html"
+   },
+   "body": "<a href=\"/projects/pidgin/files/Pidgin/2.14.13/pidgin-2.14.13-offline.exe/download\">offline</a><a href=\"/projects/pidgin/files/Pidgin/2.14.13/pidgin-2.14.13.tar.bz2/download\">source</a>"
+  }
+ ]
+}
