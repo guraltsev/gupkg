@@ -1,7 +1,7 @@
 # Manual smoke checklist
 
-The supported executable boundary is `gupkg.cli:main`, available as `gupkg`,
-`python -m gupkg`, or the source-checkout wrapper. Implementation domains live
+The supported executable boundary is `gupkg.cli:main`, available as `gupkg` or
+the source-checkout wrapper (`scripts\run.cmd`). Implementation domains live
 directly under `gupkg/`, covering shared
 utilities, Windows integration, package layout, configuration, metadata
 editing, components, origins, and update staging.
@@ -144,6 +144,17 @@ Shortcut and junction checks (issue 017):
    Menu root. Elevation and the TUI need a real session.
 3. Install a 10-shortcut package before and after the change and compare
    times (automated measurement: 6.75 s before, 0.15 s after for 10 shortcuts).
+
+One interpreter (issue 018):
+
+1. On a machine with a system Python 3.13 on `PATH` (and `py` installed), install
+   a release ZIP and run `gupkg manager self status`. Confirm `sys.executable`
+   is the bundled `...\gupkg\python\python.exe`. Run the same command from an
+   elevated shell and confirm the same interpreter. Why manual: needs a real
+   machine with other Pythons and a real administrator token.
+2. In a fresh clone, run `scripts\test.cmd` before creating `.venv` (expect exit
+   9009 and the creation command), then create `.venv` from `requirements-dev.txt`
+   and run it again. Why manual: needs a network install of the dev packages.
 
 ## A bundled Python without pip (issue 019)
 

@@ -3,14 +3,15 @@
 Behavior covered: the launcher always runs the bundled interpreter in isolated
 mode, never a Python found through ``GUPKG_PYTHON``, a ``gupkg.python`` file,
 ``python`` on ``PATH`` or the ``py`` launcher; a missing bundled interpreter stops
-the launch with the reinstall message; an elevated launch additionally passes
-the elevation flag.
+the launch with the reinstall message; ordinary and elevated launches start the
+same interpreter with the same arguments; the bootstrap refuses to run on any
+other interpreter or without ``-I``.
 
-Real: the Windows ``cmd`` launcher and the checked-in native shim, which stands
-in for ``python.exe`` and records what it was started with. The elevated branch
-is selected with the launcher's strictness-only switch ``GUPKG_FORCE_ELEVATED``
-because a real administrator token is not available to tests. Out of scope: the
-Python-side trust check (covered in ``test_elevated_runtime.py``).
+Real: the Windows ``cmd`` launcher, the checked-in native shim (which stands in
+for ``python.exe`` and records what it was started with) and, for the bootstrap
+refusal, the test interpreter. The launcher has no elevated branch (the bootstrap detects
+elevation), so ``GUPKG_ELEVATED`` is set only to show it changes nothing here. Out of scope: the access-control trust check (covered in
+``test_elevated_runtime.py``).
 """
 
 from __future__ import annotations
@@ -74,50 +75,45 @@ def _run(package: Path, *arguments: str, env: dict[str, str]) -> subprocess.Comp
     )
 
 
-def test_launch_runs_only_the_bundled_python_isolated_and_ignores_every_override(tmp_path: Path) -> None:
-    """A launch uses -I -s -B on the bundled interpreter even with GUPKG_PYTHON, gupkg.python and PATH Pythons set."""
+@pytest.mark.parametrize("marker", [None, "1"], ids=["no-marker", "GUPKG_ELEVATED=1"])
+def test_launch_runs_only_the_bundled_python_isolated_and_ignores_every_override(tmp_path: Path, marker: str | None) -> None:
+    """The launcher runs the bundled python.exe with -I -s -B -S and the same arguments despite every override and whatever GUPKG_ELEVATED says.
+
+    The launcher has no elevated branch; elevation is detected in the bootstrap
+    (see test_elevated_runtime.py), so an elevated run starts this same command line.
+    """
     package, log = _package(tmp_path)
     decoys, decoy_log = _decoy_python(tmp_path)
     (package / "gupkg.python").write_text(str(decoys / "python.cmd"), encoding="ascii")
     env = os.environ.copy()
-    env.pop("GUPKG_FORCE_ELEVATED", None)
-    env.update(GUPKG_PYTHON=str(decoys / "python.cmd"), PATH=f"{decoys};{env['PATH']}")
+    env.update(
+        GUPKG_PYTHON=str(decoys / "python.cmd"),
+        PYTHONPATH=str(decoys),
+        PATH=f"{decoys};{env['PATH']}",
+    )
+    if marker:
+        env["GUPKG_ELEVATED"] = marker
 
     result = _run(package, "manager", "list", env=env)
 
     assert result.returncode == 0, result.stderr or result.stdout
     arguments = ast.literal_eval(log.read_text(encoding="utf-8"))
-    assert arguments[:3] == ["-I", "-s", "-B"]
-    assert arguments[3].endswith("bootstrap.py")
-    assert arguments[4:] in (["manager", "list"], ["--elevated", "manager", "list"])
+    assert arguments[:4] == ["-I", "-s", "-B", "-S"]
+    assert arguments[4].endswith("bootstrap.py")
+    assert arguments[5:] == ["manager", "list"]
     assert not decoy_log.exists()
 
 
-def test_elevated_launch_passes_the_elevation_flag(tmp_path: Path) -> None:
-    """GUPKG_FORCE_ELEVATED makes the launch strict: the bootstrap is told with --elevated."""
-    package, log = _package(tmp_path)
-    env = os.environ.copy()
-    env["GUPKG_FORCE_ELEVATED"] = "1"
-
-    result = _run(package, "manager", "list", env=env)
-
-    assert result.returncode == 0, result.stderr or result.stdout
-    arguments = ast.literal_eval(log.read_text(encoding="utf-8"))
-    assert arguments[:3] == ["-I", "-s", "-B"]
-    assert arguments[4:] == ["--elevated", "manager", "list"]
-
-
-@pytest.mark.parametrize("elevated", [False, True], ids=["ordinary", "elevated"])
-def test_launch_without_the_bundled_python_stops_with_the_reinstall_message(tmp_path: Path, elevated: bool) -> None:
+@pytest.mark.parametrize("marker", [None, "1"], ids=["no-marker", "GUPKG_ELEVATED=1"])
+def test_launch_without_the_bundled_python_stops_with_the_reinstall_message(tmp_path: Path, marker: str | None) -> None:
     """With no python\\python.exe the launcher exits 1 telling the person to reinstall, and runs no other Python."""
     package, log = _package(tmp_path)
     (package / "python" / "python.exe").unlink()
     decoys, decoy_log = _decoy_python(tmp_path)
     env = os.environ.copy()
-    env.pop("GUPKG_FORCE_ELEVATED", None)
     env.update(GUPKG_PYTHON=str(decoys / "python.cmd"), PATH=f"{decoys};{env['PATH']}")
-    if elevated:
-        env["GUPKG_FORCE_ELEVATED"] = "1"
+    if marker:
+        env["GUPKG_ELEVATED"] = marker
 
     result = _run(package, "list", env=env)
 
@@ -125,3 +121,74 @@ def test_launch_without_the_bundled_python_stops_with_the_reinstall_message(tmp_
     assert "bundled Python is missing" in result.stderr
     assert "Reinstall gupkg from a release ZIP" in result.stderr
     assert not decoy_log.exists() and not log.exists()
+
+
+@pytest.mark.parametrize("isolated", [False, True], ids=["without -I", "with -I"])
+def test_bootstrap_refuses_to_run_on_another_interpreter(tmp_path: Path, isolated: bool) -> None:
+    """Running bootstrap.py on any interpreter but the bundled one exits 1 with the bundled-Python message, isolated or not."""
+    command = [sys.executable, *(["-I"] if isolated else []), "-B", str(SRC / "gupkg" / "bootstrap.py"), "--version"]
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(SRC)
+
+    result = subprocess.run(command, cwd=str(tmp_path), env=env, capture_output=True, text=True, check=False)
+
+    assert result.returncode == 1
+    assert "Start gupkg through gupkg.cmd or gupkg.exe" in result.stderr
+    assert "runs only on its bundled Python" in result.stderr
+
+
+def test_python_dash_m_gupkg_refuses_a_foreign_interpreter(tmp_path: Path) -> None:
+    """`python -m gupkg` from a checkout with the test interpreter exits 1 with the bundled-Python message."""
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(SRC)
+
+    result = subprocess.run(
+        [sys.executable, "-B", "-m", "gupkg", "--version"],
+        cwd=str(tmp_path), env=env, capture_output=True, text=True, check=False,
+    )
+
+    assert result.returncode == 1
+    assert "runs only on its bundled Python" in result.stderr
+
+
+def _real_layout(root: Path) -> tuple[Path, Path]:
+    """Copy the committed bundled runtime and gupkg code into ``<root>/gupkg`` and return it with a marker path."""
+    package = root / "gupkg"
+    shutil.copytree(SRC / "gupkg", package, ignore=shutil.ignore_patterns("__pycache__", "shim", "7zip", "*.md"))
+    marker = root / "planted-ran.txt"
+    site_packages = package / "python" / "Lib" / "site-packages"
+    for folder in (package, package / "python", site_packages):
+        (folder / "sitecustomize.py").write_text(f"open({str(marker)!r}, 'a').write('sitecustomize in {folder.name}\n')\n", encoding="utf-8")
+        (folder / "usercustomize.py").write_text(f"open({str(marker)!r}, 'a').write('usercustomize in {folder.name}\n')\n", encoding="utf-8")
+    (site_packages / "planted.pth").write_text(f"import sys; open({str(marker)!r}, 'a').write('pth')\n", encoding="utf-8")
+    return package, marker
+
+
+def test_nothing_planted_beside_the_bundled_python_runs_before_the_checks(tmp_path: Path) -> None:
+    """On the real bundled python.exe a planted sitecustomize, usercustomize or .pth never runs, in an ordinary or an elevated-marked launch."""
+    package, marker = _real_layout(tmp_path)
+    environment = os.environ.copy()
+
+    ordinary = _run(package, "--version", env=environment)
+    environment["GUPKG_ELEVATED"] = "1"
+    elevated = _run(package, "--version", env=environment)
+
+    assert ordinary.returncode == 0, ordinary.stderr
+    assert ordinary.stdout.startswith("gupkg ") and ordinary.stdout.count("\n") == 1
+    assert elevated.returncode == 1, elevated.stdout
+    assert "[gupkg]" in elevated.stderr
+    assert not marker.exists()
+
+
+def test_a_module_planted_in_the_package_parent_never_runs_before_the_elevated_check_refuses(tmp_path: Path) -> None:
+    """With a ctypes.py and struct.py planted beside the version folder, an elevated-marked real launch refuses without running them."""
+    package, marker = _real_layout(tmp_path)
+    for name in ("ctypes", "struct", "dataclasses"):
+        (tmp_path / f"{name}.py").write_text(f"open({str(marker)!r}, 'a').write({name!r})\n", encoding="utf-8")
+    environment = os.environ.copy()
+    environment["GUPKG_ELEVATED"] = "1"
+
+    result = _run(package, "--version", env=environment)
+
+    assert result.returncode == 1, result.stdout
+    assert not marker.exists()

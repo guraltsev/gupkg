@@ -143,9 +143,27 @@ import name, read from each `RECORD`), the gupkg modules (`gupkg.cli`,
 asserts pip and ensurepip are not importable. A failing probe fails the build.
 
 At run time the launcher starts only `python\python.exe` from its own folder
-(`-I -s -B`); there is no system-Python lookup, no run-time pip and no
+(`-I -s -B -S`); there is no system-Python lookup, no run-time pip and no
 dependency probe. `gupkg.integrity` is the checking half of the manifest:
 `manager self status`, the self-update hook (`pkg.local/unpack_app.py`) and the
 tests use it. `src/gupkg/python/` stays committed so a checkout runs without a
 build step. The ZIP digest in `RELEASES.md` covers the manifest in transit; after
 installation it relies on admin-only folder permissions.
+
+## Development environment
+
+The dev tree uses one explicit interpreter and never probes for another.
+Create `.venv` once, with any Python 3.11+ you choose:
+
+```
+<python> -m venv .venv
+.venv\Scripts\pip install -r requirements-dev.txt
+```
+
+Every script in `scripts\` uses `.venv\Scripts\python.exe` only; without it they
+exit 9009 and print this command. `requirements-dev.txt` holds pytest and the
+same runtime package versions as `tools/gupkg-deps.lock`. Run the tests with
+`scripts\test.cmd`. To try gupkg by hand, run `scripts\run.cmd <arguments>`: it
+starts `src\gupkg\gupkg.cmd`, so gupkg runs on its bundled Python like it does
+for a user. `python -m gupkg` works only on the bundled Python, so tests that
+start gupkg as a process use `src\gupkg\gupkg.cmd`.

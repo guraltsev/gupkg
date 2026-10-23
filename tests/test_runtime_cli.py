@@ -1,7 +1,7 @@
 """Cover standalone command information outside a package directory.
 
-The real module entry point runs in a temporary non-package directory through
-the active Python interpreter.  No package or manager data, network activity,
+The real launcher ``src/gupkg/gupkg.cmd`` runs in a temporary non-package directory
+on the committed bundled Python.  No package or manager data, network activity,
 or Windows integration is involved.
 """
 
@@ -28,14 +28,10 @@ class RuntimeCommandTests(unittest.TestCase):
     """Verify command information that does not require a package selection."""
 
     def run_command(self, *arguments: str, cwd: Path) -> subprocess.CompletedProcess[str]:
-        """Run the real module command without allowing bytecode writes to the source tree."""
-        environment = os.environ.copy()
-        environment["PYTHONPATH"] = str(RUNTIME_DIRECTORY)
-        environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        """Run the real launcher, which starts the bundled Python with -B so no bytecode is written to the source tree."""
         return subprocess.run(
-            [sys.executable, "-B", "-m", "gupkg", *arguments],
+            [str(RUNTIME_DIRECTORY / "gupkg" / "gupkg.cmd"), *arguments],
             cwd=cwd,
-            env=environment,
             capture_output=True,
             text=True,
             check=False,

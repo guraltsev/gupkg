@@ -250,11 +250,13 @@ scope elevation must leave user packages unchanged.
 ## Elevated runs
 
 An elevated (Administrator) `gupkg` executes only code that non-administrators
-cannot modify. `gupkg.cmd` detects elevation and then:
+cannot modify. `gupkg.cmd` is the same for every run; `bootstrap.py` detects
+elevation itself (the process token) and then:
 
-- runs only the bundled `python\python.exe`, in isolated mode (`-I -s -B`), as
-  every launch does; `GUPKG_PYTHON`, `gupkg.python`, `python`, `py`, and
-  `PYTHONPATH` are never consulted;
+- requires the bundled `python\python.exe` in isolated mode (`-I -s -B -S`), as for
+  every run (an ordinary run is refused too on any other interpreter, so `python -m
+  gupkg` works only on the bundled Python; use `scripts\run.cmd` in a checkout);
+  `GUPKG_PYTHON`, `gupkg.python`, `python`, `py`, and `PYTHONPATH` are never consulted;
 - verifies that the version folder, the package folder, the runtime and its
   `Lib\site-packages`, and every directory on the import path are writable by
   Administrators and SYSTEM only, and refuses otherwise, printing the offending
@@ -280,16 +282,20 @@ update with the module's name. The earlier design is recorded in
 ## Maintenance scripts
 
 Every routine job has a script in `scripts\`, so no Python needs to be typed.
-They use the repository's `.venv` if present, otherwise the runtime committed in
-`src\gupkg\python`. The committed runtime has no pip, and neither does any
+They use the repository's `.venv` only and never search for another Python; without
+it they exit 9009 and print how to create it
+(`<python> -m venv .venv && .venv\Scripts\pip install -r requirements-dev.txt`;
+`python -m venv` puts pip into the `.venv`).
+`scripts\run.cmd` runs `src\gupkg\gupkg.cmd`, so a manual test uses the bundled
+Python like a user does. The committed runtime has no pip, and neither does any
 release: the build scripts and `tools\update_deps.py` need the pip of the
-repository's `.venv` (create it with `python -m venv .venv`). These are
-development-tree tools: none ships in the release ZIP and gupkg cannot reach
-them.
+repository's `.venv`. These are development-tree tools: none ships in the
+release ZIP and gupkg cannot reach them.
 
 | Script | What it does |
 |---|---|
 | `test.cmd [pytest args]` | Run the test suite. |
+| `run.cmd [gupkg args]` | Run `src\gupkg\gupkg.cmd` from the source tree. |
 | `bump.cmd <version>` | Set the version in `_version.py` and both `pkg.toml` files and commit. |
 | `release.cmd "notes" [--no-push]` | Test, build the ZIP, tag, upload it to GitHub release `v<version>`, add the `RELEASES.md` row (with the ZIP's SHA-256), and push the branch. `--no-push` keeps everything local. |
 | `build-standalone.cmd [output.zip]` | Build the release ZIP in `dist\` with the pinned, verified Python and the locked dependencies, and print its SHA-256. |

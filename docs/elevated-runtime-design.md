@@ -98,12 +98,17 @@ When elevated, the launcher:
    not verified (the existing bootstrap download is kept for non-elevated
    runs, and elevated users run a non-elevated first launch or the explicit
    repair command from 3.5).
-2. Starts the interpreter with `-I -s -B`: isolated mode (ignores `PYTHON*`
+2. Starts the interpreter with `-I -s -B -S`: isolated mode (ignores `PYTHON*`
    variables, user site, and the script directory on `sys.path`), no user
-   site, no `.pyc` writing.
+   site, no `.pyc` writing, and no `site` import (so no `sitecustomize` and no
+   `.pth` file runs before the trust check; issue 018).
 3. Does not export the caller's `PYTHONPATH`. The embeddable package's
-   `python312._pth` file already restricts the search path to the lines it
-   lists (`.`, `..`, `Lib/site-packages`); `bootstrap.py` already writes it.
+   `python312._pth` file restricts the search path to the lines it lists. Since
+   issue 018 these are only `python312.zip`, `.` (the python folder) and
+   `Lib/site-packages`, with no `..` and no `import site` line (a `import site`
+   line would override `-S`); `tools/fetch_runtime.py` writes it. The python
+   folder, `python.exe`, the `._pth` file and `site-packages` are all checked
+   admin-only in an elevated run.
    The extra `PYTHONPATH` handling in `gupkg.cmd` is skipped when elevated.
 4. Resolves `powershell.exe` and similar helpers by absolute path under
    `%SystemRoot%` (already the case for the download step).
@@ -227,7 +232,7 @@ open. That is implemented in `src\pkg.toml` and `src\gupkg\pkg.toml`.
 | | Non-elevated | Elevated |
 |---|---|---|
 | Interpreter | bundled, else `GUPKG_PYTHON`, `python`, `py`; bootstrap may download | bundled only |
-| Interpreter flags | default | `-I -s -B` |
+| Interpreter flags | default | `-I -s -B -S` |
 | `PYTHONPATH` | honored | ignored |
 | Dependency directory | `%LOCALAPPDATA%\gupkg\embedded\site-packages` | `<package>\python\Lib\site-packages` |
 | Implicit `pip install` | yes (probe-based, `--upgrade`) | never |
@@ -282,7 +287,7 @@ Following `_docs/tests.md`:
 
 ## 8. Implementation order
 
-1. Launcher: elevated branch with bundled interpreter, `-I -s -B`, and no
+1. Launcher: elevated branch with bundled interpreter, `-I -s -B -S`, and no
    `PYTHONPATH`; `is_elevated()`.
 2. Trusted-location ACL check.
 3. Lockfile format, `repair-deps`, and staged install with swap.
@@ -295,18 +300,22 @@ Following `_docs/tests.md`:
 - Modules: `gupkg.elevation` (detection and ACL policy), `gupkg.locked_deps`
   (lockfile, staged install, `repair-deps`, `update-deps`),
   `gupkg.dependency_notices` (advisory warning).
-- **Launcher detection.** `gupkg.cmd` decides elevation with `fltmc.exe` and
-  passes `--elevated` to `bootstrap.py`. Python independently checks the process
-  token, so an elevated process started any other way (`GUPKG_PYTHON`,
-  `python -m gupkg`) is refused unless it is the isolated bundled interpreter.
-  `GUPKG_FORCE_ELEVATED=1` selects the elevated branch for testing; it can only
-  make a launch stricter.
+- **Launcher detection.** Since issue 018, `gupkg.cmd` no longer probes for
+  elevation (no `fltmc.exe`, no `--elevated`, no `GUPKG_FORCE_ELEVATED`).
+  `bootstrap.py` checks the process token (`GUPKG_ELEVATED=1` can only make a run
+  stricter), and every run, elevated or not, must be the isolated bundled
+  interpreter (`enforce_bundled_runtime`); only the admin-only directory checks
+  are limited to elevated runs.
 - **What is checked.** Every directory on `sys.path`, the package directories,
   the runtime directory and `python\Lib\site-packages`: no non-administrator may
   hold a write, delete, or permission-changing right or own the directory.
   Ancestors are checked for the rights that allow renaming or replacing the
   directory. The check cannot vouch for the launcher and bootstrap files that
-  perform it; the root of trust is the admin-only install location.
+  perform it; the root of trust is the admin-only install location. The python
+  directory is trusted at interpreter start: `python.exe`, `python312.dll` and the
+  `.pyd` files load from it before any Python code runs, so the install location
+  must be admin-only before launch, and the elevated check is a refusal gate for
+  later imports, not a defence against a hostile python directory.
 - **Dependencies ship in the bundle.** `tools/build_standalone.py` installs the
   locked wheels into `python\Lib\site-packages` and writes the `._pth` file, so
   an elevated first run needs no installation. The lock also pins `pip`,

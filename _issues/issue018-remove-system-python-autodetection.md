@@ -8,7 +8,7 @@ dev scripts; no package-format changes
 ## Objective
 
 gupkg runs on exactly one interpreter: `gupkg\python\python.exe` inside its
-own version directory, started as `-I -s -B`. Nothing looks for another
+own version directory, started as `-I -s -B -S`. Nothing looks for another
 Python. There are no `PATH` probes, no `py` launcher, no override variables
 or files, and no "ordinary versus elevated" difference in interpreter
 choice. The dev tree follows the same rule: its scripts use one explicit
@@ -58,7 +58,7 @@ if not exist "%GUPKG_PY%" (
     exit /b 1
 )
 rem argument normalization loop (unchanged)
-"%GUPKG_PY%" -I -s -B "%~dp0bootstrap.py" %GUPKG_FORWARD_ARGS%
+"%GUPKG_PY%" -I -s -B -S "%~dp0bootstrap.py" %GUPKG_FORWARD_ARGS%
 exit /b %ERRORLEVEL%
 ```
 
@@ -123,7 +123,7 @@ Behavior to protect (`tests/test_launcher.py`, replacing the "ignores
 overrides in elevated mode" cases in `tests/test_elevated_launcher.py`):
 
 - With a fake bundled `python.exe` that records its arguments, a
-  **non-elevated** launch runs it with `-I -s -B`, even when `GUPKG_PYTHON`
+  **non-elevated** launch runs it with `-I -s -B -S`, even when `GUPKG_PYTHON`
   is set, `gupkg.python` exists, `PYTHONPATH` is set, and a decoy
   `python.exe` and `py.exe` are first on `PATH`. The decoys must not run.
 - Without `python\python.exe`, `gupkg.cmd` exits 1 with the reinstall
@@ -154,7 +154,7 @@ every entry point the rehaul adds:
 
 - **`gupkg-tui` and `gupkg-manager`** (issue 030, decision D34) each get
   the same single launch path, `gupkg-tui.cmd` and `gupkg-manager.cmd`,
-  which run `python\python.exe -I -s -B` relative to themselves, and call
+  which run `python\python.exe -I -s -B -S` relative to themselves, and call
   `enforce_bundled_runtime` on start.
 - **Both UI programs start the `gupkg.cmd` next to them in the same gupkg
   tree** (`$App\gupkg.cmd` for an installed gupkg,

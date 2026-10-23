@@ -66,12 +66,12 @@ def test_archive_that_fails_the_pinned_digest_is_deleted_and_stops_the_tool(tmp_
 
 
 def test_pth_file_points_the_runtime_at_its_own_site_packages(tmp_path: Path) -> None:
-    """The runtime's search-path file names its interpreter zip, the folder, its parent and Lib/site-packages."""
+    """The search-path file names only the interpreter zip, its folder and Lib/site-packages: no parent folder and no `import site`."""
     (tmp_path / "python312._pth").write_text("python312.zip\n.\n", encoding="ascii")
 
     fetch_runtime.write_pth(tmp_path)
 
-    assert (tmp_path / "python312._pth").read_text(encoding="ascii") == "python312.zip\n.\n..\nLib/site-packages\n\nimport site\n"
+    assert (tmp_path / "python312._pth").read_text(encoding="ascii") == "python312.zip\n.\nLib/site-packages\n"
 
 
 def test_check_deps_reports_only_pins_with_a_newer_stable_release(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

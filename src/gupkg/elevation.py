@@ -9,7 +9,7 @@ interpreter, or bundled dependency directory is writable by anyone but
 Usage and API
 -------------
 Call ``is_elevated()`` or ``elevated_mode()`` to choose between the user-scoped
-and the trusted behavior. Call ``enforce_elevated_runtime(...)`` once at process
+and the trusted behavior. Call ``enforce_bundled_runtime(...)`` once at process
 start, and ``require_trusted_directory(...)`` before importing from or writing
 to a single directory. Failures raise ``UntrustedLocationError`` with a message
 that names the directory, the offending principal, and a repair command.
@@ -31,6 +31,12 @@ import struct
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+
+if os.name == "nt":
+    # Load everything the checks need while sys.path holds only the interpreter's
+    # own folders, so no module of the package directory can shadow it.
+    import ctypes
+    from ctypes import wintypes
 
 
 class UntrustedLocationError(RuntimeError):
@@ -88,23 +94,55 @@ _ACCESS_ALLOWED_TYPES = {0, 9}  # plain and callback allow entries; both put the
 # ---------------------------------------------------------------------------
 
 
+def _admin_signal() -> bool:
+    """Return ``IsUserAnAdmin()`` as a bool (raises when the call is unavailable)."""
+    return bool(ctypes.windll.shell32.IsUserAnAdmin())
+
+
+def _token_elevation_signal() -> bool:
+    """Return the ``TokenElevation`` flag of the process token (raises on any failure)."""
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    advapi32.OpenProcessToken.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
+    advapi32.GetTokenInformation.argtypes = [
+        wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD),
+    ]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    token = wintypes.HANDLE()
+    if not advapi32.OpenProcessToken(kernel32.GetCurrentProcess(), 0x8, ctypes.byref(token)):  # TOKEN_QUERY
+        raise OSError(ctypes.get_last_error(), "OpenProcessToken failed")
+    try:
+        elevation = wintypes.DWORD()
+        size = wintypes.DWORD()
+        # TokenElevation = 20
+        if not advapi32.GetTokenInformation(token, 20, ctypes.byref(elevation), ctypes.sizeof(elevation), ctypes.byref(size)):
+            raise OSError(ctypes.get_last_error(), "GetTokenInformation failed")
+        return bool(elevation.value)
+    finally:
+        kernel32.CloseHandle(token)
+
+
 def is_elevated() -> bool:
-    """Return whether the current process holds an elevated administrator token.
+    """Return whether the current process may hold an elevated administrator token.
 
     Returns
     -------
     bool
-        ``True`` only on Windows when ``IsUserAnAdmin`` reports elevation;
-        ``False`` on other platforms and on any error.
+        On Windows, ``True`` when either ``IsUserAnAdmin`` or the token's
+        ``TokenElevation`` flag says elevated, and also when either signal
+        cannot be read (detection fails closed, so the strict checks apply).
+        ``False`` on other platforms.
     """
     if os.name != "nt":
         return False
-    try:
-        import ctypes
-
-        return bool(ctypes.windll.shell32.IsUserAnAdmin())
-    except Exception:
-        return False
+    for signal in (_admin_signal, _token_elevation_signal):
+        try:
+            if signal():
+                return True
+        except Exception:
+            return True
+    return False
 
 
 def elevated_mode() -> bool:
@@ -124,42 +162,50 @@ def elevated_mode() -> bool:
 # ---------------------------------------------------------------------------
 
 
-def enforce_elevated_runtime(package_directory: Path) -> None:
-    """Refuse an elevated run that is not the isolated, bundled, admin-only runtime.
+def enforce_bundled_runtime(package_directory: Path, elevated: bool = False) -> None:
+    """Refuse any run that is not the isolated bundled interpreter; also check admin-only paths when elevated.
 
     Parameters
     ----------
     package_directory : Path
         Directory of the ``gupkg`` package that is running.
+    elevated : bool, optional
+        Also require that every directory the run imports from is admin-only.
 
     Raises
     ------
     UntrustedLocationError
-        If the interpreter is not the bundled one, is not isolated, or if any
-        directory on the import path or the bundled dependency directory is
-        writable by a non-administrator.
+        If the interpreter is not ``<package>\\python\\python.exe`` or is not
+        isolated (``-I``) and without ``site`` (``-S``), or, for an elevated run, if any directory on the
+        import path or the bundled dependency directory is writable by a
+        non-administrator.
     """
     package_directory = Path(package_directory).resolve()
     runtime_directory = package_directory / "python"
 
-    # The launcher starts the bundled interpreter with -I -s; any other way of
-    # reaching an elevated process would honor user-controlled variables.
+    # gupkg.cmd starts the bundled interpreter with -I -s -B -S; any other way of
+    # reaching gupkg would honor the caller's Python, variables and site-packages.
     expected = runtime_directory / "python.exe"
-    if os.path.normcase(os.path.realpath(sys.executable)) != os.path.normcase(str(expected.resolve())):
+    if (
+        os.path.normcase(os.path.realpath(sys.executable)) != os.path.normcase(str(expected.resolve()))
+        or not sys.flags.isolated
+        or not sys.flags.no_site
+    ):
         raise UntrustedLocationError(
-            f"Elevated runs use only the bundled Python at {expected}, not {sys.executable}. "
-            "Start gupkg through its gupkg.cmd launcher from an elevated prompt."
+            "Start gupkg through gupkg.cmd or gupkg.exe; it runs only on its bundled Python "
+            f"({expected}, started with -I and -S), not {sys.executable}."
         )
-    if not (sys.flags.ignore_environment and sys.flags.no_user_site):
-        raise UntrustedLocationError(
-            "Elevated runs must start Python in isolated mode (-I -s) so PYTHON* "
-            "variables and the user site are ignored. Start gupkg through its gupkg.cmd launcher."
-        )
+    if not elevated:
+        return
 
     # Every directory the interpreter can import from, plus the bundled
     # dependency directory that is added to the path later.
     directories = {package_directory, package_directory.parent, runtime_directory}
     directories.add(runtime_directory / "Lib" / "site-packages")
+    # The interpreter and its search-path file decide what loads before any of our
+    # code; check them as files too, in case their own entries differ from the folder's.
+    directories.add(expected)
+    directories.update(runtime_directory.glob("python*._pth"))
     for entry in sys.path:
         if entry and os.path.isdir(entry):
             directories.add(Path(entry).resolve())
@@ -277,9 +323,6 @@ def read_directory_security(path: Path) -> DirectorySecurity:
     """
     if os.name != "nt":
         raise OSError("access-control lists can only be read on Windows")
-    import ctypes
-    from ctypes import wintypes
-
     advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     pointer = ctypes.c_void_p
