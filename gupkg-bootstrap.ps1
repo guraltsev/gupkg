@@ -87,7 +87,25 @@ function Get-LatestRelease {
     }
 }
 
-function Test-ReleaseManifest([string]$Folder) {
+function Expand-ZipSafely([string]$Archive, [string]$Destination) {
+    # Windows PowerShell 5.1's Expand-Archive does not guard '..' entries, so
+    # every entry is checked to stay below the destination before extracting.
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $root = [IO.Path]::GetFullPath($Destination).TrimEnd('\') + '\'
+    New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+    $zip = [IO.Compression.ZipFile]::OpenRead($Archive)
+    try {
+        foreach ($entry in $zip.Entries) {
+            $target = [IO.Path]::GetFullPath((Join-Path $Destination $entry.FullName))
+            if (-not $target.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { throw "The archive contains an unsafe path: $($entry.FullName)" }
+            if ($entry.FullName.EndsWith('/')) { New-Item -ItemType Directory -Force -Path $target | Out-Null; continue }
+            New-Item -ItemType Directory -Force -Path (Split-Path $target) | Out-Null
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $target, $true)
+        }
+    } finally { $zip.Dispose() }
+}
+
+function Test-ReleaseManifest([string]$Folder, [switch]$InstalledCopy) {
     # The release carries gupkg\MANIFEST.sha256: "<sha256>  <relative path>" for every
     # other file of the version folder. Every file must match, and none may be
     # missing or extra; a payload that fails is never installed.
@@ -98,6 +116,7 @@ function Test-ReleaseManifest([string]$Folder) {
         $entry = [regex]::Match($line, '^([0-9a-f]{64})  (\S(?:.*\S)?)$')
         if (-not $entry.Success) { throw "Malformed line in MANIFEST.sha256: $line" }
         $relative = $entry.Groups[2].Value
+        if ($expected.ContainsKey($relative)) { throw "Duplicate path in MANIFEST.sha256: $relative" }
         $parts = $relative -split '/'
         if ($relative.StartsWith('/') -or $relative.Contains(':') -or $relative.Contains('\') -or ($parts -contains '..') -or ($parts -contains '')) {
             throw "Unsafe path in MANIFEST.sha256: $relative"
@@ -108,7 +127,10 @@ function Test-ReleaseManifest([string]$Folder) {
     $actual = @{}
     foreach ($file in Get-ChildItem -LiteralPath $Folder -Recurse -File -Force) {
         $relative = $file.FullName.Substring($base.Length + 1).Replace('\', '/')
-        if ($relative -ne 'gupkg/MANIFEST.sha256') { $actual[$relative] = $file.FullName }
+        if ($relative -eq 'gupkg/MANIFEST.sha256') { continue }
+        # An installed copy also holds installation state, which is not release content.
+        if ($InstalledCopy -and ($relative -match '^(App|Icons|Shortcuts)/' -or $relative -eq 'gupkg/gupkg-config.toml')) { continue }
+        $actual[$relative] = $file.FullName
     }
     $modified = @($expected.Keys | Where-Object { $actual.ContainsKey($_) -and (Get-FileHash -Algorithm SHA256 -LiteralPath $actual[$_]).Hash.ToLower() -ne $expected[$_] } | Sort-Object)
     $missing = @($expected.Keys | Where-Object { -not $actual.ContainsKey($_) } | Sort-Object)
@@ -180,7 +202,7 @@ try {
             Write-Warning 'No -Sha256 given: the download is not verified.'
         }
         $tree = Join-Path $work 'unpacked'
-        Expand-Archive -LiteralPath $archive -DestinationPath $tree -Force
+        Expand-ZipSafely $archive $tree
     }
 
     # 3. Place it at <Root>\gupkg\<version>, reusing an existing copy. The release
@@ -200,6 +222,7 @@ try {
         Remove-Item -LiteralPath $target -Recurse -Force
     }
     if (Test-Path -LiteralPath $target) {
+        Test-ReleaseManifest $target -InstalledCopy
         Step "Version $version is already at $target; reusing it"
     } else {
         Step "Installing gupkg $version to $target"

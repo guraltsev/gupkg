@@ -52,6 +52,47 @@ def test_verified_release_is_placed_as_a_working_versioned_folder_and_rerun_reus
     assert version.stdout.strip() == f"gupkg {release_bundle.version}"
 
 
+def test_reused_version_folder_is_checked_against_its_manifest(tmp_path: Path, release_bundle) -> None:
+    """A rerun refuses an existing version folder whose file was edited, but accepts installation state."""
+    digest = release_bundle.sha256.upper()
+    _run(tmp_path, "-Source", str(release_bundle.zip), "-Sha256", digest)
+    placed = next((tmp_path / "opt" / "gupkg").glob("*"))
+    (placed / "App").mkdir()
+    (placed / "App" / "state.txt").write_text("x", encoding="utf-8")
+    (placed / "gupkg" / "gupkg-config.toml").write_text("x", encoding="utf-8")
+    clean = _run(tmp_path, "-Source", str(release_bundle.zip), "-Sha256", digest)
+    (placed / "gupkg" / "cli.py").write_text("# edited\n", encoding="utf-8")
+
+    damaged = _run(tmp_path, "-Source", str(release_bundle.zip), "-Sha256", digest)
+
+    assert clean.returncode == 0 and "reusing it" in clean.stdout
+    assert damaged.returncode == 1 and "1 modified" in damaged.stderr
+
+
+def test_archive_entry_that_escapes_the_destination_is_rejected(tmp_path: Path, release_bundle) -> None:
+    """A ZIP with a '..' entry stops the bootstrap before anything is written outside its work folder."""
+    evil = tmp_path / "evil.zip"
+    digest = _derive(release_bundle.zip, evil, tmp_path)
+
+    result = _run(tmp_path, "-Source", str(evil), "-Sha256", digest)
+
+    assert result.returncode == 1
+    assert "unsafe path" in result.stderr
+    assert not (tmp_path / "planted.txt").exists() and not (tmp_path / "opt").exists()
+
+
+def _derive(source: Path, target: Path, tmp_path: Path) -> str:
+    """Copy a ZIP and add an entry whose name climbs out of the extraction folder; return its upper-case SHA-256."""
+    import hashlib
+    import zipfile
+
+    with zipfile.ZipFile(source) as original, zipfile.ZipFile(target, "w") as copy:
+        for entry in original.infolist():
+            copy.writestr(entry.filename, original.read(entry))
+        copy.writestr("../../../../../../../../../../../../planted.txt", b"x")
+    return hashlib.sha256(target.read_bytes()).hexdigest().upper()
+
+
 def test_checksum_mismatch_stops_before_anything_is_placed(tmp_path: Path, release_bundle) -> None:
     """A wrong -Sha256 fails with a clear message and creates no install folder."""
     result = _run(tmp_path, "-Source", str(release_bundle.zip), "-Sha256", "0" * 64)
