@@ -5,6 +5,10 @@ Behavior covered: the folder is copied whole into ``<root>\\<name>\\<version>``;
 (``identical`` when it holds the same files, ``diverged`` otherwise); a source with a link or junction, a missing
 ``pkg.toml`` or an unsafe name is refused and nothing is written; an interrupted layout leaves no work folder.
 
+Also: a name that Windows cannot hold (reserved device names, trailing dots) is refused up front; a directory or file
+swapped for a junction between the check and the use is never copied; a refused copy leaves the root as it was; and
+the package's ``modes`` are checked on the staged copy before anything is moved into the root.
+
 Real: the copy on real folders and real NTFS alternate data streams below pytest's temporary folder (the
 streams need NTFS, so the marked-source tests are ``windows_integration``), and a real junction. Out of scope:
 the engine's receipt, which records ``source_marked`` (issue 028).
@@ -12,13 +16,22 @@ the engine's receipt, which records ``source_marked`` (issue 028).
 
 from __future__ import annotations
 
+import os
+import shutil
 from pathlib import Path
 
 import pytest
 
+from gupkg import distcopy
 from gupkg.catalog.local import tree_hash
 from gupkg.distcopy import COPIED, DIVERGED, IDENTICAL, DistributionRefused, copy_distribution
+from gupkg.model.mode import ModeChoice, ModeRefused
 from gupkg.system.fake import FakeSystem
+from tests.catalog_support import version_text
+from tests.mode_support import pin_no_ambient_elevation, tree_snapshot  # noqa: F401
+
+
+EXTENDED = "\\\\?\\"  # the extended-length path prefix
 
 
 def distribution(base: Path, name: str = "tool", version: str = "1.0.0") -> Path:
@@ -178,3 +191,129 @@ def test_a_folder_without_a_manifest_is_refused(tmp_path: Path) -> None:
 
     with pytest.raises(DistributionRefused, match="pkg.toml"):
         copy_distribution(source, tmp_path / "opt")
+
+
+def make_raw(path: Path, content: bytes = b"x") -> None:
+    """Create a file whose name Win32 would normalise away (trailing dot, device name) through the extended-length prefix."""
+    with open(EXTENDED + str(path), "wb") as stream:
+        stream.write(content)
+
+
+@pytest.mark.windows_integration
+@pytest.mark.parametrize(
+    "hostile",
+    [
+        pytest.param("a.txt.", id="trailing-dot"),
+        pytest.param("b ", id="trailing-space"),
+        pytest.param("NUL", id="device-name"),
+        pytest.param("con.txt", id="device-name-with-extension"),
+        pytest.param("COM¹", id="superscript-device-name"),
+        pytest.param("lpt3.log", id="printer-device-name"),
+    ],
+)
+def test_a_hostile_file_name_is_refused_up_front_and_the_root_is_unchanged(tmp_path: Path, hostile: str) -> None:
+    """A name that Windows cannot hold is a refusal with exit code 2 (not a raw OSError), and nothing is left in the root."""
+    source = distribution(tmp_path / "downloads")
+    make_raw(source / hostile)
+    root = tmp_path / "opt"
+    before = tree_snapshot(tmp_path / "opt")
+
+    try:
+        with pytest.raises(DistributionRefused) as raised:
+            copy_distribution(source, root)
+    finally:
+        shutil.rmtree(EXTENDED + str(tmp_path / "downloads"), ignore_errors=True)
+
+    assert raised.value.exit_code == 2
+    assert tree_snapshot(root) == before and not root.exists()
+
+
+def test_a_refused_copy_leaves_an_existing_root_as_it_was(tmp_path: Path) -> None:
+    """A refusal after the work folder was made removes it again; an existing root keeps exactly its content."""
+    source = distribution(tmp_path / "downloads")
+    (source / "App" / "link").write_text("x", encoding="utf-8")
+    secret = tmp_path / "secret"
+    secret.mkdir()
+    FakeSystem(tmp_path / "machine").create_junction(source / "Icons" / "j", secret)
+    root = tmp_path / "opt"
+    (root / "other").mkdir(parents=True)
+    before = tree_snapshot(root)
+
+    with pytest.raises(DistributionRefused):
+        copy_distribution(source, root)
+
+    assert tree_snapshot(root) == before
+
+
+@pytest.mark.windows_integration
+def test_a_directory_swapped_for_a_junction_after_the_check_is_never_copied(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """If ``App`` becomes a junction to a secret folder just before it is listed, the copy is refused and copies nothing."""
+    source = distribution(tmp_path / "downloads")
+    secret = tmp_path / "secret"
+    secret.mkdir()
+    (secret / "secret.txt").write_text("private", encoding="utf-8")
+    real_scandir = os.scandir
+    fake = FakeSystem(tmp_path / "machine")
+    swapped: list[bool] = []
+
+    def swapping_scandir(path):
+        """List *path*, after replacing ``App`` by a junction the first time it is listed."""
+        if Path(path).name == "App" and not swapped:
+            swapped.append(True)
+            Path(path).rename(Path(path).with_name("App.real"))
+            fake.create_junction(Path(path), secret)
+        return real_scandir(path)
+
+    monkeypatch.setattr(distcopy.os, "scandir", swapping_scandir)
+    root = tmp_path / "opt"
+
+    with pytest.raises(DistributionRefused, match="link or junction|changed while"):
+        copy_distribution(source, root)
+
+    assert swapped and not root.exists()
+
+
+@pytest.mark.windows_integration
+def test_a_folder_swapped_for_a_junction_just_before_a_file_is_opened_is_never_copied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If a parent folder becomes a junction between the listing and the open, the outside file is not copied."""
+    source = distribution(tmp_path / "downloads")
+    secret = tmp_path / "secret"
+    secret.mkdir()
+    (secret / "tool.exe").write_bytes(b"SECRET")
+    real_open = os.open
+    fake = FakeSystem(tmp_path / "machine")
+    swapped: list[bool] = []
+
+    def swapping_open(path, *args, **kwargs):
+        """Open *path*, after swapping its parent for a junction to the secret folder the first time."""
+        if Path(path).name == "tool.exe" and not swapped:
+            swapped.append(True)
+            parent = Path(path).parent
+            parent.rename(parent.with_name("bin.real"))
+            fake.create_junction(parent, secret)
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(distcopy.os, "open", swapping_open)
+    root = tmp_path / "opt"
+
+    with pytest.raises(DistributionRefused, match="leads outside"):
+        copy_distribution(source, root)
+
+    assert swapped and not root.exists()
+
+
+def test_the_packages_modes_are_checked_on_the_staged_copy_before_anything_reaches_the_root(tmp_path: Path) -> None:
+    """A package that does not list the required mode is refused with the mode message, and the root stays empty."""
+    source = tmp_path / "downloads" / "tool" / "1.0.0"
+    source.mkdir(parents=True)
+    manifest = version_text("1.0.0").replace("format = 2\n", 'format = 2\nmodes = ["user"]\n', 1)
+    (source / "pkg.toml").write_text(manifest, encoding="utf-8")
+    root = tmp_path / "opt"
+
+    with pytest.raises(ModeRefused, match="does not support system mode"):
+        copy_distribution(source, root, required=ModeChoice("system", "--mode"))
+    assert not root.exists()
+
+    assert copy_distribution(source, root, required=ModeChoice("user", "--mode")).status == COPIED
