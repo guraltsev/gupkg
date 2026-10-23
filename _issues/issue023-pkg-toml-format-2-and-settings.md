@@ -1,5 +1,7 @@
 # Issue 023: `pkg.toml` format 2, settings model, and migration tool
 
+> **Status (2026-10-22):** Implemented, except part B. Merged in 8e384cd. Part B, adoption of 0.17 installs by the migration tool (install record from `current` and declared components, reading and removing `update.toml` and old receipts, `gupkg list` unchanged, `uninstall` removes old shortcuts), waits for issues 024 and 028 and is assigned to issue 028's worker (job 08 progress notes). Manual checks still owed: `tests/manual_smoke.md`, "Format 2, settings layers and the migration tool (issue 023)": 1 (generated launchers refuse in an administrator shell), 2 (elevated settings layers), 3 (run the tool on a copy of a real 0.17 `C:\opt`).
+
 Date: 2026-10-22
 Priority: Critical (foundation)
 Epic: 020. Design: `_docs/rehaul_design.md` §4, §7, §11, §12 (`model/`),
