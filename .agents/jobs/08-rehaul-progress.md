@@ -21,7 +21,7 @@ on `main` before dispatching the first worker.
 | 019 | The bundled Python ships without pip | 016 | merged | rehaul/issue019 | 5c922cb | 331 passed, 0 failed, 0 skipped | 019-1 real build; 019-2 clean-VM pip-less run; 019-3 update_deps --repair no-diff |
 | 021 | System boundary, FakeSystem, and sandbox mode | 016–019 | in progress | rehaul/issue021 | | | |
 | 022 | Event stream, console renderer, and standard logs | 021 | waiting | | | | |
-| 023 | `pkg.toml` format 2, settings model, and migration tool | 019 (and D35) | in progress | rehaul/issue023 | | | |
+| 023 | `pkg.toml` format 2, settings model, and migration tool | 019 (and D35) | in review | rehaul/issue023 | | | |
 | 024 | Catalog and package state model | 023 | waiting | | | | |
 | 025 | First-class install modes | 021, 023 | waiting | | | | |
 | 026 | Built-in services replacing hook scripts | 021, 022, 023 | waiting | | | | |
@@ -71,3 +71,4 @@ None blocking. For information:
 - 2026-10-22: 018 merged (1f4e085) after 3 review rounds (round 3 clean) and a merge of main (019). Suite on main: 355 passed. Stage 0 (016-019) is fully merged.
 - Stale text noted by the 018 worker: `docs/elevated-runtime-design.md` "Dependencies ship in the bundle" bullet still says the lock pins pip and that update/repair run pip from the bundled runtime (stale after 019); fix in issue 032's docs pass.
 - 2026-10-22: 0.18 prepared locally (see Releases). Dispatched workers for 021 and 023 (stage 1).
+- 2026-10-22: 023 worker done (4 commits, 553 passed); reviewer started. Worker deferred 'adoption of 0.17 installs' (reviewer to judge).
