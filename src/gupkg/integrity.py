@@ -17,8 +17,11 @@ Implementation Approach
 -----------------------
 Every file below the version directory is hashed and compared with the
 manifest. Files that belong to the installation rather than to the release are
-not "extra": the package's ``App``, ``Icons`` and ``Shortcuts`` folders, the
-per-version ``gupkg/gupkg-config.toml``, and ``__pycache__`` folders.
+not "extra": the package's ``App``, ``Icons`` and ``Shortcuts`` folders and the
+per-version ``gupkg/gupkg-config.toml``. The contents of ``App`` are therefore
+**not covered** by this check. ``__pycache__`` is not exempt: the release ships
+no bytecode and installed Python runs with ``-B``, so any ``.pyc`` is reported
+as extra (a planted one would otherwise run in the elevated trust path).
 """
 
 from __future__ import annotations
@@ -106,7 +109,7 @@ def verify_version_directory(version_root: Path) -> IntegrityReport:
         folders[:] = [
             name
             for name in folders
-            if name != "__pycache__" and not (not relative_folder.parts and name.casefold() in _INSTALL_FOLDERS)
+            if not (not relative_folder.parts and name.casefold() in _INSTALL_FOLDERS)
         ]
         for name in files:
             relative = (relative_folder / name).as_posix()
@@ -144,6 +147,8 @@ def read_manifest(path: Path) -> dict[str, str]:
         if match is None:
             raise ManifestError(f"{path}, line {number}: expected '<sha256>  <relative path>'")
         relative = match["path"]
+        if relative in entries:
+            raise ManifestError(f"{path}, line {number}: duplicate path {relative!r}")
         parts = relative.split("/")
         if relative.startswith("/") or ":" in relative or "\\" in relative or ".." in parts or "" in parts:
             raise ManifestError(f"{path}, line {number}: unsafe path {relative!r}")

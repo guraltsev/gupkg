@@ -148,7 +148,7 @@ def install_locked_dependencies(runtime: Path, lock: Path, python: str | None = 
     site_packages = runtime / "Lib" / "site-packages"
     command = [
         python or sys.executable, "-m", "pip", "install", "--isolated", "--disable-pip-version-check", "--no-input",
-        "--target", str(site_packages), "--require-hashes", "--only-binary=:all:", "--no-deps",
+        "--target", str(site_packages), "--no-compile", "--require-hashes", "--only-binary=:all:", "--no-deps",
         "--platform", "win_amd64", "--implementation", "cp", "--python-version", f"{tag[0]}.{tag[1:]}",
         "--abi", f"cp{tag}", "-r", str(lock),
     ]

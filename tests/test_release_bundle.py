@@ -92,21 +92,68 @@ def test_build_stops_when_the_runtime_archive_does_not_match_the_pinned_digest(t
     assert not output.exists()
 
 
+def test_build_ships_no_bytecode_and_the_built_tree_verifies(tmp_path: Path) -> None:
+    """A runtime tree that contains __pycache__/.pyc files yields a ZIP with none, and its tree passes the integrity check."""
+    runtime = tmp_path / "runtime.zip"
+    with zipfile.ZipFile(runtime, "w") as archive:
+        archive.writestr("python312._pth", "python312.zip\n")
+        archive.writestr("python.exe", "stub")
+        archive.writestr("Lib/site-packages/dep/__init__.py", "x = 1\n")
+        archive.writestr("Lib/site-packages/dep/__pycache__/__init__.cpython-312.pyc", b"\0")
+        archive.writestr("Lib/site-packages/stray.pyc", b"\0")
+    output = tmp_path / "out.zip"
+
+    subprocess.run(
+        [sys.executable, str(BUILD), "--skip-deps", "--runtime", str(runtime),
+         "--runtime-sha256", hashlib.sha256(runtime.read_bytes()).hexdigest(),
+         "--commit", "a" * 40, "--output", str(output)],
+        check=True, capture_output=True,
+    )
+
+    with zipfile.ZipFile(output) as archive:
+        names = archive.namelist()
+        archive.extractall(tmp_path / "unpacked")
+    assert not any("__pycache__" in name or name.endswith(".pyc") for name in names)
+    assert any(name.endswith("dep/__init__.py") for name in names)
+    assert verify_version_directory(next((tmp_path / "unpacked").iterdir())).ok
+
+
+def test_planted_bytecode_is_reported_as_extra(installed: Path) -> None:
+    """A __pycache__ file in the tree is not exempt: it is listed as an extra file."""
+    cache = installed / "gupkg" / "__pycache__"
+    cache.mkdir()
+    (cache / "cli.cpython-312.pyc").write_bytes(b"\0")
+
+    report = verify_version_directory(installed)
+
+    assert report.extra == ("gupkg/__pycache__/cli.cpython-312.pyc",)
+
+
+def test_manifest_with_a_duplicate_path_is_rejected(installed: Path) -> None:
+    """A manifest that lists one path twice is malformed, so it cannot hide a second digest."""
+    from gupkg.integrity import ManifestError, read_manifest
+
+    manifest = installed / "gupkg" / "MANIFEST.sha256"
+    first = manifest.read_text(encoding="utf-8").splitlines()[0]
+    manifest.write_text(first + "\n" + first + "\n", encoding="utf-8", newline="\n")
+
+    with pytest.raises(ManifestError, match="duplicate"):
+        read_manifest(manifest)
+
+
 def test_untouched_version_directory_matches_its_manifest(installed: Path) -> None:
     """A freshly unpacked release has no modified, missing or extra file."""
     assert verify_version_directory(installed).ok
 
 
 def test_installation_state_is_not_reported_as_extra(installed: Path) -> None:
-    """The App, Icons and Shortcuts folders and the per-version manager configuration are install state."""
+    """The App, Icons and Shortcuts folders and the per-version manager configuration are install state (App is not covered)."""
     (installed / "App").mkdir()
     (installed / "App" / "RELEASE.txt").write_text("marker", encoding="utf-8")
     (installed / "Icons").mkdir()
     (installed / "Shortcuts").mkdir()
     (installed / "Shortcuts" / "tool.lnk").write_text("x", encoding="utf-8")
     (installed / "gupkg" / "gupkg-config.toml").write_text('mode = "manager"\n', encoding="utf-8")
-    (installed / "gupkg" / "__pycache__").mkdir()
-    (installed / "gupkg" / "__pycache__" / "cli.cpython-312.pyc").write_bytes(b"\0")
 
     assert verify_version_directory(installed).ok
 
@@ -159,10 +206,16 @@ def test_manager_self_status_reports_the_edited_file(installed: Path, tmp_path: 
     command = [str(installed / "gupkg" / "gupkg.cmd"), "manager", "--config", str(config), "self", "status"]
 
     healthy = subprocess.run(command, capture_output=True, text=True, env=environment, timeout=120)
+    assert verify_version_directory(installed).ok, "running gupkg with -B must not write bytecode into the tree"
+    doctor = [str(installed / "gupkg" / "gupkg.cmd"), "manager", "--config", str(config), "doctor"]
+    healthy_doctor = subprocess.run(doctor, capture_output=True, text=True, env=environment, timeout=120)
     (installed / "gupkg" / "README.md").write_text("# edited\n", encoding="utf-8")
     damaged = subprocess.run(command, capture_output=True, text=True, env=environment, timeout=120)
+    damaged_doctor = subprocess.run(doctor, capture_output=True, text=True, env=environment, timeout=120)
+    assert healthy_doctor.returncode == 0, healthy_doctor.stderr
 
     assert "self.runtime_healthy: True" in healthy.stdout and healthy.returncode == 0, healthy.stdout + healthy.stderr
     assert damaged.returncode == 3
     assert "modified: gupkg/README.md" in damaged.stderr
     assert "Reinstall gupkg from a release ZIP" in damaged.stderr
+    assert damaged_doctor.returncode == 2 and "modified: gupkg/README.md" in damaged_doctor.stderr

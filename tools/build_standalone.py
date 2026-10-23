@@ -165,6 +165,13 @@ def build_bundle(
         if not skip_deps:
             fetch_runtime.install_locked_dependencies(payload / "python", deps_lock)
 
+        # No bytecode ships: it is not release content, installed Python runs with -B,
+        # and a stale .pyc would be trusted by its source's size and mtime alone.
+        for leftover in list(payload.rglob("__pycache__")):
+            shutil.rmtree(leftover, ignore_errors=True)
+        for leftover in list(root.rglob("*.pyc")):
+            leftover.unlink()
+
         # Step 3: record where the bundle came from, then its manifest, last.
         (payload / "RELEASE.txt").write_text(f"gupkg {version}\ncommit {commit}\n", encoding="utf-8", newline="\n")
         write_manifest(root)
