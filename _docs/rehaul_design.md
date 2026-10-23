@@ -743,9 +743,9 @@ counted are from the 2026-10-22 registry.
 | `github` | built-in github mode + 6 hand-rolled clients (bcu, perl, portablegit, wumgr, systeminformer, msys2) | `repo`, `asset` (exact or `asset_pattern` regex with `(?P<version>)`), `version_from = "tag"\|"asset"`, `tag_pattern`, `tag_prefix`, `release = "latest"\|"newest-matching"`, `prerelease = false` |
 | `gitlab` | restic-backup-gx | `project`, `link_name`/`asset_pattern` |
 | `page` | 9 template scrapers + 7zip, SumatraPDF, cwrsync, tixati, dontsleep | `check_url`, `match` (regex with named groups), `select = "max"\|"first"\|"unique"`, `version` template, `download` template, `headers` |
-| `index` | emacs, gimp, python, vlc, pidgin | `check_url`, ordered `[[track.level]]` with `match`, `select`, optional `probe` (descend until a file exists) |
+| `index` | emacs, gimp, python, vlc, pidgin | `check_url`, ordered `[[track.level]]` with `match`, `select`, `key`, `next`, optional `probe` (descend until a file exists) |
 | `redirect` | crystaldiskinfo, crystaldiskmark, geogebra, geogebra5, zotero | `check_url`, `match`, `unwrap_query` |
-| `json` | firefox, julia, vscode, qbittorrent | `check_url`, `version` (JSONPath), `download`, `filter` |
+| `json` | firefox, julia, vscode, qbittorrent | `check_url`, `version` (JSONPath), `download`, `filter`, `records`, `match`, `checksum`, `captures` |
 | `last_modified` | autoruns, processexplorer | `check_url`, `format = "%Y.%m.%d"` |
 | `rss` | netio-gui | `check_url`, `match` |
 | `git` | latex-toolkit, overleaf-sync, windebloattools | `repo_url`, `ref`; version = `YYYYMMDD-HHMMSS-<short sha>` (the commit is the integrity anchor) |
@@ -759,6 +759,49 @@ Every provider:
   when it is set;
 - returns `TrackResult(version, captures, checksum?)`;
 - leaves version comparison to the manager.
+
+**Provider details (issue 026).** The values of every `[track]` key are validated when the
+manifest is parsed (`gupkg.model.trackspec`).
+
+- **Captures.** A provider's named regex groups become captures, usable as `${name}` in
+  `[source]` and `[[prepare]]`. Built in: `github` and `gitlab` give `tag`, `asset_name`,
+  `asset_url` and `release_url`; `page`, `index`, `rss` and `chain` give `page_url`; `redirect`
+  gives `final_url` and `file_name`; every URL provider gives `download_url` (the expanded
+  `download` template or a `download_url` group); `git` gives `commit`, `short_commit`, `ref` and
+  `commit_date`. `gupkg pkg check` rejects a `${name}` in a tracker's `[source]` that its provider
+  never produces.
+- **`version` and `download`** are templates over the captures (`version = "${major}.${minor}"`,
+  `download = "${href}"`); the default `version` is `${version}`. Several matches are ordered with
+  the one shared version comparison (`1.10` is newer than `1.3`); `select` is `max`, `first` or
+  `unique`. `headers` (a table) set the User-Agent or other headers of the check; a `[source]`
+  `headers` table does the same for the download (hwinfo needs a browser User-Agent and a Referer).
+- **`github` / `gitlab`.** The version comes from the tag (`tag_prefix`, else a leading `v`
+  dropped, or `tag_pattern` with named groups) or, with `version_from = "asset"`, from the asset
+  name. The asset is the exact `asset` name or the full match of `asset_pattern`; both may contain
+  `${version}`. `release = "newest-matching"` reads up to 100 releases and takes the newest that
+  has a usable version and the asset; drafts are skipped and prereleases only with `prerelease =
+  true`. A GitHub asset `digest` becomes the discovered checksum (`github-digest`).
+- **`index`.** A level's `match` may contain `${name}` for what earlier levels captured (the value
+  is escaped); `key` orders entries when the version is split over groups (`${major}.${minor}`);
+  `next` is the page of the next level; `probe` is a file that must exist for an entry to count.
+  The walk tries entries newest first and backtracks, within 60 requests.
+- **`json`.** JSONPath subset: `$`, `.key`, `['key']`, `[n]`, `[*]`, `.*`, filters `[?a==b && c!=d]`
+  (`==`, `!=`, `=~`), and a trailing `~` for keys. `records` selects the objects to look at, `filter`
+  (one condition or an array) keeps some, and `version`, `download`, `checksum` and `captures` are
+  read from each record; `match` extracts the version from the value (qbittorrent).
+- **`last_modified`** formats the UTC `Last-Modified` date with `format` (default `%Y.%m.%d`;
+  only `%Y %y %m %d %H %M %S %j` and literal characters allowed). **`rss`** matches the links,
+  titles, ids and enclosure addresses of a feed (a document type declaration is refused).
+  **`chain`** steps have `url`, `match`, `select`, `headers`, and `header` (match a response
+  header such as `Content-Disposition` instead of the body); `${capture}` in a later step's `url`
+  and `match` come from earlier steps, and a `sha256` group becomes the discovered checksum.
+- **Safety.** Responses are data: a page over 8 MiB is refused, patterns that repeat a repeated
+  group without a bound are rejected, long runs of word characters or one repeated character
+  are cut before matching, and at most a mebibyte is scanned. Python's `re` cannot be
+  interrupted, so a page crafted against one specific pattern can still keep a check busy for
+  seconds; it can never run code. Redirects are followed by the client: HTTPS to HTTP and any
+  non-http(s) target are refused, and `Authorization`/`Cookie` are dropped when the host changes.
+  `GITHUB_TOKEN` goes only to `api.github.com`, `github.com` and `uploads.github.com` over HTTPS.
 
 ### 8.2 Unpacking (`[source]`)
 
@@ -775,6 +818,21 @@ Every provider:
 Every unpack service is safe-extracting: no paths escape, there are no reparse
 points, and partial failures leave nothing behind. Every one works for every
 archive kind; today `extract`/`rename` are limited to zip.
+
+**Unpack details (issue 026).** The kind is read from the file's signature (a `.exe` is asked of
+7-Zip: `Nsis` is `nsis`, an archive with a data offset is `sfx`, a plain executable is `exe`); a
+declared `kind` is checked against it. `msi` is unpacked by 7-Zip, never by `msiexec`. The options
+apply in this order, each addressing the tree as it is at that point: `nested`, `strip`,
+`subdir`, `extract`, `require`, `verify_manifest`.
+
+- `[[source.nested]]` unpacks the inner archive `path` and merges it at `dest` (an existing file is
+  never overwritten); with `replace = true` the inner contents replace everything at `dest` (obsidian:
+  `dest = ""` drops the rest of the installer). The inner archive file is deleted once unpacked.
+- Names are judged before anything is written: absolute paths, drives, `..`, `:` (streams),
+  Windows device names, a trailing dot or space, link entries, encryption and names that differ only by
+  letter case are refused, and so are archives over 1,000,000 entries, 8 GiB in total or 4 GiB in one
+  file (zip bombs). The finished tree is walked again for links and special files. The tree appears under
+  its final name by one rename, so a failed unpack leaves no `App` and no scratch folder.
 
 `sfx` covers only self-extractors whose codecs the bundled 7-Zip supports.
 Firefox and Zotero extract; MSYS2's `.sfx.exe` uses Zstandard and does not
@@ -801,6 +859,11 @@ module = "pkg.local/fix_nsswitch.py"               # escape hatch
 `rename` keeps today's rule: it never overwrites an existing destination.
 Paths are always confined to `App`.
 
+Details (issue 026): `remove` and `rename`/`copy` sources may be globs; `rename` and `copy` need
+exactly one match, and `copy` never overwrites either; `remove` ignores a path that is not there and
+deletes a link itself, never its target; `write` replaces a regular file but never writes through a
+link. A path may not pass through a link or junction. If a step fails the staged `App` is deleted.
+
 ### 8.4 Vendor installers
 
 `kind = "nsis"` extracts the installer without running it. Running vendor
@@ -822,6 +885,17 @@ The fields are `sidecar = "${download_url}.sha256"`, `sums_file`/`entry`,
 `json`/`path`, and `page_match`. GitHub and GitLab digests are picked up
 implicitly. This replaces discovery code in 13 hooks.
 
+Details (issue 026): every address is a template over the discovered captures, `${download_url}`
+being the `[source]` download address. `sidecar` and `sums_file` read `<digest>  <name>` and
+`SHA256 (<name>) = <digest>` lines (a one-digest sidecar needs no name); `entry` must equal the listed
+path exactly; `page_match` runs on the page the version came from (`${page_url}`) and takes the
+`sha256` group; only a 64-digit hexadecimal token is ever accepted, and the provenance is
+`vendor-sums`. A configured source that has no digest for the version is an error
+(`ChecksumDiscoveryError`), not a silent skip: what a missing hash means is the checksum policy
+(issue 027). A GitHub asset's `digest` is found by the `github` provider (`github-digest`). GitLab's
+releases API publishes no digest today, so a GitLab link's `sha256` or `digest` field is used if it
+ever appears, and otherwise the tracker declares `[source.checksum]`.
+
 ### 8.6 Hook library
 
 The hook library covers what remains after the services above. `gupkg.hooklib`
@@ -839,6 +913,13 @@ is the supported API for `pkg.local` modules:
 Hooks receive a typed `HookContext`, never raw dictionaries. The API version
 becomes `PKG_MODULE_API = 2`. Non-Python populate scripts receive the same
 context as JSON on standard input (section 4).
+
+The entry points are `track(ctx) -> TrackResult` (trackers only), `unpack(ctx)`, `prepare(ctx)` and
+`populate(ctx)`. The context carries `package`, `version`, `system`, `http` (the shared client),
+`paths` (`package_root`, `version_root`, `app`, `artifact`, `work`, `cache`), `options`,
+`captures` and a `reporter`; the helpers of `gupkg.hooklib` take it as their first argument
+(`fetch_text(ctx, url)`). A module that does not declare `PKG_MODULE_API = 2` is rejected like any
+other invalid hook.
 
 Every hook's context carries the shared HTTP client, so proxy, TLS,
 retries and the GitHub token behave the same everywhere. Hooks may also

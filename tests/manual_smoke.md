@@ -270,3 +270,30 @@ temporary directories. These steps cover real consoles, real permissions and a r
 5. **Non-UTF-8 console output.** In a console using a legacy code page (`chcp 437`) run an
    install whose origin script prints accented text and use `7z` output; confirm the lines are
    readable or replaced, never a Python traceback. Why manual: needs real code pages.
+
+## Built-in services (issue 026)
+
+The automated tests replay synthetic HTTP fixtures, build archives at test time and run
+7-Zip for real, but they cannot reach vendor sites or build NSIS installers. These steps cover
+what only real sites and real installers show.
+
+1. **Re-record the HTTP fixtures.** The files under `tests/fixtures/http` are marked
+   `"recorded": null`: they were written from the layout the registry hooks expected, because
+   the worker had no network. With a network, run `python tools/record_http_fixtures.py` and
+   run the suite. Review the diff: a case that fails shows a vendor page that changed (or a
+   pattern that was wrong). Commit the recorded files. Why manual: needs the real vendor sites.
+2. **Real NSIS installers.** In a sandbox (`gupkg --sandbox <dir> install`) install the
+   obsidian and pidgin trackers of `tests/fixtures/registry2` after copying them into a test
+   registry with a real downloaded installer (`kind = "nsis"`). Confirm `App` holds the
+   application with no `$PLUGINSDIR` folder and no uninstaller, and that no installer code ran
+   (no new Start Menu or Programs entry). Why manual: no NSIS sample can be built offline and
+   running a vendor installer is never done by the tests.
+3. **Real self-extractor and tarball.** Do the same for firefox (`kind = "sfx"`, `subdir =
+   "core"`) and msys2 (`.tar.xz`, `strip = 1`). Confirm `firefox.exe` and `usr\bin\bash.exe`
+   start. Why manual: needs the real vendor archives.
+4. **A real Git source.** Run a tracker with the `git` provider against a public repository and
+   install the version it writes: the commit in `[source.git]` equals `git ls-remote`, and `App`
+   has no `.git` folder. Why manual: the tests use a scripted `git`.
+5. **Resumed download.** Start a large `check-updates` download, cut the network, restore it and
+   repeat the command: the progress starts from the earlier size (the cache folder holds one
+   `.part` file that disappears). Why manual: needs a real flaky connection.
