@@ -88,7 +88,12 @@ def defines_track(source: str) -> bool:
         for target in _assigned_names(node):
             if target == "track":
                 return True
-        stack.extend(child for child in ast.iter_child_nodes(node) if isinstance(child, ast.stmt))
+        # Descend into every statement-bearing child: if/for/while/with bodies and else branches,
+        # try bodies, except handlers and finally blocks, and match cases.
+        stack.extend(
+            child for child in ast.iter_child_nodes(node)
+            if isinstance(child, (ast.stmt, ast.ExceptHandler, ast.match_case))
+        )
     return False
 
 

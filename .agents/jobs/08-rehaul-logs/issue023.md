@@ -54,3 +54,10 @@ See the final report.
   serve the 0.17 `config-fix`; `gupkg_migrate.shortcuts` is the format 2 importer.
 - `metadata.py` keeps its own scalar renderer: it patches key lines into a user's commented 0.17 file, which a TOML writer
   cannot do; it leaves with `config-fix`.
+
+## Review round 1
+
+- Origin URLs: a repository or project page (GitHub, GitLab, .git) is dropped with a note; any other URL stays the download_url with its sha256; every dropped checksum, extractSubdir or ref is noted.
+- apply_plan is transactional: copy, atomic swap, launchers backed up, rename last, undo on failure.
+- Comments of the 0.17 files are not preserved in the converted file (the .bak keeps them); the tool says so.
+- settingsload checks the folder before reading, also for a missing file (nearest existing parent), and wraps read and decode errors.

@@ -26,6 +26,7 @@ import pytest
 from gupkg.model.manifest import ManifestKind, parse_manifest
 from gupkg.pkgcheck import check_directory
 from gupkg_migrate.cli import main
+from gupkg_migrate.package import apply_plan, plan_package
 
 REGISTRY = Path(__file__).parent / "fixtures" / "registry_017"
 
@@ -315,3 +316,140 @@ def test_current_junction_and_data_folders_are_not_converted_twice(tmp_path: Pat
     assert "1 directories" in capsys.readouterr().out
     assert (folder / "pkg.toml.bak").exists()
     assert not (tmp_path / "tool" / "data" / "pkg.toml.bak").exists()
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        pytest.param("https://sourceforge.net/projects/tool/files/latest/download", id="sourceforge-latest"),
+        pytest.param("https://downloads.example.org/get?id=3", id="query-string"),
+    ],
+)
+def test_a_download_url_without_a_file_extension_is_kept_with_its_checksum(tmp_path: Path, url: str, capsys: pytest.CaptureFixture[str]) -> None:
+    """An origin URL that is not a project page stays the download URL, with its checksum, and a note says to check it."""
+    manifest = f'description = "x"\n[origin]\nurl = "{url}"\nchecksum = "sha256:{"d" * 64}"\nextractSubdir = "inner"\n'
+    folder = write_package(tmp_path, "tool", "1.0", manifest, {"App/tool.exe": "x"})
+
+    assert main(["package", str(folder)]) == 0
+
+    converted = parse_manifest((folder / "pkg.toml").read_text(encoding="utf-8"))
+    assert converted.source.download_url == url and converted.source.shipped is False
+    assert converted.source.sha256 == "d" * 64 and converted.source.subdir == "inner"
+    assert "was kept as download_url" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("url", ["https://github.com/o/r", "https://gitlab.com/o/r", "https://example.org/o/r.git"])
+def test_a_repository_page_is_not_a_download_and_the_dropped_checksum_is_reported(tmp_path: Path, url: str, capsys: pytest.CaptureFixture[str]) -> None:
+    """A repository page becomes a shipped source, and the checksum and subdirectory that went with it are named in notes."""
+    manifest = f'description = "x"\n[origin]\nurl = "{url}"\nchecksum = "sha256:{"d" * 64}"\nextractSubdir = "inner"\n'
+    folder = write_package(tmp_path, "tool", "1.0", manifest, {"App/tool.exe": "x"})
+
+    assert main(["package", str(folder)]) == 0
+
+    output = capsys.readouterr().out
+    assert parse_manifest((folder / "pkg.toml").read_text(encoding="utf-8")).source.shipped is True
+    assert "repository or project page" in output
+    assert "checksum = 'sha256:" in output and "extractSubdir = 'inner' was dropped" in output
+
+
+def test_a_malformed_checksum_is_reported_not_dropped_silently(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A checksum that is not sha256:<hex> is dropped with a note."""
+    manifest = 'description = "x"\n[origin]\nurl = "https://example.org/a.zip"\nchecksum = "md5:abc"\n'
+    folder = write_package(tmp_path, "tool", "1.0", manifest, {"App/tool.exe": "x"})
+
+    assert main(["package", str(folder)]) == 0
+
+    assert "not sha256:<hex> and was dropped" in capsys.readouterr().out
+
+
+def test_a_placeholder_entry_for_the_own_version_reports_what_it_drops(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A version-only `[[origin.versions]]` entry with a checksum and subdirectory gives a shipped source and names both dropped keys."""
+    manifest = (
+        'description = "x"\n[[origin.versions]]\nversion = "1.0"\nchecksum = "sha256:' + "e" * 64 + '"\nextractSubdir = "inner"\n'
+    )
+    folder = write_package(tmp_path, "tool", "1.0", manifest, {"App/tool.exe": "x"})
+
+    assert main(["package", str(folder)]) == 0
+
+    output = capsys.readouterr().out
+    assert parse_manifest((folder / "pkg.toml").read_text(encoding="utf-8")).source.shipped is True
+    assert "checksum = 'sha256:" in output and "extractSubdir = 'inner' was dropped" in output
+
+
+def test_a_version_whose_source_was_an_origin_module_gets_the_hook_api_note(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A version directory whose populate script comes from an old `origin.module` is told to rewrite it for hook API 2."""
+    folder = write_package(tmp_path, "tool", "1.0", 'description = "x"\n[origin]\nmodule = "pkg.local/populate_app.py"\n',
+                           {"pkg.local/populate_app.py": "x = 1\n"})
+
+    assert main(["package", str(folder)]) == 0
+
+    assert "uses hook API 1; rewrite it for hook API 2" in capsys.readouterr().out
+
+
+def test_output_says_comments_are_not_preserved_and_the_backup_stays(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """The run states that comments of the 0.17 file are lost in the new file and that `pkg.toml.bak` stays in the directory."""
+    folder = write_package(tmp_path, "tool", "1.0", '# a comment\ndescription = "x"\n', {"App/tool.exe": "x"})
+
+    assert main(["package", str(folder)]) == 0
+
+    output = capsys.readouterr().out
+    assert "comments of the 0.17 file are not preserved" in output
+    assert "stays in the directory" in output
+    assert "# a comment" in (folder / "pkg.toml.bak").read_text(encoding="utf-8")
+
+
+def test_a_conflicting_pkg_local_file_fails_the_run_and_leaves_the_directory_unchanged(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A script that would be moved onto an existing `pkg.local` file stops the conversion with every file untouched."""
+    manifest = 'description = "x"\n[origin]\nscript = "tools/fetch.ps1"\n'
+    folder = write_package(tmp_path, "p", "1.0", manifest, {"tools/fetch.ps1": "new\n", "pkg.local/fetch.ps1": "existing\n"})
+    before = snapshot(tmp_path)
+
+    assert main(["package", str(folder)]) == 1
+
+    assert snapshot(tmp_path) == before
+    assert "already exists" in capsys.readouterr().err
+
+
+def test_a_conflict_that_appears_after_planning_is_refused_before_any_change(tmp_path: Path) -> None:
+    """A file created between planning and applying makes `apply_plan` refuse before it writes anything."""
+    manifest = 'description = "x"\n[origin]\nscript = "tools/fetch.ps1"\n'
+    folder = write_package(tmp_path, "p", "1.0", manifest, {"tools/fetch.ps1": "new\n"})
+    plan = plan_package(folder)
+    assert plan.ok
+    (folder / "pkg.local").mkdir(exist_ok=True)
+    (folder / "pkg.local" / "fetch.ps1").write_text("late\n", encoding="utf-8")
+    before = snapshot(tmp_path)
+
+    with pytest.raises(ValueError, match="already exists"):
+        apply_plan(plan)
+
+    assert snapshot(tmp_path) == before
+
+
+def test_a_failure_in_the_middle_of_applying_restores_the_original_directory(tmp_path: Path) -> None:
+    """When a late step fails (here a launcher path that is a folder), every earlier step is undone, including the rename."""
+    folder = write_package(tmp_path, "tool", "_bootstrap",
+                           'description = "x"\n[update.check]\nmode = "module"\n[update.payload]\nmode = "module"\n'
+                           '[origin]\nurl = "https://example.org/a.zip"\n',
+                           {"pkg.local/check_update.py": "x = 1\n", "pkg.local/unpack_app.py": "x = 1\n", "gupkg-tui.cmd": "old\n"})
+    plan = plan_package(folder)
+    assert plan.ok and plan.launchers == ["gupkg-tui.cmd"]
+    (folder / "gupkg-tui.cmd").unlink()
+    (folder / "gupkg-tui.cmd").mkdir()
+    before = snapshot(tmp_path)
+
+    with pytest.raises(OSError):
+        apply_plan(plan)
+
+    assert snapshot(tmp_path) == before
+    assert not (tmp_path / "tool" / "_check_updates").exists()
+
+
+def test_an_existing_launcher_is_backed_up_before_it_is_replaced(tmp_path: Path) -> None:
+    """A hand-edited `install.cmd` is kept as `install.cmd.bak` when the 1.0 launcher replaces it."""
+    folder = write_package(tmp_path, "tool", "1.0", 'description = "x"\n', {"App/tool.exe": "x", "install.cmd": "my own\n"})
+
+    assert main(["package", str(folder)]) == 0
+
+    assert (folder / "install.cmd.bak").read_text(encoding="utf-8") == "my own\n"
+    assert "gupkg.cmd" in (folder / "install.cmd").read_text(encoding="ascii")

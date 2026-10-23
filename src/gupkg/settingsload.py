@@ -157,17 +157,27 @@ def load_settings(
 
     def read_layer(name: str, path: Path, *, required: bool = False) -> None:
         """Read one file layer into *layers*, or record why it was not applied."""
-        text = read_text(path)
+        # An elevated or system-mode run checks the folder before it reads anything from it. A
+        # folder that does not exist yet is judged by its nearest existing parent.
+        if strict:
+            folder = path.parent
+            while not folder.exists() and folder.parent != folder:
+                folder = folder.parent
+            try:
+                trust_check(folder)
+            except UntrustedLocationError as exc:
+                raise SettingsError(f"Refusing the {name} settings {path} for this run: {exc}") from exc
+
+        # Any failure to read is an error, never a silently skipped layer.
+        try:
+            text = read_text(path)
+        except (OSError, UnicodeDecodeError) as exc:
+            raise SettingsError(f"cannot read the {name} settings {path}: {exc}") from exc
         if text is None:
             if required:
                 raise SettingsError(f"the settings file {path} does not exist")
             reports.append(LayerReport(name, path, "missing"))
             return
-        if strict:
-            try:
-                trust_check(path.parent)
-            except UntrustedLocationError as exc:
-                raise SettingsError(f"Refusing the {name} settings {path} for this run: {exc}") from exc
         try:
             data = tomllib.loads(text)
         except tomllib.TOMLDecodeError as exc:

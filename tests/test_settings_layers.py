@@ -288,6 +288,44 @@ def test_roots_must_be_absolute_distinct_and_not_nested(world: World) -> None:
             world.load()
 
 
+@pytest.mark.parametrize("flags", [{"elevated": True}, {"system_mode": True}], ids=["elevated", "system-mode"])
+def test_the_folder_is_checked_before_the_file_is_read(world: World, flags: dict) -> None:
+    """In elevated and system-mode runs a file in an untrusted folder is refused without having been read."""
+    system_file = world.system_file('schema = 3\n[ui]\ncolor = "never"\n')
+
+    def untrusted(folder: Path) -> None:
+        raise UntrustedLocationError("writable by Users")
+
+    with pytest.raises(SettingsError, match="Refusing"):
+        world.load(trust=untrusted, **flags)
+
+    assert system_file not in world.reads
+
+
+def test_a_missing_layer_in_an_untrusted_folder_is_still_refused_in_strict_runs(world: World) -> None:
+    """The folder check covers a settings file that does not exist yet, judged by its nearest existing parent."""
+    def untrusted(folder: Path) -> None:
+        raise UntrustedLocationError("writable by Users")
+
+    with pytest.raises(SettingsError, match="Refusing"):
+        world.load(trust=untrusted, system_mode=True)
+
+
+def test_unreadable_and_undecodable_files_are_errors_not_skipped_layers(world: World) -> None:
+    """An OS error other than 'not found' and a file that is not UTF-8 both stop the run with a named error."""
+    world.user_file("schema = 3\n")
+    settings_file(world.user).write_bytes(b"schema = 3\n# \xff\xfe\n")
+
+    with pytest.raises(SettingsError, match="cannot read the user settings"):
+        world.load()
+
+    def broken(path: Path) -> str | None:
+        raise PermissionError("denied")
+
+    with pytest.raises(SettingsError, match="cannot read the app settings"):
+        load_settings(env=world.env, elevated=False, system_mode=False, app_dir=world.app, read_text=broken)
+
+
 def test_invalid_toml_names_the_file(world: World) -> None:
     """A file that is not TOML is an error that names the layer and the file."""
     world.user_file("schema = [")

@@ -121,6 +121,8 @@ def _report_package(plan: PackagePlan, *, check: bool) -> None:
     print(f"[{state}] {name}{renamed}")
     for error in plan.errors:
         print(f"  error: {error}", file=sys.stderr)
+    if plan.ok and not plan.already_converted:
+        print("  note: comments of the 0.17 file are not preserved in the converted file; pkg.toml.bak keeps them")
     for note in plan.notes:
         print(f"  note: {note}")
     for source, destination in plan.moves:

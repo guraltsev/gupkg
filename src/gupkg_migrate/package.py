@@ -20,6 +20,7 @@ import re
 import shutil
 import tempfile
 import tomllib
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -45,6 +46,7 @@ LEGACY_TRACKER_DIR_NAME = "_bootstrap"
 # File types that make an ``[origin] url`` a real artifact rather than a web page.
 _ARTIFACT = re.compile(r"\.(zip|7z|tar|tgz|txz|tbz2|gz|xz|bz2|exe|msi)(\?.*)?$|/releases/download/|/archive/", re.IGNORECASE)
 _GITHUB_REPO = re.compile(r"https?://(?:www\.)?github\.com/([^/\s]+)/([^/\s#?]+?)(?:\.git)?/?$", re.IGNORECASE)
+_GITLAB_REPO = re.compile(r"https?://(?:www\.)?gitlab\.com/[^/\s]+/[^/\s#?]+(?:/[^/\s#?]+)*?/?$", re.IGNORECASE)
 _SHA256 = re.compile(r"sha256:([0-9A-Fa-f]{64})")
 
 
@@ -246,6 +248,8 @@ def _local_script(value: str, plan: PackagePlan, directory: Path, context: str) 
     if normal.startswith("/") or ".." in normal.split("/") or re.match(r"[A-Za-z]:", normal):
         raise _Unconvertible(f"{context} script {value!r} is not a path inside the version directory")
     destination = f"pkg.local/{Path(normal).name}"
+    if (directory / destination).exists():
+        raise _Unconvertible(f"{context} script {normal} would be moved to {destination}, which already exists")
     plan.moves.append((normal, destination))
     plan.notes.append(f"moved {context} script {normal} to {destination}: populate scripts live in pkg.local")
     if not (directory / normal).is_file():
@@ -254,35 +258,55 @@ def _local_script(value: str, plan: PackagePlan, directory: Path, context: str) 
 
 
 def _origin_source(origin: dict[str, Any], plan: PackagePlan, directory: Path, context: str) -> dict[str, Any] | None:
-    """Map one 0.17 origin (or history entry) to a ``[source]`` table, or ``None`` when it names no artifact."""
+    """Map one 0.17 origin (or history entry) to a ``[source]`` table, or ``None`` when it names no artifact.
+
+    Every key that is not carried over is reported in the plan's notes; nothing is dropped silently.
+    """
     notes = plan.notes
     mode = origin.get("mode")
-    if mode == "git":
-        source: dict[str, Any] = {"download_url": origin["url"], "kind": "git", "shipped": False}
-        source["git"] = {"ref": origin.get("ref") or "refs/heads/main"}
-        return source
-    if origin.get("module"):
-        return {"script": _local_script(origin["module"], plan, directory, context), "shipped": False}
-    if origin.get("script"):
-        return {"script": _local_script(origin["script"], plan, directory, context), "shipped": False}
     url = origin.get("url")
-    if not url:
-        return None
-    if not _ARTIFACT.search(url):
-        notes.append(f"{context} url {url} is a web page, not an artifact: not used as a download_url")
-        return None
-    source = {"download_url": url, "shipped": False}
-    checksum = origin.get("checksum")
-    if checksum:
-        match = _SHA256.fullmatch(checksum)
-        if match:
-            source["sha256"] = match.group(1).lower()
-            source["sha256_from"] = "manual"
-        else:
-            notes.append(f"{context} checksum {checksum!r} is not sha256:<hex> and was dropped")
-    if origin.get("extractSubdir"):
-        source["subdir"] = origin["extractSubdir"]
+    source: dict[str, Any] | None = None
+    consumed: set[str] = set()
+    if mode == "git":
+        source = {"download_url": url, "kind": "git", "shipped": False, "git": {"ref": origin.get("ref") or "refs/heads/main"}}
+        consumed.add("ref")
+    elif origin.get("module") or origin.get("script"):
+        script = origin.get("module") or origin.get("script")
+        source = {"script": _local_script(script, plan, directory, context), "shipped": False}
+        if origin.get("module"):
+            notes.append(f"{context} module {source['script']} uses hook API 1; rewrite it for hook API 2 (issue 026)")
+    elif url and _is_project_page(url):
+        # A repository or project page is information, not an artifact.
+        notes.append(f"{context} url {url} is a repository or project page, not an artifact: not used as a download_url")
+    elif url:
+        # Any other address is the artifact itself, whatever its shape (redirects, query strings).
+        source = {"download_url": url, "shipped": False}
+        consumed.update({"checksum", "extractSubdir"})
+        checksum = origin.get("checksum")
+        if checksum:
+            match = _SHA256.fullmatch(checksum)
+            if match:
+                source["sha256"] = match.group(1).lower()
+                source["sha256_from"] = "manual"
+            else:
+                notes.append(f"{context} checksum {checksum!r} is not sha256:<hex> and was dropped")
+        if origin.get("extractSubdir"):
+            source["subdir"] = origin["extractSubdir"]
+        if not _ARTIFACT.search(url):
+            notes.append(f"{context} url {url} was kept as download_url; check that it names the artifact itself")
+
+    # Report every key that did not make it into [source].
+    for key in ("checksum", "extractSubdir", "ref"):
+        if origin.get(key) and key not in consumed:
+            notes.append(f"{context} {key} = {origin[key]!r} was dropped: no [source] was written that it belongs to")
     return source
+
+
+def _is_project_page(url: str) -> bool:
+    """Return whether *url* is a repository or project page rather than a downloadable artifact."""
+    if _ARTIFACT.search(url):
+        return False
+    return bool(_GITHUB_REPO.match(url) or _GITLAB_REPO.match(url) or re.search(r"\.git/?$", url))
 
 
 def _convert_version(new: dict[str, Any], origin: dict[str, Any], update: dict[str, Any] | None,
@@ -441,12 +465,25 @@ def _convert_components(new: dict[str, Any], old: dict[str, Any], notes: list[st
 # ---------------------------------------------------------------------------
 
 
-def apply_plan(plan: PackagePlan, *, backup: bool = True) -> list[str]:
-    """Write a plan's changes to disk.
+def _numbered_backup(path: Path) -> Path:
+    """Return the first free ``<name>.bak``, ``<name>.bak.1``, ... beside *path*."""
+    destination = path.with_name(path.name + ".bak")
+    counter = 0
+    while destination.exists():
+        counter += 1
+        destination = path.with_name(f"{path.name}.bak.{counter}")
+    return destination
 
-    The backup and the moved scripts come first, then the new ``pkg.toml`` replaces the
-    old one atomically, then the launchers are written and a ``_bootstrap`` is renamed to
-    ``_check_updates``.
+
+def apply_plan(plan: PackagePlan, *, backup: bool = True) -> list[str]:
+    """Write a plan's changes to disk, or leave the directory as it was.
+
+    Everything that can fail is checked first. Then each step records how to undo itself:
+    a backup of ``pkg.toml`` (and of any launcher about to be replaced), copies of moved
+    scripts, the new ``pkg.toml`` written under a temporary name and swapped in atomically,
+    the launchers, and last the ``_bootstrap`` rename. If any step fails, the steps already
+    done are undone in reverse order and the error is raised. Only after everything succeeded
+    are the originals of moved scripts removed.
 
     Parameters
     ----------
@@ -454,6 +491,7 @@ def apply_plan(plan: PackagePlan, *, backup: bool = True) -> list[str]:
         A plan from ``plan_package``.
     backup : bool, optional
         Keep the original ``pkg.toml`` as ``pkg.toml.bak`` (``.bak.1``, ... when taken).
+        Launchers that exist are always backed up the same way before being replaced.
 
     Returns
     -------
@@ -463,35 +501,77 @@ def apply_plan(plan: PackagePlan, *, backup: bool = True) -> list[str]:
     Raises
     ------
     ValueError
-        If the plan has errors, or ``_check_updates`` already exists beside ``_bootstrap``.
+        If the plan has errors, ``_check_updates`` already exists beside ``_bootstrap``, or a
+        moved script would overwrite a file.
+    OSError
+        If a step failed; the directory has been restored.
     """
     if not plan.ok:
         raise ValueError("refusing to apply a plan with validation errors")
     if plan.already_converted:
         return []
+
+    # Refuse before touching anything when the result would collide with existing files.
     if plan.target != plan.directory and plan.target.exists():
         raise ValueError(f"{plan.target} already exists; cannot rename {plan.directory.name}")
+    for _source, destination in plan.moves:
+        if (plan.directory / destination).exists():
+            raise ValueError(f"{destination} already exists; refusing to overwrite it with a moved script")
+
     done: list[str] = []
+    undo: list[Callable[[], None]] = []
     manifest_path = plan.directory / "pkg.toml"
-    if backup:
-        destination = manifest_path.with_name("pkg.toml.bak")
-        counter = 0
-        while destination.exists():
-            counter += 1
-            destination = manifest_path.with_name(f"pkg.toml.bak.{counter}")
-        shutil.copy2(manifest_path, destination)
-        done.append(f"backup {destination}")
-    for source, destination in plan.moves:
-        target = plan.directory / destination
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(plan.directory / source), str(target))
-        done.append(f"moved {source} to {destination}")
-    write_text_atomic(manifest_path, plan.new_text)
-    done.append(f"wrote {manifest_path}")
-    if plan.launchers:
-        for path in write_launchers(plan.directory, tuple(plan.launchers)):
+    original = manifest_path.read_bytes()
+    try:
+        # The backup of the old pkg.toml stays in the directory; comments are only kept there.
+        if backup:
+            destination = _numbered_backup(manifest_path)
+            shutil.copy2(manifest_path, destination)
+            undo.append(lambda path=destination: path.unlink(missing_ok=True))
+            done.append(f"backup {destination.name} (it keeps the comments of the old file and stays in the directory)")
+
+        # Scripts are copied, not moved, until everything else has worked.
+        for source, destination in plan.moves:
+            target = plan.directory / destination
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(plan.directory / source, target)
+            undo.append(lambda path=target: path.unlink(missing_ok=True))
+            done.append(f"moved {source} to {destination}")
+
+        # The new pkg.toml is written under a temporary name and swapped in atomically.
+        write_text_atomic(manifest_path, plan.new_text)
+        undo.append(lambda: manifest_path.write_bytes(original))
+        done.append(f"wrote {manifest_path}")
+
+        # Launchers that exist are backed up before they are replaced.
+        for name in plan.launchers:
+            path = plan.directory / name
+            previous = path.read_bytes() if path.is_file() else None
+            if previous is not None:
+                saved = _numbered_backup(path)
+                saved.write_bytes(previous)
+                undo.append(lambda p=saved: p.unlink(missing_ok=True))
+                done.append(f"backup {saved.name}")
+            write_launchers(plan.directory, (name,))
+            undo.append(lambda p=path, old=previous: p.write_bytes(old) if old is not None else p.unlink(missing_ok=True))
             done.append(f"wrote {path}")
-    if plan.target != plan.directory:
-        plan.directory.rename(plan.target)
-        done.append(f"renamed {plan.directory.name} to {plan.target.name}")
+
+        # Renaming the folder is last: it is the one step that changes the directory's own name.
+        if plan.target != plan.directory:
+            plan.directory.rename(plan.target)
+            undo.append(lambda: plan.target.rename(plan.directory))
+            done.append(f"renamed {plan.directory.name} to {plan.target.name}")
+    except BaseException:
+        # Undo in reverse order; the original directory is recoverable.
+        for step in reversed(undo):
+            try:
+                step()
+            except OSError:
+                pass
+        raise
+
+    # Everything worked: now the originals of moved scripts can go.
+    base = plan.target
+    for source, _destination in plan.moves:
+        (base / source).unlink(missing_ok=True)
     return done

@@ -141,6 +141,20 @@ def test_pkg_local_module_that_cannot_be_parsed_fails_closed(tmp_path: Path) -> 
     assert any("pkg.local/broken.py cannot be checked" in e for e in report.errors)
 
 
+@pytest.mark.parametrize(
+    "code",
+    [
+        pytest.param("try:\n    import fast\nexcept ImportError:\n    def track(context):\n        return None\n", id="except-handler"),
+        pytest.param("import sys\nmatch sys.platform:\n    case 'win32':\n        def track(context):\n            pass\n", id="match-case"),
+        pytest.param("try:\n    pass\nfinally:\n    track = 1\n", id="finally"),
+        pytest.param("for _ in []:\n    pass\nelse:\n    def track(c):\n        pass\n", id="loop-else"),
+    ],
+)
+def test_track_defined_in_handlers_cases_and_else_branches_is_found(code: str) -> None:
+    """A `track` defined inside an except handler, a match case, a finally block or an else branch counts as defined."""
+    assert defines_track(code)
+
+
 def test_modules_that_merely_mention_track_are_fine(tmp_path: Path) -> None:
     """A helper that calls or names `track` inside a function, or a method called `track`, does not count as defining it."""
     code = "def run(context):\n    track = 1\n    return track\n\nclass A:\n    def track(self):\n        pass\n"
