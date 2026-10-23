@@ -110,6 +110,28 @@ def identity_from_path(raw_path: Path, system: System) -> Tuple[PackageIdentity,
     return PackageIdentity.from_version_path(package_root, local.versions[-1].path, is_current=False), False
 
 
+def installed_version(package_root: Path, system: System) -> str | None:
+    """Return the active version of a package root for the 0.17 commands, from its catalog ``PackageView``.
+
+    Parameters
+    ----------
+    package_root : Path
+        The package root.
+    system : System
+        Boundary used to read ``current``.
+
+    Returns
+    -------
+    str or None
+        The version ``current`` activates, or ``None`` when the package is not installed or ``current`` is unusable.
+    """
+    try:
+        view = resolve_package_path(package_root, system).view
+    except CatalogError:
+        return None
+    return view.installed.version if view.installed is not None else None
+
+
 def update_current_junction_if_needed(
     identity: PackageIdentity, system: System, *, allow_downgrade: bool = False
 ) -> bool:

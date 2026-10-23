@@ -48,7 +48,9 @@ from .core import (
     compare_package_versions,
     read_toml_file,
 )
+from .catalog.catalog import CatalogError, resolve_package_path
 from .catalog.local import read_current
+from .model.state import CurrentState
 from .layout import compute_scope_paths
 from .registry import OFFICIAL_SOURCE
 from .tomlio import dumps
@@ -471,9 +473,15 @@ def _target_from_catalog(
     scope: Scope, package: DiscoveredPackage, complete: bool, system: System
 ) -> ManagedTarget:
     """Describe one discovered package's activation, versions, and health from the catalog's ``current`` reading."""
-    current = read_current(package.root, system)
+    diagnostics = list(package.diagnostics)
+    try:
+        view = resolve_package_path(package.root, system).view
+        current = view.local.current
+    except CatalogError as exc:
+        current = CurrentState("dangling", problem=str(exc))
     activation = {"valid": "installed", "absent": "not-installed"}.get(current.status, "broken")
-    diagnostics = list(package.diagnostics) + ([current.problem] if current.problem else [])
+    if current.problem:
+        diagnostics.append(current.problem)
 
     # Validate every manifest through the package configuration boundary so
     # inventory health reflects real package semantics, not file presence.

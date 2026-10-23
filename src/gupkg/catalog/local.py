@@ -301,7 +301,7 @@ def read_adhoc_roots(data_dir: Path) -> tuple[tuple[AdhocRoot, ...], str | None]
         return (), None
     try:
         return parse_state(read_toml(state)), None
-    except (OSError, tomllib.TOMLDecodeError, RecordError) as exc:
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError, RecordError) as exc:
         return (), f"Cannot read {state}: {exc}"
 
 

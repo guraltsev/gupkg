@@ -46,7 +46,7 @@ from pathlib import Path
 from ..core import ConfigValidationError
 from ..model.state import RegistryEntry, RegistryTracker, RegistryVersion
 from ..model.version import MANIFEST_NAME, TRACKER_DIR_NAME, compare_versions, is_version_name
-from ..pkgcheck import check_directory
+from ..pkgcheck import CheckReport, check_directory
 from ..registry import (
     archive_revision,
     archive_url,
@@ -67,6 +67,7 @@ REGISTRY_FILE_NAME = "_registry.toml"
 # The schema number of the per-revision index, so an index of another layout is ignored.
 INDEX_SCHEMA = 1
 _SHA256 = re.compile(r"[0-9a-f]{64}")
+_REVISION = re.compile(r"[0-9a-f]{40}")
 
 
 @dataclass(frozen=True)
@@ -145,11 +146,16 @@ def cache_state(cache_dir: Path, system: System) -> CacheState:
         return CacheState(Path(cache_dir))
     try:
         values = read_toml(state_path)
-    except (OSError, tomllib.TOMLDecodeError):
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
         return CacheState(Path(cache_dir))
+
+    # The revision names a folder below ``trees``, so only a 40-digit hexadecimal revision is accepted.
+    revision = values.get("revision")
+    if not isinstance(revision, str) or not _REVISION.fullmatch(revision):
+        revision = None
     return CacheState(
         Path(cache_dir),
-        revision=values.get("revision") or None,
+        revision=revision,
         source=values.get("source") or None,
         synchronized_at=values.get("synchronized_at") or None,
         last_failure=values.get("last_failure") or None,
@@ -236,7 +242,7 @@ def build_snapshot(name: str, tree: Path, revision: str | None) -> RegistrySnaps
         settings = read_toml(settings_path)
     except FileNotFoundError:
         raise ConfigValidationError(f"{REGISTRY_FILE_NAME} is missing: unsupported registry format") from None
-    except (OSError, tomllib.TOMLDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
         raise ConfigValidationError(f"Cannot read {REGISTRY_FILE_NAME}: {exc}") from exc
     if settings.get("format") != REGISTRY_FORMAT:
         raise ConfigValidationError(
@@ -293,13 +299,13 @@ def _build_entry(
         if not child.is_dir() or not (child / MANIFEST_NAME).is_file():
             continue
         if child.name == TRACKER_DIR_NAME:
-            report = check_directory(child)
-            if report.ok:
-                tracker = RegistryTracker(child, tree_hash(child))
+            report, digest = _check(child)
+            if report.ok and digest is not None:
+                tracker = RegistryTracker(child, digest)
             else:
                 problems.extend(f"{name}/{TRACKER_DIR_NAME}: {message}; tracker dropped" for message in report.errors)
         elif is_version_name(child.name):
-            report = check_directory(child)
+            report, _ = _check(child)
             if report.ok:
                 versions.append(RegistryVersion(
                     child.name, child, fingerprints.get(f"{name}/{child.name}".casefold()), manifest_text_hash(child / MANIFEST_NAME)
@@ -310,6 +316,14 @@ def _build_entry(
     if not versions and tracker is None:
         return None, [*problems, f"{name}: no valid version or tracker; skipped"]
     return RegistryEntry(registry, name, revision, folder, tuple(versions), tracker), problems
+
+
+def _check(directory: Path) -> tuple[CheckReport, str | None]:
+    """Validate a registry directory and hash it; a read failure is an error of the report, not an exception."""
+    try:
+        return check_directory(directory), tree_hash(directory)
+    except (OSError, ValueError) as exc:
+        return CheckReport(directory, None, errors=(f"cannot be read ({exc})",)), None
 
 
 def _unsafe_entry(folder: Path) -> str | None:
@@ -374,6 +388,9 @@ def _read_index(name: str, tree: Path, revision: str | None) -> RegistrySnapshot
             return None
         entries: dict[str, RegistryEntry] = {}
         for item in data["entry"]:
+            names = [item["name"], *(row["name"] for row in item["version"])]
+            if not all(isinstance(name_, str) and is_version_name(name_) for name_ in names):
+                return None
             folder = tree / "pkgs" / item["name"]
             tracker = None
             if "tracker_sha256" in item:

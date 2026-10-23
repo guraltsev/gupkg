@@ -543,7 +543,11 @@ class PackageView:
 
     @property
     def status(self) -> str:
-        """Return the status of design 5.2: ``available``, ``local``, ``installed``, ``outdated`` or ``broken``."""
+        """Return the status of design 5.2: ``available``, ``local``, ``installed``, ``outdated`` or ``broken``.
+
+        A valid ``current`` whose populated active version fails format 2 validation is still
+        ``installed``: ``invalid`` belongs to that version alone (design 5.2) and never blocks the package.
+        """
         if self.local is None:
             return "available"
         if self.broken_reasons:

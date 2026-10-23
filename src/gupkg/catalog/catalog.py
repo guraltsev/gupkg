@@ -15,7 +15,7 @@ Build a catalog with ``Catalog.from_settings(settings, system, env)`` and call `
 ``list`` and ``resolve``. ``resolve_package_path(path, system)`` resolves a path with no
 settings, for callers that have only a ``System``. Errors are ``CatalogError`` subclasses
 (``NotFound``, ``AmbiguousSelector``, ``NoVersionKnown``, ``NotInstalled``, ``NeedsRepair``,
-``UntrustedLocation``).
+``NoValidVersion``, ``UntrustedLocation``).
 
 Implementation Approach
 -----------------------
@@ -92,6 +92,15 @@ class NoVersionKnown(CatalogError):
         """Build the message of design 5.3 for package *name*."""
         self.name = name
         super().__init__(f"no version known yet; run `gupkg check-updates {name}`")
+
+
+class NoValidVersion(CatalogError):
+    """Report that a package has version directories but none of them is valid."""
+
+    def __init__(self, name: str, problems: Sequence[str]) -> None:
+        """Build the message from the problems of the invalid versions."""
+        self.name = name
+        super().__init__(f"'{name}' has no valid version; see the invalid version problems: {'; '.join(problems)}")
 
 
 class NotInstalled(CatalogError):
@@ -332,7 +341,12 @@ class Catalog:
                 continue
             roots.append(Root(path, mode))
 
-            # Ad-hoc roots recorded in this root's data directory (design 5.4).
+            # Ad-hoc roots recorded in this root's data directory (design 5.4). An elevated run
+            # reads that file only when the data directory is admin-only.
+            reason = system.directory_untrusted_reason(path / DATA_DIR_NAME) if is_elevated else None
+            if reason is not None:
+                warnings.append(f"Did not read {path / DATA_DIR_NAME / 'state.toml'} in an elevated run: {reason}")
+                continue
             adhoc, problem = read_adhoc_roots(path / DATA_DIR_NAME)
             if problem:
                 warnings.append(problem)
@@ -402,10 +416,15 @@ class Catalog:
         views: list[PackageView] = []
         roots = self._trusted_roots()
         warnings = list(self.warnings)
+        seen: set[str] = set()
         for root in roots:
             scan = scan_root(root)
             warnings.extend(scan.diagnostics)
-            views.extend(self._view(root, package, path) for package, path in scan.packages)
+            for package, path in scan.packages:
+                # A package that an ad-hoc entry names again inside a configured root is listed once.
+                if canonical_path(path) not in seen:
+                    seen.add(canonical_path(path))
+                    views.append(self._view(root, package, path))
 
         # The same name in the system and the user root is reported once.
         by_name: dict[str, set[str]] = {}
@@ -521,6 +540,8 @@ class Catalog:
         NoVersionKnown
             If there is no version at all (a package with only a tracker): the caller reports
             ``no version known yet; run `gupkg check-updates <name>``` and makes no request.
+        NoValidVersion
+            If the package has version directories and every one of them is invalid.
         """
         if view.installed is not None:
             return Candidate(view.installed.version, "local", view.installed.path)
@@ -530,6 +551,10 @@ class Catalog:
             return local[0]
         if found:
             return found[0]
+        if view.local is not None and view.local.versions:
+            raise NoValidVersion(
+                view.name, [f"{item.name}: {', '.join(item.problems)}" for item in view.local.versions if item.problems]
+            )
         raise NoVersionKnown(view.name)
 
     def update_candidate(self, view: PackageView) -> Candidate | None:
@@ -661,13 +686,14 @@ class Catalog:
         """Return the roots that may be read; an elevated run reads only admin-only system roots."""
         if self._trusted is not None:
             return self._trusted
+        configured_first = tuple(sorted(self.roots, key=lambda root: root.adhoc))
         if not self.elevated:
-            self._trusted = self.roots
+            self._trusted = configured_first
             return self._trusted
 
         # An elevated run never reads a folder that standard users can modify (design 9.4, D31).
         usable: list[Root] = []
-        for root in self.roots:
+        for root in configured_first:
             reason = self.system.directory_untrusted_reason(root.path)
             if reason is None and root.mode == "system":
                 usable.append(root)
@@ -683,11 +709,13 @@ class Catalog:
     def _matches_for(self, name: str, mode: str | None) -> list[tuple[Root, str, Path]]:
         """Return ``(root, name, path)`` for every trusted root that holds a local package called *name*."""
         found: list[tuple[Root, str, Path]] = []
+        seen: set[str] = set()
         for root in self._trusted_roots():
             if mode is not None and root.mode != mode:
                 continue
             path = _package_path(root, name)
-            if path is not None and _is_local_package(path):
+            if path is not None and _is_local_package(path) and canonical_path(path) not in seen:
+                seen.add(canonical_path(path))
                 found.append((root, name, path))
         return found
 
@@ -709,6 +737,8 @@ class Catalog:
         warnings: list[str] = []
         if read.problem:
             problems.append(read.problem)
+        if self.elevated and record is not None and record.mode not in (None, "system"):
+            problems.append(f"the install record says mode {record.mode}; an elevated run acts only on system packages")
         if record is not None and record.mode is not None and root.mode is not None and record.mode != root.mode:
             problems.append(f"the install record says mode {record.mode}, but the package lies in a {root.mode} root")
 
@@ -846,10 +876,8 @@ class Catalog:
         else:
             raise NotFound(f"Path does not exist: {candidate}")
         if self.elevated:
-            reason = self.system.directory_untrusted_reason(package_root)
-            if reason is not None:
-                raise UntrustedLocation(f"Refusing {package_root} in an elevated run: {reason}")
-        if not _is_local_package(package_root):
+            self._require_system_path(package_root, parsed.mode)
+        if not _is_local_package(package_root, allow_link=not self.elevated):
             raise NotFound(f"Not a package root, version directory or current: {candidate}")
 
         # The root decides the mode: the configured root that contains the path, else the record, else auto.
@@ -867,9 +895,26 @@ class Catalog:
                 version = valid[-1].name if valid else None
         return Resolved(view, version, via_current, is_tracker)
 
+    def _require_system_path(self, package_root: Path, mode: str | None) -> None:
+        """Refuse, in an elevated run, a path that is not in the system root or a trusted ad-hoc root (D31).
+
+        A catalog with no roots (``resolve_package_path``) can only ask whether the folder is admin-only.
+        """
+        if mode not in (None, "system"):
+            raise UntrustedLocation(f"Refusing mode {mode} in an elevated run: an elevated gupkg acts only on system packages")
+        reason = self.system.directory_untrusted_reason(package_root)
+        if reason is not None:
+            raise UntrustedLocation(f"Refusing {package_root} in an elevated run: {reason}")
+        if self.roots and not any(
+            (root.single and canonical_path(root.path) == canonical_path(package_root))
+            or (not root.single and is_inside(package_root, root.path))
+            for root in self._trusted_roots()
+        ):
+            raise UntrustedLocation(f"Refusing {package_root} in an elevated run: it is not in the system root")
+
     def _root_of(self, package_root: Path, mode: str | None) -> tuple[Root, str]:
         """Return the root that holds *package_root* and the package's name in it."""
-        for root in self.roots:
+        for root in self._trusted_roots():
             if root.single and canonical_path(root.path) == canonical_path(package_root):
                 return replace(root, mode=mode or root.mode), package_root.name
             if not root.single and is_inside(package_root, root.path):
@@ -922,10 +967,10 @@ def _package_path(root: Root, name: str) -> Path | None:
     return root.path.joinpath(*parts)
 
 
-def _is_local_package(path: Path) -> bool:
-    """Return whether *path* is a real folder (not a link) that is a package root."""
+def _is_local_package(path: Path, *, allow_link: bool = False) -> bool:
+    """Return whether *path* is a package root; a link is accepted only for an explicit path (*allow_link*)."""
     try:
-        return path.is_dir() and not is_reparse_point(path) and looks_like_package(path)
+        return path.is_dir() and (allow_link or not is_reparse_point(path)) and looks_like_package(path)
     except OSError:
         return False
 

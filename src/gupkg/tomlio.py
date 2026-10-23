@@ -69,6 +69,8 @@ def read_toml(path: Path) -> dict[str, Any]:
     ------
     OSError
         If the file cannot be read.
+    UnicodeDecodeError
+        If the file is not valid UTF-8.
     tomllib.TOMLDecodeError
         If the file is not valid TOML.
     """

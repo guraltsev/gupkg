@@ -52,8 +52,7 @@ from .core import (
     read_toml_file,
     write_text_atomic,
 )
-from .catalog.local import read_current
-from .layout import identity_from_path
+from .layout import identity_from_path, installed_version
 from .legacy_to_gupkg_toml import pick_legacy_metadata_files
 from .manager import (
     ManagedTarget,
@@ -386,13 +385,12 @@ def _command_package_record(path: Path, scope: Scope, system: System) -> dict[st
         identity, _ = identity_from_path(path, system)
     except (OSError, ValueError):
         return {"path": _path_text(path), "scope": scope.value}
-    current = read_current(identity.package_root, system)
     return {
         "path": _path_text(identity.version_path),
         "identity": identity.name,
         "scope": scope.value,
         "version": identity.version_string,
-        "installed_version": current.version,
+        "installed_version": installed_version(identity.package_root, system),
     }
 
 
@@ -411,8 +409,7 @@ def package_summary(path_text: str, system: System) -> PackageSummary:
         identity, _ = identity_from_path(Path(path_text or ".").expanduser(), system)
         config_path = identity.version_path / "pkg.toml"
         config = read_toml_file(config_path) if config_path.exists() else {}
-        current = read_current(identity.package_root, system)
-        installed = current.version if current.status == "valid" else "not installed"
+        installed = installed_version(identity.package_root, system) or "not installed"
         conflicts = check_metadata_consistency(identity, config)
         description = config.get("description", "")
         return PackageSummary(

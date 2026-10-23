@@ -9,8 +9,9 @@ New: `src/gupkg/model/state.py` (pure data: `PackageView`, `LocalState`, `Instal
 install record and `state.toml` parsing, status derivation, `known_candidates`), `src/gupkg/catalog/{__init__,local,record,registry,catalog}.py`.
 Changed (0.17 call sites, issue scope item 7): `layout.py` (the three `resolve_input_path` / `inspect_current` /
 `CurrentInspection` definitions are gone; `identity_from_path` is a thin 0.17 adapter over the catalog), `commands.py`
-(`_package_record` -> `_command_package_record`, `describe_package` -> `package_summary`), `manager.py`
-(`_managed_target` -> `_target_from_catalog`), `gupkg.py`, `tui.py`, `manager_tui.py`, `registry.py` (four private
+(`_package_record` -> `_command_package_record`, `describe_package` -> `package_summary`; both take the active version from
+the catalog's `PackageView` through `layout.installed_version`), `manager.py` (`_managed_target` -> `_target_from_catalog`,
+which reads `current` and the versions from `resolve_package_path(...).view.local`), `gupkg.py`, `tui.py`, `manager_tui.py`, `registry.py` (four private
 transport helpers made public so the new registry module shares them), design 12 and 17 (module list, `[fingerprints]`).
 Tests: `tests/catalog_support.py` (builders), `test_catalog_cases.py` (design 5.3 table), `test_catalog_state.py`,
 `test_catalog_security.py`, `test_catalog_registry.py`, `test_catalog_selectors.py`, `test_install_record.py`;
@@ -43,6 +44,29 @@ changed `test_package_root_resolution.py`, `test_gupkg_cli_behaviors.py` (two te
 - **0.17 behaviour that stays**: the manager's per-manifest health still uses 0.17's `read_runtime_config` (format 1)
   inside `_target_from_catalog`: validating format 1 through the format 2 model would mark every 0.17 package invalid.
   Both 0.17 tests that asserted "multiple version directories" asserted the defect and now assert the fix.
+
+## Review round 1
+
+- Item 2 decision: the issue text (scope item 7) says the five functions "are replaced by catalog calls" now, so I
+  routed them through `PackageView` for real instead of reverting the renames: `_command_package_record` and
+  `package_summary` read the installed version from the view (`layout.installed_version`), `_target_from_catalog` reads
+  `current` and the version list from the view's `LocalState`; `identity_from_path` is a thin adapter that builds the
+  0.17 `PackageIdentity` from `resolve_package_path`. 0.17 behaviour is kept (full suite). Manifest health in the 0.17
+  manager still uses 0.17's format 1 reader.
+- An elevated run with no configured roots (the bare catalog the 0.17 adapter uses) is only checked for admin-only;
+  with roots, a path must be inside the system root (real path, so a junction that leaves it is refused).
+- A valid `current` whose active version fails format 2 validation still shows `installed` (design 5.2); documented on
+  `PackageView.status`.
+
+### Notes for later issues
+
+- 029 must move the shared registry transport (`trusted_git`, `is_git_source`, `archive_url`, `extract_archive`,
+  `archive_revision`, `git_environment`, `git_remote_revision`, `require_trusted_cache`) and `ConfigValidationError`
+  that `catalog/registry.py` imports from `gupkg.registry` and `gupkg.core` into catalog/services before deleting
+  `registry.py`, and must delete `layout.identity_from_path` and `layout.installed_version` (they still accept
+  `_bootstrap`, D33), together with the 0.17 `commands`/`manager` call sites.
+- 031 should name `_registry.toml [fingerprints]` as the fingerprint location (design 17 now lists it).
+- The catalog only stores the registry fingerprint on candidates; computing and verifying it is 027/028.
 
 ## Acceptance criteria -> coverage
 
