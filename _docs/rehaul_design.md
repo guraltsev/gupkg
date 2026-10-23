@@ -1235,7 +1235,9 @@ Layers, lowest to highest priority. All of them are files in roots
    the system root for the other settings, which is how roots stay
    configurable without any lookup outside the roots.
 4. **The user layer, `<user root>\.gupkg\settings.toml`.** It is ignored in
-   elevated and system-mode runs.
+   elevated and system-mode runs. In a portable run it is replaced by the
+   portable root's layer, `<portable root>\.gupkg\settings.toml`, which
+   is where `[integration.portable] integrate` is read from (section 6.1).
 5. **`--settings PATH`.** It is ignored in elevated runs unless `PATH` is
    inside the admin-only system root.
 
@@ -1256,6 +1258,7 @@ bin = 'C:\bin'
 start_menu = '%ProgramData%\Microsoft\Windows\Start Menu\opt'
 [integration.user]
 bin = '%USERPROFILE%\bin'
+start_menu = '%APPDATA%\Microsoft\Windows\Start Menu\opt'
 [integration.portable]
 integrate = "user"            # user | none
 
@@ -1298,6 +1301,7 @@ gupkg/
     version.py      version parsing/ordering, reserved names
     manifest.py     pkg.toml format 2: parse, validate, typed dataclasses, templates
     settings.py     settings schema + layering
+    mode.py         ModeContext, mode selection (6.2), context building (6.1)
     state.py        PackageView, LocalState, InstalledState, status derivation
     plan.py         InstallPlan, Phase, Effect (data only)
   catalog/      discovery and joins (reads disk, no mutation)
@@ -1325,6 +1329,9 @@ gupkg/
     events.py       event dataclasses + Reporter protocol (contextvar)
     console.py      Rich renderer
     logfile.py      text + JSONL log writer, retention
+  modes.py      target -> mode: install record, containing root, portable target (D42), elevated admission (6.2, 9.6)
+  relaunch.py   the up-front elevation step for system mode (9.6)
+  distcopy.py   copy a distribution folder into a root, dropping the Mark of the Web (21.4)
   cli.py        argparse grammar -> lifecycle calls -> exit code; --json/--plan/--events-file/--no-input; the tui/manager forwarders
   selfmgmt/     self status/repair: MANIFEST.sha256 check, bundled-runtime enforcement (issues 016, 018); self check-updates/update are aliases (section 20)
 ```

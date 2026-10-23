@@ -34,8 +34,9 @@ LAYER_DEFAULTS = "defaults"
 LAYER_APP = "app"
 LAYER_SYSTEM = "system"
 LAYER_USER = "user"
+LAYER_PORTABLE = "portable"
 LAYER_CLI = "cli"
-LAYER_NAMES = (LAYER_DEFAULTS, LAYER_APP, LAYER_SYSTEM, LAYER_USER, LAYER_CLI)
+LAYER_NAMES = (LAYER_DEFAULTS, LAYER_APP, LAYER_SYSTEM, LAYER_USER, LAYER_PORTABLE, LAYER_CLI)
 
 OFFICIAL_REGISTRY_SOURCE = "https://github.com/guraltsev/gupkg-registry.git"
 _REGISTRY_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -91,7 +92,7 @@ _SCHEMA: dict[str, Any] = {
     "roots": {"system": _text, "user": _text, "portable": _text},
     "integration": {
         "system": {"bin": _text, "start_menu": _text},
-        "user": {"bin": _text},
+        "user": {"bin": _text, "start_menu": _text},
         "portable": {"integrate": _choice("user", "none")},
     },
     "manager": {"checksum_missing": _choice("ask", "refuse", "skip"), "keep_screen": _boolean},
@@ -273,7 +274,10 @@ def default_layer() -> Layer:
                     "bin": "C:\\bin",
                     "start_menu": "%ProgramData%\\Microsoft\\Windows\\Start Menu\\opt",
                 },
-                "user": {"bin": "%USERPROFILE%\\bin"},
+                "user": {
+                    "bin": "%USERPROFILE%\\bin",
+                    "start_menu": "%APPDATA%\\Microsoft\\Windows\\Start Menu\\opt",
+                },
                 "portable": {"integrate": "user"},
             },
             "manager": {"checksum_missing": "ask", "keep_screen": True},

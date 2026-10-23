@@ -239,3 +239,36 @@ prompt and the broadcast to running programs.
    `gupkg manager self status` and `gupkg install <package>` with `--scope auto`; confirm
    the elevated shell selects system scope and the other user scope. Why manual: needs
    real tokens.
+
+## Install modes (issue 025)
+
+The automated tests resolve modes, contexts and the elevation step on a `FakeSystem`. These steps
+cover the parts that need a real token, a real UAC prompt, Explorer's marking or a second account.
+The engine and the command line that call these functions arrive with issues 028 and 029, so the
+steps that need `gupkg install --mode ...` are run once those land.
+
+1. **Real relaunch from the system gupkg.** With gupkg installed in `C:\opt` (admin-only), run
+   `gupkg install <package> --mode system` from a normal shell. Confirm the question, accept UAC,
+   and confirm the install happened in `C:\opt`. Repeat with `--yes` (no question), with
+   `--no-input` (exit code 5, nothing changed) and by declining UAC (exit code 5). Why manual: UAC
+   cannot be automated.
+2. **A user-writable gupkg never elevates.** From a bundled or user-mode gupkg (for example one
+   in `%USERPROFILE%\opt`), run the same command. Confirm it refuses and says that system
+   installs need the system gupkg, and that no UAC prompt appears. Why manual: it needs the real
+   access-control lists of a user profile and of `C:\opt`.
+3. **Elevated shell and the user root.** In an elevated shell run `gupkg install <package>` with
+   no `--mode` (it prints `system (auto: elevated)`), then `--mode user`, a path inside
+   `%USERPROFILE%\opt` and `user:<name>`. Confirm each of the last three is refused with the
+   advice to use a normal shell and that nothing under `%USERPROFILE%\opt` changed. Why manual:
+   it needs a real elevated token.
+4. **Distribution from an administrator shell.** Extract a distribution ZIP with Explorer (every
+   file gets a Mark of the Web), then from an elevated shell run
+   `gupkg install <folder>\<name>\<version> --mode system`. Confirm the folder is copied into
+   `C:\opt\<name>\<version>`, that `Get-Item -Stream * <file>` shows no `Zone.Identifier` on any
+   copy, and that the receipt says the source was marked. Why manual: Explorer does the marking.
+5. **Portable in place.** On a folder shaped `<name>\<version>\pkg.toml` that declares portable
+   in `modes`, run `gupkg install <folder> --mode portable` as a normal user. Confirm nothing is
+   copied, that `<name>\..` becomes the portable root, and, with `integrate = "none"` in that
+   root's `.gupkg\settings.toml`, that no Start Menu entry or `HKCU\Environment` change appears and
+   `gupkg shell` prints the `PATH` line. Why manual: it compares against the real Start Menu and
+   registry.

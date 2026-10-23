@@ -8,8 +8,8 @@ Usage and API
 -------------
 ``identity_from_path(...)`` turns a user path into a :class:`PackageIdentity`
 for the 0.17 commands (the catalog, ``gupkg.catalog``, derives package state),
-and ``update_current_junction_if_needed(...)`` activates a version. ``compute_scope_paths(...)`` returns the default shortcut and wrapper
-locations of one scope.
+and ``update_current_junction_if_needed(...)`` activates a version. The destinations of a scope come from the
+``ModeContext`` (``gupkg.modes.scope_context``).
 
 Implementation Approach
 -----------------------
@@ -25,21 +25,20 @@ import os
 import re
 import uuid
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Tuple
 
 from .catalog.catalog import CatalogError, NotFound, resolve_package_path
 from .catalog.local import read_current, strip_extended_prefix
 from .core import (
     BOOTSTRAP_DIR_NAME,
     PackageIdentity,
-    Scope,
     compare_package_versions,
     is_package_directory,
     log_info,
     log_warning,
     normalize_path,
 )
-from .system.port import ScopeFolders, System
+from .system.port import System
 
 
 def identity_from_path(raw_path: Path, system: System) -> Tuple[PackageIdentity, bool]:
@@ -224,31 +223,6 @@ def update_current_junction_if_needed(
                 pass
     log_info(f"JUNCTION: created: {current_path.name} -> {desired_target}")
     return True
-
-
-def compute_scope_paths(scope: Scope, system: System) -> Dict[str, Path]:
-    """Resolve the default shortcut and wrapper locations for one install scope.
-
-    Parameters
-    ----------
-    scope : Scope
-        ``Scope.USER`` or ``Scope.MACHINE``.
-    system : System
-        Boundary that knows where the scope's Start Menu and ``bin`` live.
-
-    Returns
-    -------
-    Dict[str, Path]
-        ``shortcut_root`` (Start Menu ``opt`` folder) and ``bin_dir``.
-
-    Raises
-    ------
-    ValueError
-        If the machine does not identify a required location.
-
-    """
-    folders: ScopeFolders = system.scope_folders(scope)
-    return {"shortcut_root": folders.shortcut_root, "bin_dir": folders.bin_dir}
 
 
 def warn_if_output_path_is_unusual(

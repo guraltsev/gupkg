@@ -50,7 +50,8 @@ from .core import (
 )
 from .catalog.catalog import CatalogError, resolve_package_path
 from .catalog.local import read_current
-from .layout import compute_scope_paths
+from .model.mode import ModeContext
+from .modes import scope_context
 from .registry import OFFICIAL_SOURCE
 from .tomlio import dumps
 from .system.port import System
@@ -73,30 +74,6 @@ class ManagerConfig:
     def root(self, scope: Scope) -> Path:
         """Return the configured package root that owns *scope*."""
         return self.user_root if scope == Scope.USER else self.system_root
-
-
-@dataclass(frozen=True)
-class InstallationContext:
-    """Carry manager-owned destinations into one package installation."""
-
-    scope: Scope
-    collection_root: Path
-    bin_dir: Path
-    manager_config: Path
-    shortcut_root: Path | None = None
-    registry_cache: Path | None = None
-    shim_linkage: str = "dynamic"
-
-    def as_scope_paths(self) -> dict[str, Path | str]:
-        """Return the component scope-path mapping with manager paths applied."""
-        paths: dict[str, Path | str] = {
-            "bin_dir": self.bin_dir,
-            "collection_root": self.collection_root,
-            "shim_linkage": self.shim_linkage,
-        }
-        if self.shortcut_root is not None:
-            paths["shortcut_root"] = self.shortcut_root
-        return paths
 
 
 @dataclass
@@ -378,44 +355,28 @@ def default_registry_cache() -> Path:
     return Path(__file__).resolve().parent.parent / "App" / "registry"
 
 
-def installation_context(
-    config: ManagerConfig, scope: Scope, system: System, *, shim_linkage: str | None = None
-) -> InstallationContext:
-    """Build the manager-owned destinations for one explicit scope.
+def installation_context(config: ManagerConfig, scope: Scope, system: System) -> ModeContext:
+    """Build the manager-owned destinations for one explicit scope as a ``ModeContext``.
 
     Parameters
     ----------
     config : ManagerConfig
-        Validated manager configuration.
+        Validated manager configuration: its roots and ``bin`` folders replace the defaults.
     scope : Scope
         ``Scope.USER`` or ``Scope.MACHINE``.
     system : System
         Boundary that knows the scope's default Start Menu and ``bin`` folders.
-    shim_linkage : {"dynamic", "static"}, optional
-        Overrides the configured shim linkage.
 
     Returns
     -------
-    InstallationContext
+    ModeContext
         Package root, bin directory, and Start Menu root for *scope*.
     """
     if scope == Scope.AUTO:
         raise ValueError("Installation context requires an explicit scope")
-    bin_dir = config.user_bin if scope == Scope.USER else config.system_bin
-    try:
-        defaults = compute_scope_paths(scope, system)
-    except ValueError:
-        defaults = {}
-    if bin_dir is None:
-        bin_dir = defaults["bin_dir"]
-    return InstallationContext(
-        scope=scope,
-        collection_root=config.root(scope),
-        bin_dir=bin_dir,
-        manager_config=config.path,
-        shortcut_root=defaults.get("shortcut_root"),
-        registry_cache=config.registry_cache,
-        shim_linkage=shim_linkage or config.shim_linkage,
+    return scope_context(
+        scope, system, root=config.root(scope),
+        bin_dir=config.user_bin if scope == Scope.USER else config.system_bin,
     )
 
 
@@ -815,7 +776,7 @@ def manager_upgrade_target(
         scope=target.scope,
         no_checksum=no_checksum,
         shim_linkage=linkage,
-        install_context=installation_context(config, target.scope, system, shim_linkage=linkage),
+        install_context=installation_context(config, target.scope, system),
     ))
 
 

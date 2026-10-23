@@ -53,7 +53,8 @@ from gupkg.core import (
     log_warning,
     read_toml_file,
 )
-from gupkg.layout import compute_scope_paths, identity_from_path, update_current_junction_if_needed
+from gupkg.layout import identity_from_path, update_current_junction_if_needed
+from gupkg.modes import scope_context
 from gupkg.origin import populate_app_from_origin, validate_origin_health, validate_update_health
 from gupkg.updates import (
     check_update,
@@ -121,7 +122,7 @@ def install_package(
         Whether to repopulate ``App/`` from origin even when it has files.
     no_checksum : bool, default=False
         Whether to skip configured origin checksum verification.
-    install_context : InstallationContext, optional
+    install_context : ModeContext, optional
         Manager-owned destinations that replace the scope's default shortcut
         and wrapper locations.
     shim_linkage : {"dynamic", "static"}, default="dynamic"
@@ -174,10 +175,11 @@ def install_package(
             warnings,
         )
     try:
+        # The destinations are the mode context's: the caller's (the manager's roots and bins), else the scope's.
         scope_paths: Dict[str, Any] = (
-            install_context.as_scope_paths()
+            install_context.as_scope_paths(root=True)
             if install_context is not None
-            else compute_scope_paths(scope, system)
+            else scope_context(scope, system).as_scope_paths(root=False)
         )
     except (RuntimeError, ValueError, OSError) as exc:
         return _failure(f"Failed to resolve {scope.value} scope paths: {exc}", EXIT_MUTATION_ERROR, warnings)
@@ -369,7 +371,7 @@ def install_downloaded_update(
         Installation scope used to activate the staged version.
     shim_linkage : {"dynamic", "static"}, default="dynamic"
         Native launcher linkage used while installing the activated update.
-    install_context : InstallationContext, optional
+    install_context : ModeContext, optional
         Manager-owned destinations forwarded to :func:`install_package`.
 
     Returns
@@ -442,7 +444,7 @@ def full_package_upgrade(
         Whether checksum verification may be bypassed while staging a payload.
     shim_linkage : {"dynamic", "static"}, default="dynamic"
         Native launcher linkage used while activating the downloaded update.
-    install_context : InstallationContext, optional
+    install_context : ModeContext, optional
         Manager-owned destinations forwarded to the activation.
 
     Returns

@@ -31,6 +31,7 @@ from typing import Any
 
 from .core import ActionResult, ConfigValidationError, EXIT_MUTATION_ERROR, Scope
 from .integrity import IntegrityReport, ManifestError, verify_version_directory
+from .modes import scope_context
 from .system.port import System
 
 
@@ -62,8 +63,13 @@ def self_status(
     version_root: Path | None = None,
     user_bin: Path | None = None,
     system_bin: Path | None = None,
+    system: System | None = None,
 ) -> dict[str, Any]:
-    """Return read-only standalone version, runtime, integrity, and shim diagnostics."""
+    """Return read-only standalone version, runtime, integrity, and shim diagnostics.
+
+    The shims are looked for in the ``bin`` folders of the ``user`` and ``system`` mode contexts
+    (``[integration.*]`` of the built-in settings, or the machine's own folders when *system* is given).
+    """
     root = Path(version_root) if version_root is not None else standalone_version_root()
     runtime = root / "gupkg" / "python" / "python.exe"
 
@@ -74,8 +80,8 @@ def self_status(
     except ManifestError as error:
         integrity = IntegrityReport(manifest_found=True, modified=(f"{error}",))
     shims = [
-        _inspect_shim(Scope.USER, user_bin or _user_bin(), root),
-        _inspect_shim(Scope.MACHINE, system_bin or _system_bin(), root),
+        _inspect_shim(Scope.USER, user_bin or scope_context(Scope.USER, system).bin_dir, root),
+        _inspect_shim(Scope.MACHINE, system_bin or scope_context(Scope.MACHINE, system).bin_dir, root),
     ]
     return {
         "version_root": root,
@@ -92,6 +98,7 @@ def repair_self(
     scope: Scope,
     version_root: Path | None = None,
     install_context=None,
+    shim_linkage: str = "dynamic",
 ) -> ActionResult:
     """Repair one standalone scope integration through ``install_package``."""
     try:
@@ -108,9 +115,8 @@ def repair_self(
             )
         from .gupkg import install_package
 
-        linkage = install_context.shim_linkage if install_context is not None else "dynamic"
         result = install_package(
-            root, system, scope=scope, install_context=install_context, shim_linkage=linkage
+            root, system, scope=scope, install_context=install_context, shim_linkage=shim_linkage
         )
         return result
     except (ConfigValidationError, OSError, ValueError) as exc:
@@ -123,6 +129,7 @@ def update_self(
     scope: Scope,
     version_root: Path | None = None,
     install_context=None,
+    shim_linkage: str = "dynamic",
 ) -> ActionResult:
     """Install the newest verified gupkg release through the ordinary update workflow.
 
@@ -135,9 +142,8 @@ def update_self(
         root = Path(version_root) if version_root is not None else standalone_version_root()
         from .gupkg import full_package_upgrade
 
-        linkage = install_context.shim_linkage if install_context is not None else "dynamic"
         return full_package_upgrade(
-            root, system, scope=scope, shim_linkage=linkage, install_context=install_context
+            root, system, scope=scope, shim_linkage=shim_linkage, install_context=install_context
         )
     except (ConfigValidationError, OSError, ValueError) as exc:
         return ActionResult(False, errors=[str(exc)], exit_code=EXIT_MUTATION_ERROR)
@@ -202,14 +208,3 @@ def _inspect_shim(scope: Scope, bin_dir: Path, version_root: Path) -> SelfShim:
         healthy,
         None if healthy else "shim target is missing or escapes the package version",
     )
-
-
-def _user_bin() -> Path:
-    """Return the conventional user command directory."""
-    return Path(os.environ.get("USERPROFILE", Path.home())) / "bin"
-
-
-def _system_bin() -> Path:
-    """Return the conventional machine command directory."""
-    drive = os.environ.get("SYSTEMDRIVE", "C:")
-    return Path(drive) / "bin"
