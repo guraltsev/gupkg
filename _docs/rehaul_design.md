@@ -1302,8 +1302,9 @@ gupkg/
     plan.py         InstallPlan, Phase, Effect (data only)
   catalog/      discovery and joins (reads disk, no mutation)
     local.py        scan roots, build LocalState
-    registry.py     registry cache, sync, validation
-    catalog.py      describe(), list(), resolve_selector(); the only place state is derived
+    record.py       the install record <package>\.gupkg\package.toml: read, and the one writer (called by engine)
+    registry.py     registry cache, sync (writes only the cache), validation, per-revision index
+    catalog.py      describe(), list(), resolve(), candidates(); the only place state is derived
   services/     built-in declarative operations
     http.py         shared client (UA, retry, TLS, token)
     track/          github, gitlab, page, index, redirect, json, last_modified, rss, git, chain, module
@@ -1656,7 +1657,7 @@ gupkg-registry/
   <name>/
     _check_updates/        pkg.toml (+ pkg.local, support files)     # tracker (optional)
     <version>/      pkg.toml, fully pinned, no App; fingerprint     # every version is kept
-  _registry.toml    format = 2, name, description
+  _registry.toml    format = 2, name, description, [fingerprints] "<name>/<version>" = "<sha256>"
 ```
 
 - **The registry tool keeps the versions current** (D36). A maintainer runs
