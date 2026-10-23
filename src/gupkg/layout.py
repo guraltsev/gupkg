@@ -6,10 +6,9 @@ and junction updates refuse unsafe targets outside the owning package root.
 
 Usage and API
 -------------
-``resolve_input_path(...)`` turns a user path into a :class:`PackageIdentity`,
-``inspect_current(...)`` reports a package root's activation without choosing
-a fallback, and ``update_current_junction_if_needed(...)`` activates a
-version. ``compute_scope_paths(...)`` returns the default shortcut and wrapper
+``identity_from_path(...)`` turns a user path into a :class:`PackageIdentity`
+for the 0.17 commands (the catalog, ``gupkg.catalog``, derives package state),
+and ``update_current_junction_if_needed(...)`` activates a version. ``compute_scope_paths(...)`` returns the default shortcut and wrapper
 locations of one scope.
 
 Implementation Approach
@@ -25,16 +24,17 @@ from __future__ import annotations
 import os
 import re
 import uuid
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Tuple
 
+from .catalog.catalog import CatalogError, NotFound, resolve_package_path
+from .catalog.local import read_current
 from .core import (
+    BOOTSTRAP_DIR_NAME,
     PackageIdentity,
     Scope,
     compare_package_versions,
     is_package_directory,
-    is_version_directory_name,
     log_info,
     log_warning,
     normalize_path,
@@ -42,8 +42,12 @@ from .core import (
 from .system.port import ScopeFolders, System
 
 
-def resolve_input_path(raw_path: Path, system: System) -> Tuple[PackageIdentity, bool]:
-    """Resolve a user-supplied path to one concrete package version.
+def identity_from_path(raw_path: Path, system: System) -> Tuple[PackageIdentity, bool]:
+    """Resolve a user-supplied path to one concrete package version for the 0.17 commands.
+
+    A thin adapter over the catalog (``resolve_package_path`` and ``read_current``) that the
+    0.17 engine uses until issue 029 replaces its front end. It also accepts 0.17's
+    ``_bootstrap`` template folder, which the catalog does not know (decision D33).
 
     Parameters
     ----------
@@ -55,109 +59,55 @@ def resolve_input_path(raw_path: Path, system: System) -> Tuple[PackageIdentity,
     Returns
     -------
     Tuple[PackageIdentity, bool]
-        ``(identity, installing_from_current)``, where the flag reports that
-        the caller named ``current`` or a package root with ``current`` rather
-        than a version directory. A package root without ``current`` is
-        accepted when it contains exactly one version directory.
+        ``(identity, installing_from_current)``, where the flag reports that the caller
+        named ``current`` or a package root with a valid ``current``. A package root with no
+        ``current`` resolves to its newest version directory, however many it holds.
 
     Raises
     ------
     ValueError
-        If the path does not match a supported package layout.
-
+        If the path does not match a supported package layout, or ``current`` is unusable.
     """
-    # Normalize lexically so a trailing ``current`` path component is preserved
-    # instead of being dereferenced before package layout classification.
+    # Normalize lexically so a trailing ``current`` component is classified before it is followed.
     candidate = Path(os.path.abspath(os.fspath(Path(raw_path).expanduser())))
-
-    # A version directory is recognized by its pkg.toml (or the template name),
-    # since a package root may have any name.
-    if is_package_directory(candidate):
+    if candidate.name == BOOTSTRAP_DIR_NAME:
         package_root = candidate.parent
-        identity = PackageIdentity.from_version_path(
-            package_root, candidate, is_current=_current_target(package_root, system) == normalize_path(candidate)
-        )
-        return identity, False
-
-    if candidate.name.lower() == "current":
-        if not candidate.exists():
-            raise ValueError(f'"current" path does not exist: {candidate}')
+        active = read_current(package_root, system).target
         return PackageIdentity.from_version_path(
-            candidate.parent, _read_current(candidate, system), is_current=True
-        ), True
+            package_root, candidate, is_current=active is not None and normalize_path(active) == normalize_path(candidate)
+        ), False
 
-    if not candidate.is_dir():
-        raise ValueError(f"Package root does not exist: {candidate}")
-    current_path = candidate / "current"
-    if os.path.lexists(current_path):
-        return PackageIdentity.from_version_path(
-            candidate, _read_current(current_path, system), is_current=True
-        ), True
-
-    # An uninstalled package root is still usable when it holds exactly one
-    # version directory; install will create ``current`` later.
-    versions = sorted(child for child in candidate.iterdir() if is_package_directory(child))
-    if not versions:
-        raise ValueError(
-            f'Package root has no "current" junction and no version directory to use: {candidate}'
-        )
-    if len(versions) > 1:
-        raise ValueError(
-            f'Package root has no "current" junction and contains multiple version directories: {candidate}; '
-            f"found: {', '.join(path.name for path in versions)}. Pass an explicit version directory instead."
-        )
-    return PackageIdentity.from_version_path(candidate, versions[0], is_current=False), False
-
-
-@dataclass(frozen=True)
-class CurrentInspection:
-    """Describe the activation entry owned by one package root."""
-
-    status: str
-    version_path: Path | None = None
-    diagnostics: tuple[str, ...] = field(default_factory=tuple)
-
-
-def inspect_current(package_root: Path, system: System) -> CurrentInspection:
-    """Inspect ``current`` without selecting a fallback version directory.
-
-    Parameters
-    ----------
-    package_root : Path
-        Package root whose activation entry should be inspected.
-    system : System
-        Boundary used to read the junction.
-
-    Returns
-    -------
-    CurrentInspection
-        ``installed`` for a valid activation, ``not-installed`` when the
-        entry is absent, or ``broken`` when an entry exists but is unsafe.
-    """
-    current_path = package_root / "current"
-    if not os.path.lexists(current_path):
-        return CurrentInspection("not-installed")
-
-    def broken(message: str) -> CurrentInspection:
-        """Report an unusable activation entry."""
-        return CurrentInspection("broken", diagnostics=(message,))
-
-    if not system.is_link(current_path):
-        return broken(f'"current" is not a junction: {current_path}')
-    target = system.read_link(current_path)
-    if target is None:
-        return broken(f'Could not resolve "current": {current_path}')
     try:
-        resolved_target = target.resolve()
-        if not resolved_target.is_relative_to(package_root.resolve()):
-            return broken(f'"current" points outside package root: {target}')
-    except OSError as exc:
-        return broken(f"Could not inspect current target: {exc}")
-    if not resolved_target.is_dir() or not is_version_directory_name(resolved_target.name):
-        return broken(f'"current" target is not a version directory: {target}')
-    if not (resolved_target / "pkg.toml").is_file():
-        return broken(f'"current" target has no pkg.toml: {resolved_target}')
-    return CurrentInspection("installed", resolved_target)
+        resolved = resolve_package_path(candidate, system)
+    except NotFound as exc:
+        template = candidate / BOOTSTRAP_DIR_NAME
+        if candidate.name.casefold() != "current" and template.is_dir() and is_package_directory(template):
+            return PackageIdentity.from_version_path(candidate, template, is_current=False), False
+        if candidate.name.casefold() == "current":
+            raise ValueError(f'"current" path is not usable: {exc}') from exc
+        raise ValueError(str(exc)) from exc
+    except CatalogError as exc:
+        raise ValueError(str(exc)) from exc
+    if resolved.is_tracker:
+        raise ValueError(f"{candidate} is the update tracker, not a version directory")
+
+    # ``current`` is never reinterpreted: a broken one is an error, a valid one names the version.
+    local = resolved.view.local
+    package_root = local.path
+    if local.current.status not in ("absent", "valid"):
+        raise ValueError(f'"current" path is not a valid junction: {local.current.problem}')
+    if resolved.via_current:
+        return PackageIdentity.from_version_path(package_root, local.current.target, is_current=True), True
+    if candidate != package_root:
+        version = local.version(candidate.name)
+        return PackageIdentity.from_version_path(
+            package_root, candidate, is_current=version is not None and local.current.version == version.name
+        ), False
+
+    # A package root that is not installed resolves to its newest version directory.
+    if not local.versions:
+        raise ValueError(f"Package root has no version directory to use: {package_root}")
+    return PackageIdentity.from_version_path(package_root, local.versions[-1].path, is_current=False), False
 
 
 def update_current_junction_if_needed(
@@ -323,34 +273,3 @@ def warn_if_output_path_is_unusual(
         log_warning(
             f"{kind} output resolves outside the default {kind} root; this is allowed but unusual: {destination}"
         )
-
-
-def _read_current(current_path: Path, system: System) -> Path:
-    """Return the version directory an existing ``current`` junction targets."""
-    if not system.is_link(current_path):
-        raise ValueError(
-            f'"current" path exists but is not a valid junction: {current_path}; '
-            f"exists={current_path.exists()}, is_dir={current_path.is_dir()}, parent={current_path.parent}"
-        )
-    target = system.read_link(current_path)
-    if target is None:
-        raise ValueError(f'Could not resolve "current" junction target: {current_path}')
-    resolved_target = normalize_path(target)
-    if not resolved_target.is_dir():
-        raise ValueError(
-            f'"current" junction target is not a directory: {resolved_target}; '
-            f"source={current_path}, raw_target={target}"
-        )
-    return resolved_target
-
-
-def _current_target(package_root: Path, system: System) -> Path | None:
-    """Return the normalized target of a package root's ``current``, if readable."""
-    current_path = package_root / "current"
-    if not current_path.exists() or not system.is_link(current_path):
-        return None
-    target = system.read_link(current_path)
-    try:
-        return normalize_path(target) if target is not None else None
-    except OSError:
-        return None

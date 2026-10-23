@@ -921,10 +921,10 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                 local_version=1,
             )
 
-    def test_update_config_rejects_an_ambiguous_package_root_without_current(
+    def test_update_config_on_a_package_root_without_current_uses_its_newest_version(
         self,
     ) -> None:
-        """Update config rejects an ambiguous package root without current."""
+        """A package root with several versions and no current resolves to the newest one."""
         module = load_gupkg_module()
         with tempfile.TemporaryDirectory() as tmpdir:
             package_root = Path(tmpdir) / "AmbiguousApp"
@@ -937,13 +937,15 @@ class GupkgCliBehaviorTests(unittest.TestCase):
                 module, ["config-fix", str(package_root)]
             )
 
-            self.assertEqual(code, module.EXIT_USER_ERROR, msg=output)
-            self.assertIn("contains multiple version directories", output)
+            self.assertEqual(code, module.EXIT_SUCCESS, msg=output)
+            self.assertNotIn("multiple version directories", output)
+            self.assertEqual((package_root / "1.0.0.local.1" / "pkg.toml").read_text(encoding="utf-8"), "")
+            self.assertNotEqual((package_root / "2.0.0.local.1" / "pkg.toml").read_text(encoding="utf-8"), "")
 
-    def test_bare_command_explains_an_ambiguous_package_root_without_current(
+    def test_bare_command_installs_the_newest_version_of_a_package_root_without_current(
         self,
     ) -> None:
-        """A package root with several versions names the required selection."""
+        """A package root with several folders and no current installs its newest version, never ``_bootstrap``."""
         module = load_gupkg_module()
         with tempfile.TemporaryDirectory() as tmpdir:
             package_root = Path(tmpdir) / "AmbiguousApp"
@@ -955,9 +957,8 @@ class GupkgCliBehaviorTests(unittest.TestCase):
             with pushd(package_root):
                 code, output = self.run_main(module, ["install"])
 
-            self.assertEqual(code, module.EXIT_USER_ERROR, msg=output)
-            self.assertIn("contains multiple version directories", output)
-            self.assertIn("Pass an explicit version directory", output)
+            self.assertEqual(code, module.EXIT_SUCCESS, msg=output)
+            self.assertIn("Installing AmbiguousApp 2.0.0", output)
 
     def test_update_config_syncs_metadata_and_preserves_existing_content(self) -> None:
         """Update config syncs metadata and preserves existing content."""
