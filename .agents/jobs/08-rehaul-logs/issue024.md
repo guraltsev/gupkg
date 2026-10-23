@@ -68,6 +68,24 @@ changed `test_package_root_resolution.py`, `test_gupkg_cli_behaviors.py` (two te
 - 031 should name `_registry.toml [fingerprints]` as the fingerprint location (design 17 now lists it).
 - The catalog only stores the registry fingerprint on candidates; computing and verifying it is 027/028.
 
+## Review round 2
+
+- `tests/test_legacy_adapters.py` is a differential table over eight package-root shapes for the 0.17 adapters
+  (`identity_from_path`, `discover_manager`, `package_summary`, `_command_package_record`). Its expectations were
+  recomputed by running the same probe against the main source (ec75f62) and against this branch; the outcomes are
+  identical except three intentional changes, marked `intentional` in the table:
+  1. several versions with no `current` (and `_bootstrap` beside a version) resolve to the newest version instead of
+     failing with "multiple version directories" (design 5.3: no `current` -> newest valid version);
+  2. a `current` that leaves its package root is refused (not followed) when named, or via the package root (design 9.6);
+  3. as a consequence the summary for that shape reads "No package selected" instead of showing the outside version.
+- Fixed regressions: a `_bootstrap`-only root is `not-installed`/`healthy` in the manager again (the catalog does not count
+  the template, so only `current` is read); a broken `current` no longer blocks an explicit version directory, only the
+  package root and `current` itself.
+- `\?\` paths: the prefix is stripped before the path is normalised, and the package name is built from real paths.
+- Reparse-point version directories and `App` were already invalid problems (also in an elevated run); a test now says so.
+- When the user root is a junction to the system root (non-elevated), dedupe lists the package once, as `system`
+  (configured roots are scanned in order system, user, portable), while `resolve user:foo` still resolves it as `user`.
+
 ## Acceptance criteria -> coverage
 
 See the final report.

@@ -50,7 +50,6 @@ from .core import (
 )
 from .catalog.catalog import CatalogError, resolve_package_path
 from .catalog.local import read_current
-from .model.state import CurrentState
 from .layout import compute_scope_paths
 from .registry import OFFICIAL_SOURCE
 from .tomlio import dumps
@@ -477,8 +476,10 @@ def _target_from_catalog(
     try:
         view = resolve_package_path(package.root, system).view
         current = view.local.current
-    except CatalogError as exc:
-        current = CurrentState("dangling", problem=str(exc))
+    except CatalogError:
+        # Discovery found version directories that the catalog does not count (0.17's ``_bootstrap`` template
+        # only): that is not a broken package, so only ``current`` itself is read.
+        current = read_current(package.root, system)
     activation = {"valid": "installed", "absent": "not-installed"}.get(current.status, "broken")
     if current.problem:
         diagnostics.append(current.problem)

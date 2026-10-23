@@ -253,3 +253,39 @@ def test_package_with_only_invalid_versions_says_so_instead_of_asking_for_check_
 
     with pytest.raises(NoValidVersion, match="no valid version; see the invalid version problems: 1.0"):
         catalog.install_candidate(catalog.describe("foo"))
+
+
+@pytest.mark.parametrize("elevated", [False, True], ids=["normal", "elevated"])
+def test_extended_length_path_resolves_to_the_same_package(tmp_path: Path, elevated: bool) -> None:
+    """A path written with the extended-length prefix selects the package by its folder name, as the plain spelling does."""
+    system = FakeSystem(tmp_path / "machine", elevated=elevated)
+    roots = make_catalog(system, tmp_path, elevated=elevated)[1]
+    write_version(roots["system"] / "foo", "1.0")
+    catalog = make_catalog(system, tmp_path)[0]
+
+    plain = catalog.resolve(str(roots["system"] / "foo"))
+    prefixed = catalog.resolve("\\\\?\\" + str(roots["system"] / "foo"))
+
+    assert prefixed.view.name == plain.view.name == "foo"
+    assert prefixed.version == "1.0"
+
+
+@pytest.mark.parametrize("child", ["version", "app"])
+def test_junction_version_or_app_inside_an_admin_only_system_package_is_a_problem(tmp_path: Path, child: str) -> None:
+    """In an elevated run a version directory or ``App`` that is a junction is reported invalid and never counted as valid or populated."""
+    system = FakeSystem(tmp_path / "machine", elevated=True)
+    roots = make_catalog(system, tmp_path, elevated=True)[1]
+    package = roots["system"] / "foo"
+    write_version(package, "1.0")
+    outside = tmp_path / "outside"
+    write_version(outside, "payload", populated=True)
+    if child == "version":
+        system.create_junction(package / "2.0", outside / "payload")
+    else:
+        system.create_junction(package / "1.0" / "App", outside / "payload" / "App")
+
+    view = make_catalog(system, tmp_path)[0].describe("foo")
+
+    flagged = view.local.version("2.0" if child == "version" else "1.0")
+    assert not flagged.valid and any("link" in problem for problem in flagged.problems)
+    assert not flagged.populated

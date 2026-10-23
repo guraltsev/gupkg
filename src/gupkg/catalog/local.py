@@ -80,6 +80,20 @@ class RootScan:
 # ---------------------------------------------------------------------------
 
 
+def strip_extended_prefix(text: str) -> str:
+    """Return *text* without a leading extended-length prefix (the ``?`` device prefix, also for UNC paths)."""
+    if text.startswith("\\\\?\\UNC\\"):
+        return "\\\\" + text[8:]
+    if text.startswith("\\\\?\\"):
+        return text[4:]
+    return text
+
+
+def real_path(path: str | os.PathLike[str]) -> str:
+    """Return the real path of *path* (links resolved) without an extended-length prefix, keeping letter case."""
+    return strip_extended_prefix(os.path.realpath(os.fspath(path)))
+
+
 def canonical_path(path: str | os.PathLike[str]) -> str:
     """Return a spelling of *path* that is the same for every way of naming one folder.
 
@@ -94,12 +108,7 @@ def canonical_path(path: str | os.PathLike[str]) -> str:
         The real path (links resolved) without a ``\\\\?\\`` prefix, with ``..`` removed,
         trailing dots and spaces dropped from each component and letter case folded.
     """
-    text = os.path.realpath(os.fspath(path))
-    if text.startswith("\\\\?\\UNC\\"):
-        text = "\\\\" + text[8:]
-    elif text.startswith("\\\\?\\"):
-        text = text[4:]
-    drive, rest = ntpath.splitdrive(text)
+    drive, rest = ntpath.splitdrive(real_path(path))
     parts = [part.rstrip(" .") if part not in (".", "..") else part for part in rest.replace("/", "\\").split("\\")]
     return ntpath.normcase(drive + "\\" + "\\".join(part for part in parts if part != "")).rstrip("\\")
 

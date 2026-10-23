@@ -31,6 +31,7 @@ Windows environment.
 
 from __future__ import annotations
 
+import ntpath
 import os
 import re
 from collections.abc import Iterable, Mapping, Sequence
@@ -59,9 +60,11 @@ from .local import (
     is_inside,
     is_reparse_point,
     looks_like_package,
+    real_path,
     read_adhoc_roots,
     scan_package,
     scan_root,
+    strip_extended_prefix,
 )
 from .record import read_install_record
 from .registry import RegistrySnapshot, load_registry, registry_cache_dir
@@ -856,7 +859,7 @@ class Catalog:
     def _resolve_path(self, parsed: Selector) -> Resolved:
         """Resolve a path selector: a package root, a version directory, ``_check_updates`` or ``current``."""
         # Normalise lexically so a trailing ``current`` is not followed before it is classified.
-        candidate = Path(os.path.abspath(os.fspath(parsed.path.expanduser())))
+        candidate = Path(os.path.abspath(strip_extended_prefix(os.fspath(parsed.path.expanduser()))))
         version: str | None = None
         via_current = False
         is_tracker = False
@@ -918,7 +921,7 @@ class Catalog:
             if root.single and canonical_path(root.path) == canonical_path(package_root):
                 return replace(root, mode=mode or root.mode), package_root.name
             if not root.single and is_inside(package_root, root.path):
-                relative = os.path.relpath(os.path.realpath(package_root), os.path.realpath(root.path))
+                relative = ntpath.relpath(real_path(package_root), real_path(root.path))
                 return replace(root, mode=mode or root.mode), relative.replace("\\", "/")
 
         # No configured root contains it: an ad-hoc root, whose mode the install record may decide.

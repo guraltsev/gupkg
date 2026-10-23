@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Dict, Tuple
 
 from .catalog.catalog import CatalogError, NotFound, resolve_package_path
-from .catalog.local import read_current
+from .catalog.local import read_current, strip_extended_prefix
 from .core import (
     BOOTSTRAP_DIR_NAME,
     PackageIdentity,
@@ -69,7 +69,7 @@ def identity_from_path(raw_path: Path, system: System) -> Tuple[PackageIdentity,
         If the path does not match a supported package layout, or ``current`` is unusable.
     """
     # Normalize lexically so a trailing ``current`` component is classified before it is followed.
-    candidate = Path(os.path.abspath(os.fspath(Path(raw_path).expanduser())))
+    candidate = Path(os.path.abspath(strip_extended_prefix(os.fspath(Path(raw_path).expanduser()))))
     if candidate.name == BOOTSTRAP_DIR_NAME:
         package_root = candidate.parent
         active = read_current(package_root, system).target
@@ -91,10 +91,11 @@ def identity_from_path(raw_path: Path, system: System) -> Tuple[PackageIdentity,
     if resolved.is_tracker:
         raise ValueError(f"{candidate} is the update tracker, not a version directory")
 
-    # ``current`` is never reinterpreted: a broken one is an error, a valid one names the version.
+    # ``current`` is never reinterpreted: naming it, or the package root, with a broken one is an error and a
+    # valid one names the version. An explicit version directory stays usable so a damaged ``current`` can be repaired.
     local = resolved.view.local
     package_root = local.path
-    if local.current.status not in ("absent", "valid"):
+    if local.current.status not in ("absent", "valid") and (resolved.via_current or candidate == package_root):
         raise ValueError(f'"current" path is not a valid junction: {local.current.problem}')
     if resolved.via_current:
         return PackageIdentity.from_version_path(package_root, local.current.target, is_current=True), True
