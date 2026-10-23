@@ -108,6 +108,10 @@ class ProcessResult:
     stderr: str = ""
 
 
+class ProcessAborted(OSError):
+    """Report a child process that gupkg killed because its watcher asked for it."""
+
+
 class ProcessFailed(RuntimeError):
     """Report that a child process that had to succeed exited with a failure status."""
 
@@ -240,13 +244,16 @@ class System(Protocol):
         *,
         input_text: str | None = None,
         timeout: float | None = None,
+        watch: Callable[[], str | None] | None = None,
     ) -> ProcessResult:
         """Run a child process to completion and return its status and output.
 
         ``on_line`` receives each output line (both streams) as it is read.
         ``argv[0]`` may be a ``.ps1``, ``.cmd`` or ``.bat`` script, which the
         implementation starts through its interpreter. A non-zero exit status
-        is returned, not raised.
+        is returned, not raised. ``watch`` is called about five times a second while the
+        process runs; when it returns text the process is killed and ``ProcessAborted`` is
+        raised with that text (how a caller bounds what a child writes to disk).
         """
 
     # -- network -----------------------------------------------------------

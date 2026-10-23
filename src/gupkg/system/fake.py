@@ -47,6 +47,7 @@ from .port import (
     DownloadResponse,
     EnvValue,
     HttpResponse,
+    ProcessAborted,
     ProcessResult,
     ResponseTooLarge,
     Scope,
@@ -345,6 +346,7 @@ class FakeSystem(WindowsLinks):
         *,
         input_text: str | None = None,
         timeout: float | None = None,
+        watch: Callable[[], str | None] | None = None,
     ) -> ProcessResult:
         """Run a registered double or a real 7-Zip; any other program raises ``UnexpectedCall``."""
         self._maybe_fail("run")
@@ -356,6 +358,10 @@ class FakeSystem(WindowsLinks):
         double = self.processes.get(program.name.lower()) or self.processes.get(program.stem.lower())
         if double is not None:
             result = double(ProcessCall(tuple(command), cwd, env, input_text))
+            # A double finishes at once, so its watcher is asked once, after it has written.
+            reason = watch() if watch is not None else None
+            if reason is not None:
+                raise ProcessAborted(reason)
             if on_line is not None:
                 for line in (result.stdout + result.stderr).splitlines():
                     on_line(line)
@@ -366,7 +372,7 @@ class FakeSystem(WindowsLinks):
         target = self._real_target(command[0])
         if target is not None:
             return (self.delegate or WindowsSystem()).run(
-                [str(target), *command[1:]], cwd, env, on_line, input_text=input_text, timeout=timeout
+                [str(target), *command[1:]], cwd, env, on_line, input_text=input_text, timeout=timeout, watch=watch
             )
         raise UnexpectedCall(f"FakeSystem has no process double for {command[0]!r}: {command}")
 

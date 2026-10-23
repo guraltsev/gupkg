@@ -38,11 +38,11 @@ from ...report.events import Step, emit
 from ...system.port import System
 from ..safepath import UnsafePath, confine, remove_tree, safe_file_name
 from .detect import detect_kind, require_kind
-from .extract import Limits, UnpackError, check_tree, extract_archive
+from .extract import Budget, Limits, UnpackError, check_tree, extract_archive
 from .gitsource import checkout_commit
 from .transform import keep_subdir, map_extract, merge_into, require_paths, strip_levels, verify_manifest
 
-__all__ = ["Limits", "UnpackError", "UnpackPlan", "UnpackReport", "plan_from_source", "unpack_artifact", "unpack_git"]
+__all__ = ["Budget", "Limits", "UnpackError", "UnpackPlan", "UnpackReport", "plan_from_source", "unpack_artifact", "unpack_git"]
 
 _ARCHIVE_KINDS = ("zip", "7z", "tar", "sfx", "nsis", "msi")
 
@@ -132,11 +132,12 @@ def unpack_artifact(
             require_kind(plan.kind, artifact)
         kind = plan.kind or detect_kind(system, artifact, filename, seven_zip)
         emit(Step(f"Unpacking {filename or artifact.name} ({kind})"))
-        _fill(system, artifact, raw, kind, filename, seven_zip, limits)
+        budget = Budget(limits)
+        _fill(system, artifact, raw, kind, filename, seven_zip, budget)
 
         # Apply the shared options in their documented order.
         for position, inner in enumerate(plan.nested):
-            _nested(system, raw, scratch / f"nested-{position}", inner, seven_zip, limits)
+            _nested(system, raw, scratch / f"nested-{position}", inner, seven_zip, budget)
         if plan.strip not in (None, 0):
             strip_levels(raw, plan.strip)
         if plan.subdir:
@@ -196,18 +197,18 @@ def unpack_git(system: System, url: str, ref: str | None, commit: str | None, de
 
 
 def _fill(system: System, artifact: Path, raw: Path, kind: str, filename: str | None,
-          seven_zip: Path | None, limits: Limits) -> None:
+          seven_zip: Path | None, budget: Budget) -> None:
     """Fill the empty folder *raw* from the artifact: extract an archive or copy a plain file."""
     if kind in ("exe", "file"):
         shutil.copyfile(artifact, raw / safe_file_name(filename or artifact.name))
         return
     if kind not in _ARCHIVE_KINDS:
         raise UnpackError(f"{kind!r} is not an unpack kind that gupkg can extract")
-    extract_archive(system, artifact, kind, raw, limits, seven_zip)
+    extract_archive(system, artifact, kind, raw, budget, seven_zip)
 
 
 def _nested(system: System, raw: Path, holding: Path, inner: NestedArchive, seven_zip: Path | None,
-            limits: Limits) -> None:
+            budget: Budget) -> None:
     """Unpack the inner archive *inner.path* of *raw* and merge or substitute it at *inner.dest*."""
     try:
         archive = confine(raw, inner.path)
@@ -221,7 +222,7 @@ def _nested(system: System, raw: Path, holding: Path, inner: NestedArchive, seve
         raise UnpackError(f"nested {inner.path!r} is not an archive")
     holding.mkdir()
     emit(Step(f"Unpacking nested {inner.path} ({kind})"))
-    extract_archive(system, archive, kind, holding, limits, seven_zip)
+    extract_archive(system, archive, kind, holding, budget, seven_zip)
 
     # The inner archive is consumed: it is deleted unless the substitution already removed it.
     if archive.exists():

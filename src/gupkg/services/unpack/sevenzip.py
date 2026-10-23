@@ -23,13 +23,13 @@ is closed, so an encrypted archive fails instead of waiting for a prompt.
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from ...extractors import find_7z
 from ...report.events import subprocess_lines
-from ...system.port import System
+from ...system.port import ProcessAborted, System
 
 LIST_TIMEOUT = 300.0
 EXTRACT_TIMEOUT = 3600.0
@@ -97,19 +97,25 @@ class SevenZip:
             raise SevenZipError(_failure("list", archive, result.stdout, result.stderr, result.returncode))
         return parse_listing(result.stdout)
 
-    def extract(self, archive: Path, destination: Path, kind: str | None = None) -> None:
+    def extract(self, archive: Path, destination: Path, kind: str | None = None,
+                watch: Callable[[], str | None] | None = None) -> None:
         """Unpack *archive* into the existing, empty folder *destination*.
+
+        *watch* is polled while 7-Zip runs; when it returns text 7-Zip is killed.
 
         Raises
         ------
         SevenZipError
-            If 7-Zip exits with any status but zero.
+            If 7-Zip exits with any status but zero, or is killed because *watch* asked.
         """
         argv: list[str] = [str(self.executable), "x", "-y", f"-o{destination}", "-sccUTF-8"]
         if kind:
             argv.append(f"-t{kind}")
         argv += ["--", str(archive)]
-        result = self.system.run(argv, on_line=subprocess_lines(argv), timeout=EXTRACT_TIMEOUT)
+        try:
+            result = self.system.run(argv, on_line=subprocess_lines(argv), timeout=EXTRACT_TIMEOUT, watch=watch)
+        except ProcessAborted as error:
+            raise SevenZipError(f"7-Zip was stopped: {error}") from error
         if result.returncode != 0:
             raise SevenZipError(_failure("extract", archive, result.stdout, result.stderr, result.returncode))
 

@@ -1,36 +1,42 @@
-"""Extract one archive into an empty folder, refusing anything unsafe before and after.
+"""Extract one archive into an empty folder, refusing anything unsafe before, while and after.
 
 Zip archives are read in process so that every member name, type, size and byte count is
-judged before and while it is written. Every other format goes through 7-Zip: the table of
-contents is read and judged first (``gupkg.services.unpack.sevenzip``), 7-Zip unpacks into
-the folder, and the finished tree is walked again for links and size. Compressed tarballs
-take two 7-Zip passes: decompress to a tar, then unpack the tar (decision D39).
+judged before and while it is written. Gzip, bzip2 and xz wrappers of a tarball are
+decompressed in process with a byte cap, so a bomb stops at the cap. Every other format goes
+through 7-Zip: the table of contents is read and judged first (``gupkg.services.unpack.sevenzip``),
+7-Zip unpacks into the folder while a watcher measures that folder and kills 7-Zip the moment a
+limit is crossed, and the finished tree is walked again for links and size. A tarball takes two
+passes: decompress to a tar, then unpack the tar (decision D39).
 
 Usage and API
 -------------
-``extract_archive(system, archive, kind, destination, limits)`` fills the empty folder
+``extract_archive(system, archive, kind, destination, budget)`` fills the empty folder
 *destination* and returns nothing; it raises ``UnpackError`` for an unsafe, oversized,
-encrypted or damaged archive. ``Limits`` bounds entries and sizes. ``check_tree`` is the
-post-extraction walk, also used after transformations.
+encrypted or damaged archive. ``Limits`` bounds entries and sizes; one ``Budget`` is shared by
+an artifact and every archive nested in it, so the limits are cumulative. ``check_tree`` is the
+post-extraction walk, also used after transformations. ``decompress_capped`` is the capped
+in-process decompressor.
 
 Implementation Approach
 -----------------------
-Names are validated as a set (``check_member_set``), so duplicates and names that collide
-on a case-insensitive disk are refused. Sizes are bounded twice: by the declared sizes
-before extraction and by the bytes actually written (zip) or found on disk afterwards
-(7-Zip). The caller owns *destination* and deletes it on any failure, so no partial result
-survives.
+Declared sizes are only a hint (a bzip2 or NSIS listing has none, and a trailer can lie), so
+the real bound is measured: bytes written (zip, in-process decompression) or the size and entry
+count of the staging folder, polled while 7-Zip runs. The caller owns *destination* and deletes
+it on any failure, so no partial result survives.
 """
 
 from __future__ import annotations
 
+import bz2
+import gzip
 import lzma
 import os
 import shutil
 import stat
+import time
 import zipfile
 import zlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from ...system.port import System
@@ -39,6 +45,11 @@ from .sevenzip import Listing, SevenZip, SevenZipError
 
 _COPY_BLOCK = 1024 * 1024
 _NOT_REGULAR = (0o020000, 0o060000, 0o010000, 0o140000)  # device, block, fifo, socket
+_DECOMPRESSORS = (
+    (b"\x1f\x8b", gzip.open),
+    (b"BZh", bz2.open),
+    (b"\xfd7zXZ\x00", lzma.open),
+)
 
 
 class UnpackError(RuntimeError):
@@ -52,19 +63,47 @@ class Limits:
     Attributes
     ----------
     max_entries : int
-        Most members (files and folders) an archive may hold.
+        Most members (files and folders) in total, nested archives included.
     max_total_bytes : int
-        Most uncompressed bytes in total.
+        Most uncompressed bytes in total, nested archives included.
     max_file_bytes : int
         Most uncompressed bytes in one file.
     """
 
-    max_entries: int = 1_000_000
+    max_entries: int = 200_000
     max_total_bytes: int = 8 * 1024**3
     max_file_bytes: int = 4 * 1024**3
 
 
-def extract_archive(system: System, archive: Path, kind: str, destination: Path, limits: Limits,
+@dataclass
+class Budget:
+    """Track what one artifact and the archives nested in it have already produced.
+
+    A fresh budget starts empty; each extraction charges what it wrote, and the next one may
+    use only what is left, so a nested archive cannot start over with a full allowance.
+    """
+
+    limits: Limits = field(default_factory=Limits)
+    used_bytes: int = 0
+    used_entries: int = 0
+
+    @property
+    def bytes_left(self) -> int:
+        """Return the bytes the next extraction may still write."""
+        return max(self.limits.max_total_bytes - self.used_bytes, 0)
+
+    @property
+    def entries_left(self) -> int:
+        """Return the entries the next extraction may still create."""
+        return max(self.limits.max_entries - self.used_entries, 0)
+
+    def charge(self, files: int, size: int) -> None:
+        """Record *files* entries and *size* bytes as produced."""
+        self.used_entries += files
+        self.used_bytes += size
+
+
+def extract_archive(system: System, archive: Path, kind: str, destination: Path, budget: Budget | Limits,
                     seven_zip: Path | None = None) -> None:
     """Extract *archive* of the given *kind* into the empty folder *destination*.
 
@@ -78,8 +117,8 @@ def extract_archive(system: System, archive: Path, kind: str, destination: Path,
         ``zip``, ``7z``, ``tar``, ``sfx``, ``nsis`` or ``msi``.
     destination : Path
         An existing, empty folder that receives the contents.
-    limits : Limits
-        The entry and size bounds.
+    budget : Budget or Limits
+        What may still be produced (a ``Limits`` starts a new budget).
     seven_zip : Path, optional
         The 7-Zip executable for every kind but ``zip``.
 
@@ -88,28 +127,34 @@ def extract_archive(system: System, archive: Path, kind: str, destination: Path,
     UnpackError
         If anything about the archive is unsafe, over a limit, or fails to extract.
     """
+    if isinstance(budget, Limits):
+        budget = Budget(budget)
     try:
         if kind == "zip":
-            _extract_zip(archive, destination, limits)
+            _extract_zip(archive, destination, budget)
         else:
             tool = SevenZip(system, seven_zip)
             if kind == "tar":
-                _extract_tar(tool, archive, destination, limits)
+                _extract_tar(tool, archive, destination, budget)
             else:
-                _extract_with_seven_zip(tool, archive, destination, limits, kind)
+                _extract_with_seven_zip(tool, archive, destination, budget, kind)
     except (UnsafePath, SevenZipError, zipfile.BadZipFile, NotImplementedError, EOFError, zlib.error, lzma.LZMAError, OSError) as error:
         raise UnpackError(str(error)) from error
-    check_tree(destination, limits)
+    files, size = check_tree(destination, budget.limits, budget)
+    budget.charge(files, size)
 
 
-def check_tree(root: Path, limits: Limits) -> tuple[int, int]:
+def check_tree(root: Path, limits: Limits, budget: Budget | None = None) -> tuple[int, int]:
     """Walk *root* without following links; return ``(file count, byte count)``.
 
     Raises
     ------
     UnpackError
-        If any entry is a link, junction or special file, or a limit is exceeded.
+        If any entry is a link, junction or special file, or a limit (the budget's, when given)
+        is exceeded.
     """
+    allowed_bytes = budget.bytes_left if budget is not None else limits.max_total_bytes
+    allowed_entries = budget.entries_left if budget is not None else limits.max_entries
     files = total = entries = 0
     for current, folders, names in os.walk(root, followlinks=False):
         for name in [*folders, *names]:
@@ -117,7 +162,7 @@ def check_tree(root: Path, limits: Limits) -> tuple[int, int]:
             path = Path(current) / name
             if is_reparse_point(path):
                 raise UnpackError(f"The archive produced a link or junction at {path.relative_to(root).as_posix()}")
-            if entries > limits.max_entries:
+            if entries > allowed_entries:
                 raise UnpackError(f"The archive has more than {limits.max_entries} entries")
         for name in names:
             path = Path(current) / name
@@ -126,9 +171,42 @@ def check_tree(root: Path, limits: Limits) -> tuple[int, int]:
                 raise UnpackError(f"The archive produced a special file at {path.relative_to(root).as_posix()}")
             files += 1
             total += status.st_size
-            if status.st_size > limits.max_file_bytes or total > limits.max_total_bytes:
+            if status.st_size > limits.max_file_bytes or total > allowed_bytes:
                 raise UnpackError("The archive is larger than the allowed size when unpacked")
     return files, total
+
+
+def decompress_capped(source: Path, destination: Path, limit: int) -> int:
+    """Decompress a gzip, bzip2 or xz file to *destination*, writing at most *limit* bytes.
+
+    Returns
+    -------
+    int
+        The number of bytes written.
+
+    Raises
+    ------
+    UnpackError
+        If the output would exceed *limit* (what was written is at most *limit* plus one block
+        and is deleted), or the file is not one of the three formats.
+    """
+    with open(source, "rb") as handle:
+        head = handle.read(8)
+    opener = next((open_ for signature, open_ in _DECOMPRESSORS if head.startswith(signature)), None)
+    if opener is None:
+        raise UnpackError(f"{source.name} is not a gzip, bzip2 or xz file")
+    written = 0
+    try:
+        with opener(source, "rb") as reader, open(destination, "xb") as writer:
+            while block := reader.read(_COPY_BLOCK):
+                written += len(block)
+                if written > limit:
+                    raise UnpackError("The compressed file expands past the allowed size")
+                writer.write(block)
+    except UnpackError:
+        destination.unlink(missing_ok=True)
+        raise
+    return written
 
 
 # ---------------------------------------------------------------------------
@@ -136,15 +214,16 @@ def check_tree(root: Path, limits: Limits) -> tuple[int, int]:
 # ---------------------------------------------------------------------------
 
 
-def _extract_zip(archive: Path, destination: Path, limits: Limits) -> None:
+def _extract_zip(archive: Path, destination: Path, budget: Budget) -> None:
     """Write every member of a zip archive below *destination*, judging each one first."""
+    limits = budget.limits
     with zipfile.ZipFile(archive) as bundle:
         infos = bundle.infolist()
-        if len(infos) > limits.max_entries:
+        if len(infos) > budget.entries_left:
             raise UnpackError(f"The archive has {len(infos)} entries; at most {limits.max_entries} are allowed")
         names = check_member_set(info.filename for info in infos)
         declared = sum(info.file_size for info in infos)
-        if declared > limits.max_total_bytes or any(info.file_size > limits.max_file_bytes for info in infos):
+        if declared > budget.bytes_left or any(info.file_size > limits.max_file_bytes for info in infos):
             raise UnpackError("The archive declares more uncompressed data than the allowed size")
 
         # Refuse members that are not plain files or folders, and encrypted members.
@@ -172,7 +251,7 @@ def _extract_zip(archive: Path, destination: Path, limits: Limits) -> None:
                 while block := source.read(_COPY_BLOCK):
                     produced += len(block)
                     written += len(block)
-                    if produced > info.file_size or produced > limits.max_file_bytes or written > limits.max_total_bytes:
+                    if produced > info.file_size or produced > limits.max_file_bytes or written > budget.bytes_left:
                         raise UnpackError(f"{info.filename!r} expands past its declared or the allowed size")
                     sink.write(block)
 
@@ -182,10 +261,63 @@ def _extract_zip(archive: Path, destination: Path, limits: Limits) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _judge(listing: Listing, limits: Limits, *, allow_empty: bool = True) -> None:
-    """Refuse a table of contents with an unsafe name, a link, encryption, or a size over a limit."""
-    entries = listing.entries
-    if len(entries) > limits.max_entries:
+class _FolderWatch:
+    """Measure a folder while 7-Zip writes into it and say when a limit is crossed.
+
+    Called by ``System.run`` about five times a second. The walk is repeated no more often
+    than four times its own duration, so a huge tree is not scanned continuously.
+    """
+
+    def __init__(self, root: Path, max_bytes: int, max_entries: int, max_file: int) -> None:
+        """Remember the folder and the limits."""
+        self.root, self.max_bytes, self.max_entries, self.max_file = root, max_bytes, max_entries, max_file
+        self._next = 0.0
+        self.largest = 0
+
+    def __call__(self) -> str | None:
+        """Return the reason to stop 7-Zip, or ``None`` while the folder is within its limits."""
+        now = time.monotonic()
+        if now < self._next:
+            return None
+        total = entries = 0
+        for current, folders, names in os.walk(self.root, followlinks=False):
+            entries += len(folders) + len(names)
+            for name in names:
+                try:
+                    size = os.lstat(os.path.join(current, name)).st_size
+                except OSError:
+                    continue
+                total += size
+                if size > self.max_file:
+                    return "a file is larger than the allowed size"
+            if total > self.max_bytes or entries > self.max_entries:
+                break
+        self.largest = max(self.largest, total)
+        self._next = time.monotonic() + 4 * (time.monotonic() - now)
+        if total > self.max_bytes:
+            return "the archive expands past the allowed size"
+        if entries > self.max_entries:
+            return "the archive has more entries than allowed"
+        return None
+
+
+def _unpack_watched(tool: SevenZip, archive: Path, destination: Path, budget: Budget, kind: str | None) -> None:
+    """Run 7-Zip into *destination* under a watcher that enforces the budget while it works."""
+    watch = _FolderWatch(destination, budget.bytes_left, budget.entries_left, budget.limits.max_file_bytes)
+    try:
+        tool.extract(archive, destination, kind, watch=watch)
+    except SevenZipError as error:
+        raise UnpackError(str(error)) from error
+
+
+def _judge(listing: Listing, budget: Budget) -> None:
+    """Refuse a table of contents with an unsafe name, a link, encryption, or a size over a limit.
+
+    Sizes are what the archive claims, and some formats claim none: this is an early refusal,
+    and the folder watcher is the real bound.
+    """
+    limits, entries = budget.limits, listing.entries
+    if len(entries) > budget.entries_left:
         raise UnpackError(f"The archive has {len(entries)} entries; at most {limits.max_entries} are allowed")
     check_member_set(entry.path for entry in entries)
     for entry in entries:
@@ -195,13 +327,11 @@ def _judge(listing: Listing, limits: Limits, *, allow_empty: bool = True) -> Non
             raise UnpackError(f"The archive contains a link: {entry.path!r}")
         if entry.size > limits.max_file_bytes:
             raise UnpackError(f"{entry.path!r} is larger than the allowed size")
-    if sum(entry.size for entry in entries) > limits.max_total_bytes:
+    if sum(entry.size for entry in entries) > budget.bytes_left:
         raise UnpackError("The archive declares more uncompressed data than the allowed size")
-    if not entries and not allow_empty:
-        raise UnpackError("The archive is empty")
 
 
-def _extract_with_seven_zip(tool: SevenZip, archive: Path, destination: Path, limits: Limits, kind: str) -> None:
+def _extract_with_seven_zip(tool: SevenZip, archive: Path, destination: Path, budget: Budget, kind: str) -> None:
     """Extract a 7z, self-extracting, NSIS or MSI file after judging its table of contents."""
     forced = "Nsis" if kind == "nsis" else None
     listing = tool.listing(archive, forced)
@@ -211,37 +341,49 @@ def _extract_with_seven_zip(tool: SevenZip, archive: Path, destination: Path, li
         raise UnpackError(f"{archive.name} is not an NSIS installer (7-Zip reads it as {listing.type})")
     if kind == "sfx" and listing.type == "PE":
         raise UnpackError(f"{archive.name} is an executable with no archive inside")
-    _judge(listing, limits)
-    tool.extract(archive, destination, forced)
+    _judge(listing, budget)
+    _unpack_watched(tool, archive, destination, budget, forced)
 
 
-def _extract_tar(tool: SevenZip, archive: Path, destination: Path, limits: Limits) -> None:
-    """Unpack a tarball with two 7-Zip passes: decompress, then unpack the tar."""
+def _extract_tar(tool: SevenZip, archive: Path, destination: Path, budget: Budget) -> None:
+    """Unpack a tarball with two passes: decompress (capped, in process when possible), then unpack the tar."""
     first = tool.listing(archive)
 
     # A plain tar needs only the second pass; any compressed wrapper is removed first.
     if first.type.lower() == "tar":
-        _judge(first, limits)
-        tool.extract(archive, destination)
+        _judge(first, budget)
+        _unpack_watched(tool, archive, destination, budget, None)
         return
     wrapper = destination.parent / f".{destination.name}-pass1"
     wrapper.mkdir()
     try:
-        _judge(first, limits)
+        _judge(first, budget)
         if len(first.entries) > 1:
             raise UnpackError("A compressed tarball wraps exactly one file")
-        tool.extract(archive, wrapper)
-        produced = [path for path in wrapper.iterdir()]
-        if len(produced) != 1 or not produced[0].is_file() or is_reparse_point(produced[0]):
-            raise UnpackError("Decompressing the tarball did not produce exactly one file")
-        inner = produced[0]
+
+        # Pass one writes one file, never more than the budget allows: in process for the
+        # formats Python reads, otherwise 7-Zip under the folder watcher.
+        name = archive.stem if archive.suffix.lower() in (".gz", ".bz2", ".xz", ".tgz", ".txz", ".tbz2") else archive.name + ".out"
+        if archive.suffix.lower() in (".tgz", ".txz", ".tbz2"):
+            name = archive.stem + ".tar"
+        inner = wrapper / safe_file_name(name)
+        with open(archive, "rb") as handle:
+            head = handle.read(8)
+        if any(head.startswith(signature) for signature, _opener in _DECOMPRESSORS):
+            decompress_capped(archive, inner, min(budget.bytes_left, budget.limits.max_file_bytes))
+        else:
+            _unpack_watched(tool, archive, wrapper, budget, None)
+            produced = list(wrapper.iterdir())
+            if len(produced) != 1 or not produced[0].is_file() or is_reparse_point(produced[0]):
+                raise UnpackError("Decompressing the tarball did not produce exactly one file")
+            inner = produced[0]
         second = tool.listing(inner, "tar") if _looks_like_tar(inner) else None
         if second is None:
             # Not a tarball after all: the decompressed file is the content.
             shutil.move(str(inner), str(destination / safe_file_name(inner.name)))
             return
-        _judge(second, limits)
-        tool.extract(inner, destination, "tar")
+        _judge(second, budget)
+        _unpack_watched(tool, inner, destination, budget, "tar")
     finally:
         shutil.rmtree(wrapper, ignore_errors=True)
 

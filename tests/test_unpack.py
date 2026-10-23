@@ -75,8 +75,8 @@ def test_a_7z_archive_is_unpacked(system: FakeSystem, tmp_path: Path, stage: Pat
         pytest.param("tool.tar", "w", id="plain-tar"),
     ],
 )
-def test_tarballs_are_unpacked_by_two_seven_zip_passes(system: FakeSystem, tmp_path: Path, stage: Path, name: str, mode: str) -> None:
-    """`.tar.xz`, `.tar.gz` and the other tarballs are decompressed and then unpacked (decision D39)."""
+def test_tarballs_are_decompressed_with_a_cap_then_unpacked_by_seven_zip(system: FakeSystem, tmp_path: Path, stage: Path, name: str, mode: str) -> None:
+    """`.tar.xz`, `.tar.gz` and the other tarballs are decompressed (capped, in process) and then unpacked by 7-Zip (D39)."""
     archive = make_tar(tmp_path / name, [("msys64/usr/bin/bash.exe", b"bash", "file"), ("msys64/etc/profile", b"p", "file")], mode)
 
     report = unpack(system, archive, stage, UnpackPlan(strip=1))
@@ -84,7 +84,7 @@ def test_tarballs_are_unpacked_by_two_seven_zip_passes(system: FakeSystem, tmp_p
     assert report.kind == "tar"
     assert tree(stage / "App") == {"usr/bin/bash.exe": "bash", "etc/profile": "p"}
     runs = [call[1] for call in system.process_log if call[1] == "x"]
-    assert len(runs) == (1 if name.endswith(".tar") else 2)
+    assert len(runs) == 1  # pass one (decompression) runs in process under a byte cap; pass two is 7-Zip
     assert not any(path.name.startswith(".") for path in stage.iterdir())
 
 

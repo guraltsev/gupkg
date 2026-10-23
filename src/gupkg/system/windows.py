@@ -38,6 +38,7 @@ import re
 import struct
 import subprocess
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -53,6 +54,7 @@ from .port import (
     DownloadResponse,
     EnvValue,
     HttpResponse,
+    ProcessAborted,
     ProcessResult,
     ResponseTooLarge,
     Scope,
@@ -360,6 +362,7 @@ class WindowsSystem(WindowsLinks):
         *,
         input_text: str | None = None,
         timeout: float | None = None,
+        watch: Callable[[], str | None] | None = None,
     ) -> ProcessResult:
         """Run a child process to completion, streaming each output line to *on_line*.
 
@@ -367,7 +370,8 @@ class WindowsSystem(WindowsLinks):
         ------
         OSError
             If the program cannot be started; ``TimeoutError`` when *timeout*
-            seconds pass first (the process is killed).
+            seconds pass first (the process is killed); ``ProcessAborted`` when *watch*
+            returns a reason (the process is killed).
         """
         command = _script_command(argv)
         process = subprocess.Popen(
@@ -408,12 +412,25 @@ class WindowsSystem(WindowsLinks):
                     process.stdin.close()
                 except OSError:
                     pass
-            try:
-                returncode = process.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
-                raise TimeoutError(f"{command[0]} did not finish within {timeout} seconds") from None
+            # Wait in short slices when a watcher is given, so it can stop a runaway child.
+            started = time.monotonic()
+            while True:
+                slice_seconds = 0.2 if watch is not None else timeout
+                if timeout is not None and slice_seconds is not None:
+                    slice_seconds = min(slice_seconds, max(timeout - (time.monotonic() - started), 0.0))
+                try:
+                    returncode = process.wait(timeout=slice_seconds)
+                    break
+                except subprocess.TimeoutExpired:
+                    if timeout is not None and time.monotonic() - started >= timeout:
+                        process.kill()
+                        process.wait()
+                        raise TimeoutError(f"{command[0]} did not finish within {timeout} seconds") from None
+                    reason = watch() if watch is not None else None
+                    if reason is not None:
+                        process.kill()
+                        process.wait()
+                        raise ProcessAborted(reason) from None
         finally:
             for reader in readers:
                 reader.join()
