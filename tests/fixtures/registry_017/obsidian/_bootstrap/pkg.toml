@@ -1,0 +1,20 @@
+only_portable = false
+description = "Markdown knowledge base and note-taking app."
+homepage = "https://obsidian.md/"
+
+[origin]
+url = "https://github.com/obsidianmd/obsidian-releases"
+
+[update]
+
+[update.check]
+mode = "github"
+assetName = "Obsidian-${version}.exe"
+
+[update.payload]
+mode = "module"
+
+[[shortcut]]
+name = "Obsidian"
+targetPath = "$App\\Obsidian.exe"
+description = "Markdown knowledge base"

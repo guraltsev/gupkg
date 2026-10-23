@@ -1,0 +1,21 @@
+only_portable = false
+description = "Open source video recording and live streaming."
+homepage = "https://obsproject.com/"
+
+[origin]
+url = "https://github.com/obsproject/obs-studio"
+
+[update]
+
+[update.check]
+mode = "github"
+assetName = "OBS-Studio-${version}-Windows-x64.zip"
+
+[update.payload]
+mode = "zip"
+
+[[shortcut]]
+name = "OBS Studio"
+targetPath = "$App\\bin\\64bit\\obs64.exe"
+workingDirectory = "$App\\bin\\64bit"
+description = "Recording and live streaming"

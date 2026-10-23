@@ -1,0 +1,31 @@
+only_portable = false
+description = "Hassle-free JavaScript tool manager that pins node, npm, pnpm, and yarn per project."
+homepage = "https://volta.sh/"
+
+[origin]
+url = "https://github.com/volta-cli/volta"
+
+[update]
+
+[update.check]
+mode = "github"
+assetName = "volta-${version}-windows.zip"
+
+# The release ZIP holds only volta.exe, volta-shim.exe, and volta-migrate.exe.
+# The module copies volta-shim.exe to node/npm/npx/pnpm/yarn.exe, which is
+# what `volta setup` does on Windows.
+[update.payload]
+mode = "module"
+module = "pkg.local/unpack_app.py"
+ignore_checksum = true
+
+[[path]]
+value = "$App"
+
+# Shims for globally installed tools (e.g. tsc) are created here by Volta.
+[[path]]
+value = "%LOCALAPPDATA%\\Volta\\bin"
+
+[[bin]]
+name = "volta"
+target = "$App\\volta.exe"

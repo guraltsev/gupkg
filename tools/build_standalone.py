@@ -56,8 +56,9 @@ ROOT = Path(__file__).resolve().parents[1]
 # Imported by the build probe when the bundle's dependencies are installed. The UI
 # programs are modules of the gupkg package today; the separate programs the rehaul
 # creates (issues 029-030) are probed too as soon as their package directories exist
-# beside ``gupkg`` in the version directory.
-PROBE_MODULES = ("gupkg.cli", "gupkg.manager", "gupkg.tui", "gupkg.manager_tui")
+# beside ``gupkg`` in the version directory. The migration tool (issue 023) is one of them
+# and is always present, so it is probed unconditionally.
+PROBE_MODULES = ("gupkg.cli", "gupkg.manager", "gupkg.tui", "gupkg.manager_tui", "gupkg_migrate.cli")
 OPTIONAL_PROBE_PACKAGES = ("gupkg_ui", "gupkg_tui", "gupkg_manager")
 # Modules of the base probe that need no third-party package (used by --skip-deps builds).
 # ``gupkg.cli`` is not among them any more: the CLI writes TOML with tomli_w (issue 023).
@@ -199,6 +200,11 @@ def build_bundle(
         hooks = source.parent / "pkg.local"
         if hooks.is_dir():
             shutil.copytree(hooks, root / "pkg.local", ignore=shutil.ignore_patterns("__pycache__"))
+
+        # The migration tool is a separate program beside the gupkg package (design section 12).
+        migration_tool = source.parent / "gupkg_migrate"
+        if migration_tool.is_dir():
+            shutil.copytree(migration_tool, root / "gupkg_migrate", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
 
         # The interpreter, configured to import from its own site-packages,
         # then the locked dependencies (every wheel is hash-checked by pip).

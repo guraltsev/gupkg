@@ -1,0 +1,22 @@
+only_portable = false
+description = "Goldfish Scheme, a Scheme interpreter and standard library (gf command)."
+homepage = "https://github.com/MoganLab/goldfish"
+
+[origin]
+url = "https://github.com/MoganLab/goldfish"
+
+[update]
+
+[update.check]
+mode = "github"
+assetName = "goldfish-scheme-x64-v${version}-win.zip"
+
+[update.payload]
+mode = "zip"
+
+[[path]]
+value = "$App\\bin"
+
+[[bin]]
+name = "gf"
+target = "$App\\bin\\gf.exe"

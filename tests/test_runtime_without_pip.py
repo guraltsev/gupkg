@@ -137,9 +137,10 @@ def test_import_names_come_from_the_installed_records() -> None:
 
 
 def test_the_probe_passes_on_the_committed_runtime_with_the_real_lock_and_default_modules(tmp_path: Path) -> None:
-    """On the committed runtime and the real lock, the default probe imports every package and gupkg UI module."""
+    """On the committed runtime and the real lock, the default probe imports every package, gupkg UI module and the migration tool."""
     root = tmp_path / "gupkg-test"
     shutil.copytree(SOURCE, root / "gupkg", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    shutil.copytree(SOURCE.parent / "gupkg_migrate", root / "gupkg_migrate", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
 
     build_standalone.run_build_probe(root, LOCK)
 
