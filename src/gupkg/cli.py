@@ -518,7 +518,8 @@ def main(argv: Sequence[str] | None = None, *, system: System | None = None) -> 
     # Everything else runs in a session: events reach the console (standard
     # error when standard output carries the TOML document) and the logs, and
     # the closing summary is printed last.
-    console = ConsoleReporter(sys.stderr if args.format == "toml" else None)
+    toml_mode = args.format == "toml"
+    console = ConsoleReporter(sys.stderr if toml_mode else None, problems_to_stderr=not toml_mode)
     session = RunSession(
         command=_command_name(args),
         argv=list(argv) if argv is not None else sys.argv[1:],

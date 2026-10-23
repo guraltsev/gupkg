@@ -216,3 +216,84 @@ def test_a_terminal_that_cannot_encode_the_marks_falls_back_to_plain_text(monkey
     assert "WARNING: still visible" in text
     assert text.rstrip().endswith("summary")
     assert reporter.fancy is False
+
+
+def test_warnings_and_errors_go_to_the_problem_stream_and_everything_else_to_the_main_one(monkeypatch) -> None:
+    """With problems_to_stderr, plain output keeps phases and the summary on one stream and every warning and error, with its hint, on the other."""
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    main, problems = io.StringIO(), io.StringIO()
+
+    _feed(ConsoleReporter(main, problems_to_stderr=True, problems_stream=problems), _install_events())
+
+    lines = main.getvalue().splitlines()
+    assert "==> Fetch" in lines and lines[-3] == "==> Failed (exit code 3)"
+    assert not any("WARNING" in line or "ERROR" in line or "hint:" in line for line in lines)
+    assert problems.getvalue().splitlines() == [
+        "WARNING: checksum came from the vendor page",
+        "ERROR: verification failed",
+        "  hint: check the URL",
+    ]
+
+
+def test_problems_use_their_own_console_on_a_terminal(terminal, monkeypatch) -> None:
+    """On a terminal, with problems_to_stderr, warnings and errors are drawn on the problem console and the rest on the main one."""
+    from rich.console import Console
+
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.delenv("TERM", raising=False)
+    console, raw = terminal
+    problem_raw = io.StringIO()
+    problem_console = Console(record=True, force_terminal=True, width=100, color_system="truecolor", file=problem_raw)
+
+    _feed(ConsoleReporter(console=console, problems_to_stderr=True, problems_console=problem_console), _install_events())
+
+    problem_text, main_text = problem_console.export_text(), console.export_text()
+    assert "WARNING: checksum came from the vendor page" in problem_text
+    assert "ERROR: verification failed" in problem_text
+    assert "WARNING" not in main_text and "ERROR" not in main_text
+    assert "Fetch" in main_text
+
+
+@pytest.mark.parametrize("mode", ["plain", "terminal"])
+def test_escape_sequences_in_steps_warnings_and_errors_never_reach_the_output(terminal, monkeypatch, mode) -> None:
+    """Package text with colour codes, cursor movement or a window-title request is shown without the control sequences, on both render paths."""
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.delenv("TERM", raising=False)
+    hostile = "\x1b[31mred\x1b[0m \x1b]0;owned\x07title \x1b[2J gone\rtail\x00"
+    events = [Step(hostile), Warning(hostile), Error(hostile, hint=hostile), RunEnd(hostile, 0)]
+    if mode == "plain":
+        stream = io.StringIO()
+        _feed(ConsoleReporter(stream), events)
+        output = stream.getvalue()
+    else:
+        console, raw = terminal
+        _feed(ConsoleReporter(console=console), events)
+        output = console.export_text()
+        # Rich adds its own styling codes; none of the hostile ones may appear.
+        assert "\x1b]0" not in raw.getvalue() and "\x1b[2J" not in raw.getvalue()
+
+    assert "\x1b[31m" not in output and "\x1b]0" not in output and "\x1b[2J" not in output
+    assert "\x00" not in output and "\r" not in output
+    assert "red title  gonetail" in output
+
+
+def test_the_text_log_is_cleaned_like_the_console_while_the_json_log_keeps_the_original(tmp_path) -> None:
+    """The text log never holds control sequences from package text; the JSONL keeps the original, safely escaped by JSON."""
+    import json
+
+    from gupkg.report.session import RunSession
+
+    session = RunSession(
+        command="check", argv=[], mode="user", elevated=False, version="1.0.0", reporters=[], fallback_base=tmp_path,
+    )
+    with session:
+        from gupkg.report.events import emit
+
+        emit(Step("\x1b[31mred\x1b[0m step"))
+        session.finish("done", 0)
+
+    [log] = (tmp_path / ".gupkg" / "logs").glob("2*.log")
+    [events] = (tmp_path / ".gupkg" / "logs").glob("2*.jsonl")
+    assert "\x1b" not in log.read_text(encoding="utf-8") and "red step" in log.read_text(encoding="utf-8")
+    steps = [json.loads(line) for line in events.read_text(encoding="utf-8").splitlines() if '"step"' in line]
+    assert steps[0]["text"] == "\x1b[31mred\x1b[0m step"

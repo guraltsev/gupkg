@@ -60,3 +60,19 @@ See the final report.
   parameters (defaults 50 and 90) and the CLI uses the defaults.
 - The manager TUI still uses its own `on_progress` callbacks (target states); replacing them
   is the manager rewrite, not this issue.
+
+## Review round 1
+
+- Merged main (issue 023): conflicts in `components.py`, `core.py`, `manager.py` resolved by keeping both
+  sides; `import json` in `manager.py` was unused after the merge and is dropped with `contextlib`/`io`.
+- Events file: stale plain file unlinked, then created exclusively (`"x"`); a link, directory or file with
+  more than one name under the name is refused; after creation `fstat` must show one name and a regular
+  file. The realpath-parent and `samestat` checks of the first draft were dropped (redundant).
+- `latest.log` is built in a unique `latest.<uuid>.tmp` created exclusively; names `latest.*` and run-file
+  names are refused. Pruning touches regular files only (tested with a symlink).
+- `_output_lines`: scan offset (each read scanned once) and 64 KiB line cap (`[line continues]` note on the
+  reported piece, never inside a UTF-8 character); direct tests in `test_process_output_lines.py`.
+- Console: `ConsoleReporter(problems_to_stderr=True)` sends Warning and Error to stderr (0.17 behaviour),
+  `--format toml` sends everything to stderr; Step, Warning, Error, Prompt and summary text are cleaned on
+  the console and in the text log (JSONL verbatim, subprocess lines cleaned at capture).
+- Documentation of the points above is in README ("Output and logs") and the `events.py` docstrings.

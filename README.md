@@ -469,6 +469,29 @@ The newest 50 runs from the last 90 days are kept per folder, pruned when a run 
 never logs to AppData or ProgramData, and a failure to write a log produces one warning and
 never fails the operation.
 
+Details that scripts and maintainers may rely on:
+
+- **Streams.** As in 0.17, warnings and errors go to standard error and everything else (phases,
+  steps, progress, the summary) to standard output. With `--format toml` all human output goes
+  to standard error, so standard output is only the document.
+- **Every run logs, including read-only ones.** `config-check`, `update --check-only` and
+  `manager list` create `<parent>\.gupkg\logs` next to an ad-hoc package (or in the configured
+  root) like any other run; they change nothing else.
+- **Text from packages is cleaned for display.** Escape sequences and control characters in step,
+  warning, error and child-process text are removed on the console and in the text log. The
+  JSONL logs keep step, warning and error text verbatim (JSON escapes it); child-process lines
+  are cleaned where they are captured.
+- **Event contract.** Each `.jsonl` line is `{"event": <name>, <fields>, "ts": <UTC>}` (`"api": 1`
+  in `run_start`), plus the `log_link` record in run logs. `subprocess_line.stream` is always
+  `"output"` in this release: `System.run`'s `on_line` does not say which stream a line came
+  from, and the contract pins that value.
+- **Retention.** The defaults (50 runs, 90 days) are parameters of the log writer; the settings
+  layers of issues 025 and 029 will feed them.
+- **Events file names.** `--events-file` accepts ASCII letters, digits and `._+-` only. A name
+  that ends in `.log`, starts with `latest.`, or looks like a run's own file is refused, and an
+  existing hard link, link or directory under the name is never opened (a stale plain file is
+  replaced).
+
 ## `pkg.toml` reference
 
 `pkg.toml` is optional for a simple pre-populated package. If it is absent,

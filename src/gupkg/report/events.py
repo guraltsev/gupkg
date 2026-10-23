@@ -18,7 +18,11 @@ returns the JSON shape of an event, which is the machine contract written to
 Implementation Approach
 -----------------------
 The active reporter lives in a ``contextvars.ContextVar``. With no reporter
-installed ``emit`` does nothing, so library code never prints. Warnings and
+installed ``emit`` does nothing, so library code never prints. A thread
+started with ``threading.Thread`` does not inherit the variable (only
+``asyncio.to_thread`` and other copied-context paths do): code that emits
+from such a thread must capture the reporter first, as ``subprocess_lines``
+does for the threads that read a child's pipes. Warnings and
 errors are de-duplicated per package, so a problem that is reported live and
 again in a result is delivered once. Child-process lines are produced on
 reader threads that do not inherit the context variable, so
@@ -100,7 +104,12 @@ class Progress:
 
 @dataclass(frozen=True)
 class SubprocessLine:
-    """Carry one output line of a child process (``cmd`` is the program name)."""
+    """Carry one output line of a child process (``cmd`` is the program name).
+
+    ``stream`` is always ``"output"`` in this release: ``System.run`` reports
+    lines of both pipes through one callback that does not say which pipe a
+    line came from.
+    """
 
     cmd: str
     line: str

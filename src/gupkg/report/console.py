@@ -29,6 +29,7 @@ characters are replaced.
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import sys
 import threading
@@ -36,7 +37,7 @@ from typing import Any, Callable, TextIO
 
 from .events import (
     Error, PackageEnd, PackageStart, PhaseEnd, PhaseStart, Progress, Prompt, RunEnd,
-    RunStart, Step, SubprocessLine, Warning,
+    RunStart, Step, SubprocessLine, Warning, clean_line,
 )
 
 
@@ -67,6 +68,26 @@ def format_progress(event: Progress) -> str:
     return f"{event.task}: {show(event.done)} / {show(event.total)} ({percentage:.0f}%)"
 
 
+def _clean_event(event: Any) -> Any:
+    """Return *event* with the text a person reads stripped of terminal escape sequences and control characters.
+
+    Package output must never steer a terminal or a text log, so every
+    renderer cleans what it displays. The JSON logs keep the original text
+    (JSON escapes it, so it is inert there).
+    """
+    if isinstance(event, (Step, Warning, Prompt)):
+        return dataclasses.replace(event, text=clean_line(event.text))
+    if isinstance(event, Error):
+        return dataclasses.replace(event, text=clean_line(event.text), hint=clean_line(event.hint) if event.hint else event.hint)
+    if isinstance(event, RunEnd):
+        return dataclasses.replace(event, summary=clean_line(event.summary))
+    if isinstance(event, SubprocessLine):
+        return dataclasses.replace(event, cmd=clean_line(event.cmd), line=clean_line(event.line))
+    if isinstance(event, Progress):
+        return dataclasses.replace(event, task=clean_line(event.task))
+    return event
+
+
 def _elapsed(seconds: float) -> str:
     """Render a duration as ``12.3s``."""
     return f"{seconds:.1f}s"
@@ -85,6 +106,7 @@ class PlainFormatter:
     def feed(self, event: Any) -> list[str]:
         """Return the lines *event* adds (including any held progress line it releases)."""
         # A held progress line is final as soon as anything else is reported.
+        event = _clean_event(event)
         if isinstance(event, Progress):
             return self._feed_progress(event)
         lines = self.finish()
@@ -150,10 +172,29 @@ class ConsoleReporter:
     console : rich.console.Console, optional
         A prepared Rich console (tests record with one); when given it decides
         the destination and whether the output is a terminal.
+    problems_to_stderr : bool, default=False
+        Print warnings and errors on standard error (or *problems_stream*) and
+        everything else on *stream*; the 0.17 command line behaves this way
+        until the machine interface of issue 029.
+    problems_stream, problems_console : optional
+        Destination (plain text) and prepared Rich console (terminal) for the
+        problems when *problems_to_stderr* is set; the current ``sys.stderr``
+        by default.
     """
 
-    def __init__(self, stream: TextIO | None = None, *, console: Any = None) -> None:
+    def __init__(
+        self,
+        stream: TextIO | None = None,
+        *,
+        console: Any = None,
+        problems_to_stderr: bool = False,
+        problems_stream: TextIO | None = None,
+        problems_console: Any = None,
+    ) -> None:
         self._stream = stream
+        self._problems_to_stderr = problems_to_stderr
+        self._problems_stream = problems_stream
+        self._problems_console = problems_console
         self._lock = threading.RLock()
         self._plain = PlainFormatter()
         self._tasks: dict[str, Any] = {}
@@ -184,14 +225,24 @@ class ConsoleReporter:
                 except UnicodeEncodeError:
                     self.fancy = False
                     self._drop_unfinished_progress()
+            if self._problems_to_stderr and isinstance(event, (Warning, Error)):
+                for line in self._plain.finish():
+                    self._write_plain(line)
+                for line in self._plain.feed(event):
+                    self._write_plain(line, problem=True)
+                return
             for line in self._plain.feed(event):
                 self._write_plain(line)
 
     # -- plain ---------------------------------------------------------------
 
-    def _write_plain(self, line: str) -> None:
+    def _write_plain(self, line: str, *, problem: bool = False) -> None:
         """Write one line, replacing characters the stream cannot encode, and flush."""
-        stream = self._stream or sys.stdout
+        if problem:
+            stream = self._problems_stream or sys.stderr
+            (self._stream or sys.stdout).flush()
+        else:
+            stream = self._stream or sys.stdout
         text = line + "\n"
         try:
             stream.write(text)
@@ -208,10 +259,19 @@ class ConsoleReporter:
         from rich.text import Text
 
         console = self._console
+        event = _clean_event(event)
         if isinstance(event, Progress):
             self._draw_progress(event)
             return
         self._drop_unfinished_progress()
+
+        # Warnings and errors may have their own console (standard error).
+        if self._problems_to_stderr and isinstance(event, (Warning, Error)):
+            if self._problems_console is None:
+                from rich.console import Console
+
+                self._problems_console = Console(stderr=True, highlight=False)
+            console = self._problems_console
 
         if isinstance(event, RunStart):
             console.print(Text(f"gupkg {event.command}  ·  {event.mode}" + ("  ·  elevated" if event.elevated else ""), style="bold"))
