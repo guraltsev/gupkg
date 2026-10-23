@@ -1,5 +1,7 @@
 # Issue 016: One self-contained release ZIP; runtime handling moves to the dev tree
 
+> **Status (2026-10-22):** Implemented. Merged in 07d20ba. The acceptance grep excludes `src/gupkg/python` (the committed runtime still holds pip; issue 019 removes it). `gupkg manager self repair` with a ZIP was not implemented; the documented repair is `gupkg-bootstrap.cmd -Source <zip> -Sha256 <digest>`. Manual checks still owed: `tests/manual_smoke.md`, 016-1 (fresh VM, user scope), 016-2 (elevated `-Scope system`), 016-3 (`manager self update` across two releases), 016-4 (edited file in `self status`), 016-5 (`scriptselease.cmd` against a throwaway fork), and Standalone checks 1-2.
+
 Date: 2026-10-22
 Priority: High
 Change type: Distribution, bootstrap, launcher, self-update, release tooling;
