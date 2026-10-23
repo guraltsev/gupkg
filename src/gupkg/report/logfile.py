@@ -142,7 +142,7 @@ class LogUnavailable(OSError):
 
 
 # Pattern of the files a run leaves (the timestamp sorts chronologically).
-_RUN_FILE = re.compile(r"^(\d{8}T\d{6}Z)-.+\.(log|jsonl)$")
+_RUN_FILE = re.compile(r"^(\d{8}T\d{6}Z)-.+\.(log|jsonl)$", re.IGNORECASE)
 
 
 def prune_logs(directory: Path, keep_runs: int, keep_days: int, now: datetime) -> None:

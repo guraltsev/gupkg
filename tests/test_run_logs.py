@@ -649,6 +649,7 @@ def test_an_events_file_name_that_is_a_hard_link_to_another_file_is_refused(
     assert _combined(capsys).count("WARNING: Cannot write the log of package Example") == 1
 
 
+@pytest.mark.windows_integration
 def test_an_events_file_name_that_is_a_symbolic_link_is_not_followed(
     tmp_path: Path, system: FakeSystem, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -762,6 +763,9 @@ def test_latest_log_is_published_without_writing_through_planted_names(tmp_path:
         pytest.param("latest.jsonl", id="latest-prefix"),
         pytest.param("20261022T101500Z-install.jsonl", id="run-jsonl-name"),
         pytest.param("20261022T101500Z-install-Example.log", id="run-log-name"),
+        pytest.param("20261022T101500Z-update.JSONL", id="run-jsonl-name-upper-case"),
+        pytest.param("20261022t101500z-update.jsonl", id="run-jsonl-name-lower-case-stamp"),
+        pytest.param("LATEST.tmp", id="latest-upper-case"),
     ],
 )
 def test_events_file_names_that_collide_with_the_logs_own_files_are_refused(name: str) -> None:
@@ -801,7 +805,8 @@ def test_the_age_limit_alone_removes_old_runs_while_the_count_would_keep_them(tm
     assert not (logs / f"{aged}.log").exists() and not (logs / f"{aged}.jsonl").exists()
 
 
-def test_pruning_leaves_links_named_like_old_runs_alone(tmp_path: Path) -> None:
+@pytest.mark.windows_integration
+def test_pruning_leaves_symbolic_links_named_like_old_runs_alone(tmp_path: Path) -> None:
     """A symbolic link named like an expired run is neither removed nor followed; only regular files are pruned."""
     import os
 
@@ -823,6 +828,64 @@ def test_pruning_leaves_links_named_like_old_runs_alone(tmp_path: Path) -> None:
         session.finish("done", 0)
 
     assert link.is_symlink() and victim.read_text(encoding="utf-8") == "precious"
+
+
+def test_pruning_never_touches_what_a_junction_or_hard_link_named_like_an_old_run_points_to(
+    tmp_path: Path, system: FakeSystem
+) -> None:
+    """Junctions and hard links named like expired runs (no privilege needed): the junction and everything behind it survive, a hard link loses only its name."""
+    import os
+
+    victim = _victim(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("keep", encoding="utf-8")
+    logs = _logs(tmp_path)
+    logs.mkdir(parents=True)
+    expired = FIXED_TIME - timedelta(days=500)
+    junction = logs / f"{expired:%Y%m%dT%H%M%SZ}-install.log"
+    linked = logs / f"{expired - timedelta(days=1):%Y%m%dT%H%M%SZ}-install.jsonl"
+    system.create_junction(junction, outside)
+    os.link(victim, linked)
+    session = RunSession(
+        command="check", argv=[], mode="user", elevated=False, version="1.0.0", reporters=[],
+        fallback_base=tmp_path, clock=lambda: FIXED_TIME,
+    )
+
+    with session:
+        session.finish("done", 0)
+
+    assert junction.exists() and (outside / "keep.txt").read_text(encoding="utf-8") == "keep"
+    assert victim.read_text(encoding="utf-8") == "precious"
+    assert not linked.exists(), "an expired plain file (even one with a second name) is pruned by name only"
+
+
+@pytest.mark.parametrize("form", ["plain-file", "hard-link"])
+@pytest.mark.parametrize("name", ["latest.tmp", "latest.log.tmp"])
+def test_old_fixed_temporary_names_for_latest_log_are_never_written(
+    tmp_path: Path, name: str, form: str
+) -> None:
+    """Files (or hard links to a victim) already sitting under the fixed temporary names are left exactly as they were, and the run succeeds."""
+    import os
+
+    victim = _victim(tmp_path)
+    logs = _logs(tmp_path)
+    logs.mkdir(parents=True)
+    if form == "hard-link":
+        os.link(victim, logs / name)
+    else:
+        (logs / name).write_text("precious", encoding="utf-8")
+    session = RunSession(
+        command="check", argv=[], mode="user", elevated=False, version="1.0.0", reporters=[],
+        fallback_base=tmp_path, clock=lambda: FIXED_TIME,
+    )
+
+    with session:
+        session.finish("done", 0)
+
+    assert victim.read_text(encoding="utf-8") == "precious"
+    assert (logs / name).read_text(encoding="utf-8") == "precious"
+    assert "# command: check" in (logs / "latest.log").read_text(encoding="utf-8")
 
 
 def test_the_cli_keeps_warnings_and_errors_on_standard_error_and_toml_mode_moves_everything_there(
