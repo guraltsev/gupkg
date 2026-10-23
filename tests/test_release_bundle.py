@@ -214,10 +214,10 @@ def test_manager_self_status_reports_the_edited_file(installed: Path, tmp_path: 
     (installed / "gupkg" / "README.md").write_text("# edited\n", encoding="utf-8")
     damaged = subprocess.run(command, capture_output=True, text=True, env=environment, timeout=120)
     damaged_doctor = subprocess.run(doctor, capture_output=True, text=True, env=environment, timeout=120)
-    assert healthy_doctor.returncode == 0, healthy_doctor.stderr
+    assert healthy_doctor.returncode == 0, healthy_doctor.stdout + healthy_doctor.stderr
 
     assert "self.runtime_healthy: True" in healthy.stdout and healthy.returncode == 0, healthy.stdout + healthy.stderr
     assert damaged.returncode == 3
-    assert "modified: gupkg/README.md" in damaged.stderr
-    assert "Reinstall gupkg from a release ZIP" in damaged.stderr
-    assert damaged_doctor.returncode == 2 and "modified: gupkg/README.md" in damaged_doctor.stderr
+    assert "modified: gupkg/README.md" in damaged.stdout
+    assert "Reinstall gupkg from a release ZIP" in damaged.stdout
+    assert damaged_doctor.returncode == 2 and "modified: gupkg/README.md" in damaged_doctor.stdout

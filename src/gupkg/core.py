@@ -1,4 +1,4 @@
-"""Provide shared models, logging, version handling, expansion, and atomic I/O.
+"""Provide shared models, log adapters, version handling, expansion, and atomic I/O.
 
 The module contains dependency-light values and utilities used across the gupkg
 runtime. Filesystem writes use same-directory temporary files so replacements
@@ -8,17 +8,14 @@ Implementation Approach
 -----------------------
 Small immutable or result-oriented models carry package identity and outcomes.
 Pure parsing and expansion helpers are kept beside the narrowly scoped logging
-and atomic-write infrastructure shared by higher-level domains.
+and atomic-write infrastructure shared by higher-level domains; the ``log_*`` adapters turn legacy messages into events.
 """
 
 from __future__ import annotations
 
 
-import logging
 import os
 import re
-import shutil
-import sys
 import tempfile
 import tomllib
 from dataclasses import dataclass, field
@@ -26,8 +23,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 
+from .report.events import Error, Step, Warning, emit
 from .system.port import Scope
-from .system.windows import enable_virtual_terminal
 
 
 __copyright__ = "Copyright (C) 2025 Gennady Uraltsev. All rights reserved."
@@ -237,127 +234,29 @@ class ExpansionMode(Enum):
     SCRIPT = "script"
 
 
-# ANSI foreground codes for the few roles that carry meaning in console output.
-_ANSI_ROLES = {"error": "31", "warning": "33", "success": "32", "dim": "2"}
-_vt_enabled: dict[int, bool] = {}
-
-
-def supports_color(stream: Any) -> bool:
-    """Return whether *stream* is a console that should receive ANSI colors.
-
-    Colors are off for redirected output, ``NO_COLOR``, and ``TERM=dumb``. On
-    Windows the console's virtual-terminal mode is switched on first, because a
-    legacy console would otherwise print the escape codes as visible text.
-    """
-    isatty = getattr(stream, "isatty", None)
-    if not (isatty and isatty()) or os.environ.get("NO_COLOR") or os.environ.get("TERM") == "dumb":
-        return False
-    if os.name != "nt":
-        return True
-    try:
-        key = stream.fileno()
-    except (OSError, ValueError, AttributeError):
-        return False
-    if key not in _vt_enabled:
-        _vt_enabled[key] = enable_virtual_terminal(key)
-    return _vt_enabled[key]
-
-
-def colorize(text: str, role: str, stream: Any = None) -> str:
-    """Wrap *text* in the ANSI color for *role* when *stream* (default stdout) supports it.
-
-    Roles are ``error``, ``warning``, ``success``, and ``dim``; the text is
-    returned unchanged for redirected output.
-    """
-    if not supports_color(stream if stream is not None else sys.stdout):
-        return text
-    return f"\x1b[{_ANSI_ROLES[role]}m{text}\x1b[0m"
-
-
-class _DynamicStdoutHandler(logging.Handler):
-    """Logging handler that writes to the current stdout stream.
-
-    ``contextlib.redirect_stdout()`` swaps out ``sys.stdout`` at runtime. The
-    handler writes through :func:`print` during ``emit()`` so test capture keeps
-    working even though the logger is configured once at import time.
-    """
-
-    def emit(self, record: logging.LogRecord) -> None:
-        """Render and flush one log record to stdout, colored by severity on a console."""
-        try:
-            role = "error" if record.levelno >= logging.ERROR else "warning" if record.levelno >= logging.WARNING else None
-            text = self.format(record)
-            print(colorize(text, role) if role else text, flush=True)
-        except Exception:
-            self.handleError(record)
-
-
-_LOGGER = logging.getLogger("gupkg.stdout")
-for _existing_handler in list(_LOGGER.handlers):
-    _LOGGER.removeHandler(_existing_handler)
-    try:
-        _existing_handler.close()
-    except Exception:
-        pass
-_LOGGER.setLevel(logging.INFO)
-_LOGGER.propagate = False
-_stdout_handler = _DynamicStdoutHandler()
-_stdout_handler.setFormatter(logging.Formatter("%(message)s"))
-_LOGGER.addHandler(_stdout_handler)
+# ---------------------------------------------------------------------------
+# Transitional log adapters
+# ---------------------------------------------------------------------------
+# Workflows that predate the event stream still call these; each call becomes
+# an event for whichever reporter the front end installed. Nothing is printed
+# here: with no reporter installed, the call does nothing.
 
 
 def log_info(message: str) -> None:
-    """Emit one informational line to stdout."""
-    _LOGGER.info(message)
-
-
-def log_progress(message: str, *, final: bool = False) -> None:
-    """Show one progress line that later progress replaces.
-
-    On a live stream (an interactive console, or a stream that declares
-    ``accepts_transient``), intermediate messages overwrite one line and the
-    final message is committed with a newline. On any other stream (a
-    redirected file, a pipe, test capture), intermediate messages are dropped
-    and only the final message is written, as an ordinary line.
-    """
-    global _progress_width
-
-    # The stream is looked up per call so ``redirect_stdout`` keeps working.
-    stream = sys.stdout
-    isatty = getattr(stream, "isatty", None)
-    live = bool(getattr(stream, "accepts_transient", False)) or bool(isatty and isatty())
-    if not live:
-        if final:
-            log_info(message)
-        return
-
-    # A wrapped line cannot be overwritten with a carriage return, so
-    # intermediate text is cut to fit. Spaces (not ANSI erase codes) clear the
-    # remainder of a longer previous line on legacy Windows consoles.
-    if not final:
-        message = message[: max(shutil.get_terminal_size().columns - 1, 1)]
-    padded = message.ljust(_progress_width)
-    stream.write(padded + ("\n" if final else "\r"))
-    stream.flush()
-    _progress_width = 0 if final else len(message)
-
-
-# Width of the last transient progress line, so a shorter one can blank it.
-_progress_width = 0
+    """Report one informational line as a ``Step`` event (blank lines are layout and are dropped)."""
+    if message.strip():
+        emit(Step(message))
 
 
 def log_warning(message: str) -> None:
-    """Emit one warning line to stdout with a stable prefix."""
-    if not message.startswith("WARNING:"):
-        message = f"WARNING: {message}"
-    _LOGGER.warning(message)
+    """Report one warning as a ``Warning`` event; a leading ``WARNING:`` is not repeated."""
+    emit(Warning(message.removeprefix("WARNING:").lstrip()))
 
 
 def log_error(message: str) -> None:
-    """Emit one error line to stdout with a stable prefix."""
-    if not message.startswith("ERROR:"):
-        message = f"ERROR: {message}"
-    _LOGGER.error(message)
+    """Report one error as an ``Error`` event; a leading ``ERROR:`` is not repeated."""
+    emit(Error(message.removeprefix("ERROR:").lstrip()))
+
 
 
 def is_version_directory_name(name: str) -> bool:

@@ -8,7 +8,7 @@ cannot differ between them.
 Usage and API
 -------------
 ``failure(...)`` builds a failed outcome. ``format_human(...)`` returns the text
-a person should see (standard output and standard error parts), and
+a person should see (the result records; problems are events), and
 ``format_toml(...)`` returns one parseable ``output_schema = 1`` document.
 
 Implementation Approach
@@ -61,7 +61,7 @@ _ARRAY_SECTIONS = (
 )
 
 
-def format_human(outcome: Outcome) -> tuple[str, str]:
+def format_human(outcome: Outcome) -> str:
     """Format an outcome for people.
 
     Parameters
@@ -71,9 +71,9 @@ def format_human(outcome: Outcome) -> tuple[str, str]:
 
     Returns
     -------
-    tuple[str, str]
-        ``(stdout_text, stderr_text)``: the status line and records, then the
-        warnings and errors, each reported exactly once.
+    str
+        The status line and the records. Warnings and errors are not part of
+        it: they are reported once, as events, while the run happens.
     """
     lines = [f"{outcome.command}: {outcome.status}"]
     package = outcome.data.get("package")
@@ -103,9 +103,7 @@ def format_human(outcome: Outcome) -> tuple[str, str]:
     summary = outcome.data.get("summary")
     if isinstance(summary, dict):
         lines.append("summary: " + ", ".join(f"{key}={value}" for key, value in summary.items()))
-    problems = [f"WARNING: {warning}" for warning in outcome.result.warnings]
-    problems += [f"ERROR: {error}" for error in outcome.result.errors]
-    return "\n".join(lines) + "\n", "".join(line + "\n" for line in problems)
+    return "\n".join(lines) + "\n"
 
 
 def format_toml(outcome: Outcome) -> str:

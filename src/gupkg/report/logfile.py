@@ -491,4 +491,3 @@ class RunLog:
         with self._lock:
             sinks = [self._run_sink, *self._packages.values()]
             return [s.text_path for s in sinks if s is not None]
-

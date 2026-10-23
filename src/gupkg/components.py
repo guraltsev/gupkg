@@ -36,6 +36,7 @@ from .core import (
     write_bytes_atomic,
 )
 from .layout import warn_if_output_path_is_unusual
+from .report.events import phase
 from .system.port import ShortcutSpec, System
 
 
@@ -89,9 +90,8 @@ def install_components(
 
     def run(title: str, step) -> None:
         """Run one install phase and fold its outcome into the combined result."""
-        log_info("")
-        log_info(title)
-        result: StepResult = step()
+        with phase(title) as running:
+            result: StepResult = running.settle(step())
         combined.ok = combined.ok and result.ok
         combined.changed = combined.changed or result.changed
         combined.warnings.extend(result.warnings)
@@ -101,11 +101,11 @@ def install_components(
     # user-visible entrypoints; environment values follow so later wrappers
     # and PATH entries can rely on them.
     if runtime_config["shortcut"]:
-        run("Creating shortcuts...", lambda: install_shortcuts(
+        run("Shortcuts", lambda: install_shortcuts(
             runtime_config["shortcut"], identity, scope_paths, system
         ))
     if runtime_config["environment"]:
-        run("Setting environment variables...", lambda: install_environment_variables(
+        run("Environment variables", lambda: install_environment_variables(
             runtime_config["environment"], identity, scope, scope_paths, system
         ))
 
@@ -113,17 +113,15 @@ def install_components(
     # entries follow it. Wrapper files are emitted last so they target
     # directories and PATH entries prepared earlier in the sequence.
     if runtime_config["bin"]:
-        run("Managing PATH...", lambda: ensure_bin_in_path(scope_paths, identity, scope, system))
+        run("PATH", lambda: ensure_bin_in_path(scope_paths, identity, scope, system))
     if runtime_config["path"]:
-        if not runtime_config["bin"]:
-            log_info("")
-            log_info("Managing PATH...")
-        path_result = add_to_path(runtime_config["path"], identity, scope, system, scope_paths)
+        with phase("PATH entries") as adding:
+            path_result = adding.settle(add_to_path(runtime_config["path"], identity, scope, system, scope_paths))
         combined.ok = combined.ok and path_result.ok
         combined.changed = combined.changed or path_result.changed
         combined.errors.extend(path_result.errors)
     if runtime_config["bin"]:
-        run("Creating executable wrappers...", lambda: install_wrappers(
+        run("Command wrappers", lambda: install_wrappers(
             runtime_config["bin"], identity, scope_paths
         ))
     return combined

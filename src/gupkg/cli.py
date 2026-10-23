@@ -15,14 +15,16 @@ returns the process status: ``0`` success, ``2`` user or configuration error,
 Implementation Approach
 -----------------------
 Parse once, translate the namespace into a request, call the operation, format
-the outcome. TOML mode redirects progress text so standard output stays
-parseable even when an operation fails.
+the outcome. The operation runs inside a ``RunSession``: progress, warnings and
+errors reach the console renderer (and the run's log files) as events, and the
+closing summary is printed last. TOML mode sends that human output to standard
+error so standard output stays one parseable document even when an operation
+fails.
 """
 
 from __future__ import annotations
 
 import argparse
-import io
 import sys
 from pathlib import Path
 from typing import Any, Sequence
@@ -35,12 +37,15 @@ from .core import (
     EXIT_USER_ERROR,
     ActionResult,
     ConfigValidationError,
-    colorize,
     Scope,
 )
 from .outcome import Outcome, failure, format_human, format_toml
+from .report.console import ConsoleReporter
+from .report.events import emit_problems
+from .report.logfile import running_gupkg_logs_base, validate_log_file_name
+from .report.session import RunSession
 from .system.fake import FakeSystem
-from .system.port import System
+from .system.port import System, is_elevated_run
 from .system.windows import WindowsSystem, wait_for_keypress
 
 
@@ -77,6 +82,11 @@ def _build_parser() -> tuple[argparse.ArgumentParser, argparse.ArgumentParser]:
         choices=["human", "toml"],
         default="human",
         help="human text (default) or one machine-readable TOML document on stdout",
+    )
+    parser.add_argument(
+        "--events-file", metavar="NAME", type=_events_file_name,
+        help="also write the run's events as JSON lines to the plain file NAME (not a path) "
+        "in the run's log directories, next to the run and package logs",
     )
     parser.add_argument(
         "--pause", action="store_true", help="wait for a keypress before exiting"
@@ -278,6 +288,14 @@ def _build_parser() -> tuple[argparse.ArgumentParser, argparse.ArgumentParser]:
     return parser, manager
 
 
+def _events_file_name(text: str) -> str:
+    """Accept only a plain, safe file name for ``--events-file``; anything else is a usage error."""
+    try:
+        return validate_log_file_name(text)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
 # Copy-paste examples shown at the bottom of ``gupkg --help``.
 EXAMPLES = """\
 common tasks:
@@ -315,10 +333,10 @@ examples:
 # ---------------------------------------------------------------------------
 
 
-def _dispatch(args: argparse.Namespace, system: System) -> Outcome:
+def _dispatch(args: argparse.Namespace, system: System, session: RunSession | None) -> Outcome:
     """Turn parsed arguments into one operation from :mod:`gupkg.commands`."""
     if args.command == "manager":
-        return _dispatch_manager(args, system)
+        return _dispatch_manager(args, system, session)
     if args.command == "tui":
         from .tui import run_tui
 
@@ -341,10 +359,10 @@ def _dispatch(args: argparse.Namespace, system: System) -> Outcome:
         import_shortcuts=getattr(args, "import_shortcuts", "true") == "true",
         output=getattr(args, "output", None),
     )
-    return commands.run_package_command(request, system, output=_progress_stream(args))
+    return commands.run_package_command(request, system)
 
 
-def _dispatch_manager(args: argparse.Namespace, system: System) -> Outcome:
+def _dispatch_manager(args: argparse.Namespace, system: System, session: RunSession | None) -> Outcome:
     """Load the manager configuration once and run one manager subcommand."""
     sub = args.manager_command
     if args.max_depth < 1:
@@ -356,26 +374,29 @@ def _dispatch_manager(args: argparse.Namespace, system: System) -> Outcome:
         config = commands.load_manager(system, args.config)
     except (ConfigValidationError, OSError, ValueError) as exc:
         return failure("manager", str(exc))
-    progress = _progress_stream(args)
     scope = Scope(args.scope)
+
+    # A manager run is logged in the root it acts on (the user root unless the
+    # run is elevated or names the system scope).
+    if session is not None:
+        machine = scope == Scope.MACHINE or (scope == Scope.AUTO and is_elevated_run(system))
+        session.bind(config.root(Scope.MACHINE if machine else Scope.USER))
 
     # Registry and self workflows use only their own configured state, so a
     # missing or inaccessible package root cannot hide them.
     if sub == "install":
         return commands.install_registry_package(
-            config, system, args.selector, scope, offline=args.offline, output=progress,
+            config, system, args.selector, scope, offline=args.offline,
         )
     if sub == "registry":
         if args.registry_command == "sync":
-            return commands.registry_sync_outcome(config, system, progress)
+            return commands.registry_sync_outcome(config, system)
         return commands.registry_status_outcome(config, system)
     if sub == "search":
-        return commands.registry_search_outcome(
-            config, system, args.query or "", offline=args.offline, output=progress
-        )
+        return commands.registry_search_outcome(config, system, args.query or "", offline=args.offline)
     if sub == "self":
         return commands.self_outcome(
-            config, system, args.self_command, scope=scope, shim_linkage=getattr(args, "shim_linkage", None), output=progress
+            config, system, args.self_command, scope=scope, shim_linkage=getattr(args, "shim_linkage", None)
         )
 
     try:
@@ -436,9 +457,17 @@ def _interactive(command: str, code: int) -> Outcome:
     return Outcome(command, ActionResult(code == EXIT_SUCCESS, exit_code=code), {"interactive": True})
 
 
-def _progress_stream(args: argparse.Namespace) -> io.StringIO | None:
-    """Discard progress text in TOML mode so stdout is one parseable document."""
-    return io.StringIO() if args.format == "toml" else None
+def _command_name(args: argparse.Namespace) -> str:
+    """Name the run for its log files, for example ``install`` or ``manager-registry-sync``."""
+    parts = [args.command]
+    if args.command == "manager":
+        parts += [getattr(args, name) for name in ("manager_command", "registry_command", "self_command") if getattr(args, name, None)]
+    return "-".join(parts)
+
+
+def _is_interactive(args: argparse.Namespace) -> bool:
+    """Return whether the command hands the terminal to a TUI, which reports its own runs."""
+    return args.command == "tui" or (args.command == "manager" and args.manager_command == "tui")
 
 
 def main(argv: Sequence[str] | None = None, *, system: System | None = None) -> int:
@@ -479,20 +508,41 @@ def main(argv: Sequence[str] | None = None, *, system: System | None = None) -> 
         else:
             system = real
 
-    try:
-        outcome = _dispatch(args, system)
-    except Exception as exc:  # pragma: no cover - defensive process boundary
-        outcome = failure(args.command, f"Unexpected internal error: {exc}", EXIT_INTERNAL_ERROR)
-    if outcome.data.get("interactive"):
-        return outcome.result.exit_code
+    # A TUI owns the terminal and reports and logs each operation it starts.
+    if _is_interactive(args):
+        try:
+            return _dispatch(args, system, None).result.exit_code
+        except Exception as exc:  # pragma: no cover - defensive process boundary
+            return failure(args.command, f"Unexpected internal error: {exc}", EXIT_INTERNAL_ERROR).result.exit_code
+
+    # Everything else runs in a session: events reach the console (standard
+    # error when standard output carries the TOML document) and the logs, and
+    # the closing summary is printed last.
+    console = ConsoleReporter(sys.stderr if args.format == "toml" else None)
+    session = RunSession(
+        command=_command_name(args),
+        argv=list(argv) if argv is not None else sys.argv[1:],
+        mode=args.scope,
+        elevated=is_elevated_run(system),
+        version=__version__,
+        reporters=[console],
+        events_name=args.events_file,
+        fallback_base=running_gupkg_logs_base(),
+    )
+    with session:
+        try:
+            outcome = _dispatch(args, system, session)
+        except Exception as exc:  # pragma: no cover - defensive process boundary
+            outcome = failure(args.command, f"Unexpected internal error: {exc}", EXIT_INTERNAL_ERROR)
+
+        # Problems the workflow only returned (never reported live) are
+        # reported now; those already reported are dropped by the event stream.
+        emit_problems(outcome.result.warnings, outcome.result.errors)
+        text = format_human(outcome)
+        session.finish(text, outcome.result.exit_code)
 
     if args.format == "toml":
         print(format_toml(outcome), end="")
-    else:
-        text, problems = format_human(outcome)
-        print(text, end="")
-        for line in problems.splitlines():
-            print(colorize(line, "error" if line.startswith("ERROR:") else "warning", sys.stderr), file=sys.stderr)
     if args.pause:
         print("Press any key to continue...", file=sys.stderr)
         wait_for_keypress()

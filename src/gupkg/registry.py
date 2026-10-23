@@ -48,6 +48,7 @@ from .core import (
     write_text_atomic,
 )
 from .downloads import download_file, file_sha256
+from .report.events import subprocess_lines
 from .selfmgmt.elevation import UntrustedLocationError
 from .origin import validate_origin_health, validate_update_health
 from .system.port import System, is_elevated_run, require_admin_only
@@ -386,7 +387,7 @@ def _git_remote_revision(system: System, git: str, source: str) -> str | None:
     """Return the remote ``HEAD`` commit of *source* without cloning, or ``None`` on failure."""
     result = system.run(
         [git, "-c", "protocol.allow=never", "-c", "protocol.https.allow=always", "ls-remote", source, "HEAD"],
-        env=_git_environment(), timeout=60,
+        env=_git_environment(), timeout=60, on_line=subprocess_lines([git]),
     )
     match = re.match(r"([0-9a-f]{40})\s", result.stdout) if result.returncode == 0 else None
     return match.group(1) if match else None
@@ -402,10 +403,13 @@ def _obtain_registry(source: str, git: str | None, work: Path, system: System) -
             "-c", "core.symlinks=false", "-c", f"core.hooksPath={os.devnull}",
             "clone", "--depth", "1", "--single-branch", "--no-tags", "--quiet", source, str(destination),
         ]
-        result = system.run(command, env=_git_environment(), timeout=600)
+        result = system.run(command, env=_git_environment(), timeout=600, on_line=subprocess_lines(command))
         if result.returncode != 0:
             raise ConfigValidationError(f"git clone failed: {result.stderr.strip()}")
-        head = system.run([git, "-C", str(destination), "rev-parse", "HEAD"], env=_git_environment())
+        head = system.run(
+            [git, "-C", str(destination), "rev-parse", "HEAD"],
+            env=_git_environment(), on_line=subprocess_lines([git]),
+        )
         revision = head.stdout.strip().lower()
         if not re.fullmatch(r"[0-9a-f]{40}", revision):
             raise ConfigValidationError("git clone did not report a commit")

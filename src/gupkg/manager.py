@@ -25,8 +25,6 @@ output, so callers own presentation.
 
 from __future__ import annotations
 
-import contextlib
-import io
 import json
 import os
 import re
@@ -51,6 +49,7 @@ from .core import (
 )
 from .layout import compute_scope_paths, inspect_current
 from .registry import OFFICIAL_SOURCE
+from .report.events import emit_problems, package_scope
 from .system.port import System
 
 
@@ -112,6 +111,8 @@ class ManagedTarget:
     candidate_version: str | None = None
     diagnostics: list[str] = field(default_factory=list)
     checked_at: str | None = None
+    # The configured root that holds the package; its ``.gupkg\logs`` receives the run log.
+    scope_root: Path | None = None
 
 
 @dataclass
@@ -465,7 +466,7 @@ def discover_manager(
             continue
         scopes.append(ManagedScope(scope, root, inventory, inventory.complete, list(inventory.diagnostics)))
         targets.extend(
-            _managed_target(scope, package, inventory.complete, system) for package in inventory.packages
+            _managed_target(scope, package, inventory.complete, system, root) for package in inventory.packages
         )
     targets.sort(key=lambda target: (
         target.package.selector.casefold(), target.package.selector, _scope_order(target.scope)
@@ -474,7 +475,7 @@ def discover_manager(
 
 
 def _managed_target(
-    scope: Scope, package: DiscoveredPackage, complete: bool, system: System
+    scope: Scope, package: DiscoveredPackage, complete: bool, system: System, scope_root: Path | None = None
 ) -> ManagedTarget:
     """Describe one discovered package's activation, versions, and health."""
     current = inspect_current(package.root, system)
@@ -512,6 +513,7 @@ def _managed_target(
         candidate_version=candidate,
         diagnostics=diagnostics,
         checked_at=checked_at,
+        scope_root=scope_root,
     )
 
 
@@ -721,7 +723,7 @@ def manager_update_target(target: ManagedTarget, system: System) -> ActionResult
     if manifest is None:
         result = ActionResult(False, errors=["No manifest is available for the local version"], exit_code=EXIT_USER_ERROR)
     else:
-        result = _quiet(lambda: check_package_update(manifest.version_path, system))
+        result = _scoped(target, lambda: check_package_update(manifest.version_path, system))
     if result.ok and result.status in {"available", "current", "not-configured"}:
         target.update_status = result.status
     else:
@@ -767,7 +769,7 @@ def manager_revalidate_target(
             return f"current changed to {current.status}"
         if not current.version_path.resolve().is_relative_to(root):
             return "current target escaped configured root"
-        if not _quiet(lambda: health_check_package(current.version_path, system, scope=target.scope)).ok:
+        if not _scoped(target, lambda: health_check_package(current.version_path, system, scope=target.scope)).ok:
             return "health changed before upgrade"
     except (OSError, ValueError, RuntimeError) as exc:
         return str(exc)
@@ -805,7 +807,7 @@ def manager_upgrade_target(
     from .gupkg import full_package_upgrade
 
     linkage = shim_linkage or config.shim_linkage
-    return _quiet(lambda: full_package_upgrade(
+    return _scoped(target, lambda: full_package_upgrade(
         target.package.root,
         system,
         scope=target.scope,
@@ -842,15 +844,23 @@ def manager_download_target(
     """
     from .gupkg import download_package_update
 
-    return _quiet(lambda: download_package_update(
+    return _scoped(target, lambda: download_package_update(
         target.package.root, system, no_checksum=no_checksum
     ))
 
 
-def _quiet(operation):
-    """Run a package workflow with its progress output captured and discarded."""
-    with contextlib.redirect_stdout(io.StringIO()):
-        return operation()
+def _scoped(target: ManagedTarget, operation):
+    """Run a package workflow inside the target's package scope.
+
+    The workflow's events go to the run's reporters and into the package's own
+    log; its warnings and errors are reported once, and the package's result
+    record closes the scope.
+    """
+    with package_scope(target.package.selector, target.package.root, root=target.scope_root) as scope:
+        result = operation()
+        emit_problems(result.warnings, result.errors)
+        scope.result.update(ok=result.ok, status=result.status or ("ok" if result.ok else "failed"))
+    return result
 
 
 # ---------------------------------------------------------------------------

@@ -325,5 +325,3 @@ def _is_terminal(stream: Any) -> bool:
         return bool(isatty and isatty())
     except (OSError, ValueError):
         return False
-
-

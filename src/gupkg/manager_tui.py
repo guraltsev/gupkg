@@ -34,7 +34,25 @@ from . import commands
 from ._version import __version__
 from .core import ConfigValidationError, Scope
 from .manager import ManagedTarget, ManagerConfig, ManagerInventory, UpgradePlan, scope_name
-from .system.port import System
+from .report.logfile import running_gupkg_logs_base
+from .report.session import RunSession
+from .system.port import System, is_elevated_run
+
+
+def _logged(command: str, system: System, operation):
+    """Run a worker-thread operation inside a log-only run, so the TUI session leaves logs.
+
+    Nothing is printed behind the TUI: the run has no console reporter, and the
+    package events of the operation go to each package's log and the run log.
+    """
+    session = RunSession(
+        command=command, argv=["manager", "tui"], mode="auto", elevated=is_elevated_run(system),
+        version=__version__, reporters=[], fallback_base=running_gupkg_logs_base(),
+    )
+    with session:
+        result = operation()
+        session.finish(f"{command} finished", 0)
+    return result
 
 
 def run_manager_tui(
@@ -504,12 +522,12 @@ def run_manager_tui(
 
         def _refresh(self) -> None:
             """Check targets one at a time on a worker thread, streaming progress."""
-            results = commands.refresh_update_status(
+            results = _logged("manager-refresh", system, lambda: commands.refresh_update_status(
                 current_inventory,
                 system,
                 on_progress=self._progress,
                 cancel_requested=lambda: self.cancel_requested,
-            )
+            ))
             self.app.call_from_thread(self._finish, len(results))
 
         def _progress(self, index: int, total: int, target: ManagedTarget, result) -> None:
@@ -577,9 +595,9 @@ def run_manager_tui(
 
         def _plan(self) -> None:
             """Check every installed target on a worker thread, streaming progress."""
-            plan: UpgradePlan = commands.plan_updates(
+            plan: UpgradePlan = _logged("manager-plan", system, lambda: commands.plan_updates(
                 current_inventory, "auto", system, on_progress=self._progress
-            )
+            ))
             self.app.call_from_thread(self._finish, plan)
 
         def _progress(self, index: int, total: int, target: ManagedTarget, result) -> None:
@@ -694,13 +712,17 @@ def run_manager_tui(
             # states until it finishes, keeping the interface responsive.
             states: dict[str, str] = {}
             execution = asyncio.create_task(asyncio.to_thread(
-                commands.execute_updates,
-                self.plan,
-                config,
+                _logged,
+                "manager-update",
                 system,
-                no_checksum=self.no_checksum,
-                cancel_requested=lambda: self.cancel_requested,
-                on_progress=lambda target_id, state: states.__setitem__(target_id, state),
+                lambda: commands.execute_updates(
+                    self.plan,
+                    config,
+                    system,
+                    no_checksum=self.no_checksum,
+                    cancel_requested=lambda: self.cancel_requested,
+                    on_progress=lambda target_id, state: states.__setitem__(target_id, state),
+                ),
             ))
             while not execution.done():
                 show("\n".join(f"{name}: {state}" for name, state in states.items()) or "Starting...")

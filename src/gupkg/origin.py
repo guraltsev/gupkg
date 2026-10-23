@@ -32,6 +32,7 @@ from pathlib import Path, PureWindowsPath
 from typing import Any, Dict, List, Optional
 
 from .core import PackageIdentity, StepResult, log_info, log_warning
+from .report.events import subprocess_lines
 from .downloads import download_file, file_sha256
 from .system.port import System, run_checked
 
@@ -133,8 +134,9 @@ def populate_app_from_git_origin(
         prepared_app = Path(temp) / "App.new"
 
         def git(*arguments: str) -> str:
-            """Run one Git command quietly and return its stripped output."""
-            return run_checked(system, ["git", *arguments])
+            """Run one Git command, reporting its output lines, and return its stripped output."""
+            command = ["git", *arguments]
+            return run_checked(system, command, on_line=subprocess_lines(command))
 
         # Resolve the configured ref before cloning so the installed checkout
         # records one exact source state even if the branch advances.
@@ -209,12 +211,9 @@ def populate_app_from_script_origin(
     completed = system.run(
         [str(script_path)],
         cwd=script_path.parent,
+        on_line=subprocess_lines([script_path]),
         input_text=json.dumps(build_origin_script_payload(identity, runtime_config), ensure_ascii=False),
     )
-    for line in completed.stdout.splitlines():
-        log_info(line)
-    for line in completed.stderr.splitlines():
-        log_warning(line)
     if completed.returncode != 0:
         raise RuntimeError(f"Origin script failed with exit code {completed.returncode}")
     if not app_has_payload(identity):

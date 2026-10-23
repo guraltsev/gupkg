@@ -53,6 +53,7 @@ from gupkg.core import (
     log_warning,
     read_toml_file,
 )
+from gupkg.report.events import phase
 from gupkg.layout import compute_scope_paths, resolve_input_path, update_current_junction_if_needed
 from gupkg.origin import populate_app_from_origin, validate_origin_health, validate_update_health
 from gupkg.updates import (
@@ -138,50 +139,55 @@ def install_package(
 
     # Resolve the version and load its configuration before any mutation, so
     # layout, validation, and metadata problems stop the install early.
-    try:
-        identity, installing_from_current = resolve_input_path(Path(package_path), system)
-        runtime_config, raw_config, warnings = read_runtime_config(identity)
-    except (ConfigValidationError, ValueError) as exc:
-        return _failure(f"Failed to load package metadata/config: {exc}", EXIT_USER_ERROR)
-    for warning in warnings:
-        log_warning(warning)
-    inconsistencies = check_metadata_consistency(identity, raw_config)
-    if inconsistencies:
-        log_info(
-            "Configuration inconsistencies detected; run "
-            f"'gupkg config-fix {identity.version_path}' before installing."
-        )
-        return _failure(inconsistencies, EXIT_USER_ERROR, warnings)
-    log_info(f"Installing {identity.name} {identity.version_string}")
-    log_info(f"  from {identity.version_path}")
+    with phase("Resolve") as resolving:
+        try:
+            identity, installing_from_current = resolve_input_path(Path(package_path), system)
+            runtime_config, raw_config, warnings = read_runtime_config(identity)
+        except (ConfigValidationError, ValueError) as exc:
+            return resolving.settle(
+                _failure(f"Failed to load package metadata/config: {exc}", EXIT_USER_ERROR)
+            )
+        for warning in warnings:
+            log_warning(warning)
+        inconsistencies = check_metadata_consistency(identity, raw_config)
+        if inconsistencies:
+            log_info(
+                "Configuration inconsistencies detected; run "
+                f"'gupkg config-fix {identity.version_path}' before installing."
+            )
+            return resolving.settle(_failure(inconsistencies, EXIT_USER_ERROR, warnings))
+        log_info(f"Installing {identity.name} {identity.version_string}")
+        log_info(f"  from {identity.version_path}")
 
-    # Resolve automatic scope from the portability policy, then reject scope
-    # combinations the package model cannot support.
-    is_admin = system.is_elevated() if scope in {Scope.AUTO, Scope.MACHINE} else False
-    if scope == Scope.AUTO:
-        scope = Scope.MACHINE if is_admin and not runtime_config["only_portable"] else Scope.USER
-        log_info(f"Selected scope: {scope.value}")
-    if runtime_config["only_portable"] and scope == Scope.MACHINE:
-        return _failure(
-            "only_portable packages cannot be installed system-wide. Please use User scope.",
-            EXIT_USER_ERROR,
-            warnings,
-        )
-    if scope == Scope.MACHINE and not is_admin:
-        return _failure(
-            "Machine scope requires administrator privileges. Please run as administrator.",
-            EXIT_USER_ERROR,
-            warnings,
-        )
-    try:
-        scope_paths: Dict[str, Any] = (
-            install_context.as_scope_paths()
-            if install_context is not None
-            else compute_scope_paths(scope, system)
-        )
-    except (RuntimeError, ValueError, OSError) as exc:
-        return _failure(f"Failed to resolve {scope.value} scope paths: {exc}", EXIT_MUTATION_ERROR, warnings)
-    scope_paths["shim_linkage"] = shim_linkage
+        # Resolve automatic scope from the portability policy, then reject scope
+        # combinations the package model cannot support.
+        is_admin = system.is_elevated() if scope in {Scope.AUTO, Scope.MACHINE} else False
+        if scope == Scope.AUTO:
+            scope = Scope.MACHINE if is_admin and not runtime_config["only_portable"] else Scope.USER
+            log_info(f"Selected scope: {scope.value}")
+        if runtime_config["only_portable"] and scope == Scope.MACHINE:
+            return resolving.settle(_failure(
+                "only_portable packages cannot be installed system-wide. Please use User scope.",
+                EXIT_USER_ERROR,
+                warnings,
+            ))
+        if scope == Scope.MACHINE and not is_admin:
+            return resolving.settle(_failure(
+                "Machine scope requires administrator privileges. Please run as administrator.",
+                EXIT_USER_ERROR,
+                warnings,
+            ))
+        try:
+            scope_paths: Dict[str, Any] = (
+                install_context.as_scope_paths()
+                if install_context is not None
+                else compute_scope_paths(scope, system)
+            )
+        except (RuntimeError, ValueError, OSError) as exc:
+            return resolving.settle(
+                _failure(f"Failed to resolve {scope.value} scope paths: {exc}", EXIT_MUTATION_ERROR, warnings)
+            )
+        scope_paths["shim_linkage"] = shim_linkage
 
     # Bootstrap versions are templates, never installed versions: stage the
     # first immutable version and install that instead.
@@ -204,27 +210,32 @@ def install_package(
     # Point ``current`` at this version unless the caller already targeted
     # ``current``. A newer active version wins unless a downgrade is allowed.
     junction_changed = False
-    if installing_from_current:
-        log_info("Installing from resolved 'current' target (skipping junction management)")
-    else:
-        log_info("Managing 'current' junction...")
-        try:
-            junction_changed = update_current_junction_if_needed(
-                identity, system, allow_downgrade=allow_downgrade
-            )
-        except ValueError as exc:
-            return _failure(str(exc), EXIT_USER_ERROR, warnings)
-        except Exception as exc:
-            return _failure(str(exc), EXIT_MUTATION_ERROR, warnings)
-        if not junction_changed and not identity.is_current:
-            log_info("Skipping component installation (newer version already installed)")
-            return ActionResult(ok=True, warnings=warnings)
+    with phase("Activate") as activating:
+        if installing_from_current:
+            log_info("Installing from resolved 'current' target (skipping junction management)")
+        else:
+            log_info("Managing 'current' junction...")
+            try:
+                junction_changed = update_current_junction_if_needed(
+                    identity, system, allow_downgrade=allow_downgrade
+                )
+            except ValueError as exc:
+                return activating.settle(_failure(str(exc), EXIT_USER_ERROR, warnings))
+            except Exception as exc:
+                return activating.settle(_failure(str(exc), EXIT_MUTATION_ERROR, warnings))
+            if not junction_changed and not identity.is_current:
+                log_info("Skipping component installation (newer version already installed)")
+                activating.skip()
+                return ActionResult(ok=True, warnings=warnings)
 
     # Populate App when it is missing or a refresh was requested; packages
     # without an origin proceed directly to their component work.
-    origin_result = populate_app_from_origin(
-        identity, runtime_config, system, no_checksum=no_checksum, refresh_app=refresh_app
-    )
+    with phase("Fetch") as fetching:
+        if runtime_config.get("origin") is None:
+            fetching.skip()
+        origin_result = fetching.settle(populate_app_from_origin(
+            identity, runtime_config, system, no_checksum=no_checksum, refresh_app=refresh_app
+        ))
     warnings.extend(origin_result.warnings)
     if not origin_result.ok:
         return ActionResult(
@@ -235,9 +246,8 @@ def install_package(
             exit_code=EXIT_MUTATION_ERROR,
         )
 
-    # Apply the fixed component sequence only after App is ready.
-    log_info("")
-    log_info("Installing components...")
+    # Apply the fixed component sequence only after App is ready; it reports
+    # one phase per component.
     component_result = install_components(identity, scope, scope_paths, runtime_config, system)
     warnings.extend(component_result.warnings)
     changed = junction_changed or origin_result.changed or component_result.changed
@@ -249,7 +259,7 @@ def install_package(
             errors=component_result.errors,
             exit_code=EXIT_MUTATION_ERROR,
         )
-    return ActionResult(ok=True, changed=changed, warnings=warnings)
+    return ActionResult(ok=True, warnings=warnings, changed=changed)
 
 
 def health_check_package(
@@ -478,7 +488,8 @@ def _run_update(
                 status="not-configured",
             )
         with _update_session(identity.package_root) as (paths, work):
-            status, candidate = _discover_update(identity, config, paths, system)
+            with phase("Check"):
+                status, candidate = _discover_update(identity, config, paths, system)
             if candidate is None:
                 log_info(f"Current: {identity.version_string}")
                 return ActionResult(True, warnings=warnings, status=status)
@@ -595,15 +606,16 @@ def _stage_candidate(
             f"{new_identity.version_path}"
         )
     if changed:
-        staged = prepare_update(
-            identity,
-            config,
-            candidate,
-            work,
-            system,
-            no_checksum=no_checksum,
-        )
-        os.replace(staged, new_identity.version_path)
+        with phase("Fetch"):
+            staged = prepare_update(
+                identity,
+                config,
+                candidate,
+                work,
+                system,
+                no_checksum=no_checksum,
+            )
+            os.replace(staged, new_identity.version_path)
     paths["receipts"].mkdir(parents=True, exist_ok=True)
     write_receipt(receipt, candidate, new_identity)
     log_info(f"Downloaded: {new_identity.version_string}")

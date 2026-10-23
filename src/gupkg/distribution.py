@@ -31,6 +31,7 @@ from typing import Any
 
 from .core import ActionResult, ConfigValidationError, EXIT_MUTATION_ERROR, Scope
 from .integrity import IntegrityReport, ManifestError, verify_version_directory
+from .report.events import phase
 from .system.port import System
 
 
@@ -97,15 +98,16 @@ def repair_self(
     try:
         root = Path(version_root) if version_root is not None else standalone_version_root()
         runtime = root / "gupkg" / "python" / "python.exe"
-        if not _runtime_healthy(runtime, root):
-            return ActionResult(
-                False,
-                errors=[
-                    f"The bundled Python is missing or unhealthy: {runtime}. "
-                    "Reinstall gupkg from a release ZIP (gupkg-bootstrap.cmd)."
-                ],
-                exit_code=EXIT_MUTATION_ERROR,
-            )
+        with phase("Check runtime") as checking:
+            if not _runtime_healthy(runtime, root):
+                return checking.settle(ActionResult(
+                    False,
+                    errors=[
+                        f"The bundled Python is missing or unhealthy: {runtime}. "
+                        "Reinstall gupkg from a release ZIP (gupkg-bootstrap.cmd)."
+                    ],
+                    exit_code=EXIT_MUTATION_ERROR,
+                ))
         from .gupkg import install_package
 
         linkage = install_context.shim_linkage if install_context is not None else "dynamic"

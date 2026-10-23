@@ -47,6 +47,7 @@ from .core import (
     write_text_atomic,
 )
 from .downloads import download_file, file_sha256
+from .report.events import subprocess_lines
 from .github_releases import check_update as check_github_release
 from .metadata import sync_config_metadata_text
 from .origin import (
@@ -321,8 +322,9 @@ def _git_candidate(
 
 
 def _git(system: System, *arguments: str) -> str:
-    """Run one Git command and return its stripped standard output."""
-    return run_checked(system, ["git", *arguments])
+    """Run one Git command, reporting its output lines, and return its stripped standard output."""
+    command = ["git", *arguments]
+    return run_checked(system, command, on_line=subprocess_lines(command))
 
 
 def _candidate_version(state: Dict[str, Any], candidate_id: str, package_root: Path) -> str:
@@ -471,8 +473,8 @@ def prepare_update(
     payload = config["update"]["payload"]
     artifact: Optional[Path] = None
     if payload["mode"] == "git":
-        run_checked(system, ["git", "clone", "--no-checkout", candidate["url"], str(stage_app)])
-        run_checked(system, ["git", "-C", str(stage_app), "checkout", "--detach", candidate["commit"]])
+        _git(system, "clone", "--no-checkout", candidate["url"], str(stage_app))
+        _git(system, "-C", str(stage_app), "checkout", "--detach", candidate["commit"])
     else:
         artifact = _download_candidate(candidate, payload, work, system, no_checksum=no_checksum)
         if payload["mode"] == "zip":

@@ -32,6 +32,7 @@ gupkg.system.port : the protocol this class implements.
 from __future__ import annotations
 
 import ctypes
+import locale
 import os
 import struct
 import subprocess
@@ -363,8 +364,6 @@ class WindowsSystem(WindowsLinks):
             stderr=subprocess.PIPE,
             cwd=str(cwd) if cwd is not None else None,
             env=dict(env) if env is not None else None,
-            text=True,
-            errors="replace",
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
 
@@ -375,11 +374,11 @@ class WindowsSystem(WindowsLinks):
 
         def read(name: str, stream: Any) -> None:
             """Collect one stream line by line and forward each line."""
-            for line in stream:
+            for line, terminated in _output_lines(stream):
                 with lock:
-                    collected[name].append(line)
+                    collected[name].append(line + ("\n" if terminated else ""))
                     if on_line is not None:
-                        on_line(line.rstrip("\r\n"))
+                        on_line(line)
 
         readers = [
             threading.Thread(target=read, args=(name, stream), daemon=True)
@@ -392,7 +391,7 @@ class WindowsSystem(WindowsLinks):
         try:
             if input_text is not None:
                 try:
-                    process.stdin.write(input_text)
+                    process.stdin.write(input_text.encode(locale.getpreferredencoding(False), errors="replace"))
                     process.stdin.close()
                 except OSError:
                     pass
@@ -502,6 +501,57 @@ def _system_tool(name: str) -> str:
     if elevation.elevated_mode():
         raise OSError(f"Cannot find {name} under %SystemRoot%; elevated runs do not search PATH")
     return name
+
+
+def _decode_output(data: bytes) -> str:
+    """Decode one line of child output: UTF-8 when it is valid, else the system code page.
+
+    Modern tools (Git, Python) write UTF-8 whatever the code page is; older
+    console tools write the code page. Invalid bytes become replacement
+    characters instead of failing the run.
+    """
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data.decode(locale.getpreferredencoding(False), errors="replace")
+
+
+def _output_lines(stream: Any) -> Iterator[tuple[str, bool]]:
+    """Yield ``(line, terminated)`` for a child's binary output stream, as soon as each line is complete.
+
+    A line ends at a line feed, a carriage return plus line feed, or a lone
+    carriage return (the way progress meters redraw), so carriage-return
+    updates arrive as separate lines at once. The last line may have no
+    terminator.
+    """
+    pending = b""
+    while True:
+        chunk = stream.read1(8192)
+        final = not chunk
+        pending += chunk
+
+        # Split on every complete terminator; a trailing carriage return waits
+        # for the next chunk because a line feed may follow it.
+        start, index = 0, 0
+        while index < len(pending):
+            byte = pending[index]
+            if byte == 10:
+                yield _decode_output(pending[start:index]), True
+                index += 1
+                start = index
+            elif byte == 13 and (index + 1 < len(pending) or final):
+                yield _decode_output(pending[start:index]), True
+                index += 2 if pending[index + 1 : index + 2] == b"\n" else 1
+                start = index
+            elif byte == 13:
+                break
+            else:
+                index += 1
+        pending = pending[start:]
+        if final:
+            if pending:
+                yield _decode_output(pending), False
+            return
 
 
 def _script_command(argv: Sequence[str]) -> list[str]:
