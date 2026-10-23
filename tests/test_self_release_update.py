@@ -1,109 +1,186 @@
 """Cover gupkg updating itself from the release table in RELEASES.md.
 
-Behavior covered: the gupkg package finds the newest row of RELEASES.md,
-downloads that commit's source archive, and stages a complete new version tree
-that keeps install-specific files and drops removed modules; an archive built
-from another commit is refused; ``tools/release.py`` refuses an unchanged
-version.
+Behavior covered: the gupkg package finds the newest row of RELEASES.md, downloads
+the release ZIP it names, verifies the ZIP against the row's SHA-256 and the
+unpacked tree against its own ``MANIFEST.sha256``, and stages a complete new
+version tree whose runtime comes only from the ZIP; a row without a digest, a ZIP
+with the wrong digest, a ZIP that does not match its manifest, a ZIP built from
+another commit, and a 1.x release all fail and leave the active version unchanged.
 
-Real: the repository's own ``src`` tree used as the installed package, the
-update coordinator, hook loading, and staging on disk. Mocked: HTTP
-(``urllib.request.urlopen``). Out of scope: shortcut/PATH activation, which
-``test_update_lifecycle`` covers, and GitHub itself.
+Real: a release ZIP built by ``tools/build_standalone.py`` (the ``release_bundle``
+fixture), the installed version tree, the update coordinator, hook loading, and
+staging on disk. Mocked: HTTP (``urllib.request.urlopen``). Out of scope:
+shortcut/PATH activation, which ``test_update_lifecycle`` covers, and GitHub itself.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import io
-import re
 import shutil
 import urllib.request
 import zipfile
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
 from gupkg import gupkg as workflows
+from gupkg.integrity import verify_version_directory
 
 REPO = Path(__file__).resolve().parents[1]
-COMMIT = "a" * 40
-NEW_VERSION = "9.9.9"
+OLD_VERSION = "0.0.1"
 
 
-def _installed(tmp_path: Path) -> Path:
-    """Copy the repository's gupkg package into a package root as the active version."""
-    current = re.search(
-        r'(?m)^__version__ = "([^"]+)"', (REPO / "src" / "gupkg" / "_version.py").read_text(encoding="utf-8")
-    )[1]
-    version = tmp_path / "gupkg" / f"{current}"
-    shutil.copytree(
-        REPO / "src", version, ignore=shutil.ignore_patterns("__pycache__", "python", "7zip")
-    )
-    (version / "gupkg" / "python").mkdir()
-    (version / "gupkg" / "python" / "python.exe").write_text("embedded", encoding="utf-8")
-    (version / "gupkg" / "removed_module.py").write_text("old", encoding="utf-8")
-    return version
+def _installed(tmp_path: Path, release_bundle) -> Path:
+    """Install the release ZIP's tree as an old active version, plus marker files of an old install."""
+    extract = tmp_path / "extract"
+    with zipfile.ZipFile(release_bundle.zip) as archive:
+        archive.extractall(extract)
+    tree = next(extract.iterdir())
+    installed = tmp_path / "gupkg" / OLD_VERSION
+    installed.parent.mkdir()
+    shutil.move(str(tree), str(installed))
+    (installed / "gupkg" / "python" / "old_runtime_marker.txt").write_text("old runtime", encoding="utf-8")
+    (installed / "gupkg" / "gupkg-config.toml").write_text('mode = "manager"\n', encoding="utf-8")
+    return installed
 
 
-def _release_archive(installed: Path, comment: str) -> bytes:
-    """Build a GitHub-style commit archive whose gupkg version is ``NEW_VERSION``."""
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w") as archive:
-        archive.comment = comment.encode()
-        for file in (installed).rglob("*"):
-            relative = file.relative_to(installed)
-            if not file.is_file() or relative.parts[:2] == ("gupkg", "python") or relative.name == "removed_module.py":
-                continue
-            data = file.read_bytes()
-            if relative.as_posix() == "gupkg/_version.py":
-                data = re.sub(rb'(?m)^__version__ = "[^"]+"', b'__version__ = "%s"' % NEW_VERSION.encode(), data)
-            archive.writestr(f"pkg-{COMMIT}/src/{relative.as_posix()}", data)
-    return buffer.getvalue()
+def _releases_text(version: str, commit: str, digest: str | None) -> bytes:
+    """Return a RELEASES.md body listing one release, with or without a digest."""
+    shown = digest or "-"
+    return (
+        "| Version | Commit | Date | SHA-256 | Notes |\n|---|---|---|---|---|\n"
+        f"| {version} | `{commit}` | 2026-01-01 | {shown} | test |\n"
+    ).encode()
 
 
-def _releases_text(version: str) -> bytes:
-    """Return a RELEASES.md body listing one release."""
-    return f"| Version | Commit | Date | Notes |\n|---|---|---|---|\n| {version} | `{COMMIT}` | 2026-01-01 | test |\n".encode()
-
-
-def test_update_stages_the_listed_commit_as_a_complete_new_version(tmp_path: Path) -> None:
-    """A newer row yields a new version folder with new code, kept runtime, and no stale modules."""
-    installed = _installed(tmp_path)
-    responses = [io.BytesIO(_releases_text(NEW_VERSION)), io.BytesIO(_release_archive(installed, COMMIT))]
-
+def _update(installed: Path, releases: bytes, download: bytes | None):
+    """Stage the update with RELEASES.md and the ZIP served from memory."""
+    responses = [io.BytesIO(releases)] + ([io.BytesIO(download)] if download is not None else [])
     with mock.patch.object(urllib.request, "urlopen", side_effect=responses):
-        result = workflows.download_package_update(installed)
+        return workflows.download_package_update(installed)
 
-    staged = tmp_path / "gupkg" / f"{NEW_VERSION}"
+
+def test_update_stages_the_listed_release_zip_as_a_complete_verified_version(tmp_path: Path, release_bundle) -> None:
+    """A newer row yields a version folder from the ZIP: new runtime only, kept configuration, exact manifest."""
+    installed = _installed(tmp_path, release_bundle)
+    releases = _releases_text(release_bundle.version, release_bundle.commit, release_bundle.sha256)
+
+    result = _update(installed, releases, release_bundle.zip.read_bytes())
+
+    staged = tmp_path / "gupkg" / release_bundle.version
     assert result.ok, result.errors
     assert result.status == "downloaded"
-    assert f'__version__ = "{NEW_VERSION}"' in (staged / "gupkg" / "_version.py").read_text(encoding="utf-8")
-    assert (staged / "gupkg" / "cli.py").is_file()
-    assert (staged / "pkg.local" / "check_update.py").is_file()
-    assert (staged / "gupkg" / "python" / "python.exe").read_text(encoding="utf-8") == "embedded"
-    assert not (staged / "gupkg" / "removed_module.py").exists()
+    assert (staged / "gupkg" / "python" / "python.exe").is_file()
+    assert not (staged / "gupkg" / "python" / "old_runtime_marker.txt").exists()
+    assert (staged / "gupkg" / "gupkg-config.toml").read_text(encoding="utf-8") == 'mode = "manager"\n'
+    assert verify_version_directory(staged).ok
+    assert (staged / "App" / "RELEASE.txt").is_file()
+    assert (installed / "gupkg" / "python" / "old_runtime_marker.txt").is_file()
 
 
-def test_update_reports_current_when_the_table_lists_no_newer_release(tmp_path: Path) -> None:
+def test_update_reports_current_when_the_table_lists_no_newer_release(tmp_path: Path, release_bundle) -> None:
     """The newest row equal to the installed version is not an update."""
-    installed = _installed(tmp_path)
-    current = installed.name.removeprefix("v")
+    installed = _installed(tmp_path, release_bundle)
 
-    with mock.patch.object(urllib.request, "urlopen", return_value=io.BytesIO(_releases_text(current))):
-        result = workflows.download_package_update(installed)
+    result = _update(installed, _releases_text(OLD_VERSION, release_bundle.commit, "a" * 64), None)
 
     assert result.ok, result.errors
     assert result.status == "current"
-    assert not (tmp_path / "gupkg" / f"{NEW_VERSION}").exists()
+    assert not (tmp_path / "gupkg" / release_bundle.version).exists()
 
 
-def test_update_refuses_an_archive_built_from_another_commit(tmp_path: Path) -> None:
-    """An archive whose embedded commit differs from the listed one is never staged."""
-    installed = _installed(tmp_path)
-    responses = [io.BytesIO(_releases_text(NEW_VERSION)), io.BytesIO(_release_archive(installed, "b" * 40))]
+def test_update_refuses_a_zip_whose_digest_differs_from_the_listed_one(tmp_path: Path, release_bundle) -> None:
+    """A download that does not hash to the row's SHA-256 is never unpacked or staged."""
+    installed = _installed(tmp_path, release_bundle)
+    releases = _releases_text(release_bundle.version, release_bundle.commit, "0" * 64)
 
-    with mock.patch.object(urllib.request, "urlopen", side_effect=responses):
-        result = workflows.download_package_update(installed)
+    result = _update(installed, releases, release_bundle.zip.read_bytes())
+
+    assert not result.ok
+    assert any("checksum" in error for error in result.errors)
+    assert not (tmp_path / "gupkg" / release_bundle.version).exists()
+
+
+def test_update_refuses_a_zip_that_does_not_match_its_manifest(tmp_path: Path, release_bundle, derive_zip) -> None:
+    """A ZIP with the digest the table lists but a file that differs from its manifest is refused."""
+    installed = _installed(tmp_path, release_bundle)
+    tampered = tmp_path / "tampered.zip"
+    digest = derive_zip(release_bundle.zip, tampered, replace=("gupkg/cli.py", b"# tampered\n"))
+    releases = _releases_text(release_bundle.version, release_bundle.commit, digest)
+
+    result = _update(installed, releases, tampered.read_bytes())
+
+    assert not result.ok
+    assert any("MANIFEST.sha256" in error for error in result.errors)
+    assert not (tmp_path / "gupkg" / release_bundle.version).exists()
+    assert (installed / "gupkg" / "python" / "old_runtime_marker.txt").is_file()
+
+
+def test_update_refuses_a_zip_built_from_another_commit(tmp_path: Path, release_bundle) -> None:
+    """A ZIP whose recorded commit differs from the listed one is never staged."""
+    installed = _installed(tmp_path, release_bundle)
+    releases = _releases_text(release_bundle.version, "b" * 40, release_bundle.sha256)
+
+    result = _update(installed, releases, release_bundle.zip.read_bytes())
 
     assert not result.ok
     assert any("commit" in error for error in result.errors)
-    assert not (tmp_path / "gupkg" / f"{NEW_VERSION}").exists()
+    assert not (tmp_path / "gupkg" / release_bundle.version).exists()
+
+
+def test_update_fails_for_a_newest_row_without_a_digest(tmp_path: Path, release_bundle) -> None:
+    """A release row with no SHA-256 is an error, not something the updater skips or trusts."""
+    installed = _installed(tmp_path, release_bundle)
+
+    result = _update(installed, _releases_text(release_bundle.version, release_bundle.commit, None), None)
+
+    assert not result.ok
+    assert any("without a SHA-256" in error for error in result.errors)
+
+
+def test_update_to_a_1x_release_installs_nothing_and_names_the_bootstrap(tmp_path: Path, release_bundle) -> None:
+    """A major version 1 release is not installed by this updater; the message names gupkg-bootstrap.cmd."""
+    installed = _installed(tmp_path, release_bundle)
+
+    result = _update(installed, _releases_text("1.0.0", "c" * 40, "d" * 64), None)
+
+    assert not result.ok
+    assert any("gupkg-bootstrap.cmd" in error for error in result.errors)
+    assert sorted(path.name for path in (tmp_path / "gupkg").iterdir() if path.is_dir() and not path.name.startswith(".")) == [OLD_VERSION]
+
+
+def test_check_update_returns_the_asset_url_and_digest_of_the_newest_row() -> None:
+    """The hook turns the newest RELEASES.md row into a candidate carrying the release asset URL and SHA-256."""
+    spec = importlib.util.spec_from_file_location("check_update_under_test", REPO / "src" / "pkg.local" / "check_update.py")
+    hook = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hook)
+    digest = "ab" * 32
+    table = (
+        "| Version | Commit | Date | SHA-256 | Notes |\n|---|---|---|---|---|\n"
+        f"| 0.19.0 | `{'1' * 40}` | 2026-02-01 | {digest} | newer |\n"
+        f"| 0.18.0 | `{'2' * 40}` | 2026-01-01 | {'cd' * 32} | older |\n"
+        f"| 0.17.0 | `{'3' * 40}` | 2025-12-01 | - | before digests |\n"
+    ).encode()
+
+    with mock.patch.object(urllib.request, "urlopen", return_value=io.BytesIO(table)):
+        candidate = hook.check_update({"current": {"version": "0.18.0"}})
+
+    assert candidate["version"] == "0.19.0"
+    assert candidate["sha256"] == digest
+    assert candidate["url"] == "https://github.com/guraltsev/gupkg/releases/download/v0.19.0/gupkg-0.19.0-win-amd64.zip"
+    with mock.patch.object(urllib.request, "urlopen", return_value=io.BytesIO(table)):
+        assert hook.check_update({"current": {"version": "0.19.0"}}) is None
+
+
+def test_check_update_rejects_a_release_row_without_a_digest() -> None:
+    """A newest row marked '-' makes the check fail with an explicit message."""
+    spec = importlib.util.spec_from_file_location("check_update_under_test", REPO / "src" / "pkg.local" / "check_update.py")
+    hook = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hook)
+    table = _releases_text("0.19.0", "1" * 40, None)
+
+    with mock.patch.object(urllib.request, "urlopen", return_value=io.BytesIO(table)):
+        with pytest.raises(RuntimeError, match="without a SHA-256"):
+            hook.check_update({"current": {"version": "0.18.0"}})
