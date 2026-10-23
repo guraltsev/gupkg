@@ -378,9 +378,18 @@ def _dispatch_manager(args: argparse.Namespace) -> Outcome:
         return _interactive("manager.tui", run_manager_tui(config, inventory))
     if sub == "update":
         return _manager_update(args, config, inventory)
-    return commands.list_outcome(
+    outcome = commands.list_outcome(
         inventory, args.scope, doctor=sub == "doctor", filter_name=getattr(args, "filter", "all")
     )
+
+    # Doctor also checks gupkg's own installed files against their manifest.
+    if sub == "doctor":
+        problems = commands.self_integrity_problems()
+        if problems:
+            outcome.result.ok = False
+            outcome.result.exit_code = EXIT_USER_ERROR
+            outcome.result.errors.extend(problems + ["Reinstall gupkg from a release ZIP (gupkg-bootstrap.cmd)."])
+    return outcome
 
 
 def _manager_update(args: argparse.Namespace, config: Any, inventory: Any) -> Outcome:

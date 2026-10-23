@@ -666,6 +666,22 @@ def list_outcome(
     )
 
 
+def self_integrity_problems() -> list[str]:
+    """Return the running gupkg's differences from its MANIFEST.sha256, for ``manager doctor``.
+
+    A version that is not an installed release (a source checkout has no
+    manifest) yields no problems, so doctor stays usable in development.
+    """
+    from .distribution import standalone_version_root
+    from .integrity import ManifestError, verify_version_directory
+
+    try:
+        report = verify_version_directory(standalone_version_root())
+    except (ConfigValidationError, ManifestError, OSError) as exc:
+        return [f"gupkg's own files could not be checked: {exc}"]
+    return [] if not report.manifest_found else report.problems()
+
+
 def plan_updates(
     inventory: ManagerInventory,
     scope: str,
@@ -1115,6 +1131,7 @@ __all__ = [
     "run_package_command",
     "save_manager_config",
     "selected_scopes",
+    "self_integrity_problems",
     "self_outcome",
     "target_record",
     "update_outcome",

@@ -44,3 +44,9 @@ test_update_deps_tool.py, test_runtime_tools.py, or to tests/manual_smoke.md "is
   table; the documented fix is gupkg-bootstrap.cmd -Source <zip>.
 - Acceptance grep: src/gupkg/python (the committed runtime, which includes pip) is excluded; its
   removal is issue 019.
+
+## Review round 1
+
+- Build passes --no-compile to pip and deletes __pycache__/*.pyc before the manifest; integrity no longer exempts __pycache__ (planted .pyc is reported extra). The launcher's -B and the hooks' dont_write_bytecode keep an installed tree clean; a test runs the bundle and re-verifies it.
+- manager doctor now also reports gupkg's own manifest differences (silent for a source checkout without a manifest).
+- Bootstrap checks a reused version folder against its manifest (install state exempt), rejects duplicate manifest paths, and extracts with .NET after checking each entry stays under the destination.
