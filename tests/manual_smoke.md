@@ -213,3 +213,34 @@ prompt and the broadcast to running programs.
    `gupkg manager self status` and `gupkg install <package>` with `--scope auto`; confirm
    the elevated shell selects system scope and the other user scope. Why manual: needs
    real tokens.
+
+## Event stream, console and logs (issue 022)
+
+The automated tests render with a recording Rich console and write logs below pytest
+temporary directories. These steps cover real consoles, real permissions and a real TUI.
+
+1. **Real terminal rendering.** In Windows Terminal, then in a classic console window
+   (`conhost`), run `gupkg --scope user install <package with a download origin>`. Confirm
+   coloured phase rules, a ✓ or ✗ with the time, a download bar that disappears and leaves one
+   line, and a closing summary that names the logs and is the last thing printed. Run it again
+   with `set NO_COLOR=1` and with output redirected (`> out.txt`); `out.txt` has `==>` headers,
+   no escape characters and no carriage returns (`findstr /R "\x1b" out.txt` finds nothing).
+   Why manual: terminal modes and fonts cannot be asserted offline.
+2. **System logs are admin-only.** From an elevated shell run `gupkg --scope system install
+   <package>`. In a normal shell confirm `icacls C:\opt\.gupkg\logs` and
+   `icacls C:\opt\<name>\.gupkg\logs` show write access only for administrators and SYSTEM,
+   and that a standard user can neither create nor modify a file there. Why manual: needs
+   a real admin-only root.
+3. **A standard user cannot steer an elevated log write.** As a standard user prepare
+   `<user folder>\events.jsonl` and a junction `mklink /J <user folder>\link C:\Windows\Temp`.
+   From an elevated shell run `gupkg --events-file ..\link\x.jsonl install <package>` and
+   `gupkg --events-file C:\Windows\x.jsonl install <package>`; both are refused (exit 2) and
+   nothing is created outside the log directories. Why manual: UAC cannot be automated.
+4. **Nothing behind the TUI.** Open `gupkg tui` on a package whose `[origin]` is an
+   unreachable Git URL and run Install. The screen shows git's error lines inside the Fetch
+   phase and no text appears outside the TUI. Quit and confirm
+   `<root>\<name>\.gupkg\logs\` holds the `.log` and `.jsonl` of that run and the screen's
+   last line named the log. Why manual: depends on a real terminal under Textual.
+5. **Non-UTF-8 console output.** In a console using a legacy code page (`chcp 437`) run an
+   install whose origin script prints accented text and use `7z` output; confirm the lines are
+   readable or replaced, never a Python traceback. Why manual: needs real code pages.

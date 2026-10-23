@@ -7,8 +7,18 @@ implementation-facing modules and migration helpers.
 The Python modules in this directory contain the supported implementation
 domains used by the `gupkg.cli` command boundary and package workflows:
 
-- `core.py`: shared result models, package identity, logging, expansion, and
-  atomic file writes
+- `core.py`: shared result models, package identity, expansion, and atomic file
+  writes; the `log_info`/`log_warning`/`log_error` adapters that turn legacy
+  messages into events
+- `report/`: what a run reports. `events.py` defines the frozen event
+  dataclasses (the JSON contract of the `.jsonl` logs), the active reporter in a
+  `ContextVar`, `emit()` and the `phase`/`package_scope` helpers; no module below
+  `cli.py` prints. `console.py` renders events with Rich on a terminal and as
+  plain `==>` text otherwise. `logfile.py` writes the per-package and per-root
+  `.log`/`.jsonl` files, `latest.log`, retention and `--events-file` name
+  checks; `session.py` wraps one run (reporters, log files, closing summary).
+  Besides the event types, the log JSONL has one record the writer adds,
+  `log_link` (`package`, `log`, `events`, `events_file`), in the run log.
 - `system/`: the one side-effect boundary. `port.py` defines the `System`
   protocol (links, environment and `PATH`, shortcuts, elevation, processes,
   downloads); `windows.py` implements it for a real machine (junctions, registry,

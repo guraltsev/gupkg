@@ -35,7 +35,7 @@ Epic: 020. Design: `_docs/rehaul_design.md` §14. Supersedes the output parts of
    - `install_package`, `components.install_components` (its `run(title, step)`
      helper becomes `PhaseStart`/`PhaseEnd`), the update session, registry
      sync and self repair emit `PhaseStart` and `PhaseEnd`.
-   - `downloads.download_response` emits `Progress(done, total)` events
+   - `downloads.download_file` emits `Progress(done, total)` events
      instead of formatted text.
 3. **Subprocess output is streamed.** All subprocesses run through
    `System.run(..., on_line=...)` (issue 021) and emit `SubprocessLine`.
