@@ -17,6 +17,7 @@ row.
 
 | Version | Commit | Date | SHA-256 | Notes |
 |---|---|---|---|---|
+| 0.18.0 | `0a4a63ff0b287148cdedf05244f5d275f2b0c45b` | 2026-10-22 | 240d4ace40059a6ca65d85241459881f7692aa4029ff084408f16823f437d124 | Stage 0: self-contained release ZIP, native shortcuts and junctions, one bundled interpreter, no pip in the bundle |
 | 0.17.0 | `800780eb9575f0455e1eaf2c71a3a543f51559e7` | 2026-10-21 | - | Template folder renamed from pkg.bootstrap to _bootstrap |
 | 0.16.0 | `940ae3705bffbe8a924425706da12263ac0bed20` | 2026-10-18 | - | Folder name is the single source of identity; plain-string versions with .local.<rev>; no v prefix |
 | 0.15.0 | `2081044d69fadf60e6a94c94b468022d1ae345d1` | 2026-10-17 | - | TUI progress and scrolling fixes, streamed update checks, saved update status, colors |
