@@ -1081,12 +1081,12 @@ root forwarder (section 21.1). Each package's own logs and records live in its
   resolves through the configured roots and registries in every command.
 - **The UI programs are separate** (owner's decisions, 2026-10-22: D12, D34).
   `gupkg-tui` shows and acts on one package, and `gupkg-manager` is the
-  general manager (section 15). Both may import gupkg core and any libraries for reading and
-  reference, but every operation they perform is a `gupkg` CLI call
-  (D44, section 10.4). Inventory browsing, `--all`
-  batches, planning across packages, the missing-checksum policy, grouping
-  operations under one elevation, and the interactive UIs all live there. The
-  CLI acts on explicit targets: one or several names or paths.
+  general manager (section 15). Both may import gupkg core and any libraries
+  for reading and reference, but every operation they perform is a `gupkg` CLI
+  call (D44, section 10.4). Inventory browsing, `--all` batches, planning
+  across packages, the missing-checksum policy, grouping operations under one
+  elevation, and the interactive UIs all live there. The CLI acts on explicit
+  targets: one or several names or paths.
 - **`gupkg tui` and `gupkg manager` are permanent forwarders.**
   `gupkg tui PATH` starts `gupkg-tui PATH`, and `gupkg manager …`
   (including `gupkg manager tui`) starts `gupkg-manager …`, both from the

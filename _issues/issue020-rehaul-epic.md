@@ -108,10 +108,11 @@ owner (2026-10-22):
   check-updates` (D21) writes new pinned version directories and stops
   without activating them (D23); `install` and `update` never run a
   tracker, and no flag combines the two.
-- **D12:** the manager is a separate program, `gupkg-manager`. The CLI has
-  no `--all`, no UI and no checksum prompts. Amended by D44: the separate programs may import gupkg core for
-  reading, but every operation is a CLI call through the machine interface
-  (`--json`, `--plan`, `--events-file`, `--no-input`).
+- **D12:** the manager is a separate program, `gupkg-manager`. The CLI has no
+  `--all`, no UI and no checksum prompts. Amended by D44: the separate
+  programs may import gupkg core for reading, but every operation is a CLI
+  call through the machine interface (`--json`, `--plan`, `--events-file`,
+  `--no-input`).
 
 These were added when the external issues were integrated:
 
