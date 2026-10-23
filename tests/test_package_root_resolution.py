@@ -20,13 +20,13 @@ from gupkg.layout import resolve_input_path
 
 @pytest.mark.parametrize("root_name", ["volta", "vlc"])
 def test_v_prefixed_package_root_resolves_to_its_bootstrap_version(
-    tmp_path: Path, root_name: str
+    tmp_path: Path, root_name: str, system
 ) -> None:
     """A package root named like ``volta`` resolves to its only version directory."""
     root = tmp_path / root_name
     (root / "_bootstrap").mkdir(parents=True)
 
-    identity, from_current = resolve_input_path(root)
+    identity, from_current = resolve_input_path(root, system)
 
     assert identity.name == root_name
     assert identity.version_path == root / "_bootstrap"

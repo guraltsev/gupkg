@@ -65,7 +65,7 @@ from gupkg.updates import (
     write_receipt,
     write_update_state,
 )
-from gupkg.windows import is_current_user_admin
+from gupkg.system.port import System
 
 __copyright__ = "Copyright (C) 2025 Gennady Uraltsev. All rights reserved."
 __license__ = "MIT"
@@ -91,6 +91,7 @@ __all__ = [
 
 def install_package(
     package_path: Path,
+    system: System,
     *,
     scope: Scope = Scope.AUTO,
     allow_downgrade: bool = False,
@@ -109,6 +110,8 @@ def install_package(
     ----------
     package_path : Path
         Version directory, package root, or ``current`` junction.
+    system : System
+        Boundary for every machine side effect of the install.
     scope : Scope, default=Scope.AUTO
         Installation scope. Automatic selection uses machine scope for
         administrators unless the package is portable-only.
@@ -136,7 +139,7 @@ def install_package(
     # Resolve the version and load its configuration before any mutation, so
     # layout, validation, and metadata problems stop the install early.
     try:
-        identity, installing_from_current = resolve_input_path(Path(package_path))
+        identity, installing_from_current = resolve_input_path(Path(package_path), system)
         runtime_config, raw_config, warnings = read_runtime_config(identity)
     except (ConfigValidationError, ValueError) as exc:
         return _failure(f"Failed to load package metadata/config: {exc}", EXIT_USER_ERROR)
@@ -154,7 +157,7 @@ def install_package(
 
     # Resolve automatic scope from the portability policy, then reject scope
     # combinations the package model cannot support.
-    is_admin = is_current_user_admin() if scope in {Scope.AUTO, Scope.MACHINE} else False
+    is_admin = system.is_elevated() if scope in {Scope.AUTO, Scope.MACHINE} else False
     if scope == Scope.AUTO:
         scope = Scope.MACHINE if is_admin and not runtime_config["only_portable"] else Scope.USER
         log_info(f"Selected scope: {scope.value}")
@@ -174,7 +177,7 @@ def install_package(
         scope_paths: Dict[str, Any] = (
             install_context.as_scope_paths()
             if install_context is not None
-            else compute_scope_paths(scope)
+            else compute_scope_paths(scope, system)
         )
     except (RuntimeError, ValueError, OSError) as exc:
         return _failure(f"Failed to resolve {scope.value} scope paths: {exc}", EXIT_MUTATION_ERROR, warnings)
@@ -184,12 +187,13 @@ def install_package(
     # first immutable version and install that instead.
     if _is_update_bootstrap(identity, runtime_config):
         log_info("Promoting bootstrap into an immutable package version...")
-        downloaded = download_package_update(identity.version_path, no_checksum=no_checksum)
+        downloaded = download_package_update(identity.version_path, system, no_checksum=no_checksum)
         if not downloaded.ok:
             downloaded.warnings = warnings + downloaded.warnings
             return downloaded
         result = install_downloaded_update(
             identity.version_path,
+            system,
             scope=scope,
             shim_linkage=shim_linkage,
             install_context=install_context,
@@ -206,7 +210,7 @@ def install_package(
         log_info("Managing 'current' junction...")
         try:
             junction_changed = update_current_junction_if_needed(
-                identity, allow_downgrade=allow_downgrade
+                identity, system, allow_downgrade=allow_downgrade
             )
         except ValueError as exc:
             return _failure(str(exc), EXIT_USER_ERROR, warnings)
@@ -219,7 +223,7 @@ def install_package(
     # Populate App when it is missing or a refresh was requested; packages
     # without an origin proceed directly to their component work.
     origin_result = populate_app_from_origin(
-        identity, runtime_config, no_checksum=no_checksum, refresh_app=refresh_app
+        identity, runtime_config, system, no_checksum=no_checksum, refresh_app=refresh_app
     )
     warnings.extend(origin_result.warnings)
     if not origin_result.ok:
@@ -234,7 +238,7 @@ def install_package(
     # Apply the fixed component sequence only after App is ready.
     log_info("")
     log_info("Installing components...")
-    component_result = install_components(identity, scope, scope_paths, runtime_config)
+    component_result = install_components(identity, scope, scope_paths, runtime_config, system)
     warnings.extend(component_result.warnings)
     changed = junction_changed or origin_result.changed or component_result.changed
     if not component_result.ok:
@@ -248,13 +252,17 @@ def install_package(
     return ActionResult(ok=True, changed=changed, warnings=warnings)
 
 
-def health_check_package(package_path: Path, *, scope: Scope = Scope.USER) -> ActionResult:
+def health_check_package(
+    package_path: Path, system: System, *, scope: Scope = Scope.USER
+) -> ActionResult:
     """Validate one package configuration without mutating state.
 
     Parameters
     ----------
     package_path : Path
         Version directory, package root, or ``current`` junction.
+    system : System
+        Boundary used to read the ``current`` junction.
     scope : Scope, default=Scope.USER
         Selected CLI scope, used only for the banner.
 
@@ -266,7 +274,7 @@ def health_check_package(package_path: Path, *, scope: Scope = Scope.USER) -> Ac
 
     """
     try:
-        identity, _ = resolve_input_path(Path(package_path))
+        identity, _ = resolve_input_path(Path(package_path), system)
         runtime_config, raw_config, warnings = read_runtime_config(identity)
     except (ConfigValidationError, ValueError) as exc:
         return _failure(f"Failed to load package metadata/config: {exc}", EXIT_USER_ERROR)
@@ -289,7 +297,7 @@ def health_check_package(package_path: Path, *, scope: Scope = Scope.USER) -> Ac
 # ---------------------------------------------------------------------------
 
 
-def check_package_update(package_path: Path) -> ActionResult:
+def check_package_update(package_path: Path, system: System) -> ActionResult:
     """Check one package's configured source and persist the result.
 
     Parameters
@@ -297,17 +305,20 @@ def check_package_update(package_path: Path) -> ActionResult:
     package_path : Path
         Any version directory, package root, or ``current`` junction; a
         historical version may provide the update configuration.
+    system : System
+        Boundary for network, Git and junction reads.
 
     Returns
     -------
     ActionResult
         ``status`` is ``available``, ``current``, or ``not-configured``.
     """
-    return _run_update(package_path, stage=False, no_checksum=False)
+    return _run_update(package_path, system, stage=False, no_checksum=False)
 
 
 def download_package_update(
     package_path: Path,
+    system: System,
     *,
     no_checksum: bool = False,
 ) -> ActionResult:
@@ -317,6 +328,8 @@ def download_package_update(
     ----------
     package_path : Path
         Version directory, package root, or ``current`` junction.
+    system : System
+        Boundary for network, Git and junction reads.
     no_checksum : bool, default=False
         Whether checksum verification may be bypassed for downloaded payloads.
 
@@ -329,6 +342,7 @@ def download_package_update(
     """
     return _run_update(
         package_path,
+        system,
         stage=True,
         no_checksum=no_checksum,
     )
@@ -336,6 +350,7 @@ def download_package_update(
 
 def install_downloaded_update(
     package_path: Path,
+    system: System,
     *,
     scope: Scope = Scope.AUTO,
     shim_linkage: str = "dynamic",
@@ -348,6 +363,8 @@ def install_downloaded_update(
     package_path : Path
         Version directory, package root, or ``current`` junction that owns
         staged updates.
+    system : System
+        Boundary for every machine side effect of the activation.
     scope : Scope, default=Scope.AUTO
         Installation scope used to activate the staged version.
     shim_linkage : {"dynamic", "static"}, default="dynamic"
@@ -361,7 +378,7 @@ def install_downloaded_update(
         Activation outcome; ``status`` is ``installed-update`` on success.
     """
     try:
-        identity, _ = resolve_input_path(Path(package_path))
+        identity, _ = resolve_input_path(Path(package_path), system)
         receipt_path, version_path = _newest_receipt(identity)
     except (OSError, ValueError) as exc:
         return _failure(str(exc), EXIT_USER_ERROR)
@@ -394,7 +411,7 @@ def install_downloaded_update(
             EXIT_USER_ERROR,
         )
     result = install_package(
-        version_path, scope=scope, shim_linkage=shim_linkage, install_context=install_context
+        version_path, system, scope=scope, shim_linkage=shim_linkage, install_context=install_context
     )
     if result.ok:
         receipt_path.unlink(missing_ok=True)
@@ -404,6 +421,7 @@ def install_downloaded_update(
 
 def full_package_upgrade(
     package_path: Path,
+    system: System,
     *,
     scope: Scope = Scope.AUTO,
     no_checksum: bool = False,
@@ -416,6 +434,8 @@ def full_package_upgrade(
     ----------
     package_path : Path
         Version directory, package root, or ``current`` junction.
+    system : System
+        Boundary for every machine side effect of the update.
     scope : Scope, default=Scope.AUTO
         Installation scope used when activating the staged version.
     no_checksum : bool, default=False
@@ -431,23 +451,25 @@ def full_package_upgrade(
         The download result when nothing was staged, otherwise the activation
         result with the download warnings prepended.
     """
-    downloaded = download_package_update(package_path, no_checksum=no_checksum)
+    downloaded = download_package_update(package_path, system, no_checksum=no_checksum)
     if not downloaded.ok or downloaded.status != "downloaded":
         return downloaded
     installed = install_downloaded_update(
-        package_path, scope=scope, shim_linkage=shim_linkage, install_context=install_context
+        package_path, system, scope=scope, shim_linkage=shim_linkage, install_context=install_context
     )
     installed.warnings = downloaded.warnings + installed.warnings
     return installed
 
 
-def _run_update(package_path: Path, *, stage: bool, no_checksum: bool) -> ActionResult:
+def _run_update(
+    package_path: Path, system: System, *, stage: bool, no_checksum: bool
+) -> ActionResult:
     """Run one locked update check and optionally stage the discovered candidate."""
     warnings: List[str] = []
     try:
         # Any package version may define the update source; persistent update
         # state remains package-root owned either way.
-        identity, _ = resolve_input_path(Path(package_path))
+        identity, _ = resolve_input_path(Path(package_path), system)
         config, _, warnings = read_runtime_config(identity)
         if config.get("update") is None:
             return ActionResult(
@@ -456,7 +478,7 @@ def _run_update(package_path: Path, *, stage: bool, no_checksum: bool) -> Action
                 status="not-configured",
             )
         with _update_session(identity.package_root) as (paths, work):
-            status, candidate = _discover_update(identity, config, paths)
+            status, candidate = _discover_update(identity, config, paths, system)
             if candidate is None:
                 log_info(f"Current: {identity.version_string}")
                 return ActionResult(True, warnings=warnings, status=status)
@@ -469,6 +491,7 @@ def _run_update(package_path: Path, *, stage: bool, no_checksum: bool) -> Action
                 candidate,
                 paths,
                 work,
+                system,
                 no_checksum=no_checksum,
             )
             return ActionResult(True, changed=changed, warnings=warnings, status="downloaded")
@@ -507,6 +530,7 @@ def _discover_update(
     identity: PackageIdentity,
     config: Dict[str, Any],
     paths: Dict[str, Path],
+    system: System,
 ) -> Tuple[str, Optional[Dict[str, Any]]]:
     """Contact the configured source and persist timing and candidate state."""
     state = load_update_state(paths["state"])
@@ -520,9 +544,9 @@ def _discover_update(
         # A Git bootstrap has no checkout to compare, so its origin ref is
         # always the candidate to promote.
         if _is_update_bootstrap(identity, config) and config["update"]["check"]["mode"] == "git":
-            status, candidate = "available", git_origin_candidate(identity, config, state)
+            status, candidate = "available", git_origin_candidate(identity, config, state, system)
         else:
-            status, candidate = check_update(identity, config, state)
+            status, candidate = check_update(identity, config, state, system)
     except Exception as exc:
         # Record the failure for diagnosis, but never let a state-write
         # problem hide the check error itself.
@@ -548,6 +572,7 @@ def _stage_candidate(
     candidate: Dict[str, Any],
     paths: Dict[str, Path],
     work: Path,
+    system: System,
     *,
     no_checksum: bool,
 ) -> bool:
@@ -575,6 +600,7 @@ def _stage_candidate(
             config,
             candidate,
             work,
+            system,
             no_checksum=no_checksum,
         )
         os.replace(staged, new_identity.version_path)

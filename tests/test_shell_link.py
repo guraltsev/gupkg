@@ -1,11 +1,15 @@
-"""Cover Windows shortcut and junction creation without child processes.
+"""Cover the Windows-specific limits of shortcut and junction creation.
 
-Real ``.lnk`` files and real NTFS junctions are created, but only below pytest
-temporary directories. The Windows Shell COM interfaces and ``DeviceIoControl``
-are real. An independent ``WScript.Shell`` read (through PowerShell, used only
-by the test) confirms Explorer-visible properties. The registry, the ``PATH``
-and the real Start Menu are never touched. Elevated runs and the Explorer
-Properties dialog are out of scope; see ``tests/manual_smoke.md``.
+Real ``.lnk`` files and real NTFS junctions are created through the real
+``WindowsSystem``, but only below pytest temporary directories. The Windows
+Shell COM interfaces and ``DeviceIoControl`` are real. An independent
+``WScript.Shell`` read (through PowerShell, used only by the test) confirms
+Explorer-visible properties. The registry, the ``PATH`` and the real Start Menu
+are never touched: install runs use packages without environment or ``PATH``
+rows, with ``APPDATA`` and ``USERPROFILE`` pointed at a temporary home. What
+every ``System`` shares (round trips, replacement, removal) is covered by
+``tests/test_system_contract.py``. Elevated runs and the Explorer Properties
+dialog are out of scope; see ``tests/manual_smoke.md``.
 """
 
 from __future__ import annotations
@@ -20,14 +24,16 @@ from typing import Iterator
 import pytest
 
 from gupkg import cli
-from gupkg import gupkg as gupkg_module
-from gupkg import windows
-from gupkg.shell_link import ShellLink, read_shell_link, write_shell_link
+from gupkg.system import windows
+from gupkg.system.port import ShortcutSpec
+from gupkg.system.windows import WindowsSystem
 
 pytestmark = [
     pytest.mark.windows_integration,
     pytest.mark.skipif(os.name != "nt", reason="shortcuts and junctions need Windows"),
 ]
+
+SYSTEM = WindowsSystem()
 
 AWKWARD_TEXT = "it's \"quoted\" $var `tick` %TEMP% caf\u00e9 \u4e2d\u6587"
 
@@ -52,25 +58,15 @@ def _write_install_package(tmp_path: Path, shortcut_count: int) -> tuple[Path, P
 def _install(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, version_dir: Path
 ) -> int:
-    """Run ``gupkg install`` for a user-scope package with every machine-wide effect redirected."""
+    """Run ``gupkg install`` for a user-scope package with the Start Menu and profile redirected below *tmp_path*."""
     monkeypatch.setenv("APPDATA", str(tmp_path / "AppData"))
     monkeypatch.setenv("USERPROFILE", str(tmp_path / "UserProfile"))
-    # The junction and PATH steps are outside this suite's scope and touch the host.
-    monkeypatch.setattr(
-        gupkg_module, "update_current_junction_if_needed", lambda *a, **k: True
-    )
-    from gupkg import components
-
-    class _Done:
-        ok, changed, warnings, errors = True, False, [], []
-
-    monkeypatch.setattr(components, "ensure_bin_in_path", lambda *a, **k: _Done())
-    return cli.main(["install", str(version_dir)])
+    return cli.main(["--scope", "user", "install", str(version_dir)])
 
 
 def test_shortcut_fields_round_trip_exactly(tmp_path: Path) -> None:
     """Quotes, shell metacharacters, %VAR%, non-ASCII text and long paths survive a write and read."""
-    link = ShellLink(
+    link = ShortcutSpec(
         target_path="%COMSPEC%",
         arguments=f"/k echo {AWKWARD_TEXT}",
         working_directory="C:\\" + "d" * 210,
@@ -79,25 +75,25 @@ def test_shortcut_fields_round_trip_exactly(tmp_path: Path) -> None:
     )
     path = tmp_path / "round trip.lnk"
 
-    write_shell_link(path, link)
+    SYSTEM.write_shortcut(path, link)
 
-    assert read_shell_link(path) == link
+    assert SYSTEM.read_shortcut(path) == link
 
 
 def test_target_and_icon_paths_over_two_hundred_characters_round_trip(
     tmp_path: Path,
 ) -> None:
     """Target and icon paths of 259 and 258 characters, near the Windows limit, come back unchanged."""
-    link = ShellLink(
+    link = ShortcutSpec(
         target_path="C:\\" + "t" * 256,
         icon_location="C:\\" + "i" * 255 + ",4",
         working_directory="C:\\" + "w" * 257,
     )
     path = tmp_path / "long.lnk"
 
-    write_shell_link(path, link)
+    SYSTEM.write_shortcut(path, link)
 
-    assert read_shell_link(path) == link
+    assert SYSTEM.read_shortcut(path) == link
 
 
 def test_target_longer_than_windows_allows_raises_an_error_naming_the_path(
@@ -107,7 +103,7 @@ def test_target_longer_than_windows_allows_raises_an_error_naming_the_path(
     path = tmp_path / "toolong.lnk"
 
     with pytest.raises(OSError) as caught:
-        write_shell_link(path, ShellLink(target_path="C:\\" + "t" * 300))
+        SYSTEM.write_shortcut(path, ShortcutSpec(target_path="C:\\" + "t" * 300))
 
     assert caught.value.filename == str(path)
     assert "\n" not in str(caught.value)
@@ -120,7 +116,7 @@ def test_reading_a_corrupt_lnk_raises_an_error_naming_the_path(tmp_path: Path) -
     path.write_text("garbage", encoding="utf-8")
 
     with pytest.raises(OSError) as caught:
-        read_shell_link(path)
+        SYSTEM.read_shortcut(path)
 
     assert caught.value.filename == str(path)
     assert "\n" not in str(caught.value)
@@ -132,7 +128,7 @@ def test_shortcuts_work_on_a_thread_already_in_the_multithreaded_apartment(
     """A thread that already initialised COM as multithreaded can still write and read links."""
     import ctypes
 
-    results: list[ShellLink] = []
+    results: list[ShortcutSpec] = []
     errors: list[BaseException] = []
 
     def work() -> None:
@@ -140,8 +136,8 @@ def test_shortcuts_work_on_a_thread_already_in_the_multithreaded_apartment(
         ole32.CoInitializeEx(None, 0)  # COINIT_MULTITHREADED
         try:
             path = tmp_path / "mta.lnk"
-            write_shell_link(path, ShellLink("C:\\Windows\\notepad.exe"))
-            results.append(read_shell_link(path))
+            SYSTEM.write_shortcut(path, ShortcutSpec("C:\\Windows\\notepad.exe"))
+            results.append(SYSTEM.read_shortcut(path))
         except BaseException as exc:  # noqa: BLE001 - reported to the main thread
             errors.append(exc)
         finally:
@@ -152,38 +148,38 @@ def test_shortcuts_work_on_a_thread_already_in_the_multithreaded_apartment(
     thread.join()
 
     assert errors == []
-    assert results == [ShellLink("C:\\Windows\\notepad.exe")]
+    assert results == [ShortcutSpec("C:\\Windows\\notepad.exe")]
 
 
 def test_shortcut_without_optional_fields_reads_back_empty(tmp_path: Path) -> None:
     """Optional fields that were never set read back as empty text, with no icon."""
     path = tmp_path / "plain.lnk"
 
-    write_shell_link(path, ShellLink(target_path="C:\\Windows\\notepad.exe"))
+    SYSTEM.write_shortcut(path, ShortcutSpec(target_path="C:\\Windows\\notepad.exe"))
 
-    assert read_shell_link(path) == ShellLink(target_path="C:\\Windows\\notepad.exe")
+    assert SYSTEM.read_shortcut(path) == ShortcutSpec(target_path="C:\\Windows\\notepad.exe")
 
 
 def test_icon_index_splits_on_the_last_comma(tmp_path: Path) -> None:
     """An icon path containing a comma keeps it, and only the final comma starts the index."""
     path = tmp_path / "icon.lnk"
 
-    write_shell_link(
+    SYSTEM.write_shortcut(
         path,
-        ShellLink(target_path="C:\\Windows\\notepad.exe", icon_location="C:\\a,b\\x.dll,7"),
+        ShortcutSpec(target_path="C:\\Windows\\notepad.exe", icon_location="C:\\a,b\\x.dll,7"),
     )
 
-    assert read_shell_link(path).icon_location == "C:\\a,b\\x.dll,7"
+    assert SYSTEM.read_shortcut(path).icon_location == "C:\\a,b\\x.dll,7"
 
 
 def test_rewriting_a_shortcut_replaces_it(tmp_path: Path) -> None:
     """Writing over an existing shortcut leaves only the new fields."""
     path = tmp_path / "again.lnk"
-    write_shell_link(path, ShellLink("C:\\old.exe", arguments="--old", description="old"))
+    SYSTEM.write_shortcut(path, ShortcutSpec("C:\\old.exe", arguments="--old", description="old"))
 
-    write_shell_link(path, ShellLink("C:\\new.exe"))
+    SYSTEM.write_shortcut(path, ShortcutSpec("C:\\new.exe"))
 
-    assert read_shell_link(path) == ShellLink("C:\\new.exe")
+    assert SYSTEM.read_shortcut(path) == ShortcutSpec("C:\\new.exe")
 
 
 def test_independent_wscript_reader_sees_the_declared_properties(tmp_path: Path) -> None:
@@ -198,9 +194,9 @@ def test_independent_wscript_reader_sees_the_declared_properties(tmp_path: Path)
     if not powershell.is_file():
         pytest.skip("powershell.exe is not available as the test oracle")
     path = tmp_path / "oracle.lnk"
-    write_shell_link(
+    SYSTEM.write_shortcut(
         path,
-        ShellLink(
+        ShortcutSpec(
             target_path="C:\\Windows\\System32\\cmd.exe",
             arguments="/k echo 'hi'",
             working_directory="C:\\Windows",
@@ -230,19 +226,6 @@ def test_independent_wscript_reader_sees_the_declared_properties(tmp_path: Path)
         "I": "C:\\Windows\\System32\\cmd.exe,0",
         "D": "caf\u00e9 comment",
     }
-
-
-def test_writing_into_a_missing_directory_fails_with_a_one_line_error_naming_the_path(
-    tmp_path: Path,
-) -> None:
-    """A shortcut that cannot be written raises OSError whose one-line message names the shortcut."""
-    path = tmp_path / "missing folder" / "x.lnk"
-
-    with pytest.raises(OSError) as caught:
-        windows.create_shortcut(path, "C:\\Windows\\notepad.exe")
-
-    assert caught.value.filename == str(path)
-    assert "\n" not in str(caught.value)
 
 
 def test_unwritable_directory_is_reported_by_install_and_names_the_shortcut(
@@ -282,14 +265,14 @@ def test_install_creates_every_shortcut_without_powershell(
     def no_powershell(name: str) -> str:
         raise OSError(f"{name} unavailable")
 
-    monkeypatch.setattr(windows, "system_tool", no_powershell)
+    monkeypatch.setattr(windows, "_system_tool", no_powershell)
     monkeypatch.setenv("PATH", "")
     code = _install(monkeypatch, tmp_path, version_dir)
 
     assert code == 0
     links = sorted(start_menu.rglob("*.lnk"))
     assert len(links) == 10
-    first = read_shell_link(links[0])
+    first = SYSTEM.read_shortcut(links[0])
     assert first.target_path == "C:\\Windows\\System32\\cmd.exe"
     assert first.arguments.startswith("/k echo ")
 
@@ -301,8 +284,8 @@ def test_shortcuts_can_be_written_from_worker_threads(tmp_path: Path) -> None:
     def work(index: int) -> None:
         try:
             path = tmp_path / f"thread{index}.lnk"
-            write_shell_link(path, ShellLink("C:\\Windows\\notepad.exe", description=str(index)))
-            assert read_shell_link(path).description == str(index)
+            SYSTEM.write_shortcut(path, ShortcutSpec("C:\\Windows\\notepad.exe", description=str(index)))
+            assert SYSTEM.read_shortcut(path).description == str(index)
         except BaseException as exc:  # noqa: BLE001 - reported to the main thread
             errors.append(exc)
 
@@ -324,45 +307,15 @@ def junction_dirs(tmp_path: Path) -> Iterator[tuple[Path, Path]]:
     yield target, tmp_path / "link"
 
 
-def test_junction_opens_the_target_directory(junction_dirs: tuple[Path, Path]) -> None:
-    """A created junction is recognised as one and shows the target's contents."""
-    target, link = junction_dirs
-
-    windows.create_junction(link, target)
-
-    assert windows.is_junction(link)
-    assert windows.get_junction_target(link) == windows.normalize_path(str(target))
-    assert (link / "marker.txt").read_text(encoding="utf-8") == "marker"
-
-
-def test_junction_is_replaced_and_deleting_it_keeps_the_target(
+def test_junction_to_a_missing_target_leaves_no_directory_behind(
     junction_dirs: tuple[Path, Path], tmp_path: Path
 ) -> None:
-    """Re-creating a junction re-points it, and removing it does not delete the target files."""
-    target, link = junction_dirs
-    other = tmp_path / "other"
-    other.mkdir()
-    windows.create_junction(link, target)
-
-    windows.create_junction(link, other)
-
-    assert windows.get_junction_target(link) == windows.normalize_path(str(other))
-    os.rmdir(link)
-    assert (target / "marker.txt").exists()
-
-
-def test_junction_refuses_to_replace_a_real_directory_and_a_missing_target(
-    junction_dirs: tuple[Path, Path], tmp_path: Path
-) -> None:
-    """A real directory is never overwritten, and a missing target is refused with no leftovers."""
-    target, link = junction_dirs
-    link.mkdir()
-    with pytest.raises(RuntimeError, match="not a junction"):
-        windows.create_junction(link, target)
-    link.rmdir()
+    """A junction to a missing target is refused and no empty directory remains at the link path."""
+    _, link = junction_dirs
 
     with pytest.raises(RuntimeError, match="does not exist"):
-        windows.create_junction(link, tmp_path / "absent")
+        SYSTEM.create_junction(link, tmp_path / "absent")
+
     assert not link.exists()
 
 
@@ -373,13 +326,13 @@ def test_junction_accepts_a_long_path_prefixed_target_and_refuses_network_target
     target, link = junction_dirs
     prefixed = Path("\\\\?\\" + str(target))
 
-    windows.create_junction(link, prefixed)
+    SYSTEM.create_junction(link, prefixed)
 
     assert (link / "marker.txt").read_text(encoding="utf-8") == "marker"
-    os.rmdir(link)
+    SYSTEM.remove_link(link)
 
     with pytest.raises(RuntimeError, match="network"):
-        windows.create_junction(link, Path("\\\\localhost\\C$\\Windows"))
+        SYSTEM.create_junction(link, Path("\\\\localhost\\C$\\Windows"))
     assert not link.exists()
 
 
@@ -391,6 +344,6 @@ def test_junction_failure_leaves_no_directory_behind(
     link = tmp_path / "no parent" / "link"
 
     with pytest.raises(RuntimeError, match="Cannot create junction"):
-        windows.create_junction(link, target)
+        SYSTEM.create_junction(link, target)
 
     assert not link.exists()

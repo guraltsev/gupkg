@@ -26,16 +26,14 @@ from __future__ import annotations
 
 import json
 import shutil
-import subprocess
 import tempfile
-import urllib.request
 import zipfile
 from pathlib import Path, PureWindowsPath
 from typing import Any, Dict, List, Optional
 
 from .core import PackageIdentity, StepResult, log_info, log_warning
-from .downloads import download_response, file_sha256
-from .windows import system_tool
+from .downloads import download_file, file_sha256
+from .system.port import System, run_checked
 
 
 def app_has_payload(identity: PackageIdentity) -> bool:
@@ -58,6 +56,7 @@ def app_has_payload(identity: PackageIdentity) -> bool:
 def populate_app_from_origin(
     identity: PackageIdentity,
     runtime_config: Dict[str, Any],
+    system: System,
     *,
     no_checksum: bool = False,
     refresh_app: bool = False,
@@ -70,6 +69,8 @@ def populate_app_from_origin(
         Package version to populate.
     runtime_config : Dict[str, Any]
         Normalized configuration containing ``origin``.
+    system : System
+        Boundary for downloads and child processes.
     no_checksum : bool, default=False
         Skip a configured ZIP checksum with a warning.
     refresh_app : bool, default=False
@@ -101,11 +102,11 @@ def populate_app_from_origin(
     mode = origin.get("mode")
     try:
         if mode == "zip":
-            populate_app_from_zip_origin(identity, origin, no_checksum=no_checksum)
+            populate_app_from_zip_origin(identity, origin, system, no_checksum=no_checksum)
         elif mode == "git":
-            populate_app_from_git_origin(identity, origin)
+            populate_app_from_git_origin(identity, origin, system)
         elif mode == "script":
-            populate_app_from_script_origin(identity, origin, runtime_config, refresh_app=refresh_app)
+            populate_app_from_script_origin(identity, origin, runtime_config, system, refresh_app=refresh_app)
         elif mode == "module":
             populate_app_from_module_origin(identity, origin, runtime_config, refresh_app=refresh_app)
         else:
@@ -124,16 +125,16 @@ def populate_app_from_origin(
     return StepResult(ok=True, changed=True)
 
 
-def populate_app_from_git_origin(identity: PackageIdentity, origin: Dict[str, str]) -> None:
+def populate_app_from_git_origin(
+    identity: PackageIdentity, origin: Dict[str, str], system: System
+) -> None:
     """Populate ``App/`` with the exact commit at a configured Git ref."""
     with tempfile.TemporaryDirectory(prefix=".gupkg-origin-", dir=str(identity.version_path)) as temp:
         prepared_app = Path(temp) / "App.new"
 
         def git(*arguments: str) -> str:
             """Run one Git command quietly and return its stripped output."""
-            return subprocess.run(
-                ["git", *arguments], capture_output=True, text=True, check=True
-            ).stdout.strip()
+            return run_checked(system, ["git", *arguments])
 
         # Resolve the configured ref before cloning so the installed checkout
         # records one exact source state even if the branch advances.
@@ -149,7 +150,7 @@ def populate_app_from_git_origin(identity: PackageIdentity, origin: Dict[str, st
 
 
 def populate_app_from_zip_origin(
-    identity: PackageIdentity, origin: Dict[str, str], *, no_checksum: bool
+    identity: PackageIdentity, origin: Dict[str, str], system: System, *, no_checksum: bool
 ) -> None:
     """Populate ``App/`` from a downloaded and optionally verified zip archive."""
     with tempfile.TemporaryDirectory(prefix=".gupkg-origin-", dir=str(identity.version_path)) as temp:
@@ -160,8 +161,7 @@ def populate_app_from_zip_origin(
         staging_dir.mkdir()
 
         log_info(f"Downloading origin: {origin['url']}")
-        with urllib.request.urlopen(origin["url"], timeout=60) as response:
-            download_response(response, archive_path, label="Downloading origin")
+        download_file(system, origin["url"], archive_path, label="Downloading origin")
 
         # Verify before extraction so an unexpected archive is never unpacked.
         checksum = origin.get("checksum")
@@ -194,6 +194,7 @@ def populate_app_from_script_origin(
     identity: PackageIdentity,
     origin: Dict[str, str],
     runtime_config: Dict[str, Any],
+    system: System,
     *,
     refresh_app: bool,
 ) -> None:
@@ -202,24 +203,13 @@ def populate_app_from_script_origin(
     if refresh_app:
         _clear_app(identity)
 
-    # Each script type gets its native interpreter; the script runs from its
-    # own directory and receives the package context as JSON.
+    # The system starts each script type with its native interpreter; the script
+    # runs from its own directory and receives the package context as JSON.
     log_info(f"Running origin script: {origin['script']}")
-    extension = script_path.suffix.lower()
-    if extension == ".ps1":
-        command = [system_tool("powershell"), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script_path)]
-    elif extension in {".cmd", ".bat"}:
-        command = [system_tool("cmd"), "/c", str(script_path)]
-    else:
-        command = [str(script_path)]
-    completed = subprocess.run(
-        command,
-        input=json.dumps(build_origin_script_payload(identity, runtime_config), ensure_ascii=False),
-        text=True,
-        capture_output=True,
-        cwd=str(script_path.parent),
-        check=False,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    completed = system.run(
+        [str(script_path)],
+        cwd=script_path.parent,
+        input_text=json.dumps(build_origin_script_payload(identity, runtime_config), ensure_ascii=False),
     )
     for line in completed.stdout.splitlines():
         log_info(line)

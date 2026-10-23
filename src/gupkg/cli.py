@@ -39,7 +39,9 @@ from .core import (
     Scope,
 )
 from .outcome import Outcome, failure, format_human, format_toml
-from .windows import wait_for_keypress
+from .system.fake import FakeSystem
+from .system.port import System
+from .system.windows import WindowsSystem, wait_for_keypress
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +80,12 @@ def _build_parser() -> tuple[argparse.ArgumentParser, argparse.ArgumentParser]:
     )
     parser.add_argument(
         "--pause", action="store_true", help="wait for a keypress before exiting"
+    )
+    parser.add_argument(
+        "--sandbox", type=Path, metavar="DIR",
+        help="run against a pretend machine kept in DIR: environment variables, PATH, "
+        "shortcuts and elevation are recorded in DIR\\system.json and DIR instead of "
+        "the registry and Start Menu; files and downloads are real",
     )
     commands = parser.add_subparsers(dest="command", required=True, metavar="<command>")
 
@@ -307,17 +315,17 @@ examples:
 # ---------------------------------------------------------------------------
 
 
-def _dispatch(args: argparse.Namespace) -> Outcome:
+def _dispatch(args: argparse.Namespace, system: System) -> Outcome:
     """Turn parsed arguments into one operation from :mod:`gupkg.commands`."""
     if args.command == "manager":
-        return _dispatch_manager(args)
+        return _dispatch_manager(args, system)
     if args.command == "tui":
         from .tui import run_tui
 
-        directory, _, error = commands.resolve_package(args.path, command="tui")
+        directory, _, error = commands.resolve_package(args.path, system, command="tui")
         if error is not None:
             return error
-        return _interactive("tui", run_tui(str(directory)))
+        return _interactive("tui", run_tui(system, str(directory)))
 
     request = commands.PackageRequest(
         command=args.command,
@@ -333,10 +341,10 @@ def _dispatch(args: argparse.Namespace) -> Outcome:
         import_shortcuts=getattr(args, "import_shortcuts", "true") == "true",
         output=getattr(args, "output", None),
     )
-    return commands.run_package_command(request, output=_progress_stream(args))
+    return commands.run_package_command(request, system, output=_progress_stream(args))
 
 
-def _dispatch_manager(args: argparse.Namespace) -> Outcome:
+def _dispatch_manager(args: argparse.Namespace, system: System) -> Outcome:
     """Load the manager configuration once and run one manager subcommand."""
     sub = args.manager_command
     if args.max_depth < 1:
@@ -345,7 +353,7 @@ def _dispatch_manager(args: argparse.Namespace) -> Outcome:
         return commands.manager_init_outcome(args.config, force=args.force)
 
     try:
-        config = commands.load_manager(args.config)
+        config = commands.load_manager(system, args.config)
     except (ConfigValidationError, OSError, ValueError) as exc:
         return failure("manager", str(exc))
     progress = _progress_stream(args)
@@ -355,29 +363,31 @@ def _dispatch_manager(args: argparse.Namespace) -> Outcome:
     # missing or inaccessible package root cannot hide them.
     if sub == "install":
         return commands.install_registry_package(
-            config, args.selector, scope, offline=args.offline, output=progress,
+            config, system, args.selector, scope, offline=args.offline, output=progress,
         )
     if sub == "registry":
         if args.registry_command == "sync":
-            return commands.registry_sync_outcome(config, progress)
-        return commands.registry_status_outcome(config)
+            return commands.registry_sync_outcome(config, system, progress)
+        return commands.registry_status_outcome(config, system)
     if sub == "search":
-        return commands.registry_search_outcome(config, args.query or "", offline=args.offline, output=progress)
+        return commands.registry_search_outcome(
+            config, system, args.query or "", offline=args.offline, output=progress
+        )
     if sub == "self":
         return commands.self_outcome(
-            config, args.self_command, scope=scope, shim_linkage=getattr(args, "shim_linkage", None), output=progress
+            config, system, args.self_command, scope=scope, shim_linkage=getattr(args, "shim_linkage", None), output=progress
         )
 
     try:
-        inventory = commands.discover_manager(config, max_depth=args.max_depth)
+        inventory = commands.discover_manager(config, system, max_depth=args.max_depth)
     except (OSError, ValueError, ConfigValidationError) as exc:
         return failure("manager", str(exc))
     if sub == "tui":
         from .manager_tui import run_manager_tui
 
-        return _interactive("manager.tui", run_manager_tui(config, inventory))
+        return _interactive("manager.tui", run_manager_tui(system, config, inventory))
     if sub == "update":
-        return _manager_update(args, config, inventory)
+        return _manager_update(args, config, inventory, system)
     outcome = commands.list_outcome(
         inventory, args.scope, doctor=sub == "doctor", filter_name=getattr(args, "filter", "all")
     )
@@ -392,9 +402,9 @@ def _dispatch_manager(args: argparse.Namespace) -> Outcome:
     return outcome
 
 
-def _manager_update(args: argparse.Namespace, config: Any, inventory: Any) -> Outcome:
+def _manager_update(args: argparse.Namespace, config: Any, inventory: Any, system: System) -> Outcome:
     """Plan, confirm (full updates only), execute, and report a bulk update."""
-    plan = commands.plan_updates(inventory, args.scope)
+    plan = commands.plan_updates(inventory, args.scope, system)
     mode = "checked" if args.check_only else ("downloaded" if args.download_only else "updated")
 
     # Only a full update may ask for confirmation; checks and staging remain
@@ -413,6 +423,7 @@ def _manager_update(args: argparse.Namespace, config: Any, inventory: Any) -> Ou
         commands.execute_updates(
             plan,
             config,
+            system,
             download_only=args.download_only,
             no_checksum=args.no_checksum,
             shim_linkage=args.shim_linkage,
@@ -430,13 +441,16 @@ def _progress_stream(args: argparse.Namespace) -> io.StringIO | None:
     return io.StringIO() if args.format == "toml" else None
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(argv: Sequence[str] | None = None, *, system: System | None = None) -> int:
     """Run one parsed gupkg invocation and return its process status.
 
     Parameters
     ----------
     argv : sequence of str, optional
         Arguments without the program name; defaults to ``sys.argv[1:]``.
+    system : System, optional
+        Machine boundary to use instead of the real one; ``--sandbox`` still
+        selects the sandbox when no system is passed.
 
     Returns
     -------
@@ -455,8 +469,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         manager_parser.print_help()
         return EXIT_USER_ERROR
 
+    # The real machine is the default; --sandbox swaps in a fake whose state
+    # lives in the sandbox directory, with network and processes still real.
+    if system is None:
+        real = WindowsSystem()
+        if args.sandbox is not None:
+            args.sandbox.mkdir(parents=True, exist_ok=True)
+            system = FakeSystem.sandbox(args.sandbox, real)
+        else:
+            system = real
+
     try:
-        outcome = _dispatch(args)
+        outcome = _dispatch(args, system)
     except Exception as exc:  # pragma: no cover - defensive process boundary
         outcome = failure(args.command, f"Unexpected internal error: {exc}", EXIT_INTERNAL_ERROR)
     if outcome.data.get("interactive"):

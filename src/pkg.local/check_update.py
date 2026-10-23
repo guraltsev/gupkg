@@ -8,8 +8,10 @@ the locked dependencies, the native shims and the application.
 
 Usage and API
 -------------
-The package manager calls ``check_update(context)`` during an update check. The
-returned candidate describes the newest listed release (its asset URL and
+The package manager calls ``check_update(context)`` during an update check; the
+context's ``fetch_text`` function reads the table through gupkg's machine
+boundary, so the check needs no network access of its own. The returned
+candidate describes the newest listed release (its asset URL and
 digest), or ``None`` when the installed version is current or newer.
 ``parse_releases(text)`` is the table parser shared with the tests.
 
@@ -25,7 +27,6 @@ cannot be installed by this updater, so it names the bootstrap command instead.
 from __future__ import annotations
 
 import re
-import urllib.request
 from typing import Any
 
 
@@ -76,7 +77,9 @@ def check_update(context: dict[str, Any]) -> dict[str, str] | None:
     Parameters
     ----------
     context : dict[str, Any]
-        Update context containing the installed package version.
+        Update context containing the installed package version and
+        ``fetch_text(url, headers=None, *, timeout=60)``, which returns the text
+        served at a URL.
 
     Returns
     -------
@@ -91,8 +94,10 @@ def check_update(context: dict[str, Any]) -> dict[str, str] | None:
         without a digest, or the newest release needs the bootstrap script.
     """
     try:
-        with urllib.request.urlopen(_RELEASES_URL, timeout=30) as response:
-            text = response.read().decode("utf-8")
+        fetch_text = context.get("fetch_text")
+        if fetch_text is None:
+            raise RuntimeError("this gupkg is too old for this package; update gupkg")
+        text = fetch_text(_RELEASES_URL, timeout=30)
     except (OSError, UnicodeDecodeError) as exc:
         raise RuntimeError(f"Could not read the gupkg release list: {exc}") from exc
     releases = parse_releases(text)

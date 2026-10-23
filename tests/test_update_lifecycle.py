@@ -1,9 +1,10 @@
 """Cover the check → download → install lifecycle and its user-visible reporting.
 
 Package trees, receipts, update state, wrapper files, and NTFS junctions are
-real. The GitHub/HTTP boundary (``urllib.request.urlopen``) and the Windows
-registry accessors used for PATH are mocked so no network or host PATH is
-touched. Shortcut creation, elevation, and the TUIs are out of scope.
+real. The machine boundary is a ``FakeSystem``: the GitHub API and download
+URLs are fixtures served by it, and its in-memory registry takes the PATH
+writes, so no network or host PATH is touched. Elevation and the TUIs are out
+of scope.
 """
 
 from __future__ import annotations
@@ -13,17 +14,16 @@ import hashlib
 import io
 import json
 import tomllib
-import urllib.request
 import zipfile
 from pathlib import Path
-from unittest import mock
 
-import pytest
-
-from gupkg import cli, components
+from gupkg import cli
 from gupkg import gupkg as workflows
 from gupkg.core import Scope
-from gupkg.windows import create_junction
+from gupkg.system.fake import FakeSystem
+
+RELEASE_API = "https://api.github.com/repos/owner/tool/releases/latest"
+ASSET_URL = "https://example.invalid/tool.zip"
 
 
 def _archive(name: str, content: str) -> bytes:
@@ -63,26 +63,14 @@ def _github_package(root: Path, name: str = "Tool", extra: str = "") -> Path:
     return version
 
 
-@pytest.fixture
-def user_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Point the user-scope Start Menu and profile at a temporary home."""
-    home = tmp_path / "home"
-    monkeypatch.setenv("APPDATA", str(home / "AppData"))
-    monkeypatch.setenv("USERPROFILE", str(home))
-    return home
+def _serve_releases(system: FakeSystem, *releases: bytes, asset: bytes) -> None:
+    """Serve *releases* one per API request (the last repeats), and *asset* at the download URL."""
+    queue = list(releases)
+    system.add_url(RELEASE_API, lambda url, headers: queue.pop(0) if len(queue) > 1 else queue[0])
+    system.add_url(ASSET_URL, asset)
 
 
-@pytest.fixture
-def fake_path_registry(monkeypatch: pytest.MonkeyPatch) -> mock.Mock:
-    """Replace PATH registry access with an initially empty in-memory value."""
-    write = mock.Mock()
-    monkeypatch.setattr(components, "read_registry_value", mock.Mock(side_effect=FileNotFoundError))
-    monkeypatch.setattr(components, "write_registry_value", write)
-    monkeypatch.setattr(components, "broadcast_environment_change", mock.Mock())
-    return write
-
-
-def test_full_update_activates_a_version_staged_by_an_earlier_download(tmp_path: Path, user_env: Path) -> None:
+def test_full_update_activates_a_version_staged_by_an_earlier_download(tmp_path: Path, system: FakeSystem) -> None:
     """``update`` after ``update --download-only`` installs the staged version instead of failing.
 
     The second check rediscovers the same candidate; the already committed
@@ -91,11 +79,10 @@ def test_full_update_activates_a_version_staged_by_an_earlier_download(tmp_path:
     """
     version = _github_package(tmp_path)
     archive = _archive("tool.exe", "new")
-    responses = [io.BytesIO(_release("2.0.0", archive)), io.BytesIO(archive), io.BytesIO(_release("2.0.0", archive))]
+    _serve_releases(system, _release("2.0.0", archive), asset=archive)
 
-    with mock.patch.object(urllib.request, "urlopen", side_effect=responses):
-        downloaded = workflows.download_package_update(version)
-        installed = workflows.full_package_upgrade(version, scope=Scope.USER)
+    downloaded = workflows.download_package_update(version, system)
+    installed = workflows.full_package_upgrade(version, system, scope=Scope.USER)
 
     package_root = version.parent
     assert downloaded.status == "downloaded" and downloaded.changed
@@ -106,16 +93,17 @@ def test_full_update_activates_a_version_staged_by_an_earlier_download(tmp_path:
 
 
 def test_full_update_refuses_a_different_release_for_an_already_staged_version(
-    tmp_path: Path, user_env: Path
+    tmp_path: Path, system: FakeSystem
 ) -> None:
     """A republished release never activates the payload staged from the earlier one."""
     version = _github_package(tmp_path)
     archive = _archive("tool.exe", "first")
-    responses = [io.BytesIO(_release("2.0.0", archive)), io.BytesIO(archive), io.BytesIO(_release("2.0.0", archive, release_id=8))]
+    _serve_releases(
+        system, _release("2.0.0", archive), _release("2.0.0", archive, release_id=8), asset=archive
+    )
 
-    with mock.patch.object(urllib.request, "urlopen", side_effect=responses):
-        workflows.download_package_update(version)
-        result = workflows.full_package_upgrade(version, scope=Scope.USER)
+    workflows.download_package_update(version, system)
+    result = workflows.full_package_upgrade(version, system, scope=Scope.USER)
 
     assert not result.ok
     assert "already exists" in result.errors[0]
@@ -137,9 +125,7 @@ def test_human_output_reports_each_error_exactly_once(tmp_path: Path) -> None:
     assert "config-check: failed" in output.getvalue()
 
 
-def test_install_never_rewrites_a_path_that_cannot_be_read(
-    tmp_path: Path, user_env: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_install_never_rewrites_a_path_that_cannot_be_read(tmp_path: Path, system: FakeSystem) -> None:
     """An unreadable registry PATH fails the install without replacing PATH."""
     version = tmp_path / "Tool" / "1.0.0"
     (version / "App").mkdir(parents=True)
@@ -147,15 +133,13 @@ def test_install_never_rewrites_a_path_that_cannot_be_read(
     (version / "pkg.toml").write_text(
         'name = "Tool"\nversion = "1.0.0"\n\n[[path]]\nvalue = "$App"\n', encoding="utf-8"
     )
-    write = mock.Mock()
-    monkeypatch.setattr(components, "read_registry_value", mock.Mock(side_effect=PermissionError("denied")))
-    monkeypatch.setattr(components, "write_registry_value", write)
+    system.failures["get_env"] = PermissionError("denied")
 
-    result = workflows.install_package(version, scope=Scope.USER)
+    result = workflows.install_package(version, system, scope=Scope.USER)
 
     assert not result.ok
     assert any("PATH" in error for error in result.errors)
-    write.assert_not_called()
+    assert [access for access in system.registry_log if access.operation != "read"] == []
 
 
 def _manager(tmp_path: Path) -> tuple[Path, Path, Path]:
@@ -174,23 +158,23 @@ def _manager(tmp_path: Path) -> tuple[Path, Path, Path]:
     return config, user_root, user_bin
 
 
-def _toml_cli(*arguments: str) -> tuple[int, dict]:
-    """Run the CLI in TOML mode and parse its single result document."""
+def _toml_cli(system: FakeSystem, *arguments: str) -> tuple[int, dict]:
+    """Run the CLI in TOML mode against *system* and parse its single result document."""
     output = io.StringIO()
     with contextlib.redirect_stdout(output):
-        code = cli.main(["--format", "toml", *arguments])
+        code = cli.main(["--format", "toml", *arguments], system=system)
     return code, tomllib.loads(output.getvalue())
 
 
-def test_manager_check_reports_the_available_candidate_version(tmp_path: Path) -> None:
+def test_manager_check_reports_the_available_candidate_version(tmp_path: Path, system: FakeSystem) -> None:
     """``manager update --check-only`` names the version each updatable target would get."""
     config, user_root, _ = _manager(tmp_path)
     version = _github_package(user_root)
-    create_junction(version.parent / "current", version)
+    system.create_junction(version.parent / "current", version)
     archive = _archive("tool.exe", "new")
+    _serve_releases(system, _release("2.0.0", archive), asset=archive)
 
-    with mock.patch.object(urllib.request, "urlopen", return_value=io.BytesIO(_release("2.0.0", archive))):
-        code, document = _toml_cli("manager", "--config", str(config), "update", "--check-only")
+    code, document = _toml_cli(system, "manager", "--config", str(config), "update", "--check-only")
 
     assert code == 0, document["errors"]
     assert document["target"][0]["status"] == "available"
@@ -198,19 +182,18 @@ def test_manager_check_reports_the_available_candidate_version(tmp_path: Path) -
 
 
 def test_manager_update_installs_wrappers_into_the_configured_bin_directory(
-    tmp_path: Path, user_env: Path, fake_path_registry: mock.Mock
+    tmp_path: Path, system: FakeSystem
 ) -> None:
     """A manager update activates the new version with the manager's ``[bin]`` destination."""
     config, user_root, user_bin = _manager(tmp_path)
     version = _github_package(user_root, extra='\n[[bin]]\nname = "tool.cmd"\ncontent = "@echo off"\n')
-    create_junction(version.parent / "current", version)
+    system.create_junction(version.parent / "current", version)
     archive = _archive("tool.exe", "new")
-    responses = [io.BytesIO(_release("2.0.0", archive)), io.BytesIO(_release("2.0.0", archive)), io.BytesIO(archive)]
+    _serve_releases(system, _release("2.0.0", archive), asset=archive)
 
-    with mock.patch.object(urllib.request, "urlopen", side_effect=responses):
-        code, document = _toml_cli("manager", "--config", str(config), "update", "--yes")
+    code, document = _toml_cli(system, "manager", "--config", str(config), "update", "--yes")
 
     assert code == 0, document
     assert document["target"][0]["status"] == "installed-update"
     assert (user_bin / "tool.cmd").read_text(encoding="utf-8") == "@echo off"
-    assert not (user_env / "bin" / "tool.cmd").exists()
+    assert not (system.scope_folders(Scope.USER).bin_dir / "tool.cmd").exists()

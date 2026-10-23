@@ -1,9 +1,9 @@
 """Cover durable manager keyboard navigation through Textual's test driver.
 
-The manager configuration, roots, and inventory are real temporary layouts.
-Textual is exercised through its test driver; package providers and package
-operations are out of scope because this module covers manager presentation
-and handoff behavior.
+The manager configuration, roots, and inventory are real temporary layouts;
+the machine boundary is a ``FakeSystem``. Textual is exercised through its test
+driver; package providers and package operations are out of scope because this
+module covers manager presentation and handoff behavior.
 """
 
 from __future__ import annotations
@@ -16,6 +16,12 @@ import pytest
 from gupkg import cli
 from gupkg.manager import discover_manager, load_manager_config
 from gupkg.manager_tui import run_manager_tui
+from gupkg.system.fake import FakeSystem
+
+
+def _machine(tmp_path: Path) -> FakeSystem:
+    """Return a fake machine whose folders live below *tmp_path*."""
+    return FakeSystem(tmp_path / "machine")
 
 
 def _package(root: Path, selector: str) -> None:
@@ -50,7 +56,7 @@ def test_manager_browser_filters_and_handoff_keep_scope_visible(
         encoding="utf-8",
     )
     config = load_manager_config(config_path)
-    inventory = discover_manager(config)
+    inventory = discover_manager(config, _machine(tmp_path))
     captured = []
 
     def capture_run(app, *args, **kwargs):
@@ -60,7 +66,7 @@ def test_manager_browser_filters_and_handoff_keep_scope_visible(
     from textual.app import App
 
     monkeypatch.setattr(App, "run", capture_run)
-    assert run_manager_tui(config, inventory) == 0
+    assert run_manager_tui(_machine(tmp_path), config, inventory) == 0
     assert captured
     app = captured[0]
 
@@ -102,7 +108,7 @@ def test_unconfigured_manager_starts_with_one_init_action(
         return None
 
     monkeypatch.setattr(App, "run", capture_run)
-    assert run_manager_tui() == 0
+    assert run_manager_tui(_machine(tmp_path)) == 0
     app = captured[0]
 
     async def drive() -> None:
@@ -143,7 +149,7 @@ def test_manager_tui_discovers_package_directory_config_when_handed_off_from_pac
         captured.append(app)
 
     monkeypatch.setattr(App, "run", capture_run)
-    assert run_manager_tui() == 0
+    assert run_manager_tui(_machine(tmp_path)) == 0
     assert captured
 
     async def drive() -> None:
@@ -177,7 +183,7 @@ def test_manager_init_proceeds_with_displayed_defaults(
         return None
 
     monkeypatch.setattr(App, "run", capture_run)
-    assert run_manager_tui() == 0
+    assert run_manager_tui(_machine(tmp_path)) == 0
     app = captured[0]
     config_path = package_dir / "gupkg-config.toml"
 
@@ -220,7 +226,7 @@ def test_manager_tui_persists_the_selected_shim_linkage(
 
     monkeypatch.setattr(App, "run", lambda app, *args, **kwargs: captured.append(app))
     config = load_manager_config(config_path)
-    assert run_manager_tui(config, discover_manager(config)) == 0
+    assert run_manager_tui(_machine(tmp_path), config, discover_manager(config, _machine(tmp_path))) == 0
     app = captured[0]
 
     async def drive() -> None:
@@ -260,8 +266,8 @@ def test_tui_outside_package_directory_opens_manager_mode(
         encoding="utf-8",
     )
     monkeypatch.setattr("gupkg.manager_tui.run_manager_tui", capture_manager)
-    assert cli.main(["manager", "tui"]) == 0
-    assert selected and selected[0][0][0].path == manager_dir / "gupkg-config.toml"
+    assert cli.main(["manager", "tui"], system=_machine(tmp_path)) == 0
+    assert selected and selected[0][0][1].path == manager_dir / "gupkg-config.toml"
 
 
 def _manager(tmp_path: Path, selectors: tuple[str, ...]):
@@ -282,7 +288,7 @@ def _manager(tmp_path: Path, selectors: tuple[str, ...]):
         encoding="utf-8",
     )
     config = load_manager_config(config_path)
-    return config, discover_manager(config), user
+    return config, discover_manager(config, _machine(tmp_path)), user
 
 
 def _capture_app(monkeypatch: pytest.MonkeyPatch) -> list:
@@ -313,7 +319,7 @@ def _blocking_checks(monkeypatch: pytest.MonkeyPatch):
     started: list[str] = []
     release = threading.Event()
 
-    def check(target, **_kwargs):
+    def check(target, system, **_kwargs):
         started.append(target.target_id)
         if len(started) == 1:
             release.wait(5)
@@ -332,7 +338,7 @@ def test_refresh_reports_progress_and_each_result_while_checking(
     config, inventory, _ = _manager(tmp_path, ("alpha", "beta"))
     started, release = _blocking_checks(monkeypatch)
     app = _capture_app(monkeypatch)
-    assert run_manager_tui(config, inventory) == 0
+    assert run_manager_tui(_machine(tmp_path), config, inventory) == 0
 
     async def drive() -> None:
         async with app[0].run_test(size=(70, 12)) as pilot:
@@ -357,7 +363,7 @@ def test_escape_during_refresh_stops_before_the_next_target_and_keeps_results(
     config, inventory, _ = _manager(tmp_path, ("alpha", "beta"))
     started, release = _blocking_checks(monkeypatch)
     app = _capture_app(monkeypatch)
-    assert run_manager_tui(config, inventory) == 0
+    assert run_manager_tui(_machine(tmp_path), config, inventory) == 0
 
     async def drive() -> None:
         async with app[0].run_test(size=(70, 12)) as pilot:
@@ -386,7 +392,7 @@ def test_saved_update_status_survives_opening_a_package_and_returning(
     config, inventory, user = _manager(tmp_path, ("alpha", "beta"))
     opened: list[str] = []
 
-    def fake_package_tui(path: str, *, forced_scope=None):
+    def fake_package_tui(system, path: str, *, forced_scope=None):
         # The package interface records a check result exactly as a real check does.
         opened.append(path)
         state = Path(path) / ".gupkg" / "state" / "update.toml"
@@ -428,7 +434,7 @@ def test_saved_update_status_survives_opening_a_package_and_returning(
 
     monkeypatch.setattr(App, "run", run_app)
 
-    run_manager_tui(config, inventory)
+    run_manager_tui(_machine(tmp_path), config, inventory)
 
     assert opened == [str(user / "beta")]
     assert len(launches) == 2

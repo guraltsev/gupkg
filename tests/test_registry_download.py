@@ -1,9 +1,9 @@
 """Cover registry setup: ``manager init``, optional config keys, and ZIP-based sync.
 
 Manager configuration, the registry cache, archives, and state files are real.
-The registry "server" is a ``file:`` URL to a ZIP built in the test, so no
-network or Git is involved. Package installation after a registry lookup and
-the interactive screens are out of scope.
+The registry "server" is a URL fixture of ``FakeSystem`` holding a ZIP built in
+the test, so no network or Git is involved. Package installation after a
+registry lookup and the interactive screens are out of scope.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from gupkg import cli
 from gupkg.core import ConfigValidationError
 from gupkg.manager import load_manager_config
 from gupkg.registry import OFFICIAL_SOURCE, registry_status, search_registry, sync_registry
+from gupkg.system.fake import FakeSystem
 
 
 def _registry_zip(path: Path, *, comment: str = "", wrapper: str = "pkg-registry") -> Path:
@@ -71,50 +72,57 @@ def test_registry_source_must_be_a_url(tmp_path: Path) -> None:
         load_manager_config(_manager_config(tmp_path, "\n[registry]\nsource = 'git@github.com:o/r.git'\n"))
 
 
-def test_sync_downloads_archive_and_identifies_revision_by_commit_comment(tmp_path: Path) -> None:
+def _serve(system: FakeSystem, archive_path: Path) -> str:
+    """Serve *archive_path*'s bytes from the fake and return the URL that fetches them."""
+    url = f"https://registry.example/{archive_path.name}"
+    system.add_url(url, archive_path.read_bytes())
+    return url
+
+
+def test_sync_downloads_archive_and_identifies_revision_by_commit_comment(tmp_path: Path, system: FakeSystem) -> None:
     """Syncing a GitHub-style ZIP publishes its packages under the commit named in the ZIP comment."""
     commit = "a" * 40
-    source = _registry_zip(tmp_path / "registry.zip", comment=commit).as_uri()
+    source = _serve(system, _registry_zip(tmp_path / "registry.zip", comment=commit))
     cache = tmp_path / "cache"
 
-    result = sync_registry(cache, source=source)
+    result = sync_registry(cache, system, source=source)
 
     assert result.ok and result.status == "synced"
-    assert registry_status(cache).revision == commit
-    assert [item.selector for item in search_registry(cache, "to")] == ["tool"]
+    assert registry_status(cache, system).revision == commit
+    assert [item.selector for item in search_registry(cache, system, "to")] == ["tool"]
     # The same archive again is recognised as already current.
-    assert sync_registry(cache, source=source).status == "current"
+    assert sync_registry(cache, system, source=source).status == "current"
 
 
-def test_sync_failure_keeps_the_previous_registry_usable(tmp_path: Path) -> None:
+def test_sync_failure_keeps_the_previous_registry_usable(tmp_path: Path, system: FakeSystem) -> None:
     """A failed download reports the error and leaves the last validated tree active."""
     cache = tmp_path / "cache"
-    good = _registry_zip(tmp_path / "good.zip", comment="b" * 40).as_uri()
-    assert sync_registry(cache, source=good).ok
+    good = _serve(system, _registry_zip(tmp_path / "good.zip", comment="b" * 40))
+    assert sync_registry(cache, system, source=good).ok
 
-    result = sync_registry(cache, source=(tmp_path / "missing.zip").as_uri())
+    result = sync_registry(cache, system, source="https://registry.example/missing.zip")
 
     assert not result.ok
     assert "previous validated registry tree remains active" in result.warnings[0]
-    assert [item.selector for item in search_registry(cache)] == ["tool"]
+    assert [item.selector for item in search_registry(cache, system)] == ["tool"]
 
 
-def test_sync_rejects_archives_that_escape_the_cache(tmp_path: Path) -> None:
+def test_sync_rejects_archives_that_escape_the_cache(tmp_path: Path, system: FakeSystem) -> None:
     """An archive entry using .. cannot write outside the registry tree."""
     archive_path = tmp_path / "evil.zip"
     with zipfile.ZipFile(archive_path, "w") as archive:
         archive.writestr("wrap/../../escape.txt", "x")
     cache = tmp_path / "cache"
 
-    result = sync_registry(cache, source=archive_path.as_uri())
+    result = sync_registry(cache, system, source=_serve(system, archive_path))
 
     assert not result.ok
     assert not (tmp_path / "escape.txt").exists()
-    assert registry_status(cache).tree_path is None
+    assert registry_status(cache, system).tree_path is None
 
 
 def test_manager_init_creates_a_working_configuration_and_its_folders(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, system: FakeSystem
 ) -> None:
     """``manager init`` writes a loadable configuration, creates its folders, and refuses to overwrite."""
     package_dir = tmp_path / "gupkg-package"
@@ -125,7 +133,7 @@ def test_manager_init_creates_a_working_configuration_and_its_folders(
 
     output = io.StringIO()
     with redirect_stdout(output):
-        code = cli.main(["--format", "toml", "manager", "init"])
+        code = cli.main(["--format", "toml", "manager", "init"], system=system)
     document = tomllib.loads(output.getvalue())
 
     config = load_manager_config(package_dir / "gupkg-config.toml")
@@ -135,5 +143,5 @@ def test_manager_init_creates_a_working_configuration_and_its_folders(
 
     again = io.StringIO()
     with redirect_stdout(again):
-        assert cli.main(["--format", "toml", "manager", "init"]) == 2
+        assert cli.main(["--format", "toml", "manager", "init"], system=system) == 2
     assert "already exists" in tomllib.loads(again.getvalue())["errors"][0]

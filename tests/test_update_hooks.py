@@ -6,20 +6,19 @@ installed and no ``pip`` process is started, whether the import happens when the
 hook module loads, when the check runs, or while the payload is unpacked.
 
 Real: the update coordinator, hook loading from ``pkg.local``, and the package
-tree on disk. Mocked: ``subprocess`` (to prove that no installer starts) and HTTP.
-Out of scope: the content of real packages' hooks.
+tree on disk. Stood in by ``FakeSystem``: HTTP, and the child-process boundary
+(whose log proves that no installer starts, since every process gupkg starts goes
+through it). Out of scope: the content of real packages' hooks.
 """
 
 from __future__ import annotations
 
-import io
-import urllib.request
 from pathlib import Path
-from unittest import mock
 
 import pytest
 
 from gupkg import gupkg as workflows
+from gupkg.system.fake import FakeSystem
 
 MISSING = "gupkg_absent_module_for_tests"
 
@@ -61,25 +60,18 @@ def _package(root: Path, hooks: dict[str, str]) -> Path:
 
 
 @pytest.mark.parametrize("case", list(HOOKS), ids=list(HOOKS))
-def test_hook_importing_an_unavailable_module_fails_the_update_naming_it(tmp_path: Path, case: str) -> None:
+def test_hook_importing_an_unavailable_module_fails_the_update_naming_it(
+    tmp_path: Path, system: FakeSystem, case: str
+) -> None:
     """The update fails with the module's name, changes nothing, and starts no installer."""
     version = _package(tmp_path, HOOKS[case])
-    started: list[object] = []
+    system.add_url("https://example.invalid/tool.zip", b"zip")
 
-    def record(*args: object, **kwargs: object) -> None:
-        started.append(args[0] if args else kwargs)
-        raise AssertionError("no process may be started")
-
-    with (
-        mock.patch.object(urllib.request, "urlopen", return_value=io.BytesIO(b"zip")),
-        mock.patch("subprocess.run", side_effect=record),
-        mock.patch("subprocess.Popen", side_effect=record),
-    ):
-        result = workflows.download_package_update(version)
+    result = workflows.download_package_update(version, system)
 
     assert not result.ok
     assert any(MISSING in error for error in result.errors), result.errors
     assert any("installs nothing" in error for error in result.errors)
-    assert started == []
+    assert system.process_log == []
     assert sorted(path.name for path in version.parent.iterdir() if not path.name.startswith(".")) == ["1.0.0"]
     assert (version / "App" / "tool.exe").read_text(encoding="utf-8") == "old"

@@ -178,3 +178,38 @@ the probe on the committed runtime.
    `Dependencies repaired`, `git status` shows no change under
    `src\gupkg\python`, and the folder has no `pip*` entry. Why manual: it
    downloads the locked wheels from PyPI.
+
+## The system boundary and sandbox mode (issue 021)
+
+The contract tests run the real `WindowsSystem` against throwaway locations. These
+steps cover what they deliberately leave out: the real registry, Start Menu, a UAC
+prompt and the broadcast to running programs.
+
+1. **Sandbox leaves the machine alone.** Note the `PATH` of the User environment
+   (`[Environment]::GetEnvironmentVariable('Path','User')`) and the contents of
+   `%APPDATA%\Microsoft\Windows\Start Menu\opt`. Run
+   `gupkg --sandbox %TEMP%\s --scope user install <fixture package with a shortcut,
+   an [[environment]] row and a [[path]] row>`. Confirm the `PATH`, the HKCU
+   environment values and the Start Menu folder are unchanged, and that
+   `%TEMP%\s\system.json` lists the environment value and `PATH` entry while a
+   `.lnk.json` record exists below `%TEMP%\s`. Run the same install a second time and
+   confirm `system.json` keeps the first run's log. Repeat with `--scope system` after setting
+   `"elevated": true` in `system.json` (the sandbox never reads the real token) and
+   confirm the HKLM environment and `%ProgramData%` Start Menu are unchanged too.
+   Limits to expect: default package and config roots are not redirected (a package
+   given by path is installed where it is), and only `git` (on `PATH`) and the bundled 7-Zip may
+   run as child processes. Why manual: it compares against the real registry and Start Menu, which
+   the automated tests never read.
+2. **Real environment broadcast.** After a normal user-scope install of a package with
+   a `[[path]]` row, open a new terminal and confirm the entry is on `PATH`; then run
+   `gupkg manager self repair` and confirm no error mentions the broadcast. Why manual:
+   `WM_SETTINGCHANGE` reaches every open window, so the tests only exercise it through a
+   mocked `user32`.
+3. **Elevated relaunch through the launcher.** From a non-elevated shell, start a
+   `manager update` that includes a system-scope package and accept UAC. Confirm the
+   elevated window runs `gupkg.cmd` from the installed version folder. Decline UAC and
+   confirm nothing changes. Why manual: UAC cannot be automated.
+4. **Administrator detection.** In an elevated and a non-elevated shell run
+   `gupkg manager self status` and `gupkg install <package>` with `--scope auto`; confirm
+   the elevated shell selects system scope and the other user scope. Why manual: needs
+   real tokens.
