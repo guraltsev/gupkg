@@ -55,9 +55,9 @@ from gupkg.services.populate import populate_app, populate_git
 from gupkg.services.safepath import is_reparse_point, remove_tree
 from gupkg.services.track import TrackEnvironment, run_tracker
 from gupkg.system.port import System
-from gupkg_migrate.launchers import write_launchers
+from gupkg.launchers import write_launchers
 
-from .layout import LAUNCHER_NAMES, package_dirs, read_registry_file, write_registry_file, write_text_bytes
+from .layout import LAUNCHER_NAMES, TRACKER_LAUNCHER_NAME, package_dirs, read_registry_file, write_registry_file, write_text_bytes
 
 REGISTRY_SHA256_FROM = "registry"
 
@@ -324,6 +324,53 @@ def _update_package(run: _Run, package: Path) -> Outcome:
     return Outcome(name, "added", result.version, note, computed, destination, unversioned)
 
 
+def sync_launchers(root: Path) -> list[str]:
+    """Write the generated launchers into the whole registry at *root*; return one line per file changed.
+
+    Every pinned version directory gets ``install.cmd`` and ``gupkg-tui.cmd``, every tracker folder gets ``check-updates.cmd``
+    and loses a stale ``install.cmd`` or ``gupkg-tui.cmd`` (a tracker never installs). Because the fingerprint of a version covers
+    its launchers, the fingerprint of each version that changed is recomputed in ``_registry.toml``. A registry that is already in
+    step is left byte for byte as it was.
+    """
+    root = Path(root)
+    data = read_registry_file(root)
+    fingerprints = dict(data.get("fingerprints", {}))
+    changed: list[str] = []
+    for package in package_dirs(root):
+        for child in sorted(item for item in package.iterdir() if item.is_dir()):
+            if child.name == TRACKER_DIR_NAME:
+                tracker = child
+                for stale in LAUNCHER_NAMES:
+                    if (tracker / stale).is_file():
+                        (tracker / stale).unlink()
+                        changed.append(f"{package.name}/{TRACKER_DIR_NAME}/{stale}: removed (a tracker never installs)")
+                if _write_if_different(tracker, (TRACKER_LAUNCHER_NAME,)):
+                    changed.append(f"{package.name}/{TRACKER_DIR_NAME}/{TRACKER_LAUNCHER_NAME}: written")
+            elif (child / MANIFEST_NAME).is_file():
+                written = _write_if_different(child, LAUNCHER_NAMES)
+                if written:
+                    changed.extend(f"{package.name}/{child.name}/{name}: written" for name in written)
+                    key = f"{package.name}/{child.name}"
+                    fingerprints[key] = fingerprint_directory(child)
+    if any(line.endswith(": written") and "/_check_updates/" not in line for line in changed):
+        write_registry_file(root, {**data, "fingerprints": fingerprints})
+    return changed
+
+
+def _write_if_different(folder: Path, names: tuple[str, ...]) -> tuple[str, ...]:
+    """Write the launchers *names* into *folder* when they are missing or differ; return the names written."""
+    from gupkg.launchers import LAUNCHERS, launcher_text
+
+    written = []
+    for name in names:
+        expected = launcher_text(LAUNCHERS[name]).encode("ascii")
+        target = folder / name
+        if not target.is_file() or target.read_bytes() != expected:
+            write_launchers(folder, (name,))
+            written.append(name)
+    return tuple(written)
+
+
 def _copy_support_files(tracker: Path, destination: Path) -> None:
     """Copy the tracker's support files into *destination*, leaving out ``pkg.toml``, launchers and update-check code.
 
@@ -333,7 +380,7 @@ def _copy_support_files(tracker: Path, destination: Path) -> None:
         relative = path.relative_to(tracker)
         if is_reparse_point(path):
             raise ValueError(f"{relative.as_posix()} in the tracker is a link; refused")
-        if path.is_dir() or relative.as_posix() == MANIFEST_NAME or relative.name in LAUNCHER_NAMES:
+        if path.is_dir() or relative.as_posix() == MANIFEST_NAME or relative.name in (*LAUNCHER_NAMES, TRACKER_LAUNCHER_NAME):
             continue
         if "__pycache__" in relative.parts or path.suffix.lower() in (".pyc", ".bak"):
             continue

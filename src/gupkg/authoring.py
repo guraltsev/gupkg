@@ -3,14 +3,15 @@
 These are the maintainer-side commands of the ``pkg`` group. ``new`` writes a starter version directory or tracker that
 passes ``gupkg pkg check``; ``export`` writes a distribution ZIP of one version (``<name>\\<version>\\...`` plus the package's
 ``_check_updates`` when it has one) and reports its SHA-256; ``bundle`` copies the verified bundle of the running gupkg into a
-version directory so the program can be installed without gupkg (design section 21). Nothing is overwritten, links are never
-followed, and every command checks the directory it acts on first.
+version directory (together with its launchers) so the program can be installed without gupkg (design section 21). Nothing is
+overwritten, links are never followed, and every command checks the directory it acts on first. The launchers (``install.cmd`` and
+``gupkg-tui.cmd`` of a version, ``check-updates.cmd`` of a tracker) come from the one template of ``gupkg.launchers``.
 
 Usage and API
 -------------
 ``new_package(parent, name, version=None, track=None)`` returns the files it wrote. ``export_distribution(version_dir, output)``
 returns an ``ExportResult`` (path, SHA-256 and entry count). ``bundle_gupkg(version_dir, source)`` copies the bundle tree and
-returns the number of files copied. ``AuthoringError`` carries the message of a refusal.
+returns the number of files copied and writes the version's launchers. ``AuthoringError`` carries the message of a refusal.
 
 Implementation Approach
 -----------------------
@@ -29,6 +30,7 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from .launchers import TRACKER_LAUNCHER, VERSION_LAUNCHERS, launcher_text, write_launchers
 from .model.version import MANIFEST_NAME, TRACKER_DIR_NAME, is_version_name
 from .pkgcheck import check_directory
 from .services.safepath import is_reparse_point
@@ -90,11 +92,14 @@ def new_package(parent: Path, name: str, version: str | None = None, track: str 
 
     # Decide every file first, so nothing is written when one of them exists.
     package = Path(parent) / name
-    files: dict[Path, str] = {}
+    files: dict[Path, str | bytes] = {}
     if version is not None:
         files[package / version / MANIFEST_NAME] = _version_starter(name, version)
+        for launcher, command in VERSION_LAUNCHERS.items():
+            files[package / version / launcher] = launcher_text(command).encode("ascii")
     if track is not None or version is None:
         files[package / TRACKER_DIR_NAME / MANIFEST_NAME] = _tracker_starter(name, repository)
+        files[package / TRACKER_DIR_NAME / TRACKER_LAUNCHER] = launcher_text("check-updates").encode("ascii")
     for path in files:
         if os.path.lexists(path):
             raise AuthoringError(f"{path} exists; gupkg never overwrites a package definition")
@@ -105,7 +110,10 @@ def new_package(parent: Path, name: str, version: str | None = None, track: str 
     written: list[Path] = []
     for path, text in files.items():
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text, encoding="utf-8", newline="\n")
+        if isinstance(text, bytes):
+            path.write_bytes(text)
+        else:
+            path.write_text(text, encoding="utf-8", newline="\n")
         written.append(path)
     return written
 
@@ -162,7 +170,8 @@ def export_distribution(version_dir: Path, output: Path) -> ExportResult:
 
     The ZIP holds ``<name>\\<version>\\...`` (the whole version directory, bundled gupkg and shipped ``App`` included) and the
     package's ``_check_updates`` folder when it has one, so it unpacks into a root as it stands (design 21.2). The version
-    directory must pass ``gupkg pkg check`` and contain no link.
+    directory must pass ``gupkg pkg check`` and contain no link. A launcher the folder lacks (``install.cmd`` and ``gupkg-tui.cmd``,
+    and ``check-updates.cmd`` in the tracker) is added to the ZIP from the template, so every distribution carries them.
 
     Raises
     ------
@@ -179,7 +188,7 @@ def export_distribution(version_dir: Path, output: Path) -> ExportResult:
     tracker = version_dir.parent / TRACKER_DIR_NAME
 
     # Collect every entry first (sorted, no link followed) so a refusal leaves no half-written ZIP.
-    entries: list[tuple[Path, str]] = []
+    entries: list[tuple[Path | bytes, str]] = []
     for folder, prefix in ((version_dir, f"{name}/{version}"), *(((tracker, f"{name}/{TRACKER_DIR_NAME}"),) if tracker.is_dir() else ())):
         for current, folders, files in os.walk(folder):
             here = Path(current)
@@ -193,6 +202,16 @@ def export_distribution(version_dir: Path, output: Path) -> ExportResult:
                 relative = (here / item).relative_to(folder).as_posix()
                 entries.append((here / item, f"{prefix}/{relative}"))
 
+    # Add the launchers that the folders lack, generated from the template.
+    present = {arcname for _source, arcname in entries}
+    wanted = [(f"{name}/{version}/{launcher}", command) for launcher, command in VERSION_LAUNCHERS.items()]
+    if tracker.is_dir():
+        wanted.append((f"{name}/{TRACKER_DIR_NAME}/{TRACKER_LAUNCHER}", "check-updates"))
+    for arcname, command in wanted:
+        if arcname not in present:
+            entries.append((launcher_text(command).encode("ascii"), arcname))
+    entries.sort(key=lambda entry: entry[1])
+
     # Write the ZIP through a partial file and rename it, so the output appears whole or not at all.
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -202,6 +221,9 @@ def export_distribution(version_dir: Path, output: Path) -> ExportResult:
             info = zipfile.ZipInfo(arcname, _ZIP_TIME)
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = 0o644 << 16
+            if isinstance(source, bytes):
+                archive.writestr(info, source)
+                continue
             with open(source, "rb") as handle, archive.open(info, "w") as sink:
                 shutil.copyfileobj(handle, sink)
     os.replace(partial, output)
@@ -256,4 +278,7 @@ def bundle_gupkg(version_dir: Path, source: Path) -> int:
         os.replace(work, destination)
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+    # The program can now be installed from a double-click: give the version directory its launchers.
+    write_launchers(version_dir)
     return count

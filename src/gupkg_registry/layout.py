@@ -29,7 +29,8 @@ from gupkg.tomlio import dumps, read_toml
 
 REGISTRY_FILE = "_registry.toml"
 REGISTRY_FORMAT = 2
-LAUNCHER_NAMES = ("install.cmd", "gupkg-tui.cmd")
+LAUNCHER_NAMES = ("install.cmd", "gupkg-tui.cmd")  # the launchers of a version directory
+TRACKER_LAUNCHER_NAME = "check-updates.cmd"  # the one launcher of a tracker folder
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 
 

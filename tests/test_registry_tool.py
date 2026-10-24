@@ -33,7 +33,7 @@ from gupkg.report.events import Warning, use_reporter
 from gupkg.services.fingerprint import fingerprint_directory, verify_directory
 from gupkg.system.fake import FakeHttp, FakeSystem, ProcessCall
 from gupkg.system.port import ProcessResult
-from gupkg_migrate.launchers import launcher_text, write_launchers
+from gupkg.launchers import launcher_text, write_launchers
 from gupkg_registry.cli import main
 from gupkg_registry.layout import read_registry_file, write_registry_file
 from gupkg_registry.publish import commit_message
@@ -611,3 +611,26 @@ def test_registry_files_are_written_atomically(tmp_path: Path, monkeypatch: pyte
 
     assert (root / "_registry.toml").read_bytes() == before
     assert [p.name for p in root.iterdir()] == ["_registry.toml"]
+
+
+def test_the_launchers_command_brings_a_registry_to_the_current_template_and_refreshes_fingerprints(tmp_path: Path) -> None:
+    """`launchers` rewrites a stale version launcher, adds the tracker's check-updates.cmd, drops a tracker's install.cmd, fixes the fingerprint, and a second run changes nothing."""
+    root = tmp_path / "registry"
+    shutil.copytree(SNAPSHOT, root)
+    version = root / "qbittorrent" / "5.2.3"
+    tracker = root / "gh" / "_check_updates"
+    (version / "install.cmd").write_bytes(b"@echo off\r\nrem the 0.17 launcher\r\n")
+    (tracker / "check-updates.cmd").unlink()
+    (tracker / "install.cmd").write_bytes(b"@echo off\r\n")
+    assert validate_registry(root).problems
+
+    assert main(["launchers", "--registry", str(root)]) == 0
+
+    assert validate_registry(root).problems == ()
+    assert (version / "install.cmd").read_bytes() == launcher_text("install").encode("ascii")
+    assert (tracker / "check-updates.cmd").read_bytes() == launcher_text("check-updates").encode("ascii")
+    assert not (tracker / "install.cmd").exists()
+    assert read_registry_file(root)["fingerprints"]["qbittorrent/5.2.3"] == fingerprint_directory(version)
+    before = (root / "_registry.toml").read_bytes()
+    assert main(["launchers", "--registry", str(root)]) == 0
+    assert (root / "_registry.toml").read_bytes() == before

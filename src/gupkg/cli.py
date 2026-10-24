@@ -1088,7 +1088,7 @@ def _pkg_pin(run: _Run) -> int:
 
 
 def _pkg_bundle(run: _Run) -> int:
-    """Copy the verified bundle of the running gupkg into a version directory (the launchers are written by issue 033)."""
+    """Copy the verified bundle of the running gupkg into a version directory and write the version's launchers beside it."""
     status = self_status(run.location)
     if status.version_root is None or status.integrity is None or not status.integrity.ok:
         raise AuthoringError(
@@ -1096,8 +1096,10 @@ def _pkg_bundle(run: _Run) -> int:
             + ("; ".join(status.integrity.problems()) if status.integrity is not None else "it is a source checkout or its manifest is unreadable")
         )
     copied = authoring.bundle_gupkg(Path(run.args.directory), Path(status.version_root) / "gupkg")
-    _human(run, f"copied {copied} files into {Path(run.args.directory) / 'gupkg'}")
-    _document(run, results.envelope("pkg bundle", ok=True, exit_code=EXIT_OK, files=copied, version=status.version))
+    _human(run, f"copied {copied} files into {Path(run.args.directory) / 'gupkg'} and wrote install.cmd and gupkg-tui.cmd")
+    _document(run, results.envelope(
+        "pkg bundle", ok=True, exit_code=EXIT_OK, files=copied, version=status.version, launchers=["install.cmd", "gupkg-tui.cmd"],
+    ))
     return EXIT_OK
 
 

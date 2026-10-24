@@ -1,4 +1,4 @@
-"""The command line of the registry tool: ``update``, ``pin`` and ``validate``.
+"""The command line of the registry tool: ``update``, ``pin``, ``launchers`` and ``validate``.
 
 Exit status: 0 on success, 1 when a package failed or the registry has problems, 2 for a usage
 or registry-file error. ``update`` never commits or pushes unless ``--auto-push`` is given.
@@ -26,7 +26,7 @@ from gupkg.system.windows import WindowsSystem
 
 from .layout import RegistryFileError
 from .publish import PublishError, commit_and_push
-from .update import Outcome, pin_version, update_registry
+from .update import Outcome, pin_version, sync_launchers, update_registry
 from .validate import validate_registry
 
 
@@ -116,6 +116,19 @@ def _run_validate(args: argparse.Namespace, system: System, environ: Mapping[str
     return 0 if report.ok else 1
 
 
+def _run_launchers(args: argparse.Namespace, system: System, environ: Mapping[str, str]) -> int:
+    """Write the generated launchers into the whole registry (and refresh the fingerprints they change)."""
+    try:
+        changed = sync_launchers(args.registry)
+    except RegistryFileError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    for line in changed:
+        print(line)
+    print(f"{len(changed)} launcher files changed" + ("; review and commit them" if changed else ""))
+    return 0
+
+
 def _parser() -> argparse.ArgumentParser:
     """Build the argument parser."""
     parser = argparse.ArgumentParser(prog="gupkg-registry", description="Keep a gupkg registry's pinned versions current.")
@@ -142,6 +155,10 @@ def _parser() -> argparse.ArgumentParser:
     common(pin)
     network(pin)
     pin.set_defaults(run=_run_pin)
+
+    launchers = commands.add_parser("launchers", help="write install.cmd and gupkg-tui.cmd into every version and check-updates.cmd into every tracker")
+    common(launchers)
+    launchers.set_defaults(run=_run_launchers)
 
     validate = commands.add_parser("validate", help="check the whole registry (what CI runs)")
     common(validate)
