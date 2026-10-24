@@ -26,6 +26,7 @@ from __future__ import annotations
 import difflib
 import re
 import tomllib
+import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
@@ -74,12 +75,37 @@ RESERVED_ENV_NAMES = frozenset(
 _DEVICE_NAME = re.compile(r"^(con|prn|aux|nul|conin\$|conout\$|com[0-9¹²³]|lpt[0-9¹²³])(\..*)?$", re.IGNORECASE)
 
 
+# The longest file or folder name Windows accepts, and the longest environment variable name a package may use.
+MAX_NAME_PART = 255
+MAX_ENV_NAME = 128
+
+
+def env_name_problem(name: str) -> str | None:
+    """Return why *name* is not an environment variable a package may set, or ``None``.
+
+    Refused: an empty or longer than ``MAX_ENV_NAME`` name; ``=``, white space, ``%`` (it would be expanded) and any
+    control, format (zero-width), surrogate, private-use or unassigned character; and the system's own names
+    (``is_reserved_env_name``).
+    """
+    if not name:
+        return "is empty"
+    if len(name) > MAX_ENV_NAME:
+        return f"is longer than {MAX_ENV_NAME} characters"
+    if re.search(r"[=%\s]", name) or any(unicodedata.category(char).startswith("C") for char in name):
+        return "holds '=', '%', white space or an invisible or control character"
+    if is_reserved_env_name(name):
+        return "is a reserved system variable; use [[path]] to add a PATH entry"
+    return None
+
+
 def name_part_problem(part: str) -> str | None:
     """Return why *part* cannot be one file or folder name on Windows (device name, stream, trailing dot or space), or ``None``.
 
     ``CON``, ``NUL``, ``aux.lnk`` and ``COM1`` name devices whatever the extension; ``Tool:ads`` names an NTFS
     alternate stream; a trailing dot or space is silently dropped by Windows, so two names would collide.
     """
+    if len(part) > MAX_NAME_PART:
+        return f"is longer than {MAX_NAME_PART} characters"
     if re.search(r'[:*?"<>|\x00-\x1f]', part):
         return "has a character Windows does not allow in a name (including ':', which names an NTFS stream)"
     if _DEVICE_NAME.match(part):
@@ -1182,8 +1208,8 @@ def _parse_portable(collector: _Collector, raw: Any, modes: tuple[str, ...]) -> 
     else:
         env = dict(raw_env)
         for name in env:
-            if is_reserved_env_name(name) or re.search(r"[=\x00\s]", name) or not name:
-                collector.error("portable.env", f"{name!r} is not a usable variable name (reserved or malformed)")
+            if (problem := env_name_problem(name)) is not None:
+                collector.error("portable.env", f"{name!r} is not a usable variable name: it {problem}")
     for text in (*args, *env.values()):
         _check_variables(collector, text, "portable", modes)
     return Portable(persist, tuple(markers), args, env)
@@ -1217,6 +1243,9 @@ def _parse_shortcuts(collector: _Collector, raw: Any, modes: tuple[str, ...]) ->
             text = target if key == "target" else optional[key]
             if text:
                 _check_variables(collector, text, f"{where}.{key}", modes)
+        if name is not None and any(len(part) > MAX_NAME_PART for part in re.split(r"[\\/]", name)):
+            collector.error(f"{where}.name", f"has a part longer than {MAX_NAME_PART} characters")
+            name = None
         if name is not None and target is not None:
             rows.append(Shortcut(name, target, **optional))
     return tuple(rows)
@@ -1232,11 +1261,8 @@ def _parse_envs(collector: _Collector, raw: Any, modes: tuple[str, ...]) -> tupl
         value = collector.string(row, "value", where, required=True)
         if value is not None:
             _check_variables(collector, value, f"{where}.value", modes)
-        if name is not None and re.search(r"[=\x00\s]", name):
-            collector.error(f"{where}.name", f"{name!r} is not a valid environment variable name")
-            name = None
-        if name is not None and is_reserved_env_name(name):
-            collector.error(f"{where}.name", f"{name!r} is a reserved system variable; use [[path]] to add a PATH entry")
+        if name is not None and (problem := env_name_problem(name)) is not None:
+            collector.error(f"{where}.name", f"{name!r} is not a valid environment variable name: it {problem}")
             name = None
         if name is not None and value is not None:
             rows.append(EnvVar(name, value))

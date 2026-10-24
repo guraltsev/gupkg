@@ -12,9 +12,13 @@ Out of scope: registering an ad-hoc root (test_engine_distribution).
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 from gupkg.catalog.local import read_adhoc_roots
-from gupkg.tomlio import write_toml
+from gupkg.engine.executor import _forget_adhoc
+from gupkg.tomlio import read_toml, write_toml
 from tests.engine_support import World, pin_no_ambient_elevation  # noqa: F401
 
 SHIM = '[[shim]]\nname = "tool"\ntarget = "$App\\\\app.exe"\n'
@@ -92,3 +96,32 @@ def test_an_unreadable_state_file_is_a_warning_not_a_failed_purge(tmp_path: Path
 
     assert result.ok and result.status == "purged" and not package.exists()
     assert any("could not be removed" in text for text in result.warnings) and state.read_bytes() == b"adhoc = [oops"
+
+
+@pytest.mark.parametrize("mode", ["user", "portable"])
+def test_the_guard_never_lets_an_elevated_run_touch_a_user_or_portable_state_file(tmp_path: Path, mode: str) -> None:
+    """`_forget_adhoc` itself, with an elevated engine and a non-system mode (a path the lifecycle does not normally reach): fail closed."""
+    world = World(tmp_path, elevated=True)
+    package = tmp_path / "elsewhere" / "tool"
+    state = world.root(mode) / ".gupkg" / "state.toml"
+    write_toml(state, {"adhoc": [{"path": str(package), "mode": mode}]})
+    before = state.read_bytes()
+    run = SimpleNamespace(adhoc=True, context=SimpleNamespace(mode=mode), settings=world.engine.load(system_mode=True).settings, warnings=[])
+
+    _forget_adhoc(world.engine, run, package)
+
+    assert state.read_bytes() == before and run.warnings == []
+
+
+def test_the_same_call_removes_the_entry_in_a_normal_run_and_in_the_system_root(tmp_path: Path) -> None:
+    """The guard is the only difference: a normal run forgets a user entry, an elevated run forgets a system entry."""
+    for elevated, mode in ((False, "user"), (True, "system")):
+        world = World(tmp_path / mode, elevated=elevated)
+        package = tmp_path / "elsewhere" / mode / "tool"
+        state = world.root(mode) / ".gupkg" / "state.toml"
+        write_toml(state, {"adhoc": [{"path": str(package), "mode": mode}]})
+        run = SimpleNamespace(adhoc=True, context=SimpleNamespace(mode=mode), settings=world.engine.load(system_mode=elevated).settings, warnings=[])
+
+        _forget_adhoc(world.engine, run, package)
+
+        assert "adhoc" not in read_toml(state)

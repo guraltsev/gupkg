@@ -78,6 +78,8 @@ def hand_back(system: System, app: Path, data_dir: Path, persist: Sequence[str])
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
         if source.is_file():
+            if os.path.lexists(target) and (target.is_dir() or is_reparse_point(target)):
+                raise PortableError(f"'{item}' is a file in the application but a folder in {data_dir}; nothing was changed")
             write_bytes_atomic(target, source.read_bytes())
             saved.append(item)
         elif source.is_dir() and not target.exists():

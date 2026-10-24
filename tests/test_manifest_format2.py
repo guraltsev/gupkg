@@ -745,3 +745,33 @@ def test_a_portable_env_table_may_not_name_a_reserved_variable() -> None:
 
     with pytest.raises(ManifestError, match="not a usable variable name"):
         parse_manifest(text)
+
+
+@pytest.mark.parametrize("name", ["A" * 129, "A%B", "A\u200bB", "A\u0007B", "A B", "A=B", "A\u2060B", "A\ufeffB"])
+def test_an_env_name_is_capped_and_refuses_percent_and_invisible_characters(name: str) -> None:
+    """128 characters at most, no `%` (it would be expanded), no zero-width or control character, no space or `=`."""
+    shown = name.replace("\x07", "\\u0007")
+    text = f'format = 2\n[source]\ndownload_url = "https://x.test/a.zip"\n\n[[env]]\nname = "{shown}"\nvalue = "x"\n'
+
+    with pytest.raises(ManifestError, match="env\\[0\\].name"):
+        parse_manifest(text)
+
+
+def test_an_env_name_of_128_characters_is_allowed() -> None:
+    """The cap is inclusive."""
+    name = "A" * 128
+    text = f'format = 2\n[source]\ndownload_url = "https://x.test/a.zip"\n\n[[env]]\nname = "{name}"\nvalue = "x"\n'
+
+    assert parse_manifest(text).envs[0].name == name
+
+
+@pytest.mark.parametrize("table", ["shim", "shortcut"])
+def test_shim_and_shortcut_names_are_capped_at_255(table: str) -> None:
+    """255 characters is Windows' limit for one name; 256 is refused, 255 accepted."""
+    target = 'target = "C:\\\\a.exe"\n'
+    head = 'format = 2\n[source]\ndownload_url = "https://x.test/a.zip"\n\n'
+    ok = parse_manifest(head + f'[[{table}]]\nname = "{"a" * 255}"\n{target}')
+    assert getattr(ok, "shims" if table == "shim" else "shortcuts")[0].name == "a" * 255
+
+    with pytest.raises(ManifestError, match=f"{table}\\[0\\].name"):
+        parse_manifest(head + f'[[{table}]]\nname = "{"a" * 256}"\n{target}')

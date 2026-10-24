@@ -25,7 +25,7 @@ from gupkg.engine.effects import (
     remove_effect,
     verify_each,
 )
-from gupkg.model.manifest import EnvVar, parse_manifest
+from gupkg.model.manifest import EnvVar, Shim, Shortcut, parse_manifest
 from gupkg.model.state import Effect
 from gupkg.system.fake import FakeSystem
 from gupkg.system.port import Scope
@@ -239,4 +239,29 @@ def test_a_manifest_with_a_reserved_variable_cannot_become_effects(tmp_path: Pat
     hostile = replace(parsed, envs=(EnvVar("Path", "C:\\only"),))
 
     with pytest.raises(EffectError, match="reserved"):
+        desired_effects(hostile, ctx)
+
+
+@pytest.mark.parametrize("name", ["A" * 129, "A%B", "A​B", "A\u0007B"])
+def test_a_long_or_invisible_variable_name_is_never_set_or_deleted(tmp_path: Path, system: FakeSystem, name: str) -> None:
+    """The name rules hold below the validator too: apply and remove refuse, and desired_effects refuses a hostile manifest."""
+    ctx = context(tmp_path)
+    effect = Effect("env", {"scope": "user", "name": name, "value": "x"})
+
+    with pytest.raises(EffectError):
+        apply_effect(system, effect, ctx)
+    with pytest.raises(EffectError):
+        remove_effect(system, effect, ctx)
+    with pytest.raises(EffectError):
+        desired_effects(replace(manifest(""), envs=(EnvVar(name, "x"),)), ctx)
+
+
+@pytest.mark.parametrize("kind", ["shortcut", "shim"])
+def test_a_name_of_256_characters_cannot_become_an_effect(tmp_path: Path, kind: str) -> None:
+    """A hostile manifest with a 256-character shortcut or shim name is refused when the effects are derived."""
+    ctx = context(tmp_path)
+    long = "a" * 256
+    hostile = replace(manifest(""), **({"shortcuts": (Shortcut(long, "$App\\a.exe"),)} if kind == "shortcut" else {"shims": (Shim(name=long, target="$App\\a.exe"),)}))
+
+    with pytest.raises(EffectError, match="longer"):
         desired_effects(hostile, ctx)

@@ -38,7 +38,7 @@ from typing import Any
 
 from ..catalog.local import canonical_path, is_inside, is_reparse_point
 from ..core import write_bytes_atomic
-from ..model.manifest import Manifest, is_reserved_env_name, name_part_problem, path_entry_shape_problem
+from ..model.manifest import Manifest, env_name_problem, name_part_problem, path_entry_shape_problem
 from ..model.mode import ENV_MACHINE, ModeContext
 from ..model.plan import effect_key, normalize_entry
 from ..model.state import Effect
@@ -320,8 +320,9 @@ def _require_trusted_folder(system: System, entry: str, scope: str) -> None:
 
 def _require_free_name(name: str) -> None:
     """Refuse an environment variable that is the system's own (``Path`` would clobber the whole PATH)."""
-    if is_reserved_env_name(name):
-        raise EffectError(f"'{name}' is a reserved system variable and is never set or deleted by a package")
+    problem = env_name_problem(name)
+    if problem is not None:
+        raise EffectError(f"environment variable {name!r} {problem}; a package never sets or deletes it")
 
 
 def _expand(text: str, values: Mapping[str, str], env: Mapping[str, str], label: str, *, literal_unknown: bool = False) -> str:

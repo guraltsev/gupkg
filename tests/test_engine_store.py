@@ -272,6 +272,18 @@ def test_a_persisted_folder_the_application_replaced_is_merged_into_data_and_not
     assert (second / "Data" / "new.txt").read_text() == "new file"
 
 
+def test_a_file_that_is_a_folder_in_data_is_a_portable_error_not_a_crash(tmp_path: Path, system: FakeSystem) -> None:
+    """A persisted file whose `data` counterpart is a folder raises PortableError up front and writes nothing."""
+    data, app = tmp_path / "data", tmp_path / "1" / "App"
+    write(data / "settings.ini" / "inner.txt", "a folder in data")
+    write(app / "settings.ini", "a file in the app")
+
+    with pytest.raises(PortableError, match="nothing was changed"):
+        hand_back(system, app, data, ["settings.ini"])
+
+    assert (data / "settings.ini" / "inner.txt").read_text() == "a folder in data" and (data / "settings.ini").is_dir()
+
+
 def test_a_folder_that_is_a_file_in_data_stops_the_merge_before_it_writes(tmp_path: Path, system: FakeSystem) -> None:
     """A name that is a folder on one side and a file on the other is an error, with nothing copied."""
     data, app = tmp_path / "data", tmp_path / "1" / "App"
