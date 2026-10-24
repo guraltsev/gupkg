@@ -1211,6 +1211,8 @@ Rules:
    *itself*, and only when its own location (its version directory and
    root) is admin-only. A user-mode or bundled gupkg in a user-writable place
    never elevates, and cannot perform system installs.
+   Before it asks for elevation it also checks the files its child loads first (section 10.4); a
+   check-then-launch race (TOCTOU) remains and is bounded by this very requirement.
 2. **The elevated side resolves everything itself.** From the non-elevated
    side it accepts only a package name, or a path *inside* the admin-only
    system root, plus command options such as `--skip-checksum` (D24).
@@ -1451,7 +1453,20 @@ folders were checked admin-only; the arguments are quoted by the rules of
 `CreateProcess`. In addition, the parent refuses (exit code 2, before any question)
 every argument value that holds `& | < > ^ " % ! `` ` ``, a control character or a lone
 surrogate, and the child refuses the same characters in its own command line.
-A package whose name holds one of them is installed from an administrator shell.
+A package whose name holds one of them is installed from an administrator shell. Every
+Unicode category starting with `C` is refused (control characters including C1, bidi overrides
+and isolates, zero-width joiners, lone surrogates, private-use and unassigned code points),
+as are U+2028 and U+2029, and a target that starts with `-`. The options come first and the
+targets follow `--`, so a folder named `--yes` cannot be read as an option. A command line over 30000
+characters is refused (exit code 2), never reported as a declined prompt.
+
+*What is checked before the prompt.* Before `ShellExecuteEx` the parent checks that
+the files the child loads before any of its own code (`bundled_runtime_paths`: the package
+folder and its parent, the bundled runtime folder, `Lib\site-packages`, `python.exe`,
+`python*._pth`, `python*.dll` and `bootstrap.py`, the same list the child checks in
+`enforce_bundled_runtime`) are admin-only; one that is not is exit code 2 and nothing is asked. A
+check-then-launch race (TOCTOU) remains, bounded by the admin-only requirement itself: only an
+administrator can change what the check accepted, and the child checks the same list again.
 
 *The parent waits.* The parent keeps the process handle (`SEE_MASK_NOCLOSEPROCESS`),
 waits for the child and exits with the **child's exit code** (the highest of it and
@@ -1459,10 +1474,17 @@ the codes of targets that were left out); the document has `relaunched: true` an
 the same `exit_code`. A declined UAC prompt is exit code 5. The progress channel stays
 the events file. When the call named `--events-file`, the parent reads the child's
 last line afterwards: no `run_end` (a killed child, an unreadable file) is a failure,
-exit code 3 with the error `child-no-result`. Ctrl-C while waiting creates the stop
+exit code 3 with the error `child-no-result`. The child's process exit code is clamped
+to gupkg's codes (`0`-`6` pass through, anything else is `4`); the raw code is the
+`child_raw_exit_code` of the document. The call always gives the child an events file (its own
+name when the caller named none) and prints the child's closing summary, so the output does not
+vanish with the child's window; a scripted `--yes` or `--no-input` child never waits for a key. Ctrl-C while waiting creates the stop
 marker (the parent passes its own marker to the child as the hidden `--stop-file`; the
 child accepts only a fresh `gupkg-stop-<32 hex>` name inside its own temporary folder),
-keeps waiting for 30 seconds, and then gives up with exit code 5. Scheduled and CI
+keeps waiting for 30 seconds, and then gives up with exit code 5, naming the marker and the events
+file. When the user elevates through a *different* administrator account the child's temporary folder
+differs, so the child ignores `--stop-file` and the stop never works: the parent waits 30 seconds and
+gives up with exit code 5 (use the child's own `stop_file` from its events file instead). Scheduled and CI
 callers use a unique `--events-file` name per run and treat a missing `run_end` as
 failure; a multi-target call under `--no-input` needs `--yes` (the question "run this
 on N packages?" is otherwise exit code 5).

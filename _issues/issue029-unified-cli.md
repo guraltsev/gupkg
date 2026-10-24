@@ -8,9 +8,10 @@ Epic: 020. Design: `_docs/rehaul_design.md` §10, §11. Supersedes issue 013's g
 > transports, which now live in `gupkg.services.registrysource`); `pinning.py` is NOT on the deletion list: it is issue 027's
 > module behind `gupkg pkg pin` (the list named it by mistake). Decisions taken inside the issue: the stop marker is a unique path
 > announced in `run_start.stop_file` (design 10.4); `--plan` also exists for `link` and `self ...`; `link` is an engine operation;
-> `requires_gupkg` and a newer `format` give exit code 6; the forwarders refuse an elevated shell and `--settings`/`--sandbox`;
+> `requires_gupkg` and a newer `format` give exit code 6; `tui` and `manager` refuse an elevated shell (`migrate` does not) and no forwarder takes `--settings`/`--sandbox`;
 > `allow_unc_file_urls` is not a setting (`file:` URLs naming a network host stay refused, design 13.4); the parent of an elevated
-> relaunch does not wait for the child. Not done: `pkg bundle` copies the verified bundle but writes no launchers (the template is
+> relaunch waits for the child and returns its exit code (clamped to 0-6, else 4; the raw code is `child_raw_exit_code` in the
+> document); the child is started without a shell and only after the files it loads first were checked admin-only. Not done: `pkg bundle` copies the verified bundle but writes no launchers (the template is
 > issue 033's); Manual checks owed: `tests/manual_smoke.md`, "The unified command
 > line and machine interface (issue 029)" items 1-13.
 

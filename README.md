@@ -251,7 +251,10 @@ value holding `& | < > ^ " % ! `` ` ``, a control character or a lone surrogate 
 because it would travel on the elevated command line. Scheduled callers pass a unique `--events-file NAME` and treat a missing
 `run_end` line as a failure; a call with several targets needs `--yes` under `--no-input` (the question "run this on N
 packages?" is exit code 5 otherwise).
-Redirected output is UTF-8 and the `--json` document is pure ASCII, whatever the code page.
+Redirected output is UTF-8 and the `--json` document is pure ASCII, whatever the code page. The child's exit code is clamped to
+gupkg's codes (`0`-`6`, anything else is `4`; the raw code is `child_raw_exit_code`). If the user elevates through a different
+administrator account, the child's temporary folder differs, so Ctrl-C cannot stop it: the call waits 30 seconds and gives up
+with exit code 5 (the child's own `stop_file` is in its events file).
 
 ### Install modes
 
@@ -273,7 +276,7 @@ The documents and options below are a public, versioned contract (`"api": 1`); `
 
 | Option | Meaning |
 | --- | --- |
-| `--json` | One result document on standard output (`api`, `command`, `ok`, `exit_code`, then `results` with one entry per target: `package`, `operation`, `ok`, `status`, `version`, `previous`, `mode`, `exit_code`, `receipt`, `log`, `warnings`, `details` for what the operation did, and, on failure, `error` with `code`, `message`, `hint` (only when there is one) and what it carries, such as the `url` of `checksum-missing`). Human output goes to standard error. |
+| `--json` | One result document on standard output (`api`, `command`, `ok`, `exit_code`, then `results` with one entry per target: `package`, `operation`, `ok`, `status`, `version`, `previous`, `mode`, `exit_code`, `receipt`, `log`, `warnings`, `details` for what the operation did, and, on failure, `error` with `code`, `message`, `hint` (only when there is one) and what it carries (`invalid-checksum` carries the `version` and the `field`), such as the `url` of `checksum-missing`). Human output goes to standard error. |
 | `--plan` | `check-updates`, `install`, `update`, `uninstall`, `switch`, `cleanup`, `link` and `self ...` resolve and plan without changing anything (except the run's log files). The plan document has one entry per target with the chosen version, the mode, `requires_elevation`, `sha256` (`present` or `missing`; a malformed declared hash makes the version invalid, so that target has no plan: it is a failed entry with the stable error code `invalid-checksum` (plus `version` and `field`), exit code 2, which `--skip-checksum` never overrides), the source `url` and the `effects` to add or remove. |
 | `--events-file NAME` | The run's event stream as JSON lines, flushed per event, under the plain file name `NAME` in the log directories: `<root>\.gupkg\logs\NAME` (global events) and `<root>\<name>\.gupkg\logs\NAME` (one package's events). `run_start` names the run's stop marker; the last line, `run_end`, carries the result document. An elevated child chooses the directory itself, so a normal-shell caller reads the file there. `NAME` with a separator, `..`, a drive or a device name is a usage error. |
 | `--no-input` | Never asks. A question that would be asked (`uninstall --purge`, a call with several targets, the elevation of a relaunch) is exit code 5 with a structured error and nothing changed. `--yes` answers those questions. The command line never asks about checksums. |
