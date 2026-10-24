@@ -6,8 +6,10 @@ modes = ["system", "user"]
 [track]
 provider = "page"
 check_url = "https://www.7-zip.org/"
-match = 'Download\s+7-Zip\s+(?P<version>\d+(?:\.\d+)+)\s*\([^)]{0,40}\)\s*for\s+Windows'
-# The installer is named after the version without its dot: 24.09 -> 7z2409-x64.exe.
+match = '(?i)Download\s+7-Zip\s+(?P<version>\d+(?:\.\d+)+)\s*\([^)]{0,40}\)\s*for\s+Windows[^<>x]{0,20}(?:<[^>]{1,40}>[^<>x]{0,20}){0,2}x64'
+# The 0.17 hook took the announced x64 release and the page's own `7z<digits>-x64.exe` link. 7-Zip names
+# that file after the version without its dot (24.09 -> 7z2409-x64.exe), so the address is built from the
+# announced version: the same artifact, and it can never pick the 32-bit or ARM64 link.
 download = "https://www.7-zip.org/a/7z${version|nodots}-x64.exe"
 
 [source]

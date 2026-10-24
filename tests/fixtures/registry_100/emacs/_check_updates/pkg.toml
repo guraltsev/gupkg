@@ -19,12 +19,17 @@ next = "emacs-${major}/"
 [[track.level]]
 match = 'emacs-(?P<version>\d+(?:\.\d+)*(?:_\d+)?)-UCRT64\.zip'
 
-# GNU publishes a digest file for only some builds (named sha256sums.txt or
-# sha256sum.txt), so no [source.checksum] is declared: a configured source with
-# no digest is an error. The registry tool computes the hash instead.
+# GNU publishes emacs-<version>-sha256sums.txt for some builds only (older ones used
+# sha256sum.txt, which is not followed). Where the file or the entry is missing the checksum is
+# optional: the version is still found and the registry tool computes the hash (flagged for review).
 [source]
 download_url = "${download_url}"
 require = ["bin\\runemacs.exe", "bin\\emacs.exe"]
+
+[source.checksum]
+sums_file = "https://ftp.gnu.org/gnu/emacs/windows/emacs-${major}/emacs-${version}-sha256sums.txt"
+entry = "emacs-${version}-UCRT64.zip"
+optional = true
 
 [[shim]]
 name = "emacs"

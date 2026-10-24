@@ -23,11 +23,13 @@ headers = { User-Agent = "Mozilla/5.0" }
 url = "https://inkscape.org/en/release/inkscape-${version}/windows/64-bit/compressed-7z/dl/"
 match = 'href="(?P<digest_url>https://[^"]+-x64\.7z[^"]*\.sha256)"'
 headers = { User-Agent = "Mozilla/5.0" }
+optional = true    # a release without a digest link is still found; the registry tool then computes the hash
 
 [[track.fetch]]
 url = "${digest_url}"
 match = '(?P<sha256>[0-9a-fA-F]{64})'
 headers = { User-Agent = "Mozilla/5.0" }
+optional = true
 
 [source]
 download_url = "${download_url}"

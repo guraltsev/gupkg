@@ -12,6 +12,13 @@ asset = "DB.Browser.for.SQLite-v${version}-win64.zip"
 download_url = "${asset_url}"
 require = ["DB Browser for SQLite.exe"]
 
+# UNVERIFIED upstream portable mechanism
+# DB Browser for SQLite reads its settings from DB4S-settings.ini beside the exe when that file exists
+# (name recalled from its source, not tested: PORTABLE-UNVERIFIED.md).
+[portable]
+persist = ["DB4S-settings.ini"]
+markers = [{ path = "DB4S-settings.ini", content = "" }]
+
 [[shortcut]]
 name = "DB Browser for SQLite"
 target = "$App\\DB Browser for SQLite.exe"

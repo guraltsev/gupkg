@@ -755,7 +755,7 @@ counted are from the 2026-10-22 registry.
 | `last_modified` | autoruns, processexplorer | `check_url`, `format = "%Y.%m.%d"` |
 | `rss` | netio-gui | `check_url`, `match` |
 | `git` | latex-toolkit, overleaf-sync, windebloattools | `repo_url`, `ref`; version = `YYYYMMDD-HHMMSS-<short sha>` (the commit is the integrity anchor) |
-| `chain` | winscp, inkscape, shutter-encoder | ordered `[[track.fetch]]` steps; each step's captures feed the next URL |
+| `chain` | winscp, inkscape, shutter-encoder | ordered `[[track.fetch]]` steps; each step's captures feed the next URL; a step may be `optional = true` (skipped when it fails or matches nothing: inkscape's digest link) or `select = "each"` (try its matches in page order, at most 20, against the later steps and keep the first that gets through: shutter-encoder's links to several systems) |
 | `module` | anything else | `pkg.local/track.py` → `track(ctx) -> TrackResult` |
 
 Every provider:
@@ -943,6 +943,12 @@ path exactly; `page_match` runs on the page the version came from (`${page_url}`
 (issue 027). A GitHub asset's `digest` is found by the `github` provider (`github-digest`). GitLab's
 releases API publishes no digest today, so a GitLab link's `sha256` or `digest` field is used if it
 ever appears, and otherwise the tracker declares `[source.checksum]`.
+
+**`optional = true` (issue 031).** A vendor that publishes a digest for some builds only (GNU Emacs) is
+declared with `optional = true`: when the file or the entry is missing the tracker finds the version
+without a checksum, and the registry tool then computes one with `sha256_from = "registry"`, flagged
+for review. A regular-expression failure (a deadline, a crashed worker) is never skipped, even for an
+optional source.
 
 ### 8.6 Hook library
 
@@ -1853,11 +1859,24 @@ gupkg-registry/
 - **`unpinned`** (`_registry.toml`): `"name/version"` entries for legacy versions that still have no
   hash. Validation tolerates exactly those and nothing else; `registry-tool pin name/version`
   hashes one and removes the entry. It exists for the one pre-1.0 version (`qbittorrent/5.2.3`).
+- **Unversioned download addresses** (`unversioned` in `_registry.toml`, a list of package names). Where the
+  vendor serves every release at one address (Sysinternals' `Autoruns.zip`, ffmpeg's
+  `ffmpeg-release-essentials.zip`, XnView MP, DontSleep, Process Explorer, Shutter Encoder), a pinned
+  version keeps working only until the vendor replaces the file: afterwards its `sha256` fails for ever,
+  so "every version is kept" does not make such a version installable. The registry keeps the directory
+  anyway (deletion is manual), the tool prints `[UNVERSIONED]` and names these packages in the commit
+  message, and a test compares the list with the fixtures. A maintainer who needs an old build must
+  host it and change that version's `download_url` by hand.
+- **Version names** are checked wherever a version directory is created or read (`is_version_name`):
+  Windows device names (`CON`, `NUL`, `COM1`..., with or without an extension), control and bidirectional
+  characters, `%`, `$`, `~<digit>`, a leading dash, surrounding spaces and a trailing dot are refused, so a
+  hostile page cannot make the tool write a directory a Windows checkout cannot hold.
 - **Validation** (`gupkg_registry validate`, run by the registry's CI) requires: zero errors and zero
   warnings from the package checker for every tracker and version, explicit `modes`, a `sha256` and
   its provenance on every version, a fingerprint that matches the files, launchers equal to the
   template (none in a tracker), at most 13 hook files each with a `Why no service` note, no link,
-  no `.bak`, and LF endings in text files.
+  no `.bak`, LF endings in text files, a safe name for every version directory, and no stray directory,
+  file or leftover `.new-*` staging folder in a package folder.
 - **Every registry package installs under the strict CLI default** (no
   `--skip-checksum` needed). That is the acceptance bar for the migration.
 - **Several registries.** `[[registry]]` entries can name several

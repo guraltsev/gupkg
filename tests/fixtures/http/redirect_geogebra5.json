@@ -1,33 +1,33 @@
 {
-    "case":  "redirect_geogebra5",
-    "tracker":  "geogebra5",
-    "provider":  "redirect (version template with replace filter)",
-    "recorded":  null,
-    "origin":  "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/geogebra5/_bootstrap/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
-    "expected":  {
-                     "version":  "5.0.900.0",
-                     "download_url":  "https://download.geogebra.org/installers/5.0/GeoGebra-Windows-Portable-5-0-900-0.zip",
-                     "sha256":  null,
-                     "sha256_from":  null
-                 },
-    "responses":  [
-                      {
-                          "url":  "https://download.geogebra.org/package/win-port",
-                          "method":  "HEAD",
-                          "status":  302,
-                          "headers":  {
-                                          "Location":  "https://download.geogebra.org/installers/5.0/GeoGebra-Windows-Portable-5-0-900-0.zip"
-                                      },
-                          "body":  ""
-                      },
-                      {
-                          "url":  "https://download.geogebra.org/installers/5.0/GeoGebra-Windows-Portable-5-0-900-0.zip",
-                          "method":  "HEAD",
-                          "status":  200,
-                          "headers":  {
-                                          "Content-Type":  "application/zip"
-                                      },
-                          "body":  ""
-                      }
-                  ]
+ "case": "redirect_geogebra5",
+ "tracker": "geogebra5",
+ "provider": "redirect (version template with replace filter)",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/geogebra5/_bootstrap/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "5.0.900.0",
+  "download_url": "https://download.geogebra.org/installers/5.0/GeoGebra-Windows-Portable-5-0-900-0.zip",
+  "sha256": null,
+  "sha256_from": null
+ },
+ "responses": [
+  {
+   "url": "https://download.geogebra.org/package/win-port",
+   "method": "HEAD",
+   "status": 302,
+   "headers": {
+    "Location": "https://download.geogebra.org/installers/5.0/GeoGebra-Windows-Portable-5-0-900-0.zip"
+   },
+   "body": ""
+  },
+  {
+   "url": "https://download.geogebra.org/installers/5.0/GeoGebra-Windows-Portable-5-0-900-0.zip",
+   "method": "HEAD",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/zip"
+   },
+   "body": ""
+  }
+ ]
 }

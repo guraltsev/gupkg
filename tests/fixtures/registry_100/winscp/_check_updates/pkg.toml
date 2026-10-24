@@ -11,10 +11,12 @@ download = "${download_url}"
 [[track.fetch]]
 url = "https://winscp.net/eng/downloads.php"
 match = 'WinSCP-(?P<version>\d+(?:\.\d+)+)-Portable\.zip\b(?!-)'
+headers = { User-Agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) gupkg-update-check/1", Accept = "text/html,application/xhtml+xml,*/*" }
 
 [[track.fetch]]
 url = "https://winscp.net/download/WinSCP-${version}-Portable.zip/download"
 match = 'href="(?P<download_url>https://cdn\.winscp\.net/files/WinSCP-${version}-Portable\.zip\?[^"]+)"'
+headers = { User-Agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) gupkg-update-check/1", Accept = "text/html,application/xhtml+xml,*/*" }
 
 # The publisher provides no checksum in a machine-readable place: no [source.checksum].
 [source]

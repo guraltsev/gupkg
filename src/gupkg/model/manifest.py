@@ -144,6 +144,7 @@ class Checksum:
     json: str | None = None
     path: str | None = None
     page_match: str | None = None
+    optional: bool = False
 
 
 @dataclass(frozen=True)
@@ -854,8 +855,9 @@ def _parse_checksum(collector: _Collector, raw: Any) -> Checksum | None:
     table = collector.table(raw, "source.checksum")
     if table is None:
         return None
-    collector.keys(table, _CHECKSUM_KEYS, "source.checksum")
+    collector.keys(table, (*_CHECKSUM_KEYS, "optional"), "source.checksum")
     values = {key: collector.string(table, key, "source.checksum") for key in _CHECKSUM_KEYS}
+    optional = bool(collector.boolean(table, "optional", "source.checksum"))
     methods = [
         name for name, present in (
             ("sidecar", values["sidecar"]), ("sums_file", values["sums_file"]),
@@ -872,7 +874,7 @@ def _parse_checksum(collector: _Collector, raw: Any) -> Checksum | None:
         collector.error("source.checksum.entry", "belongs to sums_file")
     if values["path"] is not None and methods != ["json"]:
         collector.error("source.checksum.path", "belongs to json")
-    return Checksum(**values)
+    return Checksum(**values, optional=optional)
 
 
 def _parse_installer(collector: _Collector, raw: Any, modes: tuple[str, ...]) -> Installer | None:
@@ -1232,7 +1234,7 @@ def _source_to_data(source: Source) -> dict[str, Any]:
     }
     if source.checksum is not None:
         data["checksum"] = _drop_empty(
-            {key: getattr(source.checksum, key) for key in _CHECKSUM_KEYS}
+            {**{key: getattr(source.checksum, key) for key in _CHECKSUM_KEYS}, **({"optional": True} if source.checksum.optional else {})}
         )
     if source.installer is not None:
         data["installer"] = {"run": list(source.installer.run)}

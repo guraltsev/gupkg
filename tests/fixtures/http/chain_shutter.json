@@ -1,7 +1,7 @@
 {
  "case": "chain_shutter",
  "tracker": "shutter-encoder",
- "provider": "chain (version from a response header)",
+ "provider": "chain (version from a response header; tries each link of the page)",
  "recorded": null,
  "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/shutter-encoder/_bootstrap/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
  "expected": {
@@ -18,7 +18,23 @@
    "headers": {
     "Content-Type": "text/html"
    },
-   "body": "<a class=\"btn\" href=\"https://www.shutterencoder.com/sdc_download/1234/?key=abcDEF123\">Windows 64 bits</a>"
+   "body": "<a class=\"btn\" href=\"https://www.shutterencoder.com/sdc_download/9999/?key=zzzMAC999\">Mac</a> <a class=\"btn\" href=\"https://www.shutterencoder.com/sdc_download/5555/?key=bbbGONE555\">Old build</a> <a class=\"btn\" href=\"https://www.shutterencoder.com/sdc_download/1234/?key=abcDEF123\">Windows 64 bits</a> <a class=\"btn\" href=\"https://www.shutterencoder.com/sdc_download/7777/?key=ccLINUX777\">Linux</a>"
+  },
+  {
+   "url": "https://www.shutterencoder.com/sdc_download/9999/?key=zzzMAC999",
+   "method": "HEAD",
+   "status": 200,
+   "headers": {
+    "Content-Disposition": "attachment; filename=\"Shutter Encoder 18.4 Mac.dmg\""
+   },
+   "body": ""
+  },
+  {
+   "url": "https://www.shutterencoder.com/sdc_download/5555/?key=bbbGONE555",
+   "method": "HEAD",
+   "status": 404,
+   "headers": {},
+   "body": ""
   },
   {
    "url": "https://www.shutterencoder.com/sdc_download/1234/?key=abcDEF123",
@@ -26,6 +42,15 @@
    "status": 200,
    "headers": {
     "Content-Disposition": "attachment; filename=\"Shutter Encoder 18.4 Windows 64bits.zip\""
+   },
+   "body": ""
+  },
+  {
+   "url": "https://www.shutterencoder.com/sdc_download/7777/?key=ccLINUX777",
+   "method": "HEAD",
+   "status": 200,
+   "headers": {
+    "Content-Disposition": "attachment; filename=\"Shutter Encoder 18.4 Linux 64bits.tar.gz\""
    },
    "body": ""
   }
