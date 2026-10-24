@@ -44,15 +44,34 @@ targets = rest[rest.index("--") + 1:] if "--" in rest else []
 name = options[options.index("--events-file") + 1] if "--events-file" in options else None
 key = command + (":plan" if "--plan" in options else "")
 
-counts_path = base / "counts.json"
-counts = json.loads(counts_path.read_text()) if counts_path.exists() else {}
-turn = counts.get(key, 0)
-counts[key] = turn + 1
-counts_path.write_text(json.dumps(counts))
-with open(base / "calls.jsonl", "a", encoding="utf-8") as handle:
-    handle.write(json.dumps({"argv": args, "key": key, "targets": targets, "options": options, "elevated_env": os.environ.get("GUPKG_ELEVATED")}) + "\n")
+def retry(function):
+    """Try a file operation again a few times: a virus scanner or the test's own reader may hold the file for a moment on Windows."""
+    for attempt in range(40):
+        try:
+            return function()
+        except OSError:
+            if attempt == 39:
+                raise
+            time.sleep(0.05)
 
-scenario = json.loads((base / "scenario.json").read_text())
+
+def bump():
+    counts_path = base / "counts.json"
+    counts = json.loads(counts_path.read_text()) if counts_path.exists() else {}
+    counts[key] = counts.get(key, 0) + 1
+    counts_path.write_text(json.dumps(counts))
+    return counts[key] - 1
+
+
+def log_call():
+    with open(base / "calls.jsonl", "a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"argv": args, "key": key, "targets": targets, "options": options, "elevated_env": os.environ.get("GUPKG_ELEVATED")}) + "\n")
+
+
+turn = retry(bump)
+retry(log_call)
+
+scenario = retry(lambda: json.loads((base / "scenario.json").read_text()))
 responses = scenario.get(key) or scenario.get(command) or []
 if not responses:
     print("no scheduled response for " + key, file=sys.stderr)

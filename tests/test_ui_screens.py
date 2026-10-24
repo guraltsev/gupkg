@@ -447,7 +447,7 @@ def test_the_package_program_runs_check_update_repair_uninstall_and_health_as_cl
                 await wait_for(pilot, lambda: has(app, question), f"the question for {key}")
                 await pilot.press("y")
             await wait_for(pilot, lambda: isinstance(app.screen, RunScreen) and app.screen.outcome is not None, f"the run of {key}")
-            assert app.screen.outcome.ok
+            assert app.screen.outcome.ok, (key, app.screen.outcome.entries, app.screen.outcome.problems)
             await pilot.press("escape")
             await wait_for(pilot, lambda: has(app, "Versions in the package folder") and not isinstance(app.screen, RunScreen), "the package view")
 
