@@ -1,0 +1,44 @@
+{
+  "api": 1,
+  "command": "update",
+  "ok": true,
+  "exit_code": 0,
+  "relaunched": false,
+  "results": [
+    {
+      "package": "alpha",
+      "operation": "update",
+      "ok": true,
+      "status": "updated",
+      "version": "2.0.0",
+      "previous": "1.0.0",
+      "mode": "user",
+      "exit_code": 0,
+      "receipt": "@ROOT@\\home\\opt\\alpha\\.gupkg\\receipts\\2.0.0.toml",
+      "log": "@ROOT@\\home\\opt\\alpha\\.gupkg\\logs\\20261024T194510Z-update.log",
+      "warnings": [],
+      "details": {
+        "origin": "local",
+        "populated": false
+      }
+    },
+    {
+      "package": "beta",
+      "operation": "update",
+      "ok": true,
+      "status": "updated",
+      "version": "2.0.0",
+      "previous": "1.0.0",
+      "mode": "user",
+      "exit_code": 0,
+      "receipt": "@ROOT@\\home\\opt\\beta\\.gupkg\\receipts\\2.0.0.toml",
+      "log": "@ROOT@\\home\\opt\\beta\\.gupkg\\logs\\20261024T194510Z-update.log",
+      "warnings": [],
+      "details": {
+        "origin": "local",
+        "populated": false
+      }
+    }
+  ],
+  "warnings": []
+}

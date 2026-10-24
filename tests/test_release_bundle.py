@@ -73,6 +73,19 @@ def test_release_zip_is_named_for_the_version_and_records_its_commit(release_bun
     assert sidecar.split()[0] == release_bundle.sha256
 
 
+def test_release_zip_carries_the_ui_programs_their_launchers_and_shims(release_bundle) -> None:
+    """The UI programs ship in the bundle: the three packages beside ``gupkg``, a launcher, a configuration and (when the shim exists) an ``.exe`` for each."""
+    with zipfile.ZipFile(release_bundle.zip) as archive:
+        names = set(archive.namelist())
+    top = f"gupkg-{release_bundle.version}"
+
+    for package in ("gupkg_ui/client.py", "gupkg_tui/cli.py", "gupkg_manager/cli.py"):
+        assert f"{top}/{package}" in names
+    for program in ("gupkg-tui", "gupkg-manager"):
+        assert f"{top}/gupkg/{program}.cmd" in names and f"{top}/gupkg/{program}.config.toml" in names
+    assert not [name for name in names if name.endswith(".pyc") or "__pycache__" in name]
+
+
 def test_build_stops_when_the_runtime_archive_does_not_match_the_pinned_digest(tmp_path: Path) -> None:
     """A CPython archive whose SHA-256 differs from the expected one stops the build and writes no ZIP."""
     runtime = tmp_path / "runtime.zip"

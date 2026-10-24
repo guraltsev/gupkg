@@ -1,3 +1,7 @@
+> **Status (2026-10-24):** Implemented on branch `rehaul/issue030`; see `.agents/jobs/08-rehaul-logs/issue030.md` for the acceptance table. The
+> shared parts (client, policy, flows, screens) live in `gupkg_ui`; `gupkg_manager` keeps `batch.py`, `cli.py` and `app/`. One acceptance row
+> (*Check for updates* of a system package through the elevated call) conflicts with D22 and the engine: see the note at the end.
+
 # Issue 030: `gupkg-tui` and `gupkg-manager` — separate UI programs, and the UI redesign
 
 Date: 2026-10-22
@@ -173,10 +177,12 @@ Epic: 020. Design: `_docs/rehaul_design.md` §15, §10.4, §13.2. Supersedes the
       calls; elevation is requested once, for the system-target call. Run
       from a user-writable gupkg, it requests no elevation and reports the
       system targets as needing the system gupkg.
-- [ ] *Check for updates* with one user and one system package, run from
-      the system gupkg, writes and populates both new version directories,
-      the system one through the single elevated call, and activates
-      nothing. The browser then shows both packages as `outdated`.
+- [ ] *Check for updates* with one user and one system package is **one
+      non-elevated call** (decision D22 wins over the earlier wording of this row:
+      the controller decided that the engine is right). It writes and populates the user
+      package's new version directory and activates nothing; the system package is only
+      **reported** (an administrator checks it from an admin shell). The browser shows
+      the user package as `outdated`.
 - [ ] Cancelling a 3-package run while package 1 runs lets package 1
       finish, leaves packages 2 and 3 unchanged, and reports them as
       skipped.
@@ -209,3 +215,22 @@ Epic: 020. Design: `_docs/rehaul_design.md` §15, §10.4, §13.2. Supersedes the
 - **The elevated parent waits.** `gupkg install system:X` from a normal shell waits for the elevated child and returns its exit
   code (`relaunched: true`); the UI programs rely on that exit code and on the `run_end` line of the events file, and treat a
   missing `run_end` as a failure. Cancelling is the stop marker in the child's `run_start.stop_file`.
+
+## Notes for the controller and for issue 033 (from the implementation of 030)
+
+- **Check for updates and the elevated call (conflict, not resolved here).** The acceptance row that has *Check for updates* write and populate a
+  system package "through the single elevated call" contradicts decision D22 and design 9.3, and the engine: `check-updates` never relaunches
+  (`lifecycle._needs_token`), and from a normal shell a system package is only reported. The manager therefore makes **one non-elevated call**
+  for the whole check and a system package is only reported; an administrator checks it from an admin shell. If the owner wants the elevated
+  check, the CLI must relaunch for `check-updates` of system targets (an engine change that reverses D22); `gupkg_ui.steps.ELEVATING` is
+  the one place in the UI that would then list `check-updates`.
+- **Launchers in the gupkg tree.** `src/gupkg/gupkg-tui.cmd` and `src/gupkg/gupkg-manager.cmd` (beside `gupkg-migrate.cmd`) start `bootstrap.py
+  --gupkg-program=tui|manager`; `build_standalone.py` copies `gupkg_ui`, `gupkg_tui` and `gupkg_manager` into the bundle and probes
+  `gupkg_ui.client`, `gupkg_ui.app`, `gupkg_manager.cli` and `gupkg_tui.cli`. gupkg's own package files (`src/pkg.toml` shims, `src/gupkg-tui.cmd`
+  selector, `package-tui.cmd`) are still issue 033's: `pkg.toml` has no `gupkg-manager` shim yet.
+- **The programs refuse an elevated shell** and accept `--settings` and `--sandbox` (relayed to every call; the forwarders still refuse them).
+- **Per-call `--skip-checksum`.** The flag is per call, so a group's call carries the flag when any of its targets needs it (targets with a
+  declared hash are verified anyway); a batch is still one call per group. A second administrator prompt appears only with `[cleanup] auto = true`
+  (the cleanup of the system root is its own elevated call) or when a `check-updates` follow-up is approved.
+- **Exit codes of a batch:** the highest code of a target; a package refused by the policy counts 3, one skipped after a cancel or declined 5, a system
+  target that a non-system gupkg cannot run 2.

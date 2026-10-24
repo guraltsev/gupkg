@@ -296,6 +296,45 @@ other 0.17 option is simply an unrecognized argument). `gupkg tui`, `gupkg manag
 `gupkg-tui`, `gupkg-manager` and `gupkg-migrate` of the same gupkg; they pass the exit code through. `tui` and `manager` refuse an
 elevated shell (they ask for administrator rights themselves, once per batch); `migrate` does its own work and accepts one.
 
+### The UI programs: `gupkg-tui` and `gupkg-manager`
+
+Two separate programs (one Textual application each, sharing the library `gupkg_ui`) sit beside `gupkg` in the same gupkg
+tree. They never change anything themselves: every operation is a call to the `gupkg.cmd` of **their own tree** (never one on
+`PATH`) through the machine interface above (`--json`, `--plan`, `--events-file`, `--no-input`), whose `"api"` they check.
+They are standard-user programs and refuse an elevated shell; the system targets of a batch go to the CLI in **one** call,
+which asks for administrator rights once. A gupkg that is not the system gupkg (a user or bundled copy) never asks: its
+system targets are reported as needing the system gupkg.
+
+```text
+gupkg-tui PATH|NAME                        the package view of one package (versions, mode, link, data folder, receipt, log)
+gupkg-manager [tui]                        the browser over every package
+gupkg-manager check-updates --all [--mode M] [--no-download] [--json]
+gupkg-manager update --all [--mode M] [--yes] [--json]
+gupkg-manager check [--mode M] [--fix] [--yes] [--json]
+```
+
+Every screen has a key-hint line on top and a status line at the bottom. Browser keys: `Enter` open, `/` filter, `c` check
+for updates (`C` all), `u` update (`U` all outdated), `i` install or repair, `x` uninstall, `h` health check, `l` log, `a` registry
+packages, `r` reload, `?` help. The package view has `c u r s x h l` (`s` switches version, `X` purges, `H` fixes). While something
+runs, Escape asks "Cancel after the current package?"; yes asks the CLI to stop after the package it is working on and skips the rest.
+
+`update --all` plans with `gupkg update <targets> --plan --json`, shows the plan and asks **once** (`--yes` answers; with no terminal
+and no `--yes`, or with `--json`, it asks nothing and exits 5 with nothing changed). `[manager] checksum_missing` decides a package
+whose download has no checksum: `ask` (default) asks once per package at a terminal and behaves as `refuse` in a schedule, `refuse`
+never runs it, `skip` runs it with `--skip-checksum=setting`; a malformed declared checksum and a plain `http://` URL are never
+skippable; for a system target a value from the user settings layer or from `--settings` is not trusted. With `[cleanup] auto = true`
+an update ends with `gupkg cleanup` for each root it updated. `check-updates --all` needs no confirmation (it activates nothing); a
+system package is only reported from a normal shell (design 9.3). Exit codes follow the CLI: the highest code of a target, where a
+refused package counts 3 and a skipped or declined one 5. `--json` prints one document (the CLI's head, one entry per target and the
+calls made) and sends the text to standard error. When a program closes, the summary of the last run and the log path are printed
+(`[manager] keep_screen`). `--settings PATH` and `--sandbox DIR` (before the command) are relayed to every call.
+
+A scheduled task must run as a **normal user**: a Task Scheduler task with "Run with highest privileges" that starts `gupkg-manager check-updates --all` is
+refused (exit 2, the programs refuse an elevated shell), and a system package is then only reported (design 9.3). If the program is closed, its window
+is closed or Ctrl-C is pressed while a call runs, the call is first asked to stop after its current package and then its whole process tree is ended, so
+nothing keeps running unseen; an elevated child cannot be killed by a normal process and stops through the same stop marker. A call that does not exit
+after it wrote its result is stopped after 15 seconds and its result is still used (with a warning); a cancelled call that does not stop is killed after 30 seconds.
+
 gupkg runs only on its bundled Python: `python -m gupkg` or `bootstrap.py` on any other interpreter, or without `-I`, exits
 with `Start gupkg through gupkg.cmd or gupkg.exe; it runs only on its bundled Python.` In a source checkout use
 `scripts\run.cmd`. `src\gupkg\gupkg.cmd` runs only `python\python.exe` from its own folder, as

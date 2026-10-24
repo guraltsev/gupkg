@@ -1,0 +1,31 @@
+{
+  "api": 1,
+  "command": "list",
+  "ok": true,
+  "exit_code": 0,
+  "packages": [
+    {
+      "name": "alpha",
+      "mode": "user",
+      "status": "outdated",
+      "version": "1.0.0",
+      "newest_known": "2.0.0",
+      "path": "@ROOT@\\home\\opt\\alpha",
+      "following": null,
+      "problems": [],
+      "warnings": []
+    },
+    {
+      "name": "beta",
+      "mode": "user",
+      "status": "outdated",
+      "version": "1.0.0",
+      "newest_known": "2.0.0",
+      "path": "@ROOT@\\home\\opt\\beta",
+      "following": null,
+      "problems": [],
+      "warnings": []
+    }
+  ],
+  "warnings": []
+}
