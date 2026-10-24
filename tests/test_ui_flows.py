@@ -21,7 +21,7 @@ from gupkg_manager.batch import check_all, check_updates_all, pick, update_all
 from gupkg_ui.interaction import Interaction
 from gupkg_ui.plans import PackageRow, read_packages
 from gupkg_ui.session import BatchOutcome, BatchSession
-from tests.ui_support import FakeGupkg, ListSink, entry, head, list_doc, make_env, plan_doc, plan_entry, plan_failure, result
+from tests.ui_support import FakeGupkg, ListSink, entry, list_doc, make_env, plan_doc, plan_entry, plan_failure, result
 
 
 def rows_for(base: Path, *packages: tuple[str, str]) -> list[PackageRow]:

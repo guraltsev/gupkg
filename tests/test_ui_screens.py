@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -425,3 +425,34 @@ def test_every_operation_is_one_cli_call_with_the_machine_options(tmp_path: Path
     operations = [call for call in fake.calls() if call["key"] in ("check-updates", "install", "check")]
     assert [call["key"] for call in operations] == ["check-updates", "install", "check"]
     assert all(call["targets"] == ["user:alpha"] for call in operations)
+
+
+def test_the_package_program_runs_check_update_repair_uninstall_and_health_as_cli_calls(tmp_path: Path, fake: FakeGupkg) -> None:
+    """From ``gupkg-tui`` each key starts one ``gupkg`` call for the package (with ``--yes`` for the confirmations already given) and Escape comes back to the same view."""
+    root = tmp_path / "home" / "opt" / ".gupkg" / "logs"
+    package = {"name": "alpha", "path": str(tmp_path / "home" / "opt" / "alpha"), "records": []}
+    for command, status in (("check-updates", "written"), ("install", "installed"), ("uninstall", "uninstalled"), ("check", "healthy")):
+        doc = result(command, [entry("alpha", command, status=status)])
+        fake.respond(command, doc=doc, events={"dir": str(root), "result": doc, "packages": [package]})
+    update_run(fake, tmp_path, ("alpha",))
+
+    async def scenario(app, pilot) -> None:
+        """Press each operation key, answer the dialog where there is one, and come back."""
+        await wait_for(pilot, lambda: has(app, "Installed:"), "the package view")
+        for key, question in (("c", None), ("r", "Install or repair alpha?"), ("x", "Uninstall alpha?"), ("h", None), ("u", "Update 1 user package")):
+            await pilot.press(key)
+            if question:
+                await wait_for(pilot, lambda: has(app, question), f"the question for {key}")
+                await pilot.press("y")
+            await wait_for(pilot, lambda: isinstance(app.screen, RunScreen) and app.screen.outcome is not None, f"the run of {key}")
+            assert app.screen.outcome.ok
+            await pilot.press("escape")
+            await wait_for(pilot, lambda: has(app, "Versions in the package folder") and not isinstance(app.screen, RunScreen), "the package view")
+
+    run_app(tmp_path, fake, scenario, program="tui")
+
+    operations = [call for call in fake.calls() if call["key"] in ("check-updates", "install", "uninstall", "check", "update")]
+    assert [call["key"] for call in operations] == ["check-updates", "install", "uninstall", "check", "update"]
+    assert all(call["targets"] == ["user:alpha"] and "--no-input" in call["options"] for call in operations)
+    # ``check-updates`` activates nothing, so the program answers its own multi-package question; the health check changes nothing and needs none.
+    assert [call["key"] for call in operations if "--yes" in call["options"]] == ["check-updates", "install", "uninstall", "update"]

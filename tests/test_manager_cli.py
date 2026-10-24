@@ -19,7 +19,7 @@ import pytest
 
 from gupkg.system.fake import FakeSystem
 from gupkg_manager import cli
-from tests.test_ui_flows import logs_of, rows_for, schedule_run
+from tests.test_ui_flows import logs_of, schedule_run
 from tests.ui_support import FakeGupkg, entry, list_doc, make_env, plan_doc, plan_entry, result
 
 

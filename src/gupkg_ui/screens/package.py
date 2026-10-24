@@ -33,7 +33,6 @@ from ..render import literal
 from .actions import PackageActions
 from .frame import FrameScreen
 from .logview import LogScreen
-from .modals import ConfirmScreen
 from .versions import VersionPicker
 
 

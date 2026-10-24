@@ -29,7 +29,6 @@ import asyncio
 import json
 import os
 import re
-import sys
 import uuid
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
@@ -359,9 +358,14 @@ class Client:
             follow_task.cancel()
             return CallResult(tuple(argv), None, None, problems=(f"gupkg did not finish within {timeout:.0f} seconds and was stopped",))
         except BaseException:
+            # Cancelled (the program is closing): stop the child, stop reading, and let the child's pipes close before leaving.
             if process.returncode is None:
                 process.kill()
-            follow_task.cancel()
+            for task in (follow_task, stdout_task, stderr_task):
+                task.cancel()
+            transport = getattr(process, "_transport", None)
+            if transport is not None:
+                transport.close()
             raise
         output, too_long = stdout_task.result()
         return _judge(argv, process.returncode, output, too_long, stderr_task.result(), events)
