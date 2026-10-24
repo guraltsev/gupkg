@@ -44,6 +44,7 @@ from ..model.manifest import (
     Manifest,
     ManifestKind,
     NeedsNewerGupkg,
+    invalid_checksum_problem,
     parse_manifest,
     require_gupkg_version,
 )
@@ -64,7 +65,7 @@ from ..model.plan import (
 )
 from ..model.settings import Settings
 from ..model.state import InstallRecord, Link, PackageView, Root
-from ..model.version import MANIFEST_NAME
+from ..model.version import MANIFEST_NAME, compare_versions
 from ..modes import ModeRequest, ResolvedMode, resolve_mode
 from ..relaunch import ensure_elevation
 from ..system.port import ProcessFailed
@@ -85,7 +86,7 @@ from .executor import (
 )
 from .health import Diagnosis, diagnose
 from .locks import PackageBusy, package_lock
-from .planner import Chosen, CleanupFacts, CleanupPlan, PlanError, plan_cleanup, plan_install, plan_uninstall
+from .planner import Chosen, CleanupFacts, CleanupPlan, InvalidVersion, PlanError, plan_cleanup, plan_install, plan_uninstall
 from .receipts import list_receipts, read_receipt
 
 # A work entry younger than this is never removed by ``cleanup`` (it may belong to a run that is still going).
@@ -483,7 +484,10 @@ def _prepare_install(
             state = source_view.local.version(version)
             if state is None or not state.valid or state.manifest is None:
                 problems = "; ".join(state.problems) if state is not None else "not a version directory"
-                raise PlanError(f"{distribution} is not a valid version directory: {problems}")
+                raise InvalidVersion(
+                    f"{distribution} is not a valid version directory: {problems}", version=version,
+                    problems=state.problems if state is not None else (),
+                )
             candidate, manifest = Candidate(version, "local", state.path), state.manifest
             copy_in = CopyIn("distribution", distribution, entry.registry if entry else None, published.fingerprint if published else None)
         else:
@@ -522,12 +526,15 @@ def _prepare_install(
                 raise NeedsNewerGupkg(f"{view.name} {candidate.version} {NEEDS_NEWER_GUPKG}: {'; '.join(state.problems)}")
             if state is None or state.manifest is None:
                 problems = "; ".join(state.problems) if state is not None else "there is no such version directory"
-                raise PlanError(f"{view.name} {candidate.version} is not a valid version directory: {problems}")
+                raise InvalidVersion(
+                    f"{view.name} {candidate.version} is not a valid version directory: {problems}", version=candidate.version,
+                    problems=state.problems if state is not None else (),
+                )
 
             # Every version directory is validated again before it is installed (design 7.4); a missing App is the planner's to judge.
             other = [problem for problem in state.problems if problem != APP_MISSING_ERROR]
             if other:
-                raise PlanError(f"{view.name} {candidate.version} is not valid: {'; '.join(other)}")
+                raise InvalidVersion(f"{view.name} {candidate.version} is not valid: {'; '.join(other)}", version=candidate.version, problems=other)
             manifest = state.manifest
             published = view.registry.version(candidate.version) if view.registry is not None else None
             if published is not None:
@@ -612,6 +619,7 @@ def _choose(engine: Engine | None, target: _Target, view: PackageView, execute: 
     else:
         try:
             candidate = catalog.install_candidate(view)
+            _warn_about_newer_invalid_versions(view, candidate)
         except NoVersionKnown:
             # A registry entry with only a tracker: copy the tracker, then stop (design 5.3, case R).
             if execute and view.registry is not None and view.registry.tracker is not None and view.local is None:
@@ -624,12 +632,22 @@ def _choose(engine: Engine | None, target: _Target, view: PackageView, execute: 
     return candidate, None
 
 
+def _warn_about_newer_invalid_versions(view: PackageView, chosen: Candidate) -> None:
+    """Say so when a bare install fell back to *chosen* because a newer version directory is not valid."""
+    if view.installed is not None or view.local is None:
+        return
+    for state in view.local.versions:
+        if not state.valid and state.problems and compare_versions(state.name, chosen.version) > 0:
+            reason = "its declared sha256 is malformed" if invalid_checksum_problem(state.problems) else "; ".join(state.problems)
+            emit(Warning(f"{view.name} {state.name} is newer than {chosen.version} but not valid ({reason}), so {chosen.version} is installed instead."))
+
+
 def _pick_named(catalog: Catalog, view: PackageView, version: str) -> Candidate:
     """Return the candidate of ``name@version``; a local version directory that is invalid is refused with its problems."""
     if view.local is not None:
         state = view.local.version(version)
         if state is not None and not state.valid:
-            raise PlanError(f"{view.name} {state.name} is not valid: {'; '.join(state.problems)}")
+            raise InvalidVersion(f"{view.name} {state.name} is not valid: {'; '.join(state.problems)}", version=state.name, problems=state.problems)
     return catalog.pick_version(view, version)
 
 

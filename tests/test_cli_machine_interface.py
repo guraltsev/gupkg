@@ -143,9 +143,39 @@ def test_a_malformed_hash_is_never_planned_and_never_skippable(world: CliWorld) 
     planned = world.cli("install", "fresh", "--plan", "--json")
     skipped = world.cli("install", "fresh", "--skip-checksum", "--json")
 
-    assert planned.code == 2 and planned.document()["plans"][0]["result"]["error"]["code"] == "no-valid-version"
+    error = planned.document()["plans"][0]["result"]["error"]
+    assert planned.code == 2 and error["code"] == "invalid-checksum"
+    assert set(error) == {"code", "message", "version", "field"} and (error["version"], error["field"]) == ("1.0.0", "source.sha256")
     assert skipped.code == 2 and not (world.user / "fresh" / "current").exists()
-    assert "64 hexadecimal" in planned.out
+    assert skipped.document()["results"][0]["error"]["code"] == "invalid-checksum" and "64 hexadecimal" in planned.out
+
+
+def test_a_named_malformed_version_has_the_same_stable_code(world: CliWorld) -> None:
+    """`name@version` of a version whose declared hash is malformed is `invalid-checksum` too, with the version and the field."""
+    folder = world.publish("fresh", "1.0.0", hashed=True)
+    text = folder.joinpath("pkg.toml").read_text(encoding="utf-8")
+    start = text.index('sha256 = "') + len('sha256 = "')
+    folder.joinpath("pkg.toml").write_text(text[:start] + "zz" + text[start + 2:], encoding="utf-8")
+
+    result = world.cli("install", "fresh@1.0.0", "--json")
+
+    error = result.document()["results"][0]["error"]
+    assert result.code == 2 and error["code"] == "invalid-checksum" and (error["version"], error["field"]) == ("1.0.0", "source.sha256")
+
+
+def test_a_bare_install_that_falls_back_to_an_older_version_names_the_invalid_newer_one(world: CliWorld) -> None:
+    """When the newest version directory is invalid, `install tool` installs the older valid one and says which one it skipped."""
+    world.publish("fresh", "1.0.0")
+    newer = world.publish("fresh", "2.0.0")
+    text = newer.joinpath("pkg.toml").read_text(encoding="utf-8")
+    start = text.index('sha256 = "') + len('sha256 = "')
+    newer.joinpath("pkg.toml").write_text(text[:start] + "zz" + text[start + 2:], encoding="utf-8")
+
+    result = world.cli("install", "fresh", "--json")
+
+    assert result.code == 0, result.err
+    assert result.document()["results"][0]["version"] == "1.0.0"
+    assert "fresh 2.0.0 is newer than 1.0.0 but not valid" in result.err and "sha256 is malformed" in result.err
 
 
 def test_a_plan_that_cannot_be_made_is_the_targets_failure_with_its_exit_code(world: CliWorld) -> None:

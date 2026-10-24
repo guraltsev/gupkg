@@ -214,6 +214,15 @@ class ManifestKind(Enum):
     TRACKER = "tracker"
 
 
+# The problem a malformed declared hash is reported as (and recognised by, so that callers can give it a stable error code).
+INVALID_SHA256_MESSAGE = "must be 64 hexadecimal characters"
+
+
+def invalid_checksum_problem(problems: "Sequence[str]") -> bool:
+    """Return whether one of the *problems* of a version directory is a malformed ``source.sha256``."""
+    return any(f"source.sha256: {INVALID_SHA256_MESSAGE}" in problem for problem in problems)
+
+
 class ManifestError(ValueError):
     """Report that a ``pkg.toml`` is invalid, listing every problem found.
 
@@ -920,7 +929,7 @@ def _parse_source(collector: _Collector, raw: Any, modes: tuple[str, ...]) -> So
         if re.fullmatch(r"[0-9A-Fa-f]{64}", sha256):
             sha256 = sha256.lower()
         else:
-            collector.error("source.sha256", "must be 64 hexadecimal characters")
+            collector.error("source.sha256", INVALID_SHA256_MESSAGE)
             sha256 = None
     sha256_from = collector.string(table, "sha256_from", "source")
     if sha256_from is not None and sha256_from not in SHA256_FROM:

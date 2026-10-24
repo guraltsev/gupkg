@@ -113,6 +113,9 @@ def describe(error: BaseException) -> tuple[int, dict[str, Any]]:
             hint = getattr(error, "hint", None)
             if hint:
                 data["hint"] = hint
+            # An error may carry a stable code of its own and extra fields (``invalid-checksum``: the version and the field).
+            data["code"] = getattr(error, "error_code", None) or data["code"]
+            data.update(getattr(error, "error_details", {}))
             own = getattr(error, "exit_code", None)
             return own if own is not None else exit_code, data
     return EXIT_INTERNAL, {"code": "internal-error", "message": f"{type(error).__name__}: {error}"}

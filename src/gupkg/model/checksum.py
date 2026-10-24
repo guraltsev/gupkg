@@ -63,6 +63,8 @@ SKIP_REASON_OF = {decision: reason for reason, decision in _SKIP_REASONS.items()
 
 PRESENT = "present"
 MISSING = "missing"
+# ``INVALID`` is fed by the manager (issue 030) from an ``invalid-checksum`` error document, not from a plan: the CLI plans only
+# ``present`` and ``missing`` (a malformed declared hash makes the version invalid, so the version has no plan).
 INVALID = "invalid"
 
 EXIT_CHECKSUM = 3
@@ -524,5 +526,6 @@ def plan_checksum(url: str, sha256: str | None, *, url_from: str, commit: str | 
                 normalize_sha256(anchor)
             status = PRESENT
         except ChecksumInvalid:
+            # Reachable through ``plan_checksum`` alone (manifest parsing refuses a malformed hash first); kept for the manager.
             status = INVALID
     return ChecksumPlan(status, url, url_from, status == MISSING and is_https_url(url))
