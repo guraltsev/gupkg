@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -253,7 +252,7 @@ def _run_tracker(
         engine.system, headers=dict(manifest.source.headers), env=github_environment(engine.system, engine.env),
         sleep=engine.sleep, **({} if engine.retries is None else {"retries": engine.retries}),
     )
-    with tempfile.TemporaryDirectory(prefix="gupkg-track-") as scratch:
+    with engine.system.scratch_directory("gupkg-track-") as scratch:
         return run_tracker(manifest, TrackEnvironment(engine.system, client, Path(scratch), directory, name))
 
 

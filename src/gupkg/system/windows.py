@@ -303,6 +303,12 @@ class WindowsSystem(WindowsLinks):
         """Return whether this process may hold an elevated token; unreadable signals count as elevated."""
         return elevation.is_elevated()
 
+    @contextmanager
+    def scratch_directory(self, prefix: str) -> Iterator[Path]:
+        """Create a private temporary folder, yield it, and delete it (and whatever is left in it) on exit."""
+        with tempfile.TemporaryDirectory(prefix=prefix, ignore_cleanup_errors=True) as folder:
+            yield Path(folder)
+
     def process_id(self) -> int:
         """Return the id of this process."""
         return os.getpid()

@@ -289,6 +289,16 @@ def test_elevation_is_reported_as_a_bool(machine: System) -> None:
     assert isinstance(machine.is_elevated(), bool)
 
 
+def test_a_scratch_directory_is_private_empty_and_deleted_on_exit(machine: System) -> None:
+    """`scratch_directory` yields an empty existing folder, two calls give two folders, and the folder and its content are gone afterwards."""
+    with machine.scratch_directory("gupkg-contract-") as first, machine.scratch_directory("gupkg-contract-") as second:
+        assert first != second and first.is_dir() and list(first.iterdir()) == []
+        (first / "nested").mkdir()
+        (first / "nested" / "file.txt").write_text("x", encoding="utf-8")
+
+    assert not first.exists() and not second.exists()
+
+
 def test_the_process_id_is_running_and_an_unused_one_is_not(machine: System) -> None:
     """``process_id`` is a running process on every implementation; a freshly finished child's id is not running."""
     import subprocess

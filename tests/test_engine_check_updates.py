@@ -67,6 +67,24 @@ def test_a_normal_shell_checking_a_system_package_only_reports(tmp_path: Path, n
     assert result.details["written"] is False and tree_snapshot(world.system_root) == before
 
 
+def test_a_report_only_check_takes_its_scratch_folder_from_the_system_boundary(tmp_path: Path) -> None:
+    """The tracker's scratch folder of a report-only run comes from `System.scratch_directory`, never the real temporary folder."""
+    world = World(tmp_path, elevated=True)
+    installed(world, "system")
+    world.fake.elevated = False
+    world.engine = type(world.engine)(
+        system=world.fake, env=world.machine.env, load=world.machine.loader(elevated=False), sleep=lambda seconds: None, retries=0,
+    )
+    world.announce("tool", "1.1.0")
+    world.fake.failures["scratch_directory"] = OSError("no scratch for you")
+
+    refused = world.one("check-updates", "system:tool", no_download=True)
+    reported = world.one("check-updates", "system:tool", no_download=True)
+
+    assert not refused.ok and refused.error["code"] == "io-error" and "no scratch" in refused.error["message"]
+    assert reported.ok and reported.status == "new-version" and list((world.fake.root / "scratch").iterdir()) == []
+
+
 def test_a_normal_shell_with_no_download_writes_only_the_manifest_and_support_files(tmp_path: Path) -> None:
     """Non-elevated, on a user package, --no-download: pkg.toml and support files are written and nothing is downloaded."""
     world = World(tmp_path)

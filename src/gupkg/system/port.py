@@ -41,6 +41,7 @@ gupkg.system.fake : the test and sandbox implementation.
 from __future__ import annotations
 
 import os
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -232,6 +233,13 @@ class System(Protocol):
 
     def directory_untrusted_reason(self, path: Path) -> str | None:
         """Return why *path* is not admin-only, or ``None`` when it is."""
+
+    def scratch_directory(self, prefix: str) -> AbstractContextManager[Path]:
+        """Return a context manager that creates a private empty temporary folder, yields it, and deletes it on exit.
+
+        For work that must leave no trace in any root (a report-only run). A sandbox keeps it inside its own folder, so
+        nothing is written to the real temporary folder.
+        """
 
     def process_id(self) -> int:
         """Return the id of this process (recorded in a package lock so another run can tell whether the holder lives)."""

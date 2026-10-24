@@ -38,9 +38,11 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import uuid
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Iterator, Mapping, Sequence
 
 from ..extractors import find_7z
 from .port import (
@@ -323,6 +325,17 @@ class FakeSystem(WindowsLinks):
     def is_elevated(self) -> bool:
         """Report the configured elevation flag."""
         return self.elevated
+
+    @contextmanager
+    def scratch_directory(self, prefix: str) -> Iterator[Path]:
+        """Create a private folder below the fake's own root (never the real temporary folder), yield it, delete it on exit."""
+        self._maybe_fail("scratch_directory")
+        folder = self.root / "scratch" / f"{prefix}{uuid.uuid4().hex[:12]}"
+        folder.mkdir(parents=True)
+        try:
+            yield folder
+        finally:
+            shutil.rmtree(folder, ignore_errors=True)
 
     def process_id(self) -> int:
         """Return the configured process id (the real one by default)."""

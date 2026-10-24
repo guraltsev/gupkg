@@ -197,6 +197,12 @@ def stop_marker(path: Path) -> Callable[[], bool]:
 
     The marker is data a user-writable program may create: it is only ever read for its existence, and the
     only thing it can do is make the run stop after the package that is running, so it is safe in an elevated run.
+
+    Notes
+    -----
+    The caller (issue 029) must give each run its own marker path (a name with a fresh random part, in a folder only the
+    run and its front end use) and must never reuse one: a marker file that already exists when the run starts makes
+    every package of the run ``skipped``. A front end that cancels creates the file; it never leaves one behind.
     """
     marker = Path(path)
     return lambda: os.path.lexists(marker)

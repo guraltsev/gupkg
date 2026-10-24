@@ -272,5 +272,3 @@ class World:
         batch = self.run(operation, selector, **options)
         assert len(batch.results) == 1
         return batch.results[0]
-
-
