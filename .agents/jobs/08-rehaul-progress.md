@@ -135,11 +135,14 @@ For information (not a question):
 - 2026-10-24: 030 worker done (5 commits; 3708 passed in ONE environment (ambient); scrubbed-env and GUPKG_ELEVATED=1 passes not run; 20 mutants killed). One acceptance row 'not met as written': 'check for updates with one user and one system package writes both through the single elevated call' conflicts with D22 (from a normal shell `check-updates` on a system package only REPORTS): CONTROLLER DECISION: D22/the engine win (newer owner decision wins over issue text): the ISSUE TEXT of 030 is corrected (not the code) when the issue is closed. The worker also decided (controller may overrule): checksum questions are asked after the single plan confirmation; `--skip-checksum` is per call; the system target policy distrusts the user settings layer and `--settings`; `[cleanup] auto` makes the cleanup of the system root a second elevated call (second UAC prompt); a `--sandbox` with `system.json elevated: true` makes the CLI ignore `--settings`, so system-target flows are tested with the scripted double only. Reviewer started.
 - 2026-10-24: 030 review round 1 (PARTIAL: the reviewer ran out of time after probing injection (17 payloads, no crash), D44 (compliant), grouping, stop-marker safety, 'no' answers cannot leak a hash-less target into a `--skip-checksum` call, the real launchers; the unfinished checks (clean-env/GUPKG_ELEVATED test passes, mutation run, responsiveness numbers, pilot flakiness) carry over to round 2). Findings sent back: MAJOR `client.py` kills only `cmd.exe`, the real python CLI child keeps running headless after a cancel/exit (needs tree kill + stop marker first); MAJOR Ctrl+C on top of the cancel/checksum dialog exits the app and abandons the run (D37); minors: unescaped toast markup, no hang/timeout handling, events-file truncation, `_judge` leniency, doc gap: an elevated scheduled manager is refused.
 
-## Owner decision (2026-10-24): credit-saving mode
+## Owner decision (2026-10-24): basic review only, deep review deferred
 
-The owner needs a working 1.0 quickly and has few credits left this week. From here: no further reviewer rounds this week. Each remaining issue (030 round 2, 033, 032) gets the worker's own full test runs, then the controller runs `scripts\test.cmd` and `git diff --check` on main after the merge. Merge of 033 still waits for the owner (S1/S2 question). Reviews to do NEXT WEEK, recorded here as deferred:
+The owner needs a working 1.0 quickly and has few credits left this week, but does not want corners cut too much. From here: ONE basic review per remaining issue (030 delta, 033, 032): a fresh reviewer reads the new code for correctness, security and acceptance criteria and runs the suite once; at most one fix round; then the controller runs `scripts	est.cmd` and `git diff --check` on main after the merge. Merge of 033 still waits for the owner (S1/S2 question).
 
-- 030 round 2: fix-round-1 delta review; carry-over checks (20-mutant run, 100k-line responsiveness, pilot flakiness loops, NO_COLOR/resize, bundle MANIFEST).
-- 033: full review (bundled mode, launchers, bootstrap, owner launcher requirements, "Left by issue 029" list).
-- 032: review of migration path, docs, issue hygiene, 1.0 release preparation.
-- Fix-round-1 defects of 030 were applied by the worker but not independently re-verified.
+Deferred deep review (open items for NEXT WEEK, not done this week):
+
+- 20-mutant mutation runs for 030, 033, 032.
+- Hostile-input / adversarial probing of the UI programs, launchers and bootstrap beyond the basic read.
+- Flakiness loops (pilot tests, CPU-busy), 100k-line responsiveness numbers, NO_COLOR/resize checks.
+- Full multi-environment passes (scrubbed env, GUPKG_ELEVATED=1, windows_integration) by an independent reviewer.
+- Bundle MANIFEST inspection and a second review round for any issue that needed fixes.
