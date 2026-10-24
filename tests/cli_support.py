@@ -24,6 +24,18 @@ from gupkg.selfmgmt.location import RunningGupkg
 from tests.engine_support import World
 
 
+class ForbiddenInput(io.StringIO):
+    """A standard input that fails the test the moment anything reads it (a ``--yes`` or ``--no-input`` run must not ask)."""
+
+    def read(self, *args: Any) -> str:
+        """Fail: nothing may read standard input."""
+        raise AssertionError("standard input was read")
+
+    def readline(self, *args: Any) -> str:
+        """Fail: nothing may read standard input."""
+        raise AssertionError("standard input was read")
+
+
 @dataclass
 class CliResult:
     """What one command-line call did: its exit code and the text it wrote to standard output and standard error."""
@@ -63,11 +75,11 @@ class CliWorld(World):
             if installed else RunningGupkg("source", tree / "gupkg", (tree,))
         )
 
-    def cli(self, *argv: str, stdin: str = "", location: RunningGupkg | None = None) -> CliResult:
-        """Run ``gupkg <argv>`` and return its exit code and output; *stdin* is what a question would read."""
+    def cli(self, *argv: str, stdin: str | None = "", location: RunningGupkg | None = None) -> CliResult:
+        """Run ``gupkg <argv>`` and return its exit code and output; *stdin* is what a question would read (``None``: reading it fails the test)."""
         out, err = io.StringIO(), io.StringIO()
         original = sys.stdin
-        sys.stdin = io.StringIO(stdin)
+        sys.stdin = ForbiddenInput() if stdin is None else io.StringIO(stdin)
 
         # The process PATH is pinned to a folder with nothing in it: a git or program on the developer's PATH must not decide a test.
         try:

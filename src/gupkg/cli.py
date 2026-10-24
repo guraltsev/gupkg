@@ -188,15 +188,18 @@ def _run(args: argparse.Namespace, tokens: list[str], machine: System, env: Mapp
         parse_skip_flag(getattr(args, "skip_checksum", None))
     except ChecksumInvalid as error:
         return _usage_error(tokens, str(error))
-    if args.sandbox is not None:
-        args.sandbox.mkdir(parents=True, exist_ok=True)
-        machine = FakeSystem.sandbox(args.sandbox, machine)
-    elevated = is_elevated_run(machine)
-    installed_root = where.root if where.kind == "installed" and machine.directory_is_admin_only(where.root) else None
-    loader = settings_loader(
-        system=machine, env=env, elevated=elevated, app_dir=where.app_dir, installed_system_root=installed_root,
-        settings_path=args.settings,
-    )
+    try:
+        if args.sandbox is not None:
+            args.sandbox.mkdir(parents=True, exist_ok=True)
+            machine = FakeSystem.sandbox(args.sandbox, machine)
+        elevated = is_elevated_run(machine)
+        installed_root = where.root if where.kind == "installed" and machine.directory_is_admin_only(where.root) else None
+        loader = settings_loader(
+            system=machine, env=env, elevated=elevated, app_dir=where.app_dir, installed_system_root=installed_root,
+            settings_path=args.settings,
+        )
+    except (OSError, ValueError) as error:
+        return _usage_error(tokens, f"cannot set up the run{f' in --sandbox {args.sandbox}' if args.sandbox is not None else ''}: {error}")
     run = _Run(args, machine, env, where, elevated, loader)
 
     # Dispatch; a settings or usage problem is the caller's to fix, anything else unexpected is exit code 4.
@@ -1117,7 +1120,10 @@ def _forward(program: str, rest: list[str], root_options: list[str], system: Sys
     if root_options:
         print(f"gupkg: error: --settings and --sandbox are not passed on to gupkg-{program}", file=sys.stderr)
         return EXIT_USER
-    if is_elevated_run(system):
+    # The UI programs ask for administrator rights themselves, through `gupkg`; the migration tool does its own work and
+    # needs the token to adopt the system root, so only `tui` and `manager` refuse an elevated shell (D44, D45). It still
+    # starts through its own launcher, which runs bootstrap's trust check before importing anything.
+    if program != "migrate" and is_elevated_run(system):
         print(
             f"gupkg: error: gupkg {program} is not started from an elevated shell: the programs call `gupkg` and ask for "
             "administrator rights once themselves. Run it from a normal shell.", file=sys.stderr,
@@ -1148,20 +1154,14 @@ _HANDLERS: dict[str, Callable[[_Run], int]] = {
     "registry": _cmd_registry, "settings": _cmd_settings, "pkg": _cmd_pkg, "self": _cmd_self,
 }
 
-# What the removed 0.17 spellings say now: a usage error that names the 1.0 way (they are not aliases, decision D33).
+# The four spellings the issue keeps as usage errors that name the 1.0 way (they are not aliases, decision D33); every other
+# removed 0.17 option is simply unknown to argparse.
 _REMOVED_OPTIONS = {
     "--all": "gupkg has no --all (decisions D11, D12): the batch form is `gupkg-manager update --all`, or "
              "`gupkg update $(gupkg list --outdated --names)`",
     "--check": "`update` never looks for new versions: use `gupkg check-updates <target>` first, then `gupkg update <target>`",
     "--check-only": "use `gupkg check-updates <target> --no-download`",
     "--scope": "use --mode system|user|portable, after the command",
-    "--no-checksum": "use --skip-checksum (missing hashes only, https:// URLs only)",
-    "--allow-downgrade": "use `gupkg switch <target> <version>`",
-    "--refresh-app": "use --refresh",
-    "--shim-linkage": "the shim linkage is no longer an option",
-    "--format": "use --json",
-    "--pause": "--pause no longer exists",
-    "--download-only": "use `gupkg check-updates <target>`, which downloads and prepares a version without activating it",
 }
 
 
@@ -1286,7 +1286,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="run against a pretend machine kept in DIR: environment variables, PATH, shortcuts and elevation are recorded "
              "in DIR instead of the registry and Start Menu; files and downloads are real",
     )
-    for option in ("--scope", "--format", "--pause"):
+    for option in ("--scope",):
         parser.add_argument(option, action=_Removed, nargs=0, help=argparse.SUPPRESS)
     commands = parser.add_subparsers(dest="command", metavar="<command>", parser_class=_Parser)
 

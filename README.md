@@ -282,10 +282,10 @@ Exit status: `0` success, `2` user or configuration error (including usage error
 unmet `requires_gupkg`: a package launcher then runs its bundled gupkg).
 
 0.17 spellings are not aliases: `config-check`, `config-fix`, `doctor`, `repair-deps` and `update-deps` are unknown
-commands, and `--scope`, `--format`, `--no-checksum`, `update --check-only`, `update --all` and `update --check` are
-usage errors that name what to use now. `gupkg tui`, `gupkg manager` and `gupkg migrate` are permanent forwarders to
-`gupkg-tui`, `gupkg-manager` and `gupkg-migrate` of the same gupkg; they pass the exit code through, and they refuse an
-elevated shell (the programs ask for administrator rights themselves, once per batch).
+commands, and `--scope`, `update --check-only`, `update --all` and `update --check` are usage errors that name what to use now (every
+other 0.17 option is simply an unrecognized argument). `gupkg tui`, `gupkg manager` and `gupkg migrate` are permanent forwarders to
+`gupkg-tui`, `gupkg-manager` and `gupkg-migrate` of the same gupkg; they pass the exit code through. `tui` and `manager` refuse an
+elevated shell (they ask for administrator rights themselves, once per batch); `migrate` does its own work and accepts one.
 
 gupkg runs only on its bundled Python: `python -m gupkg` or `bootstrap.py` on any other interpreter, or without `-I`, exits
 with `Start gupkg through gupkg.cmd or gupkg.exe; it runs only on its bundled Python.` In a source checkout use

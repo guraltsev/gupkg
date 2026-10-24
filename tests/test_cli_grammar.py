@@ -101,11 +101,8 @@ def test_the_old_commands_are_unknown(world: CliWorld, word: str) -> None:
         pytest.param(("update", "tool", "--check-only"), "check-updates", id="check-only"),
         pytest.param(("update", "tool", "--scope", "user"), "--mode", id="scope-after"),
         pytest.param(("--scope", "user", "update", "tool"), "--mode", id="scope-before"),
-        pytest.param(("install", "tool", "--no-checksum"), "--skip-checksum", id="no-checksum"),
         pytest.param(("update", "--all"), "gupkg-manager update --all", id="all"),
         pytest.param(("update", "--check"), "check-updates", id="check"),
-        pytest.param(("install", "tool", "--allow-downgrade"), "switch", id="allow-downgrade"),
-        pytest.param(("install", "tool", "--format", "toml"), "--json", id="format"),
     ],
 )
 def test_the_removed_options_are_usage_errors_that_name_the_replacement(world: CliWorld, argv: tuple[str, ...], says: str) -> None:
@@ -122,6 +119,18 @@ def test_only_engine_commands_can_be_started_as_a_relaunch(world: CliWorld, argv
     result = world.cli(*argv, "--relaunched")
 
     assert result.code == 2 and "--relaunched" in result.err
+
+
+@pytest.mark.parametrize(
+    "option", ["--no-checksum", "--allow-downgrade", "--refresh-app", "--shim-linkage", "--format", "--pause", "--download-only"]
+)
+def test_the_other_removed_options_are_plain_unrecognized_arguments(world: CliWorld, option: str) -> None:
+    """Core keeps no legacy-specific code (D33): only --all, --check, --check-only and --scope are named; the rest is argparse's own error."""
+    result = world.cli("install", "tool", option)
+
+    assert result.code == 2 and "unrecognized arguments" in result.err and option in result.err
+    assert "no longer" not in result.err and "use --" not in result.err
+    assert not (world.user / "tool").exists()
 
 
 def test_update_has_no_all_and_names_the_manager(world: CliWorld) -> None:
@@ -267,6 +276,40 @@ def test_a_forwarder_is_not_started_from_an_elevated_shell(tmp_path: Path, capsy
 
     assert code == 2 and "not started from an elevated shell" in capsys.readouterr().err
     assert system.foreground_log == []
+
+
+def test_a_sandbox_that_is_an_existing_file_is_a_usage_error_not_a_traceback(world: CliWorld, tmp_path: Path) -> None:
+    """--sandbox naming a file cannot be made a folder: exit code 2 with a message (and a document under --json), never exit 1."""
+    sandbox = tmp_path / "a-file"
+    sandbox.write_text("x", encoding="utf-8")
+
+    plain = world.cli("--sandbox", str(sandbox), "list")
+    machine = world.cli("--sandbox", str(sandbox), "list", "--json")
+
+    assert plain.code == 2 and "cannot set up the run in --sandbox" in plain.err and "Traceback" not in plain.err
+    assert machine.code == 2 and machine.document()["errors"][0]["code"] == "usage"
+
+
+def test_the_migration_tool_is_started_from_an_elevated_shell_and_passes_its_exit_code(tmp_path: Path) -> None:
+    """`migrate` does its own (elevation-aware) work, so an administrator's shell may start it, unlike `tui` and `manager`."""
+    location, _ = stand_in(tmp_path, **{"gupkg-migrate": 0})
+    system = FakeSystem(tmp_path / "machine", elevated=True, processes={"gupkg-migrate.cmd": lambda call: ProcessResult(4)})
+
+    code = cli.main(["migrate", "package", "old"], system=system, env={}, location=location)
+
+    assert code == 4
+    assert [Path(call[0]).name for call in system.foreground_log] == ["gupkg-migrate.cmd"] and system.foreground_log[0][1:] == ["package", "old"]
+
+
+@pytest.mark.parametrize("word", ["tui", "manager"])
+def test_each_ui_forwarder_refuses_an_elevated_shell(tmp_path: Path, capsys: pytest.CaptureFixture[str], word: str) -> None:
+    """Both UI programs refuse an elevated shell; only the migration tool is exempt."""
+    location, _ = stand_in(tmp_path, **{f"gupkg-{word}": 0})
+    system = FakeSystem(tmp_path / "machine", elevated=True)
+
+    code = cli.main([word, "x"], system=system, env={}, location=location)
+
+    assert code == 2 and "not started from an elevated shell" in capsys.readouterr().err and system.foreground_log == []
 
 
 def test_root_options_are_not_passed_to_a_forwarded_program(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

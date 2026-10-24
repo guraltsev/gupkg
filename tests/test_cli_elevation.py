@@ -84,6 +84,16 @@ def test_the_relaunch_question_is_asked_once_and_no_input_refuses_it(world: CliW
     assert world.fake.relaunches == []
 
 
+def test_no_input_refuses_the_relaunch_even_when_standard_input_holds_an_answer(world: CliWorld) -> None:
+    """The elevation question is never asked under --no-input (exit code 5, no relaunch), and --yes never reads standard input."""
+    refused = world.cli("install", "system:tool", "--no-input", "--json", stdin="y\n")
+    assert refused.code == 5 and refused.document()["results"][0]["error"]["code"] == "input-needed"
+    assert world.fake.relaunches == []
+
+    accepted = world.cli("install", "system:tool", "--yes", stdin=None)
+    assert accepted.code == 0 and len(world.fake.relaunches) == 1
+
+
 def test_qualified_targets_of_both_modes_run_the_user_ones_here_and_hand_the_system_ones_to_the_child(world: CliWorld) -> None:
     """Targets that name their mode are split: the user target is installed by this process, the system one is relaunched."""
     world.publish("mine", "1.0.0", mode="user")

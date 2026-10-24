@@ -298,6 +298,33 @@ def test_the_several_target_question_can_be_answered_on_the_terminal(world: CliW
     assert accepted.code == 0 and (world.user / "one" / "current").is_dir()
 
 
+def test_no_input_never_asks_even_when_standard_input_holds_an_answer(world: CliWorld) -> None:
+    """--no-input is exit code 5 with a structured error for the several-target question and for --purge, although stdin says yes."""
+    world.publish("one", "1.0.0")
+    world.publish("two", "1.0.0")
+    assert world.cli("install", "one", "--yes").code == 0
+
+    several = world.cli("install", "one", "two", "--no-input", "--json", stdin="y\ny\n")
+    purge = world.cli("uninstall", "one", "--purge", "--no-input", "--json", stdin="y\ny\n")
+
+    assert several.code == 5 and several.document()["errors"][0]["code"] == "input-needed"
+    assert not (world.user / "two" / "current").exists()
+    assert purge.code == 5 and purge.document()["results"][0]["error"]["code"] == "input-needed"
+    assert (world.user / "one" / "current").is_dir()
+
+
+def test_yes_never_reads_standard_input(world: CliWorld) -> None:
+    """--yes answers every consequential question: a standard input that fails when read is never touched."""
+    world.publish("one", "1.0.0")
+    world.publish("two", "1.0.0")
+
+    several = world.cli("install", "one", "two", "--yes", stdin=None)
+    purge = world.cli("uninstall", "one", "--purge", "--yes", stdin=None)
+
+    assert several.code == 0 and purge.code == 0, several.err + purge.err
+    assert (world.user / "two" / "current").is_dir() and not (world.user / "one").exists()
+
+
 def test_a_failing_target_does_not_stop_the_rest_and_the_exit_code_is_the_failure(world: CliWorld) -> None:
     """The run continues past a failure: the other package is installed, the summary names the failure, exit code 2 or 3."""
     world.publish("one", "1.0.0")
