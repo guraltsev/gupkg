@@ -1,12 +1,15 @@
 """Cover vendor installers (`[source.installer]`, design 8.4): when one runs, how, and what it may not do.
 
-Behaviour covered: with `hooks.allow_vendor_installers` not false a verified `.exe` runs with `$Stage` expanded and the
-`App` is the stage; the plan, the run's events and the receipt carry the label "runs vendor installer"; the child gets a
+Behaviour covered: an installer runs only from a download that matches a pinned sha256 (the verified-only gate: every skip
+decision and `origin-not-verified` is refused, in user and elevated runs, and a version that pins no sha256 is refused by the
+plan before any download, whatever `--skip-checksum` says); with `hooks.allow_vendor_installers` not false a verified `.exe` runs
+with `$Stage` expanded and the `App` is the stage; the plan, the run's events and the receipt carry the label "runs vendor installer"; the child gets a
 scrubbed environment and no input; `require` is judged after the installer ran; a failing, timed-out or link-leaving
 installer leaves no `App`, no `current` and no work folder; with the setting false nothing is downloaded or run, and
 check-updates leaves the version without `App`; an argument that names a place outside the stage (`..`, another drive,
-a UNC path, a relative path) is refused before the installer starts; an elevated run refuses an installer path that is not
-admin-only; a sandbox without a double reports `needs-real-run`; the installer is never executed for real.
+a UNC path, a relative path, a rooted one-segment path, `%VAR%`, `~`, a device name, a quoted `/D=`) is refused before
+the installer starts, and a value that only starts with the stage path (`<stage>2`) is not inside it; an elevated run refuses an
+installer path that is not admin-only and gives the child only admin-only `PATH` folders; a sandbox without a double reports `needs-real-run`; the installer is never executed for real.
 
 Real: the engine, the planner, the unpack services and real folders. Mocked: `FakeSystem` (the installer is a process
 double that writes files into the stage, never a real program).
@@ -287,6 +290,11 @@ def test_check_updates_with_the_setting_false_writes_the_version_without_its_app
         "/DIR=..",
         "/LOG=x..\\y",
         "/DIR=D:$Stage",
+        "/LOG=$Stage\\con",
+        "/LOG=$Stage\\nul.txt",
+        "/DIR=$Stage\\sub\\COM1",
+        '/D="$Stage"',
+        '/d="$Stage"',
     ],
 )
 def test_an_argument_that_names_a_place_outside_the_stage_is_refused_before_the_installer_starts(world: World, argument: str) -> None:
@@ -298,6 +306,13 @@ def test_an_argument_that_names_a_place_outside_the_stage_is_refused_before_the_
 
     assert not result.ok and result.error["code"] == "installer-failed" and double.calls == []
     assert not (world.user / "gimp" / "1.0.0" / "App").exists()
+
+
+@pytest.mark.parametrize("argument", ["/DIR=${Stage}2", "/DIR=${Stage}-evil", "/LOG=${Stage}x\\y", "/DIR=${Stage}:", "/DIR=${Stage}~1"])
+def test_a_value_that_only_starts_with_the_stage_path_is_not_inside_it(tmp_path: Path, argument: str) -> None:
+    """`<stage>2` and `<stage>-evil` are sibling folders: the prefix must end at a separator (the braced form can append text)."""
+    with pytest.raises(InstallerError):
+        expand_arguments([argument], tmp_path / "work" / "App")
 
 
 @pytest.mark.parametrize(

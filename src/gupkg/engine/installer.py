@@ -112,6 +112,8 @@ def _require_inside(original: str, value: str, stage: Path) -> None:
         glued = _GLUED.match(value)
         target = glued.group("value") if glued else value
     target = target.strip()
+    if option is not None and option.group("flag").lstrip("/-").casefold() == "d" and '"' in target:
+        raise InstallerError(f"installer argument {original!r}: NSIS reads /D= unquoted and last, so a quoted value is refused")
     if len(target) >= 2 and target[0] == target[-1] == '"':
         target = target[1:-1]
     if not target:
@@ -119,8 +121,11 @@ def _require_inside(original: str, value: str, stage: Path) -> None:
     here = str(stage)
     if target == here or target.startswith(here + "\\"):
         rest = target[len(here):]
-        if ".." in re.split(r"[\\/]+", rest) or any(char in rest for char in ':%"~'):
+        segments = re.split(r"[\\/]+", rest)
+        if ".." in segments or any(char in rest for char in ':%"~'):
             raise InstallerError(f"installer argument {original!r} leaves the stage {stage}")
+        if any(segment.split(".", 1)[0].rstrip(" ").casefold() in _DEVICES for segment in segments if segment):
+            raise InstallerError(f"installer argument {original!r} names a Windows device inside the stage")
         return
     if option is None and _SWITCH.fullmatch(target):
         return

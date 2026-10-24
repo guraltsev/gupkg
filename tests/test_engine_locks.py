@@ -3,8 +3,9 @@
 Behaviour covered: an install, update, uninstall or ``check --fix`` of a package held by a living run fails with exit
 status 3 naming the holder and changes nothing, and the holder's lock stays; ``check`` and ``list`` read only and take none;
 a lock whose process is gone, one older than a day and an unreadable old one are reclaimed; an unreadable brand-new one and
-one of another host with a living-looking age are respected; ``cleanup`` skips a locked package and never removes a work
-entry younger than a day even when nothing holds the lock; the lock is released after a success, a failure, an exception
+one of another host with a living-looking age are respected; ``cleanup`` of a package the user NAMES that is locked fails
+with ``package-busy`` (exit 3), while a root-wide sweep (``sweep=True``) leaves it alone as ``locked`` without failing, and
+neither removes a work entry; ``cleanup`` never removes a work entry younger than a day even when nothing holds the lock; the lock is released after a success, a failure, an exception
 and a cancel, and a first install that fails leaves no package folder behind; an elevated run refuses a locks folder
 that is not admin-only.
 

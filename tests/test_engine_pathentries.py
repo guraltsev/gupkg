@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 from gupkg.engine.effects import EffectContext, EffectError, apply_effect, desired_effects, remove_effect
-from gupkg.model.manifest import ManifestError, parse_manifest
+from gupkg.model.manifest import ManifestError, parse_manifest, path_entry_shape_problem
 from gupkg.model.state import Effect
 from gupkg.system.fake import FakeSystem
 from gupkg.system.port import Scope
@@ -290,3 +290,22 @@ def test_user_mode_is_unchanged_by_the_machine_rules(tmp_path: Path) -> None:
     applied = apply_effect(system, Effect("path", {"scope": "user", "entry": str(tmp_path / "later" / "bin"), "added": False}), ctx)
 
     assert applied.fields["added"] is True and system.get_path(Scope.USER) == [str(tmp_path / "later" / "bin")]
+
+
+INVISIBLE = ["\x85", "\x7f", "\u200b", "\u202e", "\u2028", "\u2029", "\ufeff", "\ue000", "\ud800", "\u0378"]
+
+
+@pytest.mark.parametrize("char", INVISIBLE, ids=lambda char: f"U+{ord(char):04X}")
+def test_a_path_entry_with_a_control_invisible_or_separator_character_is_refused_everywhere(tmp_path: Path, char: str) -> None:
+    """The whole Unicode category C* (and the line and paragraph separators): NEL, DEL, zero-width, bidirectional, lone surrogate..."""
+    entry = f"C:\\tools{char}\\bin"
+    ctx = context(tmp_path, mode="user")
+
+    assert path_entry_shape_problem(entry, template=False) and path_entry_shape_problem(entry, template=True)
+    with pytest.raises(EffectError):
+        desired_effects(with_paths(entry), ctx)
+    with pytest.raises(EffectError):
+        apply_effect(FakeSystem(tmp_path / "machine"), Effect("path", {"scope": "user", "entry": entry, "added": False}), ctx)
+    if char != "\ud800":
+        with pytest.raises(ManifestError, match="path\\[0\\].value"):
+            parse_manifest(HEAD + f'[[path]]\nvalue = "C:\\\\tools\\u{ord(char):04x}\\\\bin"\n')
