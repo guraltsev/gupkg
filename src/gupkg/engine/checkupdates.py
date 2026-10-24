@@ -305,7 +305,7 @@ def _write_version(
         if not (context.root / DATA_DIR_NAME / "gupkg.cmd").is_file():
             carry_forward(view, staged)
 
-        report = check_directory(staged)
+        report = check_directory(staged, package=package_path.name)
         if not report.ok:
             raise ManifestError([f"the new version directory is not valid: {problem}" for problem in report.errors])
         if os.path.lexists(destination):

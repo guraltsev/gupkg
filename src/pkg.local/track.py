@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from gupkg._version import __version__
 from gupkg.hooklib import HookError, TrackResult, fetch_text
-from releases import REPOSITORY, RELEASES_URL, parse_releases, version_key
+from .releases import REPOSITORY, RELEASES_URL, parse_releases, version_key
 
 PKG_MODULE_API = 2
 

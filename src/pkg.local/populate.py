@@ -29,7 +29,7 @@ from pathlib import Path
 
 from gupkg.hooklib import HookError, safe_extract, fetch_text
 from gupkg.integrity import ManifestError, verify_tree
-from releases import RELEASES_URL, asset_url, parse_releases
+from .releases import RELEASES_URL, asset_url, parse_releases
 
 PKG_MODULE_API = 2
 
@@ -60,7 +60,7 @@ def populate(ctx):
 
     # Copy the whole tree: App is a plain copy, so the bundled tree stays the input for the next rebuild.
     ctx.reporter.step(f"copying the bundled gupkg {ctx.version} into App", "add")
-    shutil.copytree(tree, ctx.paths.app)
+    shutil.copytree(tree, ctx.paths.app, dirs_exist_ok=True)
 
 
 def _fetch_release(ctx, tree: Path) -> None:
