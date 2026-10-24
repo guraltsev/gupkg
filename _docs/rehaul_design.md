@@ -927,6 +927,10 @@ the setting `allow_vendor_installers` must not be `false`. GIMP, whose
 installer is built with Inno Setup 7, is the only current user. No bundled
 tool extracts it (job 07, spike S3), so 1.0 has no `inno` kind (D39).
 
+The step runs only a downloaded, verified `.exe`, into the staged `App` (`$Stage`), with a scrubbed environment, a
+timeout and arguments that may name only the stage; `require` is judged after it ran. Section 13.4 has the rules and
+the risk (vendor code runs with the rights of the gupkg that started it).
+
 ### 8.5 Checksum discovery (`[source.checksum]`)
 
 The fields are `sidecar = "${download_url}.sha256"`, `sums_file`/`entry`,
@@ -1491,6 +1495,8 @@ gupkg/
     appbuild.py     the built-in download script and the custom populate runner (atomic App)
     effects.py      declarations -> effects; apply, remove, verify (shortcuts, shims, env, PATH)
     portable.py     portable data hand-over, markers, [nonportable] removal
+    locks.py        the per-package lock (.gupkg\locks\package.lock)
+    installer.py    vendor installers ([source.installer]): the guarded run into the stage
     fingerprint.py  App fingerprint and version-directory fingerprint
     receipts.py     receipt files; stateio.py: [[adhoc]] and track.toml
     checkupdates.py the check-updates plan: track, write, populate, stop
@@ -1735,8 +1741,47 @@ hook of a version directory that exposes a name `track` once loaded is refused, 
 scan saw. A package that needs a program the sandbox has no double for ends with the code
 `needs-real-run`.
 
-**Not in the engine.** `[source.installer]` (a vendor installer, section 8.4) is refused with a
-clear message rather than ignored; running one is not part of this engine.
+**Locks.** A run that changes a package (install, update, switch, repair, uninstall, cleanup,
+`check-updates`, `check --fix`) first creates `<package>\.gupkg\locks\package.lock` exclusively; it holds the
+process id, host, operation, start time and a random token. A second run on the same package fails with
+the code `package-busy` (exit 3) and names the holder; `check`, `list` and `info` read only and take no
+lock. A lock is stale, and reclaimed, when its process is not running (`System.process_is_running`), when
+it is older than a day (no operation takes that long, and a recycled process id cannot keep a lock for
+ever) or when its text is unreadable and not brand new; a lock of another host is judged by age only. A
+lock is released on every exit, failure and cancel included. An elevated run locks only in an admin-only
+`locks` folder. `cleanup` skips a locked package and, even when it holds the lock, removes only the
+`.gupkg\work` entries older than 24 hours, so a run in flight keeps its staging folder.
+
+**Vendor installers.** `[source.installer]` is implemented by `engine.installer` (section 8.4): the
+verified, hashed-again `.exe` runs once into the staging folder. It needs `hooks.allow_vendor_installers`
+not false (read from admin-only layers in an elevated run), the plan, the output, the receipt
+(`[source] installer`) and `--plan --json` (`populate.label`) say `runs vendor installer`, and
+`list --details` shows the same label from the version's manifest (`INSTALLER_LABEL`). The installer is
+copied to the work folder under its published name, hashed once more and judged admin-only in an elevated
+run; it gets a minimal environment (machine-level variables and a `TEMP` inside the work folder), no
+standard input and `engine.installer_timeout` (30 minutes). `$Stage` expands to the staged `App`;
+an argument whose path part is anything but a path inside the stage (another drive, a UNC path, a `..`
+segment, a relative path with a separator) is refused before the installer starts. After it ran, the
+version's `require` paths must exist, and the staged `App` may hold no link or junction. A failing,
+timed-out or refused installer removes the staging folder: nothing is activated. Under a sandbox an
+installer runs only through an explicit process double; without one the result is `needs-real-run`. The risk:
+an installer is vendor code that runs with the rights of the gupkg that started it (the administrator's in an
+elevated run) and can change anything outside the stage (registry keys, other folders) that gupkg cannot see
+or undo; the setting, the label and the warning in the output exist for that reason. A version that runs an
+installer is populated by `check-updates` only when the setting allows it.
+
+**Names a package may not take.** `[[env]]` and `[portable] env` may not name `Path` (it would replace the
+whole `PATH`; `[[path]]` adds one entry the safe way) or a system variable (`PATHEXT`, `ComSpec`,
+`SystemRoot`, `TEMP`, `USERPROFILE`, `APPDATA`, `PROCESSOR_*`...; any letter case), checked by the manifest
+validator, by `desired_effects` and again when an effect is applied or removed, so an install record in a
+user-writable root cannot make an uninstall delete them. Shortcut and shim names may not be device names
+(`NUL`, `aux.lnk`, `COM1`), NTFS streams (`Tool:ads`) or end in a dot or a space.
+
+**Secrets.** URLs are written to receipts, events, errors and plan data with user information and the values
+of secret-looking query parameters (`token`, `signature`, `key`, `auth`...) replaced by `***`
+(`gupkg.redact`). A receipt larger than 1 MiB is not read (a user-mode receipt is user-writable); an `App`
+of more than 4000 files records its count and one digest instead of the file list, and `check` then still
+sees a change but cannot name the file.
 
 ## 14. Events, console output, and logs
 

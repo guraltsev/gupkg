@@ -257,23 +257,42 @@ Epic: 020. Design: `_docs/rehaul_design.md` §7.4, §13
   `<package>\.gupkg\logs` (the receipt's `[run] log` names the last one). The CLI maps `--skip-checksum` to
   `Request.skip` through `parse_skip_flag`; `--in-place`, `--refresh`, `--purge`, `--keep`, `--bundled`,
   `--no-download`, `--fix` and `--mode` are `Request` fields; `gupkg shell` prints `ModeContext.path_line()`.
-- **Deleted by 029, not by 028 (the engine is built beside the 0.17 front end, decision D13).**
-  `gupkg.py` (`install_package`, `_run_update`, `update_package`), `updates.prepare_update` and its
-  receipt-by-mtime logic, `origin.populate_*`, the `manager.py` executor, `components.py`, `downloads.py`,
-  `github_releases.py` and `configuration.py`, `configfix.py`, `metadata.py`, `legacy_to_gupkg_toml.py` and
-  `shortcuts_to_gupkg_toml.py` are imported by `cli.py`, `commands.py`, `tui.py`, `manager_tui.py`, `registry.py`
-  and `manager.py`, which 0.17 still runs. Nothing in the new engine imports any of them. When 029 replaces
-  the front end it deletes them in one commit (plus `layout.identity_from_path`, `installed_version` and the
-  shared registry transports that `catalog/registry.py` still imports from `gupkg.registry`, see issue 024).
+- **Scope item 11 ("Old code is deleted") is formally NOT met by 028, and 029 owns it.** The epic allows this
+  ("Each issue is meant to be mergeable on its own behind the existing CLI until 029 switches the front end",
+  issue 020): the 0.17 front end (`cli.py`, `commands.py`, `tui.py`, `manager_tui.py`, `manager.py`) still runs and
+  still imports the old coordinators, so deleting them in 028 would break the shipped program. The new engine
+  imports none of the modules to delete, except the registry transports named in the last item below. The
+  complete deletion list, now also written into issue 029 (and issue 030 for the TUIs):
+  - `gupkg.py` (`install_package`, `_run_update`, `update_package`), `updates.py` (`prepare_update`, its
+    receipt-by-mtime logic), `origin.py` (`populate_*`), `components.py`, `downloads.py`, `github_releases.py`,
+    `configuration.py`, `configfix.py`, `metadata.py`, `collection.py`, `distribution.py`, `layout.py`
+    (`identity_from_path`, `installed_version` and what only the old front end uses), `pinning.py`, `outcome.py`
+    (its renderers move to `report/`), `commands.py`, `cli.py`'s 0.17 command bodies, `bootstrap.py` and
+    `hooklib.py` if nothing else imports them, `legacy_to_gupkg_toml.py` and `shortcuts_to_gupkg_toml.py`
+    (they live on in `gupkg_migrate`);
+  - `registry.py` (the 0.17 registry client) and the executor of `manager.py`;
+  - for issue 030: `tui.py`, `manager_tui.py`, `tui_widgets.py`, `LineStream`;
+  - before `registry.py` can go, move the transports `catalog/registry.py` imports from it
+    (`archive_revision`, `archive_url`, `extract_archive`, `git_environment`, `git_remote_revision`,
+    `is_git_source`, `require_trusted_cache`, `trusted_git`): they are the only thing that makes `registry.py`,
+    `origin.py`, `updates.py`, `downloads.py`, `github_releases.py`, `configuration.py` and `metadata.py`
+    reachable from the new code.
 - **The fingerprint (031).** The registry tool must compute a version's fingerprint with
   `gupkg.engine.fingerprint.version_fingerprint(directory)` (names with letter case folded, SHA-256 of
   each file, sorted; `App` only for a shipped version, `.gupkg` never) and publish it in `_registry.toml`
   `[fingerprints]`. Design 9.2 has the text.
-- **Not done by 028 (033, owner).** Running a vendor installer (`[source.installer]`, design 8.4) is refused
-  with a message; the `[root_forwarder]` table, `requires_gupkg` and exit code 6, and the launchers belong to
-  issue 033 (check-updates already carries a bundled gupkg and the launchers forward into a new version
-  directory when the root has no forwarder). A memory cap and an operating-system-enforced "no network"
-  for the regex worker were not built (they need a job object limit in `WindowsSystem`).
+- **Vendor installers are implemented by 028** (owner decision after the first review; design 8.4 and D39,
+  issue 031's GIMP package depends on it): `gupkg.engine.installer`, the setting `hooks.allow_vendor_installers`,
+  the label `runs vendor installer` in the plan (`populate.label`), the output and the receipt. Issue 029 shows the
+  label in `list --details` from `INSTALLER_LABEL` (`gupkg.model.manifest`) and the manifest's `source.installer`.
+  The rules and the risk are in design 13.4.
+- **Locks are implemented by 028**: `gupkg.engine.locks`, `System.process_id` and `System.process_is_running`. The code
+  `package-busy` (exit 3) is what a front end shows when another run holds the package.
+- **Owners of what is not done.** The `[root_forwarder]` table, `requires_gupkg` and exit code 6, and the launchers belong
+  to issue 033 (check-updates already carries a bundled gupkg and the launchers forward into a new version directory when
+  the root has no forwarder). Issue 032 (hardening) owns: a memory cap and an operating-system-enforced "no network" for
+  the regex worker (a job-object limit in `WindowsSystem`), and the residual race on the parent folders of a distribution
+  copy in `distcopy` (it needs a `System` method that opens a path without following links and returns its final path).
 - **Sandbox (029).** A program that the sandbox has no double for ends a package with the code
   `needs-real-run` (exit 3), never a crash; `gupkg pkg check --install` should print that and declare the
   doubles it needs.

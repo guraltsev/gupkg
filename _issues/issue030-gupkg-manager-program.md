@@ -149,7 +149,10 @@ Epic: 020. Design: `_docs/rehaul_design.md` §15, §10.4, §13.2. Supersedes the
    the key-hint bar and the status footer, and keeps the list-first,
    frameless content area.
 10. **Old code is deleted:** `tui.py`, `manager_tui.py`, `tui_widgets.py`,
-    `manager.py`'s executor, and `LineStream`.
+    `manager.py`'s executor, and `LineStream`. (Issue 029 deletes the rest of the 0.17 coordinators, `commands.py`,
+    `registry.py`, `gupkg.py`, `updates.py`, `origin.py` and the others listed in its item 12; the 0.17 front end
+    imports both sets, so whichever of 029 and 030 lands second removes what the first could not, and the last one
+    leaves no module that only the old front end used.)
 
 ## Acceptance criteria
 
