@@ -65,9 +65,10 @@ def _confined(base: Path, relative: str) -> Path:
 def hand_back(system: System, app: Path, data_dir: Path, persist: Sequence[str]) -> list[str]:
     """Copy persisted state from the outgoing *app* into *data_dir*, and return what was saved.
 
-    A persisted file is copied (replacing the saved one); a persisted folder that is a real folder (the application
-    replaced the junction) is merged into ``data`` when ``data`` has none. A junction needs nothing: it already is
-    the saved state.
+    A persisted file is copied (replacing the saved one). A persisted folder that is a real folder (the application
+    replaced the junction) is copied into ``data`` when ``data`` has none, and otherwise merged: a file is copied when
+    ``data`` lacks it or the application's is newer, and nothing in ``data`` is deleted. A junction needs nothing: it
+    already is the saved state.
     """
     saved: list[str] = []
     for item in persist:
@@ -82,7 +83,42 @@ def hand_back(system: System, app: Path, data_dir: Path, persist: Sequence[str])
         elif source.is_dir() and not target.exists():
             shutil.copytree(source, target, symlinks=True)
             saved.append(item)
+        elif source.is_dir():
+            if not target.is_dir() or is_reparse_point(target):
+                raise PortableError(f"'{item}' is a folder in the application but not a folder in {data_dir}; nothing was changed")
+            merged = _merge_newer(source, target)
+            if merged:
+                saved.append(f"{item} ({merged} newer file{'s' if merged != 1 else ''} merged)")
     return saved
+
+
+def _merge_newer(source: Path, target: Path) -> int:
+    """Copy the files of *source* into *target* when they are missing there or newer; return how many were copied.
+
+    Nothing in *target* is deleted or replaced by an older file, so state that only *target* has stays. A link in
+    *source* is skipped, and a name that is a folder on one side and a file on the other stops the merge before it writes.
+    """
+    plan: list[tuple[Path, Path]] = []
+    for folder, directories, files in os.walk(source):
+        relative = Path(folder).relative_to(source)
+        directories[:] = [name for name in directories if not is_reparse_point(Path(folder) / name)]
+        for name in directories:
+            other = target / relative / name
+            if os.path.lexists(other) and (not other.is_dir() or is_reparse_point(other)):
+                raise PortableError(f"'{relative / name}' is a folder in the application but a file in {target}; nothing was changed")
+        for name in files:
+            origin, other = Path(folder) / name, target / relative / name
+            if is_reparse_point(origin):
+                continue
+            if os.path.lexists(other) and (other.is_dir() or is_reparse_point(other)):
+                raise PortableError(f"'{relative / name}' is a file in the application but a folder in {target}; nothing was changed")
+            if not os.path.lexists(other) or origin.stat().st_mtime > other.stat().st_mtime:
+                plan.append((origin, other))
+    for origin, other in plan:
+        other.parent.mkdir(parents=True, exist_ok=True)
+        write_bytes_atomic(other, origin.read_bytes())
+        os.utime(other, ns=(origin.stat().st_atime_ns, origin.stat().st_mtime_ns))
+    return len(plan)
 
 
 def hand_over(system: System, app: Path, data_dir: Path, persist: Sequence[str]) -> list[str]:

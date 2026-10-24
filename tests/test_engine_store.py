@@ -13,11 +13,14 @@ Out of scope: the install flow around them (the lifecycle tests).
 
 from __future__ import annotations
 
+import os
+import time
 from pathlib import Path
 
 import pytest
 
 from gupkg.catalog.catalog import AmbiguousSelector, NotFound, NotInstalled
+from gupkg.catalog.record import write_install_record
 from gupkg.engine.errors import describe
 from gupkg.engine.fingerprint import (
     LINK_MARK,
@@ -33,6 +36,7 @@ from gupkg.engine.receipts import list_receipts, read_receipt, receipt_checksum,
 from gupkg.engine.stateio import read_track_state, register_adhoc, unregister_adhoc, write_track_state
 from gupkg.model.checksum import ChecksumMismatch, ChecksumMissing
 from gupkg.model.mode import InputNeeded, ModeRefused
+from gupkg.model.state import InstallRecord
 from gupkg.model.settings import Layer, default_layer, merge_layers
 from gupkg.system.fake import FakeSystem
 from gupkg.system.port import ProcessNotAllowed
@@ -242,6 +246,70 @@ def test_portable_first_population_moves_the_vendor_default_into_data_and_state_
 
     assert (data / "settings.ini").read_text() == "user" and (second / "settings.ini").read_text() == "user"
     assert (second / "Data" / "state.txt").read_text() == "vendor state" and system.is_link(second / "Data")
+
+
+@pytest.mark.parametrize("which", ["receipt", "install-record", "toml", "track-state"])
+def test_a_write_that_fails_at_the_replace_leaves_the_old_file_intact_and_no_temporary_file(tmp_path: Path, which: str) -> None:
+    """Writes are atomic: while another handle holds the old file the replace fails (Windows refuses it), the old bytes stay and no temp file is left."""
+    package = tmp_path / "tool"
+    writers = {
+        "receipt": (package / ".gupkg" / "receipts" / "1.0.0.toml", lambda: update_receipt(package, "1.0.0", {"source": {"kind": "download"}, "new": 1})),
+        "install-record": (package / ".gupkg" / "package.toml", lambda: write_install_record(package, InstallRecord("user", None, ()))),
+        "toml": (package / "x.toml", lambda: write_toml(package / "x.toml", {"a": 2})),
+        "track-state": (package / ".gupkg" / "state" / "track.toml", lambda: write_track_state(package, {"found": "9.9"})),
+    }
+    target, write = writers[which]
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text('schema = 1\nold = "yes"\n', encoding="utf-8")
+    before = target.read_bytes()
+
+    with open(target, "rb"):
+        with pytest.raises(OSError):
+            write()
+
+    assert target.read_bytes() == before
+    assert [item.name for item in target.parent.iterdir()] == [target.name]
+
+
+def test_a_persisted_folder_the_application_replaced_is_merged_into_data_and_nothing_is_lost(tmp_path: Path, system: FakeSystem) -> None:
+    """The app swapped its junction for a real folder: newer files win, files only data has stay, and the next hand-over loses nothing."""
+    data, app = tmp_path / "data", tmp_path / "1" / "App"
+    write(data / "Data" / "old.txt", "saved old")
+    write(data / "Data" / "only-in-data.txt", "keep me")
+    write(data / "Data" / "shared.txt", "saved shared")
+    write(app / "Data" / "new.txt", "new file")
+    write(app / "Data" / "sub" / "deep.txt", "deep")
+    write(app / "Data" / "shared.txt", "app shared")
+    write(app / "Data" / "old.txt", "app edit")
+    stamp = time.time()
+    os.utime(data / "Data" / "old.txt", (stamp - 1000, stamp - 1000))
+    os.utime(data / "Data" / "shared.txt", (stamp, stamp))
+    os.utime(app / "Data" / "shared.txt", (stamp - 500, stamp - 500))  # older than data's copy: data keeps its own
+    os.utime(app / "Data" / "old.txt", (stamp - 10, stamp - 10))  # newer than data's copy: the app's wins
+
+    saved = hand_back(system, app, data, ["Data"])
+    second = tmp_path / "2" / "App"
+    write(second / "Data" / "vendor.txt", "vendor default")
+    hand_over(system, second, data, ["Data"])
+
+    assert saved == ["Data (3 newer files merged)"]
+    assert (data / "Data" / "only-in-data.txt").read_text() == "keep me" and (data / "Data" / "shared.txt").read_text() == "saved shared"
+    assert (data / "Data" / "old.txt").read_text() == "app edit" and (data / "Data" / "sub" / "deep.txt").read_text() == "deep"
+    assert (data / "Data" / "new.txt").read_text() == "new file" and system.is_link(second / "Data")
+    assert (second / "Data" / "new.txt").read_text() == "new file"
+
+
+def test_a_folder_that_is_a_file_in_data_stops_the_merge_before_it_writes(tmp_path: Path, system: FakeSystem) -> None:
+    """A name that is a folder on one side and a file on the other is an error, with nothing copied."""
+    data, app = tmp_path / "data", tmp_path / "1" / "App"
+    write(data / "Data" / "x", "a file in data")
+    write(app / "Data" / "x" / "inner.txt", "a folder in the app")
+    write(app / "Data" / "other.txt", "would be copied")
+
+    with pytest.raises(PortableError, match="nothing was changed"):
+        hand_back(system, app, data, ["Data"])
+
+    assert not (data / "Data" / "other.txt").exists() and (data / "Data" / "x").read_text() == "a file in data"
 
 
 # ---------------------------------------------------------------------------
