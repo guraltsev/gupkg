@@ -1007,6 +1007,16 @@ When the built-in download script downloads a source artifact, during
    This does not let a standard user gain rights: the URL comes from an
    admin-only `pkg.toml`, and the elevated side ignores the user's proxy
    and environment (section 9.6).
+
+   Details (issue 027). "https" is judged on the parsed address: the
+   text must start with `https://` and have a host, no user information
+   (`https://good@evil`), no backslash and no space or control
+   character, and every redirect hop of a skipped download must be
+   https too (the download stops before the hop that is not). The manager
+   relays its decision as `--skip-checksum=setting` or
+   `--skip-checksum=user-approved`; a bare flag is `skipped-cli`; any other
+   value is refused. A hash that is present is always verified, with or
+   without the flag, and a malformed hash is an error, not a missing one.
 4. **Git sources** pin a commit; the commit hash is the integrity anchor.
 5. **Local files** (`file:` URLs on a share) follow the same rules.
 
@@ -1323,7 +1333,7 @@ public, versioned contract (`"api": 1`).
 | Option | Meaning |
 | --- | --- |
 | `--json` | One result document on stdout: per target, the outcome, version, mode, receipt path and log path, plus structured errors such as `{"code": "checksum-missing", "url": …}`. Human output goes to stderr. |
-| `--plan` | Accepted by `check-updates`, `install`, `update`, `uninstall`, `switch` and `cleanup`. Resolves and plans without changing anything. Per target it reports the chosen version, mode, whether elevation is required, `sha256: present \| missing`, the source URL, and the effects to add or remove. |
+| `--plan` | Accepted by `check-updates`, `install`, `update`, `uninstall`, `switch` and `cleanup`. Resolves and plans without changing anything. Per target it reports the chosen version, mode, whether elevation is required, `sha256: present \| missing \| invalid` (invalid: a declared hash is malformed; never skippable), the source URL, and the effects to add or remove. |
 | `--events-file NAME` | `NAME` is a plain file name, never a path (D26). The CLI writes the run's event stream (section 14.1) as JSON lines, flushed per event: global events to `<root>\.gupkg\logs\NAME`, which links to each package's events in `<root>\<name>\.gupkg\logs\NAME`. It ends with the result document. The caller follows those files. A file is used rather than a pipe because an elevated child started through `runas` cannot share pipes with a non-elevated parent, and a plain name means a non-elevated caller cannot steer an elevated write (section 9.6). |
 | `--no-input` | Never prompts. Anything that would need an answer becomes a structured error with exit code 5. |
 

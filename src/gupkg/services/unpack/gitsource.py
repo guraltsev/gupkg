@@ -34,6 +34,16 @@ from .extract import UnpackError
 _SHA = re.compile(r"[0-9a-f]{40}")
 
 
+class CommitMismatch(UnpackError):
+    """Report that the repository served a commit other than the one the version pins."""
+
+    def __init__(self, message: str, expected: str, observed: str) -> None:
+        """Build the error with the pinned and the served commit."""
+        super().__init__(message)
+        self.expected = expected
+        self.observed = observed
+
+
 def checkout_commit(system: System, url: str, ref: str | None, commit: str | None, destination: Path, work: Path) -> str:
     """Check out *commit* (or the commit *ref* resolves to) into the new folder *destination*.
 
@@ -89,7 +99,7 @@ def checkout_commit(system: System, url: str, ref: str | None, commit: str | Non
         git("fetch", "--quiet", "--depth", "1", "--no-tags", "--", url, wanted, cwd=checkout)
         fetched = git("rev-parse", "FETCH_HEAD", cwd=checkout).lower()
         if fetched != wanted:
-            raise UnpackError(f"The repository served commit {fetched}, not the pinned {wanted}")
+            raise CommitMismatch(f"The repository served commit {fetched}, not the pinned {wanted}", wanted, fetched)
         git("checkout", "--quiet", "--detach", wanted, cwd=checkout)
         remove_tree(checkout / ".git")
         os.replace(checkout, destination)
