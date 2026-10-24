@@ -50,10 +50,14 @@ def result_document(command: str, batch: BatchResult, *, warnings: Sequence[str]
     ``relaunched`` is true when this process started an elevated child for the system targets; the child writes its own result
     to the events file named with ``--events-file``.
     """
-    return envelope(
+    document = envelope(
         command, ok=batch.ok, exit_code=batch.exit_code, relaunched=batch.relaunched,
         results=[item.to_data() for item in batch.results], warnings=[redact_text(item) for item in warnings],
     )
+    if batch.relaunched and batch.child_raw_exit_code is not None:
+        # The process exit code of the elevated child as Windows reported it (``exit_code`` is clamped to gupkg's 0 to 6).
+        document["child_raw_exit_code"] = batch.child_raw_exit_code
+    return document
 
 
 def plan_document(command: str, plans: Sequence[InstallPlan | PackageResult], targets: Sequence[str]) -> dict[str, Any]:

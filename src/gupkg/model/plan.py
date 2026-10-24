@@ -64,6 +64,15 @@ EXIT_OK = 0
 EXIT_USER = 2
 EXIT_FAILED = 3
 EXIT_INTERNAL = 4
+
+
+def clamp_child_exit_code(code: int) -> int:
+    """Return *code* when it is one of gupkg's exit codes (0 to 6), else ``EXIT_INTERNAL``.
+
+    The one place an elevated child's raw process exit code (a crash code such as ``0xC000012D``, ``259``, ``-1``) enters a
+    result; the raw value is kept in ``BatchResult.child_raw_exit_code`` for diagnosis.
+    """
+    return code if 0 <= code <= 6 else EXIT_INTERNAL
 EXIT_INPUT = 5
 EXIT_NEWER_GUPKG = 6
 
@@ -449,6 +458,7 @@ class BatchResult:
     results: tuple[PackageResult, ...] = ()
     relaunched: bool = False
     child_exit_code: int | None = None
+    child_raw_exit_code: int | None = None
 
     @property
     def ok(self) -> bool:

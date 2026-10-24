@@ -56,6 +56,7 @@ from ..model.plan import (
     CopyIn,
     InstallPlan,
     PackageResult,
+    clamp_child_exit_code,
     Phase,
     PlanStep,
     Request,
@@ -228,7 +229,7 @@ def run_batch(engine: Engine, requests: Sequence[Request]) -> BatchResult:
             )
             for item in resolved if isinstance(item, PackageResult) or not _needs_token(item)
         )
-        return BatchResult(left_out, relaunched=True, child_exit_code=outcome.exit_code)
+        return BatchResult(left_out, relaunched=True, child_exit_code=None if outcome.exit_code is None else clamp_child_exit_code(outcome.exit_code), child_raw_exit_code=outcome.exit_code)
 
     # One package after another; a stop request is honoured between packages (decision D37).
     results: list[PackageResult] = []

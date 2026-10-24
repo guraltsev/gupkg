@@ -154,6 +154,25 @@ def test_the_parent_waits_and_returns_the_childs_exit_code(world: CliWorld) -> N
     assert "exit code 3" in result.err
 
 
+@pytest.mark.parametrize(
+    ("raw", "mapped"),
+    [pytest.param(code, code, id=f"passes-{code}") for code in range(0, 7)]
+    + [
+        pytest.param(7, 4, id="7"), pytest.param(259, 4, id="still-active-259"), pytest.param(0xC000012D, 4, id="out-of-resources"),
+        pytest.param(0xFFFFFFFF, 4, id="all-ones"), pytest.param(-1, 4, id="minus-one"),
+    ],
+)
+def test_the_childs_exit_code_is_clamped_to_gupkgs_codes_and_the_raw_code_is_kept(world: CliWorld, raw: int, mapped: int) -> None:
+    """Only 0 to 6 pass through; any other process exit code is exit code 4 (the raw value is in `child_raw_exit_code`)."""
+    world.fake.relaunch_exit_code = raw
+
+    result = world.cli("install", "system:tool", "--yes", "--json")
+
+    document = result.document()
+    assert result.code == mapped and document["exit_code"] == mapped and document["child_raw_exit_code"] == raw
+    assert document["relaunched"] is True and document["ok"] is (mapped == 0)
+
+
 def test_a_child_that_ends_well_is_exit_0_when_it_wrote_its_run_end(world: CliWorld) -> None:
     """With ``--events-file`` the parent reads the child's last line: a ``run_end`` makes the success a success."""
     events = world.system_root / ".gupkg" / "logs" / "run.jsonl"

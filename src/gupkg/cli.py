@@ -334,7 +334,8 @@ def _execute(
         if batch.relaunched:
             session.discard_log()
     child_code = next((item.child_exit_code for item in reversed(children) if item.child_exit_code is not None), None)
-    combined = BatchResult(tuple(merged), relaunched=relaunched, child_exit_code=child_code)
+    raw_code = next((item.child_raw_exit_code for item in reversed(children) if item.child_raw_exit_code is not None), None)
+    combined = BatchResult(tuple(merged), relaunched=relaunched, child_exit_code=child_code, child_raw_exit_code=raw_code)
     text = combined.summary()
     extra: dict[str, Any] = {}
     if relaunched:
