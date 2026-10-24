@@ -1764,6 +1764,12 @@ hook of a version directory that exposes a name `track` once loaded is refused, 
 scan saw. A package that needs a program the sandbox has no double for ends with the code
 `needs-real-run`.
 
+**Child processes of an elevated run.** `safe_process_environment(extra, system=...)` builds the environment from nothing the
+process environment says: `PATH` is the admin-only, existing, absolute, de-duplicated folders of the process `PATH` (no `%`,
+no UNC, no relative entry), `SYSTEMROOT`, `WINDIR` and `COMSPEC` come from the Windows folder only when `SYSTEMROOT` or `WINDIR` names an
+existing admin-only folder (they are left out otherwise), `PATHEXT` is the fixed default, and `TEMP`/`TMP` are the work folder
+the caller gives (`PROGRAMDATA` is left out). The installer and git both use it.
+
 **Locks.** A run that changes a package (install, update, switch, repair, uninstall, cleanup,
 `check-updates`, `check --fix`) first creates `<package>\.gupkg\locks\package.lock` exclusively; it holds the
 process id, host, operation, start time and a random token. A second run on the same package fails with
@@ -1787,7 +1793,10 @@ standard input and `engine.installer_timeout` (30 minutes); in an elevated run i
 folders of the process `PATH`. `$Stage` expands to the staged `App`; after the expansion every value of an
 option (`/DIR=...`, `-dir:...`, `-o...`) or bare argument must be the stage, a path below it, or a plain word: a value
 that starts with a backslash, `/`, `~` or `%`, holds a `:` that is not in the stage path, a `..`, a separator
-outside the stage or a Windows device name (`con`, `nul`, `com1`) is refused before the installer starts. After it ran, the
+outside the stage or a Windows device name (`con`, `nul`, `com1`, also inside the stage) is refused before the
+installer starts; a quoted `/D=` is refused (NSIS reads it unquoted and last). The validator accepts `[source.installer]` only with
+`kind = "exe"` (or none) and no unpack option (`strip`, `subdir`, `nested`, `extract`, `verify_manifest`): they would be
+silently ignored. After it ran, the
 version's `require` paths must exist, and the staged `App` may hold no link or junction. A failing,
 timed-out or refused installer removes the staging folder: nothing is activated. Under a sandbox an
 installer runs only through an explicit process double; without one the result is `needs-real-run`. The risk:
@@ -1801,7 +1810,11 @@ installer is populated by `check-updates` only when the setting allows it.
 expansion, so `$App\..\..` is refused), no relative, UNC, `\\?\` or device path, no quote or control character. The
 machine `PATH` takes only a path inside the package, the mode's `bin` folder or a machine-wide folder
 (`ProgramFiles`, `SystemRoot`...), never a `%VAR%` prefix (a user can override it), and an existing folder that is a link or that
-standard users can change is refused when the entry is applied. The manifest validator, `desired_effects`,
+standard users can change is refused when the entry is applied, and so is an entry that does not exist yet unless it
+lies inside the package (a standard user could create a missing folder inside a writable subfolder of `SystemRoot`, such as
+`Temp`, later): for an entry inside the package the nearest existing ancestor is judged (admin-only, and no link or
+junction between it and `current`). Removal skips these two rules, so an entry whose folder is gone can still be taken off the
+`PATH`. Control, invisible and line-separator characters (the whole Unicode category C and `Zl`/`Zp`) are refused. The manifest validator, `desired_effects`,
 `apply_effect` and `remove_effect` all check, so a hostile install record cannot make an uninstall change the `PATH`.
 
 **Names a package may not take.** `[[env]]` and `[portable] env` may not name `Path` (it would replace the
