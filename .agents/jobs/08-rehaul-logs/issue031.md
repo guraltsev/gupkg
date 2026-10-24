@@ -83,4 +83,11 @@ Merged main (controller commits only). Fixes, by the reviewer's numbers:
 12. **Nits.** Atomic `write_text_bytes` (a test makes `os.replace` fail), stale `.new-<8 hex>` folders removed at the start of a run, fingerprint caps (10,000 files, 512 MiB),
     no Unicode normalisation documented, geogebra fixtures reformatted, the literal 13 pinned.
 13. **Flake.** `test_the_regex_worker_answers_a_request_in_isolation` finds the `pid` line anywhere; 30 repeated runs alone and 30 beside a parallel pytest process: 0 failures.
+Round 2 (final tidy): workflow values reach scripts through `env:` only (a registry test fails on any `${{` in a `run:` block); one `each` step per
+chain and a 60-request budget for the chain walk (its own error, never skipped); `render_pinned` drops `[source.checksum]` and a version directory that carries
+one is an error; an optional checksum waives only an absence and says which (warning event, `TrackResult.notes`, printed beside `[REVIEW]`), a malformed digest
+line is an error; `is_version_name` also refuses Unicode Cc, Cf, Zl, Zp, Co, Cn, Cs, variation selectors and names over 128 characters; stale staging only after an hour
+and errors tolerated; fingerprint walk caps directories (2,000) and depth (32); `:(literal)` pathspecs; ref-format rules for `--remote` and `--branch`; the shutter-encoder
+link regex matches bare URLs; the inkscape digest regex needs a whole 64-digit token. 23 more mutants killed.
+
 14. Manual list gained items 11 to 14; the SSH git URLs stay (0.17 used them, public status unknown), as a documented manual item.

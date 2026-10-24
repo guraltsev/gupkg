@@ -755,7 +755,7 @@ counted are from the 2026-10-22 registry.
 | `last_modified` | autoruns, processexplorer | `check_url`, `format = "%Y.%m.%d"` |
 | `rss` | netio-gui | `check_url`, `match` |
 | `git` | latex-toolkit, overleaf-sync, windebloattools | `repo_url`, `ref`; version = `YYYYMMDD-HHMMSS-<short sha>` (the commit is the integrity anchor) |
-| `chain` | winscp, inkscape, shutter-encoder | ordered `[[track.fetch]]` steps; each step's captures feed the next URL; a step may be `optional = true` (skipped when it fails or matches nothing: inkscape's digest link) or `select = "each"` (try its matches in page order, at most 20, against the later steps and keep the first that gets through: shutter-encoder's links to several systems) |
+| `chain` | winscp, inkscape, shutter-encoder | ordered `[[track.fetch]]` steps; each step's captures feed the next URL; a step may be `optional = true` (skipped when it fails or matches nothing: inkscape's digest link) or `select = "each"` (try its matches in page order, at most 20, against the later steps and keep the first that gets through: shutter-encoder's links to several systems; one `each` step per chain, and the whole walk is bounded at 60 requests) |
 | `module` | anything else | `pkg.local/track.py` → `track(ctx) -> TrackResult` |
 
 Every provider:
@@ -947,8 +947,12 @@ ever appears, and otherwise the tracker declares `[source.checksum]`.
 **`optional = true` (issue 031).** A vendor that publishes a digest for some builds only (GNU Emacs) is
 declared with `optional = true`: when the file or the entry is missing the tracker finds the version
 without a checksum, and the registry tool then computes one with `sha256_from = "registry"`, flagged
-for review. A regular-expression failure (a deadline, a crashed worker) is never skipped, even for an
-optional source.
+for review. Optional means the *source is absent*: a missing sums file or entry (`not found`, `not
+listed`) or a fetch that failed (`fetch failed`) is waived, with a Warning event and a note in the
+`TrackResult` that the registry tool prints next to `[REVIEW]`; a digest line that names the entry with
+something that is not a SHA-256, and a regular-expression failure (a deadline, a crashed worker), are never
+waived. A pinned version carries no `[source.checksum]`: `render_pinned` drops it and the package checker
+refuses it in a version directory.
 
 ### 8.6 Hook library
 
@@ -1870,7 +1874,14 @@ gupkg-registry/
 - **Version names** are checked wherever a version directory is created or read (`is_version_name`):
   Windows device names (`CON`, `NUL`, `COM1`..., with or without an extension), control and bidirectional
   characters, `%`, `$`, `~<digit>`, a leading dash, surrounding spaces and a trailing dot are refused, so a
-  hostile page cannot make the tool write a directory a Windows checkout cannot hold.
+  hostile page cannot make the tool write a directory a Windows checkout cannot hold. Unicode control, format,
+  separator, private-use, surrogate and unassigned characters, variation selectors and names over 128
+  characters are refused too (a version a tracker discovers is capped at 64).
+- **The tool's housekeeping and limits.** Leftover `.new-<8 hex>` staging folders are removed only when
+  older than an hour (a live run keeps its own) and a folder that cannot be removed is a warning. The
+  fingerprint walk refuses more than 10,000 files, 2,000 directories, 32 levels or 512 MiB. `git add` and
+  `git commit` use `:(literal)` pathspecs; `--remote` and `--branch` follow the rules of `git
+  check-ref-format` (a branch may not start with `refs/`).
 - **Validation** (`gupkg_registry validate`, run by the registry's CI) requires: zero errors and zero
   warnings from the package checker for every tracker and version, explicit `modes`, a `sha256` and
   its provenance on every version, a fingerprint that matches the files, launchers equal to the
