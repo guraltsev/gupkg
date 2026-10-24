@@ -163,6 +163,10 @@ class FakeSystem(WindowsLinks):
         JSON file that persists the registry, its log and the counters.
     relaunch_result : bool
         What ``relaunch_elevated`` reports.
+    pid : int
+        What ``process_id`` reports.
+    live_pids : set of int
+        Other process ids that ``process_is_running`` reports as running (a lock held by a living second run).
     failures : dict, optional
         Method name to an exception that the next call of that method raises
         (once), to exercise failure paths.
@@ -177,6 +181,8 @@ class FakeSystem(WindowsLinks):
     real_7zip: bool = True
     state_file: Path | None = None
     relaunch_result: bool = True
+    pid: int = field(default_factory=os.getpid)
+    live_pids: set[int] = field(default_factory=set)
     failures: dict[str, BaseException] = field(default_factory=dict)
     registry_log: list[RegistryAccess] = field(default_factory=list)
     broadcasts: int = 0
@@ -317,6 +323,16 @@ class FakeSystem(WindowsLinks):
     def is_elevated(self) -> bool:
         """Report the configured elevation flag."""
         return self.elevated
+
+    def process_id(self) -> int:
+        """Return the configured process id (the real one by default)."""
+        return self.pid
+
+    def process_is_running(self, pid: int) -> bool:
+        """Report whether *pid* is this fake process or one of ``live_pids``; a sandbox asks the real system."""
+        if pid == self.pid or pid in self.live_pids:
+            return True
+        return self.delegate.process_is_running(pid) if self.delegate is not None else False
 
     def relaunch_elevated(self, argv: Sequence[str]) -> bool:
         """Record the request and report the configured outcome; nothing is started."""

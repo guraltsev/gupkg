@@ -264,6 +264,8 @@ def test_cleanup_removes_receipts_of_versions_that_are_gone_and_leftover_work_fo
     leftover = package / ".gupkg" / "work" / "populate-crashed"
     leftover.mkdir(parents=True)
     (leftover / "half.bin").write_text("x", encoding="utf-8")
+    old = leftover.stat().st_mtime - 3 * 24 * 3600
+    os.utime(leftover, (old, old))
 
     result = world.one("cleanup", "tool")
 

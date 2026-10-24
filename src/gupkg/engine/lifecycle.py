@@ -27,7 +27,9 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable, Sequence
+from contextlib import nullcontext
 from dataclasses import replace
+from datetime import timedelta
 from pathlib import Path
 
 from ..catalog.catalog import Candidate, Catalog, CatalogError, NoVersionKnown, NotFound, NotInstalled
@@ -68,8 +70,12 @@ from .executor import (
     sync_registry_tracker,
 )
 from .health import Diagnosis, diagnose
+from .locks import PackageBusy, package_lock
 from .planner import Chosen, CleanupFacts, CleanupPlan, PlanError, plan_cleanup, plan_install, plan_uninstall
 from .receipts import list_receipts, read_receipt
+
+# A work entry younger than this is never removed by ``cleanup`` (it may belong to a run that is still going).
+WORK_MIN_AGE = timedelta(hours=24)
 
 
 # ---------------------------------------------------------------------------
@@ -291,7 +297,18 @@ def _run_one(engine: Engine, target: _Target, sole: bool) -> PackageResult:
     path = view.path if view is not None and view.path is not None else context.package_dir(name) if _safe_name(name) else context.root
     with package_scope(name, path, root=str(context.root), sole=sole) as scope:
         try:
-            result = _dispatch(engine, target)
+            with _held(engine, request, context, name, path):
+                result = _dispatch(engine, target)
+        except PackageBusy as busy:
+            # Housekeeping leaves a package that another run is changing alone; every other operation fails naming the holder.
+            if request.operation != "cleanup":
+                result = failure(name, request.operation, busy, mode=context.mode, log=engine.log_path(path))
+                emit(Error(str(busy), busy.hint))
+            else:
+                emit(Warning(f"{name} is in use and was left alone: {busy}"))
+                result = PackageResult(
+                    name, "cleanup", True, "skipped", mode=context.mode, warnings=(str(busy),), details={"locked": True},
+                )
         except _UpToDate as nothing:
             emit(Step(f"{nothing.view.name} is up to date", "ok"))
             result = PackageResult(
@@ -304,6 +321,14 @@ def _run_one(engine: Engine, target: _Target, sole: bool) -> PackageResult:
             emit(Error(str(data.get("message", error)), data.get("hint")))
         scope.result.update({"ok": result.ok, "status": result.status, "version": result.version})
     return result
+
+
+def _held(engine: Engine, request: Request, context: ModeContext, name: str, path: Path):
+    """Return the lock one operation holds on one package: every operation that changes it, never a read-only check."""
+    changes = request.operation != "check" or request.fix
+    if not changes or not _safe_name(name) or path == context.root:
+        return nullcontext()
+    return package_lock(engine.system, path, request.operation, engine.now, elevated=engine.elevated)
 
 
 def _safe_name(name: str) -> bool:
@@ -335,7 +360,7 @@ def _plan_one(engine: Engine, target: _Target) -> InstallPlan:
     view = _view(target)
     if request.operation == "uninstall":
         return plan_uninstall(request, view, context)
-    extra = {"cleanup": _cleanup_plan(target, view).to_data()} if request.operation == "cleanup" else {}
+    extra = {"cleanup": _cleanup_plan(engine, target, view).to_data()} if request.operation == "cleanup" else {}
     return InstallPlan(
         request.operation, view.name, view.path or context.package_dir(view.name), context.root, context.mode, None,
         view.installed.version if view.installed else None, None, None, (),
@@ -602,17 +627,36 @@ def _cleanup(engine: Engine, target: _Target) -> PackageResult:
     """Plan and run ``cleanup`` for one package (never automatically, decision D43)."""
     context = target.resolved.context
     view = _view(target)
-    cleanup_plan = _cleanup_plan(target, view)
+    cleanup_plan = _cleanup_plan(engine, target, view)
     forwarder = context.root if (context.root / DATA_DIR_NAME / "gupkg.cmd").is_file() else None
     return execute_cleanup(engine, view.path, cleanup_plan, forwarder)
 
 
-def _cleanup_plan(target: _Target, view: PackageView) -> CleanupPlan:
-    """Gather what only the disk can say about a package and plan its cleanup."""
+def _old_entries(engine: Engine, folder: Path) -> list[str]:
+    """Return the names in *folder* last changed more than ``WORK_MIN_AGE`` ago."""
+    if not folder.is_dir():
+        return []
+    now = engine.now().timestamp()
+    old = []
+    for item in folder.iterdir():
+        try:
+            if now - item.lstat().st_mtime > WORK_MIN_AGE.total_seconds():
+                old.append(item.name)
+        except OSError:
+            continue
+    return old
+
+
+def _cleanup_plan(engine: Engine, target: _Target, view: PackageView) -> CleanupPlan:
+    """Gather what only the disk can say about a package and plan its cleanup.
+
+    Only work entries older than ``WORK_MIN_AGE`` are offered for removal: a run that is still going (or has just
+    died) keeps its staging folder.
+    """
     path = view.path
     work = path / DATA_DIR_NAME / "work"
     facts = CleanupFacts(
-        tuple(list_receipts(path)), tuple(sorted(item.name for item in work.iterdir())) if work.is_dir() else (),
+        tuple(list_receipts(path)), tuple(sorted(_old_entries(engine, work))),
         {state.name: _inputs_present(path, state) for state in view.local.versions},
     )
     return plan_cleanup(target.request, view, facts)

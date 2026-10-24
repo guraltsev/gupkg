@@ -233,6 +233,12 @@ class System(Protocol):
     def directory_untrusted_reason(self, path: Path) -> str | None:
         """Return why *path* is not admin-only, or ``None`` when it is."""
 
+    def process_id(self) -> int:
+        """Return the id of this process (recorded in a package lock so another run can tell whether the holder lives)."""
+
+    def process_is_running(self, pid: int) -> bool:
+        """Return whether a process with id *pid* is running; an id that cannot be judged counts as running."""
+
     # -- locations ---------------------------------------------------------
 
     def scope_folders(self, scope: Scope) -> ScopeFolders:
