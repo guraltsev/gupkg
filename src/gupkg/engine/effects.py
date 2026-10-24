@@ -36,9 +36,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..catalog.local import canonical_path, is_inside
+from ..catalog.local import canonical_path, is_inside, is_reparse_point
 from ..core import write_bytes_atomic
-from ..model.manifest import Manifest, is_reserved_env_name, name_part_problem
+from ..model.manifest import Manifest, is_reserved_env_name, name_part_problem, path_entry_shape_problem
 from ..model.mode import ENV_MACHINE, ModeContext
 from ..model.plan import effect_key, normalize_entry
 from ..model.state import Effect
@@ -235,8 +235,7 @@ def desired_effects(manifest: Manifest, context: EffectContext) -> tuple[tuple[E
             effects.append(Effect("path", {"scope": scope, "entry": str(context.bin_dir), "added": False, "shared": True}))
         for value in manifest.paths:
             entry = _expand(value, values, context.env, f"PATH entry '{value}'").strip()
-            if not entry:
-                raise EffectError(f"PATH entry '{value}' expands to an empty value")
+            _require_path_entry(entry, context, scope, f"PATH entry '{value}'")
             effects.append(Effect("path", {"scope": scope, "entry": os.path.normpath(entry), "added": False}))
 
     # One effect per identity: a second declaration of the same thing is an error in the package.
@@ -272,6 +271,51 @@ def _wrapper_bytes(path: Path, content: str) -> bytes:
         return content.encode("ascii")
     except UnicodeEncodeError:
         return content.encode("utf-8-sig")
+
+
+# The variables whose folders are machine-wide, so a system ``PATH`` entry below one of them is as trusted as the package root.
+_MACHINE_ROOTS = (
+    "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "CommonProgramFiles", "CommonProgramFiles(x86)", "CommonProgramW6432",
+    "SystemRoot", "windir",
+)
+
+
+def _require_path_entry(entry: str, context: EffectContext, scope: str, label: str) -> None:
+    """Refuse a ``PATH`` entry that is not one absolute local folder, and, in the system scope, one outside trusted places.
+
+    After expansion the entry must pass ``path_entry_shape_problem`` (no ``;``, ``..``, relative or UNC path...). A
+    machine ``PATH`` entry must also lie inside the package root, the mode's ``bin`` folder or a machine-wide folder
+    (``ProgramFiles``, ``SystemRoot``...): a folder a standard user can write would let that user run code as everyone.
+    """
+    problem = path_entry_shape_problem(entry, template=False)
+    if problem is not None:
+        raise EffectError(f"{label} {entry!r} {problem}")
+    if scope != "system":
+        return
+    if entry.startswith("%"):
+        raise EffectError(f"{label} {entry!r} follows an environment variable, which a user can override: not allowed on the machine PATH")
+    normalized = os.path.normpath(entry)
+    roots = [context.package_path, context.bin_dir]
+    folded = {name.casefold(): value for name, value in context.env.items()}
+    roots += [Path(folded[name.casefold()]) for name in _MACHINE_ROOTS if folded.get(name.casefold())]
+    if not any(canonical_path(normalized) == canonical_path(root) or is_inside(normalized, root) for root in roots):
+        raise EffectError(
+            f"{label} {entry!r} is not inside the package, the bin folder or a machine-wide folder, so it cannot go on the machine PATH"
+        )
+
+
+def _require_trusted_folder(system: System, entry: str, scope: str) -> None:
+    """Refuse a machine ``PATH`` entry whose folder exists, is a link, or can be changed by a standard user."""
+    if scope != "system":
+        return
+    folder = Path(entry)
+    if not os.path.lexists(folder):
+        return
+    if is_reparse_point(folder):
+        raise EffectError(f"PATH entry {entry!r} is a link or junction and cannot go on the machine PATH")
+    reason = system.directory_untrusted_reason(folder)
+    if reason is not None:
+        raise EffectError(f"PATH entry {entry!r} can be changed by standard users ({reason}), so it cannot go on the machine PATH")
 
 
 def _require_free_name(name: str) -> None:
@@ -381,6 +425,9 @@ def apply_effect(system: System, effect: Effect, context: EffectContext, previou
         entry = str(fields["entry"])
         if fields.get("shared"):
             context.bin_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            _require_path_entry(entry, context, str(fields.get("scope")), "PATH entry")
+            _require_trusted_folder(system, entry, str(fields.get("scope")))
         current = system.get_path(scope)
         if normalize_entry(entry) in {normalize_entry(item) for item in current}:
             added = bool(previous.fields.get("added")) if previous is not None else False
@@ -437,6 +484,7 @@ def remove_effect(system: System, effect: Effect, context: EffectContext) -> boo
         if not fields.get("added") or fields.get("shared"):
             return False
         scope = _scope(fields)
+        _require_path_entry(str(fields["entry"]), context, str(fields.get("scope")), "recorded PATH entry")
         current = system.get_path(scope)
         wanted = normalize_entry(str(fields["entry"]))
         kept = [item for item in current if normalize_entry(item) != wanted]

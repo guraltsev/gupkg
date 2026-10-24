@@ -89,6 +89,44 @@ def name_part_problem(part: str) -> str | None:
     return None
 
 
+_DRIVE_PATH = re.compile(r"^[A-Za-z]:[\\/]")
+_ENV_PREFIX = re.compile(r"^%[A-Za-z_][A-Za-z0-9_()]*%[\\/]")
+
+
+def path_entry_shape_problem(text: str, *, template: bool) -> str | None:
+    """Return why *text* cannot be one ``PATH`` entry, or ``None``. Pure text: no file system is asked.
+
+    A ``PATH`` entry is one absolute local folder: ``X:\\...``. Refused: an empty entry, a ``;`` (one declaration would
+    become several entries, and uninstall would not match them), a control character or a quote, a ``..`` segment,
+    a UNC, ``\\\\?\\`` or device path, a relative path (a relative entry in the machine ``PATH`` resolves against the current
+    directory, so a program could plant itself there), and names Windows treats specially (devices, streams). With
+    *template* true the text is the declaration before expansion, so it may start with a variable (``$App``,
+    ``${ProgramFiles}``) instead of a drive.
+    """
+    if not text.strip():
+        return "is empty"
+    if any(ord(char) < 32 or char in '"<>|*?' for char in text):
+        return "holds a control character, a quote or one of < > | * ?"
+    if ";" in text:
+        return "holds a ';' (one PATH entry only)"
+    if text.startswith(("\\\\", "//")):
+        return "is a UNC or device path"
+    parts = [part for part in re.split(r"[\\/]+", text) if part]
+    if ".." in parts:
+        return "has a '..' segment"
+    # ``%LOCALAPPDATA%\bin`` is the Windows way to write a PATH entry that follows an environment variable; it is allowed
+    # as a prefix only (the machine PATH refuses it, see the engine), and a second ``%`` is not.
+    prefix = _ENV_PREFIX.match(text)
+    if ("%" in text[prefix.end():]) if prefix else ("%" in text):
+        return "holds a '%' that is not the one environment variable it may start with"
+    if not (_DRIVE_PATH.match(text) or prefix or (template and text.startswith("$"))):
+        return "must be an absolute local path with a drive (X:\\...)" + (" or start with a variable" if template else "")
+    for part in parts[1:]:
+        if (problem := name_part_problem(part)) is not None:
+            return f"has a segment {part!r} that {problem}"
+    return None
+
+
 def is_reserved_env_name(name: str) -> bool:
     """Return whether *name* is an environment variable a package may not set (``Path``, ``TEMP``, ``PROCESSOR_*`` ...)."""
     folded = name.strip().casefold()
@@ -1217,6 +1255,9 @@ def _parse_paths(collector: _Collector, raw: Any, modes: tuple[str, ...]) -> tup
         value = collector.string(row, "value", where, required=True)
         if value is not None:
             _check_variables(collector, value, f"{where}.value", modes)
+            if (problem := path_entry_shape_problem(value, template=True)) is not None:
+                collector.error(f"{where}.value", f"{value!r} {problem}")
+                continue
             values.append(value)
     return tuple(values)
 
