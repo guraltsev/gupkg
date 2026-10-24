@@ -56,6 +56,8 @@ SCRIPT_SUFFIXES = (".py", ".ps1", ".cmd", ".bat", ".exe")
 SHIM_TYPES = ("console", "gui")
 LOCAL_DIR = "pkg.local"
 APP_MISSING_ERROR = "App is missing and no way to recover it."
+# The label that the plan, the install output and ``list --details`` give a version that runs a vendor installer (design 8.4).
+INSTALLER_LABEL = "runs vendor installer"
 
 # Environment variables a package may not set or delete through ``[[env]]``: ``Path`` would replace the whole PATH
 # (``[[path]]`` adds one entry the safe way), and the others are the system's own. Compared case-insensitively.

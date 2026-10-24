@@ -34,18 +34,19 @@ from typing import Any
 
 from ..catalog.local import DATA_DIR_NAME, is_reparse_point
 from ..model.checksum import ChecksumMismatch, ChecksumRecord, git_gate, git_record, unverified_note
-from ..model.manifest import Manifest
+from ..model.manifest import INSTALLER_LABEL, Manifest
 from ..model.mode import ModeContext
 from ..report.events import Step, Warning, emit, phase
 from ..services.artifact import fetch_artifact, reverify
 from ..services.hooks import HookContext, HookPaths
 from ..services.http import HttpClient
-from ..services.populate import populate_app, populate_git, run_custom_populate
+from ..services.populate import populate_app, populate_git, prepare_app, run_custom_populate
 from ..services.safepath import remove_tree
 from ..services.unpack.gitsource import CommitMismatch
 from ..services.values import file_name_from_url
 from .context import Engine, require_trusted_tools, require_work_folder
 from .fingerprint import aggregate_digest, app_files
+from .installer import InstallerError, run_installer
 from .portable import apply_mode_adjustments, scratch_name
 
 
@@ -77,6 +78,7 @@ def populate_version(
     skip: str | None,
     record_manifest: bool,
     replace: bool = False,
+    allow_installer: bool = True,
 ) -> Populated:
     """Build ``<version_dir>\\App`` from the version's ``[source]`` and return the receipt sections.
 
@@ -98,6 +100,8 @@ def populate_version(
         Whether the SHA-256 of every file is recorded (the package's and the global setting together).
     replace : bool
         Replace an ``App`` that exists (``--refresh``).
+    allow_installer : bool
+        The ``hooks.allow_vendor_installers`` setting; a version that runs a vendor installer is refused when it is false.
 
     Returns
     -------
@@ -110,6 +114,8 @@ def populate_version(
         From the services; the staged ``App`` and scratch folder are removed.
     AppBuildError
         If ``App`` is a link, is missing after the build, or cannot be moved into place.
+    InstallerError
+        If a vendor installer is refused (the setting, its arguments), fails, times out or leaves an unacceptable ``App``.
     """
     source = manifest.source
     target = version_dir / "App"
@@ -138,8 +144,10 @@ def populate_version(
 
         # The three ways of filling App: the built-in download script, a git checkout, a custom script.
         if kind == "download":
-            checksum = _download_and_unpack(engine, client, manifest, paths, name, version, skip)
+            checksum, ran = _download_and_unpack(engine, client, manifest, paths, name, version, skip, allow_installer)
             sections["source"]["url"] = source.download_url
+            if ran is not None:
+                sections["source"]["installer"] = ran
         elif kind == "git":
             checksum = _checkout(engine, client, manifest, paths, name, version, skip)
             sections["source"]["url"] = source.download_url
@@ -176,8 +184,13 @@ def populate_version(
 
 def _download_and_unpack(
     engine: Engine, client: HttpClient, manifest: Manifest, paths: HookPaths, name: str, version: str, skip: str | None,
-) -> ChecksumRecord:
-    """Fetch the one URL of ``[source]`` under the checksum policy, verify it again, and unpack it into the staged ``App``."""
+    allow_installer: bool,
+) -> tuple[ChecksumRecord, list[str] | None]:
+    """Fetch the one URL of ``[source]`` under the checksum policy, verify it again, and unpack it into the staged ``App``.
+
+    A version with ``[source.installer]`` runs the verified installer into the staged ``App`` instead of unpacking it
+    (``gupkg.engine.installer``); the arguments it ran with are returned for the receipt.
+    """
     source = manifest.source
 
     # The rule runs before any byte is requested; a refusal starts no download.
@@ -202,11 +215,17 @@ def _download_and_unpack(
             name, version, engine.system, client,
             HookPaths(paths.package_root, paths.version_root, paths.app, fetched.download.path, paths.work, paths.cache),
         )
-        populate_app(
-            engine.system, manifest, fetched.download.path, paths.app, context=hook,
-            filename=file_name_from_url(fetched.download.final_url), seven_zip=engine.seven_zip_path(), limits=engine.limits,
-        )
-    return fetched.record
+        if source.installer is None:
+            populate_app(
+                engine.system, manifest, fetched.download.path, paths.app, context=hook,
+                filename=file_name_from_url(fetched.download.final_url), seven_zip=engine.seven_zip_path(), limits=engine.limits,
+            )
+            return fetched.record, None
+        if not allow_installer:
+            raise InstallerError(f"{name} {version} {INSTALLER_LABEL}, and hooks.allow_vendor_installers is false")
+        ran = run_installer(engine, fetched, source.installer.run, paths.app, paths.work, source.require, name, version)
+        prepare_app(manifest, paths.app, hook)
+    return fetched.record, ran
 
 
 def _checkout(

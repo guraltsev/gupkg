@@ -167,6 +167,7 @@ def execute_install(engine: Engine, run: ExecutionInput) -> PackageResult:
         populated = populate_version(
             engine, context, package_path, version_dir, manifest, name=plan.package, version=version,
             skip=run.request.skip, record_manifest=_records_manifest(manifest, run.settings), replace=run.request.refresh,
+            allow_installer=bool(run.settings["hooks.allow_vendor_installers"]),
         )
     else:
         for name in ("Fetch", "Verify", "Unpack", "Prepare"):

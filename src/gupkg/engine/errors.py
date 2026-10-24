@@ -45,7 +45,9 @@ from ..services.prepare import PrepareError
 from ..services.track import ChecksumDiscoveryError, TrackError
 from ..services.unpack import UnpackError
 from ..system.port import ProcessFailed, ProcessNotAllowed
+from .appbuild import AppBuildError
 from .effects import EffectError
+from .installer import InstallerError
 from .locks import PackageBusy
 from .planner import PlanError
 from .portable import PortableError
@@ -76,6 +78,8 @@ _TABLE: tuple[tuple[type[BaseException], str, int], ...] = (
     (HttpError, "network-error", EXIT_FAILED),
     (ProcessFailed, "process-failed", EXIT_FAILED),
     (PackageBusy, "package-busy", EXIT_FAILED),
+    (InstallerError, "installer-failed", EXIT_FAILED),
+    (AppBuildError, "app-build-failed", EXIT_FAILED),
     (EffectError, "effect-error", EXIT_FAILED),
     (PortableError, "portable-error", EXIT_FAILED),
     (OSError, "io-error", EXIT_FAILED),

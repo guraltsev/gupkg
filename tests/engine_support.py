@@ -195,7 +195,8 @@ class World:
         return double
 
     def tracker(
-        self, name: str, *, mode: str = "user", tables: str = "", top: str = "", root: Path | None = None, checksum: bool = True
+        self, name: str, *, mode: str = "user", tables: str = "", top: str = "", root: Path | None = None, checksum: bool = True,
+        suffix: str = "zip",
     ) -> Path:
         """Write ``<root>/<name>/_check_updates`` with a ``json`` tracker that reads ``{"version": ...}`` from a URL.
 
@@ -207,19 +208,21 @@ class World:
         text = "\n".join(line for line in (
             "format = 2", 'description = "a tracked package"', top.rstrip(),
             "[track]", 'provider = "json"', f'check_url = "{BASE_URL}/{name}-latest.json"', 'version = "$.version"',
-            "[source]", f'download_url = "{BASE_URL}/{name}-${{version}}.zip"',
+            "[source]", f'download_url = "{BASE_URL}/{name}-${{version}}.{suffix}"',
             *(("[source.checksum]", 'sidecar = "${download_url}.sha256"') if checksum else ()),
             tables.rstrip(),
         ) if line != "") + "\n"
         (folder / "pkg.toml").write_text(text, encoding="utf-8")
         return folder
 
-    def announce(self, name: str, version: str, *, sidecar: bool = True, members: dict[str, str] | None = None) -> str:
+    def announce(
+        self, name: str, version: str, *, sidecar: bool = True, members: dict[str, str] | None = None, suffix: str = "zip"
+    ) -> str:
         """Make the tracker of *name* find *version*: serve the version document, the artifact and (optionally) its sidecar."""
         self.fake.add_url(f"{BASE_URL}/{name}-latest.json", f'{{"version": "{version}"}}')
-        url, digest = self.serve(name, version, members)
+        url, digest = self.serve(name, version, members, suffix=suffix)
         if sidecar:
-            self.fake.add_url(f"{url}.sha256", f"{digest}  {name}-{version}.zip\n")
+            self.fake.add_url(f"{url}.sha256", f"{digest}  {name}-{version}.{suffix}\n")
         return digest
 
     def registry(

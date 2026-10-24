@@ -30,8 +30,8 @@ from dataclasses import dataclass, field
 from functools import cmp_to_key
 from pathlib import Path
 
-from ..model.checksum import plan_checksum
-from ..model.manifest import APP_MISSING_ERROR, Manifest
+from ..model.checksum import ChecksumPlan, plan_checksum
+from ..model.manifest import APP_MISSING_ERROR, INSTALLER_LABEL, Manifest, Source
 from ..model.mode import ModeContext
 from ..model.plan import (
     CHECK_UPDATES_PHASES,
@@ -133,6 +133,7 @@ def plan_install(
     package_path: Path | None = None,
     url_from: str = "pkg.toml",
     drifted: Collection[tuple[str, ...]] = frozenset(),
+    allow_installer: bool = True,
 ) -> InstallPlan:
     """Plan an install-like operation: ``install``, ``update``, ``switch`` or a repair.
 
@@ -158,6 +159,8 @@ def plan_install(
         Where the download URL comes from, reported in the checksum plan.
     drifted : collection of tuple
         The ``effect_key`` of recorded effects that a repair found missing or changed on the machine.
+    allow_installer : bool
+        The ``hooks.allow_vendor_installers`` setting: whether a version that runs a vendor installer may be populated.
 
     Returns
     -------
@@ -179,7 +182,10 @@ def plan_install(
     record_effects = view.record.effects if view.record is not None else ()
 
     # How App is obtained and whether anything has to happen.
-    populate = plan_populate(manifest, chosen.state, refresh=request.refresh, url_from=url_from, copy_in=copy_in is not None)
+    populate = plan_populate(
+        manifest, chosen.state, refresh=request.refresh, url_from=url_from, copy_in=copy_in is not None,
+        allow_installer=allow_installer,
+    )
 
     # The integration diff against what the install record says is applied now. An effect that is recorded but
     # known to be missing on the machine (a repair found it) is applied again.
@@ -206,7 +212,8 @@ def plan_install(
 
 
 def plan_populate(
-    manifest: Manifest, state: VersionState | None, *, refresh: bool, url_from: str, copy_in: bool = False
+    manifest: Manifest, state: VersionState | None, *, refresh: bool, url_from: str, copy_in: bool = False,
+    allow_installer: bool = True,
 ) -> PopulatePlan:
     """Decide how the version's ``App`` is obtained and whether that has to happen now.
 
@@ -220,11 +227,6 @@ def plan_populate(
         With ``App is missing and no way to recover it.`` when nothing can populate a missing ``App``.
     """
     source = manifest.source
-    if source.installer is not None:
-        raise PlanError(
-            "This version runs a vendor installer ([source.installer]), which this gupkg does not run yet; "
-            "nothing was installed. (Design 8.4 allows it as an explicit step; it is not part of the execution engine.)"
-        )
     kind = "script" if source.populate == "script" else "shipped" if source.populate == "none" else (
         "git" if source.kind == "git" else "download"
     )
@@ -240,12 +242,25 @@ def plan_populate(
     # A populated App is kept; only --refresh rebuilds it, and never a shipped one.
     if populated:
         if refresh and recoverable and not source.shipped:
-            return PopulatePlan(kind, True, "--refresh rebuilds the App", source.download_url, checksum, source.script, recoverable)
+            return _populate_plan(kind, True, "--refresh rebuilds the App", source, checksum, recoverable, allow_installer)
         why = "the shipped App is never replaced" if refresh and source.shipped else "App is already populated"
-        return PopulatePlan(kind, False, why, source.download_url, checksum, source.script, recoverable)
+        return _populate_plan(kind, False, why, source, checksum, recoverable, allow_installer)
     if not recoverable:
         raise PlanError(APP_MISSING_ERROR)
-    return PopulatePlan(kind, True, "App is missing", source.download_url, checksum, source.script, recoverable)
+    return _populate_plan(kind, True, "App is missing", source, checksum, recoverable, allow_installer)
+
+
+def _populate_plan(
+    kind: str, needed: bool, why: str, source: Source, checksum: ChecksumPlan | None, recoverable: bool, allow_installer: bool
+) -> PopulatePlan:
+    """Build a ``PopulatePlan``; a vendor installer that has to run is refused when the setting forbids it."""
+    installer = source.installer.run if source.installer is not None and kind == "download" else None
+    if installer is not None and needed and not allow_installer:
+        raise PlanError(
+            f"This version {INSTALLER_LABEL} ([source.installer]), and the setting hooks.allow_vendor_installers is false; "
+            "nothing was installed."
+        )
+    return PopulatePlan(kind, needed, why, source.download_url, checksum, source.script, recoverable, installer)
 
 
 def diff_effects(recorded: Sequence[Effect], desired: Sequence[Effect]) -> tuple[PlannedEffect, ...]:
@@ -342,6 +357,8 @@ def _install_phases(
     if building:
         verb = {"script": f"run the populate script {populate.script}", "download": "unpack the download",
                 "git": "check out the repository", "shipped": "recover the App"}[populate.kind]
+        if populate.installer is not None:
+            verb = f"{INSTALLER_LABEL}: {' '.join(populate.installer)}"
         steps["Unpack"].append(PlanStep(verb))
         steps["Prepare"].append(PlanStep("run the prepare steps, rename the finished App into place"))
     if activating:

@@ -496,7 +496,7 @@ def _prepare_install(
         url_from = f"registry {copy_in.registry}" if copy_in.origin == "registry" else "distribution folder"
     install_plan = plan_install(
         request, view, context, chosen, desired, notes=notes, copy_in=copy_in, package_path=package_path,
-        url_from=url_from, drifted=drifted,
+        url_from=url_from, drifted=drifted, allow_installer=bool(resolved.settings["hooks.allow_vendor_installers"]),
     )
     tracker = catalog.tracker_sync(view) if view.registry is not None else None
     return ExecutionInput(
@@ -747,7 +747,8 @@ def _repair(engine: Engine, target: _Target, diagnosis: Diagnosis) -> PackageRes
     chosen = Chosen(Candidate(view.installed.version, "local", view.installed.path), state.manifest, state)
     desired, notes = desired_effects(state.manifest, effect_context(context, view.path, engine.effect_env))
     repair_plan = plan_install(
-        target.request, view, context, chosen, desired, notes=notes, package_path=view.path, drifted=diagnosis.drifted
+        target.request, view, context, chosen, desired, notes=notes, package_path=view.path, drifted=diagnosis.drifted,
+        allow_installer=bool(target.resolved.settings["hooks.allow_vendor_installers"]),
     )
     run = ExecutionInput(
         repair_plan, context, view, chosen, target.request, target.resolved.settings,

@@ -293,8 +293,8 @@ def test_a_hostile_distribution_is_refused_before_anything_is_installed(world: W
     assert tree_snapshot(world.user) == before and not (world.user / "tool").exists()
 
 
-def test_a_version_that_runs_a_vendor_installer_is_refused_instead_of_being_ignored(world: World) -> None:
-    """`[source.installer]` is not executed by this engine: the install says so rather than installing a different App."""
+def test_a_vendor_installer_step_on_a_zip_artifact_is_refused_instead_of_being_ignored(world: World) -> None:
+    """`[source.installer]` runs only an .exe: a zip is refused with a message, never unpacked as if the step were absent."""
     world.publish("tool", "1.0.0", source='[source.installer]\nrun = ["/VERYSILENT", "/DIR=$Stage"]\n')
 
     result = world.one("install", "tool")

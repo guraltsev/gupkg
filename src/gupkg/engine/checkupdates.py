@@ -36,6 +36,7 @@ from ..catalog.catalog import Catalog, NotInstalled
 from ..catalog.local import DATA_DIR_NAME, is_reparse_point
 from ..model.checksum import ChecksumError
 from ..model.manifest import (
+    INSTALLER_LABEL,
     Manifest,
     ManifestError,
     ManifestKind,
@@ -172,11 +173,19 @@ def check_updates_one(
     error: dict[str, Any] | None = None
     exit_code = 0
     populated = None
+    allow_installer = bool(settings["hooks.allow_vendor_installers"])
+    if download and pinned.source.installer is not None and not allow_installer:
+        emit(Warning(
+            f"{view.name} {result.version} {INSTALLER_LABEL}, and hooks.allow_vendor_installers is false: "
+            "the version was written without its App."
+        ))
+        download = False
     if download:
         try:
             populated = populate_version(
                 engine, context, package_path, version_dir, pinned, name=view.name, version=result.version,
                 skip=request.skip, record_manifest=bool(pinned.record_manifest and settings["install.record_manifest"]),
+                allow_installer=allow_installer,
             )
         except ChecksumError as refusal:
             exit_code, error = describe(refusal)

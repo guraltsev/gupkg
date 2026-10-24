@@ -46,6 +46,7 @@ from pathlib import Path
 from typing import Any
 
 from .checksum import ChecksumPlan
+from .manifest import INSTALLER_LABEL
 from .state import Effect
 
 OPERATIONS = ("install", "update", "switch", "uninstall", "cleanup", "repair", "check-updates", "check")
@@ -203,6 +204,8 @@ class PopulatePlan:
         The custom populate script.
     recoverable : bool
         Whether a missing ``App`` can be rebuilt (a download URL, a git source or a script).
+    installer : tuple of str, optional
+        The ``[source.installer] run`` arguments when the version runs a vendor installer (labelled ``runs vendor installer``).
     """
 
     kind: str
@@ -212,10 +215,14 @@ class PopulatePlan:
     checksum: ChecksumPlan | None = None
     script: str | None = None
     recoverable: bool = False
+    installer: tuple[str, ...] | None = None
 
     def to_data(self) -> dict[str, Any]:
         """Return the JSON-ready description of the population."""
         data: dict[str, Any] = {"kind": self.kind, "needed": self.needed, "reason": self.reason, "recoverable": self.recoverable}
+        if self.installer is not None:
+            data["label"] = INSTALLER_LABEL
+            data["installer"] = list(self.installer)
         if self.url is not None:
             data["url"] = self.url
         if self.checksum is not None:

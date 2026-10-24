@@ -80,6 +80,8 @@ class Engine:
         Overrides the HTTP client's retry count.
     clock : callable, optional
         Returns the current UTC time.
+    installer_timeout : float
+        Seconds a vendor installer may run before it is killed (design 8.4).
     """
 
     system: System
@@ -99,6 +101,7 @@ class Engine:
     sleep: Callable[[float], None] = time.sleep
     retries: int | None = None
     clock: Callable[[], datetime] | None = None
+    installer_timeout: float = 1800.0
 
     def now(self) -> datetime:
         """Return the current UTC time."""
