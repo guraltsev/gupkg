@@ -34,7 +34,7 @@ from gupkg.report.events import clean_line
 # The longest line that is shown; a longer one is cut and ends with an ellipsis.
 MAX_LINE_CHARS = 2000
 # Detail lines (steps and child-process output) shown per renderer; the rest is counted, never kept.
-MAX_DETAIL_LINES = 20000
+MAX_DETAIL_LINES = 10000
 # Width of the filled part of a progress bar.
 BAR_WIDTH = 20
 # Style of a phase mark by the status the phase ended with: (mark, style).
@@ -82,8 +82,22 @@ def progress_line(task: Any, done: Any, total: Any, unit: Any) -> str:
     return f"{label}  [{'█' * filled}{'░' * (BAR_WIDTH - filled)}]  {show(done_n)} / {show(total_n)}  {share * 100:.0f}%"
 
 
+_KEPT_STYLES = frozenset({"bold", "dim", "italic", "underline", "reverse"})
+
+
+def monochrome(line: Text) -> Text:
+    """Return *line* without any colour: only emphasis (bold, dim, italic, underline) is kept, so the words and marks carry every meaning."""
+    kept = " ".join(word for word in str(line.style).split() if word in _KEPT_STYLES)
+    return Text(line.plain, style=kept)
+
+
 class EventRenderer:
     """Render event records, one batch after another, into styled lines.
+
+    Parameters
+    ----------
+    colour : bool, default=True
+        Whether lines may be coloured; ``False`` (``NO_COLOR`` or ``[ui] color = "never"``) keeps only bold and dim.
 
     Attributes
     ----------
@@ -91,7 +105,8 @@ class EventRenderer:
         The number of detail lines that were counted but not shown.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, colour: bool = True) -> None:
+        self._colour = colour
         self._progress: dict[str, tuple[Any, Any, Any, Any]] = {}
         self._links: dict[str, str] = {}
         self._detail_shown = 0
@@ -104,7 +119,7 @@ class EventRenderer:
             handler = getattr(self, f"_on_{record.get('event')}", None) if isinstance(record.get("event"), str) else None
             if handler is not None:
                 lines.extend(handler(record))
-        return lines
+        return lines if self._colour else [monochrome(line) for line in lines]
 
     def progress_text(self) -> str | None:
         """Return the live text of the transfer that runs now (the latest started one), or ``None``."""
@@ -261,7 +276,7 @@ def summarize_entries(entries: Sequence[Mapping[str, Any]]) -> list[str]:
     return lines
 
 
-def verdict_lines(exit_code: int, summary: Sequence[str], *, plain: bool = False) -> list[Text]:
+def verdict_lines(exit_code: int, summary: Sequence[str], *, plain: bool = False, colour: bool = True) -> list[Text]:
     """Return the header and the indented summary that end a log: ``━━ Done`` or ``━━ Failed (exit code N)`` come last.
 
     Parameters
@@ -272,8 +287,11 @@ def verdict_lines(exit_code: int, summary: Sequence[str], *, plain: bool = False
         The summary lines to show under the header (already safe text).
     plain : bool, default=False
         Use the ``==>`` header of redirected console output instead of the heavy rule.
+    colour : bool, default=True
+        ``False`` keeps only emphasis, no colour.
     """
     ok = exit_code == 0
     title = "Done" if ok else f"Failed (exit code {exit_code})"
     header = f"==> {title}" if plain else f"━━ {title} " + "━" * max(3, 60 - len(title))
-    return [Text(header, style="bold green" if ok else "bold red"), *(Text(f"    {line}") for line in summary)]
+    lines = [Text(header, style="bold green" if ok else "bold red"), *(Text(f"    {line}") for line in summary)]
+    return lines if colour else [monochrome(line) for line in lines]

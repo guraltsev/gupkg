@@ -11,10 +11,12 @@ The script is a Python file run with the test interpreter, so no ``.cmd`` quotin
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import subprocess
 import sys
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -223,6 +225,14 @@ def list_doc(packages: list[tuple[str, str, str, str | None, str | None, str | N
     return head("list", packages=rows, warnings=[])
 
 
+async def until(condition, what: str, timeout: float = 20.0) -> None:
+    """Wait on the event loop until *condition()* holds; fail with *what* after *timeout* seconds (a bounded poll, never a fixed sleep)."""
+    deadline = time.monotonic() + timeout
+    while not condition():
+        assert time.monotonic() < deadline, f"timed out waiting for {what}"
+        await asyncio.sleep(0.02)
+
+
 def unique(prefix: str = "run") -> str:
     """Return a fresh name for an events file."""
     return f"{prefix}-{uuid.uuid4().hex[:8]}.jsonl"
@@ -332,3 +342,91 @@ class RealWorld:
     def active(self, name: str, root: Path | None = None) -> str:
         """Return the version a package's ``current`` junction points at."""
         return os.path.basename(os.path.realpath((root or self.user) / name / "current"))
+
+
+# ---------------------------------------------------------------------------
+# A launcher that is a .cmd with a Python grandchild, like the real one
+# ---------------------------------------------------------------------------
+
+STUB = r'''
+import json, os, sys, time, uuid
+from pathlib import Path
+
+base = Path(os.environ["STUB_DIR"])
+mode = (base / "mode.txt").read_text().strip()
+args = sys.argv[1:]
+name = args[args.index("--events-file") + 1] if "--events-file" in args else None
+doc = {"api": 1, "command": "update", "ok": True, "exit_code": 0, "relaunched": False, "results": [], "warnings": []}
+
+
+def put(handle, record):
+    handle.write(json.dumps(record) + "\n")
+    handle.flush()
+
+
+stop = Path(os.environ["TEMP"]) / ("gupkg-stop-" + uuid.uuid4().hex)
+events = None
+if name:
+    logs = Path(os.environ["STUB_LOGS"])
+    logs.mkdir(parents=True, exist_ok=True)
+    events = open(logs / name, "w", encoding="utf-8", newline="\n")
+    put(events, {"event": "run_start", "command": "update", "argv": [], "mode": "auto", "elevated": False, "version": "t", "api": 1, "stop_file": str(stop)})
+(base / "child.pid").write_text(str(os.getpid()))
+
+if mode in ("hang", "ignore-stop"):
+    time.sleep(300)
+elif mode == "stop-aware":
+    deadline = time.time() + 60
+    while not stop.exists() and time.time() < deadline:
+        time.sleep(0.02)
+    (base / "saw_stop.txt").write_text(str(stop.exists()))
+    put(events, {"event": "run_end", "summary": "", "exit_code": 0, "result": doc})
+    print(json.dumps(doc))
+elif mode == "finish-then-hang":
+    put(events, {"event": "run_end", "summary": "", "exit_code": 0, "result": doc})
+    time.sleep(300)
+elif mode == "slow":
+    time.sleep(1.5)
+    put(events, {"event": "run_end", "summary": "", "exit_code": 0, "result": doc})
+    print(json.dumps(doc))
+'''
+
+
+class GrandchildStub:
+    """A launcher that is a ``.cmd`` file starting a Python process, so the process the client holds is ``cmd.exe`` and the real work is its child.
+
+    That is the shape of the real ``gupkg.cmd``; killing only the process the client started would leave the Python child running. The child's behaviour
+    (``hang``, ``ignore-stop``, ``stop-aware``, ``finish-then-hang``, ``slow``) is chosen with ``set_mode``; it records its process id in ``child.pid``.
+    """
+
+    def __init__(self, base: Path) -> None:
+        self.dir = base / "stub"
+        self.dir.mkdir()
+        self.temp = base / "stub-temp"
+        self.temp.mkdir()
+        self.logs = base / "stub-root" / ".gupkg" / "logs"
+        (self.dir / "stub.py").write_text(STUB, encoding="utf-8")
+        (self.dir / "launcher.cmd").write_text(f'@echo off\r\n"{sys.executable}" "{self.dir / "stub.py"}" %*\r\n', encoding="ascii")
+
+    def set_mode(self, mode: str) -> None:
+        """Choose how the child behaves."""
+        (self.dir / "mode.txt").write_text(mode, encoding="utf-8")
+
+    def client(self) -> Client:
+        """Return a ``Client`` that runs the ``.cmd`` launcher, with an environment of its own."""
+        env = {"STUB_DIR": str(self.dir), "STUB_LOGS": str(self.logs), "TEMP": str(self.temp), "SYSTEMROOT": os.environ.get("SYSTEMROOT", "")}
+        return Client((str(self.dir / "launcher.cmd"),), (), env)
+
+    def child_pid(self) -> int | None:
+        """Return the process id the child wrote, or ``None`` before it started."""
+        path = self.dir / "child.pid"
+        try:
+            return int(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+
+
+def process_alive(pid: int) -> bool:
+    """Return whether process *pid* exists (asked of ``tasklist``; signal 0 would be a kill on Windows)."""
+    done = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH", "/FO", "CSV"], capture_output=True, text=True, check=False)
+    return f'"{pid}"' in done.stdout

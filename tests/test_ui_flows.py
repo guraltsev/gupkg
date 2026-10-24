@@ -21,7 +21,7 @@ from gupkg_manager.batch import check_all, check_updates_all, pick, update_all
 from gupkg_ui.interaction import Interaction
 from gupkg_ui.plans import PackageRow, read_packages
 from gupkg_ui.session import BatchOutcome, BatchSession
-from tests.ui_support import FakeGupkg, ListSink, entry, list_doc, make_env, plan_doc, plan_entry, plan_failure, result
+from tests.ui_support import FakeGupkg, ListSink, until, entry, list_doc, make_env, plan_doc, plan_entry, plan_failure, result
 
 
 def rows_for(base: Path, *packages: tuple[str, str]) -> list[PackageRow]:
@@ -268,8 +268,7 @@ def test_cancelling_during_the_first_call_starts_no_second_call_and_skips_its_ta
         sink = ListSink()
         session = BatchSession(env.client, sink)
         task = asyncio.ensure_future(update_all(env, rows, session=session, sink=sink, interaction=Interaction()))
-        while not any(line.startswith("Package a: ") for line in sink.shown):
-            await asyncio.sleep(0.02)
+        await until(lambda: any(line.startswith("Package a: ") for line in sink.shown), "package a to end")
         session.request_cancel()
         return await task
 
@@ -350,8 +349,9 @@ def test_check_with_fix_asks_the_cli_for_one_grouped_call(fake: FakeGupkg, tmp_p
     """The health check without ``--fix`` is one non-elevated call for every package; ``--fix`` groups system packages into the one elevated call."""
     env = make_env(tmp_path, fake)
     rows = rows_for(tmp_path, ("a", "user"), ("c", "system"))
-    fake.respond("check", doc=result("check", [entry("a", "check", status="healthy")]))
-    fake.respond("check", doc=result("check", [entry("c", "check", status="fixed", mode="system")]))
+    for name, mode, status in (("a", "user", "healthy"), ("c", "system", "fixed")):
+        doc = result("check", [entry(name, "check", status=status, mode=mode)])
+        fake.respond("check", doc=doc, events={"dir": logs_of(tmp_path, mode), "result": doc, "packages": [{"name": name, "path": str(tmp_path / "roots" / mode / name), "records": []}]})
 
     run_flow(lambda session, sink: check_all(env, rows, session=session), env)
     plain_calls = fake.calls()

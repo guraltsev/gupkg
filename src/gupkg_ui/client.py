@@ -29,6 +29,8 @@ import asyncio
 import json
 import os
 import re
+import subprocess
+import time
 import uuid
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
@@ -48,6 +50,14 @@ MAX_DOCUMENT_BYTES = 16 << 20
 STDERR_TAIL_BYTES = 64 << 10
 # Seconds between two looks at the events file while a call runs.
 POLL_SECONDS = 0.1
+# When a call ends abnormally (the program closes, a timeout), how long the CLI gets to stop after its current package before its whole process tree is killed.
+STOP_GRACE_SECONDS = 5.0
+# After a cancel request, how long a call may keep running before its process tree is killed.
+FORCE_STOP_SECONDS = 30.0
+# After ``run_end`` was written, how long the process may take to exit before its tree is killed (the result of ``run_end`` is still used).
+EXIT_GRACE_SECONDS = 15.0
+# Seconds without any output after which the owner of a call is told that it is still running (nothing is killed).
+QUIET_SECONDS = 60.0
 # The only name the stop marker of a run may have (the CLI creates it, the UI only creates a file where the run said).
 _STOP_NAME = re.compile(r"gupkg-stop-[0-9a-f]{32}")
 
@@ -142,6 +152,8 @@ class CallResult:
         The global events file that was followed.
     stop_file : str or None
         The stop marker the run announced, when it announced one.
+    warnings : tuple of str
+        Things that do not make the result untrustworthy but that a person should read (a command that did not exit after finishing).
     """
 
     argv: tuple[str, ...]
@@ -152,6 +164,7 @@ class CallResult:
     problems: tuple[str, ...] = ()
     events_path: Path | None = None
     stop_file: str | None = None
+    warnings: tuple[str, ...] = ()
 
     @property
     def ok(self) -> bool:
@@ -220,9 +233,12 @@ class StopRequest:
         self.stream: EventStream | None = None
         self.requested = False
         self.created = False
+        self.requested_at = 0.0
 
     def request(self) -> str:
         """Record the request, try to carry it out, and return what happened in words."""
+        if not self.requested:
+            self.requested_at = time.monotonic()
         self.requested = True
         return self.poll() or "The stop request is sent as soon as the run announces its stop marker."
 
@@ -233,7 +249,7 @@ class StopRequest:
             return ""
         path = Path(stop)
         folder = self._temp_dir or Path(os.environ.get("TEMP") or os.environ.get("TMP") or "")
-        if not _STOP_NAME.fullmatch(path.name) or not folder.is_dir() or os.path.normcase(os.path.abspath(path.parent)) != os.path.normcase(os.path.abspath(folder)):
+        if not _STOP_NAME.fullmatch(path.name) or not _same_folder(path.parent, folder):
             self.created = True
             return "The run announced a stop marker outside this program's temporary folder, so it cannot be cancelled from here."
         try:
@@ -246,6 +262,72 @@ class StopRequest:
             return f"The stop request could not be sent: {error}"
         self.created = True
         return "The stop request is sent: the run stops after the current package."
+
+
+def _same_folder(first: Path, second: Path) -> bool:
+    """Return whether two paths are the same existing folder, whatever their spelling (a short ``8.3`` name and the long one are the same folder)."""
+    try:
+        return second.is_dir() and os.path.samefile(first, second)
+    except OSError:
+        return False
+
+
+def _taskkill_argv(pid: int) -> list[str] | None:
+    """Return the command line that ends process *pid* and every process it started, or ``None`` when ``taskkill`` cannot be found safely.
+
+    The launcher is a ``.cmd`` file, so the process this program holds is ``cmd.exe`` and the real command line is its child: killing only the parent would leave
+    the operation running without anyone to read it. ``taskkill`` is taken from the system folder named by ``SYSTEMROOT``, never searched on ``PATH``.
+    """
+    base = os.environ.get("SYSTEMROOT")
+    program = Path(base) / "System32" / "taskkill.exe" if base else None
+    return [str(program), "/T", "/F", "/PID", str(pid)] if program is not None and program.is_file() else None
+
+
+async def kill_tree(process: asyncio.subprocess.Process) -> None:
+    """End *process* and everything it started, then wait for it (an argument list, no shell)."""
+    argv = _taskkill_argv(process.pid)
+    if argv is not None and process.returncode is None:
+        try:
+            killer = await asyncio.create_subprocess_exec(*argv, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+            await asyncio.wait_for(killer.wait(), 15)
+        except (OSError, asyncio.TimeoutError):
+            pass
+    if process.returncode is None:
+        process.kill()
+
+
+def kill_tree_now(process: asyncio.subprocess.Process) -> None:
+    """The blocking form of ``kill_tree``, for a program that is closing and cannot await (it takes well under a second)."""
+    argv = _taskkill_argv(process.pid)
+    if argv is not None:
+        try:
+            subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15, check=False)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    if process.returncode is None:
+        try:
+            process.kill()
+        except (OSError, ProcessLookupError):
+            pass
+
+
+def end_abnormally(process: asyncio.subprocess.Process, events: EventStream | None, stop: StopRequest | None) -> None:
+    """Leave no operation running headless when a call is abandoned (the program closes, a timeout): ask it to stop, wait a bounded time, kill its tree.
+
+    The CLI is first asked to stop after its current package through the stop marker (when it announced one), and given ``STOP_GRACE_SECONDS`` to write its
+    ``run_end``; then the whole process tree is killed and the pipes are closed. Blocking is deliberate: this runs once, while the program is going away.
+    """
+    if stop is not None and events is not None and process.returncode is None:
+        stop.request()
+        deadline = time.monotonic() + STOP_GRACE_SECONDS
+        while events.run_end is None and time.monotonic() < deadline:
+            events.poll()
+            stop.poll()
+            time.sleep(0.05)
+    kill_tree_now(process)
+    transport = getattr(process, "_transport", None)
+    if transport is not None:
+        transport.close()
 
 
 @dataclass
@@ -303,6 +385,7 @@ class Client:
         on_records: Callable[[list[dict[str, Any]]], None] | None = None,
         events_name: str | None = None,
         stop: StopRequest | None = None,
+        on_idle: Callable[[float], None] | None = None,
     ) -> CallResult:
         """Run an operation with ``--json --no-input --events-file`` and follow its events while it runs.
 
@@ -317,7 +400,10 @@ class Client:
         events_name : str, optional
             The events file name; a fresh unique one by default.
         stop : StopRequest, optional
-            The request that stops this call after its current package; ``stop.request()`` may be called while the call runs.
+            The request that stops this call after its current package; ``stop.request()`` may be called while the call runs. A call still running
+            ``FORCE_STOP_SECONDS`` after the request is killed with its whole process tree and reported as failed.
+        on_idle : callable, optional
+            Called with the number of seconds when the call has written nothing for ``QUIET_SECONDS`` (and then every ``QUIET_SECONDS``); nothing is killed.
 
         Returns
         -------
@@ -329,13 +415,13 @@ class Client:
         stream = EventStream(Path(events_dir) / name) if events_dir is not None else None
         if stop is not None:
             stop.stream = stream
-        return await self._run(full, events=stream, on_records=on_records, stop=stop)
+        return await self._run(full, events=stream, on_records=on_records, stop=stop, on_idle=on_idle, expect_events=events_dir is not None)
 
     # -- internals ---------------------------------------------------------------
 
     async def _run(
         self, argv: list[str], *, events: EventStream | None, on_records: Callable[[list[dict[str, Any]]], None] | None,
-        timeout: float | None = None, stop: StopRequest | None = None,
+        timeout: float | None = None, stop: StopRequest | None = None, on_idle: Callable[[float], None] | None = None, expect_events: bool = False,
     ) -> CallResult:
         """Start the program, read it and its events file until it ends, and return the checked result."""
         environment = dict(self.env) if self.env is not None else dict(os.environ)
@@ -346,47 +432,70 @@ class Client:
         except OSError as error:
             return CallResult(tuple(argv), None, None, problems=(f"gupkg could not be started: {error}",))
 
-        # Read both pipes to their end, follow the events file, and wait for the process; a cancelled task kills the child.
+        # Read both pipes to their end, follow the events file, and wait for the process; an abandoned call is ended with its whole tree.
+        flags = _Flags()
         stdout_task = asyncio.ensure_future(_read_capped(process.stdout, MAX_DOCUMENT_BYTES))
         stderr_task = asyncio.ensure_future(_read_tail(process.stderr, STDERR_TAIL_BYTES))
-        follow_task = asyncio.ensure_future(_follow(process, events, on_records, stop))
+        follow_task = asyncio.ensure_future(_follow(process, events, on_records, stop, on_idle, flags))
         try:
             await asyncio.wait_for(asyncio.gather(process.wait(), stdout_task, stderr_task), timeout)
             await follow_task
         except asyncio.TimeoutError:
-            process.kill()
             follow_task.cancel()
+            await asyncio.get_running_loop().run_in_executor(None, end_abnormally, process, events, stop)
             return CallResult(tuple(argv), None, None, problems=(f"gupkg did not finish within {timeout:.0f} seconds and was stopped",))
         except BaseException:
-            # Cancelled (the program is closing): stop the child, stop reading, and let the child's pipes close before leaving.
-            if process.returncode is None:
-                process.kill()
+            # Cancelled (the program is closing): stop reading, then end the operation and everything it started.
             for task in (follow_task, stdout_task, stderr_task):
                 task.cancel()
-            transport = getattr(process, "_transport", None)
-            if transport is not None:
-                transport.close()
+            end_abnormally(process, events, stop)
             raise
         output, too_long = stdout_task.result()
-        return _judge(argv, process.returncode, output, too_long, stderr_task.result(), events)
+        return _judge(argv, process.returncode, output, too_long, stderr_task.result(), events, flags, expect_events)
+
+
+class _Flags:
+    """What the follower decided about a call: it was killed after a cancel request, or it hung after ``run_end``."""
+
+    def __init__(self) -> None:
+        self.forced = False
+        self.hung = False
 
 
 async def _follow(
     process: asyncio.subprocess.Process, events: EventStream | None, on_records: Callable[[list[dict[str, Any]]], None] | None,
-    stop: StopRequest | None,
+    stop: StopRequest | None, on_idle: Callable[[float], None] | None, flags: _Flags,
 ) -> None:
-    """Deliver the events file's new records while the process runs, then once more after it ended (the last lines)."""
+    """Deliver the events file's new records while the process runs, watch for a hang, then read once more after it ended (the last lines)."""
     if events is None:
         return
     quiet_after_exit = 0
+    last_output = time.monotonic()
+    finished_at: float | None = None
+    next_idle = QUIET_SECONDS
     while True:
         records = events.poll()
-        if records and on_records is not None:
-            on_records(records)
+        if records:
+            last_output, next_idle = time.monotonic(), QUIET_SECONDS
+            if on_records is not None:
+                on_records(records)
 
         # A stop request made before the run announced its marker is carried out as soon as the marker is known.
         if stop is not None:
             stop.poll()
+        now = time.monotonic()
+        if process.returncode is None:
+            if events.run_end is not None and finished_at is None:
+                finished_at = now
+            if stop is not None and stop.requested and now - stop.requested_at > FORCE_STOP_SECONDS:
+                flags.forced = True
+                await kill_tree(process)
+            elif finished_at is not None and now - finished_at > EXIT_GRACE_SECONDS:
+                flags.hung = True
+                await kill_tree(process)
+            elif on_idle is not None and now - last_output >= next_idle:
+                on_idle(now - last_output)
+                next_idle += QUIET_SECONDS
         if process.returncode is not None and not records:
             quiet_after_exit += 1
             if quiet_after_exit >= 2:
@@ -424,11 +533,25 @@ async def _read_tail(stream: asyncio.StreamReader | None, limit: int) -> str:
 
 
 def _judge(
-    argv: list[str], code: int | None, output: bytes, too_long: bool, stderr: str, events: EventStream | None,
+    argv: list[str], code: int | None, output: bytes, too_long: bool, stderr: str, events: EventStream | None, flags: _Flags | None = None,
+    expect_events: bool = False,
 ) -> CallResult:
     """Turn what a finished call left (exit code, output, events file) into a ``CallResult``, failing closed."""
     problems: list[str] = []
+    warnings: list[str] = []
     document: dict[str, Any] | None = None
+    flags = flags or _Flags()
+    path = events.global_path if events is not None else None
+    end = events.run_end if events is not None and events.run_end is not None else (read_run_end(path) if path is not None else None)
+
+    # A command that was killed after a cancel request left nothing to believe; one that hung after ``run_end`` still has its result there.
+    if flags.forced:
+        problems.append("the command did not stop after the cancel request and was stopped by force")
+    if flags.hung:
+        warnings.append("the command did not exit after finishing and was stopped; its result is the one it wrote at the end of its events file")
+        code = None
+        result = end.get("result") if end is not None else None
+        output = json.dumps(result).encode("utf-8") if isinstance(result, dict) else b""
 
     # The document: exactly one JSON object of this api version on standard output.
     if too_long:
@@ -440,13 +563,13 @@ def _judge(
             problems.append("gupkg printed no readable result document" + (f" (exit code {code})" if code is not None else ""))
         except ClientError as error:
             problems.append(str(error))
+    if flags.hung and document is not None:
+        code = document["exit_code"]
     if document is not None and code is not None and document["exit_code"] != code:
         problems.append(f"the exit code {code} disagrees with the result document ({document['exit_code']})")
 
     # The events file: when it exists it must end with ``run_end``; an elevated child's file is the only record of its work.
     child: dict[str, Any] | None = None
-    path = events.global_path if events is not None else None
-    end = events.run_end if events is not None and events.run_end is not None else (read_run_end(path) if path is not None else None)
     if document is not None and document.get("relaunched"):
         result = end.get("result") if end is not None else None
         if end is None or not isinstance(result, dict):
@@ -456,8 +579,14 @@ def _judge(
                 child = check_document(result)
             except ClientError as error:
                 problems.append(f"the elevated run's result is not usable: {error}")
-    elif path is not None and os.path.lexists(path) and end is None:
-        problems.append("the events file has no run_end line: the run did not finish")
+    elif path is not None and end is None and (os.path.lexists(path) or expect_events):
+        # The UI always asks for an events file, so a result without its ``run_end`` is not believed when it claims success. A failure document is kept
+        # (its entries say why it failed: a call whose every target failed to resolve writes no file), with a warning.
+        note = f"the events file has no run_end line (exit code {code}): the run did not finish" if os.path.lexists(path) else f"no events file was written (exit code {code})"
+        if document is None or document.get("ok") is True or os.path.lexists(path):
+            problems.append(note)
+        else:
+            warnings.append(note)
     return CallResult(
-        tuple(argv), code, document, child, stderr, tuple(problems), path, events.stop_file if events is not None else None,
+        tuple(argv), code, document, child, stderr, tuple(problems), path, events.stop_file if events is not None else None, tuple(warnings),
     )

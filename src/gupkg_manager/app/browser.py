@@ -192,7 +192,7 @@ class BrowserScreen(PackageActions, FrameScreen):
         if rows:
             self.start_update(rows)
         else:
-            self.notify("Nothing is outdated.")
+            self.notify("Nothing is outdated.", markup=False)
 
     def action_install(self) -> None:
         """Install or repair the selected package."""
@@ -220,7 +220,7 @@ class BrowserScreen(PackageActions, FrameScreen):
         try:
             info = read_info(await self.app.env.client.query(targets_after_options("info", [], [row.target])))
         except ClientError as error:
-            self.notify(str(error), severity="error")
+            self.notify(literal(error), severity="error", markup=False)
             return
         self.app.push_screen(LogScreen(info.log if info else None, Path(row.path) if row.path else None, row.name))
 

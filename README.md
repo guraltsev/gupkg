@@ -329,6 +329,12 @@ refused package counts 3 and a skipped or declined one 5. `--json` prints one do
 calls made) and sends the text to standard error. When a program closes, the summary of the last run and the log path are printed
 (`[manager] keep_screen`). `--settings PATH` and `--sandbox DIR` (before the command) are relayed to every call.
 
+A scheduled task must run as a **normal user**: a Task Scheduler task with "Run with highest privileges" that starts `gupkg-manager check-updates --all` is
+refused (exit 2, the programs refuse an elevated shell), and a system package is then only reported (design 9.3). If the program is closed, its window
+is closed or Ctrl-C is pressed while a call runs, the call is first asked to stop after its current package and then its whole process tree is ended, so
+nothing keeps running unseen; an elevated child cannot be killed by a normal process and stops through the same stop marker. A call that does not exit
+after it wrote its result is stopped after 15 seconds and its result is still used (with a warning); a cancelled call that does not stop is killed after 30 seconds.
+
 gupkg runs only on its bundled Python: `python -m gupkg` or `bootstrap.py` on any other interpreter, or without `-I`, exits
 with `Start gupkg through gupkg.cmd or gupkg.exe; it runs only on its bundled Python.` In a source checkout use
 `scripts\run.cmd`. `src\gupkg\gupkg.cmd` runs only `python\python.exe` from its own folder, as

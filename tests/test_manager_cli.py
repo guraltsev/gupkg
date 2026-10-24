@@ -155,7 +155,8 @@ def test_check_updates_all_is_one_call_without_questions(fake: FakeGupkg, tmp_pa
 def test_check_is_one_read_only_call(fake: FakeGupkg, tmp_path: Path) -> None:
     """The health check lists every package and asks the CLI once; without ``--fix`` it changes nothing and needs no confirmation."""
     fake.respond("list", doc=list_doc([("a", "user", "installed", "1.0.0", None, str(tmp_path / "roots" / "user" / "a"))]))
-    fake.respond("check", doc=result("check", [entry("a", "check", status="healthy")]))
+    doc = result("check", [entry("a", "check", status="healthy")])
+    fake.respond("check", doc=doc, events={"dir": logs_of(tmp_path, "user"), "result": doc, "packages": [{"name": "a", "path": str(tmp_path / "roots" / "user" / "a"), "records": []}]})
 
     code, out, _ = manager(tmp_path, fake, "check")
 

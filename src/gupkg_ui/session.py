@@ -175,10 +175,13 @@ class BatchSession:
         Receives the output while the calls run.
     temp_dir : Path, optional
         The only folder where a stop marker may be created (the ``TEMP`` of the client's environment by default).
+    colour : bool, default=True
+        Whether the output may be coloured (see ``EventRenderer``).
     """
 
-    def __init__(self, client: Client, sink: Sink, *, temp_dir: Path | None = None) -> None:
+    def __init__(self, client: Client, sink: Sink, *, temp_dir: Path | None = None, colour: bool = True) -> None:
         self._client = client
+        self._colour = colour
         self._sink = sink
         self._temp_dir = temp_dir or client.temp_dir
         self._stop: StopRequest | None = None
@@ -219,7 +222,7 @@ class BatchSession:
             The combined result; ``exit_code`` is zero only when nothing failed, was refused or was skipped.
         """
         outcome = BatchOutcome(entries=list(extra_entries))
-        renderer = EventRenderer()
+        renderer = EventRenderer(self._colour)
         self.running = True
         try:
             await self._run_steps(steps, renderer, outcome)
@@ -242,7 +245,7 @@ class BatchSession:
         summary = summarize_entries(outcome.entries) + [literal(item) for item in closing]
         if outcome.cancelled:
             summary.append("Stopped after the current package at your request.")
-        self._sink.lines(verdict_lines(outcome.exit_code, summary))
+        self._sink.lines(verdict_lines(outcome.exit_code, summary, colour=self._colour))
         self._sink.status("Finished" if outcome.exit_code == EXIT_OK else f"Failed (exit code {outcome.exit_code})")
         return outcome
 
@@ -265,12 +268,19 @@ class BatchSession:
         self._sink.status(f"Running: {literal(step.label, limit=100)}")
         self._stop = StopRequest(self._temp_dir)
 
+        running = f"Running: {literal(step.label, limit=100)}"
+
         def show(records: list[dict[str, Any]]) -> None:
-            """Hand a batch of records to the display and refresh the live progress."""
+            """Hand a batch of records to the display and refresh the live progress (and clear a "still running" note)."""
             self._sink.lines(renderer.feed(records))
             self._sink.progress(renderer.progress_text())
+            self._sink.status(running)
 
-        result = await self._client.call(step.args, events_dir=step.events_dir, on_records=show, stop=self._stop)
+        def quiet(seconds: float) -> None:
+            """Say that the call is still running although it has written nothing for a while (nothing is killed)."""
+            self._sink.status(f"{running}: still running, no output for {int(seconds)} s")
+
+        result = await self._client.call(step.args, events_dir=step.events_dir, on_records=show, stop=self._stop, on_idle=quiet)
         self._stop = None
         outcome.calls.append(result)
         operation = step.args[0] if step.args else "operation"
@@ -279,6 +289,8 @@ class BatchSession:
         for problem in result.problems:
             outcome.problems.append(problem)
             self._sink.lines([Text(f"Error: {literal(problem)}", style="bold red")])
+        for warning in result.warnings:
+            self._sink.lines([Text(f"Warning: {literal(warning)}", style="yellow")])
         for error in result.errors():
             self._sink.lines([Text(f"Error: {literal(error.get('message', error.get('code', 'error')))}", style="bold red")])
             if isinstance(error.get("hint"), str) and error["hint"]:

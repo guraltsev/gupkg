@@ -11,7 +11,8 @@ target of that mode, ``keep_screen`` and ``cleanup_auto`` are the booleans, and 
 
 Implementation Approach
 -----------------------
-The loader runs as a normal (non-elevated) process. Because a system target is run by an elevated child, the policy for a system
+The loader runs as a normal (non-elevated) process. ``WindowsSystem`` is imported only to *read* (whether the process is elevated and whether a folder is admin-only):
+the ``System`` protocol has no implementation apart from it and the sandbox's ``FakeSystem``, so there is no smaller read-only facade to use instead. Because a system target is run by an elevated child, the policy for a system
 target is evaluated as an elevated run would see it: a value that comes from the user or portable layer (or from ``--settings``, which an elevated child ignores) does not count, so a
 setting a standard user can edit never lets an administrator-run install skip a missing checksum (design 9.6).
 """
@@ -54,6 +55,11 @@ class UiSettings:
         if mode == "system" and self.settings.source_of(POLICY_KEY) == LAYER_CLI:
             return "refuse"
         return policy
+
+    @property
+    def colour(self) -> bool:
+        """Whether the programs may use colour: not with ``[ui] color = "never"`` and not when ``NO_COLOR`` is set in the program's environment."""
+        return self.settings["ui.color"] != "never" and not self.env.get("NO_COLOR")
 
     @property
     def keep_screen(self) -> bool:

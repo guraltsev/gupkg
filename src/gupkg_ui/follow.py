@@ -64,7 +64,9 @@ class RecordReader:
     done: bool = False
     _pending: bytes = b""
     _discarding: bool = False
-    _lines: list[bytes] = field(default_factory=list)
+    _skipped: int = 0
+    _identity: tuple[int, int] | None = None
+    _lines: list[bytes | int] = field(default_factory=list)
 
     def read(self, limit: int = MAX_RECORDS_PER_POLL) -> list[dict[str, Any]]:
         """Return up to *limit* new records; an empty list when the file is missing, unusable or has nothing new."""
@@ -81,8 +83,17 @@ class RecordReader:
             self.done = True
             return [{"event": "unreadable", "reason": f"{self.path.name} is not a plain file"}]
 
+        # A file that shrank, or that is another file under the same name (rotated, replaced), is read again from its start, with one note.
+        records: list[dict[str, Any]] = []
+        identity = (info.st_dev, info.st_ino) if info.st_ino else None
+        if info.st_size < self.offset or (self._identity is not None and identity is not None and identity != self._identity):
+            self.offset, self._pending, self._discarding, self._skipped = 0, b"", False, 0
+            self._lines.clear()
+            records.append({"event": "unreadable", "reason": "the events file was truncated or replaced; it is read again from its start"})
+        self._identity = identity
+
         # Lines that were cut earlier but not yet returned come first; a poll never returns more than *limit* records.
-        records = self._parse_lines(limit)
+        records.extend(self._parse_lines(limit - len(records)))
         if len(records) >= limit:
             return records
 
@@ -104,21 +115,23 @@ class RecordReader:
         return records
 
     def _split(self, data: bytes) -> None:
-        """Cut *data* into complete lines (kept in ``_lines``); an over-long line is dropped and noted by an empty marker line."""
-        pending = self._pending + data
-        parts = pending.split(b"\n")
+        """Cut *data* into complete lines kept in ``_lines``; a line over the limit is kept as its byte count, one entry per line however long it is."""
+        parts = (self._pending + data).split(b"\n")
         self._pending = parts.pop()
         for part in parts:
             if self._discarding:
-                # The tail of a line whose start was already dropped for being too long.
-                self._discarding = False
-                continue
-            self._lines.append(part if len(part) <= MAX_RECORD_BYTES else b"\x00too-long")
-        if len(self._pending) > MAX_RECORD_BYTES:
-            # No newline within the limit: report the line once and ignore the rest of it.
+                # The end of a line whose start was already dropped: its whole length is now known.
+                self._lines.append(self._skipped + len(part))
+                self._discarding, self._skipped = False, 0
+            else:
+                self._lines.append(part if len(part) <= MAX_RECORD_BYTES else len(part))
+
+        # No newline yet and already over the limit (or still inside such a line): drop what is held and only count it.
+        if self._discarding:
+            self._skipped += len(self._pending)
             self._pending = b""
-            self._discarding = True
-            self._lines.append(b"\x00too-long")
+        elif len(self._pending) > MAX_RECORD_BYTES:
+            self._discarding, self._skipped, self._pending = True, len(self._pending), b""
 
     def _parse_lines(self, limit: int) -> list[dict[str, Any]]:
         """Parse up to *limit* of the complete lines into records, putting a placeholder for a line that is not a record."""
@@ -128,8 +141,8 @@ class RecordReader:
             if taken >= limit:
                 break
             taken += 1
-            if raw == b"\x00too-long":
-                records.append({"event": "unreadable", "reason": "a record was longer than the limit and was skipped"})
+            if isinstance(raw, int):
+                records.append({"event": "unreadable", "reason": f"a record of {raw} bytes was longer than the limit of {MAX_RECORD_BYTES} bytes and was skipped"})
                 continue
             text = raw.strip()
             if not text:

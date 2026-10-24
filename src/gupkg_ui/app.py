@@ -82,12 +82,18 @@ class UiApp(App[int]):
             self.push_screen(HelpScreen("Keys", self.help_lines()))
 
     def action_ctrl_c(self) -> None:
-        """Ctrl-C quits the program only when no run is active; a run is cancelled through Escape, never dropped by accident."""
-        screen = self.screen
-        if isinstance(screen, RunScreen) and screen.outcome is None:
-            screen.action_leave()
-            return
-        self.exit(1)
+        """Ctrl-C never abandons a call that is running (decision D37): it asks the cancel question, or is ignored while a dialog is open.
+
+        The whole screen stack is looked at, not only the top screen: a dialog (the cancel question itself, a checksum question asked during a run) may be on top
+        of the run view. With a call running, Ctrl-C on the run view opens "Cancel after the current package?"; with any dialog on top it does nothing (a
+        second Ctrl-C while the cancel question is shown keeps the run going, it does not quit). With nothing running (the browser, a plan not yet confirmed,
+        a finished run) it quits.
+        """
+        busy = [item for item in self.screen_stack if isinstance(item, RunScreen) and item.outcome is None and item.session is not None and item.session.running]
+        if not busy:
+            self.exit(return_code=1)
+        elif self.screen is busy[-1]:
+            busy[-1].action_leave()
 
     async def start_run(self, title: str, job: Job) -> BatchOutcome | None:
         """Push a run screen for *job* and return its outcome when the person leaves it (call from a worker)."""

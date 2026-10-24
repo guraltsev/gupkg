@@ -81,6 +81,42 @@ def test_no_operation_is_performed_in_process(path: Path) -> None:
     assert function_local == [], f"{path.name} has function-local imports at lines {function_local}"
 
 
+def is_literal_text(node: ast.AST) -> bool:
+    """Return whether *node* is a plain constant or a ``rich.text.Text`` expression (``Text(...)``, ``Text(...).join(...)``, either branch of a conditional): never parsed as markup."""
+    if isinstance(node, ast.Constant):
+        return isinstance(node.value, str)
+    if isinstance(node, ast.IfExp):
+        return is_literal_text(node.body) and is_literal_text(node.orelse)
+    if isinstance(node, ast.Call):
+        function = node.func
+        if isinstance(function, ast.Name):
+            return function.id == "Text"
+        return isinstance(function, ast.Attribute) and is_literal_text(function.value)
+    return False
+
+
+@pytest.mark.parametrize("path", FILES, ids=lambda path: str(path.relative_to(SOURCE)).replace("\\", "/"))
+def test_text_from_outside_is_never_parsed_as_markup(path: Path) -> None:
+    """Every ``notify``, ``Static``, ``Label``, ``RichLog`` and widget ``update`` shows literal text: ``markup=False`` or a ``Text`` object, never a string that Textual would parse.
+
+    Package names, versions, CLI error messages and log lines are untrusted (a toast with ``[red]x`` would be styled); this fails for any such call that is not provably literal.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    bad: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id if isinstance(node.func, ast.Name) else ""
+        markup_off = any(item.arg == "markup" and isinstance(item.value, ast.Constant) and item.value.value is False for item in node.keywords)
+        if name in ("notify", "RichLog") and not markup_off:
+            bad.append(f"{name} at line {node.lineno} without markup=False")
+        elif name in ("Static", "Label") and not markup_off and not (node.args and is_literal_text(node.args[0])):
+            bad.append(f"{name} at line {node.lineno} with text that may be parsed as markup")
+        elif name == "update" and isinstance(node.func, ast.Attribute) and node.args and not is_literal_text(node.args[0]):
+            bad.append(f"update at line {node.lineno} with text that may be parsed as markup")
+    assert bad == [], f"{path.name}: {bad}"
+
+
 @pytest.mark.parametrize("path", FILES, ids=lambda path: str(path.relative_to(SOURCE)).replace("\\", "/"))
 def test_no_registry_network_shell_or_program_start_outside_the_client(path: Path) -> None:
     """The module does not use the registry, ``ctypes``, the network or a shell, and only ``client.py`` starts a program (through ``asyncio``, with an argument list)."""

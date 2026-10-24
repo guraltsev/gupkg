@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -21,7 +22,9 @@ import pytest
 
 from gupkg_manager.app.app import ManagerApp
 from gupkg_tui.app import TuiApp
-from gupkg_ui.screens.run import RunScreen
+from gupkg_ui.follow import EventStream
+from gupkg_ui.render import EventRenderer, verdict_lines
+from gupkg_ui.screens.run import MAX_LOG_LINES, RunScreen
 from tests.ui_support import FakeGupkg, entry, fixture_json, head, list_doc, make_env, plan_doc, plan_entry, result
 
 SIZES = [pytest.param((80, 24), id="80x24"), pytest.param((200, 50), id="200x50")]
@@ -84,14 +87,14 @@ def info_of(name: str, tmp_path: Path) -> dict:
     return json.loads(text)
 
 
-def run_app(tmp_path: Path, fake: FakeGupkg, scenario: Callable, *, size=(80, 24), program: str = "manager", target: str = "user:alpha", **settings) -> None:
+def run_app(tmp_path: Path, fake: FakeGupkg, scenario: Callable, *, size=(80, 24), program: str = "manager", target: str = "user:alpha", toasts: bool = False, **settings) -> None:
     """Start the manager (or ``gupkg-tui``) in a headless terminal of *size* and run the async *scenario* ``(app, pilot)`` against it."""
     env = make_env(tmp_path, fake, settings=settings.get("settings", ""))
     app = ManagerApp(env) if program == "manager" else TuiApp(env, target)
 
     async def main() -> None:
         """Run the scenario inside the app."""
-        async with app.run_test(size=size) as pilot:
+        async with app.run_test(size=size, notifications=toasts) as pilot:
             await scenario(app, pilot)
 
     asyncio.run(main())
@@ -187,7 +190,7 @@ def test_the_package_program_has_the_frame_and_escape_leaves_it(tmp_path: Path, 
         assert has(app, "alpha") and has(app, "Versions in the package folder")
         assert_frame(app, size[0])
         await pilot.press("escape")
-        await pilot.pause(0.2)
+        await wait_for(pilot, lambda: app.return_code is not None, "the program to leave")
         codes.append(app.return_code)
 
     run_app(tmp_path, fake, scenario, size=size, program="tui")
@@ -313,10 +316,9 @@ def test_a_2000_line_events_file_keeps_the_view_on_the_tail_and_the_keys_alive(t
         await pilot.press("y")
         await wait_for(pilot, lambda: isinstance(app.screen, RunScreen) and app.screen.outcome is not None, "the run to finish")
         log = app.screen.query_one("RunLog")
-        assert log.scroll_y >= log.max_scroll_y - 1 and has(app, "ok alpha 2.0.0")
+        await wait_for(pilot, lambda: has(app, "ok alpha 2.0.0") and log.scroll_y >= log.max_scroll_y - 1, "the view to reach the tail")
         await pilot.press("pageup")
-        await pilot.pause(0.1)
-        assert log.scroll_y < log.max_scroll_y
+        await wait_for(pilot, lambda: log.scroll_y < log.max_scroll_y - 1, "the view to scroll back")
         await pilot.press("question_mark")
         await wait_for(pilot, lambda: has(app, "Browser"), "help to answer while the log is long")
         await pilot.press("escape")
@@ -386,7 +388,7 @@ def test_dialogs_answer_only_to_explicit_keys(tmp_path: Path, fake: FakeGupkg) -
         await pilot.press("x")
         await wait_for(pilot, lambda: has(app, "Uninstall alpha?"), "the question")
         await pilot.press("enter")
-        await pilot.pause(0.2)
+        await pilot.pause()
         assert has(app, "Uninstall alpha?")
         await pilot.press("escape")
         await wait_for(pilot, lambda: not has(app, "Uninstall alpha?"), "the question to close")
@@ -456,3 +458,210 @@ def test_the_package_program_runs_check_update_repair_uninstall_and_health_as_cl
     assert all(call["targets"] == ["user:alpha"] and "--no-input" in call["options"] for call in operations)
     # ``check-updates`` activates nothing, so the program answers its own multi-package question; the health check changes nothing and needs none.
     assert [call["key"] for call in operations if "--yes" in call["options"]] == ["check-updates", "install", "uninstall", "update"]
+
+
+def test_cli_error_text_with_markup_is_shown_literally_everywhere(tmp_path: Path, fake: FakeGupkg) -> None:
+    """A ``[red]x`` inside what the CLI says (an api value, an error message, a log lookup failure) reaches the status line, the package view, the run log and the toast as typed."""
+    fake.respond("info", doc=head("info", packages=[], api=1))
+    fake.scenario["info"].pop(0)
+    fake.scenario["info"].insert(0, {"doc": {"api": "[red]x", "command": "info", "ok": True, "exit_code": 0}})
+    fake.respond("update:plan", doc=plan_doc([plan_entry("user:alpha", "alpha")]))
+    failing = result("update", [entry("alpha", ok=False, status="failed", code=3, error={"code": "x", "message": "[red]boom[/red] [bold]x"})])
+    fake.respond("update", doc=failing, events={"dir": str(tmp_path / "home" / "opt" / ".gupkg" / "logs"), "result": failing, "packages": [{"name": "alpha", "path": str(tmp_path / "home" / "opt" / "alpha"), "records": [{"event": "error", "text": "[red]x"}]}]})
+
+    async def scenario(app, pilot) -> None:
+        """Look at the toast of a failed log lookup, then the failed run's log."""
+        await open_browser(app, pilot)
+        await pilot.press("l")
+        await wait_for(pilot, lambda: has(app, "[red]x"), "the toast with the literal text")
+        await pilot.press("u")
+        await wait_for(pilot, lambda: has(app, "Update 1 user package"), "the plan")
+        await pilot.press("y")
+        await wait_for(pilot, lambda: isinstance(app.screen, RunScreen) and app.screen.outcome is not None, "the run to finish")
+        assert has(app, "Error: [red]x") and has(app, "[red]boom[/red] [bold]x")
+
+    run_app(tmp_path, fake, scenario, toasts=True)
+
+
+# -- Ctrl-C ---------------------------------------------------------------------------
+
+
+def slow_update(fake: FakeGupkg, tmp_path: Path, delay: float = 1.5) -> None:
+    """Schedule a one-package update whose call takes *delay* seconds to start answering (a call that is in flight for a while)."""
+    update_run(fake, tmp_path, ("alpha",), delay=delay)
+
+
+def test_ctrl_c_on_a_running_run_asks_the_cancel_question_and_never_quits(tmp_path: Path, fake: FakeGupkg) -> None:
+    """Ctrl-C while a call runs opens "Cancel after the current package?"; a second Ctrl-C with that dialog open is ignored; ``n`` lets the run finish."""
+    slow_update(fake, tmp_path)
+
+    async def scenario(app, pilot) -> None:
+        """Press Ctrl-C twice during the call, then answer no."""
+        await open_browser(app, pilot)
+        await pilot.press("u")
+        await wait_for(pilot, lambda: has(app, "Update 1 user package"), "the plan")
+        await pilot.press("y")
+        await wait_for(pilot, lambda: isinstance(app.screen, RunScreen) and app.screen.session is not None and app.screen.session.running, "the call to be in flight")
+        await pilot.press("ctrl+c")
+        await wait_for(pilot, lambda: has(app, "Cancel after the current package?"), "the cancel question")
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+        assert has(app, "Cancel after the current package?") and app.return_code is None
+        await pilot.press("n")
+        await wait_for(pilot, lambda: isinstance(app.screen, RunScreen) and app.screen.outcome is not None, "the run to finish")
+        assert app.screen.outcome.ok and app.return_code is None
+
+    run_app(tmp_path, fake, scenario)
+
+
+def test_ctrl_c_over_a_question_asked_during_a_run_is_ignored(tmp_path: Path, fake: FakeGupkg) -> None:
+    """A checksum question that appears inside a running batch (a check's follow-up) is not a way out: Ctrl-C does not quit, the answer does."""
+    refusal = {"code": "checksum-missing", "message": "no checksum", "url": "https://example.org/a.zip", "skippable": True}
+    first = result("check-updates", [entry("alpha", "check-updates", ok=False, status="failed", code=3, error=refusal)])
+    again = result("check-updates", [entry("alpha", "check-updates", status="written")])
+    for doc in (first, again):
+        fake.respond("check-updates", doc=doc, events={"dir": str(tmp_path / "home" / "opt" / ".gupkg" / "logs"), "result": doc, "packages": [{"name": "alpha", "path": str(tmp_path / "home" / "opt" / "alpha"), "records": []}]})
+
+    async def scenario(app, pilot) -> None:
+        """Reach the follow-up question, press Ctrl-C, answer no."""
+        await open_browser(app, pilot)
+        await pilot.press("c")
+        await wait_for(pilot, lambda: has(app, "without a checksum"), "the follow-up question")
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+        assert has(app, "without a checksum") and app.return_code is None
+        await pilot.press("n")
+        await wait_for(pilot, lambda: isinstance(app.screen, RunScreen) and app.screen.outcome is not None, "the run to finish")
+
+    run_app(tmp_path, fake, scenario)
+
+
+@pytest.mark.parametrize("where", ["plan-confirmation", "browser"])
+def test_ctrl_c_quits_when_nothing_is_running(tmp_path: Path, fake: FakeGupkg, where: str) -> None:
+    """On the browser, and on a plan that was not confirmed yet (no call has started), Ctrl-C quits with exit code 1."""
+    update_run(fake, tmp_path, ("alpha",))
+
+    async def scenario(app, pilot) -> None:
+        """Go to the place and press Ctrl-C."""
+        await open_browser(app, pilot)
+        if where == "plan-confirmation":
+            await pilot.press("u")
+            await wait_for(pilot, lambda: has(app, "Update 1 user package"), "the plan")
+        await pilot.press("ctrl+c")
+        await wait_for(pilot, lambda: app.return_code == 1, "the program to quit")
+
+    run_app(tmp_path, fake, scenario)
+
+    assert not [call for call in fake.calls() if call["key"] == "update"]
+
+
+def test_ctrl_c_on_the_checksum_question_before_any_call_quits(tmp_path: Path, fake: FakeGupkg) -> None:
+    """The per-package checksum question of an update comes before the first update call, so nothing runs and Ctrl-C may quit."""
+    fake.respond("update:plan", doc=plan_doc([plan_entry("user:alpha", "alpha", sha256="missing")]))
+
+    async def scenario(app, pilot) -> None:
+        """Confirm the plan, then press Ctrl-C on the checksum question."""
+        await open_browser(app, pilot)
+        await pilot.press("u")
+        await wait_for(pilot, lambda: has(app, "Update 1 user package"), "the plan")
+        await pilot.press("y")
+        await wait_for(pilot, lambda: has(app, "without a checksum"), "the checksum question")
+        await pilot.press("ctrl+c")
+        await wait_for(pilot, lambda: app.return_code == 1, "the program to quit")
+
+    run_app(tmp_path, fake, scenario)
+
+    assert not [call for call in fake.calls() if call["key"] == "update"]
+
+
+# -- responsiveness and colour -----------------------------------------------------------
+
+
+def test_a_100000_record_run_keeps_the_keys_responsive_and_the_log_bounded(tmp_path: Path, fake: FakeGupkg) -> None:
+    """While 100,000 events are ingested a key press is handled within 0.5 s (the log never re-renders what it has, and keeps at most its cap of lines)."""
+    records = [{"event": "subprocess_line", "cmd": "git", "line": f"line {number}"} for number in range(100_000)]
+    update_run(fake, tmp_path, ("alpha",), records=records)
+    latencies: list[float] = []
+
+    async def scenario(app, pilot) -> None:
+        """Start the run and press ? while the follower is still reading, timing the answer."""
+        await open_browser(app, pilot)
+        await pilot.press("u")
+        await wait_for(pilot, lambda: has(app, "Update 1 user package"), "the plan")
+        await pilot.press("y")
+        await wait_for(pilot, lambda: isinstance(app.screen, RunScreen) and has(app, "line "), "ingestion to begin", timeout=60)
+        started = time.monotonic()
+        await pilot.press("question_mark")
+        await wait_for(pilot, lambda: has(app, "Browser"), "help to open during ingestion")
+        latencies.append(time.monotonic() - started)
+        await pilot.press("escape")
+        await wait_for(pilot, lambda: isinstance(app.screen, RunScreen) and app.screen.outcome is not None, "the run to finish", timeout=60)
+        log = app.screen.query_one("RunLog")
+        assert len(log.lines) <= MAX_LOG_LINES and has(app, "ok alpha 2.0.0")
+
+    run_app(tmp_path, fake, scenario)
+
+    assert latencies and latencies[0] < 0.5, f"a key press took {latencies} seconds during ingestion"
+
+
+def test_ingesting_100000_records_takes_bounded_time(tmp_path: Path) -> None:
+    """Reading and rendering 100,000 records (follower, parser, renderer) stays under 5 s: detail lines past the cap are counted, not drawn."""
+    path = tmp_path / "events.jsonl"
+    with open(path, "w", encoding="utf-8", newline="\n") as handle:
+        for number in range(100_000):
+            handle.write(json.dumps({"event": "subprocess_line", "cmd": "git", "line": f"line {number}"}) + "\n")
+    stream, renderer = EventStream(path), EventRenderer()
+    started = time.monotonic()
+    shown = 0
+    while True:
+        batch = stream.poll()
+        if not batch:
+            break
+        shown += len(renderer.feed(batch))
+
+    assert time.monotonic() - started < 5.0
+    assert shown <= 10_000 and renderer.detail_omitted >= 90_000
+
+
+def test_with_colour_off_nothing_is_carried_by_colour_alone(tmp_path: Path, fake: FakeGupkg) -> None:
+    """With ``[ui] color = "never"`` (the program's own setting) at 80x24 the run view shows failures, warnings and errors in words and marks, and its lines carry no colour."""
+    records = [
+        {"event": "phase_start", "phase": "Verify"}, {"event": "warning", "text": "slow mirror"}, {"event": "error", "text": "checksum differs", "hint": "retry later"},
+        {"event": "phase_end", "phase": "Verify", "status": "failed", "elapsed": 0.5},
+    ]
+    update_run(fake, tmp_path, ("alpha",), records=records)
+    fake.scenario["update"][0]["doc"] = result("update", [entry("alpha", ok=False, status="failed", code=3, error={"code": "x", "message": "checksum differs"})])
+    fake.scenario["update"][0]["events"]["result"] = fake.scenario["update"][0]["doc"]
+    fake.respond("update", **fake.scenario["update"].pop(0))
+    coloured: list[bool] = []
+
+    async def scenario(app, pilot) -> None:
+        """Run the failing update and read the screen and the log's own styles."""
+        await open_browser(app, pilot)
+        await pilot.press("u")
+        await wait_for(pilot, lambda: has(app, "Update 1 user package"), "the plan")
+        await pilot.press("y")
+        await wait_for(pilot, lambda: isinstance(app.screen, RunScreen) and app.screen.outcome is not None, "the run to finish")
+        text = "\n".join(screen_text(app))
+        for word in ("✗ Verify failed", "Warning: slow mirror", "Error: checksum differs", "Failed (exit code 3)", "x alpha: update failed"):
+            assert word in text, word
+        coloured.append(app.env.settings.colour)
+
+    run_app(tmp_path, fake, scenario, settings='[ui]\ncolor = "never"')
+
+    assert coloured == [False]
+
+
+def test_the_renderer_without_colour_keeps_only_emphasis(tmp_path: Path) -> None:
+    """Every kind of line, rendered without colour, has no colour word in its style and still says what happened."""
+    records = [
+        {"event": "run_start", "command": "update", "mode": "user", "elevated": False}, {"event": "package_start", "view": {"name": "p"}},
+        {"event": "phase_start", "phase": "Fetch"}, {"event": "phase_end", "phase": "Fetch", "status": "failed", "elapsed": 1.0},
+        {"event": "step", "text": "x", "kind": "add"}, {"event": "warning", "text": "w"}, {"event": "error", "text": "e", "hint": "h"},
+        {"event": "package_end", "result": {"name": "p", "ok": False, "status": "failed"}},
+    ]
+    lines = EventRenderer(colour=False).feed(records) + verdict_lines(3, ["x p: update failed: e"], colour=False)
+
+    assert all(not ({"red", "green", "cyan", "yellow", "magenta", "blue"} & set(str(line.style).split())) for line in lines)
+    assert any(line.plain.startswith("  ✗ Fetch failed") for line in lines) and any(line.plain.startswith("Warning:") for line in lines)
+    assert any(line.plain.startswith("Error:") for line in lines) and any(line.plain.startswith("━━ Failed (exit code 3)") for line in lines)

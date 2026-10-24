@@ -2069,8 +2069,14 @@ and both are specified in issue 030.
   two separate operations, so the new version folders can be reviewed in
   between.
 - **Cancel** (D37). While a run is active, Esc asks "cancel after the
-  current package?". It is never a silent leave. The running CLI finishes
-  the current package cleanly and skips the rest.
+  current package?". It is never a silent leave (Ctrl-C asks the same
+  question and never quits while a call runs). The running CLI finishes
+  the current package cleanly and skips the rest; a program that is closed
+  anyway first asks the CLI to stop, then ends its whole process tree (the
+  launcher is a `.cmd`, so the process the program holds is only `cmd.exe`).
+- **Scheduled runs are normal-user runs.** The UI programs refuse an
+  elevated shell, so a task with "Run with highest privileges" is refused;
+  run it as a normal user (system packages are then only reported, D22).
 
 Textual stays for the interactive parts (D6). It is pinned and already
 bundled. The manager's layout changes completely, and `gupkg-tui` uses the

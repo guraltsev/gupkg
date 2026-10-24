@@ -171,7 +171,7 @@ class PackageScreen(PackageActions, FrameScreen):
     def _rows(self) -> list[PackageRow] | None:
         """Return the package as a one-row list for an operation, or ``None`` (after saying so) when it is not known yet."""
         if self._row is None:
-            self.notify("The package is not known yet.", severity="warning")
+            self.notify("The package is not known yet.", severity="warning", markup=False)
             return None
         return [self._row]
 
@@ -213,11 +213,11 @@ class PackageScreen(PackageActions, FrameScreen):
     def action_switch(self) -> None:
         """Choose another local version and activate it."""
         if self.info is None or self._row is None:
-            self.notify("The package is not known yet.", severity="warning")
+            self.notify("The package is not known yet.", severity="warning", markup=False)
             return
         others = [name for name, status, _, _ in self.info.versions if name != self.info.row.version]
         if not others:
-            self.notify("There is no other version to switch to.", severity="warning")
+            self.notify("There is no other version to switch to.", severity="warning", markup=False)
             return
 
         def chosen(version: str | None) -> None:

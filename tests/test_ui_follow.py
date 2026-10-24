@@ -137,3 +137,46 @@ def test_read_run_end_needs_the_last_record_to_be_run_end(tmp_path: Path) -> Non
 
     assert read_run_end(done)["summary"] == "s"
     assert read_run_end(unfinished) is None and read_run_end(tmp_path / "missing.jsonl") is None
+
+
+def test_a_file_that_shrinks_or_is_replaced_is_read_again_from_its_start(tmp_path: Path) -> None:
+    """Truncation and replacement under the same name are noticed (one placeholder) instead of reading nothing forever."""
+    path = tmp_path / "events.jsonl"
+    write(path, {"event": "step", "text": "one"}, {"event": "step", "text": "two"})
+    reader = RecordReader(path)
+    assert [item["text"] for item in reader.read()] == ["one", "two"]
+
+    path.write_text(json.dumps({"event": "step", "text": "x"}) + "\n", encoding="utf-8")
+    shrunk = reader.read()
+    replacement = tmp_path / "new.jsonl"
+    write(replacement, {"event": "step", "text": "first"}, {"event": "step", "text": "second"}, {"event": "step", "text": "third"})
+    path.unlink()
+    replacement.rename(path)
+    replaced = reader.read()
+
+    assert [item["event"] for item in shrunk] == ["unreadable", "step"] and shrunk[1]["text"] == "x"
+    assert [item["event"] for item in replaced] == ["unreadable", "step", "step", "step"] and "replaced" in replaced[0]["reason"]
+
+
+def test_one_huge_line_is_one_placeholder_with_its_size(tmp_path: Path, monkeypatch) -> None:
+    """A line far over the limit, arriving over many reads without a newline, gives ONE placeholder naming its byte count, and the next record is read."""
+    monkeypatch.setattr(follow, "MAX_RECORD_BYTES", 1000)
+    monkeypatch.setattr(follow, "CHUNK_BYTES", 4096)
+    path = tmp_path / "events.jsonl"
+    path.write_bytes(b"x" * 100_000)
+    reader = RecordReader(path)
+
+    def drain() -> list:
+        """Read until the whole file was consumed (a poll reads a bounded amount, so it takes several)."""
+        found: list = []
+        while reader.offset < path.stat().st_size:
+            found += reader.read()
+        return found + reader.read()
+
+    first = drain()
+    with open(path, "ab") as handle:
+        handle.write(b"y" * 50_000 + b"\n" + json.dumps({"event": "step", "text": "after"}).encode() + b"\n")
+    rest = drain()
+
+    assert first == []
+    assert [item["event"] for item in rest] == ["unreadable", "step"] and "150000 bytes" in rest[0]["reason"] and rest[1]["text"] == "after"

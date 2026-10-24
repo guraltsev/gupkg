@@ -177,10 +177,12 @@ Epic: 020. Design: `_docs/rehaul_design.md` §15, §10.4, §13.2. Supersedes the
       calls; elevation is requested once, for the system-target call. Run
       from a user-writable gupkg, it requests no elevation and reports the
       system targets as needing the system gupkg.
-- [ ] *Check for updates* with one user and one system package, run from
-      the system gupkg, writes and populates both new version directories,
-      the system one through the single elevated call, and activates
-      nothing. The browser then shows both packages as `outdated`.
+- [ ] *Check for updates* with one user and one system package is **one
+      non-elevated call** (decision D22 wins over the earlier wording of this row:
+      the controller decided that the engine is right). It writes and populates the user
+      package's new version directory and activates nothing; the system package is only
+      **reported** (an administrator checks it from an admin shell). The browser shows
+      the user package as `outdated`.
 - [ ] Cancelling a 3-package run while package 1 runs lets package 1
       finish, leaves packages 2 and 3 unchanged, and reports them as
       skipped.

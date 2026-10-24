@@ -509,8 +509,12 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
    needing the system gupkg, no UAC prompt appears, user packages are updated. Why manual: the real ACL check decides it.
 5. **Schedule behaviour.** In Task Scheduler (no console) run `gupkg-manager check-updates --all` and then `gupkg-manager update --all
    --yes`: both finish without waiting for a key, and a package without a checksum under the default `ask` is reported as `refused: no
-   checksum` with exit code 3. Why manual: needs a real scheduled task without a terminal.
+   checksum` with exit code 3. Then tick "Run with highest privileges" on the task: it is refused with exit code 2 (the programs refuse an
+   elevated shell). Why manual: needs a real scheduled task without a terminal and a real elevated token.
 6. **A hostile package name.** Make a folder `a&calc` in the user root and run `gupkg-manager update --all --yes` and open the browser:
    the package is listed literally, refused alone with exit code 2, and no Calculator starts. Why manual: real `cmd` quoting.
-7. **After the program closes.** Close `gupkg-tui` after an update: the console shows the summary and the log path (and nothing with
+7. **Closing while a call runs.** Start `gupkg-manager update --all --yes` of several packages, then close the console window (and, separately, press Ctrl-C in
+   the browser's run view): no `python.exe` of that gupkg is left in Task Manager after a few seconds, and the log shows the run stopped after its current
+   package. Why manual: real process trees and a real window close.
+8. **After the program closes.** Close `gupkg-tui` after an update: the console shows the summary and the log path (and nothing with
    `[manager] keep_screen = false`). Why manual: real console behaviour after a full-screen program exits.

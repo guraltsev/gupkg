@@ -141,7 +141,7 @@ class RunScreen(FrameScreen):
     async def _execute(self) -> None:
         """Run the job; whatever it raises becomes a failed outcome shown in the log, never a crashed interface."""
         sink = ScreenSink(self)
-        self.session = BatchSession(self._env.client, sink)
+        self.session = BatchSession(self._env.client, sink, colour=self._env.settings.colour)
         interaction = Interaction(confirm=self._confirm, ask_checksum=self._ask_checksum, interactive=True)
         try:
             outcome = await self._job(self.session, sink, interaction)
@@ -174,7 +174,7 @@ class RunScreen(FrameScreen):
     def action_quit_or_cancel(self) -> None:
         """``q``: quit when the job ended; while it runs, the same question as Escape (a run is never abandoned silently)."""
         if self.outcome is not None:
-            self.app.exit(self.outcome.exit_code)
+            self.app.exit(return_code=self.outcome.exit_code)
         else:
             self.run_worker(self._ask_cancel(), name="cancel-question")
 

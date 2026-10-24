@@ -13,6 +13,7 @@ Out of scope: what batches do with results (``test_ui_flows.py``) and the real l
 from __future__ import annotations
 
 import asyncio
+import ctypes
 from pathlib import Path
 
 import pytest
@@ -21,7 +22,7 @@ from gupkg.selfmgmt.location import RunningGupkg
 from gupkg_ui import client as client_module
 from gupkg_ui.follow import EventStream
 from gupkg_ui.client import Client, ClientError, StopRequest, check_document, refuse_unsafe, sibling_launcher, with_options
-from tests.ui_support import FakeGupkg, entry, head, result
+from tests.ui_support import FakeGupkg, entry, head, result, until
 
 
 @pytest.fixture
@@ -242,8 +243,7 @@ def test_a_stop_request_creates_the_announced_marker_and_the_run_stops(fake: Fak
         """Start the call, ask to stop once the first package is in, and return the result."""
         seen: list[dict] = []
         task = asyncio.ensure_future(fake.client().call(("update", "--", "user:a", "user:b"), events_dir=tmp_path / "root" / ".gupkg" / "logs", on_records=seen.extend, stop=stop))
-        while not any(item["event"] == "package_end" for item in seen):
-            await asyncio.sleep(0.02)
+        await until(lambda: any(item["event"] == "package_end" for item in seen), "package one to end")
         message = stop.request()
         return message, await task
 
@@ -252,6 +252,21 @@ def test_a_stop_request_creates_the_announced_marker_and_the_run_stops(fake: Fak
     assert "stop request is sent" in message and outcome.ok
     assert fake.stop_events()[0]["saw_stop"] is True
     assert [item["status"] for item in outcome.entries()] == ["updated", "skipped"]
+
+
+def test_the_same_temporary_folder_in_its_short_and_long_spelling_is_accepted(tmp_path: Path) -> None:
+    """The marker is compared by folder identity, not by text: a TEMP given in its 8.3 short form still allows the CLI's marker (named by the long form)."""
+    long_folder = tmp_path / "A Temporary Folder With A Long Name"
+    long_folder.mkdir()
+    buffer = ctypes.create_unicode_buffer(500)
+    ctypes.windll.kernel32.GetShortPathNameW(str(long_folder), buffer, 500)
+    assert buffer.value and buffer.value != str(long_folder), "this machine has no short names to compare"
+    stream = EventStream(tmp_path / "x.jsonl")
+    stream.stop_file = str(long_folder / ("gupkg-stop-" + "a" * 32))
+    stop = StopRequest(Path(buffer.value))
+    stop.stream = stream
+
+    assert "stop request is sent" in stop.request() and Path(stream.stop_file).exists()
 
 
 def test_a_stop_marker_outside_the_temporary_folder_is_never_created(tmp_path: Path) -> None:
