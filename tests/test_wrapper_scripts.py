@@ -1,287 +1,66 @@
-"""Cover observable launcher selection and argument forwarding.
+"""Cover the commands of a gupkg tree: ``gupkg.cmd``, ``gupkg-tui.cmd`` and ``gupkg-manager.cmd`` at the root of the tree.
 
-The tests run real Windows ``cmd`` wrappers and the checked-in native shim;
-the shim's target is a temporary Python probe. Package management, downloads,
-and the native shim implementation itself are out of scope.
+Behavior covered: each command starts only the launcher of the same name inside the ``gupkg`` folder beside it, forwards its
+arguments unchanged (spaces included) and returns its exit code; it never uses a ``gupkg`` found on ``PATH`` or in the current
+directory (design 21.3); with the inner launcher missing it says so and exits 9009.
+
+Real: the Windows command interpreter and the checked-in wrappers; the inner launchers are small recording batch files.
+Out of scope: what the inner launchers start (test_launcher, test_runtime_cli) and the package launchers (test_package_launcher).
 """
 
 from __future__ import annotations
 
-import ast
-import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
-import sys
-import tempfile
-import unittest
+from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-SRC_ROOT = ROOT / "src"
-# The dynamic launcher requires its MinGW runtime DLLs beside the executable.
-# These isolated wrapper tests intentionally copy one file, so use the
-# self-contained build and keep the packaging test responsible for dynamic
-# dependency provisioning.
-SHIM = SRC_ROOT / "gupkg" / "shim" / "shim-console.static.exe"
+import pytest
+
+SRC_ROOT = Path(__file__).resolve().parents[1] / "src"
+
+pytestmark = pytest.mark.skipif(os.name != "nt", reason="Windows batch wrapper behavior")
 
 
-class WrapperScriptTests(unittest.TestCase):
-    def make_probe(self, directory: Path, name: str, exit_code: int = 0) -> Path:
-        """Create a Python child that records its cwd and forwarded arguments."""
-        log_file = directory / f"{name}.log"
-        probe = directory / f"{name}.py"
-        probe.write_text(
-            f"""from pathlib import Path
-import sys
-
-Path({log_file.as_posix()!r}).write_text(
-    f\"cwd={{Path.cwd()}}\\nargs={{sys.argv[1:]!r}}\", encoding=\"utf-8\"
-)
-raise SystemExit({exit_code})
-""",
-            encoding="utf-8",
-        )
-        return log_file
-
-    def make_executable(self, directory: Path, name: str, probe: Path) -> Path:
-        """Create a native command shim targeting the temporary probe."""
-        executable = directory / name
-        shutil.copy2(SHIM, executable)
-        target = sys.executable.replace("\\", "/")
-        script = probe.as_posix()
-        executable.with_suffix(".config.toml").write_text(
-            f'target = "{target}"\n'
-            "forward_arguments = true\n\n"
-            "[[argument]]\n"
-            f'value = "{script}"\n',
-            encoding="utf-8",
-        )
-        return executable
-
-    def run_wrapper(
-        self, wrapper: Path, *arguments: str, cwd: Path, env: dict[str, str]
-    ) -> subprocess.CompletedProcess[str]:
-        """Run a batch wrapper through the real Windows command interpreter."""
-        return subprocess.run(
-            ["cmd", "/c", str(wrapper), *arguments],
-            cwd=str(cwd),
-            env=env,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-
-    @unittest.skipUnless(os.name == "nt", "Windows batch wrapper behavior")
-    def test_gupkg_launcher_prefers_local_executable(self) -> None:
-        """The outer launcher chooses its package-local command first."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            package = root / "gupkg"
-            package.mkdir()
-            local_probe = self.make_probe(root, "local")
-            self.make_executable(package, "gupkg.exe", local_probe.with_suffix(".py"))
-            path_dir = root / "path"
-            path_dir.mkdir()
-            path_probe = self.make_probe(root, "path")
-            self.make_executable(path_dir, "gupkg.exe", path_probe.with_suffix(".py"))
-            wrapper = root / "gupkg.cmd"
-            shutil.copy2(SRC_ROOT / "gupkg.cmd", wrapper)
-
-            env = os.environ.copy()
-            env["PATH"] = f"{path_dir}{os.pathsep}{env.get('PATH', '')}"
-            result = self.run_wrapper(
-                wrapper, "--name", "value with spaces", cwd=root, env=env
-            )
-
-            self.assertEqual(result.returncode, 0, msg=result.stderr or result.stdout)
-            self.assertTrue(local_probe.exists())
-            self.assertFalse(path_probe.exists())
-            recorded = local_probe.read_text(encoding="utf-8")
-            self.assertEqual(
-                ast.literal_eval(recorded.split("args=", 1)[1]),
-                ["--name", "value with spaces"],
-            )
-
-    @unittest.skipUnless(os.name == "nt", "Windows batch wrapper behavior")
-    def test_gupkg_launcher_uses_package_bootstrap_without_native_command(self) -> None:
-        """The outer launcher uses its adjacent bootstrap when no native command exists."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            package = root / "gupkg"
-            package.mkdir()
-            log_file = root / "bootstrap.log"
-            (package / "gupkg.cmd").write_text(
-                "@echo off\n"
-                f'> "{log_file}" echo args=%*\n'
-                "exit /b 17\n",
-                encoding="ascii",
-            )
-            wrapper = root / "gupkg.cmd"
-            shutil.copy2(SRC_ROOT / "gupkg.cmd", wrapper)
-
-            env = os.environ.copy()
-            env["PATH"] = ""
-            result = self.run_wrapper(
-                wrapper, "install", "--scope", "system", cwd=root, env=env
-            )
-
-            self.assertEqual(result.returncode, 17, msg=result.stderr or result.stdout)
-            self.assertEqual(
-                log_file.read_text(encoding="utf-8").strip(),
-                "args=install --scope system",
-            )
-
-    @unittest.skipUnless(os.name == "nt", "Windows batch wrapper behavior")
-    def test_tui_launcher_uses_local_tui_or_system_gupkg(self) -> None:
-        """The TUI launcher selects local TUI and otherwise prepends ``tui``."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            package = root / "gupkg"
-            package.mkdir()
-            local_probe = self.make_probe(root, "local-tui")
-            self.make_executable(
-                package, "gupkg-tui.exe", local_probe.with_suffix(".py")
-            )
-            wrapper = root / "gupkg-tui.cmd"
-            shutil.copy2(SRC_ROOT / "gupkg-tui.cmd", wrapper)
-
-            env = os.environ.copy()
-            result = self.run_wrapper(wrapper, "--probe", cwd=root, env=env)
-
-            self.assertEqual(result.returncode, 0, msg=result.stderr or result.stdout)
-            recorded = local_probe.read_text(encoding="utf-8")
-            self.assertEqual(ast.literal_eval(recorded.split("args=", 1)[1]), ["--probe"])
-
-            local_probe.unlink()
-            (package / "gupkg-tui.exe").unlink()
-            path_dir = root / "path"
-            path_dir.mkdir()
-            system_probe = self.make_probe(root, "system-tui")
-            self.make_executable(path_dir, "gupkg.exe", system_probe.with_suffix(".py"))
-            env["PATH"] = f"{path_dir}{os.pathsep}{env.get('PATH', '')}"
-            result = self.run_wrapper(wrapper, "--probe", cwd=root, env=env)
-
-            self.assertEqual(result.returncode, 0, msg=result.stderr or result.stdout)
-            recorded = system_probe.read_text(encoding="utf-8")
-            self.assertEqual(
-                ast.literal_eval(recorded.split("args=", 1)[1]), ["tui", "--probe"]
-            )
-
-    @unittest.skipUnless(os.name == "nt", "Windows batch wrapper behavior")
-    def test_launcher_ignores_current_directory_fallback_and_preserves_failure(self) -> None:
-        """PATH fallback excludes cwd executables and does not mask local failures."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            wrapper = root / "gupkg.cmd"
-            shutil.copy2(SRC_ROOT / "gupkg.cmd", wrapper)
-            current_probe = self.make_probe(root, "current")
-            self.make_executable(root, "gupkg.exe", current_probe.with_suffix(".py"))
-            env = os.environ.copy()
-            env["PATH"] = ""
-
-            result = self.run_wrapper(wrapper, "--probe", cwd=root, env=env)
-
-            self.assertNotEqual(result.returncode, 0)
-            self.assertFalse(current_probe.exists())
-            self.assertIn("No package-local or PATH", result.stderr)
-
-            local = root / "gupkg"
-            local.mkdir()
-            failing_probe = self.make_probe(root, "failing", exit_code=23)
-            self.make_executable(local, "gupkg.exe", failing_probe.with_suffix(".py"))
-            fallback = root / "fallback"
-            fallback.mkdir()
-            fallback_probe = self.make_probe(root, "fallback")
-            self.make_executable(
-                fallback, "gupkg.exe", fallback_probe.with_suffix(".py")
-            )
-            env["PATH"] = f"{fallback}{os.pathsep}{env.get('PATH', '')}"
-
-            result = self.run_wrapper(wrapper, "--probe", cwd=root, env=env)
-
-            self.assertEqual(result.returncode, 23)
-            self.assertFalse(fallback_probe.exists())
-
-    @unittest.skipUnless(os.name == "nt", "Windows batch wrapper behavior")
-    def test_outer_tui_launcher_falls_back_to_source_bootstrap(self) -> None:
-        """The outer TUI launcher uses the adjacent bootstrap in a source checkout."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            package = root / "gupkg"
-            package.mkdir()
-            log_file = root / "source.log"
-            native_probe = self.make_probe(root, "native-tui")
-            self.make_executable(
-                package, "gupkg-tui.exe", native_probe.with_suffix(".py")
-            )
-            source_tui = package / "gupkg-tui.cmd"
-            source_tui.write_text(
-                "@echo off\n"
-                f'>> "{log_file}" echo args=%*\n'
-                "exit /b 17\n",
-                encoding="ascii",
-            )
-            wrapper = root / "gupkg-tui.cmd"
-            shutil.copy2(SRC_ROOT / "gupkg-tui.cmd", wrapper)
-
-            env = os.environ.copy()
-            env["PATH"] = ""
-            result = self.run_wrapper(wrapper, "--probe", cwd=root, env=env)
-
-            self.assertEqual(result.returncode, 17, msg=result.stderr or result.stdout)
-            self.assertEqual(
-                log_file.read_text(encoding="utf-8").strip(), "args=--probe"
-            )
-            self.assertFalse(native_probe.exists())
-
-    @unittest.skipUnless(os.name == "nt", "Windows native shim behavior")
-    def test_native_shim_calls_absolute_batch_without_changing_cwd(self) -> None:
-        """A shell shim can launch a batch file without changing package cwd."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            package = root / "package with spaces" / "gupkg"
-            package.mkdir(parents=True)
-            log_file = root / "batch.log"
-            batch = package / "gupkg.cmd"
-            batch.write_text(
-                "@echo off\n"
-                f'>"{log_file}" echo cwd=%CD%\n'
-                f'>>"{log_file}" echo arg1=[%1] arg1tilde=[%~1] arg2=[%2] args=[%*]\n'
-                "exit /b 0\n",
-                encoding="ascii",
-            )
-
-            executable = root / "gupkg.exe"
-            shutil.copy2(SHIM, executable)
-            config = executable.with_suffix(".config.toml")
-            config.write_text(
-                'target = "%COMSPEC%"\n'
-                "forward_arguments = true\n"
-                "elevate = false\n\n"
-                "[[argument]]\nvalue = \"/d\"\n\n"
-                "[[argument]]\nvalue = \"/s\"\n\n"
-                "[[argument]]\nvalue = \"/c\"\n\n"
-                f"[[argument]]\nvalue = {json.dumps(str(batch))}\n",
-                encoding="utf-8",
-            )
-
-            result = subprocess.run(
-                [str(executable), "--probe"],
-                cwd=str(root),
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-
-            self.assertEqual(result.returncode, 0, msg=result.stderr or result.stdout)
-            recorded = log_file.read_text(encoding="utf-8").splitlines()
-            self.assertEqual(recorded[0], f"cwd={root}")
-            self.assertEqual(
-                recorded[1],
-                'arg1=["--probe] arg1tilde=[--probe] arg2=[] args=["--probe]',
-            )
+def tree_with(root: Path, wrapper: str, inner_exit: int = 0) -> tuple[Path, Path]:
+    """Copy *wrapper* into *root* with a recording inner launcher of the same name in ``gupkg\\``; return both paths and the log."""
+    shutil.copy2(SRC_ROOT / wrapper, root / wrapper)
+    (root / "gupkg").mkdir()
+    log = root / "args.log"
+    (root / "gupkg" / wrapper).write_text(f'@echo off\r\n> "{log}" echo args=%*\r\nexit /b {inner_exit}\r\n', encoding="ascii")
+    return root / wrapper, log
 
 
-if __name__ == "__main__":
-    unittest.main()
+def run(wrapper: Path, *arguments: str, cwd: Path, path: str = "") -> subprocess.CompletedProcess[str]:
+    """Run a wrapper through ``cmd`` with a controlled PATH."""
+    environment = {**os.environ, "PATH": path}
+    return subprocess.run(["cmd", "/c", str(wrapper), *arguments], cwd=str(cwd), env=environment, capture_output=True, text=True, check=False)
+
+
+@pytest.mark.parametrize("name", ["gupkg.cmd", "gupkg-tui.cmd", "gupkg-manager.cmd"])
+def test_each_command_starts_its_inner_launcher_with_the_same_arguments_and_exit_code(tmp_path: Path, name: str) -> None:
+    """The inner launcher of the same name runs, receives every argument, and its exit code is the command's."""
+    wrapper, log = tree_with(tmp_path, name, inner_exit=17)
+
+    result = run(wrapper, "--name", "value with spaces", cwd=tmp_path)
+
+    assert result.returncode == 17, result.stderr
+    assert log.read_text(encoding="utf-8").strip() == 'args=--name "value with spaces"'
+
+
+@pytest.mark.parametrize("name", ["gupkg.cmd", "gupkg-tui.cmd", "gupkg-manager.cmd"])
+def test_a_missing_inner_launcher_exits_9009_and_nothing_on_path_or_in_the_current_directory_runs(tmp_path: Path, name: str) -> None:
+    """With no inner launcher the command fails with 9009; a gupkg on PATH and one in the current directory are not used."""
+    shutil.copy2(SRC_ROOT / name, tmp_path / name)
+    decoys = tmp_path / "decoys"
+    decoys.mkdir()
+    marker = tmp_path / "decoy-ran.txt"
+    for folder in (decoys, tmp_path / "cwd"):
+        folder.mkdir(exist_ok=True)
+        for decoy in ("gupkg.cmd", "gupkg-tui.cmd", "gupkg-manager.cmd"):
+            (folder / decoy).write_text(f'@echo off\r\necho ran> "{marker}"\r\n', encoding="ascii")
+
+    result = run(tmp_path / name, cwd=tmp_path / "cwd", path=str(decoys))
+
+    assert result.returncode == 9009
+    assert "incomplete" in result.stderr and not marker.exists()
