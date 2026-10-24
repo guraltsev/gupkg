@@ -69,6 +69,24 @@ RESERVED_ENV_NAMES = frozenset(
 )
 
 
+_DEVICE_NAME = re.compile(r"^(con|prn|aux|nul|conin\$|conout\$|com[0-9¹²³]|lpt[0-9¹²³])(\..*)?$", re.IGNORECASE)
+
+
+def name_part_problem(part: str) -> str | None:
+    """Return why *part* cannot be one file or folder name on Windows (device name, stream, trailing dot or space), or ``None``.
+
+    ``CON``, ``NUL``, ``aux.lnk`` and ``COM1`` name devices whatever the extension; ``Tool:ads`` names an NTFS
+    alternate stream; a trailing dot or space is silently dropped by Windows, so two names would collide.
+    """
+    if re.search(r'[:*?"<>|\x00-\x1f]', part):
+        return "has a character Windows does not allow in a name (including ':', which names an NTFS stream)"
+    if _DEVICE_NAME.match(part):
+        return "is a Windows device name"
+    if part.endswith((".", " ")):
+        return "ends with a dot or a space"
+    return None
+
+
 def is_reserved_env_name(name: str) -> bool:
     """Return whether *name* is an environment variable a package may not set (``Path``, ``TEMP``, ``PROCESSOR_*`` ...)."""
     folded = name.strip().casefold()
@@ -1201,6 +1219,9 @@ def _parse_shims(collector: _Collector, raw: Any, modes: tuple[str, ...]) -> tup
         name = collector.string(row, "name", where, required=True)
         if name is not None and re.search(r'[\\/:*?"<>|\x00-\x1f]', name):
             collector.error(f"{where}.name", f"{name!r} must be a plain file name")
+            name = None
+        elif name is not None and (problem := name_part_problem(name)) is not None:
+            collector.error(f"{where}.name", f"{name!r} {problem}")
             name = None
         content = collector.string(row, "content", where, empty=True)
         target = collector.string(row, "target", where)

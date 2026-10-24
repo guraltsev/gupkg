@@ -719,6 +719,15 @@ def test_an_env_row_may_not_name_a_reserved_system_variable(name: str) -> None:
         parse_manifest(text)
 
 
+@pytest.mark.parametrize("name", ["NUL", "con", "aux.exe", "COM1", "lpt9", "tool:ads", "tool.", "tool "])
+def test_a_shim_may_not_be_named_like_a_device_or_a_stream(name: str) -> None:
+    """Device names (with any extension), NTFS streams and names Windows would rewrite are refused for a shim."""
+    text = f'format = 2\n[source]\ndownload_url = "https://x.test/a.zip"\n\n[[shim]]\nname = "{name}"\ntarget = "$App\\\\a.exe"\n'
+
+    with pytest.raises(ManifestError, match="shim"):
+        parse_manifest(text)
+
+
 def test_a_portable_env_table_may_not_name_a_reserved_variable() -> None:
     """The same rule holds for the `[portable] env` table."""
     text = ('format = 2\nmodes = ["portable"]\n[source]\ndownload_url = "https://x.test/a.zip"\n\n[portable]\n'

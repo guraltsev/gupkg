@@ -72,6 +72,11 @@ def test_variables_expand_against_current_so_shortcuts_survive_a_switch(tmp_path
         pytest.param('[[shortcut]]\nname = "..\\\\..\\\\evil"\ntarget = "$App\\\\a.exe"\n', "outside", id="shortcut-escapes-the-menu"),
         pytest.param('[[shortcut]]\nname = "C:\\\\evil"\ntarget = "$App\\\\a.exe"\n', "relative", id="absolute-shortcut-name"),
         pytest.param('[[env]]\nname = "A"\nvalue = "$Data"\n', "portable mode", id="data-outside-portable"),
+        pytest.param('[[shortcut]]\nname = "Tool:ads"\ntarget = "$App\\\\a.exe"\n', "stream", id="shortcut-ntfs-stream"),
+        pytest.param('[[shortcut]]\nname = "NUL"\ntarget = "$App\\\\a.exe"\n', "device name", id="shortcut-nul"),
+        pytest.param('[[shortcut]]\nname = "aux.lnk"\ntarget = "$App\\\\a.exe"\n', "device name", id="shortcut-aux-lnk"),
+        pytest.param('[[shortcut]]\nname = "COM1"\ntarget = "$App\\\\a.exe"\n', "device name", id="shortcut-com1"),
+        pytest.param('[[shortcut]]\nname = "Group\\\\con"\ntarget = "$App\\\\a.exe"\n', "device name", id="shortcut-device-in-folder"),
     ],
 )
 def test_a_declaration_that_cannot_become_an_effect_is_refused(tmp_path: Path, row: str, message: str) -> None:

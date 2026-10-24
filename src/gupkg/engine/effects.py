@@ -38,7 +38,7 @@ from typing import Any
 
 from ..catalog.local import canonical_path, is_inside
 from ..core import write_bytes_atomic
-from ..model.manifest import Manifest, is_reserved_env_name
+from ..model.manifest import Manifest, is_reserved_env_name, name_part_problem
 from ..model.mode import ENV_MACHINE, ModeContext
 from ..model.plan import effect_key, normalize_entry
 from ..model.state import Effect
@@ -314,6 +314,10 @@ def _confined(folder: Path, name: str, label: str) -> Path:
     """Return ``folder\\name`` after requiring it to stay inside *folder* (a relative name, no drive, no ``..`` escape)."""
     if not name or re.match(r"^[A-Za-z]:", name) or name.startswith(("\\", "/")):
         raise EffectError(f"{label}: '{name}' must be a relative name inside {folder}")
+    for part in re.split(r"[\\/]", name):
+        problem = None if part in ("", ".", "..") else name_part_problem(part)
+        if problem is not None:
+            raise EffectError(f"{label}: '{name}' {problem}")
     path = Path(os.path.normpath(folder / name))
     if not is_inside(path, folder) or canonical_path(path) == canonical_path(folder):
         raise EffectError(f"{label}: '{name}' would write outside {folder}")
