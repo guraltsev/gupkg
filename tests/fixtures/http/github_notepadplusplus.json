@@ -1,0 +1,24 @@
+{
+ "case": "github_notepadplusplus",
+ "tracker": "notepadplusplus",
+ "provider": "github latest, exact asset",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (tests/fixtures/registry_017/notepadplusplus/_bootstrap/pkg.toml, the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "8.7.9",
+  "download_url": "https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.7.9/npp.8.7.9.portable.x64.zip",
+  "sha256": "8b68f9035eef72e3803c7baa5b75cdbda9709a095762a0f0a59ee88790bb41bb",
+  "sha256_from": "github-digest"
+ },
+ "responses": [
+  {
+   "url": "https://api.github.com/repos/notepad-plus-plus/notepad-plus-plus/releases/latest",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"tag_name\": \"v8.7.9\", \"name\": \"v8.7.9\", \"draft\": false, \"prerelease\": false, \"html_url\": \"https://github.com/notepad-plus-plus/notepad-plus-plus/releases/tag/v8.7.9\", \"assets\": [{\"name\": \"npp.8.7.9.portable.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.7.9/npp.8.7.9.portable.zip\", \"digest\": \"sha256:eafd88ab9542c0475bf16cdec1cc3fda38892f8f2dd7736ca9b9389c5a1b52a3\"}, {\"name\": \"npp.8.7.9.portable.x64.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.7.9/npp.8.7.9.portable.x64.zip\", \"digest\": \"sha256:8b68f9035eef72e3803c7baa5b75cdbda9709a095762a0f0a59ee88790bb41bb\"}, {\"name\": \"npp.8.7.9.Installer.x64.exe\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.7.9/npp.8.7.9.Installer.x64.exe\", \"digest\": \"sha256:84fe67d2af720b2d3d6fb17b444495cb160ae116ee6231e62c09befd61f7edd9\"}]}"
+  }
+ ]
+}

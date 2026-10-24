@@ -1,0 +1,24 @@
+{
+ "case": "github_restic",
+ "tracker": "restic",
+ "provider": "github latest, exact asset",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (tests/fixtures/registry_017/restic/_bootstrap/pkg.toml, the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "0.17.3",
+  "download_url": "https://github.com/restic/restic/releases/download/v0.17.3/restic_0.17.3_windows_amd64.zip",
+  "sha256": "c32efa9c5ba099c5c2c88da4f47025308d4278467222651d8109dff6693d9ff8",
+  "sha256_from": "github-digest"
+ },
+ "responses": [
+  {
+   "url": "https://api.github.com/repos/restic/restic/releases/latest",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"tag_name\": \"v0.17.3\", \"name\": \"v0.17.3\", \"draft\": false, \"prerelease\": false, \"html_url\": \"https://github.com/restic/restic/releases/tag/v0.17.3\", \"assets\": [{\"name\": \"restic_0.17.3_windows_386.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/restic/restic/releases/download/v0.17.3/restic_0.17.3_windows_386.zip\", \"digest\": \"sha256:f4f42070c1110b55fbc4d4f37a9a8781c3ccb9457377e3e047d387923fb84fa1\"}, {\"name\": \"restic_0.17.3_windows_amd64.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/restic/restic/releases/download/v0.17.3/restic_0.17.3_windows_amd64.zip\", \"digest\": \"sha256:c32efa9c5ba099c5c2c88da4f47025308d4278467222651d8109dff6693d9ff8\"}, {\"name\": \"restic_0.17.3_linux_amd64.bz2\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/restic/restic/releases/download/v0.17.3/restic_0.17.3_linux_amd64.bz2\", \"digest\": \"sha256:7e52aa987981db184dd8c0c6833fd7ea2f7b2bcb7097945cba637a26b147eb1a\"}, {\"name\": \"SHA256SUMS\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/restic/restic/releases/download/v0.17.3/SHA256SUMS\", \"digest\": \"sha256:1c2c1f9e956e61427f64f345af1b885caf53e6d791396ae63523880179200de5\"}]}"
+  }
+ ]
+}

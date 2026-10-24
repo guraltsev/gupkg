@@ -1,0 +1,15 @@
+format = 2
+description = "An advanced and multi-platform BitTorrent client with a nice Qt user interface as well as a Web UI for remote control and an integrated search engine. qBittorrent aims to meet the needs of most users while using as little CPU and memory as possible."
+project_url = "https://www.qbittorrent.org/"
+modes = ["system", "user"]
+
+# No checksum: SourceForge publishes none (the registry tool computes it).
+# The NSIS installer is unpacked by 7-Zip, never run.
+[source]
+download_url = "https://sourceforge.net/projects/qbittorrent/files/qbittorrent-win32/qbittorrent-5.2.3/qbittorrent_5.2.3_x64_setup.exe/download"
+kind = "nsis"
+
+[[shortcut]]
+name = "Qbittorrent"
+target = "$App\\qbittorrent.exe"
+description = "Torrent client"

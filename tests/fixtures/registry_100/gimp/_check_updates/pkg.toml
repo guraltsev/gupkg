@@ -1,0 +1,40 @@
+format = 2
+description = "GNU Image Manipulation Program, a raster graphics editor."
+project_url = "https://www.gimp.org/"
+modes = ["system", "user"]
+
+# Stable series only (even minor), newest first; a series counts only when its
+# Windows folder exists, as in the 0.17 hook.
+[track]
+provider = "index"
+check_url = "https://download.gimp.org/gimp/"
+download = "https://download.gimp.org/gimp/v${major}.${minor}/windows/gimp-${version}-setup.exe"
+
+[[track.level]]
+match = 'href="v(?P<major>\d+)\.(?P<minor>\d*[02468])/"'
+key = "${major}.${minor}"
+next = "v${major}.${minor}/windows/"
+probe = "v${major}.${minor}/windows/"
+
+[[track.level]]
+match = 'href="gimp-(?P<version>\d+(?:\.\d+)*)-setup\.exe"'
+
+# The official download is an Inno Setup installer, which no bundled tool can
+# unpack: the vendor installer is run silently into the staged App folder.
+[source]
+download_url = "${download_url}"
+kind = "exe"
+require = ["bin/gimp-3.exe"]
+
+[source.checksum]
+sums_file = "https://download.gimp.org/gimp/v${major}.${minor}/windows/SHA256SUMS"
+entry = "gimp-${version}-setup.exe"
+
+[source.installer]
+run = ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/CURRENTUSER", "/NOICONS", "/DIR=$Stage"]
+
+[[shortcut]]
+name = "Gimp"
+target = "$App\\bin\\gimp-3.exe"
+working_dir = "%USERPROFILE%"
+description = "Graphics manipulation"

@@ -1,0 +1,24 @@
+{
+ "case": "github_portablegit",
+ "tracker": "portablegit",
+ "provider": "github latest, version from asset name (tag v2.46.2.windows.1)",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/portablegit/_bootstrap/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "2.46.2",
+  "download_url": "https://github.com/o/r/releases/download/v2.46.2.windows.1/PortableGit-2.46.2-64-bit.7z.exe",
+  "sha256": "86cab61f9f6269c88578f6c876890eace5a01fb80d503f7aa199bc5756461109",
+  "sha256_from": "github-digest"
+ },
+ "responses": [
+  {
+   "url": "https://api.github.com/repos/git-for-windows/git/releases/latest",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"tag_name\": \"v2.46.2.windows.1\", \"name\": \"v2.46.2.windows.1\", \"draft\": false, \"prerelease\": false, \"html_url\": \"https://github.com/o/r/releases/tag/v2.46.2.windows.1\", \"assets\": [{\"name\": \"PortableGit-2.46.2-64-bit.7z.exe\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/o/r/releases/download/v2.46.2.windows.1/PortableGit-2.46.2-64-bit.7z.exe\", \"digest\": \"sha256:86cab61f9f6269c88578f6c876890eace5a01fb80d503f7aa199bc5756461109\"}, {\"name\": \"PortableGit-2.46.2-32-bit.7z.exe\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/o/r/releases/download/v2.46.2.windows.1/PortableGit-2.46.2-32-bit.7z.exe\", \"digest\": \"sha256:d7352b0a0cd8aaaffa54f7edff076169644b659dadee6fbf9fd249299c0ba7c2\"}, {\"name\": \"Git-2.46.2-64-bit.exe\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/o/r/releases/download/v2.46.2.windows.1/Git-2.46.2-64-bit.exe\", \"digest\": \"sha256:9749eae3221095206e9e160155b9e0ad875a701c6b10d6ea43cd7b018a44a479\"}, {\"name\": \"MinGit-2.46.2-64-bit.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/o/r/releases/download/v2.46.2.windows.1/MinGit-2.46.2-64-bit.zip\", \"digest\": \"sha256:7c2205b1bfe4efdbc3cd17fe425cce5fdf71fdfb51d8e86ea4f2956fac7ad3bd\"}]}"
+  }
+ ]
+}

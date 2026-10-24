@@ -1,0 +1,29 @@
+format = 2
+description = "Keyboard-driven launcher and command palette."
+project_url = "https://keypirinha.com/"
+modes = ["system", "user", "portable"]
+
+# The publisher provides no checksum beyond GitHub's asset digest.
+[track]
+provider = "github"
+repo = "Keypirinha/Keypirinha"
+asset = "keypirinha-${version}-x64-portable.7z"
+
+[source]
+download_url = "${asset_url}"
+strip = "auto"
+
+# UNVERIFIED upstream portable mechanism
+[portable]
+persist = ["portable"]
+
+# The release ships a "portable" folder that puts Keypirinha in portable mode; outside
+# portable mode it is removed so the profile stays outside the versioned App
+# (the 0.17 unpack hook did this unconditionally).
+[nonportable]
+remove = ["portable"]
+
+[[shortcut]]
+name = "Keypirinha"
+target = "$App\\keypirinha.exe"
+description = "Launcher"

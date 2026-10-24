@@ -1,0 +1,22 @@
+format = 2
+description = "Fast desktop launcher for opening apps, finding files, running system actions, and building workflows with plugins."
+project_url = "https://wox-launcher.github.io/Wox/"
+modes = ["system", "user"]
+
+[track]
+provider = "github"
+repo = "Wox-launcher/Wox"
+asset = "wox-windows-amd64.exe"
+
+[source]
+download_url = "${asset_url}"
+kind = "exe"
+
+# The release asset is a single executable, stored in App as wox.exe.
+[[prepare]]
+rename = { from = "wox-windows-amd64.exe", to = "wox.exe" }
+
+[[shortcut]]
+name = "Wox"
+target = "$App\\wox.exe"
+description = "Application launcher"

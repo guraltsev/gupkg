@@ -1,0 +1,24 @@
+{
+ "case": "github_rmapi",
+ "tracker": "rmapi",
+ "provider": "github latest, exact asset",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (tests/fixtures/registry_017/rmapi/_bootstrap/pkg.toml, the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "0.0.30",
+  "download_url": "https://github.com/ddvk/rmapi/releases/download/v0.0.30/rmapi-win64.zip",
+  "sha256": "980f132e2dea3f4e12022d73191747bfe84763c3810dda78b172893126dff9f7",
+  "sha256_from": "github-digest"
+ },
+ "responses": [
+  {
+   "url": "https://api.github.com/repos/ddvk/rmapi/releases/latest",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"tag_name\": \"v0.0.30\", \"name\": \"v0.0.30\", \"draft\": false, \"prerelease\": false, \"html_url\": \"https://github.com/ddvk/rmapi/releases/tag/v0.0.30\", \"assets\": [{\"name\": \"rmapi-linuxx86-64.tar.gz\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/ddvk/rmapi/releases/download/v0.0.30/rmapi-linuxx86-64.tar.gz\", \"digest\": \"sha256:7148ff5fe276886fb5d92b8d4b55119ab6836a0e9392e72e36d54b9f978581c1\"}, {\"name\": \"rmapi-win64.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/ddvk/rmapi/releases/download/v0.0.30/rmapi-win64.zip\", \"digest\": \"sha256:980f132e2dea3f4e12022d73191747bfe84763c3810dda78b172893126dff9f7\"}, {\"name\": \"rmapi-macos-intel.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/ddvk/rmapi/releases/download/v0.0.30/rmapi-macos-intel.zip\", \"digest\": \"sha256:1718a93d5c925ac152a890f8dff72dda108f21ab15466442abe31c7ca57a5e72\"}]}"
+  }
+ ]
+}

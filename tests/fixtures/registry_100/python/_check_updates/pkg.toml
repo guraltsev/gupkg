@@ -1,0 +1,39 @@
+format = 2
+description = "Python programming language, official embeddable distribution for 64-bit Windows."
+project_url = "https://www.python.org/"
+modes = ["system", "user"]
+
+# Only final releases count: a folder must list the exact embeddable amd64 ZIP (probe).
+[track]
+provider = "index"
+check_url = "https://www.python.org/ftp/python/"
+download = "https://www.python.org/ftp/python/${version}/python-${version}-embed-amd64.zip"
+
+[[track.level]]
+match = 'href="(?P<version>3\.\d+\.\d+)/"'
+probe = "${version}/python-${version}-embed-amd64.zip"
+
+# python.org publishes signatures, not checksums, for the embeddable ZIP: no [source.checksum].
+[source]
+download_url = "${download_url}"
+
+[[path]]
+value = "$App"
+
+[[path]]
+value = "$App\\Scripts"
+
+[[shim]]
+name = "python"
+target = "$App\\python.exe"
+
+[[shim]]
+name = "pythonw"
+target = "$App\\pythonw.exe"
+type = "gui"
+
+[[shortcut]]
+name = "Python"
+target = "$App\\python.exe"
+working_dir = "%USERPROFILE%"
+description = "Python interactive interpreter"

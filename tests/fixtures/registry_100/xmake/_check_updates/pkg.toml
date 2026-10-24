@@ -1,0 +1,23 @@
+format = 2
+description = "Cross-platform build utility based on Lua."
+project_url = "https://xmake.io/"
+modes = ["system", "user"]
+
+[track]
+provider = "github"
+repo = "xmake-io/xmake"
+asset = "xmake-master.win64.zip"
+
+[source]
+download_url = "${asset_url}"
+
+[[source.extract]]
+src = "xmake/"
+dest = ""
+
+[[path]]
+value = "$App"
+
+[[shim]]
+name = "xmake"
+target = "$App\\xmake.exe"

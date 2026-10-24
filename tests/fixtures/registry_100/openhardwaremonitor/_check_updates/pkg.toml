@@ -1,0 +1,25 @@
+format = 2
+description = "Hardware temperature, fan, and voltage monitor (legacy project)."
+project_url = "https://openhardwaremonitor.org/"
+modes = ["system", "user"]
+
+[track]
+provider = "page"
+check_url = "https://openhardwaremonitor.org/downloads/"
+match = 'files/openhardwaremonitor-v(?P<version>\d+(?:\.\d+)+)\.zip'
+download = "https://openhardwaremonitor.org/files/openhardwaremonitor-v${version}.zip"
+
+[track.headers]
+User-Agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) gupkg-update-check/1"
+Accept = "text/html,application/xhtml+xml,*/*"
+
+# The ZIP wraps everything in one OpenHardwareMonitor folder.
+[source]
+download_url = "${download_url}"
+subdir = "OpenHardwareMonitor"
+require = ["OpenHardwareMonitor.exe"]
+
+[[shortcut]]
+name = "Open Hardware Monitor"
+target = "$App\\OpenHardwareMonitor.exe"
+description = "Hardware monitor"

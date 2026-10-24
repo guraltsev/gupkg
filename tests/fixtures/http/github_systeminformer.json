@@ -1,0 +1,24 @@
+{
+ "case": "github_systeminformer",
+ "tracker": "systeminformer",
+ "provider": "github latest, four-component tag, asset pattern",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/systeminformer/_bootstrap/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "3.2.25011.2103",
+  "download_url": "https://github.com/o/r/releases/download/v3.2.25011.2103/systeminformer-3.2.25011.2103-bin.zip",
+  "sha256": null,
+  "sha256_from": null
+ },
+ "responses": [
+  {
+   "url": "https://api.github.com/repos/winsiderss/systeminformer/releases/latest",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"tag_name\": \"v3.2.25011.2103\", \"name\": \"v3.2.25011.2103\", \"draft\": false, \"prerelease\": false, \"html_url\": \"https://github.com/o/r/releases/tag/v3.2.25011.2103\", \"assets\": [{\"name\": \"systeminformer-3.2.25011.2103-bin.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/o/r/releases/download/v3.2.25011.2103/systeminformer-3.2.25011.2103-bin.zip\"}, {\"name\": \"systeminformer-3.2.25011.2103-setup.exe\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/o/r/releases/download/v3.2.25011.2103/systeminformer-3.2.25011.2103-setup.exe\"}, {\"name\": \"systeminformer-3.2.25011.2103-sdk.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/o/r/releases/download/v3.2.25011.2103/systeminformer-3.2.25011.2103-sdk.zip\"}]}"
+  }
+ ]
+}

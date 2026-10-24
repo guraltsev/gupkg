@@ -1,0 +1,24 @@
+{
+ "case": "github_xournalpp",
+ "tracker": "xournalpp",
+ "provider": "github latest, exact asset",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (tests/fixtures/registry_017/xournalpp/_bootstrap/pkg.toml, the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "1.2.5",
+  "download_url": "https://github.com/xournalpp/xournalpp/releases/download/v1.2.5/xournalpp-1.2.5-windows-portable-AMD64.zip",
+  "sha256": "f8f5b97b794fcb5128ca256b163de71d1579c1f56da2279d315e1ff74dc4d9b6",
+  "sha256_from": "github-digest"
+ },
+ "responses": [
+  {
+   "url": "https://api.github.com/repos/xournalpp/xournalpp/releases/latest",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"tag_name\": \"v1.2.5\", \"name\": \"v1.2.5\", \"draft\": false, \"prerelease\": false, \"html_url\": \"https://github.com/xournalpp/xournalpp/releases/tag/v1.2.5\", \"assets\": [{\"name\": \"xournalpp-1.2.5-windows.exe\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/xournalpp/xournalpp/releases/download/v1.2.5/xournalpp-1.2.5-windows.exe\", \"digest\": \"sha256:26ce795abc163d7040eb3d7752cd6162252eba26a05f5a14440c7741d483ea31\"}, {\"name\": \"xournalpp-1.2.5-windows-portable-AMD64.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/xournalpp/xournalpp/releases/download/v1.2.5/xournalpp-1.2.5-windows-portable-AMD64.zip\", \"digest\": \"sha256:f8f5b97b794fcb5128ca256b163de71d1579c1f56da2279d315e1ff74dc4d9b6\"}, {\"name\": \"xournalpp-1.2.5-linux-x86_64.AppImage\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/xournalpp/xournalpp/releases/download/v1.2.5/xournalpp-1.2.5-linux-x86_64.AppImage\", \"digest\": \"sha256:6afddc32836f3742d28c9d6bbf0274999454922e1bb5cb5e5f87dcd9b2d1d4f5\"}]}"
+  }
+ ]
+}

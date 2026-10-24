@@ -1,0 +1,24 @@
+{
+ "case": "github_autohotkey",
+ "tracker": "autohotkey",
+ "provider": "github latest, exact asset",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (tests/fixtures/registry_017/autohotkey/_bootstrap/pkg.toml, the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "2.0.19",
+  "download_url": "https://github.com/AutoHotkey/AutoHotkey/releases/download/v2.0.19/AutoHotkey_2.0.19.zip",
+  "sha256": "ad48a0aac904cf38d516ee343cc31970d8a0df09c48964f8e64deb338f862ad2",
+  "sha256_from": "github-digest"
+ },
+ "responses": [
+  {
+   "url": "https://api.github.com/repos/AutoHotkey/AutoHotkey/releases/latest",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"tag_name\": \"v2.0.19\", \"name\": \"v2.0.19\", \"draft\": false, \"prerelease\": false, \"html_url\": \"https://github.com/AutoHotkey/AutoHotkey/releases/tag/v2.0.19\", \"assets\": [{\"name\": \"AutoHotkey_2.0.19_setup.exe\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/AutoHotkey/AutoHotkey/releases/download/v2.0.19/AutoHotkey_2.0.19_setup.exe\", \"digest\": \"sha256:78280ab2218cd07e3f0f47c5da0f7ec03d15ad4e810cfd4801d43d042a912aef\"}, {\"name\": \"AutoHotkey_2.0.19.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/AutoHotkey/AutoHotkey/releases/download/v2.0.19/AutoHotkey_2.0.19.zip\", \"digest\": \"sha256:ad48a0aac904cf38d516ee343cc31970d8a0df09c48964f8e64deb338f862ad2\"}]}"
+  }
+ ]
+}

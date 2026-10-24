@@ -1,0 +1,31 @@
+format = 2
+description = "DB Browser for SQLite, a visual tool for creating, designing, and editing SQLite database files."
+project_url = "https://sqlitebrowser.org/"
+modes = ["portable"]
+
+[track]
+provider = "github"
+repo = "sqlitebrowser/sqlitebrowser"
+asset = "DB.Browser.for.SQLite-v${version}-win64.zip"
+
+[source]
+download_url = "${asset_url}"
+require = ["DB Browser for SQLite.exe"]
+
+# UNVERIFIED upstream portable mechanism
+# DB Browser for SQLite reads its settings from DB4S-settings.ini beside the exe when that file exists
+# (name recalled from its source, not tested: PORTABLE-UNVERIFIED.md).
+[portable]
+persist = ["DB4S-settings.ini"]
+markers = [{ path = "DB4S-settings.ini", content = "" }]
+
+[[shortcut]]
+name = "DB Browser for SQLite"
+target = "$App\\DB Browser for SQLite.exe"
+icon_location = "$App\\DB Browser for SQLite.exe"
+description = "DB Browser for SQLite"
+
+[[shim]]
+name = "sqlitebrowser"
+target = "$App\\DB Browser for SQLite.exe"
+type = "gui"

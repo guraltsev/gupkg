@@ -1,0 +1,37 @@
+format = 2
+description = "Complete solution to record, convert, and stream audio and video."
+project_url = "https://ffmpeg.org/"
+modes = ["system", "user"]
+
+# Gyan.dev publishes the release version and the archive's SHA-256 as compact
+# text endpoints; the stable archive keeps one unversioned name.
+[track]
+provider = "page"
+check_url = "https://www.gyan.dev/ffmpeg/builds/release-version"
+match = '(?P<version>\d+(?:\.\d+)+)'
+download = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+
+# The ZIP holds ffmpeg-<version>-essentials_build\bin, doc and presets; only bin is kept.
+[source]
+download_url = "${download_url}"
+strip = 1
+subdir = "bin"
+require = ["ffmpeg.exe", "ffprobe.exe", "ffplay.exe"]
+
+[source.checksum]
+sidecar = "${download_url}.sha256"
+
+[[path]]
+value = "$App"
+
+[[shim]]
+name = "ffmpeg"
+target = "$App\\ffmpeg.exe"
+
+[[shim]]
+name = "ffprobe"
+target = "$App\\ffprobe.exe"
+
+[[shim]]
+name = "ffplay"
+target = "$App\\ffplay.exe"

@@ -1,0 +1,24 @@
+{
+ "case": "page_xnviewmp",
+ "tracker": "xnviewmp",
+ "provider": "page (structured data version, unversioned ZIP)",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/xnviewmp/_bootstrap/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "1.8.6",
+  "download_url": "https://download.xnview.com/XnViewMP-win-x64.zip",
+  "sha256": null,
+  "sha256_from": null
+ },
+ "responses": [
+  {
+   "url": "https://www.xnview.com/en/xnview-mp/",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/html"
+   },
+   "body": "<html><head><script type=\"application/ld+json\">{\"@type\": \"SoftwareApplication\", \"name\": \"XnView MP\", \"softwareVersion\": \"1.8.6\"}</script>\n<script type=\"application/ld+json\">{\"@type\": \"SoftwareApplication\", \"softwareVersion\": \"1.8.5\"}</script></head><body>XnView MP</body></html>"
+  }
+ ]
+}

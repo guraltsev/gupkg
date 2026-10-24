@@ -1,0 +1,18 @@
+format = 2
+description = "Screen capture, recording, and file-sharing tool."
+project_url = "https://getsharex.com/"
+modes = ["system", "user"]
+
+[track]
+provider = "github"
+repo = "ShareX/ShareX"
+asset = "ShareX-${version}-portable-x64.zip"
+
+[source]
+download_url = "${asset_url}"
+require = ["ShareX.exe"]
+
+[[shortcut]]
+name = "ShareX"
+target = "$App\\ShareX.exe"
+description = "Screen capture and sharing"

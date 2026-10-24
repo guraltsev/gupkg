@@ -1,0 +1,24 @@
+{
+ "case": "github_komorebi",
+ "tracker": "komorebi",
+ "provider": "github latest, exact asset",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (tests/fixtures/registry_017/komorebi/_bootstrap/pkg.toml, the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "0.1.35",
+  "download_url": "https://github.com/LGUG2Z/komorebi/releases/download/v0.1.35/komorebi-0.1.35-x86_64-pc-windows-msvc.zip",
+  "sha256": "fbd9d049dfb0bfe7ac17a71fc5c364bdf67abc9b8aae1ea201c7cb630e88e13a",
+  "sha256_from": "github-digest"
+ },
+ "responses": [
+  {
+   "url": "https://api.github.com/repos/LGUG2Z/komorebi/releases/latest",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"tag_name\": \"v0.1.35\", \"name\": \"v0.1.35\", \"draft\": false, \"prerelease\": false, \"html_url\": \"https://github.com/LGUG2Z/komorebi/releases/tag/v0.1.35\", \"assets\": [{\"name\": \"komorebi-0.1.35-aarch64-pc-windows-msvc.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/LGUG2Z/komorebi/releases/download/v0.1.35/komorebi-0.1.35-aarch64-pc-windows-msvc.zip\", \"digest\": \"sha256:29452f7f8fa767aafa7566d7a2aa24846dfa76c0746aa94f1e0a4fdc6e4c0adc\"}, {\"name\": \"komorebi-0.1.35-x86_64-pc-windows-msvc.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/LGUG2Z/komorebi/releases/download/v0.1.35/komorebi-0.1.35-x86_64-pc-windows-msvc.zip\", \"digest\": \"sha256:fbd9d049dfb0bfe7ac17a71fc5c364bdf67abc9b8aae1ea201c7cb630e88e13a\"}, {\"name\": \"komorebi-0.1.35-x86_64-pc-windows-msvc.msi\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/LGUG2Z/komorebi/releases/download/v0.1.35/komorebi-0.1.35-x86_64-pc-windows-msvc.msi\", \"digest\": \"sha256:714228d45cba24b0cd3c966aa5ed48f9da0493b47bf152ea8ccf9bfbd26a0d05\"}]}"
+  }
+ ]
+}

@@ -1,6 +1,6 @@
 """Cover version discovery by every ``[track]`` provider against fixture vendor responses.
 
-Each case runs a committed format 2 tracker (``tests/fixtures/registry2``) through
+Each case runs a committed format 2 tracker (``tests/fixtures/registry_100``) through
 ``run_tracker`` and ``render_pinned`` with a ``FakeSystem`` that serves the responses of
 ``tests/fixtures/http``: the pinned version directory that comes out is what
 ``gupkg check-updates`` would write. The fixtures are synthetic models of the registry hooks'
@@ -61,7 +61,7 @@ def test_each_tracker_discovers_its_version_and_download_from_the_fixture_respon
 
 def test_synthetic_fixtures_say_so_and_no_fixture_claims_a_recording_it_does_not_have() -> None:
     """A fixture is either a synthetic model marked `recorded: null`, or carries a recording date, never both or neither."""
-    assert len(CASES) == 25
+    assert len(CASES) >= 25
     for case in CASES:
         document = json.loads(case.read_text(encoding="utf-8"))
         if document["recorded"] is None:

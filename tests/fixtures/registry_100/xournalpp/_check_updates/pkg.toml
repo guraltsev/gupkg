@@ -1,0 +1,26 @@
+format = 2
+description = "Handwriting notetaking and PDF annotation app."
+project_url = "https://xournalpp.github.io/"
+modes = ["system", "user"]
+
+[track]
+provider = "github"
+repo = "xournalpp/xournalpp"
+asset = "xournalpp-${version}-windows-portable-AMD64.zip"
+
+[source]
+download_url = "${asset_url}"
+
+[[source.extract]]
+src = "xournalpp-*/"
+dest = ""
+
+[[shortcut]]
+name = "Xournal++"
+target = "$App\\bin\\xournalpp.exe"
+description = "Handwritten notes and PDF annotation"
+
+[[shim]]
+name = "xournalpp"
+target = "$App\\bin\\xournalpp.exe"
+type = "gui"

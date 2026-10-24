@@ -1,0 +1,24 @@
+{
+ "case": "page_tixati",
+ "tracker": "tixati",
+ "provider": "page (file name carries version-build, newest chosen)",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/tixati/_bootstrap/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "3.31-1",
+  "download_url": "https://download.tixati.com/tixati-3.31-1.portable.zip",
+  "sha256": null,
+  "sha256_from": null
+ },
+ "responses": [
+  {
+   "url": "https://tixati.com/windows",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/html"
+   },
+   "body": "<html><body><a href=\"https://download.tixati.com/tixati-3.31-1.portable.zip\">Portable</a>\n<a href=\"https://download.tixati.com/tixati-3.31-1.install64.exe\">Installer 64</a>\n<a href=\"https://download.tixati.com/tixati-3.9-1.portable.zip\">older</a>\n<a href=\"https://download.tixati.com/tixati-3.31-1.portable.zip\">again</a></body></html>"
+  }
+ ]
+}

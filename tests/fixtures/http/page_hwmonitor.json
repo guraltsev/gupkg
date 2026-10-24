@@ -1,0 +1,24 @@
+{
+ "case": "page_hwmonitor",
+ "tracker": "hwmonitor",
+ "provider": "page (several releases listed, newest chosen)",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/hwmonitor/_bootstrap/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "1.60",
+  "download_url": "https://download.cpuid.com/hwmonitor/hwmonitor_1.60.zip",
+  "sha256": null,
+  "sha256_from": null
+ },
+ "responses": [
+  {
+   "url": "https://www.cpuid.com/softwares/hwmonitor.html",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/html"
+   },
+   "body": "<html><body><a href=\"https://download.cpuid.com/hwmonitor/hwmonitor_1.9.zip\">1.9</a>\n<a href=\"https://download.cpuid.com/hwmonitor/hwmonitor_1.60.zip\">ZIP 1.60</a>\n<a href=\"https://download.cpuid.com/hwmonitor/hwmonitor_1.59-setup.exe\">Setup 1.59</a></body></html>"
+  }
+ ]
+}

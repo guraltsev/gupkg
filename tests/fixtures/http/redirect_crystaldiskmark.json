@@ -1,0 +1,24 @@
+{
+ "case": "redirect_crystaldiskmark",
+ "tracker": "crystaldiskmark",
+ "provider": "redirect (unwrap_query)",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/crystaldiskmark/_bootstrap/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "9.0.1",
+  "download_url": "https://sourceforge.net/projects/crystaldiskmark/files/9.0.1/CrystalDiskMark9_0_1.zip/download",
+  "sha256": null,
+  "sha256_from": null
+ },
+ "responses": [
+  {
+   "url": "https://crystalmark.info/redirect.php?product=CrystalDiskMark",
+   "method": "HEAD",
+   "status": 302,
+   "headers": {
+    "Location": "https://crystalmark.info/jump.php?url=https%3A%2F%2Fsourceforge.net%2Fprojects%2Fcrystaldiskmark%2Ffiles%2F9.0.1%2FCrystalDiskMark9_0_1.zip%2Fdownload"
+   },
+   "body": ""
+  }
+ ]
+}

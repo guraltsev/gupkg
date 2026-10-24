@@ -1,0 +1,24 @@
+{
+ "case": "github_backrest",
+ "tracker": "backrest",
+ "provider": "github latest, exact asset",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (tests/fixtures/registry_017/backrest/_bootstrap/pkg.toml, the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "1.9.2",
+  "download_url": "https://github.com/garethgeorge/backrest/releases/download/v1.9.2/backrest_Windows_x86_64.zip",
+  "sha256": "15648358a76f97d6deb574f7a9c949ee1118582d8517cd34205a1d812cb05190",
+  "sha256_from": "github-digest"
+ },
+ "responses": [
+  {
+   "url": "https://api.github.com/repos/garethgeorge/backrest/releases/latest",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"tag_name\": \"v1.9.2\", \"name\": \"v1.9.2\", \"draft\": false, \"prerelease\": false, \"html_url\": \"https://github.com/garethgeorge/backrest/releases/tag/v1.9.2\", \"assets\": [{\"name\": \"backrest_Linux_x86_64.tar.gz\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/garethgeorge/backrest/releases/download/v1.9.2/backrest_Linux_x86_64.tar.gz\", \"digest\": \"sha256:c76e146a819f2197d367047bd42183a4d49ab76371449213c8d24db79636c134\"}, {\"name\": \"backrest_Windows_x86_64.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/garethgeorge/backrest/releases/download/v1.9.2/backrest_Windows_x86_64.zip\", \"digest\": \"sha256:15648358a76f97d6deb574f7a9c949ee1118582d8517cd34205a1d812cb05190\"}, {\"name\": \"backrest_Darwin_arm64.tar.gz\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/garethgeorge/backrest/releases/download/v1.9.2/backrest_Darwin_arm64.tar.gz\", \"digest\": \"sha256:dfb3208e2d29fc1924b73938639fc2e157b23a1cdc0eddb13785e7f460404c57\"}]}"
+  }
+ ]
+}

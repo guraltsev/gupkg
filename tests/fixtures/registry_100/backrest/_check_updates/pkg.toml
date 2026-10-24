@@ -1,0 +1,18 @@
+format = 2
+description = "Web UI and orchestrator for restic backup."
+project_url = "https://github.com/garethgeorge/backrest"
+modes = ["system", "user"]
+
+[track]
+provider = "github"
+repo = "garethgeorge/backrest"
+asset = "backrest_Windows_x86_64.zip"
+
+[source]
+download_url = "${asset_url}"
+require = ["backrest.exe"]
+
+[[shortcut]]
+name = "BackRest"
+target = "$App\\backrest.exe"
+icon_location = "$App\\backrest.exe"

@@ -601,7 +601,8 @@ def test_the_regex_worker_answers_a_request_in_isolation(machine: System, tmp_pa
 
     result = machine.regex_worker(REQUEST, 20, on_line=lines.append)
 
-    assert result.returncode == 0 and lines[0].startswith("pid ")
+    # The pid line (standard error) and the answer (standard output) reach the callback from two reader threads, in either order.
+    assert result.returncode == 0 and any(line.startswith("pid ") for line in lines)
     assert '"ok":true' in result.stdout and '"42"' in result.stdout
 
 
@@ -614,7 +615,7 @@ def test_the_regex_worker_is_killed_at_its_deadline_and_is_gone(machine: System)
         machine.regex_worker(HANGING, 1.0, on_line=lines.append)
 
     assert time.monotonic() - started < 1.0 + 0.5 + 4  # the deadline, a poll, and a slow process start
-    pid = int(lines[0].split()[1])
+    pid = int(next(line for line in lines if line.startswith("pid ")).split()[1])
     time.sleep(0.5)
     assert not _alive(pid)
 

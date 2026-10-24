@@ -1,0 +1,24 @@
+{
+ "case": "page_cwrsync",
+ "tracker": "cwrsync",
+ "provider": "page (several versions listed, newest chosen)",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/cwrsync/_bootstrap/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "6.10.0",
+  "download_url": "https://itefix.net/downloads/cwrsync/cwrsync_6.10.0_x64_free.zip",
+  "sha256": null,
+  "sha256_from": null
+ },
+ "responses": [
+  {
+   "url": "https://itefix.net/cwrsync",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/html"
+   },
+   "body": "<html><body><ul>\n<li><a href=\"/downloads/cwrsync/cwrsync_6.9.1_x64_free.zip\">6.9.1</a></li>\n<li><a href=\"/downloads/cwrsync/cwrsync_6.10.0_x64_free.zip\">6.10.0</a></li>\n<li><a href=\"/downloads/cwrsync/cwrsync_6.10.0_x86_free.zip\">6.10.0 x86</a></li>\n<li><a href=\"/downloads/cwrsync/cwrsync_6.2.4_x64_free.zip\">6.2.4</a></li></ul></body></html>"
+  }
+ ]
+}

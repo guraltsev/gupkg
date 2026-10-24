@@ -1,0 +1,29 @@
+format = 2
+description = "Fast, compact image viewer and converter."
+project_url = "https://www.irfanview.com/"
+modes = ["system", "user"]
+
+# The file name carries the version without its dot: iview472.zip is 4.72.
+[track]
+provider = "page"
+check_url = "https://www.irfanview.com/main_download_engl.htm"
+match = 'iview(?P<major>\d)(?P<minor>\d{2})\.zip'
+version = "${major}.${minor}"
+download = "https://www.irfanview.info/files/iview${major}${minor}_x64.zip"
+
+[track.headers]
+User-Agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) gupkg-update-check/1"
+Accept = "text/html,application/xhtml+xml,*/*"
+
+[source]
+download_url = "${download_url}"
+require = ["i_view64.exe"]
+
+[source.headers]
+User-Agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124 Safari/537.36"
+Referer = "https://www.irfanview.info/"
+
+[[shortcut]]
+name = "IrfanView"
+target = "$App\\i_view64.exe"
+description = "Image viewer"

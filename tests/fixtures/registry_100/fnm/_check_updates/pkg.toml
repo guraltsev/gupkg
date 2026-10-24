@@ -1,0 +1,20 @@
+format = 2
+description = "Fast and simple Node.js version manager, built in Rust."
+project_url = "https://fnm.vercel.app/"
+modes = ["system", "user"]
+
+[track]
+provider = "github"
+repo = "Schniz/fnm"
+asset = "fnm-windows.zip"
+
+[source]
+download_url = "${asset_url}"
+require = ["fnm.exe"]
+
+[[path]]
+value = "$App"
+
+[[shim]]
+name = "fnm"
+target = "$App\\fnm.exe"

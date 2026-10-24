@@ -1,0 +1,70 @@
+format = 2
+description = "An extensible, customizable, free/libre text editor — and more."
+project_url = "https://www.gnu.org/software/emacs/"
+modes = ["system", "user"]
+
+# GNU keeps Windows builds in one folder per major version. Release numbers such
+# as 31.1_1 (a rebuild of 31.1) are ordered by their numeric components. The
+# dependency-free (no-deps), installer and source files and the pretest builds on
+# alpha.gnu.org are not followed.
+[track]
+provider = "index"
+check_url = "https://ftp.gnu.org/gnu/emacs/windows/"
+download = "https://ftp.gnu.org/gnu/emacs/windows/emacs-${major}/emacs-${version}-UCRT64.zip"
+
+[[track.level]]
+match = 'href="emacs-(?P<major>\d+)/"'
+next = "emacs-${major}/"
+
+[[track.level]]
+match = 'emacs-(?P<version>\d+(?:\.\d+)*(?:_\d+)?)-UCRT64\.zip'
+
+# GNU publishes emacs-<version>-sha256sums.txt for some builds only (older ones used
+# sha256sum.txt, which is not followed). Where the file or the entry is missing the checksum is
+# optional: the version is still found and the registry tool computes the hash (flagged for review).
+[source]
+download_url = "${download_url}"
+require = ["bin\\runemacs.exe", "bin\\emacs.exe"]
+
+[source.checksum]
+sums_file = "https://ftp.gnu.org/gnu/emacs/windows/emacs-${major}/emacs-${version}-sha256sums.txt"
+entry = "emacs-${version}-UCRT64.zip"
+optional = true
+
+[[shim]]
+name = "emacs"
+target = "$App\\bin\\emacs.exe"
+
+[[shim]]
+name = "runemacs"
+target = "$App\\bin\\runemacs.exe"
+type = "gui"
+
+[[shim]]
+name = "emacsclient"
+target = "$App\\bin\\emacsclient.exe"
+
+[[shim]]
+name = "emacsclientw"
+target = "$App\\bin\\emacsclientw.exe"
+type = "gui"
+
+[[shortcut]]
+name = "Emacs"
+target = "$App\\bin\\runemacs.exe"
+working_dir = "%USERPROFILE%"
+description = "Emacs text editor"
+
+[[shortcut]]
+name = "Emacs (debug init)"
+target = "$App\\bin\\runemacs.exe"
+arguments = "--debug-init"
+working_dir = "%USERPROFILE%"
+description = "Emacs text editor (debug)"
+
+[[shortcut]]
+name = "Emacs client"
+target = "$App\\bin\\emacsclientw.exe"
+arguments = "-c -n -a \"\""
+working_dir = "%USERPROFILE%"
+description = "Emacs text editor (client)"

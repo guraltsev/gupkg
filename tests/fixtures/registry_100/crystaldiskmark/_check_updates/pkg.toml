@@ -1,0 +1,23 @@
+format = 2
+description = "Disk benchmark utility."
+project_url = "https://crystalmark.info/"
+modes = ["system", "user", "portable"]
+
+[track]
+provider = "redirect"
+check_url = "https://crystalmark.info/redirect.php?product=CrystalDiskMark"
+unwrap_query = "url"
+match = '/files/(?P<version>\d+(?:\.\d+)+)/'
+
+# The publisher provides no checksum for this release asset.
+[source]
+download_url = "${download_url}"
+
+# UNVERIFIED upstream portable mechanism
+[portable]
+persist = ["DiskMark.ini"]
+
+[[shortcut]]
+name = "Tools\\CrystalDiskMark"
+target = "$App\\DiskMark64.exe"
+description = "CrystalDiskMark"

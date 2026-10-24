@@ -1,0 +1,22 @@
+format = 2
+description = "Configuration profiles and scheduling for restic backups."
+project_url = "https://creativeprojects.github.io/resticprofile/"
+modes = ["system", "user"]
+
+[track]
+provider = "github"
+repo = "creativeprojects/resticprofile"
+asset = "resticprofile_${version}_windows_amd64.zip"
+
+[source]
+download_url = "${asset_url}"
+require = ["resticprofile.exe"]
+
+[[shortcut]]
+name = "resticprofile"
+target = "$App\\resticprofile.exe"
+description = "Restic backup profile manager"
+
+[[shim]]
+name = "resticprofile"
+target = "$App\\resticprofile.exe"

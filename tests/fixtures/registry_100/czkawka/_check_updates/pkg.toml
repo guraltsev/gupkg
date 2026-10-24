@@ -1,0 +1,27 @@
+format = 2
+description = "Finds duplicate files, empty folders, similar images, and more."
+project_url = "https://github.com/qarmin/czkawka"
+modes = ["system", "user"]
+
+[track]
+provider = "github"
+repo = "qarmin/czkawka"
+asset = "windows_czkawka_gui_gtk_412.zip"
+
+[source]
+download_url = "${asset_url}"
+require = ["czkawka_gui.exe", "krokiet.exe", "czkawka_cli.exe"]
+
+[[shortcut]]
+name = "Czkawka"
+target = "$App\\czkawka_gui.exe"
+description = "Duplicate and clutter finder"
+
+[[shortcut]]
+name = "Krokiet"
+target = "$App\\krokiet.exe"
+description = "Czkawka with the Krokiet interface"
+
+[[shim]]
+name = "czkawka_cli"
+target = "$App\\czkawka_cli.exe"

@@ -1,0 +1,24 @@
+{
+ "case": "github_czkawka",
+ "tracker": "czkawka",
+ "provider": "github latest, exact asset",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (tests/fixtures/registry_017/czkawka/_bootstrap/pkg.toml, the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "9.0.0",
+  "download_url": "https://github.com/qarmin/czkawka/releases/download/9.0.0/windows_czkawka_gui_gtk_412.zip",
+  "sha256": "668a64145749ad0a51d1f4e789eda2bdbccad6b8ad1dcb30f24ce3fe2bcedd50",
+  "sha256_from": "github-digest"
+ },
+ "responses": [
+  {
+   "url": "https://api.github.com/repos/qarmin/czkawka/releases/latest",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"tag_name\": \"9.0.0\", \"name\": \"9.0.0\", \"draft\": false, \"prerelease\": false, \"html_url\": \"https://github.com/qarmin/czkawka/releases/tag/9.0.0\", \"assets\": [{\"name\": \"windows_czkawka_cli.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/qarmin/czkawka/releases/download/9.0.0/windows_czkawka_cli.zip\", \"digest\": \"sha256:ca616d116f1695070b16e97fd0fd881fdf7023a16dc06af8a6562e474834421e\"}, {\"name\": \"windows_czkawka_gui_gtk_412.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/qarmin/czkawka/releases/download/9.0.0/windows_czkawka_gui_gtk_412.zip\", \"digest\": \"sha256:668a64145749ad0a51d1f4e789eda2bdbccad6b8ad1dcb30f24ce3fe2bcedd50\"}, {\"name\": \"linux_czkawka_gui.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/qarmin/czkawka/releases/download/9.0.0/linux_czkawka_gui.zip\", \"digest\": \"sha256:c87c02ee5f3b355e87f3da486cf16292d08454c097165c6e64acc1b844038e8a\"}]}"
+  }
+ ]
+}

@@ -1,0 +1,24 @@
+{
+ "case": "github_fnm",
+ "tracker": "fnm",
+ "provider": "github latest, exact asset",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (tests/fixtures/registry_017/fnm/_bootstrap/pkg.toml, the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "1.38.1",
+  "download_url": "https://github.com/Schniz/fnm/releases/download/v1.38.1/fnm-windows.zip",
+  "sha256": "d0b1f34a065f81905d05d78dd67a3e3ec8c7becc6c86cf9666eb814c1a01ea4f",
+  "sha256_from": "github-digest"
+ },
+ "responses": [
+  {
+   "url": "https://api.github.com/repos/Schniz/fnm/releases/latest",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"tag_name\": \"v1.38.1\", \"name\": \"v1.38.1\", \"draft\": false, \"prerelease\": false, \"html_url\": \"https://github.com/Schniz/fnm/releases/tag/v1.38.1\", \"assets\": [{\"name\": \"fnm-linux.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/Schniz/fnm/releases/download/v1.38.1/fnm-linux.zip\", \"digest\": \"sha256:68f3b659d3e936ac8ab5be9f0edb7c448d7353810c706fddccfed5c6f01620b7\"}, {\"name\": \"fnm-windows.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/Schniz/fnm/releases/download/v1.38.1/fnm-windows.zip\", \"digest\": \"sha256:d0b1f34a065f81905d05d78dd67a3e3ec8c7becc6c86cf9666eb814c1a01ea4f\"}, {\"name\": \"fnm-macos.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/Schniz/fnm/releases/download/v1.38.1/fnm-macos.zip\", \"digest\": \"sha256:7f725280645443d4f0e42adc48c992425ff7172cca5a550709ea6fc8c2caa1a6\"}]}"
+  }
+ ]
+}

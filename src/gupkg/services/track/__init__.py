@@ -27,6 +27,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from ...model.manifest import Manifest, ManifestKind, TrackResult
+from ...model.patterns import PatternError
 from ...model.template import render
 from ...model.trackspec import (
     ChainSpec,
@@ -44,7 +45,8 @@ from ...model.trackspec import (
     TrackSpecError,
     parse_spec,
 )
-from ..checksum import ChecksumDiscoveryError, discover_checksum
+from ...report.events import Warning, emit
+from ..checksum import ChecksumAbsent, ChecksumDiscoveryError, discover_checksum
 from .common import TrackEnvironment, TrackError
 from .index import track_index, track_redirect
 from .page import track_chain, track_page, track_rss
@@ -87,7 +89,8 @@ def run_tracker(manifest: Manifest, env: TrackEnvironment) -> TrackResult:
     TrackError
         If the manifest is not a tracker, ``[track]`` is invalid, or the provider fails.
     ChecksumDiscoveryError
-        If ``[source.checksum]`` is declared but its source has no digest for the version.
+        If ``[source.checksum]`` is declared (and not ``optional = true``) but its source has no
+        digest for the version.
     """
     track = manifest.track
     if manifest.kind is not ManifestKind.TRACKER or track is None:
@@ -108,5 +111,25 @@ def run_tracker(manifest: Manifest, env: TrackEnvironment) -> TrackResult:
     values["version"] = result.version
     if manifest.source.download_url is not None:
         values["download_url"] = render(manifest.source.download_url, values)
-    checksum = discover_checksum(env.http, declared, values, env.regex)
+    try:
+        checksum = discover_checksum(env.http, declared, values, env.regex)
+    except ChecksumAbsent as error:
+        # An optional source (the vendor publishes a digest for some builds only) falls back to no
+        # discovered checksum, and says so. Only an absence is waived: a malformed digest line and a
+        # regular-expression failure (a deadline, a crashed worker) always stop the check.
+        if declared.optional and not _pattern_failure(error):
+            note = f"the optional checksum source had nothing ({error.kind}): {error}"
+            emit(Warning(note))
+            return replace(result, notes=(*result.notes, note))
+        raise
     return replace(result, checksum=checksum)
+
+
+def _pattern_failure(error: BaseException) -> bool:
+    """Return whether a regular-expression failure (deadline, crashed worker) is anywhere in *error*'s cause chain."""
+    seen = 0
+    while error is not None and seen < 10:
+        if isinstance(error, PatternError):
+            return True
+        error, seen = error.__cause__, seen + 1
+    return False

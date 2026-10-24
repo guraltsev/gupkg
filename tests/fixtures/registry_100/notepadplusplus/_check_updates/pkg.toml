@@ -1,0 +1,38 @@
+format = 2
+description = "Source code and text editor."
+project_url = "https://notepad-plus-plus.org/"
+modes = ["system", "user", "portable"]
+
+[track]
+provider = "github"
+repo = "notepad-plus-plus/notepad-plus-plus"
+asset = "npp.${version}.portable.x64.zip"
+
+[source]
+download_url = "${asset_url}"
+require = ["notepad++.exe"]
+
+# UNVERIFIED upstream portable mechanism
+[portable]
+markers = [{ path = "doLocalConf.xml", content = "" }]
+persist = [
+    "config.xml",
+    "session.xml",
+    "shortcuts.xml",
+    "stylers.xml",
+    "contextMenu.xml",
+    "userDefineLangs",
+    "plugins",
+    "themes",
+    "backup",
+]
+
+[[shortcut]]
+name = "Notepad++"
+target = "$App\\notepad++.exe"
+description = "Text and source code editor"
+
+[[shim]]
+name = "notepad++"
+target = "$App\\notepad++.exe"
+type = "gui"

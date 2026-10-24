@@ -1,0 +1,24 @@
+{
+ "case": "github_imagemagick",
+ "tracker": "imagemagick",
+ "provider": "github latest, exact asset with version",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/imagemagick/_bootstrap/pkg.toml); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "7.1.1-39",
+  "download_url": "https://github.com/o/r/releases/download/7.1.1-39/ImageMagick-7.1.1-39-portable-Q16-HDRI-x64.7z",
+  "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+  "sha256_from": "github-digest"
+ },
+ "responses": [
+  {
+   "url": "https://api.github.com/repos/ImageMagick/ImageMagick/releases/latest",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"tag_name\": \"7.1.1-39\", \"name\": \"7.1.1-39\", \"draft\": false, \"prerelease\": false, \"html_url\": \"https://github.com/o/r/releases/tag/7.1.1-39\", \"assets\": [{\"name\": \"ImageMagick-7.1.1-39-portable-Q16-HDRI-x64.7z\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/o/r/releases/download/7.1.1-39/ImageMagick-7.1.1-39-portable-Q16-HDRI-x64.7z\", \"digest\": \"sha256:1111111111111111111111111111111111111111111111111111111111111111\"}, {\"name\": \"ImageMagick-7.1.1-39-portable-Q16-x64.7z\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/o/r/releases/download/7.1.1-39/ImageMagick-7.1.1-39-portable-Q16-x64.7z\", \"digest\": \"sha256:2222222222222222222222222222222222222222222222222222222222222222\"}, {\"name\": \"ImageMagick-7.1.1-39-Q16-HDRI-x64-dll.exe\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/o/r/releases/download/7.1.1-39/ImageMagick-7.1.1-39-Q16-HDRI-x64-dll.exe\", \"digest\": \"sha256:3333333333333333333333333333333333333333333333333333333333333333\"}]}"
+  }
+ ]
+}

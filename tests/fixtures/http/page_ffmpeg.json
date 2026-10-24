@@ -1,0 +1,33 @@
+{
+ "case": "page_ffmpeg",
+ "tracker": "ffmpeg",
+ "provider": "page (version text endpoint, sidecar digest)",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/ffmpeg/_bootstrap/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "7.1.1",
+  "download_url": "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip",
+  "sha256": "9c0b4e7a1d3f58260ab4c6e8d1f3a5b79e2c4d6f8a0b1c3e5d7f9a2b4c6e8d01",
+  "sha256_from": "vendor-sums"
+ },
+ "responses": [
+  {
+   "url": "https://www.gyan.dev/ffmpeg/builds/release-version",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/plain"
+   },
+   "body": "7.1.1\n"
+  },
+  {
+   "url": "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip.sha256",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/plain"
+   },
+   "body": "9c0b4e7a1d3f58260ab4c6e8d1f3a5b79e2c4d6f8a0b1c3e5d7f9a2b4c6e8d01\n"
+  }
+ ]
+}
