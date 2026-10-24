@@ -288,8 +288,13 @@ def test_an_elevated_install_locks_inside_the_system_package_and_never_writes_th
     assert not lock_path(world.system_root / "tool").exists()
 
 
-def test_racing_runs_never_hold_the_lock_together(world: World) -> None:
-    """Sixteen threads ask for one package's lock at once: at no moment do two of them hold it."""
+@pytest.mark.parametrize("repeat", range(8))
+def test_racing_runs_never_hold_the_lock_together(world: World, repeat: int) -> None:
+    """Sixteen threads ask for one package's lock at once: at no moment do two hold it, and it is gone at the end.
+
+    Repeated, because the first version of the release gave up when a racing reader held the file open (Windows refuses
+    to delete it then) and left a lock that a living process held for ever.
+    """
     package = world.user / "tool"
     inside = [0]
     most = [0]

@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import os
 import socket
+import time
 import tomllib
 import uuid
 from collections.abc import Callable, Iterator
@@ -107,17 +108,27 @@ def _quote(text: str) -> str:
 
 
 def _read(path: Path) -> tuple[Holder | None, float | None]:
-    """Return the holder written in *path* (``None`` when unreadable) and the file's modification time."""
+    """Return the holder written in *path* and the file's modification time.
+
+    The time is ``None`` only when the file is gone. A file that exists but cannot be read right now (the run that
+    created it still holds it open, which Windows reports as a sharing violation) is ``(None, mtime)``: it is
+    a lock that is being written, not a stale one.
+    """
     try:
         mtime = path.stat().st_mtime
+    except OSError:
+        return None, None
+    try:
         return _parse(path.read_text(encoding="utf-8")), mtime
     except (OSError, UnicodeDecodeError):
-        return None, None
+        return None, mtime
 
 
 def _is_stale(system: System, holder: Holder | None, mtime: float | None, now: datetime) -> bool:
     """Return whether a lock no live run holds: dead process, too old, or unreadable and not brand new."""
-    age = timedelta(seconds=max(0.0, now.timestamp() - mtime)) if mtime is not None else MAX_LOCK_AGE
+    if mtime is None:
+        return False
+    age = timedelta(seconds=max(0.0, now.timestamp() - mtime))
     if age > MAX_LOCK_AGE:
         return True
     if holder is None:
@@ -195,14 +206,33 @@ def _reclaim(path: Path, seen: Holder | None) -> None:
         pass
 
 
+def _remove_own_lock(path: Path, token: str) -> None:
+    """Delete the lock file when it carries *token*, trying again while another run is reading it.
+
+    A run that is only looking at the lock holds it open for a moment, and Windows then refuses to delete it (or to read it back).
+    Giving up there would leave a lock that nobody releases, held for ever by a process that is alive, so the read and the
+    delete are retried for about a second.
+    """
+    for _attempt in range(100):
+        holder, mtime = _read(path)
+        if mtime is None:
+            return  # already gone
+        if holder is not None and holder.token != token:
+            return  # not ours (it was reclaimed): never delete another run's lock
+        if holder is not None:
+            try:
+                path.unlink()
+                return
+            except FileNotFoundError:
+                return
+            except OSError:
+                pass
+        time.sleep(0.01)
+
+
 def _release(path: Path, token: str, *, drop_data: bool) -> None:
     """Remove the lock file when it still carries *token*, the locks folder when it is empty and, when *drop_data*, an empty ``.gupkg``."""
-    holder, _ = _read(path)
-    if holder is not None and holder.token == token:
-        try:
-            path.unlink()
-        except OSError:
-            pass
+    _remove_own_lock(path, token)
     for folder in (path.parent, path.parent.parent if drop_data else None):
         if folder is None:
             continue
@@ -248,10 +278,12 @@ def package_lock(
     me = Holder(system.process_id(), socket.gethostname(), operation, now().isoformat(timespec="seconds"), uuid.uuid4().hex)
     try:
         _check_folder(system, package_path, elevated)
-        for _attempt in range(3):
+        for _attempt in range(5):
             if _create(path, render_lock(me)):
                 break
             holder, mtime = _read(path)
+            if mtime is None:
+                continue  # the lock was released between the two calls: try to create it again
             if not _is_stale(system, holder, mtime, now()):
                 raise _busy(holder, package_path)
             _reclaim(path, holder)
