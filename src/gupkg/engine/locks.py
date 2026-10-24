@@ -268,4 +268,3 @@ def package_lock(
         _release(path, me.token, drop_data=not data_existed)
         if not existed:
             prune_empty_package(package_path)
-
