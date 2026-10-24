@@ -1,5 +1,7 @@
 # Issue 028: Execution engine — phases, receipts, uninstall, cleanup, check
 
+> **Status (2026-10-24):** Implemented, with scope item 11 (deletion of the 0.17 engine modules) formally deferred to issues 029 and 030 (the epic: each issue is mergeable behind the existing CLI until 029 switches the front end); the complete deletion list is in issues 029 and 030. Merged in 20bbe94. Manual checks still owed: `tests/manual_smoke.md`, "Execution engine (issue 028)" items 1-8 (real install/update/uninstall/repair, elevated system install, portable run, a real GIMP vendor installer with a pinned sha256, two real concurrent processes).
+
 Date: 2026-10-22
 Priority: Critical
 Epic: 020. Design: `_docs/rehaul_design.md` §7.4, §13
