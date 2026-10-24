@@ -348,6 +348,7 @@ def test_every_file_the_child_loads_first_is_checked_before_the_prompt() -> None
         patches, record = _scripted_win32(trusted=True)
 
         def untrusted(candidate, reader=None, *, _bad=path):
+            """Call *_bad* the only user-writable entry."""
             return "users can write here" if Path(candidate) == _bad else None
 
         with patches[0], patches[1], mock.patch.object(elevation, "untrusted_reason", side_effect=untrusted):
