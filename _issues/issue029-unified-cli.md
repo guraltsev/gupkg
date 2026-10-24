@@ -1,5 +1,7 @@
 # Issue 029: Unified command-line interface and machine interface
 
+> **Status (2026-10-24):** Implemented; the 0.17 front end and about 170 of its tests are deleted. Merged in 198affd. The elevated parent waits for the child and returns its clamped exit code. Left to issues 030 and 033: see their 'Left by issue 029' sections. Manual checks still owed: `tests/manual_smoke.md`, "The unified command line and machine interface (issue 029)" items 1-13 (real console/colour, real UAC relaunch, events file and stop file, hostile target under UAC, the wait and Ctrl-C, redirected non-ASCII output, forwarders in the real bundle, `pkg check --install` with real downloads, `gupkg shell`, `uninstall --purge`).
+
 Date: 2026-10-22
 Priority: Critical
 Epic: 020. Design: `_docs/rehaul_design.md` §10, §11. Supersedes issue 013's grammar decisions.
