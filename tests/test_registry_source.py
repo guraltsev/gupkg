@@ -14,6 +14,7 @@ download. Out of scope: Git itself, and the Windows access-control reader (``tes
 from __future__ import annotations
 
 import io
+import warnings
 import zipfile
 from pathlib import Path
 
@@ -21,6 +22,7 @@ import pytest
 
 from gupkg.catalog.registry import cache_state, load_registry, registry_cache_dir, sync_registry
 from gupkg.core import ConfigValidationError
+from gupkg.services import registrysource
 from gupkg.services.registrysource import trusted_git
 from gupkg.system.fake import FakeSystem, ProcessCall
 from gupkg.system.port import ProcessResult
@@ -193,3 +195,114 @@ def test_the_registry_status_command_reports_the_refusal_as_an_error(tmp_path: P
     document = result.document()
     assert result.code == 2 and document["ok"] is False
     assert document["errors"][0]["code"] == "invalid-configuration" and "Refusing the registry cache" in document["errors"][0]["message"]
+
+
+# ---------------------------------------------------------------------------
+# The archive route: what an archive may contain, and which sources are accepted
+# ---------------------------------------------------------------------------
+
+ARCHIVE_URL = "https://registry.example/registry.zip"
+
+
+def _good_entries() -> list[tuple[str | zipfile.ZipInfo, bytes | str]]:
+    """Return the entries of a valid GitHub-style registry archive."""
+    return [
+        ("wrap/_registry.toml", REGISTRY_FILE),
+        ("wrap/tool/1.0.0/pkg.toml", version_text("1.0.0")),
+    ]
+
+
+def _archive(entries, comment: str = REVISION) -> bytes:
+    """Return the bytes of a ZIP archive holding *entries* (names or prepared ``ZipInfo`` objects) with the commit as its comment."""
+    buffer = io.BytesIO()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")  # a duplicate name is the point of some archives
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.comment = comment.encode()
+            for name, data in entries:
+                archive.writestr(name, data)
+    return buffer.getvalue()
+
+
+def _symlink(name: str) -> zipfile.ZipInfo:
+    """Return the header of a symbolic-link entry called *name*."""
+    info = zipfile.ZipInfo(name)
+    info.external_attr = (0o120000 << 16) | 0x20
+    return info
+
+
+HOSTILE_ARCHIVES = {
+    "dot-dot": [("wrap/../../escape.txt", "x")],
+    "absolute": [("/escape.txt", "x")],
+    "drive-letter": [("C:/escape.txt", "x")],
+    "drive-relative": [("C:escape.txt", "x")],
+    "backslash-traversal": [("wrap\\..\\..\\escape.txt", "x")],
+    "symlink": [(_symlink("wrap/link"), "C:\\Windows")],
+    "duplicate-name": [("wrap/tool/1.0.0/pkg.toml", "a"), ("wrap/tool/1.0.0/pkg.toml", "b")],
+    "duplicate-name-other-case": [("wrap/tool/1.0.0/pkg.toml", "a"), ("wrap/Tool/1.0.0/PKG.toml", "b")],
+}
+
+
+@pytest.mark.parametrize("entries", [pytest.param(value, id=key) for key, value in HOSTILE_ARCHIVES.items()])
+def test_a_hostile_archive_is_refused_writes_nothing_outside_and_keeps_the_previous_tree(tmp_path: Path, entries: list) -> None:
+    """Escaping, absolute, drive, link and repeated names fail the sync; no file appears outside the cache and the old tree stays."""
+    system = FakeSystem(tmp_path / "machine", urls={"https://registry.example/good.zip": _archive(_good_entries(), "b" * 40)})
+    cache = tmp_path / "cache"
+    assert sync_registry(cache, system, name="main", source="https://registry.example/good.zip").ok
+    system.add_url(ARCHIVE_URL, _archive([*_good_entries(), *entries]))
+
+    result = sync_registry(cache, system, name="main", source=ARCHIVE_URL)
+
+    assert not result.ok and "previous validated tree remains active" in (result.error or "")
+    assert not list(tmp_path.rglob("escape.txt"))
+    assert cache_state(cache, system).revision == "b" * 40
+
+
+def test_a_hostile_archive_on_a_first_sync_publishes_no_tree(tmp_path: Path) -> None:
+    """With nothing cached yet, a refused archive leaves no active tree behind."""
+    system = FakeSystem(tmp_path / "machine", urls={ARCHIVE_URL: _archive([("wrap/../../escape.txt", "x")])})
+    cache = tmp_path / "cache"
+
+    result = sync_registry(cache, system, name="main", source=ARCHIVE_URL)
+
+    assert not result.ok and cache_state(cache, system).tree_dir is None and not list(tmp_path.rglob("escape.txt"))
+
+
+def test_an_archive_with_too_much_content_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The byte bound counts what is written: a larger archive is a failed sync, not a full disk."""
+    monkeypatch.setattr(registrysource, "MAX_ARCHIVE_BYTES", 100)
+    system = FakeSystem(tmp_path / "one", urls={ARCHIVE_URL: _archive([*_good_entries(), ("wrap/blob.bin", "x" * 5000)])})
+
+    result = sync_registry(tmp_path / "cache", system, name="main", source=ARCHIVE_URL)
+
+    assert not result.ok and "bytes of content" in (result.error or "")
+
+
+def test_an_archive_with_too_many_entries_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The entry bound is checked before anything is written."""
+    monkeypatch.setattr(registrysource, "MAX_ARCHIVE_ENTRIES", 2)
+    system = FakeSystem(tmp_path / "two", urls={ARCHIVE_URL: _archive([("wrap/a", "1"), ("wrap/b", "2"), ("wrap/c", "3")])})
+
+    result = sync_registry(tmp_path / "cache", system, name="main", source=ARCHIVE_URL)
+
+    assert not result.ok and "entries" in (result.error or "")
+
+
+def test_a_valid_archive_still_extracts(tmp_path: Path) -> None:
+    """The checks refuse hostile names only: the plain archive of the other tests publishes its package."""
+    system = FakeSystem(tmp_path / "machine", urls={ARCHIVE_URL: _archive(_good_entries())})
+
+    result = sync_registry(tmp_path / "cache", system, name="main", source=ARCHIVE_URL)
+
+    assert result.ok, result.error
+
+
+@pytest.mark.parametrize("source", ["ftp://registry.example/registry.zip", "git@github.com:example/registry.git", "C:\\registries\\main.zip", "registry.zip"])
+def test_a_registry_source_that_is_not_an_http_or_file_url_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str) -> None:
+    """A source that is neither an http(s) nor a file URL (and no repository) fails the sync with a message, and nothing is fetched."""
+    monkeypatch.setenv("PATH", str(tmp_path / "no-git-here"))
+    system = FakeSystem(tmp_path / "machine")
+
+    result = sync_registry(tmp_path / "cache", system, name="main", source=source)
+
+    assert not result.ok and system.fetch_log == []

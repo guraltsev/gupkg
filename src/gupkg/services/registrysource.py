@@ -39,6 +39,10 @@ from . import gitenv
 # A registry archive that GitHub serves records its commit in the ZIP comment; other archives are named by digest.
 _REVISION = re.compile(r"[0-9a-f]{40}")
 
+# Bounds on a registry archive (a registry is text files): a larger one is refused, whatever its entries claim about their size.
+MAX_ARCHIVE_ENTRIES = 50_000
+MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
+
 
 def is_git_source(source: str) -> bool:
     """Return whether *source* names a Git repository rather than a ZIP archive."""
@@ -122,22 +126,33 @@ def archive_revision(archive_path: Path) -> str:
 def extract_archive(archive_path: Path, destination: Path) -> Path:
     """Extract a registry archive safely and return the folder that holds the packages.
 
-    Entries that are absolute, climb out with ``..``, are symlinks, or are named with a drive are rejected.
+    Entries that are absolute, climb out with ``..``, are symlinks, or are named with a drive are rejected, and so are
+    two entries with the same name (compared case-insensitively, as Windows does), more than ``MAX_ARCHIVE_ENTRIES``
+    entries and more than ``MAX_ARCHIVE_BYTES`` of content (counted while copying, not from the sizes the entries claim).
     GitHub wraps a repository in one top-level folder; when the archive has exactly one, that folder is the
     registry root.
 
     Raises
     ------
     ConfigValidationError
-        If an entry has an unsafe name or is a symbolic link.
+        If an entry has an unsafe or repeated name, is a symbolic link, or the archive is too large.
     """
     destination.mkdir(parents=True)
     root = destination.resolve()
+    seen: set[str] = set()
+    total = 0
     with zipfile.ZipFile(archive_path) as archive:
-        for info in archive.infolist():
+        entries = archive.infolist()
+        if len(entries) > MAX_ARCHIVE_ENTRIES:
+            raise ConfigValidationError(f"Registry archive has {len(entries)} entries; more than {MAX_ARCHIVE_ENTRIES} are refused")
+        for info in entries:
             parts = PurePosixPath(info.filename)
-            if parts.is_absolute() or ".." in parts.parts or ":" in info.filename:
+            if parts.is_absolute() or ".." in parts.parts or ":" in info.filename or "\\" in info.filename:
                 raise ConfigValidationError(f"Registry archive contains an unsafe path: {info.filename}")
+            key = "/".join(parts.parts).casefold()
+            if key in seen:
+                raise ConfigValidationError(f"Registry archive contains the name {info.filename} twice")
+            seen.add(key)
             if (info.external_attr >> 16) & 0o170000 == 0o120000:
                 raise ConfigValidationError(f"Registry archive contains a symlink: {info.filename}")
 
@@ -150,7 +165,11 @@ def extract_archive(archive_path: Path, destination: Path) -> Path:
             else:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 with archive.open(info) as source, open(target, "wb") as sink:
-                    shutil.copyfileobj(source, sink)
+                    while block := source.read(1 << 20):
+                        total += len(block)
+                        if total > MAX_ARCHIVE_BYTES:
+                            raise ConfigValidationError(f"Registry archive holds more than {MAX_ARCHIVE_BYTES} bytes of content")
+                        sink.write(block)
     children = list(root.iterdir())
     if len(children) == 1 and children[0].is_dir():
         return children[0]
