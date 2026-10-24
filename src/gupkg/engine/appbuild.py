@@ -194,6 +194,13 @@ def _download_and_unpack(
     """
     source = manifest.source
 
+    # An installer is vendor code: it needs a pinned sha256, and the refusal comes before any byte is requested.
+    if source.installer is not None and not source.sha256:
+        raise InstallerError(
+            f"{name} {version} {INSTALLER_LABEL} and pins no sha256; a vendor installer runs only from a download that "
+            "matches a pinned sha256 (pin one with `gupkg pkg pin`; --skip-checksum does not apply to it)"
+        )
+
     # The rule runs before any byte is requested; a refusal starts no download.
     with phase("Fetch"):
         fetched = fetch_artifact(

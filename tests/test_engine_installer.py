@@ -23,7 +23,7 @@ import pytest
 
 from gupkg.engine.installer import InstallerError, expand_arguments, run_installer
 from gupkg.engine.receipts import read_receipt
-from gupkg.model.checksum import ChecksumRecord
+from gupkg.model.checksum import ChecksumRecord, parse_skip_flag
 from gupkg.model.plan import Request
 from gupkg.engine import lifecycle
 from gupkg.report.events import Step, Warning, use_reporter
@@ -62,14 +62,17 @@ class InstallerDouble:
         return ProcessResult(0, "installing\nDone\n")
 
 
-def publish_installer(world: World, *, source: str = RUN, mode: str = "user", double: InstallerDouble | None = None, version: str = "1.0.0", name: str = "gimp") -> InstallerDouble:
+def publish_installer(
+    world: World, *, source: str = RUN, mode: str = "user", double: InstallerDouble | None = None, version: str = "1.0.0",
+    name: str = "gimp", pinned: bool = True,
+) -> InstallerDouble:
     """Publish `name` `version` whose artifact is an .exe run through `[source.installer]`, with a process double for it."""
     data = b"MZ pretend installer " + version.encode()
     url = f"{BASE_URL}/{SETUP.replace('1.0.0', version)}"
     world.fake.add_url(url, data)
     folder = world.root(mode) / name / version
     folder.mkdir(parents=True, exist_ok=True)
-    (folder / "pkg.toml").write_text(pkg_text(url, sha256=hashlib.sha256(data).hexdigest(), source=source), encoding="utf-8")
+    (folder / "pkg.toml").write_text(pkg_text(url, sha256=hashlib.sha256(data).hexdigest() if pinned else None, source=source), encoding="utf-8")
     double = double or InstallerDouble()
     world.fake.processes[SETUP.replace("1.0.0", version).lower()] = double
     return double
@@ -265,11 +268,30 @@ def test_check_updates_with_the_setting_false_writes_the_version_without_its_app
         "/LOG=$Stage\\..\\install.log",
         "/D=C:\\elsewhere",
         "-dir:C:\\elsewhere",
+        "/DIR=\\Windows",
+        "/DIR=/Windows",
+        "/LOG=\\x",
+        "-oC:\\x",
+        "/LOG=con",
+        "/DIR=nul",
+        "/DIR=NUL.txt",
+        "/LOG=COM1",
+        "/DIR=%TEMP%",
+        "/DIR=%TEMP%\\x",
+        "/DIR=~\\x",
+        "/DIR=~",
+        "/DIR=$Stage:evil",
+        "/DIR=$Stage\\x:stream",
+        '/DIR="C:\\Windows"',
+        "/DIR=a/b",
+        "/DIR=..",
+        "/LOG=x..\\y",
+        "/DIR=D:$Stage",
     ],
 )
 def test_an_argument_that_names_a_place_outside_the_stage_is_refused_before_the_installer_starts(world: World, argument: str) -> None:
     """Hostile `run` arguments end the install with the code installer-failed, and the installer never starts."""
-    escaped = argument.replace("\\", "\\\\")
+    escaped = argument.replace("\\", "\\\\").replace('"', '\\"')
     double = publish_installer(world, source=f'[source.installer]\nrun = ["/VERYSILENT", "{escaped}", "/DIR=$Stage"]\n')
 
     result = world.one("install", "gimp")
@@ -291,12 +313,12 @@ def test_ordinary_arguments_and_paths_inside_the_stage_are_accepted(tmp_path: Pa
     assert "$Stage" not in expanded and (str(stage) in expanded) == ("Stage" in argument)
 
 
-def fetched_for(path: Path, name: str = SETUP) -> FetchedArtifact:
-    """Return a verified download of the file *path* named *name*."""
+def fetched_for(path: Path, name: str = SETUP, decision: str = "verified") -> FetchedArtifact:
+    """Return a download of the file *path* named *name*, with the checksum *decision* (verified by default)."""
     data = path.read_bytes()
     digest = hashlib.sha256(data).hexdigest()
     download = Download(path, len(data), digest, f"{BASE_URL}/{name}", name, False, False)
-    return FetchedArtifact(download, ChecksumRecord("verified", f"{BASE_URL}/{name}", f"{BASE_URL}/{name}", digest, len(data)))
+    return FetchedArtifact(download, ChecksumRecord(decision, f"{BASE_URL}/{name}", f"{BASE_URL}/{name}", digest, len(data)))
 
 
 def direct_world(tmp_path: Path, **kwargs) -> tuple[World, Path, Path, Path]:
@@ -366,3 +388,93 @@ def test_a_sandbox_without_a_double_reports_needs_a_real_run(world: World) -> No
     result = world.one("install", "gimp")
 
     assert not result.ok and result.error["code"] == "needs-real-run" and not (world.user / "gimp" / "1.0.0" / "App").exists()
+
+
+@pytest.mark.parametrize("decision", ["skipped-cli", "skipped-setting", "user-approved", "origin-not-verified"])
+@pytest.mark.parametrize("elevated", [False, True], ids=["user", "elevated"])
+def test_an_installer_never_runs_from_a_download_that_was_not_verified(tmp_path: Path, decision: str, elevated: bool) -> None:
+    """Every skip decision (and an unverified origin) is refused by `run_installer`, in user and elevated runs; nothing starts."""
+    world, cached, work, stage = direct_world(tmp_path, elevated=elevated)
+    double = InstallerDouble()
+    world.fake.processes[SETUP.lower()] = double
+
+    with pytest.raises(InstallerError, match="no verified sha256") as raised:
+        run_installer(world.engine, fetched_for(cached, decision=decision), ["/DIR=$Stage"], stage, work, (), "gimp", "1.0.0")
+
+    assert "gupkg pkg pin" in str(raised.value) and SETUP in str(raised.value) and double.calls == [] and not (work / "installer").exists()
+
+
+@pytest.mark.parametrize("decision", ["verified", "registry-fingerprint"])
+def test_a_verified_download_still_runs(tmp_path: Path, decision: str) -> None:
+    """A checked hash (or a matching registry fingerprint) is what an installer needs."""
+    world, cached, work, stage = direct_world(tmp_path)
+    double = InstallerDouble()
+    world.fake.processes[SETUP.lower()] = double
+    fetched = fetched_for(cached, decision="verified")
+    if decision == "registry-fingerprint":
+        fetched = FetchedArtifact(fetched.download, ChecksumRecord(decision, registry="main", observed_sha256=fetched.record.observed_sha256))
+
+    run_installer(world.engine, fetched, ["/DIR=$Stage"], stage, work, (), "gimp", "1.0.0")
+
+    assert len(double.calls) == 1
+
+
+@pytest.mark.parametrize("elevated", [False, True], ids=["user", "elevated"])
+def test_an_unpinned_installer_is_refused_before_any_download_even_with_skip_checksum(tmp_path: Path, elevated: bool) -> None:
+    """The plan refuses a version that pins no sha256; --skip-checksum is for archives only. Nothing is fetched or run."""
+    world = World(tmp_path, elevated=elevated)
+    mode = "system" if elevated else "user"
+    double = publish_installer(world, pinned=False, mode=mode)
+    world.fake.fetch_log.clear()
+
+    result = world.one("install", f"{mode}:gimp", skip=parse_skip_flag(""))
+
+    assert not result.ok and result.exit_code == 2 and "gupkg pkg pin" in result.error["message"]
+    assert double.calls == [] and world.fake.fetch_log == [] and world.fake.process_log == []
+
+
+def test_check_updates_refuses_an_unpinned_installer_before_the_download(world: World) -> None:
+    """A tracker that discovers no checksum for an installer version leaves it unpopulated: the installer is neither fetched nor run."""
+    publish_installer(world, version="1.0.0")
+    assert world.one("install", "gimp").ok
+    world.tracker("gimp", tables=RUN, suffix="exe", checksum=False)
+    world.announce("gimp", "1.1.0", suffix="exe", sidecar=False)
+    double = InstallerDouble()
+    world.fake.processes["gimp-1.1.0.exe"] = double
+    world.fake.fetch_log.clear()
+
+    result = world.one("check-updates", "gimp", skip=parse_skip_flag(""))
+
+    assert not result.ok and result.error["code"] == "installer-failed" and double.calls == []
+    assert not any(url.endswith("gimp-1.1.0.exe") for url in world.fake.fetch_log)
+
+
+def test_an_elevated_installer_gets_only_admin_only_folders_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The process PATH can hold the user's own folders; the elevated child gets the admin-only ones only."""
+    trusted, writable = tmp_path / "windows" / "system32", tmp_path / "users" / "me" / "bin"
+    trusted.mkdir(parents=True)
+    writable.mkdir(parents=True)
+    monkeypatch.setenv("PATH", os.pathsep.join([str(writable), str(trusted)]))
+    world, cached, work, stage = direct_world(tmp_path, elevated=True, untrusted={writable})
+    double = InstallerDouble()
+    world.fake.processes[SETUP.lower()] = double
+
+    run_installer(world.engine, fetched_for(cached), ["/DIR=$Stage"], stage, work, (), "gimp", "1.0.0")
+
+    [call] = double.calls
+    assert call.env["PATH"] == str(trusted)
+
+
+def test_a_normal_installer_keeps_the_process_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only an elevated run narrows PATH."""
+    first, second = tmp_path / "a", tmp_path / "b"
+    first.mkdir()
+    second.mkdir()
+    monkeypatch.setenv("PATH", os.pathsep.join([str(first), str(second)]))
+    world, cached, work, stage = direct_world(tmp_path, untrusted={first})
+    double = InstallerDouble()
+    world.fake.processes[SETUP.lower()] = double
+
+    run_installer(world.engine, fetched_for(cached), ["/DIR=$Stage"], stage, work, (), "gimp", "1.0.0")
+
+    assert double.calls[0].env["PATH"] == os.pathsep.join([str(first), str(second)])

@@ -374,13 +374,19 @@ class System(Protocol):
 _SAFE_ENVIRONMENT_NAMES = ("PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC", "TEMP", "TMP", "PROGRAMDATA")
 
 
-def safe_process_environment(extra: Mapping[str, str] | None = None) -> dict[str, str]:
+def safe_process_environment(extra: Mapping[str, str] | None = None, *, system: "System | None" = None) -> dict[str, str]:
     """Return a minimal environment for a child process: machine-level variables plus *extra*.
 
     Nothing of the user's own settings is passed on (decision D19: an elevated gupkg ignores them,
-    and a normal one gives a child process no more than it needs).
+    and a normal one gives a child process no more than it needs). When *system* is given and the run is elevated, ``PATH``
+    holds only the folders of the process ``PATH`` that only administrators can change (``trusted_path_entries``), because
+    the process ``PATH`` can hold the user's own writable folders and an elevated child must not find a program there.
     """
     kept = {name: value for name, value in os.environ.items() if name.upper() in _SAFE_ENVIRONMENT_NAMES}
+    if system is not None and is_elevated_run(system):
+        for name in [name for name in kept if name.upper() == "PATH"]:
+            del kept[name]
+        kept["PATH"] = os.pathsep.join(trusted_path_entries(system))
     kept.update(extra or {})
     return kept
 

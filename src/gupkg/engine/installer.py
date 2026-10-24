@@ -35,7 +35,7 @@ import shutil
 from collections.abc import Sequence
 from pathlib import Path
 
-from ..catalog.local import canonical_path, is_inside, is_reparse_point
+from ..catalog.local import is_reparse_point
 from ..report.events import Step, Warning, emit, subprocess_lines
 from ..services.artifact import FetchedArtifact, reverify
 from ..services.unpack.transform import require_paths
@@ -45,7 +45,11 @@ from .context import Engine, require_trusted_tools
 
 _VARIABLE = re.compile(r"\$(?:\$|\{(?P<braced>[A-Za-z_][A-Za-z0-9_]*)\}|(?P<plain>[A-Za-z_][A-Za-z0-9_]*))")
 _OPTION = re.compile(r"^(?P<flag>[/-]{1,2}[A-Za-z][\w-]*)(?P<sep>[=:])(?P<value>.*)$", re.DOTALL)
-_DRIVE = re.compile(r"^[A-Za-z]:")
+_GLUED = re.compile(r"^[/-]{1,2}[A-Za-z]{1,3}(?P<value>[A-Za-z]:.*|[\\/~%].*)$", re.DOTALL)
+_SWITCH = re.compile(r"[/-]{1,2}[A-Za-z][\w!,.+-]*")
+_DEVICES = frozenset(
+    {"con", "prn", "aux", "nul", "conin$", "conout$", *(f"com{n}" for n in range(1, 10)), *(f"lpt{n}" for n in range(1, 10))}
+)
 
 
 class InstallerError(RuntimeError):
@@ -90,23 +94,45 @@ def expand_arguments(run: Sequence[str], stage: Path) -> list[str]:
 
 
 def _require_inside(original: str, value: str, stage: Path) -> None:
-    """Refuse an expanded argument whose path part leaves *stage* (or has a control character)."""
+    """Refuse an expanded argument whose value is a path that is not inside *stage*, or a name that is not plain.
+
+    The argument is a pure switch (``/VERYSILENT``), an option with a value (``/DIR=<value>``, ``-dir:<value>``,
+    ``-o<value>``) or a bare word. A value is accepted only when it is the stage itself or a path below it, or when it is
+    a plain word: no separator, drive colon, ``~``, ``%`` or quote, no ``..`` and not a Windows device name (``con``,
+    ``nul``, ``com1``...). A value that starts with a backslash, ``/``, ``~`` or ``%``, holds a ``:`` that is not in the
+    stage path, or names a path anywhere else is refused.
+    """
     if any(ord(char) < 32 for char in value):
         raise InstallerError(f"installer argument {original!r} holds a control character")
     option = _OPTION.match(value)
-    target = (option.group("value") if option else value).strip().strip('"')
+    if option is not None:
+        target = option.group("value")
+    else:
+        # A bare word may still be a switch glued to a value (``-oC:\x``): look at what follows the flag characters.
+        glued = _GLUED.match(value)
+        target = glued.group("value") if glued else value
+    target = target.strip()
+    if len(target) >= 2 and target[0] == target[-1] == '"':
+        target = target[1:-1]
     if not target:
         return
-    segments = [part for part in re.split(r"[\\/]+", target) if part]
-    if ".." in segments:
+    here = str(stage)
+    if target == here or target.startswith(here + "\\"):
+        rest = target[len(here):]
+        if ".." in re.split(r"[\\/]+", rest) or any(char in rest for char in ':%"~'):
+            raise InstallerError(f"installer argument {original!r} leaves the stage {stage}")
+        return
+    if option is None and _SWITCH.fullmatch(target):
+        return
+    stripped = target
+    if any(char in stripped for char in ':\\/~%"'):
+        raise InstallerError(
+            f"installer argument {original!r} names {target!r}; only a path inside the stage {stage} or a plain word is accepted"
+        )
+    if ".." in stripped:
         raise InstallerError(f"installer argument {original!r} has a '..' segment")
-    if _DRIVE.match(target) or target.startswith(("\\\\", "//")):
-        # An absolute path: only a drive path inside the stage is accepted (a UNC path never is).
-        inside = canonical_path(target) == canonical_path(stage) or is_inside(Path(target), stage)
-        if target.startswith(("\\\\", "//")) or not inside:
-            raise InstallerError(f"installer argument {original!r} names {target!r}, which is not inside the stage {stage}")
-    elif len(segments) > 1:
-        raise InstallerError(f"installer argument {original!r} names the path {target!r}; only the stage may be named")
+    if stripped.split(".", 1)[0].rstrip(" ").casefold() in _DEVICES:
+        raise InstallerError(f"installer argument {original!r} names a Windows device ({target!r})")
 
 
 def run_installer(
@@ -135,6 +161,14 @@ def run_installer(
     gupkg.system.port.ProcessNotAllowed
         If a sandbox has no double for the installer (the package needs a real run).
     """
+    # Vendor code runs only from bytes whose hash was checked against a pinned sha256 (or a matching registry fingerprint).
+    # The skip rules of design 9.1 are for archives; no flag, setting or approval lets an installer run unverified.
+    if not fetched.record.verified:
+        raise InstallerError(
+            f"{name} {version}: the installer {fetched.download.filename or fetched.download.path.name!r} has no verified sha256 "
+            f"({fetched.record.decision}). A vendor installer runs only from a download that matches a pinned sha256; "
+            "pin one in the version's pkg.toml (`gupkg pkg pin`). --skip-checksum does not apply to installers."
+        )
     arguments = expand_arguments(run, stage)
     filename = fetched.download.filename or file_name_from_url(fetched.download.final_url) or fetched.download.path.name
     if not filename.lower().endswith(".exe"):
@@ -161,7 +195,7 @@ def run_installer(
     ))
     try:
         result = engine.system.run(
-            command, cwd=folder, env=safe_process_environment({"TEMP": str(temp), "TMP": str(temp)}),
+            command, cwd=folder, env=safe_process_environment({"TEMP": str(temp), "TMP": str(temp)}, system=engine.system),
             on_line=subprocess_lines(command), timeout=engine.installer_timeout,
         )
     except TimeoutError as error:

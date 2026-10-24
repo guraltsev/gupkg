@@ -263,6 +263,12 @@ def _populate_plan(
             f"This version {INSTALLER_LABEL} ([source.installer]), and the setting hooks.allow_vendor_installers is false; "
             "nothing was installed."
         )
+    if installer is not None and needed and (checksum is None or checksum.sha256 != "present"):
+        raise PlanError(
+            f"This version {INSTALLER_LABEL} ([source.installer]) and pins no sha256. A vendor installer runs only from a "
+            "download that matches a pinned sha256 (--skip-checksum does not apply to it); pin one with `gupkg pkg pin`. "
+            "Nothing was installed."
+        )
     return PopulatePlan(kind, needed, why, source.download_url, checksum, source.script, recoverable, installer)
 
 

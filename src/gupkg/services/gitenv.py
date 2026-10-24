@@ -26,7 +26,6 @@ helper.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from ..system.port import System, is_elevated_run, safe_process_environment, trusted_path_entries
@@ -83,7 +82,5 @@ def git_environment(system: System | None = None) -> dict[str, str]:
         "GIT_ALLOW_PROTOCOL": "https:http:ssh:git",
         "GIT_ASKPASS": "",
         "SSH_ASKPASS": "",
-    })
-    if system is not None and is_elevated_run(system):
-        environment["PATH"] = os.pathsep.join(trusted_path_entries(system))
+    }, system=system)
     return environment
