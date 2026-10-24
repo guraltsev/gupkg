@@ -1007,6 +1007,16 @@ When the built-in download script downloads a source artifact, during
    This does not let a standard user gain rights: the URL comes from an
    admin-only `pkg.toml`, and the elevated side ignores the user's proxy
    and environment (section 9.6).
+
+   Details (issue 027). "https" is judged on the parsed address: the
+   text must start with `https://` and have a host, no user information
+   (`https://good@evil`), no backslash and no space or control
+   character, and every redirect hop of a skipped download must be
+   https too (the download stops before the hop that is not). The manager
+   relays its decision as `--skip-checksum=setting` or
+   `--skip-checksum=user-approved`; a bare flag is `skipped-cli`; any other
+   value is refused. A hash that is present is always verified, with or
+   without the flag, and a malformed hash is an error, not a missing one.
 4. **Git sources** pin a commit; the commit hash is the integrity anchor.
 5. **Local files** (`file:` URLs on a share) follow the same rules.
 

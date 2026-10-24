@@ -494,6 +494,9 @@ def _type_name(value: Any) -> str:
 
 def _hint(key: str, allowed: tuple[str, ...]) -> str:
     """Return ``"; did you mean 'x'?"`` for the closest allowed key, or ``""``."""
+    if key == "ignore_checksum":
+        return ("; ignore_checksum was removed in format 2: add a sha256 to [source], or run the command with "
+                "--skip-checksum for a download over https")
     folded = {name.casefold(): name for name in allowed}
     if key.casefold() in folded:
         return f"; did you mean '{folded[key.casefold()]}'?"

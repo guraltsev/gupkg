@@ -49,6 +49,7 @@ from typing import Any
 
 from .._version import __version__
 from ..report.events import Progress, Step, emit
+from ..model.checksum import is_https_url
 from ..model.trackspec import check_header_map
 from ..system.port import HttpResponse, ResponseTooLarge, System, is_elevated_run
 from .safepath import safe_file_name
@@ -330,6 +331,7 @@ class HttpClient:
         headers: Mapping[str, str] | None = None,
         label: str | None = None,
         max_bytes: int = MAX_DOWNLOAD_BYTES,
+        require_https: bool = False,
     ) -> Download:
         """Download *url* into the cache, resuming an interrupted attempt, and return the file.
 
@@ -348,6 +350,10 @@ class HttpClient:
             The name shown in progress events; the URL's file name by default.
         max_bytes : int
             The download fails when the file would be larger.
+        require_https : bool
+            Used for a download without a checksum (``--skip-checksum``): the address and every
+            redirect hop must be ``https://`` on their *parsed* form (``gupkg.model.checksum.is_https_url``),
+            otherwise the download stops before that hop is requested.
 
         Raises
         ------
@@ -378,10 +384,10 @@ class HttpClient:
         # Fetch the body, resuming an interrupted attempt when the server gave a
         # validator; a refused range (416) restarts once from the first byte.
         wanted = check_header_map(headers)
-        result = self._download_to(url, part, meta, shown, max_bytes, wanted)
+        result = self._download_to(url, part, meta, shown, max_bytes, wanted, require_https)
         if result is None:
             part.unlink(missing_ok=True)
-            result = self._download_to(url, part, meta, shown, max_bytes, wanted)
+            result = self._download_to(url, part, meta, shown, max_bytes, wanted, require_https)
         if result is None:
             raise HttpError(f"{url} could not be downloaded from the start")
         final_url, answer_headers, resumed = result
@@ -500,7 +506,8 @@ class HttpClient:
         return target
 
     def _download_to(
-        self, url: str, part: Path, meta: Path, shown: str, max_bytes: int, wanted: Mapping[str, str]
+        self, url: str, part: Path, meta: Path, shown: str, max_bytes: int, wanted: Mapping[str, str],
+        require_https: bool = False,
     ) -> tuple[str, Mapping[str, str], bool] | None:
         """Follow redirects and stream the body into *part*; return ``(final url, headers, resumed)``.
 
@@ -536,6 +543,9 @@ class HttpClient:
             _write_meta(meta, fresh)
 
         for _hop in range(MAX_REDIRECTS + 1):
+            if require_https and not is_https_url(current):
+                part.unlink(missing_ok=True)
+                raise HttpError(f"{url[:80]} led to {current[:80]}, which is not https; a download without a checksum must be https on every hop")
             delay = self.backoff
             response = None
             for attempt in range(self.retries + 1):
