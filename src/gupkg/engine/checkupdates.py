@@ -55,7 +55,7 @@ from ..services.http import HttpClient, github_environment
 from ..services.safepath import remove_tree
 from ..services.track import TrackEnvironment, run_tracker
 from .appbuild import populate_version
-from .context import Engine, require_work_folder
+from .context import Engine, require_trusted_tools, require_work_folder, tracker_tools
 from .errors import describe
 from .executor import emit_skipped, sync_registry_tracker
 from .planner import PlanError, plan_check_updates
@@ -65,6 +65,34 @@ from .stateio import write_track_state
 
 # Names a bundled install carries from one version directory to the next (design 21.2, decision D32).
 _CARRIED = ("gupkg", "install.cmd", "gupkg-tui.cmd")
+
+
+def writes_root(engine: Engine, context: ModeContext) -> bool:
+    """Return whether this run may write the package's root: an administrator for system, a normal shell for user and portable.
+
+    A system package checked from a normal shell is only reported (decision D22); the resolution of the mode already
+    refused an elevated run on a user or portable root (decision D31).
+    """
+    return engine.elevated if context.mode == "system" else True
+
+
+def plan_check(engine: Engine, request, resolved: ResolvedMode, catalog: Catalog):
+    """Plan ``check-updates`` for one resolved target without running anything (``--plan``).
+
+    Raises
+    ------
+    NotInstalled
+        If the target has no package root.
+    """
+    view = resolved.resolved.view if resolved.resolved is not None else None
+    if view is None or view.local is None:
+        name = view.name if view is not None else request.selector
+        raise NotInstalled(f"'{name}' is not a local package, so there is nothing to check; use `gupkg install {name}`")
+    sync = catalog.check_updates_plan(view).tracker
+    writes = writes_root(engine, resolved.context)
+    return plan_check_updates(
+        request, view, resolved.context, tracker_action=sync.action, writes=writes, download=writes and not request.no_download
+    )
 
 
 def check_updates_one(
@@ -108,7 +136,7 @@ def check_updates_one(
                              None, context.mode, details={"reason": "nothing to check: the package has no tracker"})
 
     # Who writes: an administrator in an admin shell for the system root, a normal shell for everything else.
-    writes = engine.elevated if context.mode == "system" else True
+    writes = writes_root(engine, context)
     download = writes and not request.no_download
     package_path = view.local.path
     planned = plan_check_updates(request, view, context, tracker_action=plan.tracker.action, writes=writes, download=download)
@@ -204,6 +232,8 @@ def _run_tracker(
     engine: Engine, context: ModeContext, manifest: Manifest, directory: Path, name: str, package_path: Path, writes: bool
 ):
     """Run the tracker's provider; a report-only run keeps its cache and scratch folder out of the root."""
+    # An elevated run starts the regex worker with its own interpreter: judge both before anything is launched.
+    require_trusted_tools(engine, *tracker_tools())
     if writes:
         client = engine.http_client(context, manifest.source.headers)
         work = require_work_folder(engine, package_path / DATA_DIR_NAME / "work") / scratch_name("track")

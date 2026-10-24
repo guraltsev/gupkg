@@ -46,9 +46,9 @@ from ..report.events import Step, Warning, emit, phase
 from ..services.safepath import remove_tree
 from .appbuild import Populated, app_section, populate_version
 from .context import Engine, require_work_folder
-from .effects import apply_effect, changes_environment, effect_context, remove_effect
+from .effects import EffectError, apply_effect, changes_environment, effect_context, remove_effect
 from .fingerprint import app_files, tree_differences, version_fingerprint
-from .planner import Chosen, CleanupPlan
+from .planner import Chosen, CleanupPlan, PlanError
 from .portable import hand_back, hand_over, scratch_name
 from .receipts import read_receipt, update_receipt
 from .stateio import register_adhoc, unregister_adhoc
@@ -424,7 +424,18 @@ def _activate(engine: Engine, run: ExecutionInput, version_dir: Path) -> bool:
         if context.mode == "portable":
             _hand_over_data(engine, run, version_dir)
         emit(Step(f"current -> {plan.version}", "add"))
-        system.create_junction(package_path / "current", version_dir)
+        current = package_path / "current"
+        try:
+            system.create_junction(current, version_dir)
+        except (OSError, RuntimeError) as error:
+            # Replacing a junction removes the old one first: put the previous version back so the package stays installed.
+            previous = run.view.installed.path if run.view.installed is not None else None
+            if previous is not None and not os.path.lexists(current):
+                try:
+                    system.create_junction(current, previous)
+                except (OSError, RuntimeError):
+                    pass
+            raise OSError(f"current could not be switched to {plan.version}: {error}") from error
     return True
 
 
@@ -478,14 +489,19 @@ def _integrate(engine: Engine, run: ExecutionInput) -> tuple[list[Effect], list[
             emit(Step(f"{'+' if item.action == 'add' else '~'} {_label(result)}", "add"))
         for item in (item for item in plan.effects if item.action == "remove"):
             try:
-                remove_effect(engine.system, item.effect, effect_ctx)
+                removed = remove_effect(engine.system, item.effect, effect_ctx)
+            except EffectError as error:
+                # The record names something outside the mode's folders: it is ignored and dropped, never acted on.
+                run.warnings.append(f"Ignored a recorded effect: {error}")
+                emit(Warning(run.warnings[-1]))
+                continue
             except (OSError, ValueError) as error:
                 failures.append(f"{_label(item.effect)}: {error}")
                 applied.append(item.effect)
                 emit(Warning(failures[-1]))
                 continue
-            changed_environment = changed_environment or changes_environment(item.effect)
-            emit(Step(f"- {_label(item.effect)}  stale, removed", "remove"))
+            changed_environment = changed_environment or (removed and changes_environment(item.effect))
+            emit(Step(f"- {_label(item.effect)}  stale" + (", removed" if removed else ", left in place"), "remove"))
 
         # One broadcast for the whole change of the environment.
         warning = None
@@ -564,6 +580,13 @@ def execute_uninstall(engine: Engine, run: ExecutionInput) -> PackageResult:
     """
     plan, context = run.plan, run.context
     package_path = plan.package_path
+
+    # --purge deletes a whole folder: it must be a package root of its own, never a drive, the root or a folder holding it.
+    if run.request.purge and (
+        package_path.parent == package_path or canonical_path(package_path) == canonical_path(context.root)
+        or is_inside(context.root, package_path)
+    ):
+        raise PlanError(f"Refusing to purge {package_path}: it is not a package folder inside its root ({context.root}).")
     effect_ctx = effect_context(context, package_path, engine.env)
     remaining: list[Effect] = []
     failures: list[str] = []
@@ -576,14 +599,19 @@ def execute_uninstall(engine: Engine, run: ExecutionInput) -> PackageResult:
         with phase("Integrate") as integrating:
             for item in plan.effects:
                 try:
-                    remove_effect(engine.system, item.effect, effect_ctx)
+                    removed = remove_effect(engine.system, item.effect, effect_ctx)
+                except EffectError as error:
+                    # The record names something outside the mode's folders: it is ignored and dropped, never acted on.
+                    run.warnings.append(f"Ignored a recorded effect: {error}")
+                    emit(Warning(run.warnings[-1]))
+                    continue
                 except (OSError, ValueError) as error:
                     failures.append(f"{_label(item.effect)}: {error}")
                     remaining.append(item.effect)
                     emit(Warning(failures[-1]))
                     continue
-                changed_environment = changed_environment or changes_environment(item.effect)
-                emit(Step(f"- {_label(item.effect)}", "remove"))
+                changed_environment = changed_environment or (removed and changes_environment(item.effect))
+                emit(Step(f"- {_label(item.effect)}" + ("" if removed else "  (left in place)"), "remove"))
             if changed_environment:
                 try:
                     engine.system.broadcast_environment_change()

@@ -51,12 +51,13 @@ def _confined(base: Path, relative: str) -> Path:
     path = Path(base).joinpath(*parts)
     folder = Path(base)
 
-    # A link above the leaf would let a path leave the folder.
+    # A link above the leaf would let a path leave the folder; the leaf itself may be a link (it is never followed).
     for part in parts[:-1]:
         folder = folder / part
         if is_reparse_point(folder):
             raise PortableError(f"'{relative}' passes through the link {folder}")
-    if not is_inside(path, base):
+    parent = path.parent
+    if canonical_path(parent) != canonical_path(base) and not is_inside(parent, base):
         raise PortableError(f"'{relative}' would leave {base}")
     return path
 

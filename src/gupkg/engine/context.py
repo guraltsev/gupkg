@@ -21,6 +21,8 @@ the cache and work folders first and then refuse them unless only administrators
 
 from __future__ import annotations
 
+import os
+import sys
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -133,6 +135,39 @@ class Engine:
             self.system, headers=dict(headers or {}), cache_dir=cache, env=github_environment(self.system, self.env),
             sleep=self.sleep, **options,
         )
+
+
+def require_trusted_tools(engine: Engine, *tools: Path | None) -> None:
+    """Refuse, in an elevated run, to start a program whose folder standard users can change; check *before* launching it.
+
+    An elevated gupkg runs no code that a standard user can modify (decision D19): the interpreter that starts the regex
+    worker, the worker script and 7-Zip must all lie in admin-only folders. A normal run is not restricted.
+
+    Raises
+    ------
+    gupkg.selfmgmt.elevation.UntrustedLocationError
+        If the run is elevated and the folder of a tool is not admin-only (or cannot be judged).
+    """
+    if not engine.elevated:
+        return
+    for tool in tools:
+        if tool is not None:
+            require_admin_only(engine.system, Path(tool).parent)
+
+
+def tracker_tools() -> tuple[Path, ...]:
+    """Return the files an elevated ``check-updates`` starts: the running interpreter and the regex worker script."""
+    return Path(sys.executable), Path(__file__).resolve().parents[1] / "system" / "regex_worker.py"
+
+
+def stop_marker(path: Path) -> Callable[[], bool]:
+    """Return a ``cancel`` callable that is true once the file *path* exists (decision D37).
+
+    The marker is data a user-writable program may create: it is only ever read for its existence, and the
+    only thing it can do is make the run stop after the package that is running, so it is safe in an elevated run.
+    """
+    marker = Path(path)
+    return lambda: os.path.lexists(marker)
 
 
 def require_work_folder(engine: Engine, folder: Path) -> Path:

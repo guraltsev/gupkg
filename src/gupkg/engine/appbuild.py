@@ -44,7 +44,7 @@ from ..services.populate import populate_app, populate_git, run_custom_populate
 from ..services.safepath import remove_tree
 from ..services.unpack.gitsource import CommitMismatch
 from ..services.values import file_name_from_url
-from .context import Engine, require_work_folder
+from .context import Engine, require_trusted_tools, require_work_folder
 from .fingerprint import aggregate_digest, app_files
 from .portable import apply_mode_adjustments, scratch_name
 
@@ -120,6 +120,10 @@ def populate_version(
     kind = "git" if source.kind == "git" and source.populate == "download" else source.populate
     if kind == "none":
         raise AppBuildError(f"{name} {version} ships its App and has nothing to populate it from")
+
+    # An elevated run unpacks archives with 7-Zip only from an admin-only folder, judged before anything starts.
+    if kind in ("download", "git"):
+        require_trusted_tools(engine, engine.seven_zip_path())
 
     # Scratch space lives in the package's own work folder; an elevated run needs it admin-only.
     work_root = require_work_folder(engine, package_path / DATA_DIR_NAME / "work")

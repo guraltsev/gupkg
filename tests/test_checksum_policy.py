@@ -317,6 +317,13 @@ def test_the_git_gate_follows_the_table() -> None:
         git_gate("https://h/r.git", "abc123")
 
 
+@pytest.mark.parametrize("commit", [123, ["a" * 40], b"a" * 40, True], ids=["int", "list", "bytes", "bool"])
+def test_a_commit_that_is_not_text_is_an_invalid_checksum_not_an_attribute_error(commit: object) -> None:
+    """A non-text commit fails closed with ChecksumInvalid (the plan reports it as `invalid`, never as a crash)."""
+    with pytest.raises(ChecksumInvalid, match="text"):
+        git_gate("https://h/r.git", commit)
+
+
 def test_a_git_record_requires_the_pinned_commit() -> None:
     """The resolved commit is recorded; a different one than the pin is a mismatch."""
     gate = git_gate("https://h/r.git", COMMIT)

@@ -371,6 +371,25 @@ def safe_process_environment(extra: Mapping[str, str] | None = None) -> dict[str
     return kept
 
 
+def trusted_path_entries(system: System) -> list[str]:
+    """Return the folders of the process ``PATH`` that only administrators can change, in order.
+
+    An elevated run looks tools up only here (``git``, for example), never in a folder a standard user can
+    write: the process ``PATH`` can hold the user's own entries.
+    """
+    trusted: list[str] = []
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        folder = entry.strip().strip('"')
+        if not folder:
+            continue
+        try:
+            if system.directory_untrusted_reason(Path(folder)) is None:
+                trusted.append(folder)
+        except OSError:
+            continue
+    return trusted
+
+
 def is_elevated_run(system: System) -> bool:
     """Return whether this run must use only trusted, non-implicit behavior.
 

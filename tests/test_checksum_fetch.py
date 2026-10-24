@@ -519,7 +519,11 @@ def gupkg_imports(name: str, path: Path) -> set[str]:
 
 
 def rule_closure() -> dict[str, Path]:
-    """Return every gupkg module that the download rule imports, directly or through other modules."""
+    """Return every gupkg module that the download rule imports, directly or through other modules.
+
+    The parent packages of a module count too: importing ``gupkg.services.http`` runs ``gupkg/__init__.py`` and
+    ``gupkg/services/__init__.py`` first.
+    """
     seen: dict[str, Path] = {}
     pending = list(RULE_ROOTS)
     while pending:
@@ -528,7 +532,24 @@ def rule_closure() -> dict[str, Path]:
         if name not in seen and path is not None:
             seen[name] = path
             pending += gupkg_imports(name, path)
+            parts = name.split(".")
+            pending += [".".join(parts[:count]) for count in range(1, len(parts))]
     return seen
+
+
+def reads_the_environment(tree: ast.AST) -> bool:
+    """Return whether a syntax tree reads the environment, however it is spelled.
+
+    ``os.environ``, ``os.getenv``, ``sys.argv``, ``__import__``, ``importlib.import_module``, and the same names
+    brought in with ``from os import environ``, ``from sys import argv as arguments`` and the like.
+    """
+    attributes = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
+    names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+    imported = {
+        alias.name for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module in ("os", "sys", "importlib")
+        for alias in node.names
+    }
+    return bool((FORBIDDEN_ATTRIBUTES & attributes) or (FORBIDDEN_NAMES & names) or (FORBIDDEN_ATTRIBUTES & imported))
 
 
 def test_the_download_rule_and_everything_it_imports_read_neither_settings_nor_the_environment() -> None:
@@ -540,10 +561,7 @@ def test_the_download_rule_and_everything_it_imports_read_neither_settings_nor_t
     assert {"gupkg.model.checksum", "gupkg.services.http", "gupkg.system.port"} <= set(closure), "the closure was not computed"
     readers: set[str] = set()
     for name, path in closure.items():
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        attributes = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
-        names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
-        if (FORBIDDEN_ATTRIBUTES & attributes) or (FORBIDDEN_NAMES & names):
+        if reads_the_environment(ast.parse(path.read_text(encoding="utf-8"))):
             readers.add(name)
         assert "settings" not in name and "manager" not in name, f"{name} is part of the download rule's imports"
     assert readers == ENVIRONMENT_READERS, f"unexpected readers of the environment: {sorted(readers ^ ENVIRONMENT_READERS)}"
@@ -556,12 +574,17 @@ def test_the_download_rule_and_everything_it_imports_read_neither_settings_nor_t
 def test_the_forbidden_name_check_is_not_vacuous() -> None:
     """The checks used above do flag each spelling when it is present."""
     spellings = ["import os\nos.environ", "import os\nos.getenv('x')", "import os\nos.environb", "import sys\nsys.argv",
-                 "__import__('os')", "import importlib\nimportlib.import_module('os')"]
+                 "__import__('os')", "import importlib\nimportlib.import_module('os')",
+                 "from os import environ as variables", "from sys import argv", "from os import getenv",
+                 "from importlib import import_module"]
     for text in spellings:
-        tree = ast.parse(text)
-        attributes = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
-        names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
-        assert (FORBIDDEN_ATTRIBUTES & attributes) or (FORBIDDEN_NAMES & names), text
+        assert reads_the_environment(ast.parse(text)), text
+    assert not reads_the_environment(ast.parse("import os\nos.pathsep\nfrom os import path"))
+
+
+def test_the_closure_includes_the_parent_packages_of_every_module() -> None:
+    """Importing a module runs its parent packages' ``__init__.py`` first, so they belong to the closure."""
+    assert {"gupkg", "gupkg.services", "gupkg.model"} <= set(rule_closure())
 
 
 # ---------------------------------------------------------------------------

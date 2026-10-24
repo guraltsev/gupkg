@@ -1388,6 +1388,10 @@ def render_pinned(tracker: Manifest, result: TrackResult) -> Manifest:
     if not is_version_name(result.version):
         raise ManifestError(f"The discovered version {result.version!r} cannot name a version directory")
     values = {**result.captures, "version": result.version}
+
+    # ``${download_url}`` in ``[source.checksum]`` means the address that this version downloads from.
+    if tracker.source.download_url is not None:
+        values["download_url"] = render(tracker.source.download_url, values)
     data = manifest_to_data(tracker)
     data.pop("track", None)
     data = _render_data(data, values)

@@ -30,12 +30,12 @@ from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
 
-from ..catalog.catalog import Candidate, Catalog, NoVersionKnown, NotFound, NotInstalled
+from ..catalog.catalog import Candidate, Catalog, CatalogError, NoVersionKnown, NotFound, NotInstalled
 from ..catalog.local import DATA_DIR_NAME, is_inside
 from ..catalog.registry import cache_state, registry_cache_dir
 from ..distcopy import COPIED, DIVERGED, CopyResult, DistributionRefused, copy_distribution
-from ..model.manifest import Manifest, ManifestKind, parse_manifest
-from ..model.mode import InputNeeded, ModeContext, ModeRefused
+from ..model.manifest import APP_MISSING_ERROR, Manifest, ManifestKind, parse_manifest
+from ..model.mode import InputNeeded, ModeContext, ModeRefused, check_supported
 from ..model.plan import (
     EXIT_INPUT,
     BatchResult,
@@ -55,13 +55,13 @@ from ..relaunch import ensure_elevation
 from ..report.events import Error, Prompt, Step, Warning, emit, package_scope
 from ..report.logfile import prune_logs
 from ..services.safepath import remove_tree
-from .checkupdates import check_updates_one
+from .checkupdates import check_updates_one, plan_check
 from .context import Engine
 from .effects import desired_effects, effect_context, verify_each
 from .errors import failure
 from .executor import ExecutionInput, execute_cleanup, execute_install, execute_uninstall, sync_registry_tracker
 from .health import Diagnosis, diagnose
-from .planner import Chosen, CleanupFacts, PlanError, plan_cleanup, plan_install, plan_uninstall
+from .planner import Chosen, CleanupFacts, CleanupPlan, PlanError, plan_cleanup, plan_install, plan_uninstall
 from .receipts import list_receipts, read_receipt
 
 
@@ -223,9 +223,35 @@ def _resolve(engine: Engine, request: Request) -> _Target | PackageResult:
             system=engine.system, env=engine.env, load=engine.load,
         )
         catalog = Catalog.from_settings(resolved.settings, engine.system, engine.env, elevated=engine.elevated)
-        return _Target(request, resolved, catalog)
+        target = _Target(request, resolved, catalog)
+        _require_supported_mode(target)
+        return target
     except Exception as error:  # noqa: BLE001 - every failure of one target is that target's result
         return failure(request.selector, request.operation, error)
+
+
+def _require_supported_mode(target: _Target) -> None:
+    """Refuse a mode the chosen version does not support, before elevation and before any work (design 6.2).
+
+    ``resolve_mode`` can judge a path or a named version; for a bare name the version is chosen here. A request
+    that cannot choose a version yet (nothing installed, nothing newer) is left to the operation itself.
+    """
+    request, resolved = target.request, target.resolved
+    selection = resolved.resolved
+    if request.operation not in ("install", "update", "switch", "repair") or selection is None or resolved.source is not None:
+        return
+    view = selection.view
+    try:
+        candidate, _ = _choose(None, target, view, False)
+        if candidate.source == "registry":
+            manifest = parse_manifest((candidate.path / MANIFEST_NAME).read_text(encoding="utf-8-sig"))
+        else:
+            state = view.local.version(candidate.version) if view.local is not None else None
+            manifest = state.manifest if state is not None else None
+    except (CatalogError, PlanError, _UpToDate, OSError, ValueError):
+        return
+    if manifest is not None:
+        check_supported(resolved.choice, manifest.modes)
 
 
 def _needs_token(target: _Target) -> bool:
@@ -294,13 +320,17 @@ def _plan_one(engine: Engine, target: _Target) -> InstallPlan:
     request, context = target.request, target.resolved.context
     if request.operation in ("install", "update", "switch", "repair"):
         return _prepare_install(engine, target, execute=False).plan
+    if request.operation == "check-updates":
+        return plan_check(engine, request, target.resolved, target.catalog)
     view = _view(target)
     if request.operation == "uninstall":
         return plan_uninstall(request, view, context)
+    extra = {"cleanup": _cleanup_plan(target, view).to_data()} if request.operation == "cleanup" else {}
     return InstallPlan(
         request.operation, view.name, view.path or context.package_dir(view.name), context.root, context.mode, None,
         view.installed.version if view.installed else None, None, None, (),
         (Phase("Resolve", (PlanStep(f"{request.operation} {view.name} (mode {context.mode})"),)),), context.requires_elevation,
+        (), False, extra,
     )
 
 
@@ -388,7 +418,13 @@ def _prepare_install(engine: Engine, target: _Target, *, execute: bool) -> Execu
         else:
             state = view.local.version(candidate.version) if view.local is not None else None
             if state is None or state.manifest is None:
-                raise PlanError(f"{view.name} {candidate.version} is not a valid version directory")
+                problems = "; ".join(state.problems) if state is not None else "there is no such version directory"
+                raise PlanError(f"{view.name} {candidate.version} is not a valid version directory: {problems}")
+
+            # Every version directory is validated again before it is installed (design 7.4); a missing App is the planner's to judge.
+            other = [problem for problem in state.problems if problem != APP_MISSING_ERROR]
+            if other:
+                raise PlanError(f"{view.name} {candidate.version} is not valid: {'; '.join(other)}")
             manifest = state.manifest
             published = view.registry.version(candidate.version) if view.registry is not None else None
             if published is not None:
@@ -438,8 +474,11 @@ def _describe_destination(catalog: Catalog, name: str, context: ModeContext) -> 
         return PackageView(name, root, None)
 
 
-def _choose(engine: Engine, target: _Target, view: PackageView, execute: bool) -> tuple[Candidate, CopyIn | None]:
-    """Choose the version an install-like request activates, and the copy-in it needs when it comes from a registry."""
+def _choose(engine: Engine | None, target: _Target, view: PackageView, execute: bool) -> tuple[Candidate, CopyIn | None]:
+    """Choose the version an install-like request activates, and the copy-in it needs when it comes from a registry.
+
+    *engine* is needed only when *execute* is true (a tracker-only registry entry is copied in before the refusal).
+    """
     request, catalog = target.request, target.catalog
     selection = target.resolved.resolved
     named = selection.version if selection is not None and selection.named_version else None
@@ -535,17 +574,22 @@ def _confirm(engine: Engine, question: str) -> None:
 
 def _cleanup(engine: Engine, target: _Target) -> PackageResult:
     """Plan and run ``cleanup`` for one package (never automatically, decision D43)."""
-    request, context = target.request, target.resolved.context
+    context = target.resolved.context
     view = _view(target)
+    cleanup_plan = _cleanup_plan(target, view)
+    forwarder = context.root if (context.root / DATA_DIR_NAME / "gupkg.cmd").is_file() else None
+    return execute_cleanup(engine, view.path, cleanup_plan, forwarder)
+
+
+def _cleanup_plan(target: _Target, view: PackageView) -> CleanupPlan:
+    """Gather what only the disk can say about a package and plan its cleanup."""
     path = view.path
     work = path / DATA_DIR_NAME / "work"
     facts = CleanupFacts(
         tuple(list_receipts(path)), tuple(sorted(item.name for item in work.iterdir())) if work.is_dir() else (),
         {state.name: _inputs_present(path, state) for state in view.local.versions},
     )
-    cleanup_plan = plan_cleanup(request, view, facts)
-    forwarder = context.root if (context.root / DATA_DIR_NAME / "gupkg.cmd").is_file() else None
-    return execute_cleanup(engine, path, cleanup_plan, forwarder)
+    return plan_cleanup(target.request, view, facts)
 
 
 def _inputs_present(package_path: Path, state) -> bool:

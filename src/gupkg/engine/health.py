@@ -107,7 +107,7 @@ def diagnose(
     problems: list[Problem] = []
     notes: list[Problem] = []
     if view.local is None:
-        return Diagnosis(False, (Problem("not-local", f"'{view.name}' has no package root on disk"),))
+        return Diagnosis(False)
 
     # ``current`` and the install record itself.
     current = view.local.current

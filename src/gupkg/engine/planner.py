@@ -44,6 +44,7 @@ from ..model.plan import (
     PopulatePlan,
     Request,
     effect_key,
+    normalize_entry,
 )
 from ..model.state import Candidate, Effect, PackageView, VersionState
 from ..model.version import compare_versions
@@ -279,8 +280,14 @@ def diff_effects(recorded: Sequence[Effect], desired: Sequence[Effect]) -> tuple
 
 
 def _comparable(effect: Effect) -> tuple[str, tuple[tuple[str, str], ...]]:
-    """Return the part of an effect that decides whether it changed (the run-time fact ``added`` does not)."""
-    return effect.kind, tuple(sorted((key, repr(value)) for key, value in effect.fields.items() if key != "added"))
+    """Return the part of an effect that decides whether it changed (the run-time fact ``added`` does not).
+
+    A ``PATH`` entry is compared the way ``PATH`` entries are (case, trailing separator), not as written.
+    """
+    fields = {key: value for key, value in effect.fields.items() if key != "added"}
+    if effect.kind == "path" and "entry" in fields:
+        fields["entry"] = normalize_entry(str(fields["entry"]))
+    return effect.kind, tuple(sorted((key, repr(value)) for key, value in fields.items()))
 
 
 def _effect_line(item: PlannedEffect) -> PlanStep:

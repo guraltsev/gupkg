@@ -433,6 +433,8 @@ def git_gate(url: str, commit: str | None, skip: str | None = None) -> Verificat
     if skip is not None and skip not in SKIP_DECISIONS:
         raise ChecksumInvalid(f"{skip!r} is not a skip decision")
     if commit is not None:
+        if not isinstance(commit, str):
+            raise ChecksumInvalid(f"a commit id must be text, not {type(commit).__name__}")
         cleaned = commit.strip().lower()
         if not _COMMIT.fullmatch(cleaned):
             raise ChecksumInvalid(f"{commit!r} is not a 40-digit commit id")

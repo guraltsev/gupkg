@@ -515,6 +515,15 @@ class RunLog:
                     lines.append(f"Log of {self._package_names[path]}: {sink.text_path}")
             return lines
 
+    def package_log(self, package_path: Path | str) -> Path | None:
+        """Return the text log of the package whose folder is *package_path* in this run, or ``None`` when it has none.
+
+        The engine stores this path in the package's receipt (design 14.3).
+        """
+        with self._lock:
+            sink = self._packages.get(str(package_path))
+            return sink.text_path if sink is not None else None
+
     def paths(self) -> list[Path]:
         """Return the text logs written, run log first."""
         with self._lock:
