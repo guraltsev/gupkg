@@ -1650,6 +1650,7 @@ gupkg/
   viewdata.py   PackageView -> the plain data of list, info and --json (reads small files, prints nothing)
   settingsedit.py  create and edit one settings file (settings init/set, registry add/remove), validated by the schema first
   authoring.py  pkg new, pkg export, pkg bundle
+  launchers/    the one template of the package launchers (install.cmd, gupkg-tui.cmd, check-updates.cmd) and the code that writes them; used by check-updates, authoring, the registry tool and the migration tool
   report/results.py  the result, plan and error documents of --json, and the text of list, info and --plan
   selfmgmt/     self status/repair: MANIFEST.sha256 check, bundled-runtime enforcement (issues 016, 018); self check-updates/update are aliases (section 20)
     location.py   where the running gupkg lives (installed, bundled, source): $App, its version directory and root, its sibling launchers

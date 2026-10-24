@@ -30,7 +30,22 @@ Branch `rehaul/issue033` from main 2828520. Baseline `scripts\test.cmd` equivale
 
 ## Acceptance criteria and coverage
 
-(see the table at the end of the file, kept current)
+| Criterion | Coverage |
+| --- | --- |
+| Bundled install leaves no gupkg behind (+ registry log, nothing under AppData) | tests/test_bundled_mode.py::test_a_bundled_install_leaves_no_gupkg_behind_and_touches_nothing_else; manual 033-2 |
+| Bundled install manages itself | test_a_bundled_install_manages_itself_across_a_check_and_an_update, test_purging_a_bundled_install_leaves_only_the_roots_data_folder; manual 033-2 |
+| Bootstrap | tests/test_bootstrap_script.py, tests/test_self_release_update.py (install side); manual 033-3 |
+| Installed gupkg takes over | test_package_launcher.py forwarder/--no-system-gupkg tests; manual 033-5 |
+| Too-old fallback | test_package_launcher.py::test_exit_code_6_*, test_cli_machine_interface (exit 6); manual 033-5 |
+| No PATH search | test_package_launcher.py::test_a_gupkg_on_path_is_never_used, ::test_a_gupkg_exe_in_the_current_directory_is_never_used |
+| Elevated refusal | test_package_launcher.py (simulated elevation: refusal, PowerShell blocked, unknown level; real elevation: needs_admin tests); manual 033-1 |
+| Squatted system root | test_bootstrap_script.py::test_a_root_that_a_standard_user_created_is_not_admin_only; manual 033-4 |
+| Mark of the Web | tests/test_distribution_copy.py (025), docs/troubleshooting; manual 033-7 |
+| Self-update | tests/test_self_release_update.py; manual 033-6 |
+| Uninstalling gupkg | test_the_forwarder_is_recorded_in_the_install_record_and_removed_by_uninstall; launcher fallback in test_package_launcher.py; manual 033-5 |
+| System install of a distribution | test_a_system_install_of_a_distribution_runs_nothing_from_the_source_folder, test_engine_distribution.py; manual 033-8 |
+| Recoverable bundled installs | test_a_populate_script_that_copies_a_shipped_folder_makes_app_recoverable |
+| cleanup --bundled | test_cleanup_bundled_* and test_plain_cleanup_never_removes_a_bundled_copy |
 
 ## Unclear in the issue
 
