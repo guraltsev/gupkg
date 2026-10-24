@@ -54,3 +54,33 @@ Registry clone: see its `git log` (convert, rewrite, layout and CI, LF fix).
 - `msys2/_check_updates/config.default/configure_nsswitch.{py,cmd}` (a 0.17 post-install helper, not referenced by any manifest) is left as a support file;
   no service expresses its in-place edit of `etc/nsswitch.conf`. Owner decision whether to keep it.
 - `[source.installer]` (GIMP) is parsed but no code runs it yet (issue 028).
+
+## Review round 1
+
+Merged main (controller commits only). Fixes, by the reviewer's numbers:
+
+1. **Hostile version names.** `model.version.is_version_name` (the one rule behind the catalog, `render_pinned`, `valid_version`, the registry cache
+   reader and `pkgcheck`) now refuses Windows device names (stem before the first dot, any case, superscript digits), control characters (C0, C1,
+   line and paragraph separators), zero-width and bidirectional controls, the byte order mark, `%`, `$`, `~<digit>` and a leading `-`.
+   `tests/test_version_names.py`: a table of real versions, 55 hostile names, hostile versions found by a tracker page through `update_registry` (nothing
+   written, no download), and the catalog scan. Registry `validate` flags a stray directory without `pkg.toml`, a leftover `.new-*`, a file in a
+   package folder, an unsafe version name and two versions differing only in case (the last tested with a stand-in: Windows cannot hold the pair).
+2. **shutter-encoder.** The chain provider gains `select = "each"` on a step (page order, at most 20 candidates, each fetched through the shared
+   client, the first that gets through the later steps wins, none: fail closed) and `optional = true` (skip a failing or empty step). A regex
+   deadline is never taken for "no match" (cause-chain check, mutation-tested). Fixture `chain_shutter` has Mac, dead, Windows and Linux links;
+   `test_registry_semantics.py` runs 12 orders, the none-matches, cap and deadline cases.
+3. **inkscape** digest steps are `optional`. **4. emacs** has `[source.checksum] sums_file` with the new `optional = true` (core: `Checksum.optional`,
+   `run_tracker` falls back to no checksum, never past a regex failure); the older `sha256sum.txt` spelling is not followed (README).
+   **5. pidgin:** no `probe`: the index walk already backtracks; the fixture has a newest folder without the installer and a test asserts both folders were fetched.
+   **6. 7zip:** x64 announcement restored (tolerant of tags and `&nbsp;`), the URL rule kept and justified; tests with x86/ARM64/x64 in six orders and a page with no x64.
+   **7. winscp:** headers on both steps, asserted from the request log. **8.** sqlitebrowser gets a `[portable]` table (`DB4S-settings.ini`, unverified; the reviewer
+   suggested another name, I recalled this one from the project's source); tixati is unchanged (not confident about anything beyond the marker; documented).
+   **9.** `unversioned` list in `_registry.toml` (6 packages), `[UNVERSIONED]` output, commit-message section, README and design 17; a test compares the list with the fixtures.
+10. **Publish.** `git commit -- <paths>`; `--remote` / `--branch` (names starting with `-` or with spaces refused, never forced); computed hashes are refused
+    unless `--allow-computed`. Tests for each, 19 mutants killed (the two that survived were fixed: bidi range, case duplicates).
+11. **CI.** Pushes only to `main`, pull requests, manual `gupkg_ref` input, a message when the gupkg checkout fails, pip cache, actions by full version tag
+    (SHA pinning is a README / manual item); tests on the workflow text.
+12. **Nits.** Atomic `write_text_bytes` (a test makes `os.replace` fail), stale `.new-<8 hex>` folders removed at the start of a run, fingerprint caps (10,000 files, 512 MiB),
+    no Unicode normalisation documented, geogebra fixtures reformatted, the literal 13 pinned.
+13. **Flake.** `test_the_regex_worker_answers_a_request_in_isolation` finds the `pid` line anywhere; 30 repeated runs alone and 30 beside a parallel pytest process: 0 failures.
+14. Manual list gained items 11 to 14; the SSH git URLs stay (0.17 used them, public status unknown), as a documented manual item.

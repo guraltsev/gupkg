@@ -376,4 +376,18 @@ repository `gupkg-registry`; its README repeats the commands.
    runs with a scrubbed environment, so check that `registry-tool update latex-toolkit` can reach them from the maintainer's
    machine, or switch them to `https://` if the repositories are public. Why manual: depends on your SSH setup.
 10. **CI.** Push the registry branch and confirm the `validate` workflow is green on `windows-latest` (it checks out
-    `guraltsev/gupkg`, so the gupkg code of this branch must be on that repository's `main` first). Why manual: GitHub only.
+    `guraltsev/gupkg`, so the gupkg code of this branch must be on that repository's `main` first, or run it by hand with
+    `gupkg_ref`). Replace the two actions' version tags by commit SHAs of those tags (not verifiable offline). Why manual:
+    GitHub only.
+11. **msys2's real `.tar.xz` through the safe unpacker.** Run `gupkg --sandbox <dir> install msys2` (or the tool's `update msys2`)
+    with the real release: it must unpack and `usr\bin\bash.exe` must start. The safe unpacker refuses any link entry, so if the
+    real archive contains one the unpack fails and the package needs another route. Why manual: needs the real archive.
+12. **GitHub digests.** For every package whose tracker uses the `github` provider (about 30), confirm the release assets really
+    carry a `digest` (the registry tool's output shows `github-digest` rather than `[REVIEW]`). A package whose releases carry
+    none gets a registry-computed hash instead: decide whether to accept it. Why manual: needs the live API.
+13. **The shutter-encoder page.** Run `registry-tool update shutter-encoder` and check which of the page's links was kept (the
+    Windows 64-bit file) and how many HEAD requests it took. Why manual: the real page decides.
+14. **Windows device-name versions.** Windows cannot create a folder named `CON` through normal calls, so the tests only
+    cover the rule. Check on a real machine that a registry holding a folder named `con` or `Nul.txt` fails
+    `registry-tool validate` with a clear message (create it with `mkdir \\?\C:\path\con`), and that nothing in gupkg lists it as a
+    version. Why manual: needs the real Win32 namespace.
