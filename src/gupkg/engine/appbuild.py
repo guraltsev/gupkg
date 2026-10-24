@@ -43,6 +43,7 @@ from ..services.http import HttpClient
 from ..services.populate import populate_app, populate_git, prepare_app, run_custom_populate
 from ..services.safepath import remove_tree
 from ..services.unpack.gitsource import CommitMismatch
+from ..redact import redact_url
 from ..services.values import file_name_from_url
 from .context import MAX_RECORDED_FILES, Engine, require_trusted_tools, require_work_folder
 from .fingerprint import aggregate_digest, app_files
@@ -145,12 +146,12 @@ def populate_version(
         # The three ways of filling App: the built-in download script, a git checkout, a custom script.
         if kind == "download":
             checksum, ran = _download_and_unpack(engine, client, manifest, paths, name, version, skip, allow_installer)
-            sections["source"]["url"] = source.download_url
+            sections["source"]["url"] = redact_url(source.download_url)
             if ran is not None:
                 sections["source"]["installer"] = ran
         elif kind == "git":
             checksum = _checkout(engine, client, manifest, paths, name, version, skip)
-            sections["source"]["url"] = source.download_url
+            sections["source"]["url"] = redact_url(source.download_url)
         else:
             hook = HookContext(name, version, engine.system, client, paths)
             with phase("Unpack"):

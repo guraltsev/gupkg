@@ -41,6 +41,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from ..redact import redact_text, redact_url
+
 SKIP_FLAG = "--skip-checksum"
 
 VERIFIED = "verified"
@@ -84,9 +86,9 @@ class ChecksumError(Exception):
 
     def to_data(self) -> dict[str, Any]:
         """Return the structured error of a ``--json`` result: ``{"code": ..., "url": ..., "message": ...}``."""
-        data: dict[str, Any] = {"code": self.code, "message": str(self)}
+        data: dict[str, Any] = {"code": self.code, "message": redact_text(str(self))}
         if self.url is not None:
-            data["url"] = self.url
+            data["url"] = redact_url(self.url)
         return data
 
 
@@ -335,6 +337,9 @@ class ChecksumRecord:
     def to_data(self) -> dict[str, Any]:
         """Return the record as plain TOML-ready data, without unset fields."""
         values = {key: getattr(self, key) for key in _RECORD_KEYS}
+        for key in ("url", "final_url"):
+            if values[key] is not None:
+                values[key] = redact_url(values[key])
         return {key: value for key, value in values.items() if value is not None}
 
 
@@ -495,7 +500,7 @@ class ChecksumPlan:
 
     def to_data(self) -> dict[str, Any]:
         """Return the plan entry as JSON-ready data."""
-        return {"sha256": self.sha256, "url": self.url, "url_from": self.url_from, "skippable": self.skippable}
+        return {"sha256": self.sha256, "url": redact_url(self.url), "url_from": self.url_from, "skippable": self.skippable}
 
 
 def plan_checksum(url: str, sha256: str | None, *, url_from: str, commit: str | None = None, git: bool = False) -> ChecksumPlan:

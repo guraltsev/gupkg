@@ -34,6 +34,7 @@ from ..catalog.catalog import (
     UntrustedLocation,
 )
 from ..model.checksum import ChecksumError
+from ..redact import redact_text
 from ..model.manifest import ManifestError
 from ..model.mode import InputNeeded, ModeRefused
 from ..model.plan import EXIT_FAILED, EXIT_INPUT, EXIT_INTERNAL, EXIT_USER, PackageResult
@@ -102,7 +103,7 @@ def describe(error: BaseException) -> tuple[int, dict[str, Any]]:
     """
     for kind, code, exit_code in _TABLE:
         if isinstance(error, kind):
-            data: dict[str, Any] = {"code": code, "message": str(error)}
+            data: dict[str, Any] = {"code": code, "message": redact_text(str(error))}
             if isinstance(error, ChecksumError):
                 data.update(error.to_data())
             hint = getattr(error, "hint", None)

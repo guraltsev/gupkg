@@ -45,6 +45,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ..redact import redact_text, redact_url
 from .checksum import ChecksumPlan
 from .manifest import INSTALLER_LABEL
 from .state import Effect
@@ -178,7 +179,7 @@ class Phase:
 
     def to_data(self) -> dict[str, Any]:
         """Return the JSON-ready description of the phase."""
-        data: dict[str, Any] = {"name": self.name, "skipped": self.skipped, "steps": [step.text for step in self.steps]}
+        data: dict[str, Any] = {"name": self.name, "skipped": self.skipped, "steps": [redact_text(step.text) for step in self.steps]}
         if self.reason:
             data["reason"] = self.reason
         return data
@@ -224,7 +225,7 @@ class PopulatePlan:
             data["label"] = INSTALLER_LABEL
             data["installer"] = list(self.installer)
         if self.url is not None:
-            data["url"] = self.url
+            data["url"] = redact_url(self.url)
         if self.checksum is not None:
             data["checksum"] = self.checksum.to_data()
         if self.script is not None:
@@ -326,15 +327,15 @@ class InstallPlan:
             "previous": self.previous,
             "effects": [item.to_data() for item in self.effects if item.action != "keep"],
             "phases": [item.to_data() for item in self.phases],
-            "notes": list(self.notes),
+            "notes": [redact_text(note) for note in self.notes],
         }
         if self.populate is not None:
             data["populate"] = self.populate.to_data()
             if self.populate.checksum is not None:
                 data["sha256"] = self.populate.checksum.sha256
-                data["url"] = self.populate.checksum.url
+                data["url"] = redact_url(self.populate.checksum.url)
             elif self.populate.url is not None:
-                data["url"] = self.populate.url
+                data["url"] = redact_url(self.populate.url)
         if self.copy_in is not None:
             data["copy_in"] = self.copy_in.to_data()
         if self.purge:
