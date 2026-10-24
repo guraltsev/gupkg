@@ -38,6 +38,9 @@ from ..services.unpack import Limits
 from ..system.port import System, is_elevated_run, require_admin_only
 
 
+# The largest App whose files are listed one by one in a receipt (about 150 bytes each, under the receipt size limit).
+MAX_RECORDED_FILES = 4000
+
 # The variables an elevated run lets a package's ``${NAME}`` see: the machine's own, never the user's (D19).
 MACHINE_VARIABLES = frozenset(name.casefold() for name in (
     "SystemRoot", "SystemDrive", "WINDIR", "ProgramData", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432",
@@ -82,6 +85,11 @@ class Engine:
         Returns the current UTC time.
     installer_timeout : float
         Seconds a vendor installer may run before it is killed (design 8.4).
+    replace : callable
+        ``replace(source, destination)`` is the atomic rename that puts a finished ``App`` in place (``os.replace``); a test
+        injects a failing one to exercise the restore of the previous ``App``.
+    max_recorded_files : int
+        The largest ``App`` whose files are listed one by one in a receipt (larger ones record the count and one digest).
     """
 
     system: System
@@ -102,6 +110,8 @@ class Engine:
     retries: int | None = None
     clock: Callable[[], datetime] | None = None
     installer_timeout: float = 1800.0
+    replace: Callable[[Path, Path], None] = os.replace
+    max_recorded_files: int = MAX_RECORDED_FILES
 
     def now(self) -> datetime:
         """Return the current UTC time."""

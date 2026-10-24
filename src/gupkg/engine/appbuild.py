@@ -27,7 +27,7 @@ the work.
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -44,7 +44,7 @@ from ..services.populate import populate_app, populate_git, prepare_app, run_cus
 from ..services.safepath import remove_tree
 from ..services.unpack.gitsource import CommitMismatch
 from ..services.values import file_name_from_url
-from .context import Engine, require_trusted_tools, require_work_folder
+from .context import MAX_RECORDED_FILES, Engine, require_trusted_tools, require_work_folder
 from .fingerprint import aggregate_digest, app_files
 from .installer import InstallerError, run_installer
 from .portable import apply_mode_adjustments, scratch_name
@@ -174,8 +174,8 @@ def populate_version(
             # Record the SHA-256 of every file (decision D41), unless the package or the settings opt out.
             files = app_files(staged) if record_manifest else None
             emit(Step("The finished App is moved into place", "ok"))
-            _move_into_place(staged, target, work_root, replace)
-        sections["app"] = app_section(files)
+            _move_into_place(staged, target, work_root, replace, engine.replace)
+        sections["app"] = app_section(files, engine.max_recorded_files)
         sections["inputs"] = _inputs(version_dir) if kind == "script" else []
         return Populated(sections, checksum)
     finally:
@@ -249,7 +249,7 @@ def _checkout(
     return git_record(verification, report.commit or "", url=source.download_url)
 
 
-def _move_into_place(staged: Path, target: Path, work_root: Path, replace: bool) -> None:
+def _move_into_place(staged: Path, target: Path, work_root: Path, replace: bool, move: Callable[[Path, Path], None]) -> None:
     """Rename the finished *staged* folder to *target*; an old ``App`` is moved aside first and restored on failure."""
     old: Path | None = None
     if os.path.lexists(target):
@@ -257,15 +257,15 @@ def _move_into_place(staged: Path, target: Path, work_root: Path, replace: bool)
             target.rmdir()
         elif replace:
             old = work_root / scratch_name("old-App")
-            os.replace(target, old)
+            move(target, old)
         else:
             raise AppBuildError(f"{target} already holds an App; use --refresh to rebuild it")
     try:
-        os.replace(staged, target)
+        move(staged, target)
     except OSError as error:
         if old is not None:
             try:
-                os.replace(old, target)
+                move(old, target)
             except OSError as restore_error:
                 # The old App stays where it was moved to (outside the scratch folder that is deleted): nothing is lost.
                 raise AppBuildError(
@@ -277,11 +277,21 @@ def _move_into_place(staged: Path, target: Path, work_root: Path, replace: bool)
         remove_tree(old)
 
 
-def app_section(files: Mapping[str, str] | None) -> dict[str, Any]:
-    """Return the ``[app]`` receipt section: whether the files are recorded, their count, one digest and the list."""
+def app_section(files: Mapping[str, str] | None, limit: int = MAX_RECORDED_FILES) -> dict[str, Any]:
+    """Return the ``[app]`` receipt section: whether the files are recorded, their count, one digest and the list.
+
+    An ``App`` of more than *limit* (``MAX_RECORDED_FILES``) files records the count and the digest but not the list (the receipt
+    stays small enough to be read, see ``MAX_RECEIPT_BYTES``); ``check`` then still sees that something changed, though
+    it cannot name the file.
+    """
     if files is None:
         return {"recorded": False}
-    return {"recorded": True, "count": len(files), "fingerprint": aggregate_digest(files), "files": dict(files)}
+    section: dict[str, Any] = {"recorded": True, "count": len(files), "fingerprint": aggregate_digest(files)}
+    if len(files) > limit:
+        section["files_omitted"] = True
+    else:
+        section["files"] = dict(files)
+    return section
 
 
 def _inputs(version_dir: Path) -> list[str]:

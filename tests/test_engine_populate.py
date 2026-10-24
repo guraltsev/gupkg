@@ -17,10 +17,10 @@ from pathlib import Path
 
 import pytest
 
-from gupkg.engine import appbuild
 from gupkg.engine.appbuild import AppBuildError, populate_version
 from gupkg.model.checksum import ChecksumMismatch
 from gupkg.model.manifest import parse_manifest
+from gupkg.report.events import PhaseStart, use_reporter
 from tests.engine_support import World, pin_no_ambient_elevation  # noqa: F401
 
 
@@ -33,23 +33,28 @@ def build(world: World, version_dir: Path, **options):
     )
 
 
-def test_a_cached_file_replaced_after_its_verification_stops_the_population(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+class Tamper:
+    """A reporter that, as the Unpack phase starts, replaces every cached download with other bytes of the same size."""
+
+    def __init__(self, cache: Path) -> None:
+        self.cache = cache
+
+    def handle(self, event: object) -> None:
+        """On the start of Unpack, reverse the bytes of each cached file."""
+        if isinstance(event, PhaseStart) and event.phase == "Unpack":
+            for item in self.cache.rglob("*"):
+                if item.is_file():
+                    item.write_bytes(bytes(reversed(item.read_bytes())))
+
+
+def test_a_cached_file_replaced_after_its_verification_stops_the_population(tmp_path: Path) -> None:
     """The file is hashed again right before it is unpacked: a replacement between the check and the use is a checksum mismatch."""
     world = World(tmp_path)
     folder = world.publish("tool", "1.0.0")
-    real_fetch = appbuild.fetch_artifact
 
-    def tampering_fetch(*arguments, **options):
-        """Fetch normally, then replace the cached file with another archive of the same size."""
-        fetched = real_fetch(*arguments, **options)
-        data = fetched.download.path.read_bytes()
-        fetched.download.path.write_bytes(bytes(reversed(data)))
-        return fetched
-
-    monkeypatch.setattr(appbuild, "fetch_artifact", tampering_fetch)
-
-    with pytest.raises(ChecksumMismatch, match="changed after it was verified"):
-        build(world, folder)
+    with use_reporter(Tamper(world.user / ".gupkg" / "cache")):
+        with pytest.raises(ChecksumMismatch, match="changed after it was verified"):
+            build(world, folder)
 
     assert not (folder / "App").exists()
     work = folder.parent / ".gupkg" / "work"
@@ -100,7 +105,7 @@ def test_an_existing_app_is_replaced_only_on_request(tmp_path: Path) -> None:
     assert (folder / "App" / "app.exe").read_text() == "tool 1.0.0\n"
 
 
-def test_the_old_app_is_put_back_when_the_new_one_cannot_be_moved_into_place(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_old_app_is_put_back_when_the_new_one_cannot_be_moved_into_place(tmp_path: Path) -> None:
     """If the final rename fails the previous App is restored, the failure is reported and no scratch folder is left."""
     world = World(tmp_path)
     folder = world.publish("tool", "1.0.0")
@@ -116,7 +121,7 @@ def test_the_old_app_is_put_back_when_the_new_one_cannot_be_moved_into_place(tmp
             raise PermissionError("locked")
         return real_replace(source, destination, *arguments, **options)
 
-    monkeypatch.setattr(appbuild.os, "replace", failing_replace)
+    world.engine.replace = failing_replace
 
     with pytest.raises(AppBuildError, match="cannot be moved into place"):
         build(world, folder, replace=True)
@@ -126,7 +131,7 @@ def test_the_old_app_is_put_back_when_the_new_one_cannot_be_moved_into_place(tmp
     assert not work.exists() or list(work.iterdir()) == []
 
 
-def test_when_the_old_app_cannot_be_put_back_it_is_kept_and_named(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_when_the_old_app_cannot_be_put_back_it_is_kept_and_named(tmp_path: Path) -> None:
     """If even the restore fails, the previous App is not deleted: it stays in the work folder and the error says where."""
     world = World(tmp_path)
     folder = world.publish("tool", "1.0.0")
@@ -140,7 +145,7 @@ def test_when_the_old_app_cannot_be_put_back_it_is_kept_and_named(tmp_path: Path
             raise PermissionError("locked")
         return real_replace(source, destination, *arguments, **options)
 
-    monkeypatch.setattr(appbuild.os, "replace", failing_replace)
+    world.engine.replace = failing_replace
 
     with pytest.raises(AppBuildError, match="previous App is kept in"):
         build(world, folder, replace=True)

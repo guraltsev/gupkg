@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from gupkg.engine.receipts import MAX_RECEIPT_BYTES, read_receipt
 from gupkg.model.checksum import parse_skip_flag
 from gupkg.report.events import PhaseEnd, PhaseStart, Warning, use_reporter
 from gupkg.system.port import Scope
@@ -168,6 +169,25 @@ def test_a_changed_app_file_is_reported_whatever_the_receipt_claims(world: World
     result = world.one("check", "tool")
 
     assert not result.ok and "app-modified" in kinds(result)
+
+
+def test_an_app_with_too_many_files_to_list_is_still_checked_by_its_digest(tmp_path: Path) -> None:
+    """Over the engine's max_recorded_files the receipt keeps the count and the digest only; a change is still reported."""
+    world = World(tmp_path)
+    world.engine.max_recorded_files = 5
+    members = {f"lib/file{index:05d}.dat": f"{index}\n" for index in range(6)}
+    world.publish("big", "1.0.0", members=members)
+    assert world.one("install", "big").ok
+    receipt = world.user / "big" / ".gupkg" / "receipts" / "1.0.0.toml"
+
+    section = read_receipt(world.user / "big", "1.0.0").data["app"]
+    assert section["files_omitted"] is True and "files" not in section and section["count"] == 6
+    assert receipt.stat().st_size < MAX_RECEIPT_BYTES and world.one("check", "big").status == "healthy"
+
+    (world.user / "big" / "1.0.0" / "App" / "lib" / "file00007.dat").write_text("changed", encoding="utf-8")
+    result = world.one("check", "big")
+
+    assert not result.ok and "app-modified" in kinds(result) and "too many files" in result.details["problems"][0]["message"]
 
 
 def test_shadowing_between_the_system_and_the_user_root_is_reported(tmp_path: Path) -> None:

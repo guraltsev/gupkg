@@ -32,7 +32,7 @@ from gupkg.engine.fingerprint import (
 )
 from gupkg.engine.planner import PlanError
 from gupkg.engine.portable import PortableError, hand_back, hand_over
-from gupkg.engine.receipts import list_receipts, read_receipt, receipt_checksum, update_receipt
+from gupkg.engine.receipts import MAX_RECEIPT_BYTES, list_receipts, read_receipt, receipt_checksum, update_receipt
 from gupkg.engine.stateio import read_track_state, register_adhoc, unregister_adhoc, write_track_state
 from gupkg.model.checksum import ChecksumMismatch, ChecksumMissing
 from gupkg.model.mode import InputNeeded, ModeRefused
@@ -171,15 +171,19 @@ def test_a_receipt_is_never_written_through_a_link(tmp_path: Path, system: FakeS
     assert read_receipt(package, "1.0.0").problem and list(elsewhere.iterdir()) == []
 
 
-def test_a_receipt_over_the_size_limit_is_refused_unread(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A user-writable receipt cannot make `check` read an enormous file."""
+def test_a_receipt_over_the_size_limit_is_refused_unread(tmp_path: Path) -> None:
+    """A user-writable receipt cannot make `check` read an enormous file: one byte over 1 MiB is a problem, 1 MiB itself is read."""
     package = tmp_path / "tool"
-    update_receipt(package, "1.0.0", {"source": {"kind": "download"}})
-    monkeypatch.setattr("gupkg.engine.receipts.MAX_RECEIPT_BYTES", 10)
+    path = update_receipt(package, "1.0.0", {"source": {"kind": "download"}})
+    valid = path.read_bytes()
+    padding = b"# " + b"x" * (MAX_RECEIPT_BYTES - len(valid) - 3) + b"\n"
+    path.write_bytes(valid + padding)
+    assert path.stat().st_size == MAX_RECEIPT_BYTES and read_receipt(package, "1.0.0").data["source"] == {"kind": "download"}
 
+    path.write_bytes(valid + padding + b"#")
     read = read_receipt(package, "1.0.0")
 
-    assert read.data is None and "is not read" in read.problem
+    assert MAX_RECEIPT_BYTES == 1024 * 1024 and read.data is None and "is not read" in read.problem
 
 
 def test_a_receipt_with_an_unknown_schema_or_broken_text_is_a_problem_not_data(tmp_path: Path) -> None:

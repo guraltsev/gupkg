@@ -14,13 +14,13 @@ Out of scope: bundled launchers and the bootstrap (issue 033), publishing finger
 from __future__ import annotations
 
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 from gupkg.catalog.local import read_adhoc_roots
 from gupkg.catalog.record import read_install_record
-from gupkg.engine import executor
 from gupkg.engine.fingerprint import version_fingerprint
 from gupkg.engine.receipts import read_receipt
 from gupkg.system.port import Scope
@@ -259,18 +259,20 @@ def test_the_relaunched_elevated_child_refuses_a_folder_outside_the_system_root(
     assert not (world.system_root / "tool").exists()
 
 
-def test_a_source_that_changes_between_the_plan_and_the_copy_is_refused_and_the_copy_removed(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_source_that_changes_between_the_plan_and_the_copy_is_refused_and_the_copy_removed(world: World) -> None:
     """The plan was made from the source folder; the copy is what gets installed, so a different pkg.toml in the copy stops the install."""
     folder = distribution(world)
-    real_copy = executor.copy_distribution
+    changed: list[bool] = []
 
-    def changing_copy(source, root, **options):
-        """Rewrite the source's pkg.toml just before it is copied, as a user changing the folder would."""
-        text = (source / "pkg.toml").read_text(encoding="utf-8")
-        (source / "pkg.toml").write_text(text + '\n[[env]]\nname = "SNEAKY"\nvalue = "1"\n', encoding="utf-8")
-        return real_copy(source, root, **options)
+    def clock():
+        """The executor reads the clock when it starts, after the plan and before the copy: change the source there, as a user could."""
+        if not changed:
+            changed.append(True)
+            text = (folder / "pkg.toml").read_text(encoding="utf-8")
+            (folder / "pkg.toml").write_text(text + '\n[[env]]\nname = "SNEAKY"\nvalue = "1"\n', encoding="utf-8")
+        return datetime.now(timezone.utc)
 
-    monkeypatch.setattr(executor, "copy_distribution", changing_copy)
+    world.engine.clock = clock
 
     result = world.one("install", str(folder))
 

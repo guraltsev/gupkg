@@ -32,7 +32,7 @@ from ..model.plan import effect_key
 from ..model.state import PackageView
 from ..system.port import System
 from .effects import verify_each
-from .fingerprint import diff_app, tree_differences, version_fingerprint
+from .fingerprint import aggregate_digest, app_files, diff_app, tree_differences, version_fingerprint
 from .receipts import read_receipt, receipt_checksum
 
 
@@ -173,12 +173,14 @@ def _receipt_notes(data: dict, view: PackageView) -> list[Problem]:
 def _app_problems(data: dict, view: PackageView, state, manifest) -> list[Problem]:
     """Compare the files of the active ``App`` with the fingerprint recorded at install time (decision D41)."""
     app_record = data.get("app")
-    if not isinstance(app_record, dict) or not app_record.get("recorded") or not isinstance(app_record.get("files"), dict):
+    if not isinstance(app_record, dict) or not app_record.get("recorded"):
         return []
     skip: tuple[str, ...] = ()
     if view.mode == "portable" and manifest is not None and manifest.portable is not None:
         skip = manifest.portable.persist
     app = Path(view.installed.path) / "App"
+    if not isinstance(app_record.get("files"), dict):
+        return _large_app_problems(app_record, app, view, skip)
     try:
         modified, missing, extra = diff_app(app, {str(k): str(v) for k, v in app_record["files"].items()}, skip)
     except OSError as error:
@@ -189,6 +191,22 @@ def _app_problems(data: dict, view: PackageView, state, manifest) -> list[Proble
             shown = ", ".join(names[:10]) + (f" and {len(names) - 10} more" if len(names) > 10 else "")
             found.append(Problem(f"app-{kind}", f"files of the App were {text} since the install: {shown}"))
     return found
+
+
+def _large_app_problems(app_record: dict, app: Path, view: PackageView, skip: Sequence[str]) -> list[Problem]:
+    """Compare an ``App`` whose file list was not recorded (too many files) by its one digest; the files cannot be named."""
+    fingerprint = app_record.get("fingerprint")
+    if not app_record.get("files_omitted") or not isinstance(fingerprint, str):
+        return []
+    if skip:
+        return [Problem("receipt", f"the App of {view.installed.version} has too many files to list and persists data, so it is not compared")]
+    try:
+        found = aggregate_digest(app_files(app))
+    except OSError as error:
+        return [Problem("app-unreadable", f"The App of {view.installed.version} cannot be read: {error}")]
+    if found == fingerprint.lower():
+        return []
+    return [Problem("app-modified", f"the App of {view.installed.version} differs from its install fingerprint (too many files to name which)")]
 
 
 def _registry_problems(view: PackageView, version: str, directory: Path, manifest) -> list[Problem]:

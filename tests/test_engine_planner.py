@@ -15,10 +15,11 @@ from pathlib import Path
 
 import pytest
 
+from gupkg.catalog.catalog import Catalog
 from gupkg.engine import lifecycle
-from gupkg.engine.planner import diff_effects
+from gupkg.engine.planner import CleanupFacts, diff_effects, plan_cleanup
 from gupkg.model.plan import INSTALL_PHASES, InstallPlan, PackageResult, Request
-from gupkg.model.state import Effect
+from gupkg.model.state import Effect, Root
 from tests.engine_support import World, pin_no_ambient_elevation  # noqa: F401
 from tests.mode_support import tree_snapshot
 
@@ -186,6 +187,21 @@ def test_a_cleanup_with_keep_zero_drops_every_recoverable_old_app(world: World) 
     plan = planned(world, "cleanup", "tool", keep=0).extra["cleanup"]
 
     assert plan["drop_apps"] == ["1.0.0"]
+
+
+def test_the_cleanup_plan_is_made_from_the_facts_it_is_given_and_never_looks_at_the_disk(world: World) -> None:
+    """Which versions hold a bundled gupkg is data (CleanupFacts.bundled): the planner names exactly those, whatever the disk says."""
+    world.publish("tool", "1.0.0", tables=ENV)
+    world.one("install", "tool")
+    view = Catalog.from_settings(
+        world.engine.load().settings, world.fake, world.machine.env, elevated=False
+    ).describe("tool", Root(world.user, "user"))
+
+    named = plan_cleanup(Request("cleanup", "tool", bundled=True), view, CleanupFacts(bundled=("1.0.0",)))
+    none = plan_cleanup(Request("cleanup", "tool", bundled=True), view, CleanupFacts())
+
+    assert not (world.user / "tool" / "1.0.0" / "gupkg").exists()
+    assert named.drop_bundled == ("1.0.0",) and none.drop_bundled == ()
 
 
 def test_a_plan_that_cannot_be_made_is_a_failure_result(world: World) -> None:

@@ -658,6 +658,7 @@ def _cleanup_plan(engine: Engine, target: _Target, view: PackageView) -> Cleanup
     facts = CleanupFacts(
         tuple(list_receipts(path)), tuple(sorted(_old_entries(engine, work))),
         {state.name: _inputs_present(path, state) for state in view.local.versions},
+        tuple(state.name for state in view.local.versions if (state.path / "gupkg").exists()),
     )
     return plan_cleanup(target.request, view, facts)
 

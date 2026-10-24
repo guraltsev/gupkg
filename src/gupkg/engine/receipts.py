@@ -34,8 +34,11 @@ from ..tomlio import read_toml, write_toml
 
 RECEIPT_SCHEMA = 1
 
-# The largest receipt that is read (200,000 files at about 130 bytes each fit with room to spare).
-MAX_RECEIPT_BYTES = 64 * 1024 * 1024
+# The largest receipt that is read. A receipt of a user-mode install is user-writable, so it is untrusted input: 1 MiB
+# holds a recorded file list of several thousand files (about 130 bytes each) and keeps ``check`` and ``info`` from
+# reading an enormous file. A larger one is reported as a problem, never parsed; an App of more files than that records
+# its fingerprint but not the list (see ``MAX_RECORDED_FILES`` in ``gupkg.engine.context``).
+MAX_RECEIPT_BYTES = 1024 * 1024
 
 
 @dataclass(frozen=True)

@@ -450,23 +450,12 @@ def test_a_failed_effect_is_reported_and_recorded_truthfully_and_a_repeat_conver
     assert repeated.ok and repeated.status == "repaired" and [path.stem for path in world.fake.shortcuts()] == ["Tool"]
 
 
-def test_a_junction_that_cannot_be_switched_leaves_the_previous_version_active(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_junction_that_cannot_be_switched_leaves_the_previous_version_active(world: World) -> None:
     """Replacing a junction removes the old one first; when creating the new one fails the old one is put back."""
     world.publish("tool", "1.0.0", tables=ENV_ONLY)
     world.one("install", "tool")
     world.publish("tool", "1.1.0", tables=ENV_ONLY)
-    real_create = world.fake.create_junction
-    failed: list[bool] = []
-
-    def failing_create(link: Path, target: Path) -> None:
-        """Remove the junction as the real replacement does, then fail the first attempt to create the new one."""
-        if link.name == "current" and not failed:
-            failed.append(True)
-            os.rmdir(link)
-            raise RuntimeError("Windows refused")
-        real_create(link, target)
-
-    monkeypatch.setattr(world.fake, "create_junction", failing_create)
+    world.fake.failures["create_junction"] = RuntimeError("Windows refused")
 
     result = world.one("update", "tool")
 

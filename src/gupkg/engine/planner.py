@@ -82,12 +82,15 @@ class CleanupFacts:
     """What only a disk can say about a package, for ``plan_cleanup``.
 
     ``receipts`` are the versions that have a receipt, ``work`` the entries of ``.gupkg\\work``, and
-    ``inputs_present`` says per version whether the recorded inputs of a script-populated ``App`` still exist.
+    ``inputs_present`` says per version whether the recorded inputs of a script-populated ``App`` still exist, and
+    ``bundled`` names the versions whose directory holds a bundled ``gupkg`` folder. ``work`` lists only the entries old
+    enough to remove.
     """
 
     receipts: tuple[str, ...] = ()
     work: tuple[str, ...] = ()
     inputs_present: Mapping[str, bool] = field(default_factory=dict)
+    bundled: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -479,7 +482,8 @@ def plan_cleanup(request: Request, view: PackageView, facts: CleanupFacts) -> Cl
     drop = tuple(state.name for state in candidates[request.keep:])
     existing = {state.name.casefold() for state in view.local.versions}
     receipts = tuple(item for item in facts.receipts if item.casefold() not in existing)
-    bundled = tuple(state.name for state in view.local.versions if request.bundled and (state.path / "gupkg").exists()) if request.bundled else ()
+    present = {name.casefold() for name in facts.bundled}
+    bundled = tuple(state.name for state in view.local.versions if state.name.casefold() in present) if request.bundled else ()
     return CleanupPlan(view.name, drop, tuple(kept), receipts, facts.work, bundled)
 
 

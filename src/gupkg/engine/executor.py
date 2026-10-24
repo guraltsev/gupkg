@@ -589,7 +589,7 @@ def _write_receipt(
     if populated is None and app.is_dir() and _records_manifest(run.chosen.manifest, run.settings):
         existing = read_receipt(plan.package_path, plan.version or "").data or {}
         if "app" not in existing:
-            sections["app"] = app_section(app_files(app))
+            sections["app"] = app_section(app_files(app), engine.max_recorded_files)
     checksum = populated.checksum if populated is not None and populated.checksum is not None else origin.record
     if checksum is not None:
         sections["checksum"] = checksum.to_data()
