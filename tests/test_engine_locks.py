@@ -71,15 +71,25 @@ def test_a_second_install_is_refused_naming_the_holder_and_the_holders_lock_stay
 
 @pytest.mark.parametrize("operation", ["install", "uninstall", "cleanup", "check-updates"])
 def test_every_operation_that_changes_a_package_takes_the_lock(world: World, operation: str) -> None:
-    """Install, uninstall, cleanup and check-updates see a living holder (cleanup is skipped, the others fail)."""
+    """Install, uninstall, cleanup and check-updates see a living holder and fail with `package-busy` (exit 3), naming it."""
     hold(world, world.user / "tool")
 
     result = world.one(operation, "tool")
 
-    if operation == "cleanup":
-        assert result.ok and result.status == "skipped" and result.details["locked"] is True
-    else:
-        assert not result.ok and result.error["code"] == "package-busy"
+    assert not result.ok and result.exit_code == 3 and result.error["code"] == "package-busy" and str(OTHER_PID) in result.error["message"]
+
+
+def test_a_cleanup_sweep_leaves_a_busy_package_alone_without_failing(world: World) -> None:
+    """A pass over a whole root is not a request about one package: the busy one is `locked`, the call succeeds, the summary says why."""
+    world.publish("free", "1.0.0")
+    assert world.one("install", "free").ok
+    hold(world, world.user / "tool")
+
+    batch = world.run("cleanup", "tool", "free", sweep=True)
+
+    assert [(item.package, item.status) for item in batch.results] == [("tool", "locked"), ("free", "cleaned")]
+    assert batch.ok and batch.exit_code == 0 and batch.results[0].details["locked"] is True
+    assert "Left alone (in use by another run): tool" in batch.summary() and "after cancel" not in batch.summary()
 
 
 def test_check_reads_only_but_check_fix_takes_the_lock(world: World) -> None:
@@ -151,7 +161,7 @@ def test_cleanup_never_removes_a_work_folder_younger_than_a_day_even_when_unlock
 
 
 def test_cleanup_of_a_locked_package_removes_nothing(world: World) -> None:
-    """A package another run is changing is skipped whole, even its old receipts and work entries."""
+    """A package another run is changing is left whole, even its old receipts and work entries, whether named or swept."""
     package = world.user / "tool"
     work = package / ".gupkg" / "work" / "populate-inflight"
     work.mkdir(parents=True)
@@ -159,9 +169,10 @@ def test_cleanup_of_a_locked_package_removes_nothing(world: World) -> None:
     os.utime(work, (ancient, ancient))
     hold(world, package)
 
-    result = world.one("cleanup", "tool")
+    named = world.one("cleanup", "tool")
+    swept = world.one("cleanup", "tool", sweep=True)
 
-    assert result.status == "skipped" and work.is_dir()
+    assert named.error["code"] == "package-busy" and swept.status == "locked" and work.is_dir()
 
 
 def test_the_lock_is_released_after_a_failure_an_exception_and_a_cancel(world: World, tmp_path: Path) -> None:

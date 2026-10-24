@@ -118,10 +118,14 @@ def uninstall(engine: Engine, selectors: Sequence[str], *, purge: bool = False, 
 
 
 def cleanup(
-    engine: Engine, selectors: Sequence[str], *, keep: int = 1, bundled: bool = False, mode: str | None = None
+    engine: Engine, selectors: Sequence[str], *, keep: int = 1, bundled: bool = False, mode: str | None = None, sweep: bool = False
 ) -> BatchResult:
-    """Remove old ``App`` folders, receipts and work folders of the named packages (never run automatically, D43)."""
-    return run_batch(engine, [Request("cleanup", item, mode=mode, keep=keep, bundled=bundled) for item in selectors])
+    """Remove old ``App`` folders, receipts and work folders of the named packages (never run automatically, D43).
+
+    A named package that another run holds fails with ``package-busy``; with *sweep* (a pass over every package of a root,
+    not a list the user wrote) it is left alone and reported as ``locked``.
+    """
+    return run_batch(engine, [Request("cleanup", item, mode=mode, keep=keep, bundled=bundled, sweep=sweep) for item in selectors])
 
 
 def check(engine: Engine, selectors: Sequence[str], *, fix: bool = False, mode: str | None = None) -> BatchResult:
@@ -300,14 +304,15 @@ def _run_one(engine: Engine, target: _Target, sole: bool) -> PackageResult:
             with _held(engine, request, context, name, path):
                 result = _dispatch(engine, target)
         except PackageBusy as busy:
-            # Housekeeping leaves a package that another run is changing alone; every other operation fails naming the holder.
-            if request.operation != "cleanup":
+            # A sweep over a whole root leaves a busy package alone; a package the user named, like every other operation,
+            # fails naming the holder.
+            if not (request.operation == "cleanup" and request.sweep):
                 result = failure(name, request.operation, busy, mode=context.mode, log=engine.log_path(path))
                 emit(Error(str(busy), busy.hint))
             else:
                 emit(Warning(f"{name} is in use and was left alone: {busy}"))
                 result = PackageResult(
-                    name, "cleanup", True, "skipped", mode=context.mode, warnings=(str(busy),), details={"locked": True},
+                    name, "cleanup", True, "locked", mode=context.mode, warnings=(str(busy),), details={"locked": True},
                 )
         except _UpToDate as nothing:
             emit(Step(f"{nothing.view.name} is up to date", "ok"))

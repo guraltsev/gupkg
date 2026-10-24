@@ -99,6 +99,9 @@ class Request:
         ``check --fix``: re-apply integration and rebuild a missing ``App``.
     download_only : bool
         ``update`` that populates the chosen version's ``App`` and stops: nothing is activated or integrated.
+    sweep : bool
+        ``cleanup`` over every package of a root rather than the packages the user named: a package that another run holds is
+        left alone (status ``locked``, not a failure). A package the user names that is busy fails with ``package-busy``.
     """
 
     operation: str
@@ -114,6 +117,7 @@ class Request:
     skip: str | None = None
     fix: bool = False
     download_only: bool = False
+    sweep: bool = False
 
     def __post_init__(self) -> None:
         """Refuse an operation the engine does not know."""
@@ -418,6 +422,8 @@ class PackageResult:
             return f"x {self.package}: {self.operation} failed: {reason}"
         if self.status == "skipped":
             return f"- {self.package}: skipped"
+        if self.status == "locked":
+            return f"- {self.package}: left alone, another gupkg run is changing it"
         version = f" {self.version}" if self.version else ""
         was = f" (was {self.previous})" if self.previous and self.previous != self.version else ""
         return f"ok {self.package}{version}: {self.status}{was}"
@@ -459,8 +465,11 @@ class BatchResult:
         skipped = [item.package for item in self.results if item.status == "skipped"]
         if failed:
             lines.append(f"{len(failed)} of {len(self.results)} failed: {', '.join(failed)}")
+        locked = [item.package for item in self.results if item.status == "locked"]
         if skipped:
             lines.append(f"Skipped after cancel: {', '.join(skipped)}")
+        if locked:
+            lines.append(f"Left alone (in use by another run): {', '.join(locked)}")
         return "\n".join(lines)
 
 
