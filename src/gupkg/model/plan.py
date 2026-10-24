@@ -407,7 +407,7 @@ class PackageResult:
         data: dict[str, Any] = {
             "package": self.package, "operation": self.operation, "ok": self.ok, "status": self.status,
             "version": self.version, "previous": self.previous, "mode": self.mode, "exit_code": self.exit_code,
-            "receipt": self.receipt, "log": self.log, "warnings": list(self.warnings),
+            "receipt": self.receipt, "log": self.log, "warnings": [redact_text(item) for item in self.warnings],
         }
         if self.error is not None:
             data["error"] = dict(self.error)

@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 from gupkg.engine import lifecycle
-from gupkg.model.plan import Request
+from gupkg.model.plan import PackageResult, Request
 from gupkg.redact import redact_text, redact_url
 from gupkg.report.events import use_reporter
 from tests.engine_support import World, pin_no_ambient_elevation, pkg_text, zip_bytes  # noqa: F401
@@ -38,6 +38,14 @@ from tests.engine_support import World, pin_no_ambient_elevation, pkg_text, zip_
         ("https://cdn.example/a.zip?Policy=P&Signature=S&Key-Pair-Id=K", "https://cdn.example/a.zip?Policy=***&Signature=***&Key-Pair-Id=***"),
         ("https://b.s3.example/a.zip?AWSAccessKeyId=AKIA&Expires=1&X-Amz-Credential=C", "https://b.s3.example/a.zip?AWSAccessKeyId=***&Expires=1&X-Amz-Credential=***"),
         ("https://example.org/a.zip?sessionid=1&x-ms-session=2", "https://example.org/a.zip?sessionid=***&x-ms-session=***"),
+        ("https://example.org/a.zip?a=1;sig=S", "https://example.org/a.zip?a=1;sig=***"),
+        ("https://example.org/a.zip?a=1;b=2;token=S;c=3", "https://example.org/a.zip?a=1;b=2;token=***;c=3"),
+        ("https://example.org/a.zip?%74oken=S", "https://example.org/a.zip?%74oken=***"),
+        ("https://example.org/a.zip?tok%65n=S&v=1", "https://example.org/a.zip?tok%65n=***&v=1"),
+        ("https://example.org/a.zip?token%3DS", "https://example.org/a.zip?token=***"),
+        ("https://example.org/a.zip?%2574oken=S", "https://example.org/a.zip?%2574oken=***"),
+        ("https://example.org/a.zip?pwd=S&passwd=S&Password=S&pass=S", "https://example.org/a.zip?pwd=***&passwd=***&Password=***&pass=***"),
+        ("https://example.org/a.zip?jwt=S&Bearer=S&sas=S&sv=2", "https://example.org/a.zip?jwt=***&Bearer=***&sas=***&sv=2"),
     ],
 )
 def test_credentials_in_a_url_are_masked_and_the_rest_is_kept(url: str, expected: str) -> None:
@@ -101,3 +109,12 @@ def test_an_error_that_quotes_a_secret_url_is_masked(tmp_path: Path) -> None:
     result = world.one("install", "tool")
 
     assert not result.ok and "TOPSECRET" not in repr(result.error) and "TOPSECRET" not in repr(result.warnings)
+
+
+def test_the_json_document_of_a_result_redacts_its_warnings() -> None:
+    """Defence in depth: a warning that quotes a secret URL is masked in `PackageResult.to_data`, whatever put it there."""
+    result = PackageResult("tool", "install", True, "installed", warnings=("fetched https://u:pw@host/a.zip?token=TOPSECRET fine",))
+
+    data = result.to_data()
+
+    assert data["warnings"] == ["fetched https://***@host/a.zip?token=*** fine"] and "TOPSECRET" not in repr(data)

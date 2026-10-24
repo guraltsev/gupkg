@@ -16,8 +16,9 @@ an ordinary name, so it is not masked; keep secrets in the query, in a header or
 Implementation Approach
 -----------------------
 A query or fragment parameter (separated by ``&`` or ``;``) is secret when its name contains one of ``SECRET_WORDS`` (case-insensitive): ``token``, ``secret``,
-``passw``, ``signature``, ``credential``, ``auth``, ``key`` (``AWSAccessKeyId``, ``Key-Pair-Id``), ``sig``, ``policy`` and
-``session``. The match is deliberately broad: hiding a harmless
+``pass`` (``password``, ``passwd``), ``pwd``, ``signature``, ``credential``, ``auth``, ``key`` (``AWSAccessKeyId``,
+``Key-Pair-Id``), ``sig``, ``policy``, ``session``, ``jwt``, ``bearer`` and ``sas``. The name is percent-decoded (twice) before it
+is judged, and a percent-encoded ``=`` (``token%3DS``) counts as a separator. The match is deliberately broad: hiding a harmless
 value costs nothing, showing a secret does. The URL is split and joined with the standard library; its path is never
 changed. Text that is not a URL is returned as it was.
 """
@@ -25,20 +26,26 @@ changed. Text that is not a URL is returned as it was.
 from __future__ import annotations
 
 import re
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import unquote, urlsplit, urlunsplit
 
-SECRET_WORDS = ("token", "secret", "passw", "signature", "credential", "auth", "key", "sig", "policy", "session")
+SECRET_WORDS = (
+    "token", "secret", "pass", "pwd", "signature", "credential", "auth", "key", "sig", "policy", "session", "jwt", "bearer", "sas",
+)
 MASK = "***"
 
-_PARAMETER = re.compile(r"(?P<name>[^&;=#]+)=(?P<value>[^&;#]*)")
 _ADDRESS = re.compile(r"https?://[^\s'\"<>]+", re.IGNORECASE)
 _TRAILING = ".,;:)]}"
 
 
 def _is_secret(name: str) -> bool:
     """Return whether a query parameter named *name* is a secret."""
-    folded = name.casefold()
+    folded = _decode(name).casefold()
     return any(word in folded for word in SECRET_WORDS)
+
+
+def _decode(text: str) -> str:
+    """Percent-decode *text* twice, so ``%74oken`` and ``%2574oken`` are read as ``token``."""
+    return unquote(unquote(text))
 
 
 def redact_url(url: str) -> str:
@@ -59,10 +66,15 @@ def redact_url(url: str) -> str:
 def _mask_parameters(text: str) -> str:
     """Mask the value of every secret-looking ``name=value`` pair of a query or a fragment (``&`` or ``;`` separated)."""
 
-    def replace(match: re.Match[str]) -> str:
-        return f"{match.group('name')}={MASK}" if _is_secret(match.group("name")) else match.group(0)
-
-    return _PARAMETER.sub(replace, text)
+    pieces = re.split(r"([&;])", text)
+    for index in range(0, len(pieces), 2):
+        piece = pieces[index]
+        name, separator, _value = _decode(piece).partition("=")
+        if separator and _is_secret(name):
+            # Keep the name as it was written when the ``=`` was written too; a percent-encoded ``=`` (``token%3DS``) has no raw name.
+            raw_name = piece.partition("=")[0] if "=" in piece else name
+            pieces[index] = f"{raw_name}={MASK}"
+    return "".join(pieces)
 
 
 def redact_text(text: str) -> str:
