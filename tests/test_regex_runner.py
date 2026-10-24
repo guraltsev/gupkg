@@ -3,7 +3,7 @@
 ``RegexRunner`` sends (pattern, flags, texts, operation) to ``gupkg/system/regex_worker.py`` through
 ``System.regex_worker`` and reads the matches back. Covers: identical results to in-process ``re`` for
 the 50 registry patterns over every fixture page; a hostile corpus (the reviewer's patterns of four review
-rounds) that must return or raise ``RegexTimeout`` within the deadline plus one second, with the worker
+rounds) that must return or raise ``RegexTimeout`` within the deadline plus the start allowance (exponential patterns must raise), with the worker
 gone afterwards and no process left; the fail-closed rules (a crashed, garbled, oversized or malformed
 answer, a refused request, an exhausted total budget); the batch operations and the answer size cap.
 Real child processes are used throughout (the fake system runs the worker for real unless a double is
@@ -165,9 +165,36 @@ def deadline_runner(system: FakeSystem) -> RegexRunner:
     return RegexRunner(system, per_call=DEADLINE, total=1000.0)
 
 
+# Patterns whose cost grows exponentially (at least 1.6 to the power of the page length, for pages of 40 or more
+# characters): no CPU can finish them inside the deadline, so they prove the kill path deterministically.
+ALWAYS_SLOW = [
+    pytest.param(r"(a+)+$", "a" * 40 + "!", id="classic-exponential"),
+    pytest.param(r"(?:a|a)+b", "a" * 40, id="identical-alternatives"),
+    pytest.param(r"(?:a|aa)+b", "a" * 60, id="prefix-alternatives"),
+    pytest.param(r"(?:a{1,30}){1,30}b", "a" * 60, id="nested-bounded"),
+]
+
+
 @pytest.mark.parametrize(("pattern", "page"), HOSTILE)
-def test_a_hostile_pattern_on_its_page_is_stopped_at_the_deadline(system: FakeSystem, pattern: str, page: str) -> None:
-    """Each pair raises RegexTimeout within the deadline plus one second, naming the pattern and the field."""
+def test_a_hostile_pattern_on_its_page_is_bounded_by_the_deadline(system: FakeSystem, pattern: str, page: str) -> None:
+    """Each pair returns, or raises RegexTimeout naming the field, and either way within the deadline plus the start allowance.
+
+    How slow a polynomial pattern is depends on the CPU and its load, so this test does not require a timeout;
+    ``test_an_exponential_pattern_is_killed_at_the_deadline`` proves the kill path.
+    """
+    started = time.monotonic()
+
+    try:
+        deadline_runner(system).finditer(re.compile(pattern), page, what="the hostile page")
+    except RegexTimeout as error:
+        assert re.search(r"took longer than 0\.8 seconds in the hostile page", str(error))
+
+    assert time.monotonic() - started < DEADLINE + 1.0 + START_ALLOWANCE
+
+
+@pytest.mark.parametrize(("pattern", "page"), ALWAYS_SLOW)
+def test_an_exponential_pattern_is_killed_at_the_deadline(system: FakeSystem, pattern: str, page: str) -> None:
+    """Each exponential pair always raises RegexTimeout naming the pattern and the field, within the deadline plus the start allowance."""
     started = time.monotonic()
 
     with pytest.raises(RegexTimeout, match=r"took longer than 0\.8 seconds in the hostile page"):
@@ -224,7 +251,7 @@ def test_no_worker_process_is_left_after_the_hostile_corpus(system: FakeSystem, 
     running = _count_processes_of(unique)  # the positive control: the query does see a live worker
     thread.join(30)
     runner = deadline_runner(system)
-    for pattern, page in (("(a+)+$", "a" * 40 + "!"), (r"\d+\d+\d+x", "1" * 1000), (r"(?:x+x+x+){3}y", "x" * 1000)):
+    for pattern, page in (("(a+)+$", "a" * 40 + "!"), (r"(?:a|a)+b", "a" * 40), (r"(?:a|aa)+b", "a" * 60)):
         with pytest.raises(RegexTimeout):
             runner.finditer(re.compile(pattern), page)
     time.sleep(0.5)
