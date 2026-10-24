@@ -212,7 +212,10 @@ def _run(args: argparse.Namespace, tokens: list[str], machine: System, env: Mapp
         code = handler(run)
     except Exception as error:  # noqa: BLE001 - the process boundary: nothing may escape as a traceback
         code = _fail(run, args.command, error)
-    if getattr(args, "relaunched", False) and not getattr(args, "no_input", False) and sys.stdin is not None and sys.stdin.isatty():
+    if (
+        getattr(args, "relaunched", False) and not getattr(args, "no_input", False) and not getattr(args, "yes", False)
+        and sys.stdin is not None and sys.stdin.isatty()
+    ):
         print("Press any key to continue...", file=sys.stderr)
         wait_for_keypress()
     return code
@@ -328,9 +331,11 @@ def _execute(
     # Targets whose mode is known to need the elevated token are run apart from the rest (one elevation per call).
     merged: list[Any] = []
     children: list[BatchResult] = []
+    # An elevated child always writes an events file, so that this process can show how it ended (a name the caller chose, or its own).
+    relaunch_events = args.events_file or f"gupkg-relaunch-{uuid.uuid4().hex}.jsonl"
     relaunched = False
     for group in _groups(targets):
-        engine = _engine(run, session, command, group, stop_path, batch_confirmed=confirmed and not args.yes)
+        engine = _engine(run, session, command, group, stop_path, batch_confirmed=confirmed and not args.yes, events_name=relaunch_events)
         batch = lifecycle.run_batch(engine, [replace(make(item), skip=skip) for item in group])
         merged.extend(batch.results)
         relaunched = relaunched or batch.relaunched
@@ -344,7 +349,10 @@ def _execute(
     extra: dict[str, Any] = {}
     if relaunched:
         text += f"\nThe elevated gupkg ended with exit code {child_code} for the system targets."
-        problem = _missing_run_end(run, args.events_file)
+        ended = _child_run_end(run, relaunch_events)
+        if ended is not None and str(ended.get("summary", "")).strip():
+            text += "\nThe elevated run reported:\n" + "\n".join(f"    {line}" for line in str(ended["summary"]).splitlines())
+        problem = _missing_run_end(run, args.events_file) if args.events_file else None
         if problem is not None:
             text += f"\nerror: {problem}"
             extra["errors"] = [{"code": "child-no-result", "message": problem, "hint": "The elevated run may have been killed; check the system root's logs."}]
@@ -468,6 +476,17 @@ def _stop_path(run: _Run) -> Path | None:
     return Path(folder) / f"gupkg-stop-{uuid.uuid4().hex}"
 
 
+def _child_run_end(run: _Run, events_name: str) -> dict[str, Any] | None:
+    """Return the ``run_end`` record that the elevated child wrote as the last line of its events file, else ``None``."""
+    try:
+        _, context = _context(run, "system")
+        lines = (context.log_dir / events_name).read_text(encoding="utf-8").splitlines()
+        last = json.loads(next((line for line in reversed(lines) if line.strip()), ""))
+    except (OSError, ModeRefused, SettingsError, ValueError):
+        return None
+    return last if isinstance(last, dict) and last.get("event") == "run_end" else None
+
+
 def _missing_run_end(run: _Run, events_name: str | None) -> str | None:
     """Return a message when the elevated child left no ``run_end`` line in its events file, else ``None``.
 
@@ -525,7 +544,10 @@ def _argv_text(run: _Run) -> list[str]:
     return [args.command, *named]
 
 
-def _engine(run: _Run, session: RunSession, command: str, targets: Sequence[str], stop_path: Path | None, *, batch_confirmed: bool) -> Engine:
+def _engine(
+    run: _Run, session: RunSession, command: str, targets: Sequence[str], stop_path: Path | None, *, batch_confirmed: bool,
+    events_name: str | None = None,
+) -> Engine:
     """Build the engine of one call: the machine, the questions it may ask, the stop marker and the elevated child's command line."""
     args = run.args
     log = session.log
@@ -539,10 +561,10 @@ def _engine(run: _Run, session: RunSession, command: str, targets: Sequence[str]
         system=run.system, env=run.env, load=run.loader, confirm=_ask, yes=bool(args.yes), no_input=bool(args.no_input),
         cancel=stop_marker(stop_path) if stop_path is not None else (lambda: False), log_path=log_path,
         relaunched=bool(getattr(args, "relaunched", False)),
-        argv=_child_argv(run, command, targets, batch_confirmed=batch_confirmed, stop_path=stop_path),
+        argv=_child_argv(run, command, targets, batch_confirmed=batch_confirmed, stop_path=stop_path, events_name=events_name),
         gupkg_dir=run.location.version_dir, gupkg_root=run.location.root,
         request_stop=(lambda: stop_path.touch()) if stop_path is not None else None,
-        relaunch_note=_relaunch_note(stop_path, getattr(args, "events_file", None)),
+        relaunch_note=_relaunch_note(stop_path, events_name),
     )
 
 
@@ -558,6 +580,7 @@ def _relaunch_note(stop_path: Path | None, events_name: str | None) -> str:
 
 def _child_argv(
     run: _Run, command: str, targets: Sequence[str], *, batch_confirmed: bool, stop_path: Path | None = None,
+    events_name: str | None = None,
 ) -> tuple[str, ...]:
     """Return the command line of the elevated child, rebuilt from the parsed options (never copied from the input).
 
@@ -593,8 +616,8 @@ def _child_argv(
     skip = getattr(args, "skip_checksum", None)
     if skip is not None:
         argv.append("--skip-checksum" if skip == "" else f"--skip-checksum={skip}")
-    if getattr(args, "events_file", None):
-        argv += ["--events-file", args.events_file]
+    if events_name or getattr(args, "events_file", None):
+        argv += ["--events-file", events_name or args.events_file]
     if stop_path is not None and unsafe_relaunch_argument(str(stop_path)) is None:
         argv += ["--stop-file", str(stop_path)]
     argv.append("--relaunched")

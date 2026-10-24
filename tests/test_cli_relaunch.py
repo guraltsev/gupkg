@@ -221,6 +221,58 @@ def test_a_command_line_that_is_too_long_is_refused_with_a_reason_on_the_fake_bo
     assert over.started is False and "characters long" in (over.refused or "") and fake.relaunches == []
 
 
+@pytest.mark.parametrize(
+    ("options", "pauses"),
+    [
+        pytest.param((), True, id="a-person-at-a-console-sees-the-window-stay"),
+        pytest.param(("--yes",), False, id="yes-never-pauses"),
+        pytest.param(("--no-input",), False, id="no-input-never-pauses"),
+    ],
+)
+def test_the_elevated_child_pauses_only_for_a_person_at_a_console(
+    world: CliWorld, monkeypatch: pytest.MonkeyPatch, options: tuple[str, ...], pauses: bool
+) -> None:
+    """A scripted `--yes` or `--no-input` run never waits for a key; a console run without them does (so the window stays readable)."""
+    pressed: list[int] = []
+    monkeypatch.setattr("gupkg.cli.wait_for_keypress", lambda: pressed.append(1))
+    world.fake.elevated = True
+
+    result = world.cli("install", "--mode", "system", "--relaunched", *options, "--", "tool", tty=True)
+
+    assert result.code == 0, result.err
+    assert pressed == ([1] if pauses else [])
+
+
+def test_the_elevated_child_does_not_pause_when_standard_input_is_not_a_console(world: CliWorld, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A redirected standard input is not a console: a scripted caller is never blocked."""
+    pressed: list[int] = []
+    monkeypatch.setattr("gupkg.cli.wait_for_keypress", lambda: pressed.append(1))
+    world.fake.elevated = True
+
+    result = world.cli("install", "--mode", "system", "--relaunched", "--", "tool", tty=False)
+
+    assert result.code == 0 and pressed == []
+
+
+@pytest.mark.parametrize("named", [False, True], ids=["own-events-file", "callers-events-file"])
+def test_the_parent_shows_what_the_child_reported_so_a_closed_window_loses_nothing(world: CliWorld, named: bool) -> None:
+    """The child's `run_end` summary is printed by the waiting parent, whether or not the caller named an events file."""
+    def child(argv: list[str]) -> None:
+        """Write the events file the child would have written, ending with its summary."""
+        name = argv[argv.index("--events-file") + 1]
+        logs = world.system_root / ".gupkg" / "logs"
+        logs.mkdir(parents=True, exist_ok=True)
+        (logs / name).write_text(json.dumps({"event": "run_end", "summary": "ok tool 1.0.0: installed", "exit_code": 0}) + "\n", encoding="utf-8")
+
+    world.fake.on_relaunch = child
+    extra = ("--events-file", "mine.jsonl") if named else ()
+
+    result = world.cli("install", "system:tool", "--yes", *extra)
+
+    assert result.code == 0, result.out + result.err
+    assert "The elevated run reported:" in result.out and "ok tool 1.0.0: installed" in result.out
+
+
 def test_the_abandoned_wait_names_the_stop_marker_and_the_events_file(world: CliWorld) -> None:
     """When the wait is given up the message says where the child's marker and events file are."""
     world.fake.relaunch_interrupt = True

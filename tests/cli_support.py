@@ -24,6 +24,14 @@ from gupkg.selfmgmt.location import RunningGupkg
 from tests.engine_support import World
 
 
+class TerminalInput(io.StringIO):
+    """A standard input that claims to be a console (``isatty``), as when a person runs the command in a window."""
+
+    def isatty(self) -> bool:
+        """Report a console."""
+        return True
+
+
 class ForbiddenInput(io.StringIO):
     """A standard input that fails the test the moment anything reads it (a ``--yes`` or ``--no-input`` run must not ask)."""
 
@@ -75,11 +83,11 @@ class CliWorld(World):
             if installed else RunningGupkg("source", tree / "gupkg", (tree,))
         )
 
-    def cli(self, *argv: str, stdin: str | None = "", location: RunningGupkg | None = None) -> CliResult:
-        """Run ``gupkg <argv>`` and return its exit code and output; *stdin* is what a question would read (``None``: reading it fails the test)."""
+    def cli(self, *argv: str, stdin: str | None = "", location: RunningGupkg | None = None, tty: bool = False) -> CliResult:
+        """Run ``gupkg <argv>`` and return its exit code and output; *stdin* is what a question would read (``None``: reading it fails the test); *tty* makes it look like a console."""
         out, err = io.StringIO(), io.StringIO()
         original = sys.stdin
-        sys.stdin = ForbiddenInput() if stdin is None else io.StringIO(stdin)
+        sys.stdin = ForbiddenInput() if stdin is None else (TerminalInput if tty else io.StringIO)(stdin)
 
         # The process PATH is pinned to a folder with nothing in it: a git or program on the developer's PATH must not decide a test.
         try:

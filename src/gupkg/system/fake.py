@@ -174,6 +174,8 @@ class FakeSystem(WindowsLinks):
         Whether ``relaunch_elevated`` reports that the child started (False: the elevation prompt was declined).
     relaunch_exit_code : int, optional
         The exit code of the pretend child; ``None`` means the wait ended without one.
+    on_relaunch : callable, optional
+        Called with the child's command line when a child "starts" (a test writes the child's events file there).
     relaunch_error : str, optional
         Pretend waiting for the started child failed with this message.
     relaunch_interrupt : bool
@@ -201,6 +203,7 @@ class FakeSystem(WindowsLinks):
     relaunch_exit_code: int | None = 0
     relaunch_interrupt: bool = False
     relaunch_error: str | None = None
+    on_relaunch: Callable[[list[str]], None] | None = None
     package_dir: Path = Path("C:/Program Files/gupkg/1.0.0/gupkg")
     pid: int = field(default_factory=os.getpid)
     live_pids: set[int] = field(default_factory=set)
@@ -393,6 +396,8 @@ class FakeSystem(WindowsLinks):
         self._save()
         if not self.relaunch_result:
             return ElevatedRun(False)
+        if self.on_relaunch is not None:
+            self.on_relaunch([str(part) for part in argv])
         if self.relaunch_error is not None:
             return ElevatedRun(True, error=self.relaunch_error)
         if self.relaunch_interrupt:
