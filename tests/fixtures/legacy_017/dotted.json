@@ -1,0 +1,16 @@
+{
+  "bin_files": {},
+  "current": "1.0.0",
+  "env": {},
+  "launchers": [],
+  "path": [],
+  "shortcuts": {
+    "<MENU>\\Tool 1.lnk": {
+      "arguments": "",
+      "description": "",
+      "icon_location": "",
+      "target_path": "<ROOT>\\Dotted\\current\\App\\tool.exe",
+      "working_directory": ""
+    }
+  }
+}

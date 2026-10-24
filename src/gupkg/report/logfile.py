@@ -44,7 +44,7 @@ from typing import Any, Callable
 
 from .console import PlainFormatter
 from .events import (
-    PackageEnd, PackageStart, RunEnd, RunStart, event_to_dict,
+    Diagnostic, PackageEnd, PackageStart, RunEnd, RunStart, event_to_dict,
 )
 
 
@@ -219,11 +219,11 @@ class _Sink:
             name = stem if attempt == 1 else f"{stem}-{attempt}"
             text_path, json_path = self.directory / f"{name}.log", self.directory / f"{name}.jsonl"
             try:
-                text = open(text_path, "x", encoding="utf-8", newline="\n")
+                text = open(text_path, "x", encoding="utf-8", errors="backslashreplace", newline="\n")
             except FileExistsError:
                 continue
             try:
-                events = open(json_path, "x", encoding="utf-8", newline="\n")
+                events = open(json_path, "x", encoding="utf-8", errors="backslashreplace", newline="\n")
             except FileExistsError:
                 text.close()
                 text_path.unlink(missing_ok=True)
@@ -251,7 +251,7 @@ class _Sink:
 
         # Create it exclusively, so that a link planted after the check above
         # makes the creation fail instead of being followed.
-        handle = open(path, "x", encoding="utf-8", newline="\n")
+        handle = open(path, "x", encoding="utf-8", errors="backslashreplace", newline="\n")
         self._files.append(handle)
         self._json_files.append(handle)
 
@@ -469,6 +469,18 @@ class RunLog:
                 self._warn(f"Cannot finish the log {sink.text_path}: {exc}")
         self.close()
 
+    def release_package(self, path: str) -> None:
+        """Close the log files of the package folder *path* (it is about to be deleted); its later events go to the run log."""
+        with self._lock:
+            sink = self._packages.get(path)
+            if sink is None:
+                return
+            sink.close()
+            self._packages[path] = None
+            if self._current is sink:
+                self._current = None
+                self._in_package = False
+
     def close(self) -> None:
         """Close every log file; later events are ignored."""
         with self._lock:
@@ -495,6 +507,9 @@ class RunLog:
             else:
                 for line in sink.formatter.feed(payload):
                     sink.write_line(line)
+                if isinstance(payload, Diagnostic):
+                    for line in payload.text.rstrip().splitlines():
+                        sink.write_line(f"DIAGNOSTIC: {line}")
                 sink.write_record(self._record(payload, moment))
         except Exception as exc:  # noqa: BLE001 - logging must never fail the operation
             self._disable(sink, exc)

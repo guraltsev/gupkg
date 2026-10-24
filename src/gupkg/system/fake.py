@@ -47,6 +47,7 @@ from typing import Any, Callable, Iterator, Mapping, Sequence
 from ..extractors import find_7z
 from .port import (
     DownloadResponse,
+    ElevatedRun,
     EnvValue,
     HttpResponse,
     ProcessAborted,
@@ -57,7 +58,11 @@ from .port import (
     ScopeFolders,
     ShortcutSpec,
     System,
+    MAX_RELAUNCH_PARAMETERS,
+    elevated_command,
+    unsafe_relaunch_argument,
 )
+from ..selfmgmt.elevation import bundled_runtime_paths
 from .windows import WindowsLinks, WindowsSystem
 
 
@@ -105,7 +110,8 @@ class FakeHttp:
     ``headers`` are the response headers (any letter case). With ``ranges`` true the
     fixture honours ``Range: bytes=N-`` with a 206 answer, as a resumable server does.
     ``fail_after`` makes ``http_download`` drop the connection (``OSError``) after that
-    many body bytes, leaving the partial file behind.
+    many body bytes, leaving the partial file behind. With ``report_size`` false the server
+    does not announce the size, so ``http_download`` reports progress with an unknown total.
     """
 
     body: bytes | str = b""
@@ -113,6 +119,7 @@ class FakeHttp:
     headers: Mapping[str, str] = field(default_factory=dict)
     ranges: bool = False
     fail_after: int | None = None
+    report_size: bool = True
 
 
 @dataclass(frozen=True)
@@ -164,7 +171,17 @@ class FakeSystem(WindowsLinks):
     state_file : Path, optional
         JSON file that persists the registry, its log and the counters.
     relaunch_result : bool
-        What ``relaunch_elevated`` reports.
+        Whether ``relaunch_elevated`` reports that the child started (False: the elevation prompt was declined).
+    relaunch_exit_code : int, optional
+        The exit code of the pretend child; ``None`` means the wait ended without one.
+    on_relaunch : callable, optional
+        Called with the child's command line when a child "starts" (a test writes the child's events file there).
+    relaunch_error : str, optional
+        Pretend waiting for the started child failed with this message.
+    relaunch_interrupt : bool
+        Pretend the user pressed Ctrl-C while waiting: ``on_interrupt`` is called and the wait is abandoned.
+    package_dir : Path
+        The package folder the pretend elevated command is built from (``relaunch_commands``).
     pid : int
         What ``process_id`` reports.
     live_pids : set of int
@@ -183,15 +200,23 @@ class FakeSystem(WindowsLinks):
     real_7zip: bool = True
     state_file: Path | None = None
     relaunch_result: bool = True
+    relaunch_exit_code: int | None = 0
+    relaunch_interrupt: bool = False
+    relaunch_error: str | None = None
+    on_relaunch: Callable[[list[str]], None] | None = None
+    package_dir: Path = Path("C:/Program Files/gupkg/1.0.0/gupkg")
     pid: int = field(default_factory=os.getpid)
     live_pids: set[int] = field(default_factory=set)
     failures: dict[str, BaseException] = field(default_factory=dict)
     registry_log: list[RegistryAccess] = field(default_factory=list)
     broadcasts: int = 0
     relaunches: list[list[str]] = field(default_factory=list)
+    relaunch_commands: list[tuple[str, str, str]] = field(default_factory=list)
     fetch_log: list[str] = field(default_factory=list)
     request_log: list[RecordedRequest] = field(default_factory=list)
     process_log: list[list[str]] = field(default_factory=list)
+    foreground_log: list[list[str]] = field(default_factory=list)
+    opened: list[Path] = field(default_factory=list)
     regex_log: list[str] = field(default_factory=list)
     real_programs: dict[str, Path] = field(default_factory=dict)
     _env: dict[str, dict[str, tuple[str, EnvValue]]] = field(
@@ -347,12 +372,39 @@ class FakeSystem(WindowsLinks):
             return True
         return self.delegate.process_is_running(pid) if self.delegate is not None else False
 
-    def relaunch_elevated(self, argv: Sequence[str]) -> bool:
-        """Record the request and report the configured outcome; nothing is started."""
+    def relaunch_elevated(
+        self, argv: Sequence[str], *, on_interrupt: Callable[[], None] | None = None, grace: float = 30.0,
+    ) -> ElevatedRun:
+        """Record the request and report the configured outcome; nothing is started.
+
+        Like the real one, it refuses a value that could mean something to a shell (nothing is recorded), and records the
+        program, parameters and folder the real call would pass to ``ShellExecuteEx`` in ``relaunch_commands``.
+        """
         self._maybe_fail("relaunch_elevated")
+        if any(unsafe_relaunch_argument(part) for part in argv):
+            return ElevatedRun(False)
+        _, parameters, _ = elevated_command(self.package_dir, argv)
+        if len(parameters) > MAX_RELAUNCH_PARAMETERS:
+            return ElevatedRun(False, refused=f"the command line is {len(parameters)} characters long; more than {MAX_RELAUNCH_PARAMETERS} cannot be started")
+        for path in bundled_runtime_paths(self.package_dir):
+            reason = self.directory_untrusted_reason(path) if path.exists() else None
+            if reason is not None:
+                return ElevatedRun(False, refused=f"{path}: {reason}")
         self.relaunches.append([str(part) for part in argv])
+        program, parameters, directory = elevated_command(self.package_dir, argv)
+        self.relaunch_commands.append((str(program), parameters, str(directory)))
         self._save()
-        return self.relaunch_result
+        if not self.relaunch_result:
+            return ElevatedRun(False)
+        if self.on_relaunch is not None:
+            self.on_relaunch([str(part) for part in argv])
+        if self.relaunch_error is not None:
+            return ElevatedRun(True, error=self.relaunch_error)
+        if self.relaunch_interrupt:
+            if on_interrupt is not None:
+                on_interrupt()
+            return ElevatedRun(True, None, True)
+        return ElevatedRun(True, self.relaunch_exit_code)
 
     def directory_is_admin_only(self, path: Path) -> bool:
         """Report whether *path* lies outside every directory listed as untrusted."""
@@ -411,6 +463,24 @@ class FakeSystem(WindowsLinks):
                 [str(target), *command[1:]], cwd, env, on_line, input_text=input_text, timeout=timeout, watch=watch
             )
         raise UnexpectedProcess(f"FakeSystem has no process double for {command[0]!r}: {command}")
+
+    def run_foreground(self, argv: Sequence[str], cwd: Path | None = None, env: Mapping[str, str] | None = None) -> int:
+        """Record the request and answer it with a registered double's status; any other program raises ``UnexpectedProcess``."""
+        self._maybe_fail("run_foreground")
+        command = [str(part) for part in argv]
+        self.foreground_log.append(command)
+        program = Path(command[0])
+        double = self.processes.get(program.name.lower()) or self.processes.get(program.stem.lower())
+        if double is None:
+            raise UnexpectedProcess(f"FakeSystem has no process double for {command[0]!r}: {command}")
+        return double(ProcessCall(tuple(command), cwd, env, None)).returncode
+
+    def open_path(self, path: Path) -> None:
+        """Record the request (nothing is opened); a path that does not exist raises ``FileNotFoundError`` like the real call."""
+        self._maybe_fail("open_path")
+        if not Path(path).exists():
+            raise FileNotFoundError(f"{path} does not exist")
+        self.opened.append(Path(path))
 
     def regex_worker(
         self,
@@ -536,7 +606,7 @@ class FakeSystem(WindowsLinks):
             if start >= len(body):
                 return DownloadResponse(416, url, answer_headers)
             status, resumed, payload = 206, True, body[start:]
-        total = len(body)
+        total = len(body) if fixture.report_size else None
         already = len(body) - len(payload)
         if on_progress is not None:
             on_progress(already, total)
@@ -566,7 +636,7 @@ class FakeSystem(WindowsLinks):
         if isinstance(content, FakeHttp):
             return content
         if isinstance(content, FakeResponse):
-            return FakeHttp(content.body)
+            return FakeHttp(content.body, report_size=content.report_size)
         if isinstance(content, str):
             return FakeHttp(content)
         return FakeHttp(bytes(content))

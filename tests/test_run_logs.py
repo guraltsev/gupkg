@@ -1,30 +1,29 @@
 """Cover the log files a run leaves: placement, names, content, retention, failure and name safety.
 
-Real: the CLI, the event stream, the console renderer and the log files, written
-below pytest temporary directories (junctions included). Mocked: only the machine
-boundary, as a ``FakeSystem`` (and its process double for ``git``). Out of scope:
-real UAC and admin-only permissions (see ``tests/manual_smoke.md``), the settings
-file that will set retention (the defaults are used) and the UI programs.
+Real: the command line, the engine, the event stream, the console renderer and the log files, written below pytest
+temporary directories (junctions and hard links included). Mocked: only the machine boundary, as a ``FakeSystem`` (and its
+process double for ``git``). Out of scope: real UAC and admin-only permissions (see ``tests/manual_smoke.md``) and the UI
+programs. The ``[logs]`` retention that the command line reads from the settings is covered in ``test_cli_tools.py``.
 """
 
 from __future__ import annotations
 
-import hashlib
-import io
 import json
 import re
-import zipfile
+import tomllib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
-from gupkg import cli, commands
+from gupkg import cli
 from gupkg.report.events import PackageEnd, PackageStart, PhaseEnd, PhaseStart, RunEnd, RunStart, Step, Warning
 from gupkg.report.logfile import RunLog, list_run_logs, running_gupkg_logs_base, validate_log_file_name
 from gupkg.report.session import RunSession
 from gupkg.system.fake import FakeSystem
 from gupkg.system.port import ProcessResult
+from tests.cli_support import CliResult, CliWorld
+from tests.mode_support import pin_no_ambient_elevation  # noqa: F401
 
 FIXED_TIME = datetime(2026, 10, 22, 10, 15, 0, tzinfo=timezone.utc)
 
@@ -39,25 +38,14 @@ class _Collector:
         self.events.append(event)
 
 
-def _package(root: Path, name: str = "Example", extra: str = "", app: bool = True) -> Path:
-    """Create a one-version package below *root* and return the version directory."""
-    version = root / name / "1.0.0"
-    (version / "App").mkdir(parents=True)
-    if app:
-        (version / "App" / "tool.exe").write_text("payload", encoding="utf-8")
-    (version / "pkg.toml").write_text(
-        f'name = "{name}"\nversion = "1.0.0"\nlocalVersion = 0\n{extra}', encoding="utf-8"
-    )
-    return version
+def _world(tmp_path: Path, name: str = "Example", **options) -> CliWorld:
+    """Return a fake machine whose user root holds the downloadable package *name* 1.0.0 (``options`` go to ``publish``)."""
+    world = CliWorld(tmp_path)
+    world.publish(name, "1.0.0", **options)
+    return world
 
 
-def _zip(entries: dict[str, str]) -> bytes:
-    """Return the bytes of a ZIP archive holding *entries*."""
-    archive = io.BytesIO()
-    with zipfile.ZipFile(archive, "w") as handle:
-        for name, content in entries.items():
-            handle.writestr(name, content)
-    return archive.getvalue()
+ENV = '[[env]]\nname = "EXAMPLE_READY"\nvalue = "yes"\n'
 
 
 def _logs(directory: Path) -> Path:
@@ -185,22 +173,19 @@ def test_retention_keeps_the_newest_runs_and_drops_aged_ones_when_a_run_starts(t
     assert (logs / "events.jsonl").read_text(encoding="utf-8") == "caller file"
 
 
-def test_an_unwritable_log_location_gives_one_warning_and_the_run_still_succeeds(
-    tmp_path: Path, system: FakeSystem, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_an_unwritable_log_location_gives_one_warning_and_the_run_still_succeeds(tmp_path: Path) -> None:
     """When the root's log directory cannot be created, the run warns exactly once, succeeds, and the package log is still written."""
-    root = tmp_path / "opt"
-    version = _package(root)
-    (root / ".gupkg").write_text("a file where the data directory should be", encoding="utf-8")
+    world = _world(tmp_path)
+    (world.user / ".gupkg").mkdir(parents=True)
+    (world.user / ".gupkg" / "logs").write_text("a file where the log directory should be", encoding="utf-8")
 
-    code = cli.main(["--scope", "user", "install", str(version)], system=system)
+    result = world.cli("install", "Example")
 
-    captured = capsys.readouterr()
-    output = captured.out + captured.err
-    assert code == 0
+    output = result.out + result.err
+    assert result.code == 0
     assert len(re.findall(r"WARNING: Cannot write the run log", output)) == 1
-    assert len(_run_files(root / "Example", ".log")) == 1
-    assert "==> Done" in captured.out and captured.out.rstrip().splitlines()[-1].startswith("Log of Example:")
+    assert len(_run_files(world.user / "Example", ".log")) == 1
+    assert "==> Done" in result.out and result.out.rstrip().splitlines()[-1].startswith("Log of Example:")
 
 
 def test_a_log_failure_in_the_middle_of_a_run_is_one_warning_not_a_failed_run(
@@ -298,65 +283,53 @@ def test_plain_events_file_names_are_accepted() -> None:
     ]
 
 
-def test_the_cli_refuses_an_events_file_with_a_path_and_writes_nothing(
-    tmp_path: Path, system: FakeSystem, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_the_cli_refuses_an_events_file_with_a_path_and_writes_nothing(tmp_path: Path) -> None:
     """A path as --events-file is a usage error (exit 2) before any work happens, and no log or events file is created anywhere."""
-    root = tmp_path / "opt"
-    version = _package(root)
+    world = _world(tmp_path)
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
 
-    with pytest.raises(SystemExit) as stopped:
-        cli.main(["--events-file", str(elsewhere / "events.jsonl"), "install", str(version)], system=system)
-    with pytest.raises(SystemExit):
-        cli.main(["--events-file", "..\\events.jsonl", "install", str(version)], system=system)
+    absolute = world.cli("install", "Example", "--events-file", str(elsewhere / "events.jsonl"))
+    parent = world.cli("install", "Example", "--events-file", "..\\events.jsonl")
 
-    assert stopped.value.code == 2
-    assert "plain file name" in capsys.readouterr().err
+    assert absolute.code == parent.code == 2
+    assert "plain file name" in absolute.err
     assert list(elsewhere.iterdir()) == []
-    assert not (root / ".gupkg").exists() and not (root / "Example" / ".gupkg").exists()
-    assert not (root / "Example" / "current").exists(), "nothing was installed"
+    assert not (world.user / ".gupkg").exists() and not (world.user / "Example" / ".gupkg").exists()
+    assert not (world.user / "Example" / "current").exists(), "nothing was installed"
 
 
-def test_a_junction_planted_as_the_log_directory_cannot_redirect_the_writes(
-    tmp_path: Path, system: FakeSystem, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_a_junction_planted_as_the_log_directory_cannot_redirect_the_writes(tmp_path: Path) -> None:
     """If .gupkg\\logs is a junction to a folder outside the package, nothing is written through it and the run warns once and succeeds."""
-    root = tmp_path / "opt"
-    version = _package(root)
+    world = _world(tmp_path)
     outside = tmp_path / "outside"
     outside.mkdir()
-    (root / "Example" / ".gupkg").mkdir()
-    system.create_junction(root / "Example" / ".gupkg" / "logs", outside)
+    (world.user / "Example" / ".gupkg").mkdir(parents=True)
+    world.fake.create_junction(world.user / "Example" / ".gupkg" / "logs", outside)
 
-    code = cli.main(["--scope", "user", "--events-file", "events.jsonl", "install", str(version)], system=system)
+    result = world.cli("install", "Example", "--events-file", "events.jsonl")
 
-    captured = capsys.readouterr()
-    output = captured.out + captured.err
-    assert code == 0
+    output = result.out + result.err
+    assert result.code == 0
     assert list(outside.iterdir()) == []
     assert len(re.findall(r"WARNING: Cannot write the log of package Example", output)) == 1
-    assert len(_run_files(root, ".log")) == 1, "the root's own log is unaffected"
+    assert len(_run_files(world.user, ".log")) == 1, "the root's own log is unaffected"
 
 
-def test_an_events_file_name_that_is_a_junction_inside_the_log_directory_is_not_followed(
-    tmp_path: Path, system: FakeSystem, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_an_events_file_name_that_is_a_junction_inside_the_log_directory_is_not_followed(tmp_path: Path) -> None:
     """A junction planted under the events-file name is refused rather than written through, so the folder it points to stays empty."""
-    root = tmp_path / "opt"
-    version = _package(root)
+    world = _world(tmp_path)
     outside = tmp_path / "outside"
     outside.mkdir()
-    logs = _logs(root / "Example")
+    logs = _logs(world.user / "Example")
     logs.mkdir(parents=True)
-    system.create_junction(logs / "events.jsonl", outside)
+    world.fake.create_junction(logs / "events.jsonl", outside)
 
-    code = cli.main(["--scope", "user", "--events-file", "events.jsonl", "install", str(version)], system=system)
+    result = world.cli("install", "Example", "--events-file", "events.jsonl")
 
-    assert code == 0
+    assert result.code == 0
     assert list(outside.iterdir()) == []
-    assert "WARNING: Cannot write the log of package Example" in (lambda c: c.out + c.err)(capsys.readouterr())
+    assert "WARNING: Cannot write the log of package Example" in result.out + result.err
 
 
 # ---------------------------------------------------------------------------
@@ -364,76 +337,63 @@ def test_an_events_file_name_that_is_a_junction_inside_the_log_directory_is_not_
 # ---------------------------------------------------------------------------
 
 
-def test_an_install_leaves_package_logs_a_linking_run_log_and_nothing_in_appdata(
-    tmp_path: Path, system: FakeSystem, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_an_install_leaves_package_logs_a_linking_run_log_and_nothing_in_appdata(tmp_path: Path) -> None:
     """An install writes .log and .jsonl in the package's logs, a run log without package output that links them, names both in the summary, and writes nothing under AppData or ProgramData."""
-    appdata, local, programdata = tmp_path / "appdata", tmp_path / "local", tmp_path / "programdata"
-    for folder, variable in ((appdata, "APPDATA"), (local, "LOCALAPPDATA"), (programdata, "ProgramData")):
-        folder.mkdir()
-        monkeypatch.setenv(variable, str(folder))
-    root = tmp_path / "opt"
-    version = _package(root, extra='\n[[environment]]\nName = "EXAMPLE_READY"\nValue = "yes"\n')
+    world = _world(tmp_path, tables=ENV)
+    appdata, programdata = Path(world.env["APPDATA"]), Path(world.env["ProgramData"])
 
-    code = cli.main(["--scope", "user", "install", str(version)], system=system)
+    result = world.cli("install", "Example")
 
-    captured = capsys.readouterr()
-    output = captured.out + captured.err
-    assert code == 0
+    output = result.out + result.err
+    root = world.user
+    assert result.code == 0, output
     [package_log] = _run_files(root / "Example", ".log")
     [package_events] = _run_files(root / "Example", ".jsonl")
     [run_log] = _run_files(root, ".log")
     assert package_log.name.endswith("-install.log") and run_log.name.endswith("-install-Example.log")
     package_text = package_log.read_text(encoding="utf-8")
-    assert "==> Resolve" in package_text and "Installing Example 1.0.0" in package_text
-    assert "==> Environment variables" in package_text
+    assert "==> Resolve" in package_text and "mode: user" in package_text and "==> Integrate" in package_text
 
     # The run log holds global facts and a link, and none of the package's output.
     run_text = run_log.read_text(encoding="utf-8")
     assert f"Package Example: {package_log}" in run_text
-    assert "Installing Example 1.0.0" not in run_text and "==> Resolve" not in run_text
+    assert "mode: user" not in run_text and "==> Resolve" not in run_text
     run_records = [json.loads(line) for line in _run_files(root, ".jsonl")[0].read_text(encoding="utf-8").splitlines()]
     assert not {"phase_start", "step"} & {r["event"] for r in run_records}
     [link] = [r for r in run_records if r["event"] == "log_link"]
     assert (link["log"], link["events"]) == (str(package_log), str(package_events))
 
     # The summary names every log and is the last thing printed.
-    tail = captured.out.rstrip().splitlines()[-2:]
+    tail = result.out.rstrip().splitlines()[-2:]
     assert tail == [f"Run log: {run_log}", f"Log of Example: {package_log}"]
-    assert list(appdata.iterdir()) == [] and list(local.iterdir()) == [] and list(programdata.iterdir()) == []
+    assert not appdata.exists() and not programdata.exists()
+
+    # The receipt of the installed version names this run's package log.
+    [receipt_file] = (root / "Example" / ".gupkg" / "receipts").glob("*.toml")
+    assert tomllib.loads(receipt_file.read_text(encoding="utf-8"))["run"]["log"] == str(package_log)
 
 
-def test_redirected_install_output_is_plain_with_phase_headers_and_a_final_summary(
-    tmp_path: Path, system: FakeSystem, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_redirected_install_output_is_plain_with_phase_headers_and_a_final_summary(tmp_path: Path) -> None:
     """With output redirected, an install prints ==> phase headers, no ANSI codes and no carriage returns, and one final progress line per download."""
-    root = tmp_path / "opt"
-    archive = _zip({"tool/tool.exe": "payload"})
-    system.add_url("https://example.invalid/tool.zip", archive)
-    version = _package(
-        root, app=False, extra='\n[origin]\nurl = "https://example.invalid/tool.zip"\nextractSubdir = "tool"\n'
-    )
+    world = _world(tmp_path, members={"tool.exe": "payload"})
 
-    code = cli.main(["--scope", "user", "install", str(version)], system=system)
+    result = world.cli("install", "Example")
 
-    captured = capsys.readouterr()
-    output = captured.out + captured.err
-    assert code == 0
+    output = result.out + result.err
+    assert result.code == 0
     assert "\x1b" not in output and "\r" not in output
     lines = output.splitlines()
     assert "==> Resolve" in lines and "==> Fetch" in lines
-    assert len([line for line in lines if "Downloading origin:" in line and "(100%)" in line]) == 1
+    assert len([line for line in lines if "Example-1.0.0.zip" in line and "(100%)" in line]) == 1
     assert lines.index("==> Done") > lines.index("==> Fetch")
 
 
-def test_events_file_appears_in_the_run_and_package_log_directories(
-    tmp_path: Path, system: FakeSystem
-) -> None:
+def test_events_file_appears_in_the_run_and_package_log_directories(tmp_path: Path) -> None:
     """--events-file events.jsonl writes the event stream under that name in the root's and the package's log directories."""
-    root = tmp_path / "opt"
-    version = _package(root)
+    world = _world(tmp_path)
+    root = world.user
 
-    assert cli.main(["--scope", "user", "--events-file", "events.jsonl", "install", str(version)], system=system) == 0
+    assert world.cli("install", "Example", "--events-file", "events.jsonl").code == 0
 
     package_lines = (_logs(root / "Example") / "events.jsonl").read_text(encoding="utf-8").splitlines()
     run_lines = (_logs(root) / "events.jsonl").read_text(encoding="utf-8").splitlines()
@@ -443,80 +403,53 @@ def test_events_file_appears_in_the_run_and_package_log_directories(
     assert set(tmp_path.rglob("events.jsonl")) == {_logs(root) / "events.jsonl", _logs(root / "Example") / "events.jsonl"}
 
 
-def test_a_failing_git_clone_shows_gits_error_lines_in_the_fetch_phase_of_console_and_log(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_a_failing_git_clone_shows_gits_error_lines_in_the_unpack_phase_of_console_and_log(tmp_path: Path) -> None:
     """A git clone that fails prints git's own error lines inside the Fetch phase, on the console and in the package log, and the install fails."""
     def git(call) -> ProcessResult:
-        if "ls-remote" in call.argv:
-            return ProcessResult(0, "a" * 40 + "\tHEAD\n", "")
+        """Answer the git command that was started."""
         return ProcessResult(128, "", "Cloning into 'App.new'...\nfatal: unable to access 'https://example.invalid/x.git/': Could not resolve host\n")
 
-    system = FakeSystem(tmp_path / "machine", processes={"git": git})
-    root = tmp_path / "opt"
-    version = _package(
-        root, app=False, extra='\n[origin]\nmode = "git"\nurl = "https://example.invalid/x.git"\nref = "refs/heads/main"\n'
+    world = CliWorld(tmp_path)
+    world.fake.processes["git"] = git
+    folder = world.user / "Example" / "1.0.0"
+    folder.mkdir(parents=True)
+    folder.joinpath("pkg.toml").write_text(
+        f'format = 2\n[source]\ndownload_url = "https://example.invalid/x.git"\nkind = "git"\n[source.git]\ncommit = "{"a" * 40}"\n',
+        encoding="utf-8",
     )
 
-    code = cli.main(["--scope", "user", "install", str(version)], system=system)
+    result = world.cli("install", "Example")
 
-    captured = capsys.readouterr()
-    output = captured.out + captured.err
-    assert code == 3, output
-    package_text = _run_files(root / "Example", ".log")[0].read_text(encoding="utf-8")
+    output = result.out + result.err
+    assert result.code == 3, output
+    package_text = _run_files(world.user / "Example", ".log")[0].read_text(encoding="utf-8")
     for text in (output, package_text):
-        fetch = text.split("==> Fetch", 1)[1].split("Fetch: failed", 1)[0]
-        assert "[git] fatal: unable to access 'https://example.invalid/x.git/': Could not resolve host" in fetch
-        assert "[git] Cloning into 'App.new'..." in fetch
-    assert "Fetch: failed" in output
+        unpack = text.split("==> Unpack", 1)[1].split("Unpack: failed", 1)[0]
+        assert "[git] fatal: unable to access 'https://example.invalid/x.git/': Could not resolve host" in unpack
+        assert "[git] Cloning into 'App.new'..." in unpack
+    assert "Unpack: failed" in output
 
 
-def test_each_warning_appears_once_on_the_console_and_once_in_the_log(
-    tmp_path: Path, system: FakeSystem, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """A warning reported live and again in the result is printed once and logged once; a live-only warning also appears once."""
-    root = tmp_path / "opt"
-    version = _package(root, extra='\n[[environment]]\nName = "EXAMPLE_READY"\nValue = "yes"\n')
-    system.failures["broadcast_environment_change"] = OSError("broadcast refused")
+def test_each_warning_appears_once_on_the_console_and_once_in_the_log(tmp_path: Path) -> None:
+    """A warning that the engine reports live and again in the result is printed once on the console and logged once."""
+    world = _world(tmp_path, tables=ENV)
+    world.fake.failures["broadcast_environment_change"] = OSError("broadcast refused")
 
-    assert cli.main(["--scope", "user", "install", str(version)], system=system) == 0
-    captured = capsys.readouterr()
-    live_output = captured.out + captured.err
-    live_log = _run_files(root / "Example", ".log")[0].read_text(encoding="utf-8")
+    result = world.cli("install", "Example")
 
-    for text in (live_output, live_log):
-        assert text.count("WARNING: failed to broadcast environment change notification: broadcast refused") == 1
-
-    # A workflow that reports a warning live and also returns it.
-    from gupkg.core import ActionResult, log_warning
-
-    def operation() -> ActionResult:
-        log_warning("reported twice")
-        return ActionResult(ok=True, warnings=["reported twice", "only in the result"])
-
-    collector = _Collector()
-    session = RunSession(
-        command="check", argv=[], mode="user", elevated=False, version="1.0.0", reporters=[collector],
-        fallback_base=tmp_path / "own", clock=lambda: FIXED_TIME,
-    )
-    with session:
-        commands.run_guarded("check", operation)
-        session.finish("done", 0)
-
-    assert [e.text for e in collector.events if isinstance(e, Warning)] == ["reported twice", "only in the result"]
-    own_log = _run_files(tmp_path / "own", ".log")[0].read_text(encoding="utf-8")
-    assert own_log.count("WARNING: reported twice") == 1 and own_log.count("WARNING: only in the result") == 1
+    assert result.code == 0
+    live_log = _run_files(world.user / "Example", ".log")[0].read_text(encoding="utf-8")
+    for text in (result.out + result.err, live_log):
+        assert text.count("could not be broadcast") == 1
 
 
-def test_a_bundled_gupkg_run_with_no_package_logs_into_its_own_package(
-    tmp_path: Path, system: FakeSystem, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_a_bundled_gupkg_run_with_no_package_logs_into_its_own_package(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A run that involves no package, started by a bundled gupkg, leaves its log in its own package's .gupkg\\logs, and an installed gupkg logs in its root."""
     # Bundled layout: <root>\<package>\<version>\gupkg\gupkg\<module>
     package = tmp_path / "opt" / "MyApp"
     bundled = package / "1.0.0" / "gupkg" / "gupkg"
     bundled.mkdir(parents=True)
-    (package / "1.0.0" / "pkg.toml").write_text('name = "MyApp"\nversion = "1.0.0"\nlocalVersion = 0\n', encoding="utf-8")
+    (package / "1.0.0" / "pkg.toml").write_text("format = 2\n", encoding="utf-8")
     assert running_gupkg_logs_base(bundled) == package
 
     # Installed layout: <root>\gupkg\<version>\App\gupkg\<module>
@@ -529,13 +462,14 @@ def test_a_bundled_gupkg_run_with_no_package_logs_into_its_own_package(
     assert running_gupkg_logs_base(tmp_path / "src" / "gupkg") is None
 
     # A real run that names no package (an install of a path that is no package) logs in the bundle's package.
+    world = CliWorld(tmp_path / "machine")
     monkeypatch.setattr(cli, "running_gupkg_logs_base", lambda: package)
-    code = cli.main(["install", str(tmp_path / "no-such-package")], system=system)
+    result = world.cli("install", str(tmp_path / "no-such-package"))
 
-    assert code == 2
+    assert result.code == 2
     [log] = _run_files(package, ".log")
     assert log.name.endswith("-install.log") and "ERROR:" in log.read_text(encoding="utf-8")
-    assert capsys.readouterr().out.rstrip().splitlines()[-1] == f"Run log: {log}"
+    assert result.out.rstrip().splitlines()[-1] == f"Run log: {log}"
 
 
 # ---------------------------------------------------------------------------
@@ -543,65 +477,30 @@ def test_a_bundled_gupkg_run_with_no_package_logs_into_its_own_package(
 # ---------------------------------------------------------------------------
 
 
-def _updatable(root: Path, system: FakeSystem, name: str) -> None:
-    """Install-shaped package <name> 1.0.0 whose GitHub release offers 2.0.0 (served by the fake network)."""
-    version = _package(
-        root, name,
-        extra=(
-            f'\n[origin]\nurl = "https://github.com/owner/{name}"\n'
-            '\n[update.check]\nmode = "github"\nassetName = "pkg.zip"\n\n[update.payload]\nmode = "zip"\n'
-        ),
-    )
-    system.create_junction(root / name / "current", version)
-    archive = _zip({f"{name}.exe": "v2"})
-    system.add_url(
-        f"https://api.github.com/repos/owner/{name}/releases/latest",
-        json.dumps({
-            "id": 1, "tag_name": "2.0.0",
-            "assets": [{
-                "name": "pkg.zip", "state": "uploaded",
-                "browser_download_url": f"https://example.invalid/{name}.zip",
-                "digest": "sha256:" + hashlib.sha256(archive).hexdigest(),
-            }],
-        }),
-    )
-    system.add_url(f"https://example.invalid/{name}.zip", archive)
+def test_a_call_with_several_packages_logs_each_one_and_links_them_from_the_run_log(tmp_path: Path) -> None:
+    """An update of two packages records each package's phase output in its own log, and the run log links both without their output."""
+    world = CliWorld(tmp_path)
+    for name in ("alpha", "beta"):
+        world.publish(name, "1.0.0")
+        assert world.cli("install", name).code == 0
+        world.publish(name, "2.0.0")
+    user = world.user
 
+    result = world.cli("update", "alpha", "beta", "--yes")
 
-def test_a_manager_call_with_several_packages_logs_each_one_and_links_them_from_the_run_log(
-    tmp_path: Path, system: FakeSystem, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """A manager update of two packages records each package's phase output in its own log, and the run log links both without their output."""
-    user, system_root, manager = tmp_path / "user", tmp_path / "system", tmp_path / "manager"
-    for folder in (user, system_root, manager):
-        folder.mkdir()
-    _updatable(user, system, "alpha")
-    _updatable(user, system, "beta")
-    config = manager / "gupkg-config.toml"
-    config.write_text(
-        'mode = "manager"\nschema_version = 2\n\n'
-        f"[packages]\nsystem = '{system_root}'\nuser = '{user}'\n\n"
-        f"[bin]\nsystem = '{manager / 'sbin'}'\nuser = '{manager / 'ubin'}'\n\n"
-        f"[registry]\ncache = '{manager / 'registry'}'\n\n[shims]\nlinkage = 'dynamic'\n",
-        encoding="utf-8",
-    )
-
-    code = cli.main(["--scope", "user", "manager", "--config", str(config), "update", "--yes"], system=system)
-
-    captured = capsys.readouterr()
-    output = captured.out + captured.err
-    assert code == 0, output
-    [run_log] = _run_files(user, ".log")
+    output = result.out + result.err
+    assert result.code == 0, output
+    [run_log] = _run_files(user, ".log")[-1:]
     run_text = run_log.read_text(encoding="utf-8")
     for name in ("alpha", "beta"):
-        [package_log] = _run_files(user / name, ".log")
+        package_log = _run_files(user / name, ".log")[-1]
         package_text = package_log.read_text(encoding="utf-8")
-        assert "==> Fetch" in package_text and f"Downloading update: " in package_text
+        assert "==> Fetch" in package_text and f"{name}-2.0.0.zip" in package_text
         assert f"Package {name}: {package_log}" in run_text
         assert f"Log of {name}: {package_log}" in output
         other = "beta" if name == "alpha" else "alpha"
-        assert f"{other}.zip" not in package_text
-    assert "==> Fetch" not in run_text and "Downloading update" not in run_text
+        assert f"{other}-2.0.0.zip" not in package_text
+    assert "==> Fetch" not in run_text and "-2.0.0.zip" not in run_text
 
 
 # ---------------------------------------------------------------------------
@@ -610,21 +509,13 @@ def test_a_manager_call_with_several_packages_logs_each_one_and_links_them_from_
 # ---------------------------------------------------------------------------
 
 
-def _combined(capsys: pytest.CaptureFixture[str]) -> str:
-    """Return everything the run printed, standard output then standard error."""
-    captured = capsys.readouterr()
-    return captured.out + captured.err
-
-
-def _run_install_with_events_file(tmp_path: Path, system: FakeSystem, prepare) -> tuple[Path, int]:
+def _run_install_with_events_file(tmp_path: Path, prepare) -> tuple[Path, CliResult]:
     """Prepare the package's log directory with *prepare(logs)*, then run an install with ``--events-file events.jsonl``."""
-    root = tmp_path / "opt"
-    version = _package(root)
-    logs = _logs(root / "Example")
+    world = _world(tmp_path)
+    logs = _logs(world.user / "Example")
     logs.mkdir(parents=True)
     prepare(logs)
-    code = cli.main(["--scope", "user", "--events-file", "events.jsonl", "install", str(version)], system=system)
-    return logs, code
+    return logs, world.cli("install", "Example", "--events-file", "events.jsonl")
 
 
 def _victim(tmp_path: Path) -> Path:
@@ -635,23 +526,23 @@ def _victim(tmp_path: Path) -> Path:
 
 
 def test_an_events_file_name_that_is_a_hard_link_to_another_file_is_refused(
-    tmp_path: Path, system: FakeSystem, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
 ) -> None:
     """A hard link planted under the events-file name is not opened, so the file it shares stays untouched, and the run warns once and succeeds."""
     import os
 
     victim = _victim(tmp_path)
-    logs, code = _run_install_with_events_file(tmp_path, system, lambda logs: os.link(victim, logs / "events.jsonl"))
+    logs, result = _run_install_with_events_file(tmp_path, lambda logs: os.link(victim, logs / "events.jsonl"))
 
-    assert code == 0
+    assert result.code == 0
     assert victim.read_text(encoding="utf-8") == "precious"
     assert (logs / "events.jsonl").read_text(encoding="utf-8") == "precious"
-    assert _combined(capsys).count("WARNING: Cannot write the log of package Example") == 1
+    assert (result.out + result.err).count("WARNING: Cannot write the log of package Example") == 1
 
 
 @pytest.mark.windows_integration
 def test_an_events_file_name_that_is_a_symbolic_link_is_not_followed(
-    tmp_path: Path, system: FakeSystem, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
 ) -> None:
     """A symbolic link planted under the events-file name is refused rather than written through."""
     import os
@@ -664,15 +555,15 @@ def test_an_events_file_name_that_is_a_symbolic_link_is_not_followed(
         except OSError:
             pytest.skip("this account may not create symbolic links")
 
-    logs, code = _run_install_with_events_file(tmp_path, system, plant)
+    logs, result = _run_install_with_events_file(tmp_path, plant)
 
-    assert code == 0
+    assert result.code == 0
     assert victim.read_text(encoding="utf-8") == "precious"
-    assert "WARNING: Cannot write the log of package Example" in _combined(capsys)
+    assert "WARNING: Cannot write the log of package Example" in (result.out + result.err)
 
 
 def test_a_link_planted_between_the_check_and_the_creation_is_not_followed(
-    tmp_path: Path, system: FakeSystem, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """If a hard link appears right after the name was found free, the exclusive creation fails and the victim stays untouched."""
     import os
@@ -689,15 +580,15 @@ def test_a_link_planted_between_the_check_and_the_creation_is_not_followed(
         return not free
 
     monkeypatch.setattr(logfile.os.path, "lexists", racing_lexists)
-    logs, code = _run_install_with_events_file(tmp_path, system, lambda logs: None)
+    logs, result = _run_install_with_events_file(tmp_path, lambda logs: None)
 
-    assert code == 0
+    assert result.code == 0
     assert victim.read_text(encoding="utf-8") == "precious"
-    assert "WARNING: Cannot write the log of package Example" in _combined(capsys)
+    assert "WARNING: Cannot write the log of package Example" in (result.out + result.err)
 
 
 def test_an_events_file_that_gains_a_second_name_while_being_created_is_refused(
-    tmp_path: Path, system: FakeSystem, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A file that was linked to another place right after its creation is detected and not used."""
     import builtins
@@ -715,21 +606,21 @@ def test_an_events_file_that_gains_a_second_name_while_being_created_is_refused(
         return handle
 
     monkeypatch.setattr(logfile, "open", linking_open, raising=False)
-    logs, code = _run_install_with_events_file(tmp_path, system, lambda logs: None)
+    logs, result = _run_install_with_events_file(tmp_path, lambda logs: None)
 
-    output = _combined(capsys)
-    assert code == 0 and len(created) == 2
+    output = (result.out + result.err)
+    assert result.code == 0 and len(created) == 2
     assert "WARNING: Cannot write the log of package Example" in output
     assert "WARNING: Cannot write the run log" in output
 
 
-def test_a_stale_events_file_from_an_earlier_run_is_replaced(tmp_path: Path, system: FakeSystem) -> None:
+def test_a_stale_events_file_from_an_earlier_run_is_replaced(tmp_path: Path) -> None:
     """A plain events file left by an earlier run is replaced, not appended to."""
-    logs, code = _run_install_with_events_file(
-        tmp_path, system, lambda logs: (logs / "events.jsonl").write_text("stale\n", encoding="utf-8")
+    logs, result = _run_install_with_events_file(
+        tmp_path, lambda logs: (logs / "events.jsonl").write_text("stale\n", encoding="utf-8")
     )
 
-    assert code == 0
+    assert result.code == 0
     text = (logs / "events.jsonl").read_text(encoding="utf-8")
     assert "OLD-RUN-MARKER" not in text and json.loads(text.splitlines()[0])["event"] == "run_start"
 
@@ -888,29 +779,25 @@ def test_old_fixed_temporary_names_for_latest_log_are_never_written(
     assert "# command: check" in (logs / "latest.log").read_text(encoding="utf-8")
 
 
-def test_the_cli_keeps_warnings_and_errors_on_standard_error_and_toml_mode_moves_everything_there(
-    tmp_path: Path, system: FakeSystem, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """As in 0.17, plain output puts warnings and errors on stderr and the rest on stdout; --format toml leaves stdout as only the document."""
-    root = tmp_path / "opt"
-    version = _package(root, extra='\n[[environment]]\nName = "EXAMPLE_READY"\nValue = "yes"\n')
-    system.failures["broadcast_environment_change"] = OSError("broadcast refused")
+def test_the_cli_keeps_warnings_and_errors_on_standard_error_and_json_mode_moves_everything_there(tmp_path: Path) -> None:
+    """Plain output puts warnings and errors on stderr and the rest on stdout; --json leaves stdout as only the document."""
+    world = _world(tmp_path, tables=ENV)
+    world.fake.failures["broadcast_environment_change"] = OSError("broadcast refused")
 
-    assert cli.main(["--scope", "user", "install", str(version)], system=system) == 0
-    plain = capsys.readouterr()
-    assert "WARNING: failed to broadcast" in plain.err and "WARNING" not in plain.out
-    assert "==> Done" in plain.out and "install: changed" in plain.out
+    plain = world.cli("install", "Example")
+    assert plain.code == 0
+    assert "WARNING: " in plain.err and "could not be broadcast" in plain.err and "WARNING" not in plain.out
+    assert "==> Done" in plain.out and "ok Example 1.0.0" in plain.out
 
-    missing = tmp_path / "no-such-package"
-    assert cli.main(["install", str(missing)], system=system) == 2
-    failed = capsys.readouterr()
+    failed = world.cli("install", "no-such-package")
+    assert failed.code == 2
     assert "ERROR:" in failed.err and "ERROR:" not in failed.out
 
-    system.failures["broadcast_environment_change"] = OSError("broadcast refused")
-    assert cli.main(["--format", "toml", "--scope", "user", "install", str(version)], system=system) == 0
-    toml_run = capsys.readouterr()
-    assert toml_run.out.startswith("output_schema = 1") and "==>" not in toml_run.out
-    assert "==> Done" in toml_run.err and "WARNING: failed to broadcast" in toml_run.err
+    world.fake.failures["broadcast_environment_change"] = OSError("broadcast refused")
+    world.publish("Second", "1.0.0", tables=ENV)
+    machine = world.cli("install", "Second", "--json")
+    assert machine.code == 0 and json.loads(machine.out)["api"] == 1 and "==>" not in machine.out
+    assert "==> Done" in machine.err and "WARNING: " in machine.err
 
 
 def test_the_run_logs_of_a_package_are_listed_newest_first_without_latest_or_strangers(tmp_path: Path) -> None:

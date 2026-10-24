@@ -183,22 +183,6 @@ class ModeContext:
             return None
         return f'set "PATH={self.bin_dir};%PATH%"'
 
-    def as_scope_paths(self, shim_linkage: str = "dynamic", *, root: bool = True) -> dict[str, Path | str]:
-        """Return the destinations in the form the 0.17 install code takes (until issue 029 replaces it).
-
-        Parameters
-        ----------
-        shim_linkage : str, default="dynamic"
-            Native launcher linkage for generated wrappers.
-        root : bool, default=True
-            Whether to include the root as ``collection_root`` (the ``$ScopeRoot`` variable).
-        """
-        paths: dict[str, Path | str] = {"bin_dir": self.bin_dir, "shim_linkage": shim_linkage}
-        if self.start_menu is not None:
-            paths["shortcut_root"] = self.start_menu
-        if root:
-            paths["collection_root"] = self.root
-        return paths
 
 
 def _supported_text(supported: Sequence[str]) -> str:

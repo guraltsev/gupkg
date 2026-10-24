@@ -50,6 +50,7 @@ def _install_events() -> list:
 
 
 def _feed(reporter: ConsoleReporter, events: list) -> None:
+    """Hand every event to *reporter* in order."""
     for event in events:
         reporter.handle(event)
 
@@ -425,3 +426,10 @@ def test_a_10_mb_flood_of_hostile_lines_is_cleaned_in_linear_time() -> None:
     lines = [flood[i : i + 64 * 1024] for i in range(0, 10 * 1024 * 1024, 64 * 1024)]
 
     assert _slowest_line(lines, timeout=120) < 1.0
+
+
+def test_the_ui_color_setting_overrides_the_terminal_detection() -> None:
+    """`always` draws with Rich on redirected output, `never` stays plain, `auto` follows the terminal (a redirect is plain)."""
+    assert ConsoleReporter(io.StringIO(), color="always").fancy is True
+    assert ConsoleReporter(io.StringIO(), color="never").fancy is False
+    assert ConsoleReporter(io.StringIO(), color="auto").fancy is False

@@ -250,23 +250,112 @@ def test_elevated_trust_check_covers_the_version_directory_and_the_whole_bundled
 # ---------------------------------------------------------------------------
 
 
+def _scripted_win32(trusted: bool, *, exit_code: int = 5, wait_state: int = 0):
+    """Return (patches, record): the ShellExecuteEx and wait calls replaced by a recording script; nothing is started."""
+    record: dict = {"closed": []}
+    shell32, kernel32 = mock.Mock(), mock.Mock()
+
+    def shell_execute(info) -> int:
+        """Record the ShellExecuteEx request and hand back a process handle (99)."""
+        record.update(verb=info.lpVerb, file=info.lpFile, parameters=info.lpParameters, directory=info.lpDirectory, mask=info.fMask)
+        info.hProcess = 99
+        return 1
+
+    def exit_code_of(handle, code) -> int:
+        """Report the scripted exit code of the child."""
+        code.value = exit_code
+        return 1
+
+    shell32.ShellExecuteExW.side_effect = shell_execute
+    kernel32.WaitForSingleObject.return_value = wait_state
+    kernel32.GetExitCodeProcess.side_effect = exit_code_of
+    kernel32.CloseHandle.side_effect = lambda handle: record["closed"].append(handle)
+    patches = [
+        mock.patch("ctypes.WinDLL", side_effect=lambda name, **kwargs: {"shell32": shell32, "kernel32": kernel32}[name], create=True),
+        mock.patch("ctypes.byref", side_effect=lambda value: value),
+        mock.patch.object(elevation, "untrusted_reason", return_value=None if trusted else "users can write here"),
+    ]
+    return patches, record
+
+
 @pytest.mark.skipif(os.name != "nt", reason="uses the Windows shell relaunch")
-def test_elevated_relaunch_goes_through_the_isolated_launcher() -> None:
-    """The elevated update relaunch starts gupkg.cmd, never `python -m gupkg` in the caller's directory."""
-    shell_execute = mock.Mock(return_value=42)
-    fake_windll = types.SimpleNamespace(shell32=types.SimpleNamespace(ShellExecuteW=shell_execute))
+def test_elevated_relaunch_runs_the_bundled_python_on_bootstrap_without_a_shell() -> None:
+    """The ShellExecuteEx call gets runas, the bundled python.exe, the isolation flags and bootstrap.py: never cmd.exe, never -m gupkg."""
+    patches, record = _scripted_win32(trusted=True)
 
-    with mock.patch("ctypes.windll", fake_windll, create=True):
-        accepted = WindowsSystem().relaunch_elevated(["manager", "update", "--yes"])
+    with patches[0], patches[1], patches[2]:
+        run = WindowsSystem().relaunch_elevated(["install", "system:tool", "--yes"])
 
-    assert accepted is True
-    _, verb, program, parameters, directory, _ = shell_execute.call_args.args
-    assert verb == "runas"
-    assert Path(program).name.lower() == "cmd.exe"
-    assert "gupkg.cmd" in parameters
-    assert "manager update --yes" in parameters
-    assert "-m gupkg" not in parameters
-    assert Path(directory) == SRC
+    assert (run.started, run.exit_code, run.abandoned) == (True, 5, False)
+    assert record["verb"] == "runas" and record["mask"] & 0x40  # SEE_MASK_NOCLOSEPROCESS: the handle is waited on
+    assert Path(record["file"]) == SRC / "python" / "python.exe" and Path(record["directory"]) == SRC
+    assert record["parameters"].startswith(f'-I -s -B -S {SRC / "bootstrap.py"} install system:tool --yes')
+    assert "cmd" not in Path(record["file"]).name.lower() and "-m gupkg" not in record["parameters"]
+    assert record["closed"] == [99], "the process handle is closed"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="uses the Windows shell relaunch")
+def test_elevated_relaunch_refuses_a_package_folder_that_users_can_write() -> None:
+    """Defence in depth: even when asked, the system call starts nothing from a folder that is not admin-only."""
+    patches, record = _scripted_win32(trusted=False)
+
+    with patches[0], patches[1], patches[2]:
+        run = WindowsSystem().relaunch_elevated(["install", "system:tool"])
+
+    assert run.started is False and "verb" not in record
+
+
+@pytest.mark.skipif(os.name != "nt", reason="uses the Windows shell relaunch")
+def test_after_the_child_started_a_failure_while_waiting_is_never_reported_as_not_started() -> None:
+    """The handle is closed, and the answer says the child started and what failed (it may still be running)."""
+    patches, record = _scripted_win32(trusted=True)
+
+    with patches[0], patches[1], patches[2], mock.patch("gupkg.system.windows.wait_for_child", side_effect=RuntimeError("boom")):
+        run = WindowsSystem().relaunch_elevated(["install", "system:tool"])
+
+    assert run.started is True and run.error == "boom" and run.exit_code is None and record["closed"] == [99]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="uses the Windows shell relaunch")
+@pytest.mark.parametrize("state", [0xFFFFFFFF, 0x80], ids=["wait-failed", "abandoned-mutex"])
+def test_a_wait_that_fails_ends_the_loop_with_an_error_instead_of_spinning(state: int) -> None:
+    """WAIT_FAILED (or any state that is not signalled or timed out) is an error with a clear message, and the handle is closed."""
+    patches, record = _scripted_win32(trusted=True, wait_state=state)
+
+    with patches[0], patches[1], patches[2]:
+        run = WindowsSystem().relaunch_elevated(["install", "system:tool"])
+
+    assert run.started is True and run.exit_code is None and "WaitForSingleObject" in (run.error or "") and record["closed"] == [99]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="uses the Windows shell relaunch")
+def test_a_command_line_that_is_too_long_is_refused_before_the_prompt() -> None:
+    """More than 30000 characters cannot be started by ShellExecuteEx: a refusal that says so, never `not accepted`."""
+    patches, record = _scripted_win32(trusted=True)
+
+    with patches[0], patches[1], patches[2]:
+        run = WindowsSystem().relaunch_elevated(["install", "system:" + "a" * 31000])
+
+    assert run.started is False and "characters long" in (run.refused or "") and "verb" not in record
+
+
+@pytest.mark.skipif(os.name != "nt", reason="uses the Windows shell relaunch")
+def test_every_file_the_child_loads_first_is_checked_before_the_prompt() -> None:
+    """The refusal comes for the first untrusted entry of `bundled_runtime_paths`, and ShellExecuteEx is never called."""
+    for path in elevation.bundled_runtime_paths(SRC):
+        if not path.exists():
+            continue
+        patches, record = _scripted_win32(trusted=True)
+
+        def untrusted(candidate, reader=None, *, _bad=path):
+            """Call *_bad* the only user-writable entry."""
+            return "users can write here" if Path(candidate) == _bad else None
+
+        with patches[0], patches[1], mock.patch.object(elevation, "untrusted_reason", side_effect=untrusted):
+            run = WindowsSystem().relaunch_elevated(["install", "system:tool"])
+
+        assert run.started is False and path.name in (run.refused or ""), path
+        assert "verb" not in record, path
 
 
 # ---------------------------------------------------------------------------

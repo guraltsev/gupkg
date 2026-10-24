@@ -26,35 +26,50 @@ before anything changes.
 from __future__ import annotations
 
 import os
+import traceback
 from collections.abc import Callable, Sequence
 from contextlib import nullcontext
 from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 
-from ..catalog.catalog import Candidate, Catalog, CatalogError, NoVersionKnown, NotFound, NotInstalled
+from ..catalog.catalog import Candidate, Catalog, CatalogError, NoValidVersion, NoVersionKnown, NotFound, NotInstalled
 from ..catalog.local import DATA_DIR_NAME, is_inside
+from ..catalog.record import write_install_record
 from ..catalog.registry import cache_state, registry_cache_dir
 from ..distcopy import COPIED, DIVERGED, CopyResult, DistributionRefused, copy_distribution
-from ..model.manifest import APP_MISSING_ERROR, Manifest, ManifestKind, parse_manifest
+from ..model.manifest import (
+    APP_MISSING_ERROR,
+    NEEDS_NEWER_GUPKG,
+    Manifest,
+    ManifestKind,
+    NeedsNewerGupkg,
+    invalid_checksum_problem,
+    parse_manifest,
+    require_gupkg_version,
+)
 from ..model.mode import InputNeeded, ModeContext, ModeRefused, check_supported
 from ..model.plan import (
     EXIT_INPUT,
+    EXIT_INTERNAL,
+    EXIT_USER,
     BatchResult,
     CopyIn,
     InstallPlan,
     PackageResult,
+    clamp_child_exit_code,
     Phase,
     PlanStep,
     Request,
     effect_key,
 )
 from ..model.settings import Settings
-from ..model.state import PackageView, Root
-from ..model.version import MANIFEST_NAME
+from ..model.state import InstallRecord, Link, PackageView, Root
+from ..model.version import MANIFEST_NAME, compare_versions
 from ..modes import ModeRequest, ResolvedMode, resolve_mode
 from ..relaunch import ensure_elevation
-from ..report.events import Error, Prompt, Step, Warning, emit, package_scope
+from ..system.port import ProcessFailed
+from ..report.events import Diagnostic, Error, Prompt, Step, Warning, emit, package_scope
 from ..report.logfile import prune_logs
 from ..services.safepath import remove_tree
 from .checkupdates import check_updates_one, plan_check
@@ -71,7 +86,7 @@ from .executor import (
 )
 from .health import Diagnosis, diagnose
 from .locks import PackageBusy, package_lock
-from .planner import Chosen, CleanupFacts, CleanupPlan, PlanError, plan_cleanup, plan_install, plan_uninstall
+from .planner import Chosen, CleanupFacts, CleanupPlan, InvalidVersion, PlanError, plan_cleanup, plan_install, plan_uninstall
 from .receipts import list_receipts, read_receipt
 
 # A work entry younger than this is never removed by ``cleanup`` (it may belong to a run that is still going).
@@ -133,6 +148,11 @@ def check(engine: Engine, selectors: Sequence[str], *, fix: bool = False, mode: 
     return run_batch(engine, [Request("check", item, mode=mode, fix=fix) for item in selectors])
 
 
+def link(engine: Engine, selector: str, entry: str | None = None, *, unlink: bool = False, mode: str | None = None) -> BatchResult:
+    """Make a package follow the registry entry *entry* (``registry/name``), its own name's entry again, or none (*unlink*)."""
+    return run_batch(engine, [Request("link", selector, mode=mode, link_to=entry, unlink=unlink)])
+
+
 def repair(engine: Engine, selectors: Sequence[str], *, mode: str | None = None, skip: str | None = None) -> BatchResult:
     """Re-apply the integration and rebuild a missing ``App`` of installed packages."""
     return run_batch(engine, [Request("repair", item, mode=mode, skip=skip) for item in selectors])
@@ -190,15 +210,28 @@ def run_batch(engine: Engine, requests: Sequence[Request]) -> BatchResult:
         outcome = ensure_elevation(
             contexts, system=engine.system, argv=engine.argv, version_dir=engine.gupkg_dir or Path(),
             root=engine.gupkg_root or Path(), yes=engine.yes, no_input=engine.no_input, confirm=engine.confirm,
-            elevated=engine.elevated,
+            elevated=engine.elevated, on_interrupt=engine.request_stop, note=engine.relaunch_note,
         )
-    except (InputNeeded, ModeRefused) as error:
+    except (InputNeeded, ModeRefused, ProcessFailed) as error:
         return BatchResult(tuple(
             item if isinstance(item, PackageResult) else failure(item.request.selector, item.request.operation, error)
             for item in resolved
         ))
     if outcome.relaunched:
-        return BatchResult((), relaunched=True)
+        # The elevated child gets the whole command line and takes only the system targets (it refuses the others), so a
+        # target that does not need the token is reported here as not run, never dropped silently.
+        left_out = tuple(
+            item if isinstance(item, PackageResult) else PackageResult(
+                item.request.selector, item.request.operation, False, "not-run", mode=item.resolved.context.mode, exit_code=EXIT_USER,
+                error={
+                    "code": "mixed-modes",
+                    "message": f"{item.request.selector} was not run: this call needs an elevated gupkg for its system targets.",
+                    "hint": "Run the user and portable targets in a separate call.",
+                },
+            )
+            for item in resolved if isinstance(item, PackageResult) or not _needs_token(item)
+        )
+        return BatchResult(left_out, relaunched=True, child_exit_code=None if outcome.exit_code is None else clamp_child_exit_code(outcome.exit_code), child_raw_exit_code=outcome.exit_code)
 
     # One package after another; a stop request is honoured between packages (decision D37).
     results: list[PackageResult] = []
@@ -298,7 +331,11 @@ def _run_one(engine: Engine, target: _Target, sole: bool) -> PackageResult:
         name = target.resolved.source.parent.name
     else:
         name = request.selector
-    path = view.path if view is not None and view.path is not None else context.package_dir(name) if _safe_name(name) else context.root
+    if target.resolved.source is not None:
+        # A distribution folder is only the copy's source (design 21.4): logs, lock and receipt belong to the destination.
+        path = context.package_dir(name) if _safe_name(name) else context.root
+    else:
+        path = view.path if view is not None and view.path is not None else context.package_dir(name) if _safe_name(name) else context.root
     with package_scope(name, path, root=str(context.root), sole=sole) as scope:
         try:
             with _held(engine, request, context, name, path):
@@ -324,6 +361,8 @@ def _run_one(engine: Engine, target: _Target, sole: bool) -> PackageResult:
             result = failure(name, request.operation, error, mode=context.mode, log=engine.log_path(path))
             data = result.error or {}
             emit(Error(str(data.get("message", error)), data.get("hint")))
+            if result.exit_code == EXIT_INTERNAL:
+                emit(Diagnostic(traceback.format_exc()))
         scope.result.update({"ok": result.ok, "status": result.status, "version": result.version})
     return result
 
@@ -352,6 +391,8 @@ def _dispatch(engine: Engine, target: _Target) -> PackageResult:
         return _uninstall(engine, target)
     if operation == "cleanup":
         return _cleanup(engine, target)
+    if operation == "link":
+        return _link(engine, target)
     return _check(engine, target)
 
 
@@ -366,6 +407,8 @@ def _plan_one(engine: Engine, target: _Target) -> InstallPlan:
     if request.operation == "uninstall":
         return plan_uninstall(request, view, context)
     extra = {"cleanup": _cleanup_plan(engine, target, view).to_data()} if request.operation == "cleanup" else {}
+    if request.operation == "link":
+        extra = {"link": {"to": request.link_to, "unlink": request.unlink}}
     return InstallPlan(
         request.operation, view.name, view.path or context.package_dir(view.name), context.root, context.mode, None,
         view.installed.version if view.installed else None, None, None, (),
@@ -441,7 +484,10 @@ def _prepare_install(
             state = source_view.local.version(version)
             if state is None or not state.valid or state.manifest is None:
                 problems = "; ".join(state.problems) if state is not None else "not a version directory"
-                raise PlanError(f"{distribution} is not a valid version directory: {problems}")
+                raise InvalidVersion(
+                    f"{distribution} is not a valid version directory: {problems}", version=version,
+                    problems=state.problems if state is not None else (),
+                )
             candidate, manifest = Candidate(version, "local", state.path), state.manifest
             copy_in = CopyIn("distribution", distribution, entry.registry if entry else None, published.fingerprint if published else None)
         else:
@@ -463,27 +509,41 @@ def _prepare_install(
         package_path = context.package_dir(name)
     else:
         view = selection.view
-        candidate, copy_in = _choose(engine, target, view, execute)
+        try:
+            candidate, copy_in = _choose(engine, target, view, execute)
+        except NoValidVersion as error:
+            # Every version is invalid because its pkg.toml is for a newer gupkg: that is exit code 6, not a mistake (21.3).
+            if NEEDS_NEWER_GUPKG in str(error):
+                raise NeedsNewerGupkg(str(error)) from error
+            raise
         if candidate.source == "registry":
             manifest = parse_manifest((candidate.path / MANIFEST_NAME).read_text(encoding="utf-8-sig"))
             registry = _Registry(candidate.registry, candidate.fingerprint, candidate.path)
             state = None
         else:
             state = view.local.version(candidate.version) if view.local is not None else None
+            if state is not None and any(NEEDS_NEWER_GUPKG in problem for problem in state.problems):
+                raise NeedsNewerGupkg(f"{view.name} {candidate.version} {NEEDS_NEWER_GUPKG}: {'; '.join(state.problems)}")
             if state is None or state.manifest is None:
                 problems = "; ".join(state.problems) if state is not None else "there is no such version directory"
-                raise PlanError(f"{view.name} {candidate.version} is not a valid version directory: {problems}")
+                raise InvalidVersion(
+                    f"{view.name} {candidate.version} is not a valid version directory: {problems}", version=candidate.version,
+                    problems=state.problems if state is not None else (),
+                )
 
             # Every version directory is validated again before it is installed (design 7.4); a missing App is the planner's to judge.
             other = [problem for problem in state.problems if problem != APP_MISSING_ERROR]
             if other:
-                raise PlanError(f"{view.name} {candidate.version} is not valid: {'; '.join(other)}")
+                raise InvalidVersion(f"{view.name} {candidate.version} is not valid: {'; '.join(other)}", version=candidate.version, problems=other)
             manifest = state.manifest
             published = view.registry.version(candidate.version) if view.registry is not None else None
             if published is not None:
                 registry = _Registry(view.registry.registry, published.fingerprint, published.path)
         chosen = Chosen(candidate, manifest, state)
         package_path = view.path if view.path is not None else context.package_dir(view.name)
+
+    # A package for a newer gupkg is refused with exit code 6, before any effect is planned (design 21.3).
+    require_gupkg_version(manifest.requires_gupkg, engine.version, f"{view.name} {candidate.version}")
 
     # Effects the version declares for this mode, and what a repair found missing on the machine.
     desired, notes = desired_effects(manifest, effect_context(context, package_path, engine.effect_env))
@@ -559,6 +619,7 @@ def _choose(engine: Engine | None, target: _Target, view: PackageView, execute: 
     else:
         try:
             candidate = catalog.install_candidate(view)
+            _warn_about_newer_invalid_versions(view, candidate)
         except NoVersionKnown:
             # A registry entry with only a tracker: copy the tracker, then stop (design 5.3, case R).
             if execute and view.registry is not None and view.registry.tracker is not None and view.local is None:
@@ -571,13 +632,58 @@ def _choose(engine: Engine | None, target: _Target, view: PackageView, execute: 
     return candidate, None
 
 
+def _warn_about_newer_invalid_versions(view: PackageView, chosen: Candidate) -> None:
+    """Say so when a bare install fell back to *chosen* because a newer version directory is not valid."""
+    if view.installed is not None or view.local is None:
+        return
+    for state in view.local.versions:
+        if not state.valid and state.problems and compare_versions(state.name, chosen.version) > 0:
+            reason = "its declared sha256 is malformed" if invalid_checksum_problem(state.problems) else "; ".join(state.problems)
+            emit(Warning(f"{view.name} {state.name} is newer than {chosen.version} but not valid ({reason}), so {chosen.version} is installed instead."))
+
+
 def _pick_named(catalog: Catalog, view: PackageView, version: str) -> Candidate:
     """Return the candidate of ``name@version``; a local version directory that is invalid is refused with its problems."""
     if view.local is not None:
         state = view.local.version(version)
         if state is not None and not state.valid:
-            raise PlanError(f"{view.name} {state.name} is not valid: {'; '.join(state.problems)}")
+            raise InvalidVersion(f"{view.name} {state.name} is not valid: {'; '.join(state.problems)}", version=state.name, problems=state.problems)
     return catalog.pick_version(view, version)
+
+
+# ---------------------------------------------------------------------------
+# Link
+# ---------------------------------------------------------------------------
+
+
+def _link(engine: Engine, target: _Target) -> PackageResult:
+    """Record in the install record which registry entry the package follows (decision D2); nothing else changes."""
+    request, context = target.request, target.resolved.context
+    view = _view(target)
+
+    # The entry to follow must exist in a configured registry; no entry means the same-name entry again.
+    follow: Link | None = None
+    if request.unlink:
+        follow = Link(unlinked=True)
+        status = "unlinked"
+    elif request.link_to:
+        wanted = target.catalog.resolve(request.link_to)
+        if wanted.view.registry is None:
+            raise NotFound(f"registry entry '{request.link_to}' was not found")
+        follow = Link(registry=wanted.view.registry.registry, name=wanted.view.registry.name)
+        status = "linked"
+    else:
+        status = "following"
+
+    # Only the link changes: the mode and the recorded effects stay as the install wrote them.
+    record = view.record or InstallRecord()
+    write_install_record(view.path, InstallRecord(record.mode, follow, record.effects))
+    where = "no registry entry" if request.unlink else (request.link_to or f"the registry entry named {view.name}")
+    emit(Step(f"{view.name} follows {where}", "ok"))
+    return PackageResult(
+        view.name, "link", True, status, view.installed.version if view.installed else None, None, context.mode,
+        log=engine.log_path(view.path), details={"following": request.link_to, "unlinked": request.unlink},
+    )
 
 
 # ---------------------------------------------------------------------------

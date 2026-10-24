@@ -8,7 +8,8 @@ and the application.
 Usage and API
 -------------
 Call ``main(...)`` from the launcher. It forwards the remaining arguments to
-``gupkg.cli.main``.
+``gupkg.cli.main``, or to the migration tool's ``main`` when the launcher
+``gupkg-migrate.cmd`` put ``--gupkg-program=migrate`` first.
 
 Implementation Approach
 -----------------------
@@ -71,6 +72,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     package_parent = Path(__file__).resolve().parent.parent
     if sys.path[:1] != [str(package_parent)]:
         sys.path.insert(0, str(package_parent))
+
+    # ``gupkg-migrate.cmd`` names the migration tool, which lives beside this package in the same version directory.
+    if command_args[:1] == ["--gupkg-program=migrate"]:
+        from gupkg_migrate.cli import main as migrate_main
+
+        return int(migrate_main(command_args[1:]))
 
     from gupkg.cli import main as cli_main
 

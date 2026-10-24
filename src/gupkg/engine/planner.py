@@ -31,7 +31,7 @@ from functools import cmp_to_key
 from pathlib import Path
 
 from ..model.checksum import ChecksumPlan, plan_checksum
-from ..model.manifest import APP_MISSING_ERROR, INSTALLER_LABEL, Manifest, Source
+from ..model.manifest import APP_MISSING_ERROR, INSTALLER_LABEL, Manifest, Source, invalid_checksum_problem
 from ..model.mode import ModeContext
 from ..model.plan import (
     CHECK_UPDATES_PHASES,
@@ -56,6 +56,17 @@ class PlanError(ValueError):
     """Report a request that cannot be planned; the message says what to do instead."""
 
     exit_code = EXIT_PLAN
+
+
+class InvalidVersion(PlanError):
+    """Report that a version directory is not valid; a malformed declared hash has the stable code ``invalid-checksum``."""
+
+    def __init__(self, message: str, *, version: str, problems: "Sequence[str]") -> None:
+        """Build the message; *version* and *problems* decide the error code."""
+        super().__init__(message)
+        if invalid_checksum_problem(problems):
+            self.error_code = "invalid-checksum"
+            self.error_details = {"version": version, "field": "source.sha256"}
 
 
 @dataclass(frozen=True)

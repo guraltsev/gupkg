@@ -16,7 +16,7 @@ Build a loader with ``settings_loader(...)``, then call
 ``resolve_mode(ModeRequest(selector, ...), system=..., env=..., load=...)``. The result carries the
 ``ModeContext``, the ``ModeChoice`` (``system (auto: elevated)``), the catalog resolution, warnings (a
 package of the same name in two modes shadows itself on ``PATH``), and, for a distribution folder, the
-folder to copy in. ``scope_context(...)`` gives the 0.17 front end its destinations from the same data.
+folder to copy in.
 ``ModeRefused`` and ``InputNeeded`` (from ``gupkg.model.mode``) carry the message and exit code.
 
 Implementation Approach
@@ -38,7 +38,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 
 from .catalog.catalog import Catalog, CatalogError, Resolved, Selector, UntrustedLocation, parse_selector
@@ -56,7 +56,7 @@ from .model.mode import (
     build_mode_context,
     select_mode,
 )
-from .model.settings import LAYER_DEFAULTS, Settings, default_layer, expand_env, merge_layers
+from .model.settings import LAYER_DEFAULTS, Settings, expand_env
 from .model.version import MANIFEST_NAME, is_version_name
 from .settingsload import LoadedSettings, load_settings, read_text_file
 from .system.port import Scope, System, is_elevated_run
@@ -252,58 +252,6 @@ def resolve_mode(
     )
     warnings = _shadow_warnings(catalog, resolved, folder, choice, is_elevated)
     return ResolvedMode(context, choice, final.settings, resolved, warnings, folder)
-
-
-# ---------------------------------------------------------------------------
-# The 0.17 front end
-# ---------------------------------------------------------------------------
-
-
-def scope_context(
-    scope: Scope,
-    system: System | None,
-    *,
-    root: Path | None = None,
-    bin_dir: Path | None = None,
-    env: Mapping[str, str] | None = None,
-) -> ModeContext:
-    """Return the destinations of a 0.17 ``Scope`` as a ``ModeContext`` (until issue 029 replaces that front end).
-
-    Parameters
-    ----------
-    scope : Scope
-        ``Scope.USER`` or ``Scope.MACHINE``.
-    system : System or None
-        The boundary that knows the machine's default Start Menu and ``bin`` folders; ``None`` uses the
-        built-in ``%VAR%`` defaults of the settings.
-    root : Path, optional
-        The package root of the scope (the manager configuration names it); the built-in default otherwise.
-    bin_dir : Path, optional
-        The wrapper folder of the manager configuration, replacing the default one.
-    env : mapping, optional
-        The environment; the process environment by default.
-
-    Returns
-    -------
-    ModeContext
-        The context of the ``user`` or ``system`` mode.
-
-    Raises
-    ------
-    ValueError
-        If *scope* is ``Scope.AUTO``, or the machine does not identify a required location.
-    """
-    if scope == Scope.AUTO:
-        raise ValueError("A scope context requires an explicit scope")
-    mode = MODE_SYSTEM if scope == Scope.MACHINE else MODE_USER
-
-    # The built-in defaults are the whole configuration here: the 0.17 manager supplies its own folders.
-    settings = merge_layers([default_layer()])
-    context = build_mode_context(
-        ModeChoice(mode, f"--scope {scope.value}"), settings, os.environ if env is None else env,
-        defaults=default_folders(system) if system is not None else None, root=root,
-    )
-    return replace(context, bin_dir=Path(bin_dir)) if bin_dir is not None else context
 
 
 def settings_loader(

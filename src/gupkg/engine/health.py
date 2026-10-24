@@ -151,6 +151,22 @@ def diagnose(
     return Diagnosis(True, tuple(problems), tuple(notes), frozenset(drifted))
 
 
+def install_notes(view: PackageView) -> tuple[list[Problem], dict | None]:
+    """Return the notes about how the active version of *view* was verified, and its receipt data (``None`` without one).
+
+    This is what ``list --details`` and ``info`` show: a skipped checksum, an origin that was not verified, and, in user and
+    portable mode, the reminder that a stored ``verified`` is the install's own report and not proof.
+    """
+    if view.local is None or view.installed is None:
+        return [], None
+    receipt = read_receipt(view.local.path, view.installed.version)
+    if receipt.problem:
+        return [Problem("receipt", receipt.problem)], None
+    if receipt.data is None:
+        return [], None
+    return _receipt_notes(receipt.data, view), dict(receipt.data)
+
+
 def _receipt_notes(data: dict, view: PackageView) -> list[Problem]:
     """Return the notes of a receipt: skipped checksums, an origin that was not verified, a self-reported ``verified``."""
     notes: list[Problem] = []

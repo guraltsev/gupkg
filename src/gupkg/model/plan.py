@@ -50,7 +50,7 @@ from .checksum import ChecksumPlan
 from .manifest import INSTALLER_LABEL
 from .state import Effect
 
-OPERATIONS = ("install", "update", "switch", "uninstall", "cleanup", "repair", "check-updates", "check")
+OPERATIONS = ("install", "update", "switch", "uninstall", "cleanup", "repair", "check-updates", "check", "link")
 
 # The phases of an install-like plan, in order (design 13.1), and those of ``check-updates``.
 INSTALL_PHASES = ("Resolve", "Fetch", "Verify", "Unpack", "Prepare", "Activate", "Integrate", "Finish")
@@ -64,7 +64,17 @@ EXIT_OK = 0
 EXIT_USER = 2
 EXIT_FAILED = 3
 EXIT_INTERNAL = 4
+
+
+def clamp_child_exit_code(code: int) -> int:
+    """Return *code* when it is one of gupkg's exit codes (0 to 6), else ``EXIT_INTERNAL``.
+
+    The one place an elevated child's raw process exit code (a crash code such as ``0xC000012D``, ``259``, ``-1``) enters a
+    result; the raw value is kept in ``BatchResult.child_raw_exit_code`` for diagnosis.
+    """
+    return code if 0 <= code <= 6 else EXIT_INTERNAL
 EXIT_INPUT = 5
+EXIT_NEWER_GUPKG = 6
 
 
 @dataclass(frozen=True)
@@ -102,6 +112,11 @@ class Request:
     sweep : bool
         ``cleanup`` over every package of a root rather than the packages the user named: a package that another run holds is
         left alone (status ``locked``, not a failure). A package the user names that is busy fails with ``package-busy``.
+    link_to : str, optional
+        ``link``: the ``registry/name`` entry the package follows from now on (without it the package follows the entry with
+        its own name again).
+    unlink : bool
+        ``link --unlink``: the package follows no registry entry.
     """
 
     operation: str
@@ -118,6 +133,8 @@ class Request:
     fix: bool = False
     download_only: bool = False
     sweep: bool = False
+    link_to: str | None = None
+    unlink: bool = False
 
     def __post_init__(self) -> None:
         """Refuse an operation the engine does not know."""
@@ -204,7 +221,7 @@ class PopulatePlan:
     url : str, optional
         The address the built-in download script fetches (the only one: design section 4).
     checksum : ChecksumPlan, optional
-        What ``--plan`` reports for the download (``present``, ``missing`` or ``invalid``).
+        What ``--plan`` reports for the download (``present`` or ``missing``; a malformed declared hash makes the version invalid, so no plan exists).
     script : str, optional
         The custom populate script.
     recoverable : bool
@@ -319,7 +336,7 @@ class InstallPlan:
         """Return the JSON-ready plan document of ``--plan --json`` (design 10.4).
 
         Per target: the chosen version, the mode, whether elevation is required,
-        ``sha256: present | missing | invalid``, the source URL, and the effects to add or remove.
+        ``sha256: present | missing``, the source URL, and the effects to add or remove.
         """
         data: dict[str, Any] = {
             "operation": self.operation,
@@ -434,21 +451,28 @@ class BatchResult:
     """The outcome of a call with several targets.
 
     ``relaunched`` is true when the call started one elevated child for its system targets and
-    ran nothing itself; the caller waits for that child.
+    ran nothing itself; the call waited for that child and ``child_exit_code`` is how it ended, which is the call's exit code
+    unless a target left out of the child failed with a higher one.
     """
 
     results: tuple[PackageResult, ...] = ()
     relaunched: bool = False
+    child_exit_code: int | None = None
+    child_raw_exit_code: int | None = None
 
     @property
     def ok(self) -> bool:
-        """Return whether every target succeeded (a skipped one counts as not done)."""
-        return all(item.ok and item.status != "skipped" for item in self.results)
+        """Return whether every target succeeded (a skipped one counts as not done) and the elevated child, if any, ended well."""
+        return all(item.ok and item.status != "skipped" for item in self.results) and not (
+            self.relaunched and self.child_exit_code not in (None, 0)
+        )
 
     @property
     def exit_code(self) -> int:
         """Return the call's exit code: zero when all succeeded, else the highest code of a failure."""
         failed = [item.exit_code or EXIT_FAILED for item in self.results if not item.ok]
+        if self.relaunched and self.child_exit_code is not None:
+            return max([self.child_exit_code, *failed])
         if failed:
             return max(failed)
         return EXIT_INPUT if any(item.status == "skipped" for item in self.results) else EXIT_OK

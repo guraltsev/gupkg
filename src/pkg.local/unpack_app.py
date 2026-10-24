@@ -27,17 +27,38 @@ from __future__ import annotations
 
 import re
 import shutil
-from pathlib import Path
+import zipfile
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from gupkg.integrity import verify_version_directory
-from gupkg.origin import safe_extract_zip
 
 
 PKG_MODULE_API = 1
 
 # Entries of a version directory that hold installation state, not release code.
 _KEEP_TOP_LEVEL = {"app", "icons", "shortcuts"}
+
+
+def safe_extract_zip(zip_path: Path, destination: Path) -> None:
+    """Extract a zip archive after rejecting absolute, escaping and symlink members."""
+    resolved_destination = destination.resolve()
+    with zipfile.ZipFile(zip_path) as archive:
+        for member in archive.infolist():
+            member_path = Path(member.filename)
+            windows_member_path = PureWindowsPath(member.filename)
+            if (
+                member_path.is_absolute()
+                or windows_member_path.is_absolute()
+                or windows_member_path.drive
+                or ".." in member_path.parts
+                or ".." in windows_member_path.parts
+                or not (destination / member_path).resolve().is_relative_to(resolved_destination)
+            ):
+                raise RuntimeError("Zip archive contains an unsafe path")
+            if (member.external_attr >> 16) & 0o170000 == 0o120000:
+                raise RuntimeError("Zip archive contains an unsupported symlink")
+        archive.extractall(destination)
 
 
 def unpack_app(context: dict[str, Any]) -> None:

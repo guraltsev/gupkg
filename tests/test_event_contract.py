@@ -1,9 +1,9 @@
 """Pin the event stream's public JSON contract and the rules of how events are delivered.
 
-The event classes, the active-reporter channel, the transitional ``log_*``
-adapters and the JSON Lines written by a real CLI run are real. The machine
-boundary is a ``FakeSystem``. Rendering (``test_console_renderer.py``) and log
-file placement (``test_run_logs.py``) are out of scope.
+The event classes, the active-reporter channel and the JSON Lines written by a real
+command-line run are real. The machine boundary is a ``FakeSystem``. Rendering
+(``test_console_renderer.py``), log file placement (``test_run_logs.py``) and the result documents
+(``test_cli_machine_interface.py``) are out of scope.
 """
 
 from __future__ import annotations
@@ -14,11 +14,10 @@ from pathlib import Path
 
 import pytest
 
-from gupkg import cli
-from gupkg.core import log_error, log_info, log_warning
+from tests.cli_support import CliWorld
 from gupkg.report import events
 from gupkg.report.events import (
-    EVENT_TYPES, Error, MultiReporter, PackageEnd, PackageStart, PhaseEnd, PhaseStart,
+    EVENT_TYPES, Diagnostic, Error, MultiReporter, PackageEnd, PackageStart, PhaseEnd, PhaseStart,
     Progress, Prompt, RunEnd, RunStart, Step, SubprocessLine, Warning, current_reporter,
     emit, emit_problems, event_to_dict, package_scope, phase, subprocess_lines, use_reporter,
 )
@@ -41,8 +40,14 @@ CONTRACT = [
     pytest.param(
         RunStart("update", ("update", "firefox"), "user", False, "1.0.0", ("user",)),
         {"event": "run_start", "command": "update", "argv": ["update", "firefox"], "mode": "user",
-         "elevated": False, "version": "1.0.0", "settings_layers": ["user"], "api": 1},
+         "elevated": False, "version": "1.0.0", "settings_layers": ["user"], "api": 1, "stop_file": None},
         id="run_start",
+    ),
+    pytest.param(
+        RunStart("update", ("update", "firefox"), "user", False, "1.0.0", (), stop_file="C:\\Temp\\gupkg-stop-1"),
+        {"event": "run_start", "command": "update", "argv": ["update", "firefox"], "mode": "user",
+         "elevated": False, "version": "1.0.0", "settings_layers": [], "api": 1, "stop_file": "C:\\Temp\\gupkg-stop-1"},
+        id="run_start-with-the-stop-marker",
     ),
     pytest.param(
         PackageStart({"name": "firefox", "path": "C:\\opt\\firefox"}),
@@ -76,6 +81,7 @@ CONTRACT = [
         id="prompt",
     ),
     pytest.param(Warning("careful"), {"event": "warning", "text": "careful"}, id="warning"),
+    pytest.param(Diagnostic("Traceback"), {"event": "diagnostic", "text": "Traceback"}, id="diagnostic"),
     pytest.param(
         Error("it broke", "run gupkg check --fix"),
         {"event": "error", "text": "it broke", "hint": "run gupkg check --fix"},
@@ -93,8 +99,14 @@ CONTRACT = [
     ),
     pytest.param(
         RunEnd("install: changed", 0),
-        {"event": "run_end", "summary": "install: changed", "exit_code": 0},
+        {"event": "run_end", "summary": "install: changed", "exit_code": 0, "result": None},
         id="run_end",
+    ),
+    pytest.param(
+        RunEnd("install: changed", 0, {"api": 1, "command": "install", "ok": True}),
+        {"event": "run_end", "summary": "install: changed", "exit_code": 0,
+         "result": {"api": 1, "command": "install", "ok": True}},
+        id="run_end-with-the-result-document",
     ),
 ]
 
@@ -106,26 +118,22 @@ def test_every_event_type_has_a_pinned_json_shape(event, record) -> None:
     assert json.loads(json.dumps(event_to_dict(event))) == record
 
 
+def test_a_diagnostic_traceback_is_redacted_like_every_other_text() -> None:
+    """A traceback that holds a URL with credentials reaches the reporters (and so the log files) without them."""
+    collector = _Collector()
+    text = "Traceback (most recent call last):\nHttpError: https://user:hunter2@example.org/a.zip?token=SECRET123&x=1 failed"
+
+    with use_reporter(collector):
+        emit(Diagnostic(text))
+
+    [event] = collector.events
+    assert "hunter2" not in event.text and "SECRET123" not in event.text and "Traceback" in event.text and "example.org" in event.text
+
+
 def test_the_contract_covers_every_event_type() -> None:
     """No event type exists without a pinned shape, so adding one forces a contract decision."""
     pinned = {type(param.values[0]) for param in CONTRACT}
     assert pinned == set(EVENT_TYPES)
-
-
-def test_legacy_log_calls_become_events_and_nothing_is_printed(capsys: pytest.CaptureFixture[str]) -> None:
-    """The transitional log functions emit Step, Warning and Error events, drop blank layout lines, and never print."""
-    collector = _Collector()
-
-    with use_reporter(collector):
-        log_info("Installing things")
-        log_info("")
-        log_warning("WARNING: be careful")
-        log_error("ERROR: it broke")
-    log_info("nobody is listening")
-
-    assert collector.events == [Step("Installing things"), Warning("be careful"), Error("it broke")]
-    captured = capsys.readouterr()
-    assert captured.out == "" and captured.err == ""
 
 
 def test_a_problem_is_delivered_once_per_package_and_once_in_the_run_summary() -> None:
@@ -202,26 +210,23 @@ def test_events_are_silently_dropped_without_a_reporter() -> None:
     assert events.current_reporter() is None
 
 
-def test_a_real_cli_run_writes_only_contract_records_to_its_event_file(
-    tmp_path: Path, system
-) -> None:
+def test_a_real_cli_run_writes_only_contract_records_to_its_event_file(tmp_path: Path) -> None:
     """A real install through the CLI leaves JSON Lines in which every record is a pinned event (or the log link) with a timestamp."""
-    version = tmp_path / "opt" / "Example" / "1.0.0"
-    (version / "App").mkdir(parents=True)
-    (version / "pkg.toml").write_text('name = "Example"\nversion = "1.0.0"\nlocalVersion = 0\n', encoding="utf-8")
+    world = CliWorld(tmp_path)
+    world.publish("example", "1.0.0")
 
-    code = cli.main(["--scope", "user", "--events-file", "events.jsonl", "install", str(version)], system=system)
+    result = world.cli("install", "example", "--events-file", "events.jsonl")
 
-    assert code == 0
-    run_events = (tmp_path / "opt" / ".gupkg" / "logs" / "events.jsonl").read_text(encoding="utf-8").splitlines()
-    package_events = (tmp_path / "opt" / "Example" / ".gupkg" / "logs" / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    assert result.code == 0, result.err
+    run_events = (world.user / ".gupkg" / "logs" / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    package_events = (world.user / "example" / ".gupkg" / "logs" / "events.jsonl").read_text(encoding="utf-8").splitlines()
     wire_names = {event_to_dict(param.values[0])["event"] for param in CONTRACT} | {"log_link"}
     for line in run_events + package_events:
         record = json.loads(line)
         assert record["event"] in wire_names
         assert record["ts"].endswith("+00:00")
     assert json.loads(run_events[0])["event"] == "run_start" and json.loads(run_events[0])["api"] == 1
-    assert json.loads(run_events[-1])["event"] == "run_end"
+    assert json.loads(run_events[-1])["event"] == "run_end" and json.loads(run_events[-1])["result"]["api"] == 1
     [link] = [json.loads(line) for line in run_events if json.loads(line)["event"] == "log_link"]
     assert set(link) == {"event", "package", "log", "events", "events_file", "ts"}
-    assert link["package"] == "Example"
+    assert link["package"] == "example"

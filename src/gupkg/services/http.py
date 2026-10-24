@@ -515,7 +515,7 @@ class HttpClient:
         caller can start again from the first byte.
         """
         current = url
-        throttle = {"last": time.monotonic()}
+        throttle: dict[str, Any] = {"last": time.monotonic(), "final": None}
         deadline = time.monotonic() + self.download_deadline
 
         def on_progress(received: int, total: int | None) -> None:
@@ -526,6 +526,8 @@ class HttpClient:
             if received == 0 or total == received or now - throttle["last"] >= 0.2:
                 emit(Progress(shown, received, total))
                 throttle["last"] = now
+                if total == received:
+                    throttle["final"] = received
 
         def remember(status: int, headers: Mapping[str, str]) -> None:
             """Store the validators and file name of an accepted answer, so an interruption can resume."""
@@ -590,7 +592,10 @@ class HttpClient:
                 return None
             if not 200 <= response.status < 300:
                 raise HttpError(f"{current} answered HTTP {response.status}", response.status)
-            emit(Progress(shown, part.stat().st_size, part.stat().st_size))
+            # The last event of a transfer says it is complete; a total that was already reported complete is not repeated.
+            size = part.stat().st_size
+            if throttle["final"] != size:
+                emit(Progress(shown, size, size))
             return current, response.headers, response.resumed
         raise HttpError(f"More than {MAX_REDIRECTS} redirects from {url}")
 

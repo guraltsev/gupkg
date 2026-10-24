@@ -1,0 +1,37 @@
+{
+  "bin_files": {
+    "rich-run.cmd": "@echo off\n\"<ROOT>\\Rich\\current\\App\\rich.exe\" %*\n",
+    "rich.config.toml": "target = \"<ROOT>\\\\Rich\\\\current\\\\App\\\\rich.exe\"\nforward_arguments = false\nelevate = true\nworking_dir = \"<ROOT>\\\\Rich\\\\current\\\\App\"\n\n[[argument]]\nvalue = \"--a\"\n\n[[argument]]\nvalue = \"<ROOT>\\\\Rich\\\\current\\\\App\\\\x\"\n"
+  },
+  "current": "2.0.local.1",
+  "env": {
+    "Path": {
+      "expandable": true,
+      "value": "<BIN>;<ROOT>\\Rich\\current\\App\\bin"
+    },
+    "RICH_BIN": {
+      "expandable": true,
+      "value": "<ROOT>\\Rich\\current\\App\\bin;C:\\Users\\same"
+    },
+    "RICH_HOME": {
+      "expandable": true,
+      "value": "<ROOT>\\Rich\\current\\App"
+    }
+  },
+  "launchers": [
+    "rich.exe"
+  ],
+  "path": [
+    "<BIN>",
+    "<ROOT>\\Rich\\current\\App\\bin"
+  ],
+  "shortcuts": {
+    "<MENU>\\Rich App.lnk": {
+      "arguments": "--flag",
+      "description": "Rich",
+      "icon_location": "<ROOT>\\Rich\\current\\App\\rich.ico,0",
+      "target_path": "<ROOT>\\Rich\\current\\App\\rich.exe",
+      "working_directory": "<ROOT>\\Rich\\current\\App"
+    }
+  }
+}

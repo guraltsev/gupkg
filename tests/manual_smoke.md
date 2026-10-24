@@ -434,3 +434,59 @@ repository `gupkg-registry`; its README repeats the commands.
     cover the rule. Check on a real machine that a registry holding a folder named `con` or `Nul.txt` fails
     `registry-tool validate` with a clear message (create it with `mkdir \\?\C:\path\con`), and that nothing in gupkg lists it as a
     version. Why manual: needs the real Win32 namespace.
+
+
+## The unified command line and machine interface (issue 029)
+
+Run these with a gupkg built by `scripts\build-standalone.cmd`, unpacked into a throwaway root (`%TEMP%\gupkg-029`), unless a step
+says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `FakeSystem`.
+
+1. **A real console.** In Windows Terminal and in a redirected `cmd` (`gupkg install <name> > out.txt`), run `gupkg install`,
+   `gupkg update <name> --plan`, `gupkg list --details` and `gupkg info <name>`. On the terminal the phases are coloured and the
+   download has a live bar; redirected, the output is plain (`==> Phase`, no colour, one final progress line) and `--json` leaves
+   standard output a single document. Why manual: only a real console shows colour and the bar.
+2. **The real UAC relaunch (needs the system gupkg).** From a normal shell with the system gupkg on `PATH`, run
+   `gupkg install system:<name> --yes --events-file run.jsonl --json`. Expect exactly one UAC prompt, an elevated window that runs
+   the install and waits for a key, the calling shell waits for it and ends with the child's exit code (`echo %ERRORLEVEL%`),
+   and `C:\opt\.gupkg\logs\run.jsonl` (and `C:\opt\<name>\.gupkg\logs\run.jsonl`) that a normal
+   shell can read and that ends with `run_end` carrying the result document. Read `stop_file` from the first line, create that
+   file during a run of three packages: the elevated run stops after the package it is working on and exits 5. Why manual: needs
+   UAC and the real admin-only `C:\opt`.
+3. **A user-writable gupkg never elevates.** Run `gupkg install system:<name>` with a user-mode gupkg (under
+   `%USERPROFILE%\opt`): expect exit 2 and "System installs need the system gupkg". Why manual: the real ACL check.
+4. **The elevated child refuses a user folder.** From an elevated prompt run the system gupkg with `--relaunched`:
+   `gupkg install %USERPROFILE%\Downloads\<dist>\<name>\<version> --mode system --relaunched --yes` and expect exit 2 ("accepts
+   only package names and paths inside the system root"); without `--relaunched` the same folder is copied into `C:\opt`. Why
+   manual: the real elevated token and ACLs.
+5. **The forwarders (the UI programs arrive with issue 030).** `gupkg migrate --help` prints the migration tool's help and
+   `gupkg migrate package <old>` converts a copy of a real 0.17 package; `gupkg tui <folder>` and `gupkg manager` say that
+   `gupkg-tui.cmd` or `gupkg-manager.cmd` was not found beside this gupkg until issue 030 adds them. Once those launchers exist,
+   check that the exit code of the program is the exit code of `gupkg`. Why manual: needs the real bundle layout.
+6. **`gupkg logs`.** `gupkg logs <name> --open` opens the newest log in the program Windows associates with `.log`; `--path` prints
+   its path. Why manual: needs the Windows shell association.
+7. **`gupkg self status`.** On an installed gupkg expect `ok` and the bundled interpreter; edit one file below the version
+   directory and expect exit 3 naming it. Why manual: needs a real install.
+8. **`gupkg pkg check --install` with real downloads.** On a package from the registry (a version directory with its pinned hash)
+   expect exit 0 with the real network, and the real user root and registry unchanged. Why manual: real downloads.
+9. **`gupkg shell`.** With `[integration.portable] integrate = "none"` and a portable root set, `for /f "delims=" %i in ('gupkg
+   shell --mode portable') do %i` puts `<root>\bin` on that console's `PATH`. Why manual: `cmd` interprets the line.
+10. **`uninstall --purge` on a real machine.** After a purge the package folder is gone including this run's own package log (it
+    cannot stay open), and the root's run log under `<root>\.gupkg\logs` records the deletion. Why manual: only real file locking
+    shows whether the log files were released.
+11. **A hostile target under real UAC.** With the system gupkg, make a folder `C:\opt\a&calc` (or any system package whose name
+    holds `&`, `%`, `!` or `^`) and run `gupkg install "system:a&calc" --yes` from a normal shell: expect exit 2, "not allowed in a
+    command that runs with administrator rights", **no UAC prompt** and no Calculator. Then, from an elevated prompt, run
+    `gupkg install "system:a&calc" --relaunched --yes`: expect exit 2 ("the elevated child refuses"). Finally run an ordinary
+    `gupkg install system:<name> --yes` and check in Task Manager's details tab (command line column) that the elevated process
+    is the bundled `python.exe -I -s -B -S ...\bootstrap.py ...` and that no `cmd.exe` was started for it. Why manual: needs the
+    real UAC prompt, the real elevated token and a real process list.
+12. **The parent waits for the elevated child.** From a normal shell run `gupkg install system:<name> --yes` (a package that
+    installs) and then one that fails (for example a corrupt `pkg.toml` in `C:\opt`): the command line stays busy until the
+    elevated window closes, and `%ERRORLEVEL%` is 0 and then the failing code. Press Ctrl-C during a long install: the stop marker
+    is created, the child finishes its package and the call ends with exit code 5 (or 5 after 30 seconds when the child does not
+    end). Decline the UAC prompt: exit code 5. Why manual: needs UAC and a real second process.
+13. **Redirected output with non-ASCII names.** Make a package folder `жук` in the user root, then run `gupkg list > out.txt`,
+    `gupkg list --json > out.json` and `gupkg list | more` in `cmd`: exit code 0, `out.txt` is UTF-8 (open it in an editor that
+    shows the encoding), `out.json` is pure ASCII with `\u` escapes that parse back to `жук`. In a console set to a legacy code
+    page (`chcp 437`) the listing shows replacement marks for what the page cannot draw, with no error. Why manual: only a real
+    console has a code page.

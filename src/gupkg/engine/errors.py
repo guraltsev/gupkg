@@ -33,11 +33,12 @@ from ..catalog.catalog import (
     NotInstalled,
     UntrustedLocation,
 )
+from ..core import ConfigValidationError
 from ..model.checksum import ChecksumError
 from ..redact import redact_text
-from ..model.manifest import ManifestError
+from ..model.manifest import ManifestError, NeedsNewerGupkg
 from ..model.mode import InputNeeded, ModeRefused
-from ..model.plan import EXIT_FAILED, EXIT_INPUT, EXIT_INTERNAL, EXIT_USER, PackageResult
+from ..model.plan import EXIT_FAILED, EXIT_INTERNAL, EXIT_USER, PackageResult
 from ..model.settings import SettingsError
 from ..selfmgmt.elevation import UntrustedLocationError
 from ..services.hooks import HookError
@@ -53,12 +54,14 @@ from .locks import PackageBusy
 from .planner import PlanError
 from .portable import PortableError
 
-# (exception type, stable code, exit code): the first entry that matches wins.
-_TABLE: tuple[tuple[type[BaseException], str, int], ...] = (
-    (InputNeeded, "input-needed", EXIT_INPUT),
+# (exception type, stable code, exit code): the first entry that matches wins. ``None`` means the exception class carries
+# its own ``exit_code`` (the one place it is defined), which ``describe`` reads.
+_TABLE: tuple[tuple[type[BaseException], str, int | None], ...] = (
+    (InputNeeded, "input-needed", None),
     (ChecksumError, "checksum-error", EXIT_FAILED),
     (ProcessNotAllowed, "needs-real-run", EXIT_FAILED),
-    (ModeRefused, "refused", EXIT_USER),
+    (NeedsNewerGupkg, "needs-newer-gupkg", None),
+    (ModeRefused, "refused", None),
     (NoVersionKnown, "no-version-known", EXIT_USER),
     (NoValidVersion, "no-valid-version", EXIT_USER),
     (NotInstalled, "not-installed", EXIT_USER),
@@ -70,6 +73,7 @@ _TABLE: tuple[tuple[type[BaseException], str, int], ...] = (
     (UntrustedLocationError, "untrusted-location", EXIT_USER),
     (PlanError, "cannot-plan", EXIT_USER),
     (SettingsError, "settings", EXIT_USER),
+    (ConfigValidationError, "invalid-configuration", EXIT_USER),
     (ManifestError, "invalid-package", EXIT_USER),
     (HookError, "hook-error", EXIT_FAILED),
     (UnpackError, "unpack-failed", EXIT_FAILED),
@@ -109,7 +113,11 @@ def describe(error: BaseException) -> tuple[int, dict[str, Any]]:
             hint = getattr(error, "hint", None)
             if hint:
                 data["hint"] = hint
-            return getattr(error, "exit_code", exit_code), data
+            # An error may carry a stable code of its own and extra fields (``invalid-checksum``: the version and the field).
+            data["code"] = getattr(error, "error_code", None) or data["code"]
+            data.update(getattr(error, "error_details", {}))
+            own = getattr(error, "exit_code", None)
+            return own if own is not None else exit_code, data
     return EXIT_INTERNAL, {"code": "internal-error", "message": f"{type(error).__name__}: {error}"}
 
 

@@ -6,7 +6,7 @@ Shell COM interfaces and ``DeviceIoControl`` are real. An independent
 ``WScript.Shell`` read (through PowerShell, used only by the test) confirms
 Explorer-visible properties. The registry, the ``PATH`` and the real Start Menu
 are never touched: install runs use packages without environment or ``PATH``
-rows, with ``APPDATA`` and ``USERPROFILE`` pointed at a temporary home. What
+rows, with the roots, the Start Menu and ``bin`` folders given by a settings file below the temporary folder. What
 every ``System`` shares (round trips, replacement, removal) is covered by
 ``tests/test_system_contract.py``. Elevated runs and the Explorer Properties
 dialog are out of scope; see ``tests/manual_smoke.md``.
@@ -39,29 +39,33 @@ AWKWARD_TEXT = "it's \"quoted\" $var `tick` %TEMP% caf\u00e9 \u4e2d\u6587"
 
 
 def _write_install_package(tmp_path: Path, shortcut_count: int) -> tuple[Path, Path]:
-    """Build a one-package tree with *shortcut_count* shortcuts and return it with the Start Menu root."""
-    version_dir = tmp_path / "ShortApp" / "1.0.0.local.1"
+    """Build a one-version distribution folder with *shortcut_count* shortcuts and return it with the Start Menu root."""
+    version_dir = tmp_path / "downloads" / "ShortApp" / "1.0.0"
     (version_dir / "App").mkdir(parents=True)
+    (version_dir / "App" / "app.txt").write_text("shipped", encoding="utf-8")
     rows = "".join(
         f'\n[[shortcut]]\nname = "Short {index}"\n'
-        f'targetPath = "C:\\\\Windows\\\\System32\\\\cmd.exe"\n'
+        f'target = "C:\\\\Windows\\\\System32\\\\cmd.exe"\n'
         f'arguments = "/k echo {index}"\ndescription = "Shortcut {index}"\n'
         for index in range(shortcut_count)
     )
-    (version_dir / "pkg.toml").write_text(
-        f'name = "ShortApp"\nversion = "1.0.0"\nlocalVersion = 1\n{rows}', encoding="utf-8"
-    )
+    (version_dir / "pkg.toml").write_text(f"format = 2\n\n[source]\nshipped = true\n{rows}", encoding="utf-8")
     start_menu = tmp_path / "AppData" / "Microsoft" / "Windows" / "Start Menu" / "opt"
     return version_dir, start_menu
 
 
-def _install(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, version_dir: Path
-) -> int:
-    """Run ``gupkg install`` for a user-scope package with the Start Menu and profile redirected below *tmp_path*."""
-    monkeypatch.setenv("APPDATA", str(tmp_path / "AppData"))
-    monkeypatch.setenv("USERPROFILE", str(tmp_path / "UserProfile"))
-    return cli.main(["--scope", "user", "install", str(version_dir)])
+def _install(tmp_path: Path, version_dir: Path) -> int:
+    """Run ``gupkg install`` in user mode on the real machine boundary, with every folder below *tmp_path* by a settings file."""
+    settings = tmp_path / "settings.toml"
+    settings.write_text(
+        "schema = 3\n"
+        f"[roots]\nsystem = '{tmp_path / 'sys'}'\nuser = '{tmp_path / 'opt'}'\nportable = '{tmp_path / 'portable'}'\n"
+        f"[integration.user]\nbin = '{tmp_path / 'bin'}'\nstart_menu = '{tmp_path / 'AppData' / 'Microsoft' / 'Windows' / 'Start Menu' / 'opt'}'\n",
+        encoding="utf-8",
+    )
+    # The settings layers below ``--settings`` still expand the built-in defaults, so the variables they name are given too.
+    env = {"USERPROFILE": str(tmp_path / "UserProfile"), "APPDATA": str(tmp_path / "AppData"), "ProgramData": str(tmp_path / "ProgramData")}
+    return cli.main(["--settings", str(settings), "install", str(version_dir), "--mode", "user"], system=SYSTEM, env=env)
 
 
 def test_shortcut_fields_round_trip_exactly(tmp_path: Path) -> None:
@@ -229,7 +233,7 @@ def test_independent_wscript_reader_sees_the_declared_properties(tmp_path: Path)
 
 
 def test_unwritable_directory_is_reported_by_install_and_names_the_shortcut(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Install reports a denied shortcut write as a failed install that names the shortcut."""
     version_dir, start_menu = _write_install_package(tmp_path, 1)
@@ -241,7 +245,7 @@ def test_unwritable_directory_is_reported_by_install_and_names_the_shortcut(
         capture_output=True,
     )
     try:
-        code = _install(monkeypatch, tmp_path, version_dir)
+        code = _install(tmp_path, version_dir)
     finally:
         subprocess.run(
             ["icacls", str(start_menu), "/remove:d", user], check=True, capture_output=True
@@ -267,7 +271,7 @@ def test_install_creates_every_shortcut_without_powershell(
 
     monkeypatch.setattr(windows, "_system_tool", no_powershell)
     monkeypatch.setenv("PATH", "")
-    code = _install(monkeypatch, tmp_path, version_dir)
+    code = _install(tmp_path, version_dir)
 
     assert code == 0
     links = sorted(start_menu.rglob("*.lnk"))

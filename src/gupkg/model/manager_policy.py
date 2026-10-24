@@ -16,7 +16,8 @@ Usage and API
 Implementation Approach
 -----------------------
 A plan entry marked ``invalid`` (a malformed declared hash) is never asked about and never skipped: the
-target is refused with its own message. Fail-closed everywhere: an unknown policy value, a plan entry that is not clearly ``missing``
+target is refused with its own message. (The CLI's plan carries only ``present`` or ``missing``: a malformed hash makes the version
+invalid, so the manager (issue 030) builds this ``invalid`` entry from the error document, whose ``code`` is ``invalid-checksum``.) Fail-closed everywhere: an unknown policy value, a plan entry that is not clearly ``missing``
 and skippable, no way to ask, a failed answer: all of them mean the target is not run with a
 skip. In an elevated run only admin-only layers count (the settings loader already drops the
 user layer; the source layer is checked again here, and a value from the user or portable layer

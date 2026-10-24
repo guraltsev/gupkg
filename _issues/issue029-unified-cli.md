@@ -4,6 +4,17 @@ Date: 2026-10-22
 Priority: Critical
 Epic: 020. Design: `_docs/rehaul_design.md` §10, §11. Supersedes issue 013's grammar decisions.
 
+> **Status (2026-10-24):** Implemented on `rehaul/issue029`. The 0.17 front end is deleted (item 12, including the moved registry
+> transports, which now live in `gupkg.services.registrysource`); `pinning.py` is NOT on the deletion list: it is issue 027's
+> module behind `gupkg pkg pin` (the list named it by mistake). Decisions taken inside the issue: the stop marker is a unique path
+> announced in `run_start.stop_file` (design 10.4); `--plan` also exists for `link` and `self ...`; `link` is an engine operation;
+> `requires_gupkg` and a newer `format` give exit code 6; `tui` and `manager` refuse an elevated shell (`migrate` does not) and no forwarder takes `--settings`/`--sandbox`;
+> `allow_unc_file_urls` is not a setting (`file:` URLs naming a network host stay refused, design 13.4); the parent of an elevated
+> relaunch waits for the child and returns its exit code (clamped to 0-6, else 4; the raw code is `child_raw_exit_code` in the
+> document); the child is started without a shell and only after the files it loads first were checked admin-only. Not done: `pkg bundle` copies the verified bundle but writes no launchers (the template is
+> issue 033's); Manual checks owed: `tests/manual_smoke.md`, "The unified command
+> line and machine interface (issue 029)" items 1-13.
+
 ## Problem
 
 The owner says the CLI and manager mode are "messed up in a way that is
@@ -139,7 +150,7 @@ The owner's decisions (2026-10-22) that shape this issue:
     - `gupkg.py` (`install_package`, `_run_update`, `update_package`), `updates.py` (`prepare_update` and the
       receipt-by-mtime logic), `origin.py` (`populate_*`), `components.py`, `downloads.py`, `github_releases.py`,
       `configuration.py`, `configfix.py`, `metadata.py`, `collection.py`, `distribution.py`, `layout.py` (what only the old
-      front end uses, including `identity_from_path` and `installed_version`), `pinning.py`, `outcome.py`, `commands.py`,
+      front end uses, including `identity_from_path` and `installed_version`), `outcome.py`, `commands.py`,
       the 0.17 command bodies of `cli.py`, `registry.py` (the 0.17 registry client), the executor of `manager.py`, and
       `legacy_to_gupkg_toml.py` and `shortcuts_to_gupkg_toml.py` (the migration tool `gupkg_migrate` has its own copies);
       check `bootstrap.py` and `hooklib.py` for remaining importers first;
@@ -152,46 +163,46 @@ The owner's decisions (2026-10-22) that shape this issue:
 
 ## Acceptance criteria
 
-- [ ] `gupkg tui PATH` runs `gupkg-tui PATH`, and `gupkg manager <args>`
+- [x] `gupkg tui PATH` runs `gupkg-tui PATH`, and `gupkg manager <args>`
       (including `gupkg manager tui`) runs `gupkg-manager <args>`, and each
       returns the program's exit code. This is checked with fake
       `gupkg-tui` and `gupkg-manager` executables that record their argv,
       so it does not wait for issue 030. `config-check`, `config-fix`,
       `doctor`, `repair-deps` and `update-deps` are unknown commands, and
       `update --check-only` and `--scope` are usage errors (exit 2).
-- [ ] `gupkg install vscode --mode user` and `gupkg install
+- [x] `gupkg install vscode --mode user` and `gupkg install
       %USERPROFILE%\opt\vscode` give identical integration destinations,
       because both use the `ModeContext` from the settings.
-- [ ] With the system gupkg in an elevated process, `gupkg install X` with
+- [x] With the system gupkg in an elevated process, `gupkg install X` with
       no `--mode` installs in
       system mode and prints `system (auto: elevated)`. From a normal shell it
       installs in user mode.
-- [ ] `gupkg check-updates X` on a tracked user package writes
+- [x] `gupkg check-updates X` on a tracked user package writes
       `X\<new version>\` with a populated `App`, and leaves `current`, the
       install record and the `FakeSystem` integration state unchanged. With
       `--no-download` it writes the directory with no `App` and makes no
       request except the tracker's.
-- [ ] `gupkg update X` after `check-updates X --no-download` installs the
+- [x] `gupkg update X` after `check-updates X --no-download` installs the
       new version without contacting any URL except those written in the
       new version's `pkg.toml`. This is verified with the `FakeSystem`
       fetch log.
-- [ ] `gupkg self check-updates` and `gupkg check-updates gupkg` give the
+- [x] `gupkg self check-updates` and `gupkg check-updates gupkg` give the
       same result document.
-- [ ] `gupkg check X` reports a deleted shim of an installed package as
+- [x] `gupkg check X` reports a deleted shim of an installed package as
       drift and changes nothing; `gupkg check X --fix` restores it.
-- [ ] `gupkg update X`, when no newer version is known, reports "up to date"
+- [x] `gupkg update X`, when no newer version is known, reports "up to date"
       and makes no network request.
-- [ ] `--plan --json` changes nothing on disk except the run's log files, and
+- [x] `--plan --json` changes nothing on disk except the run's log files, and
       the document names every target's checksum status and elevation need.
-- [ ] A run with `--events-file NAME` from an elevated child produces a
+- [x] A run with `--events-file NAME` from an elevated child produces a
       JSON-lines file named `NAME` in the system root's log directories,
       which a non-elevated reader can follow to the final result line.
       `--events-file` with a value that contains a path separator or `..`
       is a usage error (exit 2) and writes nothing.
-- [ ] `gupkg uninstall X --purge --no-input` exits 5 with a structured error
+- [x] `gupkg uninstall X --purge --no-input` exits 5 with a structured error
       and changes nothing; with `--yes` it proceeds without reading stdin.
       The same holds for `gupkg install X Y` (a plan with several targets).
-- [ ] `gupkg update --all` and `gupkg update --check` are usage errors (exit
+- [x] `gupkg update --all` and `gupkg update --check` are usage errors (exit
       2); the first names `gupkg-manager update --all` (D11, D12).
 
 ## Tests

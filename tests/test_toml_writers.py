@@ -1,86 +1,75 @@
-"""Cover that every TOML file gupkg writes survives hostile text and reads back unchanged.
+"""Cover that every file gupkg writes survives hostile text and reads back unchanged.
 
-Behavior covered: values with quotes, backslashes, newlines, tabs and non-ASCII text round-trip
-through the machine-readable command output, the update state and receipt, and the manager
-configuration, all of which are now written by the one TOML writer (`tomli_w`) instead of
-hand-built strings.
+Behavior covered: values with quotes, backslashes, newlines, tabs and non-ASCII text round-trip through the receipt, the install
+record, the last-check state, the settings file written by ``settings set`` and ``registry add``, and the JSON documents of the
+machine interface. The TOML files are all written by the one TOML writer (`tomli_w`) instead of hand-built strings.
 
-Real: the public writers and readers on files under a temporary folder. Mocked: nothing. Out
-of scope: the content rules of each file (covered by the command tests).
+Real: the public writers and readers on files under a temporary folder. Mocked: nothing. Out of scope: the content rules of each
+file (covered by the command tests).
 """
 
 from __future__ import annotations
 
-import tomllib
+import json
 from pathlib import Path
 
-from gupkg.core import ActionResult, PackageIdentity
-from gupkg.manager import ManagerConfig, load_manager_config, manager_config_text
-from gupkg.outcome import Outcome, format_toml
-from gupkg.updates import load_update_state, write_receipt, write_update_state
+from gupkg import settingsedit
+from gupkg.catalog.record import read_install_record, write_install_record
+from gupkg.engine.receipts import read_receipt, update_receipt
+from gupkg.engine.stateio import read_track_state, write_track_state
+from gupkg.model.settings import RegistryEntry
+from gupkg.model.state import Effect, InstallRecord, Link
+from gupkg.report import results
+from gupkg.tomlio import read_toml
 
 HOSTILE = 'C:\\opt\\"quoted" name\twith\ttabs\nand a line break — and ünïcode ☃'
 
 
-def test_machine_output_round_trips_hostile_text_in_every_section() -> None:
-    """`format_toml` output parses back to the same message text, section values and record lists."""
-    outcome = Outcome(
-        "info",
-        ActionResult(ok=False, changed=True, errors=[HOSTILE], warnings=['a "b"'], exit_code=2),
-        {
-            "package": {"name": HOSTILE, "count": 3, "ready": True, "missing": None},
-            "registry": {"source": "https://example.org/x.git"},
-            "registry_packages": [{"name": HOSTILE}, {"name": "second"}],
-            "targets": [{"id": "user:a", "aliases": ["x", HOSTILE]}],
-            "self": {"version": "1.0"},
-            "self_shims": [{"name": "gupkg"}],
-        },
-    )
+def test_a_receipt_round_trips_hostile_text(tmp_path: Path) -> None:
+    """The receipt keeps text with quotes, backslashes and line breaks intact."""
+    update_receipt(tmp_path / "tool", "1.0", {"run": {"log": HOSTILE, "operation": "install"}, "origin": {"copied_from": HOSTILE}})
 
-    parsed = tomllib.loads(format_toml(outcome))
+    data = read_receipt(tmp_path / "tool", "1.0").data
 
-    assert parsed["output_schema"] == 1 and parsed["ok"] is False and parsed["exit_code"] == 2
-    assert parsed["errors"] == [HOSTILE] and parsed["warnings"] == ['a "b"']
-    assert parsed["package"] == {"name": HOSTILE, "count": 3, "ready": True}
-    assert [row["name"] for row in parsed["registry"]["package"]] == [HOSTILE, "second"]
-    assert parsed["registry"]["source"] == "https://example.org/x.git"
-    assert parsed["target"][0]["aliases"] == ["x", HOSTILE]
-    assert parsed["self"]["shim"] == [{"name": "gupkg"}]
+    assert data["run"] == {"log": HOSTILE, "operation": "install"} and data["origin"]["copied_from"] == HOSTILE
 
 
-def test_update_state_and_receipt_round_trip_hostile_text(tmp_path: Path) -> None:
-    """The update state and a receipt keep text with quotes and backslashes intact."""
-    state_file = tmp_path / "state" / "update.toml"
-    write_update_state(state_file, {
-        "lastStatus": "failed", "lastError": HOSTILE, "lastCandidateId": "abc",
-        "assignedVersion": [{"candidateId": HOSTILE, "version": "1.0"}],
-    })
+def test_the_install_record_round_trips_hostile_text(tmp_path: Path) -> None:
+    """A link name and an effect field with hostile text read back equal."""
+    record = InstallRecord("user", Link(registry="main", name=HOSTILE), (Effect("env", {"name": "X", "value": HOSTILE}),))
 
-    state = load_update_state(state_file)
+    write_install_record(tmp_path / "tool", record)
+    read = read_install_record(tmp_path / "tool")
 
-    assert state["lastError"] == HOSTILE
-    assert state["assignedVersion"] == [{"candidateId": HOSTILE, "version": "1.0"}]
-    identity = PackageIdentity.from_version_path(tmp_path / "tool", tmp_path / "tool" / "1.2.3", is_current=False)
-    receipt = tmp_path / "receipts" / "1.2.3.toml"
-    write_receipt(receipt, {"candidateId": HOSTILE}, identity)
-    parsed = tomllib.loads(receipt.read_text(encoding="utf-8"))
-    assert parsed["candidateId"] == HOSTILE and parsed["version"] == "1.2.3"
+    assert read.problem is None and read.record.link.name == HOSTILE and read.record.effects[0].fields["value"] == HOSTILE
 
 
-def test_manager_configuration_round_trips_unusual_paths(tmp_path: Path) -> None:
-    """A manager configuration written for roots and a registry source with a quote and non-ASCII text loads back equal."""
-    config = ManagerConfig(
-        tmp_path / "cfg" / "gupkg-config.toml", tmp_path / "sys ünï", tmp_path / "user'quote",
-        system_bin=tmp_path / "sbin", user_bin=tmp_path / "ubin", registry_cache=tmp_path / "cache",
-        registry_source="https://example.org/team-\"registry\".git", shim_linkage="static",
-    )
-    path = config.path
-    path.parent.mkdir()
-    path.write_text(manager_config_text(config), encoding="utf-8")
+def test_the_last_check_state_round_trips_hostile_text(tmp_path: Path) -> None:
+    """The result of the last check-updates keeps a message with quotes and line breaks."""
+    write_track_state(tmp_path / "tool", {"found": "1.0", "outcome": HOSTILE})
 
-    loaded = load_manager_config(path)
+    assert read_track_state(tmp_path / "tool")["outcome"] == HOSTILE
 
-    assert loaded.system_root == (tmp_path / "sys ünï").resolve()
-    assert loaded.user_root == (tmp_path / "user'quote").resolve()
-    assert loaded.registry_source == config.registry_source
-    assert loaded.shim_linkage == "static"
+
+def test_the_settings_file_round_trips_unusual_paths_and_registry_sources(tmp_path: Path) -> None:
+    """`settings set` and `registry add` write a path with a quote and a source with non-ASCII text, and the file reads back equal."""
+    path = tmp_path / "settings.toml"
+
+    settingsedit.set_setting(path, "user", "roots.user", HOSTILE)
+    settingsedit.add_registry(path, "user", "team", 'https://example.org/team-"registry"-ü.git', (RegistryEntry("main", "https://example.org/m.git"),))
+
+    data = read_toml(path)
+    assert data["roots"]["user"] == HOSTILE
+    assert data["registry"] == [
+        {"name": "main", "source": "https://example.org/m.git"},
+        {"name": "team", "source": 'https://example.org/team-"registry"-ü.git'},
+    ]
+
+
+def test_machine_documents_round_trip_hostile_text() -> None:
+    """The error document keeps its message through JSON, whatever characters it holds, and carries the contract head."""
+    document = results.error_document("install", "refused", HOSTILE, 2, hint=HOSTILE)
+
+    parsed = json.loads(results.dumps(document))
+
+    assert parsed["api"] == 1 and parsed["errors"][0]["message"] == HOSTILE and parsed["errors"][0]["hint"] == HOSTILE

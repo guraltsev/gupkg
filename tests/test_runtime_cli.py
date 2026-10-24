@@ -11,7 +11,6 @@ import os
 import re
 from pathlib import Path
 import subprocess
-import sys
 import tempfile
 import tomllib
 import unittest
@@ -61,45 +60,30 @@ class RuntimeCommandTests(unittest.TestCase):
             result = self.run_command("--help", cwd=Path(tmpdir))
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
-        self.assertIn("Local Package Manager for Windows", result.stdout)
+        self.assertIn("Package manager for Windows", result.stdout)
 
-    def test_config_check_accepts_a_version_directory_without_a_local_revision(self) -> None:
-        """A version directory without ``.lN`` has local revision zero for metadata checks."""
+    def test_pkg_check_accepts_a_version_directory_without_a_local_revision(self) -> None:
+        """A version directory without ``.lN`` passes the authoring check, run through the real launcher."""
         with tempfile.TemporaryDirectory() as tmpdir:
             package_root = Path(tmpdir) / "Example"
             version_directory = package_root / "1.2.3"
             app_directory = version_directory / "App"
             app_directory.mkdir(parents=True)
             (app_directory / "payload.txt").write_text("payload", encoding="utf-8")
-            (version_directory / "pkg.toml").write_text(
-                'name = "Example"\nversion = "1.2.3"\nlocalVersion = 0\n',
-                encoding="utf-8",
-            )
-            result = self.run_command(
-                "config-check", str(version_directory), cwd=package_root
-            )
+            (version_directory / "pkg.toml").write_text('format = 2\ndescription = "Example"\n', encoding="utf-8")
+            result = self.run_command("pkg", "check", str(version_directory), cwd=package_root)
 
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
 
-    def test_legacy_converter_infers_zero_for_an_absent_local_revision(self) -> None:
-        """Legacy conversion writes no identity keys; the folder name supplies them."""
+    def test_the_migrate_forwarder_and_its_launcher_reach_the_migration_tool(self) -> None:
+        """`gupkg migrate --help` and `gupkg-migrate.cmd --help` both print the migration tool's help."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            version_directory = Path(tmpdir) / "Example" / "1.2.3"
-            version_directory.mkdir(parents=True)
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    "-B",
-                    str(RUNTIME_DIRECTORY / "gupkg" / "legacy_to_gupkg_toml.py"),
-                    "--dir",
-                    str(version_directory),
-                    "--dry-run",
-                ],
-                cwd=version_directory,
-                capture_output=True,
-                text=True,
-                check=False,
+            forwarded = self.run_command("migrate", "--help", cwd=Path(tmpdir))
+            direct = subprocess.run(
+                [str(RUNTIME_DIRECTORY / "gupkg" / "gupkg-migrate.cmd"), "--help"],
+                cwd=tmpdir, capture_output=True, text=True, check=False,
             )
 
-        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
-        self.assertNotIn("localVersion", result.stdout)
+        for result in (forwarded, direct):
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            self.assertIn("migrate", result.stdout.lower())

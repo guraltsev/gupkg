@@ -22,11 +22,12 @@ bound late, because the root is only known after the target has been resolved.
 
 from __future__ import annotations
 
+import traceback as traceback_module
 from pathlib import Path
 from typing import Any, Sequence
 
 from .events import (
-    MultiReporter, Reporter, RunEnd, RunStart, Warning, emit, use_reporter,
+    Diagnostic, MultiReporter, Reporter, RunEnd, RunStart, Warning, emit, use_reporter,
 )
 from .logfile import RunLog
 
@@ -56,6 +57,8 @@ class RunSession:
         Folder whose ``.gupkg\\logs`` receives the run log when ``bind`` was never called.
     settings_layers : sequence of str
         Names of the settings layers in effect, recorded in the header.
+    stop_file : str, optional
+        The run's stop marker, announced in ``RunStart`` (decision D37).
     log : bool, default=True
         Set false to keep a run out of the log files (used where no log may be written).
     clock : callable, optional
@@ -76,10 +79,11 @@ class RunSession:
         keep_days: int = 90,
         fallback_base: Path | None = None,
         settings_layers: Sequence[str] = (),
+        stop_file: str | None = None,
         log: bool = True,
         clock=None,
     ) -> None:
-        self._start = RunStart(command, tuple(argv), mode, elevated, version, tuple(settings_layers))
+        self._start = RunStart(command, tuple(argv), mode, elevated, version, tuple(settings_layers), stop_file=stop_file)
         self._fallback = fallback_base
         self._finished = False
         self._context: Any = None
@@ -109,8 +113,16 @@ class RunSession:
         if self.log is not None and base is not None:
             self.log.bind(Path(base), package_label)
 
-    def finish(self, summary: str, exit_code: int) -> None:
-        """Emit the closing summary, with the log paths appended; later calls are ignored."""
+    def discard_log(self) -> None:
+        """Stop writing log files for this run, because it handed its work to another process that logs it itself.
+
+        The run's own events still reach the other reporters; no log or events file is created afterwards.
+        """
+        if self.log is not None:
+            self.log.close()
+
+    def finish(self, summary: str, exit_code: int, result: dict[str, Any] | None = None) -> None:
+        """Emit the closing summary, with the log paths appended and the result document attached; later calls are ignored."""
         if self._finished:
             return
         self._finished = True
@@ -120,13 +132,15 @@ class RunSession:
             self.log.bind(self._fallback)
         lines = self.log.summary_lines() if self.log is not None else []
         text = "\n".join([part for part in [summary.rstrip("\n"), *lines] if part])
-        emit(RunEnd(text, exit_code))
+        emit(RunEnd(text, exit_code, result))
 
     def __exit__(self, exc_type, exc, traceback) -> None:
         """End the run (as an internal error if it was never finished) and uninstall the reporters."""
         try:
             if not self._finished:
                 detail = f": {exc}" if exc is not None else ""
+                if exc is not None:
+                    emit(Diagnostic("".join(traceback_module.format_exception(exc_type, exc, traceback))))
                 self.finish(f"gupkg stopped unexpectedly{detail}", 4)
         finally:
             if self.log is not None:

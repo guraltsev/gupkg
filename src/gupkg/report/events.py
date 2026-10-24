@@ -54,7 +54,12 @@ API_VERSION = 1
 
 @dataclass(frozen=True)
 class RunStart:
-    """Announce a run: the command, its arguments, mode, elevation and settings layers."""
+    """Announce a run: the command, its arguments, mode, elevation and settings layers.
+
+    ``stop_file`` is the path of the stop marker of this run (decision D37): a caller that wants the run to stop after
+    the package that is running creates a file there. It is unique to the run and ``None`` when the run cannot be
+    stopped that way.
+    """
 
     command: str
     argv: tuple[str, ...]
@@ -63,6 +68,7 @@ class RunStart:
     version: str
     settings_layers: tuple[str, ...] = ()
     api: int = API_VERSION
+    stop_file: str | None = None
 
 
 @dataclass(frozen=True)
@@ -142,6 +148,17 @@ class Error:
 
 
 @dataclass(frozen=True)
+class Diagnostic:
+    """Carry detail for the log files only, such as the traceback of an internal error.
+
+    The console renderer never shows it, so a person sees the structured error and reads the log for the cause. It is part of the
+    event stream (the ``diagnostic`` record of the events file) and may be ignored by any reporter.
+    """
+
+    text: str
+
+
+@dataclass(frozen=True)
 class PhaseEnd:
     """End a phase: ``status`` is ``ok``, ``failed`` or ``skipped``; ``elapsed`` is in seconds."""
 
@@ -159,16 +176,21 @@ class PackageEnd:
 
 @dataclass(frozen=True)
 class RunEnd:
-    """Close the run with the summary text people read last and the exit code."""
+    """Close the run with the summary text people read last, the exit code and the result document.
+
+    ``result`` is the document that ``--json`` prints (``"api": 1``): an events file therefore ends with the same result
+    a caller reads from standard output, which is how a caller follows an elevated child it cannot share pipes with.
+    """
 
     summary: str
     exit_code: int
+    result: dict[str, Any] | None = None
 
 
 # Every event type, in the order the design lists them.
 EVENT_TYPES = (
     RunStart, PackageStart, PhaseStart, Step, Progress, SubprocessLine,
-    Prompt, Warning, Error, PhaseEnd, PackageEnd, RunEnd,
+    Prompt, Warning, Error, PhaseEnd, PackageEnd, RunEnd, Diagnostic,
 )
 
 
@@ -227,6 +249,15 @@ class MultiReporter:
                 for other in list(self._reporters):
                     with contextlib.suppress(Exception):
                         other.handle(notice)
+
+
+    def release_package(self, path: str) -> None:
+        """Tell every reporter that keeps files inside the package folder *path* to close them."""
+        with self._lock:
+            for reporter in list(self._reporters):
+                release = getattr(reporter, "release_package", None)
+                if release is not None:
+                    release(path)
 
 
 # The reporter that ``emit`` delivers to, per execution context.
@@ -288,7 +319,7 @@ def emit(event: Any) -> None:
 
 def _redacted(event: Any) -> Any:
     """Return *event* with the credentials of any URL in its text removed (userinfo, ``token=`` and similar query values)."""
-    if isinstance(event, (Step, Warning, Prompt)):
+    if isinstance(event, (Step, Warning, Prompt, Diagnostic)):
         text = redact_text(event.text)
         return event if text == event.text else dataclasses.replace(event, text=text)
     if isinstance(event, Error):
@@ -298,6 +329,17 @@ def _redacted(event: Any) -> Any:
         line = redact_text(event.line)
         return event if line == event.line else dataclasses.replace(event, line=line)
     return event
+
+
+def release_package_log(path: Any) -> None:
+    """Ask the active reporters to close the log files they hold open inside the package folder *path*.
+
+    A purge deletes the package folder, which holds this run's own package log; Windows cannot delete a file that is open, so
+    the producer calls this first. The rest of the package's events then go to the run log.
+    """
+    release = getattr(_ACTIVE.get(), "release_package", None)
+    if release is not None:
+        release(str(path))
 
 
 def emit_problems(warnings: Sequence[str], errors: Sequence[str], hint: str | None = None) -> None:

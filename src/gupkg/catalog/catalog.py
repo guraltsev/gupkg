@@ -38,7 +38,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from ..model.manifest import TrackResult
+from ..model.manifest import TrackResult, invalid_checksum_problem
 from ..model.settings import RegistryEntry as RegistryConfig
 from ..model.settings import Settings, expand_env
 from ..model.state import (
@@ -104,6 +104,12 @@ class NoValidVersion(CatalogError):
         """Build the message from the problems of the invalid versions."""
         self.name = name
         super().__init__(f"'{name}' has no valid version; see the invalid version problems: {'; '.join(problems)}")
+        # A malformed declared hash has its own stable error code (the manager reads the code, never the prose).
+        for problem in problems:
+            if invalid_checksum_problem([problem]):
+                self.error_code = "invalid-checksum"
+                self.error_details = {"version": problem.split(":", 1)[0], "field": "source.sha256"}
+                break
 
 
 class NotInstalled(CatalogError):

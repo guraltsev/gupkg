@@ -1,0 +1,30 @@
+{
+  "bin_files": {
+    "goodapp.cmd": "@echo off\n\"<ROOT>\\GoodApp\\current\\App\\GoodApp.exe\" %*\n"
+  },
+  "current": "1.2.3.local.1",
+  "env": {
+    "GOODAPP_HOME": {
+      "expandable": true,
+      "value": "<ROOT>\\GoodApp\\current\\App"
+    },
+    "Path": {
+      "expandable": true,
+      "value": "<BIN>;<ROOT>\\GoodApp\\current\\App\\bin"
+    }
+  },
+  "launchers": [],
+  "path": [
+    "<BIN>",
+    "<ROOT>\\GoodApp\\current\\App\\bin"
+  ],
+  "shortcuts": {
+    "<MENU>\\Good App.lnk": {
+      "arguments": "",
+      "description": "Launch GoodApp",
+      "icon_location": "<ROOT>\\GoodApp\\current\\Icons\\goodapp.ico,0",
+      "target_path": "<ROOT>\\GoodApp\\current\\App\\GoodApp.exe",
+      "working_directory": "<ROOT>\\GoodApp\\current\\App"
+    }
+  }
+}
