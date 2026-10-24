@@ -424,12 +424,22 @@ def test_git_source_needs_a_ref_or_a_commit() -> None:
 
 def test_checksum_discovery_needs_exactly_one_method() -> None:
     """`[source.checksum]` names one way to find a hash, with the fields that way needs."""
-    base = 'format = 2\n[source]\ndownload_url = "https://x.test/a.zip"\n[source.checksum]\n'
+    base = (
+        'format = 2\n[track]\nprovider = "page"\ncheck_url = "https://x.test/"\nmatch = "v(?P<version>[0-9]+)"\n'
+        '[source]\ndownload_url = "https://x.test/a.zip"\n[source.checksum]\n'
+    )
 
-    assert problems(base)
-    assert problems(base + 'sidecar = "https://x.test/a.sha256"\npage_match = "x"\n')
-    assert problems(base + 'sums_file = "https://x.test/SUMS"\n')
-    assert parse_manifest(base + 'sidecar = "https://x.test/a.sha256"\n').source.checksum.sidecar
+    assert problems(base, ManifestKind.TRACKER)
+    assert problems(base + 'sidecar = "https://x.test/a.sha256"\npage_match = "x"\n', ManifestKind.TRACKER)
+    assert problems(base + 'sums_file = "https://x.test/SUMS"\n', ManifestKind.TRACKER)
+    assert parse_manifest(base + 'sidecar = "https://x.test/a.sha256"\n', ManifestKind.TRACKER).source.checksum.sidecar
+
+
+def test_a_version_directory_has_no_checksum_table() -> None:
+    """`[source.checksum]` finds the hash of a discovered version, so it belongs to a tracker, not to a pinned version."""
+    text = 'format = 2\n[source]\ndownload_url = "https://x.test/a.zip"\n[source.checksum]\nsidecar = "https://x.test/a.sha256"\n'
+
+    assert any("belongs to a tracker" in problem for problem in problems(text))
 
 
 # ---------------------------------------------------------------------------
@@ -635,7 +645,7 @@ def test_render_pinned_gives_a_concrete_url_and_no_track() -> None:
     assert pinned.source.download_url == (
         "https://archive.mozilla.org/pub/firefox/releases/128.0.3/win64/en-US/Firefox%20Setup%20128.0.3.exe"
     )
-    assert pinned.source.checksum.entry == "win64/en-US/Firefox Setup 128.0.3.exe"
+    assert pinned.source.checksum is None and "checksum" not in manifest_to_toml(pinned)  # tracker-only: dropped (D10)
     assert "[track]" not in manifest_to_toml(pinned) and "${" not in manifest_to_toml(pinned)
     # The output is an ordinary version manifest.
     assert parse_manifest(manifest_to_toml(pinned)) == pinned

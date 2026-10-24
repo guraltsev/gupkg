@@ -95,6 +95,7 @@ class Step:
     select: str = "max"
     header: str | None = None
     headers: Mapping[str, str] = field(default_factory=dict)
+    optional: bool = False
 
 
 @dataclass(frozen=True)
@@ -637,8 +638,8 @@ def _chain(view: _View) -> ChainSpec:
     for position, row in enumerate(raw):
         sub = _View({}, row, view.problems)
         sub.error = lambda key, message, _n=position: view.error(f"fetch[{_n}].{key}", message)  # type: ignore[method-assign]
-        for key in sorted(set(row) - {"url", "match", "select", "header", "headers"}):
-            sub.error(key, "is not a key of a fetch step; use url, match, select, header or headers")
+        for key in sorted(set(row) - {"url", "match", "select", "header", "headers", "optional"}):
+            sub.error(key, "is not a key of a fetch step; use url, match, select, header, headers or optional")
         url = sub.string("url", required=True)
         if url is not None:
             allowed_now = seen | {"version"}
@@ -650,8 +651,13 @@ def _chain(view: _View) -> ChainSpec:
         if match:
             groups.update(match.groupindex)
             seen.update(match.groupindex)
-        steps.append(Step(url or "", match, match_text, sub.choice("select", SELECTS, "max"),
-                          sub.string("header"), _View({}, row, view.problems).headers()))
+        select = sub.choice("select", (*SELECTS, "each"), "max")
+        if select == "each" and position == len(raw) - 1:
+            sub.error("select", 'is "each" on the last step; "each" tries the candidates of a step against the steps after it')
+        if select == "each" and any(step.select == "each" for step in steps):
+            sub.error("select", 'is "each" on a second step; a chain may try the candidates of one step only')
+        steps.append(Step(url or "", match, match_text, select, sub.string("header"),
+                          _View({}, row, view.problems).headers(), sub.boolean("optional", False)))
     allowed = groups | set(BUILTIN_CAPTURES["chain"])
     version = view.template("version", allowed, default="${version}") or "${version}"
     _needs_version(view, "version", version, groups)

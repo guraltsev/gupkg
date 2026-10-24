@@ -1,0 +1,25 @@
+format = 2
+description = "Reference manager for collecting and citing research."
+project_url = "https://www.zotero.org/"
+modes = ["system", "user"]
+
+# The release download address redirects to the versioned file.
+[track]
+provider = "redirect"
+check_url = "https://www.zotero.org/download/client/dl?channel=release&platform=win-x64"
+match = '/release/(?P<version>\d+(?:\.\d+)+)/'
+unwrap_query = "url"
+
+# The publisher provides no checksum: no [source.checksum].
+# The Windows download is an installer package that 7-Zip unpacks (kind inferred from the file); nothing is run.
+[source]
+download_url = "${download_url}"
+
+# Installer debris left beside the program files in App.
+[[prepare]]
+remove = ["$PLUGINSDIR", "uninstall.exe", "setup.exe"]
+
+[[shortcut]]
+name = "Zotero"
+target = "$App\\core\\zotero.exe"
+description = "Reference manager"

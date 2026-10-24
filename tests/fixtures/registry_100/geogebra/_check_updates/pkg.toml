@@ -1,0 +1,19 @@
+format = 2
+description = "Dynamic mathematics software for geometry, algebra, and calculus."
+project_url = "https://www.geogebra.org/"
+modes = ["system", "user"]
+
+[track]
+provider = "redirect"
+check_url = "https://download.geogebra.org/package/win-port6"
+match = 'Portable-(?P<dashed>\d+(?:-\d+)+)\.zip'
+version = "${dashed|replace:-:.}"
+
+# The publisher provides no checksum for this release asset.
+[source]
+download_url = "${download_url}"
+
+[[shortcut]]
+name = "GeoGebra"
+target = "$App\\GeoGebra.exe"
+description = "Dynamic mathematics software"

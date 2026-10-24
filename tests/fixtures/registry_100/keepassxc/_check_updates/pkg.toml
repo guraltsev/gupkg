@@ -1,0 +1,26 @@
+format = 2
+description = "Cross-platform password manager compatible with KeePass databases."
+project_url = "https://keepassxc.org/"
+modes = ["system", "user", "portable"]
+
+[track]
+provider = "github"
+repo = "keepassxreboot/keepassxc"
+asset = "KeePassXC-${version}-Win64.zip"
+
+[source]
+download_url = "${asset_url}"
+
+[[source.extract]]
+src = "KeePassXC-*/"
+dest = ""
+
+# UNVERIFIED upstream portable mechanism
+[portable]
+markers = [{ path = "keepassxc.ini", content = "" }]
+persist = ["keepassxc.ini"]
+
+[[shortcut]]
+name = "KeePassXC"
+target = "$App\\KeePassXC.exe"
+description = "KeePassXC password manager"

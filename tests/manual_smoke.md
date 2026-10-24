@@ -318,7 +318,7 @@ what only real sites and real installers show.
    change, a failing case is a pattern that was wrong) and commit the recorded files. Why
    manual: needs the real vendor sites.
 2. **Real NSIS installers.** In a sandbox (`gupkg --sandbox <dir> install`) install the
-   obsidian and pidgin trackers of `tests/fixtures/registry2` after copying them into a test
+   obsidian and pidgin trackers of `tests/fixtures/registry_100` after copying them into a test
    registry with a real downloaded installer (`kind = "nsis"`). Confirm `App` holds the
    application with no `$PLUGINSDIR` folder and no uninstaller, and that no installer code ran
    (no new Start Menu or Programs entry). Why manual: no NSIS sample can be built offline and
@@ -375,3 +375,62 @@ root such as `%TEMP%\gupkg-028`). Everything the tests do on `FakeSystem` is rep
    fail with `package-busy` naming the first run, `cleanup` skips the package and the first run's
    `.gupkg\work` folder survives. Kill the first run (Task Manager) and run again: the stale lock is
    reclaimed. Why manual: two real processes and a real kill.
+
+## Registry 2 (issue 031)
+
+Everything the registry work could prove offline is automated (conversion, validation, the registry tool against recorded
+responses, fingerprints). The agents had no network, so these steps are the owner's. The registry lives in the separate
+repository `gupkg-registry`; its README repeats the commands.
+
+1. **First population of the registry (needs the network).** In a checkout of `gupkg-registry` (branch merged), run
+   `_scripts\registry-tool.cmd update --sandbox C:\temp\registry-sandbox`. Each package prints `added`, `current` or `failed`.
+   Fix failing trackers (the pattern or the vendor page changed) and run `update <name>` again. Review every new
+   `<name>\<version>\` directory, especially each one marked `[REVIEW]` (`sha256_from = "registry"`: the vendor publishes no
+   checksum, so the hash is the tool's own over an `https://` download: confirm it against the vendor's page or a second
+   download), then `_scripts\validate.cmd`, commit and push. Why manual: needs the vendors' sites; invented hashes must never
+   be committed.
+2. **Hash the legacy version.** Run `_scripts\registry-tool.cmd pin qbittorrent/5.2.3`; confirm `unpinned` disappears from
+   `_registry.toml` and `validate` stays green. Why manual: needs SourceForge.
+3. **`--auto-push` on a scratch remote.** Clone the registry into a scratch folder with a bare repository as `origin`, run
+   `registry-tool update <name> --auto-push` for a package with a new version and check the last commit (only the new
+   directory and `_registry.toml`) and that the bare repository has it. Why manual: needs a real source-control client and
+   credentials; the tests only record the commands.
+4. **Every package installs under the strict default.** On a clean Windows runner (or VM), with the registry synced, run
+   for each package `gupkg --sandbox <dir> install <name>` (no `--skip-checksum`), once in user mode and, for the
+   portable-capable ones (see `PORTABLE-UNVERIFIED.md`), once with `--mode portable`. Expect exit 0, `App` filled, and for
+   versions with `sha256_from = "registry"` the label *verified*. Why manual: needs the engine (issue 028), a clean Windows and
+   the vendors' downloads.
+5. **Verify each portable mechanism.** For every row of the registry's `PORTABLE-UNVERIFIED.md`: install portable, change a
+   setting, update or reinstall, and check it survived and that nothing was written outside `<package>\data` and `App`.
+   Correct the package's `[portable]` table where the upstream behaviour differs and delete its row. Why manual: only the real
+   applications show how they enter portable mode.
+6. **Record the HTTP fixtures and commit a real NSIS sample** (owed by issue 026 to this issue): see "Built-in services" steps 1
+   and 2. After recording, `python tools/snapshot_registry.py <registry> --check` must still say "snapshot is current", and the
+   CI job of the registry runs the recorded cases against its own trackers.
+7. **Distribution folder against the published fingerprint (needs the engine, issues 028 and 029).** Copy a registry version
+   directory (for example `<registry cache>\qbittorrent\5.2.3`) to a folder outside every root and run `gupkg install <folder>
+   --mode user` with the registry synced: the install is labelled *verified against registry <name>*. Change one byte of the
+   copy's `pkg.toml` and repeat: the install is refused and names `pkg.toml`. The comparison itself is automated
+   (`tests/test_fingerprint.py`); what is manual is the engine calling it. Why manual: the install engine does not exist yet.
+8. **GIMP's vendor installer.** The tracker declares `[source.installer]` (Inno Setup, `/DIR=$Stage`). Confirm the engine runs it
+   (no code that runs `[source.installer]` existed when this was written) and that `require = ["bin/gimp-3.exe"]` is judged
+   after the installer ran, not before. Why manual: real installer.
+9. **Git trackers over SSH.** latex-toolkit and overleaf-sync use `git@github.com:...` addresses (as in 0.17). The git service
+   runs with a scrubbed environment, so check that `registry-tool update latex-toolkit` can reach them from the maintainer's
+   machine, or switch them to `https://` if the repositories are public. Why manual: depends on your SSH setup.
+10. **CI.** Push the registry branch and confirm the `validate` workflow is green on `windows-latest` (it checks out
+    `guraltsev/gupkg`, so the gupkg code of this branch must be on that repository's `main` first, or run it by hand with
+    `gupkg_ref`). Replace the two actions' version tags by commit SHAs of those tags (not verifiable offline). Why manual:
+    GitHub only.
+11. **msys2's real `.tar.xz` through the safe unpacker.** Run `gupkg --sandbox <dir> install msys2` (or the tool's `update msys2`)
+    with the real release: it must unpack and `usr\bin\bash.exe` must start. The safe unpacker refuses any link entry, so if the
+    real archive contains one the unpack fails and the package needs another route. Why manual: needs the real archive.
+12. **GitHub digests.** For every package whose tracker uses the `github` provider (about 30), confirm the release assets really
+    carry a `digest` (the registry tool's output shows `github-digest` rather than `[REVIEW]`). A package whose releases carry
+    none gets a registry-computed hash instead: decide whether to accept it. Why manual: needs the live API.
+13. **The shutter-encoder page.** Run `registry-tool update shutter-encoder` and check which of the page's links was kept (the
+    Windows 64-bit file) and how many HEAD requests it took. Why manual: the real page decides.
+14. **Windows device-name versions.** Windows cannot create a folder named `CON` through normal calls, so the tests only
+    cover the rule. Check on a real machine that a registry holding a folder named `con` or `Nul.txt` fails
+    `registry-tool validate` with a clear message (create it with `mkdir \\?\C:\path\con`), and that nothing in gupkg lists it as a
+    version. Why manual: needs the real Win32 namespace.

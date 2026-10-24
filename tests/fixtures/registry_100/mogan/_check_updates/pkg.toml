@@ -1,0 +1,37 @@
+format = 2
+description = "Mogan STEM, a scientific writing and technical computing environment based on GNU TeXmacs."
+project_url = "https://mogan.app/"
+modes = ["system", "user"]
+
+[track]
+provider = "github"
+repo = "MoganLab/mogan"
+asset = "mogan-release-${version}-win-x64-stable.zip"
+
+# The release bundle also carries updater packages; only the nested portable
+# archive belongs in App.
+[source]
+download_url = "${asset_url}"
+
+[[source.nested]]
+path = "MoganSTEM-v${version}-64bit-stable-Portable.zip"
+dest = ""
+replace = true
+
+# The ".portable" marker changes Mogan's runtime behaviour; the package manager
+# already isolates App, so it is removed (the 0.17 hook did the same).
+# UNVERIFIED upstream portable mechanism
+[nonportable]
+remove = [".portable"]
+
+[[shortcut]]
+name = "Mogan STEM"
+target = "$App\\Mogan Stem.exe"
+working_dir = "$App"
+description = "Mogan STEM"
+
+[[shim]]
+name = "mogan"
+target = "$App\\Mogan Stem.exe"
+type = "gui"
+working_dir = "$App"

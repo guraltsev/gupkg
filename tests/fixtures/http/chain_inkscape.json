@@ -12,7 +12,7 @@
  },
  "responses": [
   {
-   "url": "https://inkscape.org/release/all/windows/64-bit/compressed-7z/",
+   "url": "https://inkscape.org/release/",
    "method": "GET",
    "status": 200,
    "headers": {

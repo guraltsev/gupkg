@@ -1,0 +1,24 @@
+{
+ "case": "github_rufus",
+ "tracker": "rufus",
+ "provider": "github latest, exact asset",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (tests/fixtures/registry_017/rufus/_bootstrap/pkg.toml, the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "4.6",
+  "download_url": "https://github.com/pbatard/rufus/releases/download/v4.6/rufus-4.6p.exe",
+  "sha256": "21612af3ef7d6bf19f4192e00d704802af6b3970f3bd7f04c8094872c46c94c1",
+  "sha256_from": "github-digest"
+ },
+ "responses": [
+  {
+   "url": "https://api.github.com/repos/pbatard/rufus/releases/latest",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"tag_name\": \"v4.6\", \"name\": \"v4.6\", \"draft\": false, \"prerelease\": false, \"html_url\": \"https://github.com/pbatard/rufus/releases/tag/v4.6\", \"assets\": [{\"name\": \"rufus-4.6.exe\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/pbatard/rufus/releases/download/v4.6/rufus-4.6.exe\", \"digest\": \"sha256:1c6e04178ce1ec209c0e555c55aa0056edcbcac826c67d3bd8fd7da403e49e65\"}, {\"name\": \"rufus-4.6p.exe\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/pbatard/rufus/releases/download/v4.6/rufus-4.6p.exe\", \"digest\": \"sha256:21612af3ef7d6bf19f4192e00d704802af6b3970f3bd7f04c8094872c46c94c1\"}, {\"name\": \"rufus-4.6_x86.exe\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/pbatard/rufus/releases/download/v4.6/rufus-4.6_x86.exe\", \"digest\": \"sha256:82b0497ac7f42d2b36fabc94a9ff21049125d7c32ceff4a85f81f6cc58d748fe\"}, {\"name\": \"rufus-4.6_arm64.exe\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/pbatard/rufus/releases/download/v4.6/rufus-4.6_arm64.exe\", \"digest\": \"sha256:4332eaf94fc63e068097c5a7395290b49d2d9f57a904709ebe92bb5f2f5c53de\"}]}"
+  }
+ ]
+}

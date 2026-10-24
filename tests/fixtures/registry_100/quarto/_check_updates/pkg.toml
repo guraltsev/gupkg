@@ -1,0 +1,20 @@
+format = 2
+description = "Open-source scientific and technical publishing system."
+project_url = "https://quarto.org/"
+modes = ["system", "user"]
+
+[track]
+provider = "github"
+repo = "quarto-dev/quarto-cli"
+asset = "quarto-${version}-win.zip"
+
+[source]
+download_url = "${asset_url}"
+require = ["bin/quarto.exe"]
+
+[[path]]
+value = "$App\\bin"
+
+[[shim]]
+name = "quarto"
+target = "$App\\bin\\quarto.exe"

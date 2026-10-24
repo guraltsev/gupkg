@@ -1,0 +1,24 @@
+{
+ "case": "github_pandoc",
+ "tracker": "pandoc",
+ "provider": "github latest, exact asset",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (tests/fixtures/registry_017/pandoc/_bootstrap/pkg.toml, the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "3.6.4",
+  "download_url": "https://github.com/jgm/pandoc/releases/download/3.6.4/pandoc-3.6.4-windows-x86_64.zip",
+  "sha256": "2909bac578c71228bc69d6ec88429feb0a2d57ba9f4a84ea02b730e2006cd051",
+  "sha256_from": "github-digest"
+ },
+ "responses": [
+  {
+   "url": "https://api.github.com/repos/jgm/pandoc/releases/latest",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"tag_name\": \"3.6.4\", \"name\": \"3.6.4\", \"draft\": false, \"prerelease\": false, \"html_url\": \"https://github.com/jgm/pandoc/releases/tag/3.6.4\", \"assets\": [{\"name\": \"pandoc-3.6.4-windows-x86_64.msi\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/jgm/pandoc/releases/download/3.6.4/pandoc-3.6.4-windows-x86_64.msi\", \"digest\": \"sha256:1731a2eceec03dbf2a1244fab1a804cfc23327341001e6d530dbca536653d41a\"}, {\"name\": \"pandoc-3.6.4-windows-x86_64.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/jgm/pandoc/releases/download/3.6.4/pandoc-3.6.4-windows-x86_64.zip\", \"digest\": \"sha256:2909bac578c71228bc69d6ec88429feb0a2d57ba9f4a84ea02b730e2006cd051\"}, {\"name\": \"pandoc-3.6.4-linux-amd64.tar.gz\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/jgm/pandoc/releases/download/3.6.4/pandoc-3.6.4-linux-amd64.tar.gz\", \"digest\": \"sha256:c54a900972353e04d15980c2d48ce41b58e69387c43e57d5228f3deb6233f3bb\"}]}"
+  }
+ ]
+}

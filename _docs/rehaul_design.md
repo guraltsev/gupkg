@@ -755,7 +755,7 @@ counted are from the 2026-10-22 registry.
 | `last_modified` | autoruns, processexplorer | `check_url`, `format = "%Y.%m.%d"` |
 | `rss` | netio-gui | `check_url`, `match` |
 | `git` | latex-toolkit, overleaf-sync, windebloattools | `repo_url`, `ref`; version = `YYYYMMDD-HHMMSS-<short sha>` (the commit is the integrity anchor) |
-| `chain` | winscp, inkscape, shutter-encoder | ordered `[[track.fetch]]` steps; each step's captures feed the next URL |
+| `chain` | winscp, inkscape, shutter-encoder | ordered `[[track.fetch]]` steps; each step's captures feed the next URL; a step may be `optional = true` (skipped when it fails or matches nothing: inkscape's digest link) or `select = "each"` (try its matches in page order, at most 20, against the later steps and keep the first that gets through: shutter-encoder's links to several systems; one `each` step per chain, and the whole walk is bounded at 60 requests) |
 | `module` | anything else | `pkg.local/track.py` → `track(ctx) -> TrackResult` |
 
 Every provider:
@@ -947,6 +947,16 @@ path exactly; `page_match` runs on the page the version came from (`${page_url}`
 (issue 027). A GitHub asset's `digest` is found by the `github` provider (`github-digest`). GitLab's
 releases API publishes no digest today, so a GitLab link's `sha256` or `digest` field is used if it
 ever appears, and otherwise the tracker declares `[source.checksum]`.
+
+**`optional = true` (issue 031).** A vendor that publishes a digest for some builds only (GNU Emacs) is
+declared with `optional = true`: when the file or the entry is missing the tracker finds the version
+without a checksum, and the registry tool then computes one with `sha256_from = "registry"`, flagged
+for review. Optional means the *source is absent*: a missing sums file or entry (`not found`, `not
+listed`) or a fetch that failed (`fetch failed`) is waived, with a Warning event and a note in the
+`TrackResult` that the registry tool prints next to `[REVIEW]`; a digest line that names the entry with
+something that is not a SHA-256, and a regular-expression failure (a deadline, a crashed worker), are never
+waived. A pinned version carries no `[source.checksum]`: `render_pinned` drops it and the package checker
+refuses it in a version directory.
 
 ### 8.6 Hook library
 
@@ -1483,7 +1493,8 @@ gupkg/
     populate/       the built-in download script; the custom-script runner (Python hook, or subprocess with JSON context)
     unpack/         zip, 7z, tar, sfx, nsis, msi, file, git; strip/subdir/nested/extract/require
     prepare.py      remove, rename, copy, write, module
-    checksum.py     sidecar, sums_file, json, page; verification; App and registry fingerprints
+    checksum.py     sidecar, sums_file, json, page; verification
+    fingerprint.py  the fingerprint of a version directory and of a distribution copy (section 17), shared by the registry tool, install and check
     hooks.py        loader + HookContext + hooklib re-exports
   system/       THE side-effect boundary
     port.py         System protocol (fs links, env/PATH, shortcuts, broadcast, elevation, processes, http fetch)
@@ -1531,6 +1542,9 @@ gupkg_migrate/  separate, non-core tool (gupkg-migrate), built in issue 023 (sec
                 gupkg-config -> settings, adoption of 0.17 installs,
                 shortcut import; ships in the release bundle;
                 `gupkg migrate` forwards to it (D45)
+gupkg_registry/ separate maintainer tool (issue 031, section 17); may import gupkg core (D44); not in the
+                release bundle: update (run trackers, write pinned versions with sha256 and fingerprint),
+                pin, validate
 ```
 
 Dependency rules:
@@ -2000,6 +2014,52 @@ gupkg-registry/
   deletion is manual.
 - **Fingerprints** let gupkg verify a package that is installed without a
   download, such as a distribution folder (section 9.2, D29).
+  **The algorithm (issue 031, `gupkg.services.fingerprint`, version 1):** every regular
+  file below the version directory except the top-level `App` and `gupkg` folders is
+  described by a line `<size> <sha256 of its bytes> <relative path>` (`/` as separator,
+  UTF-8); the lines are sorted by the UTF-8 bytes of the path; the fingerprint is the
+  SHA-256 of `gupkg-fingerprint-1\n` followed by the lines. Timestamps and attributes are
+  not part of it, empty directories have no effect, an empty file is covered, line endings
+  are **not** normalised (so the registry stores every file byte for byte: `* -text` in its
+  `.gitattributes`, launchers CRLF, everything else LF), and links, junctions and special
+  files are refused rather than followed or skipped.
+- **The registry tool** is `gupkg_registry` in the gupkg repository (`python -m gupkg_registry`
+  `update`, `pin`, `validate`; the registry's `_scripts\registry-tool.cmd` runs it). It is a
+  maintainer tool, separate from core and not shipped in the release bundle. It writes the
+  `sha256` and `sha256_from` (`"registry"` for a hash it computed itself, over `https://` only,
+  flagged `[REVIEW]` in its output and in the `--auto-push` commit message), the support files
+  of the tracker without any update-check code, and the launchers generated from the template,
+  then records the fingerprint in `_registry.toml`. It runs unpack and prepare in a sandbox
+  folder and discards the staged `App`. A package is its unit of failure. Without `--auto-push`
+  it starts no `git` process.
+- **`unpinned`** (`_registry.toml`): `"name/version"` entries for legacy versions that still have no
+  hash. Validation tolerates exactly those and nothing else; `registry-tool pin name/version`
+  hashes one and removes the entry. It exists for the one pre-1.0 version (`qbittorrent/5.2.3`).
+- **Unversioned download addresses** (`unversioned` in `_registry.toml`, a list of package names). Where the
+  vendor serves every release at one address (Sysinternals' `Autoruns.zip`, ffmpeg's
+  `ffmpeg-release-essentials.zip`, XnView MP, DontSleep, Process Explorer, Shutter Encoder), a pinned
+  version keeps working only until the vendor replaces the file: afterwards its `sha256` fails for ever,
+  so "every version is kept" does not make such a version installable. The registry keeps the directory
+  anyway (deletion is manual), the tool prints `[UNVERSIONED]` and names these packages in the commit
+  message, and a test compares the list with the fixtures. A maintainer who needs an old build must
+  host it and change that version's `download_url` by hand.
+- **Version names** are checked wherever a version directory is created or read (`is_version_name`):
+  Windows device names (`CON`, `NUL`, `COM1`..., with or without an extension), control and bidirectional
+  characters, `%`, `$`, `~<digit>`, a leading dash, surrounding spaces and a trailing dot are refused, so a
+  hostile page cannot make the tool write a directory a Windows checkout cannot hold. Unicode control, format,
+  separator, private-use, surrogate and unassigned characters, variation selectors and names over 128
+  characters are refused too (a version a tracker discovers is capped at 64).
+- **The tool's housekeeping and limits.** Leftover `.new-<8 hex>` staging folders are removed only when
+  older than an hour (a live run keeps its own) and a folder that cannot be removed is a warning. The
+  fingerprint walk refuses more than 10,000 files, 2,000 directories, 32 levels or 512 MiB. `git add` and
+  `git commit` use `:(literal)` pathspecs; `--remote` and `--branch` follow the rules of `git
+  check-ref-format` (a branch may not start with `refs/`).
+- **Validation** (`gupkg_registry validate`, run by the registry's CI) requires: zero errors and zero
+  warnings from the package checker for every tracker and version, explicit `modes`, a `sha256` and
+  its provenance on every version, a fingerprint that matches the files, launchers equal to the
+  template (none in a tracker), at most 13 hook files each with a `Why no service` note, no link,
+  no `.bak`, LF endings in text files, a safe name for every version directory, and no stray directory,
+  file or leftover `.new-*` staging folder in a package folder.
 - **Every registry package installs under the strict CLI default** (no
   `--skip-checksum` needed). That is the acceptance bar for the migration.
 - **Several registries.** `[[registry]]` entries can name several

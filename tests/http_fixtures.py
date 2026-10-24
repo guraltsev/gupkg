@@ -1,7 +1,7 @@
 """Load HTTP fixture cases and registry-2 manifests, and build the service environment, for tests.
 
 ``tests/fixtures/http/<case>.json`` holds the responses of one registry package's provider
-(synthetic fixtures modelled on the registry hooks' regexes, marked ``recorded: null``, to be re-recorded by ``tools/record_http_fixtures.py``). ``tests/fixtures/registry2/<package>/_check_updates``
+(synthetic fixtures modelled on the registry hooks' regexes, marked ``recorded: null``, to be re-recorded by ``tools/record_http_fixtures.py``). ``tests/fixtures/registry_100/<package>/_check_updates`` (the snapshot of the real registry)
 holds the format 2 tracker that expresses that package with no hook. The helpers here turn
 them into a ``FakeSystem`` that serves the fixture answers, a shared ``HttpClient`` that
 never sleeps and never reads the ambient environment, and a parsed tracker manifest.
@@ -12,6 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import json
+import os
 
 from gupkg.model.manifest import Manifest, ManifestKind, parse_manifest
 from gupkg.services.http import HttpClient
@@ -20,7 +21,7 @@ from gupkg.system.fake import FakeHttp, FakeSystem
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 HTTP_CASES = FIXTURES / "http"
-REGISTRY2 = FIXTURES / "registry2"
+REGISTRY2 = Path(os.environ.get("GUPKG_REGISTRY_TRACKERS") or FIXTURES / "registry_100")  # the CI job of the registry points this at its own checkout
 
 
 def load_case(name: str) -> dict[str, FakeHttp]:
@@ -46,6 +47,6 @@ def environment(system: FakeSystem, tmp_path: Path, *, directory: Path | None = 
 
 
 def tracker_manifest(package: str) -> Manifest:
-    """Parse the committed tracker ``registry2/<package>/_check_updates/pkg.toml``."""
+    """Parse the committed tracker ``registry_100/<package>/_check_updates/pkg.toml``."""
     text = (REGISTRY2 / package / "_check_updates" / "pkg.toml").read_text(encoding="utf-8")
     return parse_manifest(text, ManifestKind.TRACKER)

@@ -1,0 +1,30 @@
+format = 2
+description = "Free, open-source utility for monitoring system resources, processes, services, and network activity."
+project_url = "https://systeminformer.sourceforge.io/"
+modes = ["system", "user", "portable"]
+
+# Tags carry a fourth build component that the ZIP name once omitted
+# (<x.y.z>-release-bin.zip, now <full tag>-bin.zip): accept both names.
+[track]
+provider = "github"
+repo = "winsiderss/systeminformer"
+asset_pattern = 'systeminformer-(?:${version}|\d+\.\d+\.\d+-release)-bin\.zip'
+
+# The GitHub asset digest, when GitHub publishes one, is the checksum (github provider).
+[source]
+download_url = "${asset_url}"
+
+# UNVERIFIED upstream portable mechanism
+# System Informer uses SystemInformer.exe.settings.xml beside the exe when that file exists.
+[portable]
+persist = ["amd64/SystemInformer.exe.settings.xml"]
+markers = [{ path = "amd64/SystemInformer.exe.settings.xml", content = "" }]
+
+# Release payloads must not carry machine-specific settings (replaces remove_settings.py).
+[nonportable]
+remove = ["*/SystemInformer.exe.settings.xml"]
+
+[[shortcut]]
+name = "Tools\\System Informer"
+target = "$App\\amd64\\SystemInformer.exe"
+description = "System resource and process monitor"

@@ -1,0 +1,26 @@
+format = 2
+description = "A desktop application for your personal backups, powered by restic."
+project_url = "https://restic.cryptic.link/"
+modes = ["system", "user"]
+
+# Each release links one Windows executable (link name "Windows") whose job artifact path changes with every build.
+[track]
+provider = "gitlab"
+repo = "stormking/resticguigx"
+link_name = "Windows"
+
+# GitLab publishes no digest and the vendor no sums file: no [source.checksum].
+# The release is one executable named after its version: copied as it is, then given a fixed name.
+[source]
+download_url = "${asset_url}"
+kind = "exe"
+
+[[prepare]]
+rename = { from = "*.exe", to = "restic-backup-gx.exe" }
+
+[[shortcut]]
+name = "restic-backup-gx"
+target = "$App\\restic-backup-gx.exe"
+working_dir = "$App"
+icon_location = "$App\\restic-backup-gx.exe,0"
+description = "GUI for Restic"

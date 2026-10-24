@@ -1,0 +1,37 @@
+format = 2
+description = "Video, audio, and image conversion tool built on FFmpeg."
+project_url = "https://www.shutterencoder.com/"
+modes = ["system", "user"]
+
+# The home page links the download; the version is in the Content-Disposition
+# header of that link's answer. The site wants a browser User-Agent.
+[track]
+provider = "chain"
+download = "${link}"
+
+[[track.fetch]]
+url = "https://www.shutterencoder.com/"
+select = "each"    # the page links several systems; keep the first link whose answer names the Windows 64-bit file
+match = '(?P<link>https://www\.shutterencoder\.com/sdc_download/\d+/\?key=[A-Za-z0-9]+)'
+headers = { User-Agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36" }
+
+[[track.fetch]]
+url = "${link}"
+header = "Content-Disposition"
+match = 'filename="?(?P<name>Shutter Encoder (?P<version>\d+(?:\.\d+)*) Windows 64bits\.zip)"?'
+headers = { User-Agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36" }
+
+# The ZIP wraps everything in a "Shutter Encoder" folder.
+[source]
+download_url = "${download_url}"
+subdir = "Shutter Encoder"
+require = ["Shutter Encoder.exe"]
+
+[source.headers]
+User-Agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36"
+
+[[shortcut]]
+name = "Shutter Encoder"
+target = "$App\\Shutter Encoder.exe"
+working_dir = "$App"
+description = "Video and audio converter"

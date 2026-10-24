@@ -1,0 +1,35 @@
+format = 2
+description = "Strawberry Perl portable distribution with a bundled C toolchain."
+project_url = "https://strawberryperl.com/"
+modes = ["system", "user"]
+
+# Tags look like SP_54231_64bit and do not spell the version: it comes from the asset name.
+[track]
+provider = "github"
+repo = "StrawberryPerl/Perl-Dist-Strawberry"
+version_from = "asset"
+asset_pattern = 'strawberry-perl-(?P<version>\d+(?:\.\d+)+)-64bit-portable\.zip'
+
+# The GitHub asset digest is the checksum (found by the github provider).
+[source]
+download_url = "${asset_url}"
+
+[[path]]
+value = "$App\\perl\\bin"
+
+[[path]]
+value = "$App\\perl\\site\\bin"
+
+[[path]]
+value = "$App\\c\\bin"
+
+[[shim]]
+name = "perl"
+target = "$App\\perl\\bin\\perl.exe"
+
+[[shortcut]]
+name = "Perl shell"
+target = "$App\\portableshell.exe"
+working_dir = "%USERPROFILE%"
+icon_location = "$App\\win32\\strawberry.ico,0"
+description = "Strawberry Perl portable shell"

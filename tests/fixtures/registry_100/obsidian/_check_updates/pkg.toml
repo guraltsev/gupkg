@@ -1,0 +1,25 @@
+format = 2
+description = "Markdown knowledge base and note-taking app."
+project_url = "https://obsidian.md/"
+modes = ["system", "user"]
+
+[track]
+provider = "github"
+repo = "obsidianmd/obsidian-releases"
+asset = "Obsidian-${version}.exe"
+
+# The GitHub asset digest is the checksum (found by the github provider).
+[source]
+download_url = "${asset_url}"
+kind = "nsis"
+
+# The NSIS installer carries the program as an inner 7-Zip archive; it replaces the installer's own files.
+[[source.nested]]
+path = "$PLUGINSDIR/app-64.7z"
+dest = ""
+replace = true
+
+[[shortcut]]
+name = "Obsidian"
+target = "$App\\Obsidian.exe"
+description = "Markdown knowledge base"

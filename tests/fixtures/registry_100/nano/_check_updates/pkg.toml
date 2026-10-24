@@ -1,0 +1,21 @@
+format = 2
+description = "Small, friendly command-line text editor."
+project_url = "https://www.nano-editor.org/"
+modes = ["system", "user"]
+
+# The publisher provides no checksum beyond GitHub's asset digest.
+[track]
+provider = "github"
+repo = "okibcn/nano-for-windows"
+asset = "nano-for-windows_win64_v${version}.zip"
+
+[source]
+download_url = "${asset_url}"
+strip = "auto"
+
+[[path]]
+value = "$App"
+
+[[shim]]
+name = "nano"
+target = "$App\\nano.exe"

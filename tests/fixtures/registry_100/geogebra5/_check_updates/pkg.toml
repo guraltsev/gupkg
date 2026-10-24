@@ -1,0 +1,24 @@
+format = 2
+description = "Dynamic mathematics software, Classic 5 edition."
+project_url = "https://www.geogebra.org/"
+modes = ["system", "user"]
+
+[track]
+provider = "redirect"
+check_url = "https://download.geogebra.org/package/win-port"
+match = 'Portable-(?P<dashed>\d+(?:-\d+)+)\.zip'
+version = "${dashed|replace:-:.}"
+
+# The publisher provides no checksum for this release asset.
+[source]
+download_url = "${download_url}"
+
+# Keep only the "GeoGebra x.y.z" wrapper folder's contents, as at 0.17.
+[[source.extract]]
+src = "GeoGebra */"
+dest = ""
+
+[[shortcut]]
+name = "GeoGebra Classic 5"
+target = "$App\\GeoGebra.exe"
+description = "Dynamic mathematics software"

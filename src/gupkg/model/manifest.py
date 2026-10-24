@@ -181,6 +181,7 @@ class Checksum:
     json: str | None = None
     path: str | None = None
     page_match: str | None = None
+    optional: bool = False
 
 
 @dataclass(frozen=True)
@@ -433,6 +434,8 @@ class TrackResult:
     version: str
     captures: Mapping[str, str] = field(default_factory=dict)
     checksum: DiscoveredChecksum | None = None
+    notes: tuple[str, ...] = ()
+    """What the tracker waived and a maintainer should know (an optional checksum source that held nothing)."""
 
 
 # ---------------------------------------------------------------------------
@@ -733,6 +736,11 @@ def parse_manifest_data(data: Mapping[str, Any], kind: ManifestKind = ManifestKi
             collector.error("track", f"a tracker ({TRACKER_DIR_NAME}) needs a [track] table")
         if source.sha256 is not None or source.sha256_from is not None:
             collector.error("source", "a tracker has no sha256 or sha256_from: check-updates sets them from a discovered checksum")
+    elif source.checksum is not None:
+        collector.error(
+            "source.checksum",
+            "finds the hash of a discovered version and belongs to a tracker; a version directory carries the sha256 itself",
+        )
 
     if collector.problems:
         raise ManifestError(collector.problems)
@@ -891,8 +899,9 @@ def _parse_checksum(collector: _Collector, raw: Any) -> Checksum | None:
     table = collector.table(raw, "source.checksum")
     if table is None:
         return None
-    collector.keys(table, _CHECKSUM_KEYS, "source.checksum")
+    collector.keys(table, (*_CHECKSUM_KEYS, "optional"), "source.checksum")
     values = {key: collector.string(table, key, "source.checksum") for key in _CHECKSUM_KEYS}
+    optional = bool(collector.boolean(table, "optional", "source.checksum"))
     methods = [
         name for name, present in (
             ("sidecar", values["sidecar"]), ("sums_file", values["sums_file"]),
@@ -909,7 +918,7 @@ def _parse_checksum(collector: _Collector, raw: Any) -> Checksum | None:
         collector.error("source.checksum.entry", "belongs to sums_file")
     if values["path"] is not None and methods != ["json"]:
         collector.error("source.checksum.path", "belongs to json")
-    return Checksum(**values)
+    return Checksum(**values, optional=optional)
 
 
 def _parse_installer(collector: _Collector, raw: Any, modes: tuple[str, ...]) -> Installer | None:
@@ -1278,7 +1287,7 @@ def _source_to_data(source: Source) -> dict[str, Any]:
     }
     if source.checksum is not None:
         data["checksum"] = _drop_empty(
-            {key: getattr(source.checksum, key) for key in _CHECKSUM_KEYS}
+            {**{key: getattr(source.checksum, key) for key in _CHECKSUM_KEYS}, **({"optional": True} if source.checksum.optional else {})}
         )
     if source.installer is not None:
         data["installer"] = {"run": list(source.installer.run)}
@@ -1444,6 +1453,7 @@ def render_pinned(tracker: Manifest, result: TrackResult) -> Manifest:
 
     source = data.setdefault("source", {})
     source["shipped"] = tracker.source.shipped
+    source.pop("checksum", None)  # tracker-only: a version carries the sha256 it was given (D10)
     checksum = result.checksum
     if checksum is not None:
         if checksum.sha256_from not in DISCOVERED_SHA256_FROM:

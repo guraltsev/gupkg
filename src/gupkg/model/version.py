@@ -23,6 +23,7 @@ input or output: directory listings are passed in by the caller.
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Collection, Iterable
 from functools import cmp_to_key
 
@@ -36,7 +37,23 @@ DATA_DIR_NAME = "data"
 RESERVED_NAMES = frozenset({CURRENT_DIR_NAME, TRACKER_DIR_NAME, DATA_DIR_NAME})
 MANIFEST_NAME = "pkg.toml"
 
-_UNSAFE_NAME_CHARACTERS = re.compile(r'[<>:"/\\|?*]|[\x00-\x1f]')
+# Characters that are never part of a version name: path syntax, control characters (C0 and C1), line and
+# paragraph separators, zero-width and bidirectional controls, and the byte order mark.
+_UNSAFE_NAME_CHARACTERS = re.compile(
+    r'[<>:"/\\|?*]|[\x00-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff]'
+)
+# Unicode categories that make a name invisible or ambiguous: controls, format characters (soft hyphen, word joiner,
+# tag characters, bidirectional marks), line and paragraph separators, private use, surrogates and unassigned code points;
+# and the variation selectors, which change nothing a reader can see.
+_UNSAFE_CATEGORIES = frozenset({"Cc", "Cf", "Zl", "Zp", "Co", "Cn", "Cs"})
+_VARIATION_SELECTORS = re.compile("[\ufe00-\ufe0f\U000e0100-\U000e01ef]")
+MAX_NAME_LENGTH = 128
+# Tokens a shell or Windows could expand or shorten: ``%TEMP%``, ``$HOME``, ``PROGRA~1``.
+_EXPANDING_TOKENS = re.compile(r"[%$]|~\d")
+_DIGITS = "123456789\u00b9\u00b2\u00b3"
+_DEVICE_NAMES = frozenset(
+    {"con", "prn", "aux", "nul", "conin$", "conout$"} | {f"com{d}" for d in _DIGITS} | {f"lpt{d}" for d in _DIGITS}
+)
 
 
 def is_reserved_name(name: str) -> bool:
@@ -73,12 +90,21 @@ def is_version_name(name: str) -> bool:
     Returns
     -------
     bool
-        ``True`` for a non-empty, path-safe name without surrounding spaces or a
-        trailing dot that is not reserved. ``bootstrap2`` is an ordinary version.
+        ``True`` for a non-empty, path-safe name that is not reserved. ``False`` for surrounding
+        spaces, a trailing dot, a leading ``-``, control and bidirectional characters,
+        ``%``, ``$`` and ``~<digit>`` (expansion and short names), and Windows device names
+        (``CON``, ``NUL``, ``COM1``, ``LPT1``..., with or without an extension, any letter case),
+        Unicode control, format, separator, private-use, surrogate and unassigned characters, variation
+        selectors, and names longer than ``MAX_NAME_LENGTH`` (128; a version that a tracker discovers
+        is capped at 64 by ``valid_version``). ``bootstrap2`` is an ordinary version.
     """
-    if not name or name != name.strip() or name.endswith("."):
+    if not name or name != name.strip() or name.endswith(".") or name.startswith("-"):
         return False
-    if _UNSAFE_NAME_CHARACTERS.search(name):
+    if len(name) > MAX_NAME_LENGTH or _UNSAFE_NAME_CHARACTERS.search(name) or _EXPANDING_TOKENS.search(name):
+        return False
+    if _VARIATION_SELECTORS.search(name) or any(unicodedata.category(char) in _UNSAFE_CATEGORIES for char in name):
+        return False
+    if name.split(".", 1)[0].rstrip(" ").casefold() in _DEVICE_NAMES:
         return False
     return not is_reserved_name(name)
 

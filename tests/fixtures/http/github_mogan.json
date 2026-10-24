@@ -1,0 +1,24 @@
+{
+ "case": "github_mogan",
+ "tracker": "mogan",
+ "provider": "github latest, exact asset with version",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/mogan/_bootstrap/pkg.toml); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "1.2.9",
+  "download_url": "https://github.com/o/r/releases/download/v1.2.9/mogan-release-1.2.9-win-x64-stable.zip",
+  "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+  "sha256_from": "github-digest"
+ },
+ "responses": [
+  {
+   "url": "https://api.github.com/repos/MoganLab/mogan/releases/latest",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"tag_name\": \"v1.2.9\", \"name\": \"v1.2.9\", \"draft\": false, \"prerelease\": false, \"html_url\": \"https://github.com/o/r/releases/tag/v1.2.9\", \"assets\": [{\"name\": \"mogan-release-1.2.9-win-x64-stable.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/o/r/releases/download/v1.2.9/mogan-release-1.2.9-win-x64-stable.zip\", \"digest\": \"sha256:1111111111111111111111111111111111111111111111111111111111111111\"}, {\"name\": \"mogan-release-1.2.9-win-x64-beta.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/o/r/releases/download/v1.2.9/mogan-release-1.2.9-win-x64-beta.zip\", \"digest\": \"sha256:2222222222222222222222222222222222222222222222222222222222222222\"}, {\"name\": \"mogan-release-1.2.9-ubuntu.deb\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/o/r/releases/download/v1.2.9/mogan-release-1.2.9-ubuntu.deb\", \"digest\": \"sha256:3333333333333333333333333333333333333333333333333333333333333333\"}]}"
+  }
+ ]
+}

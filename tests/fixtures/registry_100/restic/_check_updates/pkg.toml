@@ -1,0 +1,22 @@
+format = 2
+description = "Fast, secure, and efficient backup program."
+project_url = "https://restic.net/"
+modes = ["system", "user"]
+
+[track]
+provider = "github"
+repo = "restic/restic"
+asset = "restic_${version}_windows_amd64.zip"
+
+[source]
+download_url = "${asset_url}"
+
+[[prepare]]
+rename = { from = "restic_${version}_windows_amd64.exe", to = "restic.exe" }
+
+[[path]]
+value = "$App"
+
+[[shim]]
+name = "restic"
+target = "$App\\restic.exe"

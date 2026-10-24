@@ -1,0 +1,24 @@
+{
+ "case": "github_keepassxc",
+ "tracker": "keepassxc",
+ "provider": "github latest, exact asset",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (tests/fixtures/registry_017/keepassxc/_bootstrap/pkg.toml, the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "2.7.10",
+  "download_url": "https://github.com/keepassxreboot/keepassxc/releases/download/2.7.10/KeePassXC-2.7.10-Win64.zip",
+  "sha256": "5d2b640b7a5ca3428f643ba726dd21dce3d899adf5c1ade61627f06a42e1bb3d",
+  "sha256_from": "github-digest"
+ },
+ "responses": [
+  {
+   "url": "https://api.github.com/repos/keepassxreboot/keepassxc/releases/latest",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"tag_name\": \"2.7.10\", \"name\": \"2.7.10\", \"draft\": false, \"prerelease\": false, \"html_url\": \"https://github.com/keepassxreboot/keepassxc/releases/tag/2.7.10\", \"assets\": [{\"name\": \"KeePassXC-2.7.10-Win64.msi\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/keepassxreboot/keepassxc/releases/download/2.7.10/KeePassXC-2.7.10-Win64.msi\", \"digest\": \"sha256:2d1f1f54e9db4be4f6cac6fde0677d31368911607c1fad09151787facda4d1bc\"}, {\"name\": \"KeePassXC-2.7.10-Win64.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/keepassxreboot/keepassxc/releases/download/2.7.10/KeePassXC-2.7.10-Win64.zip\", \"digest\": \"sha256:5d2b640b7a5ca3428f643ba726dd21dce3d899adf5c1ade61627f06a42e1bb3d\"}, {\"name\": \"KeePassXC-2.7.10-Win64.zip.DIGEST\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/keepassxreboot/keepassxc/releases/download/2.7.10/KeePassXC-2.7.10-Win64.zip.DIGEST\", \"digest\": \"sha256:87171ff62f022b620c0d7c9e3ba69301648aaa504a4cd7e0165905b494c71f92\"}]}"
+  }
+ ]
+}

@@ -1,0 +1,24 @@
+{
+ "case": "github_quarto",
+ "tracker": "quarto",
+ "provider": "github latest, exact asset",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (tests/fixtures/registry_017/quarto/_bootstrap/pkg.toml, the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "1.6.42",
+  "download_url": "https://github.com/quarto-dev/quarto-cli/releases/download/v1.6.42/quarto-1.6.42-win.zip",
+  "sha256": "b08fd9ed4bbcbb5d3ff69e76984ea80a0ba7293b43c745137dded74c8be6f6a1",
+  "sha256_from": "github-digest"
+ },
+ "responses": [
+  {
+   "url": "https://api.github.com/repos/quarto-dev/quarto-cli/releases/latest",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"tag_name\": \"v1.6.42\", \"name\": \"v1.6.42\", \"draft\": false, \"prerelease\": false, \"html_url\": \"https://github.com/quarto-dev/quarto-cli/releases/tag/v1.6.42\", \"assets\": [{\"name\": \"quarto-1.6.42-win.msi\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/quarto-dev/quarto-cli/releases/download/v1.6.42/quarto-1.6.42-win.msi\", \"digest\": \"sha256:d5d137911f67927856860b8910d1aef7559333f22e15791225d6ab0e87cde686\"}, {\"name\": \"quarto-1.6.42-win.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/quarto-dev/quarto-cli/releases/download/v1.6.42/quarto-1.6.42-win.zip\", \"digest\": \"sha256:b08fd9ed4bbcbb5d3ff69e76984ea80a0ba7293b43c745137dded74c8be6f6a1\"}, {\"name\": \"quarto-1.6.42-linux-amd64.tar.gz\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/quarto-dev/quarto-cli/releases/download/v1.6.42/quarto-1.6.42-linux-amd64.tar.gz\", \"digest\": \"sha256:da10850884ad2f54bb7b9a6aba6073e26fcda6035d2c3062b7e3efc899dd843f\"}]}"
+  }
+ ]
+}

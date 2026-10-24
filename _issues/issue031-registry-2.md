@@ -102,3 +102,13 @@ Continues issue 014 (new packages), which is now written against this layout.
       hooks fetch only URLs written in the selected version's `pkg.toml`
       (D11, D28). Upstream checks happen only in the registry tool, or when
       the user runs `gupkg check-updates <name>` locally.
+
+## Notes from the offline pass (job 08)
+
+The work was done offline in a local clone of the registry. Done: the conversion and rewrite of all 79 packages (no hook file
+remains), the registry tool (`src/gupkg_registry`), the fingerprint algorithm (`gupkg.services.fingerprint`, design 17), the layout
+with `_registry.toml`, the CI workflow, the registry's tests on the package checker, and the tests in this repository. Owed to the owner
+(`tests/manual_smoke.md`, "Registry 2", and the registry's README): populating real pinned versions with real hashes, hashing
+`qbittorrent/5.2.3` (listed under `unpinned` in `_registry.toml` until then), installing every package on a clean runner, verifying each
+portable mechanism (`PORTABLE-UNVERIFIED.md`), recording the HTTP fixtures, and the engine-side use of the fingerprint
+(`gupkg.services.fingerprint.verify_directory`, for issue 028).

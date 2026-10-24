@@ -1,0 +1,93 @@
+# Issue 031 worker log
+
+Branch: rehaul/issue031 (from main 0d69dd0). Registry clone (a separate repository, offline, never pushed):
+`<worktree>\gupkg-registry`, branch `rehaul/issue031` (git-ignored by this repository). Baseline on main: 2122 passed, 0 failed, 0 skipped.
+
+## Scope split (owner: offline, local clone)
+
+Done here: conversion of all 79 packages, rewrite onto the services, modes and portable declarations, package faults, the
+registry tool (`src/gupkg_registry`), the fingerprint algorithm (`gupkg.services.fingerprint`), `_registry.toml`, CI workflow, the
+registry's tests moved to the package checker, tests in this repository, design text, manual checks.
+Manual (owner, `tests/manual_smoke.md` "Registry 2" and the registry README): real pinned versions with real hashes
+(run `update`), `pin qbittorrent/5.2.3`, installing every package on a clean runner, verifying each portable mechanism
+(`PORTABLE-UNVERIFIED.md`), recording the 76 HTTP fixtures and a real NSIS sample, the engine-side fingerprint use, GIMP's installer, CI.
+
+## Files
+
+This repository: `src/gupkg/services/fingerprint.py`; `src/gupkg_registry/{__init__,__main__,cli,layout,publish,update,validate}.py`;
+`tools/snapshot_registry.py`; `tests/fixtures/registry_100/` (snapshot of the real converted registry, replaces
+`tests/fixtures/registry2/`, `-text` in `.gitattributes`); 76 fixture cases in `tests/fixtures/http/` (51 new: 12 + 6 + 5 + 28; the 25 of issue 026, three of them changed);
+tests `test_fingerprint`, `test_registry_tool`, `test_registry_validate`, `test_registry_100`, `test_registry_trackers`; changed
+`tests/http_fixtures.py` (`GUPKG_REGISTRY_TRACKERS`), `test_track_providers`, `test_registry_expressible` (keypirinha keeps its
+`portable` folder until `[nonportable]` is applied), `tools/record_http_fixtures.py`, design 12 and 17, `tests/manual_smoke.md`.
+Registry clone: see its `git log` (convert, rewrite, layout and CI, LF fix).
+
+## Decisions taken (not settled by design or issue)
+
+- **Where the tool lives:** `src/gupkg_registry/`, a separate maintainer tool like `gupkg_migrate` (may import core, D44), not copied
+  into the release bundle (the build copies only `gupkg` and `gupkg_migrate`). The registry runs it through `_tools/registry_tool.py`.
+- **Fingerprint:** algorithm in the module docstring and design 17; byte-exact (no line-ending normalisation); `App` and `gupkg`
+  top-level folders excluded; links refused. The registry stores files byte for byte (`* -text`) and validation requires LF in text files.
+  `verify_directory` is what the engine (028) must call for a distribution folder; it can name differing files when the registry's own
+  copy is given as reference.
+- **`unpinned` in `_registry.toml`:** the one legacy version `qbittorrent/5.2.3` has no hash and none can be computed offline. Instead of
+  deleting it (deletion is a maintainer act, D36) or committing an invented hash, validation tolerates exactly the listed versions;
+  `pin` hashes one and removes the entry. Validation fails for any other version without a `sha256`.
+- **No `verified` key** exists in `[portable]` (the schema rejects unknown keys and core is not mine to change), so unverified portable
+  declarations are recorded by `PORTABLE-UNVERIFIED.md` (a registry test requires every declaring package to be listed) and a TOML comment.
+- **Launchers** come from `gupkg_migrate.launchers` until issue 033 moves the template into core (the tool calls `write_launchers`).
+  Trackers carry no launchers; every version directory gets both.
+- **Registry-computed hashes** use the `--skip-checksum` machinery of 027 (`skipped-cli`, https enforced on every hop) inside the tool, then
+  write `sha256_from = "registry"`; they are marked `[REVIEW]` in the output and in the `--auto-push` commit message.
+- **`gupkg pkg check` (029) does not exist:** the registry's `_tools/pkg_check.py` calls `gupkg.pkgcheck.check_directory`, the only place
+  that imports gupkg internals; the swap to the CLI is one function.
+- Tracker fixtures now come from the snapshot (`registry_100`), removing the duplicated `registry2` copies; the registry's CI points the same tests
+  at its own checkout through `GUPKG_REGISTRY_TRACKERS`.
+
+## Findings
+
+- Package work was done by four parallel workers on disjoint package lists; all 79 packages pass `check_directory` with 0 errors and 0 warnings, 0 hook files remain
+  (limit 13). A differential test against the migration tool's own conversion of every 0.17 original shows only five intentional differences.
+- Mechanical conversion kept some wrong guesses that review fixed: git `ref = "refs/heads/main"`, a `$VersionRoot\Icons\backrest.ico` that never existed,
+  restic-backup-gx's asset, GIMP's `windows/` folder and development-series filter, inkscape's check URL, keypirinha's unconditional marker removal.
+- Agents wrote CRLF into some registry text files; the fingerprint is byte-exact, so validation now rejects CR in text files and the registry was normalised.
+- `msys2/_check_updates/config.default/configure_nsswitch.{py,cmd}` (a 0.17 post-install helper, not referenced by any manifest) is left as a support file;
+  no service expresses its in-place edit of `etc/nsswitch.conf`. Owner decision whether to keep it.
+- `[source.installer]` (GIMP) is parsed but no code runs it yet (issue 028).
+
+## Review round 1
+
+Merged main (controller commits only). Fixes, by the reviewer's numbers:
+
+1. **Hostile version names.** `model.version.is_version_name` (the one rule behind the catalog, `render_pinned`, `valid_version`, the registry cache
+   reader and `pkgcheck`) now refuses Windows device names (stem before the first dot, any case, superscript digits), control characters (C0, C1,
+   line and paragraph separators), zero-width and bidirectional controls, the byte order mark, `%`, `$`, `~<digit>` and a leading `-`.
+   `tests/test_version_names.py`: a table of real versions, 55 hostile names, hostile versions found by a tracker page through `update_registry` (nothing
+   written, no download), and the catalog scan. Registry `validate` flags a stray directory without `pkg.toml`, a leftover `.new-*`, a file in a
+   package folder, an unsafe version name and two versions differing only in case (the last tested with a stand-in: Windows cannot hold the pair).
+2. **shutter-encoder.** The chain provider gains `select = "each"` on a step (page order, at most 20 candidates, each fetched through the shared
+   client, the first that gets through the later steps wins, none: fail closed) and `optional = true` (skip a failing or empty step). A regex
+   deadline is never taken for "no match" (cause-chain check, mutation-tested). Fixture `chain_shutter` has Mac, dead, Windows and Linux links;
+   `test_registry_semantics.py` runs 12 orders, the none-matches, cap and deadline cases.
+3. **inkscape** digest steps are `optional`. **4. emacs** has `[source.checksum] sums_file` with the new `optional = true` (core: `Checksum.optional`,
+   `run_tracker` falls back to no checksum, never past a regex failure); the older `sha256sum.txt` spelling is not followed (README).
+   **5. pidgin:** no `probe`: the index walk already backtracks; the fixture has a newest folder without the installer and a test asserts both folders were fetched.
+   **6. 7zip:** x64 announcement restored (tolerant of tags and `&nbsp;`), the URL rule kept and justified; tests with x86/ARM64/x64 in six orders and a page with no x64.
+   **7. winscp:** headers on both steps, asserted from the request log. **8.** sqlitebrowser gets a `[portable]` table (`DB4S-settings.ini`, unverified; the reviewer
+   suggested another name, I recalled this one from the project's source); tixati is unchanged (not confident about anything beyond the marker; documented).
+   **9.** `unversioned` list in `_registry.toml` (6 packages), `[UNVERSIONED]` output, commit-message section, README and design 17; a test compares the list with the fixtures.
+10. **Publish.** `git commit -- <paths>`; `--remote` / `--branch` (names starting with `-` or with spaces refused, never forced); computed hashes are refused
+    unless `--allow-computed`. Tests for each, 19 mutants killed (the two that survived were fixed: bidi range, case duplicates).
+11. **CI.** Pushes only to `main`, pull requests, manual `gupkg_ref` input, a message when the gupkg checkout fails, pip cache, actions by full version tag
+    (SHA pinning is a README / manual item); tests on the workflow text.
+12. **Nits.** Atomic `write_text_bytes` (a test makes `os.replace` fail), stale `.new-<8 hex>` folders removed at the start of a run, fingerprint caps (10,000 files, 512 MiB),
+    no Unicode normalisation documented, geogebra fixtures reformatted, the literal 13 pinned.
+13. **Flake.** `test_the_regex_worker_answers_a_request_in_isolation` finds the `pid` line anywhere; 30 repeated runs alone and 30 beside a parallel pytest process: 0 failures.
+Round 2 (final tidy): workflow values reach scripts through `env:` only (a registry test fails on any `${{` in a `run:` block); one `each` step per
+chain and a 60-request budget for the chain walk (its own error, never skipped); `render_pinned` drops `[source.checksum]` and a version directory that carries
+one is an error; an optional checksum waives only an absence and says which (warning event, `TrackResult.notes`, printed beside `[REVIEW]`), a malformed digest
+line is an error; `is_version_name` also refuses Unicode Cc, Cf, Zl, Zp, Co, Cn, Cs, variation selectors and names over 128 characters; stale staging only after an hour
+and errors tolerated; fingerprint walk caps directories (2,000) and depth (32); `:(literal)` pathspecs; ref-format rules for `--remote` and `--branch`; the shutter-encoder
+link regex matches bare URLs; the inkscape digest regex needs a whole 64-digit token. 23 more mutants killed.
+
+14. Manual list gained items 11 to 14; the SSH git URLs stay (0.17 used them, public status unknown), as a documented manual item.

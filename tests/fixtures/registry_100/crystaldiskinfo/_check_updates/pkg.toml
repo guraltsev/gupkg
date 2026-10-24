@@ -1,0 +1,23 @@
+format = 2
+description = "Disk health and S.M.A.R.T. monitor."
+project_url = "https://crystalmark.info/"
+modes = ["system", "user", "portable"]
+
+[track]
+provider = "redirect"
+check_url = "https://crystalmark.info/redirect.php?product=CrystalDiskInfo"
+unwrap_query = "url"
+match = '/files/(?P<version>\d+(?:\.\d+)+)/'
+
+# The publisher provides no checksum for this release asset.
+[source]
+download_url = "${download_url}"
+
+# UNVERIFIED upstream portable mechanism
+[portable]
+persist = ["DiskInfo.ini"]
+
+[[shortcut]]
+name = "Tools\\CrystalDiskInfo"
+target = "$App\\DiskInfo64.exe"
+description = "CrystalDiskInfo"

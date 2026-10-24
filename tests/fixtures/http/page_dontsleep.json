@@ -1,0 +1,24 @@
+{
+ "case": "page_dontsleep",
+ "tracker": "dontsleep",
+ "provider": "page (version announcement, digest from the page text)",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/dontsleep/_bootstrap/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "10.01",
+  "download_url": "https://www.softwareok.com/Download/DontSleep_x64_Portable.zip",
+  "sha256": "3a1f5c0e9b7d42a68c1e0f5b9d3a7c2e4f6081b3d5a79c0e2f4b6d8a1c3e5f70",
+  "sha256_from": "vendor-sums"
+ },
+ "responses": [
+  {
+   "url": "https://www.softwareok.com/?Download=DontSleep",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/html"
+   },
+   "body": "<html><head><meta name=\"description\" content=\"Download Don't Sleep 10.01 portable\"></head><body>\n<h2>Download Don't Sleep 10.01</h2>\n<table><tr><td>DontSleep_x86_Portable.zip<div class=\"hash\">SHA-256: <span>00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff</span></div></td></tr>\n<tr><td>DontSleep_x64_Portable.zip<div class=\"hash\">SHA-256: <span>3A1F5C0E9B7D42A68C1E0F5B9D3A7C2E4F6081B3D5A79C0E2F4B6D8A1C3E5F70</span></div></td></tr>\n</table></body></html>"
+  }
+ ]
+}

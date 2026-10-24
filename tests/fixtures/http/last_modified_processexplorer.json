@@ -1,0 +1,26 @@
+{
+ "case": "last_modified_processexplorer",
+ "tracker": "processexplorer",
+ "provider": "last_modified",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/processexplorer/_bootstrap/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "20240912",
+  "download_url": "https://download.sysinternals.com/files/ProcessExplorer.zip",
+  "sha256": null,
+  "sha256_from": null
+ },
+ "responses": [
+  {
+   "url": "https://download.sysinternals.com/files/ProcessExplorer.zip",
+   "method": "HEAD",
+   "status": 200,
+   "headers": {
+    "Last-Modified": "Thu, 12 Sep 2024 16:02:44 GMT",
+    "Content-Length": "2957000",
+    "Content-Type": "application/x-zip-compressed"
+   },
+   "body": ""
+  }
+ ]
+}
