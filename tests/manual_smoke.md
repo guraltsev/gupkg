@@ -518,3 +518,52 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
    package. Why manual: real process trees and a real window close.
 8. **After the program closes.** Close `gupkg-tui` after an update: the console shows the summary and the log path (and nothing with
    `[manager] keep_screen = false`). Why manual: real console behaviour after a full-screen program exits.
+
+
+## Bundled mode, package launchers and bootstrap (issue 033)
+
+1. **Elevated launcher refusals and the elevated test run.** From an elevated PowerShell run
+   `scripts\test.cmd tests\test_package_launcher.py -v`: the ten tests marked `needs_admin` (they skip in a standard shell) build an
+   admin-only tree under the temporary folder, grant `Users` write on one object at a time (package folder, version folder, root data
+   folder, forwarder, a Python file, the root itself, a file deep in the installed gupkg) and expect the launcher to refuse, and expect
+   it to proceed in the untouched tree and through `current` only when `current` names a version of the same package. Then right-click
+   an `install.cmd` in `Downloads` and choose Run as administrator: expect `Refusing to run elevated` and no Python started. Why manual:
+   UAC and the integrity level of a real elevated token (the automated tests simulate "elevated" to run the real access check).
+2. **A bundled install leaves no gupkg behind.** On a machine with no installed gupkg, run `gupkg pkg export` for a small package (or use a
+   registry package with `gupkg pkg bundle`), unzip the ZIP into `Downloads` with Explorer and double-click `install.cmd` (click Run on
+   the security warning). Expect the program installed under `%USERPROFILE%\opt\<name>\<version>`, its shortcut and shims, and no
+   `<root>\gupkg` package, no `<root>\.gupkg\gupkg.cmd`, no `gupkg` shim and no gupkg `PATH` entry; nothing new under `%LOCALAPPDATA%`,
+   `%APPDATA%` or `%ProgramData%` other than the Start Menu entry. Delete the `Downloads` folder: the program still works. Then
+   double-click `current\gupkg-tui.cmd`, run check-updates and an update, and confirm the new version directory holds a copy of `gupkg\`
+   and that switching back to the old one leaves its launchers working. `uninstall --purge` leaves only `<root>\.gupkg\logs`. Why manual:
+   the real registry, Start Menu and a clean machine (clean-VM run; the automated tests use `FakeSystem`).
+3. **Bootstrap, user and system.** On a clean VM run `gupkg-bootstrap.cmd` (user), then in an elevated shell
+   `gupkg-bootstrap.cmd -Scope system`. Expect `gupkg\<version>` in `%USERPROFILE%\opt` and `C:\opt`, `App` matching `MANIFEST.sha256`,
+   `current`, the three shims, `PATH`, the Start Menu entry and `<root>\.gupkg\` with the forwarder; `C:\opt` and `C:\opt\.gupkg` are
+   admin-only (`icacls`); `gupkg check` is healthy. Re-run both: nothing breaks. Why manual: the real ACLs, junction, registry and UAC.
+4. **Squatted system root.** As a standard user create `C:\opt` (`mkdir C:\opt`), then run `gupkg-bootstrap.cmd -Scope system` elevated:
+   expect a refusal naming the reason and nothing unpacked; delete the folder and run it again to see it succeed. Why manual: needs a real
+   `C:\opt` created by a standard user (the automated test checks the same decision on a temporary folder).
+5. **An installed gupkg takes over, and old gupkg falls back.** With bundled installs from item 2 in the root, run the bootstrap in the
+   same root: their `install.cmd` and `gupkg-tui.cmd` now go through the forwarder (see the newest file in `<root>\.gupkg\logs`), also when
+   their bundled copy is newer, and `--no-system-gupkg=true` uses the bundled copy. Then temporarily set `requires_gupkg = ">=99"` in
+   the version's `pkg.toml`, run `install.cmd`: the installed gupkg exits 6 and the launcher finishes with the bundled copy. A decoy
+   `gupkg.exe` on `PATH` and in the current directory is never run. `gupkg uninstall gupkg` removes the forwarder: launchers fall back
+   to their bundled copies, and a launcher with none prints the bootstrap URL and exits 9009. `gupkg cleanup --bundled` removes no bundled
+   copy while the forwarder is missing (and says why), and removes them once gupkg is installed again. Why manual: real launchers on a real
+   installed gupkg.
+6. **Self-update.** From an installed gupkg run `gupkg self check-updates` then `gupkg self update` against a real second release (build
+   one with a bumped version and a `RELEASES.md` row, or use the published one): expect a new `<root>\gupkg\<new>` with a verified `App`
+   and `gupkg\` tree, `current` switched, the forwarder byte-identical. Why manual: needs two real releases on GitHub.
+7. **Mark of the Web, SmartScreen and Smart App Control.** On a clean machine download a distribution ZIP with Edge, extract it with
+   Explorer, double-click `install.cmd` (expect the Run/Cancel security warning, then the install) and check that the copies under the
+   root have no `Zone.Identifier` stream (`Get-Item -Stream * <file>`) and that the receipt (`<package>\.gupkg\receipts\<version>.toml`)
+   records `source_marked = true`. Repeat with Smart App Control in evaluation mode: record whether the bundled `python.exe` from the
+   extracted ZIP and the installed copy run, and fix `_docs/troubleshooting.md` with what you see. Why manual: needs a real browser download
+   and a machine with Smart App Control (spike S2; it could not be run during the rehaul, so it stays owed before 1.0 is published).
+8. **System install of a distribution.** In an elevated shell with the system gupkg installed, run
+   `gupkg install <folder in Downloads> --mode system`: the folder is copied into `C:\opt\<name>\<v>` and installed from there, nothing
+   starts from `Downloads`, and `--in-place` installs where the folder is. Why manual: real elevation and a real `C:\opt`.
+9. **The registry after the launcher change.** In the registry checkout run `python -m gupkg_registry launchers --registry .`, review the
+   diff (every tracker gets `check-updates.cmd`, every pinned version gets the new `install.cmd` and `gupkg-tui.cmd`, `_registry.toml`
+   gets the new fingerprints), run `validate`, then commit. Why manual: the registry is a separate repository.

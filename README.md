@@ -66,23 +66,41 @@ package on a Python package index. Pick the route that fits:
   gupkg-bootstrap.cmd -Scope system    :: force all users (needs an elevated shell)
   ```
 
-  It downloads the newest release ZIP (`gupkg-<version>-win-amd64.zip`, which
-  `RELEASES.md` lists with its SHA-256) and checks the download against that
-  digest. It then checks every file of the unpacked release against the
-  release's `MANIFEST.sha256` (a modified, missing or extra file stops the
-  install), places it at `<root>\gupkg\<version>` (default root
-  `%USERPROFILE%\opt` for user scope, `C:\opt` for system scope; `-Root` changes
-  it), creates the `gupkg` and `gupkg-tui` commands and their PATH entry, and
-  runs `gupkg manager init`. It is safe to repeat. The only downloads are
-  `RELEASES.md` and the ZIP. Use `-Source` with a ZIP (URL or path) or an
-  extracted release folder, and `-Sha256` to verify it, to install a vetted
-  release from your own share; `-SkipInstall` only places the files.
-  Nothing needs to be installed first: the ZIP carries its own Python, the
-  locked dependencies and the native launchers.
+  The script is thin: it downloads the newest release ZIP
+  (`gupkg-<version>-win-amd64.zip`, which `RELEASES.md` lists with its SHA-256),
+  checks the download against that digest, unpacks it and runs the
+  `install.cmd` of the version directory it holds. That launcher starts the gupkg
+  bundled in the ZIP, which installs the `gupkg` package like any other: it copies
+  the bundled tree into `App` (checking every file against `MANIFEST.sha256`; a
+  modified, missing or extra file stops the install), creates `current`, the
+  `gupkg`, `gupkg-tui` and `gupkg-manager` commands, their `PATH` entry and the
+  Start Menu entry, and writes the root data folder `<root>\.gupkg\` with the
+  root forwarder through which the package launchers of that root find the
+  installed gupkg. In user scope the ZIP is unpacked to a staging folder and the
+  result is `%USERPROFILE%\opt\gupkg\<version>`. In system scope the script
+  creates `C:\opt` owned by Administrators and writable by nobody else (it refuses
+  an existing `C:\opt` that is not like that), unpacks straight into it and runs
+  `C:\opt\gupkg\<version>\install.cmd` elevated, which first checks that
+  everything it will run is admin-only. It is safe to repeat, and running it again
+  is how a 0.18 installation moves to 1.0. The only downloads are `RELEASES.md` and
+  the ZIP. Use `-Source` with a ZIP (URL or path) and `-Sha256` to install a vetted
+  release from your own share, or the distribution of another program in user
+  scope (that installs only that program, never gupkg); `-SkipInstall` only
+  verifies and unpacks. Nothing needs to be installed first: the ZIP carries its
+  own Python, the locked dependencies and the native launchers.
+
+  A ZIP downloaded with a browser (and extracted with Explorer) has the Mark of
+  the Web on every file, so Windows asks before it runs the first `install.cmd`
+  ("Open File - Security Warning"): click Run, or tick Unblock in the ZIP's
+  Properties before extracting it. Files that gupkg copies into a root carry no
+  mark, so later launchers do not ask. See the
+  [troubleshooting guide](_docs/troubleshooting.md#a-security-warning-when-running-installcmd-or-smartscreen-and-smart-app-control).
 - **Release ZIP by hand.** The ZIP built by `tools\build_standalone.py` (and
   attached to each GitHub release) is the only distribution. Give it to the
-  bootstrap script as `-Source`, or unpack it yourself and run its
-  `gupkg\gupkg.cmd install <folder> --mode user`.
+  bootstrap script as `-Source`, or unzip it and run
+  `gupkg\<version>\install.cmd`: with no installed gupkg in reach, the launcher
+  runs the gupkg bundled beside it. Every distribution made with
+  `gupkg pkg export` installs the same way, and installs only its program.
 - **From a source checkout (development).** `src\gupkg.cmd install PATH` runs
   on the Python committed at `src\gupkg\python`, like every other launch: no
   system Python, `PATH` lookup or download is ever used. Fetching or refreshing

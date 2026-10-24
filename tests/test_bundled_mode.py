@@ -290,3 +290,22 @@ def test_a_populate_script_that_copies_a_shipped_folder_makes_app_recoverable(wo
 
     assert result.ok and (folder / "App" / "app.exe").read_text(encoding="utf-8") == "shipped\n"
     assert (folder / "payload" / "app.exe").read_text(encoding="utf-8") == "shipped\n"
+
+
+# ---------------------------------------------------------------------------
+# Installing a distribution system-wide
+# ---------------------------------------------------------------------------
+
+
+def test_a_system_install_of_a_distribution_runs_nothing_from_the_source_folder(tmp_path: Path) -> None:
+    """From an admin shell the folder in Downloads is read and copied only: the process log has no path under it, and the install uses the admin-only copy."""
+    world = World(tmp_path, elevated=True)
+    world.publish_script("tool", "1.0.0", script="populate.cmd", tables=SHIM, root=world.base / "downloads")
+    source = world.base / "downloads" / "tool" / "1.0.0"
+
+    result = world.one("install", str(source), mode="system")
+
+    assert result.ok, result.error
+    commands = [part for call in (*world.fake.process_log, *world.fake.foreground_log) for part in call]
+    assert commands and not [part for part in commands if str(source) in part]
+    assert (world.system_root / "tool" / "1.0.0" / "pkg.local" / "populate.cmd").is_file()
