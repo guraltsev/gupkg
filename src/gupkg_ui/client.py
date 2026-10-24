@@ -267,6 +267,13 @@ class Client:
     root_options: tuple[str, ...] = ()
     env: Mapping[str, str] | None = None
 
+    @property
+    def temp_dir(self) -> Path | None:
+        """The temporary folder of the calls' environment: where a run puts its stop marker (``None`` when the environment names none)."""
+        env = self.env if self.env is not None else os.environ
+        text = env.get("TEMP") or env.get("TMP")
+        return Path(text) if text else None
+
     def argv(self, args: Sequence[str]) -> list[str]:
         """Return the full command line for *args* (the command word and what follows), refusing unsafe characters."""
         full = [*self.command, *self.root_options, *args]

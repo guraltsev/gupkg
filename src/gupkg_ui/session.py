@@ -174,13 +174,13 @@ class BatchSession:
     sink : Sink
         Receives the output while the calls run.
     temp_dir : Path, optional
-        The only folder where a stop marker may be created (the process ``TEMP`` by default).
+        The only folder where a stop marker may be created (the ``TEMP`` of the client's environment by default).
     """
 
     def __init__(self, client: Client, sink: Sink, *, temp_dir: Path | None = None) -> None:
         self._client = client
         self._sink = sink
-        self._temp_dir = temp_dir
+        self._temp_dir = temp_dir or client.temp_dir
         self._stop: StopRequest | None = None
         self.cancelled = False
         self.running = False

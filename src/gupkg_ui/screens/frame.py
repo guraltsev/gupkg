@@ -36,7 +36,7 @@ KeyHintBar, StatusFooter {
 }
 KeyHintBar { dock: top; }
 StatusFooter { dock: bottom; }
-VerticalScroll, RichLog, DataTable, Input { background: transparent; border: none; outline: none; }
+VerticalScroll, RichLog, DataTable, Input, OptionList { background: transparent; border: none; outline: none; }
 """
 
 

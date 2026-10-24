@@ -96,7 +96,7 @@ class LogScreen(FrameScreen):
     def on_mount(self) -> None:
         """Focus the log and load its end."""
         self.query_one(RichLog).focus()
-        self.run_worker(self._load(), name="read log")
+        self.run_worker(self._load(), name="read log", exit_on_error=False)
 
     async def _load(self) -> None:
         """Read the end of the log off the interface thread and show it."""

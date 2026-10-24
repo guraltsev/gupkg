@@ -262,12 +262,11 @@ def test_cancelling_during_the_first_call_starts_no_second_call_and_skips_its_ta
         "dir": logs_of(tmp_path, "user"), "stop_after": 0, "result": stopped,
         "packages": [{"name": name, "path": str(tmp_path / "roots" / "user" / name), "records": []} for name in ("a", "b")],
     })
-    env_temp = fake.temp
 
     async def scenario():
         """Run the update, cancel once package a has ended in the log, and return the outcome."""
         sink = ListSink()
-        session = BatchSession(env.client, sink, temp_dir=env_temp)
+        session = BatchSession(env.client, sink)
         task = asyncio.ensure_future(update_all(env, rows, session=session, sink=sink, interaction=Interaction()))
         while not any(line.startswith("Package a: ") for line in sink.shown):
             await asyncio.sleep(0.02)

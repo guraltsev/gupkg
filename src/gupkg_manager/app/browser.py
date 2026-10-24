@@ -62,7 +62,7 @@ class BrowserScreen(PackageActions, FrameScreen):
 
     def key_hints(self) -> str:
         """Return the keys of the browser."""
-        return "↑↓ Enter open  / filter  c check  u update  U all  x remove  l logs  ? help  q quit"
+        return "↑↓ Enter open  / filter  c check  u update  U all  x remove  ? help  q quit"
 
     def status_text(self) -> str:
         """Return the program's counts and registry state."""
@@ -84,7 +84,7 @@ class BrowserScreen(PackageActions, FrameScreen):
 
     def reload(self) -> None:
         """Read the inventory again in a worker; the selection and filter are kept."""
-        self.run_worker(self._load(), name="inventory", exclusive=True)
+        self.run_worker(self._load(), name="inventory", exclusive=True, exit_on_error=False)
 
     async def _load(self) -> None:
         """Read ``gupkg list --json`` and the registry state, then show the rows."""
@@ -213,7 +213,7 @@ class BrowserScreen(PackageActions, FrameScreen):
         """Show the log of the selected package."""
         row = self.selected_row()
         if row is not None:
-            self.run_worker(self._show_log(row), name="logs")
+            self.run_worker(self._show_log(row), name="logs", exit_on_error=False)
 
     async def _show_log(self, row: PackageRow) -> None:
         """Find the package's log through ``gupkg info`` and show it."""

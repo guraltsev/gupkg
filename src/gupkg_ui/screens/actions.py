@@ -53,7 +53,7 @@ class PackageActions:
             await self.app.start_run(title, job)
             self.reload()
 
-        self.run_worker(work(), name=f"start {title}")
+        self.run_worker(work(), name=f"start {title}", exit_on_error=False)
 
     async def _confirm(self, question: str, lines: Sequence[Text] = ()) -> bool:
         """Ask a yes-or-no question in a dialog."""

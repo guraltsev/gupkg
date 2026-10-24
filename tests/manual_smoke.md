@@ -458,10 +458,10 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
    `gupkg install %USERPROFILE%\Downloads\<dist>\<name>\<version> --mode system --relaunched --yes` and expect exit 2 ("accepts
    only package names and paths inside the system root"); without `--relaunched` the same folder is copied into `C:\opt`. Why
    manual: the real elevated token and ACLs.
-5. **The forwarders (the UI programs arrive with issue 030).** `gupkg migrate --help` prints the migration tool's help and
-   `gupkg migrate package <old>` converts a copy of a real 0.17 package; `gupkg tui <folder>` and `gupkg manager` say that
-   `gupkg-tui.cmd` or `gupkg-manager.cmd` was not found beside this gupkg until issue 030 adds them. Once those launchers exist,
-   check that the exit code of the program is the exit code of `gupkg`. Why manual: needs the real bundle layout.
+5. **The forwarders.** `gupkg migrate --help` prints the migration tool's help and `gupkg migrate package <old>` converts a copy of a
+   real 0.17 package; `gupkg tui <folder>` opens the package view of that folder and `gupkg manager` opens the browser (both from a normal
+   shell; from an elevated shell they refuse with exit 2). Check that the exit code of each program is the exit code of `gupkg`. Why
+   manual: needs the real bundle layout and a real console.
 6. **`gupkg logs`.** `gupkg logs <name> --open` opens the newest log in the program Windows associates with `.log`; `--path` prints
    its path. Why manual: needs the Windows shell association.
 7. **`gupkg self status`.** On an installed gupkg expect `ok` and the bundled interpreter; edit one file below the version
@@ -490,3 +490,27 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
     shows the encoding), `out.json` is pure ASCII with `\u` escapes that parse back to `жук`. In a console set to a legacy code
     page (`chcp 437`) the listing shows replacement marks for what the page cannot draw, with no error. Why manual: only a real
     console has a code page.
+
+## The UI programs (issue 030)
+
+1. **Look at both programs in a real terminal.** From a normal shell run `gupkg-manager` in Windows Terminal and in a plain `cmd` window
+   (80x24 and maximised) and open a package with Enter. Expect a one-line key-hint list on top and a one-line status line at the
+   bottom on every screen (browser, package view, run view, each dialog, help), nothing drawn over them, no flicker when opening a package
+   and coming back, and the filter and selection kept. Repeat with `set NO_COLOR=1`: every state is still readable in words. Why
+   manual: only a real terminal shows rendering, colour and resize behaviour.
+2. **Update all with real elevation.** With the system gupkg installed and one outdated user package and two outdated system packages,
+   run `gupkg-manager update --all` (type `y`): expect one plan, one question, one UAC prompt for both system packages and the user
+   package updated first. Decline the UAC prompt: the system packages are unchanged and the run ends with exit code 5. Why manual: real
+   UAC and the real second process.
+3. **Cancel during an elevated run.** Start an update of several system packages and press Escape then `y` while the first one runs:
+   it finishes cleanly, the rest are reported skipped and the exit code is 5; no further UAC prompt appears. Why manual: needs the
+   elevated child's stop marker in a real temporary folder.
+4. **Run from a user copy.** From a bundled or user-mode gupkg run `gupkg-manager update --all --yes`: system packages are reported as
+   needing the system gupkg, no UAC prompt appears, user packages are updated. Why manual: the real ACL check decides it.
+5. **Schedule behaviour.** In Task Scheduler (no console) run `gupkg-manager check-updates --all` and then `gupkg-manager update --all
+   --yes`: both finish without waiting for a key, and a package without a checksum under the default `ask` is reported as `refused: no
+   checksum` with exit code 3. Why manual: needs a real scheduled task without a terminal.
+6. **A hostile package name.** Make a folder `a&calc` in the user root and run `gupkg-manager update --all --yes` and open the browser:
+   the package is listed literally, refused alone with exit code 2, and no Calculator starts. Why manual: real `cmd` quoting.
+7. **After the program closes.** Close `gupkg-tui` after an update: the console shows the summary and the log path (and nothing with
+   `[manager] keep_screen = false`). Why manual: real console behaviour after a full-screen program exits.

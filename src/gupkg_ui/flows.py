@@ -77,21 +77,30 @@ async def run_update(
         entries = [synthetic_entry(item.target, "update", "failed", 3, f"the plan could not be made: {error}") for item in subjects]
         return await session.run([], extra_entries=[*unsafe, *entries])
 
-    # Decide every target with the policy (asking once per package when the policy is ``ask`` and someone can answer).
-    decisions = await decide_targets(planned, lambda item: env.settings.checksum_policy(item.mode), interactive=interaction.interactive, ask=interaction.ask_checksum)
-    entries = [*unsafe, *refused_entries(planned, decisions)]
-    runnable = [item for item in planned if item.state == "ready" and decisions.get(item.target, TargetDecision(False)).run]
+    # Preview what the policy would do, without answering any question: the targets it would ask about are noted, so the plan can say so.
+    policy_of = lambda item: env.settings.checksum_policy(item.mode)  # noqa: E731 - one short rule, used twice below
+    would_ask: set[str] = set()
+    preview = await decide_targets(
+        planned, policy_of, interactive=interaction.interactive, ask=lambda item: would_ask.add(item.target) and False,
+    )
 
-    # Show the plan, then ask once for the whole of it.
-    lines, question = plan_lines(planned, decisions, can_elevate=env.can_elevate)
+    # Show the plan, then ask once for the whole of it (before any per-package question, so a no costs the person nothing).
+    entries = [*unsafe, *refused_entries(planned, {key: value for key, value in preview.items() if key not in would_ask})]
+    lines, question = plan_lines(planned, preview, can_elevate=env.can_elevate, would_ask=would_ask)
     sink.lines(lines)
-    if runnable and interaction.confirm is not None:
+    pending = [item for item in planned if item.state == "ready" and (preview.get(item.target, TargetDecision(False)).run or item.target in would_ask)]
+    if pending and interaction.confirm is not None:
         answer = interaction.confirm(lines, question)
         if inspect.isawaitable(answer):
             answer = await answer
         if answer is not True:
-            entries += [synthetic_entry(item.target, "update", "cancelled", EXIT_INPUT, "not confirmed; left unchanged", ok=True) for item in runnable]
+            entries += [synthetic_entry(item.target, "update", "cancelled", EXIT_INPUT, "not confirmed; left unchanged", ok=True) for item in pending]
             return await session.run([], extra_entries=entries)
+
+    # Now ask the checksum questions, once per package, and decide every target with the policy.
+    decisions = await decide_targets(planned, policy_of, interactive=interaction.interactive, ask=interaction.ask_checksum)
+    entries = [*unsafe, *refused_entries(planned, decisions)]
+    runnable = [item for item in planned if item.state == "ready" and decisions.get(item.target, TargetDecision(False)).run]
 
     # Run: the user group first, then the one elevated call; the confirmation answers the CLI's own question (--yes).
     by_target = {subject.target: subject for subject in subjects}
@@ -118,8 +127,13 @@ def refused_entries(planned: Sequence[PlannedTarget], decisions: dict[str, Targe
     return entries
 
 
-def plan_lines(planned: Sequence[PlannedTarget], decisions: dict[str, TargetDecision], *, can_elevate: bool) -> tuple[list[Text], str]:
-    """Return the plan table (one line per target, saying what happens to it) and the one question that confirms it."""
+def plan_lines(
+    planned: Sequence[PlannedTarget], decisions: dict[str, TargetDecision], *, can_elevate: bool, would_ask: set[str] = frozenset(),
+) -> tuple[list[Text], str]:
+    """Return the plan table (one line per target, saying what happens to it) and the one question that confirms it.
+
+    *would_ask* names the targets whose missing checksum the person will be asked about after confirming the plan.
+    """
     lines = [Text("Plan", style="bold")]
     user = system = 0
     for item in planned:
@@ -129,6 +143,12 @@ def plan_lines(planned: Sequence[PlannedTarget], decisions: dict[str, TargetDeci
         mode = literal(item.mode or "?", limit=12)
         if item.state == "up-to-date":
             note, style = "up to date", "dim"
+        elif item.target in would_ask:
+            note, style = "no checksum: you will be asked", "yellow"
+            if item.mode == "system":
+                system += 1
+            else:
+                user += 1
         elif decision is not None and not decision.run:
             note, style = decision.message or decision.status, "yellow"
         elif item.state == "failed":
@@ -141,7 +161,7 @@ def plan_lines(planned: Sequence[PlannedTarget], decisions: dict[str, TargetDeci
                 system += 1
             else:
                 user += 1
-        lines.append(Text(f"  {name:<24} {change:<24} {mode:<8} {note}", style=style))
+        lines.append(Text(f"  {name:<16} {change:<18} {mode:<7} {note}", style=style))
     parts = [f"{count} {label}" for count, label in ((user, "user"), (system, "system")) if count]
     prompt = " (one administrator prompt)" if system and can_elevate else ""
     return lines, f"Update {' and '.join(parts) or 'no'} package{'s' if user + system != 1 else ''}{prompt}?"

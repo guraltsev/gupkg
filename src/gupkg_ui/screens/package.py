@@ -24,6 +24,7 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import VerticalScroll
+from textual.css.query import NoMatches
 from textual.widgets import Static
 
 from ..client import ClientError, targets_after_options
@@ -140,7 +141,7 @@ class PackageScreen(PackageActions, FrameScreen):
 
     def reload(self) -> None:
         """Read ``gupkg info`` again (in a worker) and show it."""
-        self.run_worker(self._read(), name="read package", exclusive=True)
+        self.run_worker(self._read(), name="read package", exclusive=True, exit_on_error=False)
 
     async def _read(self) -> None:
         """Run ``gupkg info <target> --json`` and show the package, or the reason it cannot be shown."""
@@ -158,7 +159,12 @@ class PackageScreen(PackageActions, FrameScreen):
         lines = info_lines(self.info) if self.info is not None else []
         if self._error:
             lines.insert(0, Text(f"Error: {literal(self._error)}", style="bold red"))
-        self.query_one("#text", Static).update(Text("\n").join(lines) if lines else Text(""))
+
+        # The screen may have been left while the read was running; then there is nothing to show it on.
+        try:
+            self.query_one("#text", Static).update(Text("\n").join(lines) if lines else Text(""))
+        except NoMatches:
+            return
         self.refresh_frame()
 
     # -- actions -------------------------------------------------------------------

@@ -61,12 +61,13 @@ is `model` <- `catalog`, `services` <- `engine` <- `cli`, and nothing below
   `MANIFEST.sha256`, `hooklib.py` is the library that hook modules import and
   `extractors.py` finds the bundled 7-Zip.
 - `bootstrap.py`: the launcher's Python entry point (trust check for elevated
-  runs, then the CLI, or the migration tool when `gupkg-migrate.cmd` asks).
+  runs, then the CLI, or the migration tool or a UI program when its launcher asks).
 
-`gupkg.cmd` starts `bootstrap.py` on the bundled Python; `gupkg-migrate.cmd` starts the
-migration tool the same way, and `gupkg migrate ...` runs it. The UI programs
-(`gupkg-tui`, `gupkg-manager`, issue 030) are started by `gupkg tui` and `gupkg manager`
-from launchers in the same gupkg tree.
+`gupkg.cmd` starts `bootstrap.py` on the bundled Python; `gupkg-migrate.cmd`, `gupkg-tui.cmd` and
+`gupkg-manager.cmd` start the migration tool and the two UI programs the same way (`bootstrap.py
+--gupkg-program=migrate|tui|manager`), and `gupkg migrate|tui|manager ...` run them. The UI programs
+(`gupkg_tui`, `gupkg_manager` and their shared library `gupkg_ui`, issue 030) sit beside the `gupkg`
+package; they read through core and perform every operation as a call to the sibling `gupkg.cmd`.
 These runtime modules are internal implementation details and are not a
 separate public API; the public contract is the command line and its JSON documents.
 
