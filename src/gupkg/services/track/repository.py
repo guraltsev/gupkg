@@ -47,7 +47,7 @@ def track_git(spec: GitSpec, env: TrackEnvironment) -> TrackResult:
     """
     if env.work_dir is None:
         raise TrackError("The git provider needs a scratch folder")
-    environment = git_environment(env.system)
+    environment = git_environment(env.system, env.work_dir)
 
     def git(*arguments: str, cwd: Path | None = None) -> str:
         """Run one Git command and return its stripped output."""

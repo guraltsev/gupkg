@@ -72,8 +72,13 @@ def git_command(*arguments: str, system: System | None = None) -> list[str]:
     return [*command, *arguments]
 
 
-def git_environment(system: System | None = None) -> dict[str, str]:
-    """Return the scrubbed environment for a Git process; an elevated run sees only admin-only folders on ``PATH``."""
+def git_environment(system: System | None = None, temp: Path | None = None) -> dict[str, str]:
+    """Return the scrubbed environment for a Git process.
+
+    An elevated run sees only admin-only folders on ``PATH``, values for the Windows folder, ``COMSPEC`` and ``PATHEXT`` that
+    do not come from the process environment, and the temporary folder *temp* (the work folder, which is admin-only
+    there) as ``TEMP`` and ``TMP`` when it is given.
+    """
     environment = safe_process_environment({
         "GIT_CONFIG_GLOBAL": _NULL_DEVICE,
         "GIT_CONFIG_SYSTEM": _NULL_DEVICE,
@@ -82,5 +87,6 @@ def git_environment(system: System | None = None) -> dict[str, str]:
         "GIT_ALLOW_PROTOCOL": "https:http:ssh:git",
         "GIT_ASKPASS": "",
         "SSH_ASKPASS": "",
+        **({"TEMP": str(temp), "TMP": str(temp)} if temp is not None else {}),
     }, system=system)
     return environment

@@ -15,6 +15,7 @@ Out of scope: real ACLs and UAC (``tests/manual_smoke.md``).
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -23,7 +24,7 @@ import pytest
 from gupkg.catalog.record import read_install_record, write_install_record
 from gupkg.model.state import Effect, InstallRecord
 from gupkg.services.gitenv import GitUnavailable, git_command, git_environment, git_executable
-from gupkg.system.port import Scope
+from gupkg.system.port import Scope, trusted_path_entries
 from gupkg.system.fake import FakeSystem
 from tests.engine_support import World, pin_no_ambient_elevation, pkg_text  # noqa: F401
 
@@ -227,3 +228,59 @@ def test_a_normal_run_uses_the_bare_git_name_and_keeps_its_path(tmp_path: Path, 
     system = FakeSystem(tmp_path / "machine", elevated=False, untrusted_dirs={folders[0]})
 
     assert git_executable(system) == "git" and git_environment(system)["PATH"] == str(folders[0])
+
+
+def test_the_trusted_path_keeps_only_existing_absolute_local_admin_only_folders_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Relative entries and `.`, `%VAR%`, UNC, missing folders, user-writable ones and repeats (any case, trailing slash) are dropped."""
+    good, other, writable = tmp_path / "good", tmp_path / "other", tmp_path / "writable"
+    for folder in (good, other, writable):
+        folder.mkdir()
+    entries = [".", "rel\\bin", "%SystemRoot%\\System32", "\\\\srv\\share", str(tmp_path / "missing"), str(writable), str(good),
+               str(good).upper() + "\\", str(good), "", f'"{other}"', "C:bin"]
+    monkeypatch.setenv("PATH", os.pathsep.join(entries))
+    system = FakeSystem(tmp_path / "machine", elevated=True, untrusted_dirs={writable})
+
+    assert trusted_path_entries(system) == [str(good), str(other)]
+
+
+def test_an_elevated_child_gets_no_comspec_pathext_or_windows_folder_from_the_process_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A planted COMSPEC, PATHEXT, SYSTEMROOT, WINDIR, TEMP or PROGRAMDATA does not reach an elevated git or installer child."""
+    windows = tmp_path / "Windows"
+    (windows / "System32").mkdir(parents=True)
+    evil = tmp_path / "users" / "evil"
+    evil.mkdir(parents=True)
+    for name, value in (("COMSPEC", str(evil / "cmd.exe")), ("PATHEXT", ".EVIL"), ("SYSTEMROOT", str(windows)), ("WINDIR", str(evil)),
+                        ("TEMP", str(evil)), ("TMP", str(evil)), ("PROGRAMDATA", str(evil))):
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("PATH", str(windows))
+    system = FakeSystem(tmp_path / "machine", elevated=True, untrusted_dirs={evil})
+    work = tmp_path / "work"
+
+    env = git_environment(system, work)
+
+    assert env["COMSPEC"] == str(windows / "System32" / "cmd.exe") and env["SYSTEMROOT"] == env["WINDIR"] == str(windows)
+    assert env["PATHEXT"] == ".COM;.EXE;.BAT;.CMD" and env["TEMP"] == env["TMP"] == str(work) and "PROGRAMDATA" not in env
+    assert str(evil) not in " ".join(env.values())
+    assert "TEMP" not in git_environment(system)
+
+
+def test_with_no_trusted_windows_folder_an_elevated_child_gets_no_windows_variables(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """SYSTEMROOT and WINDIR naming a user-writable or missing folder are not used, and COMSPEC is left out rather than guessed."""
+    evil = tmp_path / "evil"
+    evil.mkdir()
+    monkeypatch.setenv("SYSTEMROOT", str(evil))
+    monkeypatch.setenv("WINDIR", str(tmp_path / "missing"))
+    monkeypatch.setenv("COMSPEC", str(evil / "cmd.exe"))
+    system = FakeSystem(tmp_path / "machine", elevated=True, untrusted_dirs={evil})
+
+    env = git_environment(system)
+
+    assert not {"COMSPEC", "SYSTEMROOT", "WINDIR"} & set(env)
+
+
+def test_a_normal_run_keeps_the_process_values(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only an elevated run rebuilds these variables."""
+    monkeypatch.setenv("COMSPEC", "C:\\mine\\cmd.exe")
+    system = FakeSystem(tmp_path / "machine", elevated=False)
+
+    assert git_environment(system)["COMSPEC"] == "C:\\mine\\cmd.exe"

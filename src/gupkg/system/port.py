@@ -384,9 +384,15 @@ def safe_process_environment(extra: Mapping[str, str] | None = None, *, system: 
     """
     kept = {name: value for name, value in os.environ.items() if name.upper() in _SAFE_ENVIRONMENT_NAMES}
     if system is not None and is_elevated_run(system):
-        for name in [name for name in kept if name.upper() == "PATH"]:
-            del kept[name]
+        # Nothing here may come from the process environment, which a standard user can influence: ``PATH`` is the admin-only
+        # folders, the Windows folder values come from the trusted Windows folder (and are left out when there is none),
+        # ``PATHEXT`` is the fixed default, and ``TEMP``/``TMP``/``PROGRAMDATA`` are left out unless the caller gives them.
+        kept = {}
         kept["PATH"] = os.pathsep.join(trusted_path_entries(system))
+        root = trusted_system_root(system)
+        if root is not None:
+            kept.update({"SYSTEMROOT": str(root), "WINDIR": str(root), "COMSPEC": str(root / "System32" / "cmd.exe")})
+        kept["PATHEXT"] = ".COM;.EXE;.BAT;.CMD"
     kept.update(extra or {})
     return kept
 
@@ -398,16 +404,44 @@ def trusted_path_entries(system: System) -> list[str]:
     write: the process ``PATH`` can hold the user's own entries.
     """
     trusted: list[str] = []
+    seen: set[str] = set()
     for entry in os.environ.get("PATH", "").split(os.pathsep):
         folder = entry.strip().strip('"')
-        if not folder:
+
+        # Only an absolute local folder that exists: a relative entry or `.` is the current directory, `%VAR%` is expanded
+        # by whoever reads it, and a folder that is missing can be created later by anyone.
+        if not folder or "%" in folder or folder.startswith(("\\\\", "//")):
             continue
+        path = Path(folder)
         try:
-            if system.directory_untrusted_reason(Path(folder)) is None:
-                trusted.append(folder)
+            if not path.is_absolute() or not path.is_dir():
+                continue
+            key = os.path.normcase(os.path.normpath(folder)).rstrip("\\/")
+            if key in seen or system.directory_untrusted_reason(path) is not None:
+                continue
         except OSError:
             continue
+        seen.add(key)
+        trusted.append(folder)
     return trusted
+
+
+def trusted_system_root(system: System) -> Path | None:
+    """Return the Windows folder named by ``SYSTEMROOT`` or ``WINDIR`` when it is an existing admin-only folder, else ``None``.
+
+    The process environment can be set by a standard user, so the name is only a candidate: the folder itself is judged.
+    """
+    for name in ("SYSTEMROOT", "WINDIR"):
+        value = os.environ.get(name, "").strip()
+        if not value or "%" in value:
+            continue
+        path = Path(value)
+        try:
+            if path.is_absolute() and path.is_dir() and system.directory_untrusted_reason(path) is None:
+                return path
+        except OSError:
+            continue
+    return None
 
 
 def is_elevated_run(system: System) -> bool:

@@ -74,7 +74,7 @@ def checkout_commit(system: System, url: str, ref: str | None, commit: str | Non
     """
     if url.startswith("-"):
         raise UnpackError("A repository address cannot start with '-'")
-    environment = git_environment(system)
+    environment = git_environment(system, Path(work))
     checkout = Path(work) / "git-checkout"
     remove_tree(checkout)
     checkout.mkdir(parents=True)
