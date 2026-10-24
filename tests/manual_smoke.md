@@ -434,3 +434,41 @@ repository `gupkg-registry`; its README repeats the commands.
     cover the rule. Check on a real machine that a registry holding a folder named `con` or `Nul.txt` fails
     `registry-tool validate` with a clear message (create it with `mkdir \\?\C:\path\con`), and that nothing in gupkg lists it as a
     version. Why manual: needs the real Win32 namespace.
+
+
+## The unified command line and machine interface (issue 029)
+
+Run these with a gupkg built by `scripts\build-standalone.cmd`, unpacked into a throwaway root (`%TEMP%\gupkg-029`), unless a step
+says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `FakeSystem`.
+
+1. **A real console.** In Windows Terminal and in a redirected `cmd` (`gupkg install <name> > out.txt`), run `gupkg install`,
+   `gupkg update <name> --plan`, `gupkg list --details` and `gupkg info <name>`. On the terminal the phases are coloured and the
+   download has a live bar; redirected, the output is plain (`==> Phase`, no colour, one final progress line) and `--json` leaves
+   standard output a single document. Why manual: only a real console shows colour and the bar.
+2. **The real UAC relaunch (needs the system gupkg).** From a normal shell with the system gupkg on `PATH`, run
+   `gupkg install system:<name> --yes --events-file run.jsonl --json`. Expect exactly one UAC prompt, an elevated window that runs
+   the install and waits for a key, and `C:\opt\.gupkg\logs\run.jsonl` (and `C:\opt\<name>\.gupkg\logs\run.jsonl`) that a normal
+   shell can read and that ends with `run_end` carrying the result document. Read `stop_file` from the first line, create that
+   file during a run of three packages: the elevated run stops after the package it is working on and exits 5. Why manual: needs
+   UAC and the real admin-only `C:\opt`.
+3. **A user-writable gupkg never elevates.** Run `gupkg install system:<name>` with a user-mode gupkg (under
+   `%USERPROFILE%\opt`): expect exit 2 and "System installs need the system gupkg". Why manual: the real ACL check.
+4. **The elevated child refuses a user folder.** From an elevated prompt run the system gupkg with `--relaunched`:
+   `gupkg install %USERPROFILE%\Downloads\<dist>\<name>\<version> --mode system --relaunched --yes` and expect exit 2 ("accepts
+   only package names and paths inside the system root"); without `--relaunched` the same folder is copied into `C:\opt`. Why
+   manual: the real elevated token and ACLs.
+5. **The forwarders (the UI programs arrive with issue 030).** `gupkg migrate --help` prints the migration tool's help and
+   `gupkg migrate package <old>` converts a copy of a real 0.17 package; `gupkg tui <folder>` and `gupkg manager` say that
+   `gupkg-tui.cmd` or `gupkg-manager.cmd` was not found beside this gupkg until issue 030 adds them. Once those launchers exist,
+   check that the exit code of the program is the exit code of `gupkg`. Why manual: needs the real bundle layout.
+6. **`gupkg logs`.** `gupkg logs <name> --open` opens the newest log in the program Windows associates with `.log`; `--path` prints
+   its path. Why manual: needs the Windows shell association.
+7. **`gupkg self status`.** On an installed gupkg expect `ok` and the bundled interpreter; edit one file below the version
+   directory and expect exit 3 naming it. Why manual: needs a real install.
+8. **`gupkg pkg check --install` with real downloads.** On a package from the registry (a version directory with its pinned hash)
+   expect exit 0 with the real network, and the real user root and registry unchanged. Why manual: real downloads.
+9. **`gupkg shell`.** With `[integration.portable] integrate = "none"` and a portable root set, `for /f "delims=" %i in ('gupkg
+   shell --mode portable') do %i` puts `<root>\bin` on that console's `PATH`. Why manual: `cmd` interprets the line.
+10. **`uninstall --purge` on a real machine.** After a purge the package folder is gone including this run's own package log (it
+    cannot stay open), and the root's run log under `<root>\.gupkg\logs` records the deletion. Why manual: only real file locking
+    shows whether the log files were released.

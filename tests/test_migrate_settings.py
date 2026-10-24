@@ -1,13 +1,12 @@
 """Cover ``gupkg-migrate settings``: a 0.17 manager configuration becomes a schema 3 settings file.
 
 Behavior covered: roots, `bin` locations and the registry of a schema 2 `gupkg-config.toml`
-come out of the settings loader (the backend of `gupkg settings show`) exactly as the 0.17
-manager loader reads them, with the registry named `main`; relative and `~` paths become
+come out of the settings loader (the backend of `gupkg settings show`) as the values the 0.17
+file spells, with the registry named `main`; relative and `~` paths become
 explicit; `--check` writes nothing; an existing settings file is kept unless `--force` is
 given; a file that is not a schema 2 manager configuration is refused.
 
-Real: the command line, the 0.17 manager loader (``gupkg.manager.load_manager_config``), and
-the settings loader, on files under a temporary folder. Mocked: nothing (the run is not
+Real: the command line and the settings loader, on files under a temporary folder. Mocked: nothing (the run is not
 elevated, so the admin-only folder check is not involved). Out of scope: the 0.17 registry
 cache and shim linkage, which schema 3 drops.
 """
@@ -20,7 +19,6 @@ from pathlib import Path
 
 import pytest
 
-from gupkg.manager import load_manager_config
 from gupkg.settingsload import load_settings, settings_file
 from gupkg.system.fake import FakeSystem
 from gupkg_migrate.cli import main
@@ -63,18 +61,17 @@ def load(machine: dict):
 
 def test_converted_settings_show_the_same_roots_bin_locations_and_registry(machine: dict, capsys: pytest.CaptureFixture[str]) -> None:
     """The settings loader reports the roots, bin directories and registry that the 0.17 loader read, the registry named `main`."""
-    old = load_manager_config(machine["config"])
-
+    home = Path(machine["env"]["USERPROFILE"])
     assert main(["settings", str(machine["config"])]) == 0
 
     written = settings_file(machine["system"])
     assert written.is_file() and str(written) in capsys.readouterr().out
     settings = load(machine).settings
-    assert same(settings["roots.system"], old.system_root)
-    assert same(settings["roots.user"], old.user_root)
-    assert same(settings["integration.system.bin"], old.system_bin)
-    assert same(settings["integration.user.bin"], old.user_bin)
-    assert [(entry.name, entry.source) for entry in settings.registries] == [("main", old.registry_source)]
+    assert same(settings["roots.system"], machine["system"])
+    assert same(settings["roots.user"], home / "opt")
+    assert same(settings["integration.system.bin"], machine["system"].parent / "bin")
+    assert same(settings["integration.user.bin"], home / "bin")
+    assert [(entry.name, entry.source) for entry in settings.registries] == [("main", "https://example.org/team-registry.git")]
     assert settings.source_of("registry") == "system"
     assert settings.source_of("roots.system") == "system"
 

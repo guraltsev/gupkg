@@ -7,7 +7,7 @@ import from its own folder, and nothing that belongs to one install (a manager
 configuration, the source dump); the build stops when the CPython archive does not
 match the pinned digest; an installed version is checked against its manifest
 (modified, missing and extra files are reported, installation state is not), and
-``gupkg manager self status`` run from the bundle reports an edited file.
+``gupkg self status`` run from the bundle reports an edited file.
 
 Real: the build tool run as a subprocess, the ZIP it writes, the bundle's own
 launcher and bundled Python for the ``self status`` test. Mocked: nothing. The
@@ -192,32 +192,16 @@ def _elevated() -> bool:
 
 
 @pytest.mark.skipif(os.name != "nt" or _elevated(), reason="runs the bundle's launcher; an elevated run demands admin-only folders")
-def test_manager_self_status_reports_the_edited_file(installed: Path, tmp_path: Path) -> None:
-    """`gupkg manager self status` is healthy on the bundle, and names the file after one is edited."""
-    config = tmp_path / "gupkg-config.toml"
-    (tmp_path / "system").mkdir()
-    (tmp_path / "user").mkdir()
-    config.write_text(
-        'mode = "manager"\nschema_version = 2\n\n'
-        f"[packages]\nsystem = '{tmp_path / 'system'}'\nuser = '{tmp_path / 'user'}'\n\n"
-        f"[bin]\nsystem = '{tmp_path / 'system-bin'}'\nuser = '{tmp_path / 'user-bin'}'\n\n"
-        f"[registry]\ncache = '{tmp_path / 'registry'}'\n\n[shims]\nlinkage = 'dynamic'\n",
-        encoding="utf-8",
-    )
+def test_self_status_reports_the_edited_file(installed: Path) -> None:
+    """`gupkg self status` is healthy on the bundle, and names the file after one is edited."""
     environment = os.environ.copy()
-    command = [str(installed / "gupkg" / "gupkg.cmd"), "manager", "--config", str(config), "self", "status"]
+    command = [str(installed / "gupkg" / "gupkg.cmd"), "self", "status"]
 
     healthy = subprocess.run(command, capture_output=True, text=True, env=environment, timeout=120)
     assert verify_version_directory(installed).ok, "running gupkg with -B must not write bytecode into the tree"
-    doctor = [str(installed / "gupkg" / "gupkg.cmd"), "manager", "--config", str(config), "doctor"]
-    healthy_doctor = subprocess.run(doctor, capture_output=True, text=True, env=environment, timeout=120)
     (installed / "gupkg" / "README.md").write_text("# edited\n", encoding="utf-8")
     damaged = subprocess.run(command, capture_output=True, text=True, env=environment, timeout=120)
-    damaged_doctor = subprocess.run(doctor, capture_output=True, text=True, env=environment, timeout=120)
-    assert healthy_doctor.returncode == 0, healthy_doctor.stderr
 
-    assert "self.runtime_healthy: True" in healthy.stdout and healthy.returncode == 0, healthy.stdout + healthy.stderr
-    assert damaged.returncode == 3
-    assert "modified: gupkg/README.md" in damaged.stderr
-    assert "Reinstall gupkg from a release ZIP" in damaged.stderr
-    assert damaged_doctor.returncode == 2 and "modified: gupkg/README.md" in damaged_doctor.stderr
+    assert healthy.returncode == 0, healthy.stdout + healthy.stderr
+    assert damaged.returncode == 3, damaged.stdout + damaged.stderr
+    assert "modified: gupkg/README.md" in damaged.stdout + damaged.stderr

@@ -10,10 +10,11 @@ are staged before they switch over, and any command can be repeated safely to
 repair a machine.
 
 ```bat
-gupkg install C:\opt\pandoc            :: download, verify, install, wire up Windows
-gupkg update C:\opt\pandoc             :: get the newest release; the old one stays
-gupkg manager update --yes             :: do it for every package you manage
-gupkg install C:\opt\pandoc\3.6.1 --allow-downgrade    :: roll back
+gupkg install pandoc                   :: download, verify, install, wire up Windows
+gupkg check-updates pandoc             :: look for a new release and prepare it; nothing is activated
+gupkg update pandoc                    :: activate the newest prepared release; the old one stays
+gupkg switch pandoc 3.6.1              :: roll back
+gupkg manager update --all --yes       :: the same for every package you manage (starts gupkg-manager)
 ```
 
 **Why use it**
@@ -24,9 +25,9 @@ gupkg install C:\opt\pandoc\3.6.1 --allow-downgrade    :: roll back
   folder; the working version is never modified in place. A failed update
   changes nothing.
 - **Repairable.** `install` re-applies shortcuts, PATH, and wrappers without
-  re-downloading. `config-check` and `manager doctor` find problems early.
-- **Built for administration.** Bulk updates with a plan and confirmation,
-  `--yes` for unattended runs, stable exit codes, and `--format toml` for
+  re-downloading. `check` finds drift and `check --fix` repairs it.
+- **Built for administration.** `--plan` shows what a call would do, `--yes` and
+  `--no-input` for unattended runs, stable exit codes, and `--json` for
   scripts. A failing package never blocks the others.
 - **Transparent.** Plain files and folders, an NTFS junction, standard
   registry values. Nothing runs in the background.
@@ -81,8 +82,8 @@ package on a Python package index. Pick the route that fits:
 - **Release ZIP by hand.** The ZIP built by `tools\build_standalone.py` (and
   attached to each GitHub release) is the only distribution. Give it to the
   bootstrap script as `-Source`, or unpack it yourself and run its
-  `gupkg\gupkg.cmd --scope user install <folder>`.
-- **From a source checkout (development).** `src\gupkg.cmd install [PATH]` runs
+  `gupkg\gupkg.cmd install <folder> --mode user`.
+- **From a source checkout (development).** `src\gupkg.cmd install PATH` runs
   on the Python committed at `src\gupkg\python`, like every other launch: no
   system Python, `PATH` lookup or download is ever used. Fetching or refreshing
   that runtime, updating the locked dependencies and building the release ZIP
@@ -206,291 +207,140 @@ Installing a newer version advances `current`. Installing an older version
 does not replace a newer active version unless `--allow-downgrade` is supplied. Old
 versions are retained.
 
-## Install a package
-
-From a version directory:
-
-```bat
-gupkg install
-```
-
-Or pass a version directory or package root:
-
-```bat
-gupkg install C:\Packages\Ripgrep\14.1.0.local.1
-gupkg install C:\Packages\Ripgrep
-```
-
-The default `auto` scope uses system scope for an administrator unless the
-package is portable-only; otherwise it uses User scope. Select a scope
-explicitly when needed:
-
-```bat
-gupkg --scope user install C:\Packages\Ripgrep
-gupkg --scope system install C:\Packages\Ripgrep
-```
-
-System scope requires Administrator privileges. Portable-only packages cannot
-be installed in system scope.
-
-| Scope | Start Menu shortcut root | Registry environment and PATH | Wrapper directory |
-| --- | --- | --- | --- |
-| User | `%APPDATA%\Microsoft\Windows\Start Menu\opt` | `HKCU\Environment` | `%USERPROFILE%\bin` |
-| Machine | `%PROGRAMDATA%\Microsoft\Windows\Start Menu\opt` | `HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment` | `<SYSTEMDRIVE>\bin` |
-
-During an ordinary install, `gupkg`:
-
-1. resolves the package and validates `pkg.toml`;
-2. makes the selected version current when appropriate;
-3. ensures `App` is a non-empty directory, populating it from `[origin]` when
-   possible and otherwise failing the install;
-4. creates declared shortcuts;
-5. writes declared environment variables and PATH additions;
-6. creates declared wrappers and ensures the scope's wrapper directory is on PATH.
-
-An already populated `App` is left alone by default. Reinstalling still repairs
-shortcuts, registry values, PATH entries, and wrappers. Use `--refresh-app` to
-explicitly rebuild `App` from its origin before that repair.
-
 ## Commands and options
 
-`gupkg` uses one explicit command grammar. `update` performs a full update by
-default; `--check-only` and `--download-only` limit it without changing the
-package. The root options are `--scope auto|user|system`, `--format
-human|toml`, and `--pause`.
-
-### Central manager mode
-
-The centrally installed executable and package-local mode are both supported.
-Package-local launchers and explicit package paths keep existing behavior.
-Manager mode is explicit: use the `manager` command with an optional
-`--config PATH`. A discovered `gupkg-config.toml` never changes a package
-invocation into manager mode.
-
-The current manager schema is:
-
-```toml
-mode = "manager"
-schema_version = 2
-
-[packages]
-system = 'C:\opt'
-user = '%USERPROFILE%\opt'
-
-[bin]
-system = 'C:\bin'
-user = '%USERPROFILE%\bin'
-
-# Optional. These are the defaults; change them to move the cache or use a mirror.
-[registry]
-cache = 'C:\opt\gupkg\current\App\registry'
-source = "https://github.com/guraltsev/gupkg-registry.git"
-```
-
-Both package roots are required collection roots and must be distinct and
-non-nesting. The bin roots must also be distinct. The `[registry]` table is
-optional: `cache` (default `App\registry` in the running gupkg version) is where the
-downloaded catalogue is kept and must not be inside either package root (except inside a package version's `App` folder, which is where the default sits), and
-`source` (default: the separate [`gupkg-registry`](https://github.com/guraltsev/gupkg-registry) repository) is an
-`https://` Git repository URL, cloned with a Git that only administrators can
-modify and otherwise downloaded as its GitHub archive, or the URL of a ZIP
-archive whose single top-level folder holds the packages (an `https://` mirror
-or a `file:` URL on a share).
-`gupkg manager init` writes this file for you. Relative paths resolve against the manager
-file, `%NAME%` expands from the case-insensitive process environment, and a
-leading `~` expands to the current user's home. Unknown variables and shell
-substitutions are rejected. A missing root is reported as an incomplete scope
-and blocks mutation; loading never creates roots. Scope comes from the
-configured root, so a user target cannot silently become a machine
-installation. Only schema version 2 is accepted; older files must be migrated
-explicitly before manager commands can use them.
-
-Manager workflows include `gupkg manager list`, `gupkg manager doctor`,
-`gupkg manager update`, `gupkg manager init`, `gupkg manager registry sync|status`,
-`gupkg manager search`, `gupkg manager install`, and
-`gupkg manager self status|repair|update`. `self status` checks every file of the
-running version against its `MANIFEST.sha256` and lists modified, missing or
-extra files (report only; reinstall the release ZIP to fix them), `self repair`
-re-creates the shims and PATH entries, and `self update` installs the newest
-release after verifying its ZIP digest and manifest. A 1.x release is never
-installed by 0.x: `self update` then changes nothing and names the bootstrap
-command to run. `list` is local-only. Doctor
-validates configuration, roots, `current`, and manifests without contacting providers. A valid `current` is
-authoritative: a lone version directory is not installed, and a broken or
-escaping activation is broken. Bootstrap definitions remain available but are
-never implicitly installed.
-
-`gupkg --scope auto manager list` reports the manager inventory. Use
-`gupkg manager tui` for the interactive manager interface. Manager update first shows a
-non-installing plan with available, current, skipped, and failed-check counts.
-The confirmation screen puts `Run planned updates` first and exposes scope
-and checksum settings. Execution remains scrollable
-with per-target states and final totals, then refreshes inventory. Elevation
-occurs before any mixed-scope mutation; declining it leaves packages unchanged.
-Later safe targets continue after a failure.
-`Refresh update status` and the planning step show `Checking i of N` with one
-result line per package; Escape stops after the current check. Update results
-are saved in each package's `.gupkg/state/update.toml`, so the manager shows
-them (with the check time in Details) after opening a package or in a new
-session.
-To recover, fix the failed target and safely rerun the same check/confirm flow;
-successful targets are revalidated and remain current. This migration changes
-only orchestration: package content, version directories, `current`, and
-`pkg.local` require no edits.
-
-### Terminal interface
-
-Run the simple interactive interface:
-
-```bat
-gupkg-tui.cmd C:\Packages\Example
-```
-
-You can also run `gupkg tui [PATH]` directly.
-
-To open the manager interface, use `gupkg manager tui`. Manager selection is
-always explicit; a package TUI invocation outside a package directory reports
-an invalid package selection instead of switching modes.
-
-The interface exposes install, update, and every configuration action with the
-same package path, scope, and applicable flags as the command line. It
-intentionally uses selections and plain output instead of a
-frame-heavy terminal layout. Textual ships inside the release's bundled
-`gupkg\python\Lib\site-packages`; nothing is installed on first use.
-`--pause` is omitted because the interface stays open after each operation.
+One grammar serves people, scripts and the UI programs. Options go **after** the command; the only options
+before it are `--version`, `--help`, `--settings PATH` and `--sandbox DIR`. A target is a package name
+(`firefox`, `firefox@135.0`, `user:firefox`, `main/firefox`) or a path (anything with a `\` or `/`, or starting with
+`.`). Several targets in one call run one after another and the run continues past a failure. The command line has
+no `--all` and no interactive screen: `gupkg-manager` is the program for batches and interactive use.
 
 ```text
-gupkg [global-options] <command> [command-options]
+gupkg check-updates <target>... [--no-download] [--mode M] [--skip-checksum]   run trackers; write and prepare new versions; activate nothing
+gupkg install  <target>... [--mode M] [--skip-checksum] [--refresh] [--in-place] [--yes]
+gupkg update   <target>... [--mode M] [--skip-checksum] [--yes]   activate the newest KNOWN version; never runs a tracker
+gupkg switch   <target> <version>                       activate another local version (rollback)
+gupkg uninstall <target>... [--purge] [--yes]           remove the integration; --purge also deletes the package folder and its data
+gupkg check    [<target>...] [--fix]                    health: drift, App fingerprint, registry fingerprint, unverified installs
+gupkg list     [--mode M] [--installed|--available|--outdated|--broken|--local] [--details] [--names]
+gupkg info     <target>...
+gupkg search   <query> [--registry R] [--offline]
+gupkg cleanup  [<target>...] [--keep N] [--bundled]     old Apps, receipts, work folders, registry trees, logs (only when asked)
+gupkg link     <target> [<registry>/<name>] [--unlink]  follow another registry entry, the same-name entry again, or none
+gupkg logs     [<target>] [--open | --path]
+gupkg shell    [--mode M]                               the PATH line of a root with integrate = "none"
+gupkg registry sync|status|list|add|remove
+gupkg settings show|path|init|set KEY VALUE
+gupkg pkg new|check|pin|bundle|export
+gupkg self status|repair|check-updates|update
+gupkg tui <target> | gupkg manager ... | gupkg migrate ...     start gupkg-tui, gupkg-manager, gupkg-migrate of this gupkg
 ```
 
-### Install
+Checking and installing are separate operations. `check-updates` runs a package's tracker and writes the new
+version as a pinned directory (`<root>\<name>\<version>\`), by default with its `App` downloaded, verified and
+unpacked; it never activates anything. `update` then activates the newest version that is already known, locally or in
+the followed registry, and prepares its `App` first if it has none. `install` and `update` never run a tracker, so
+`update` of a package with nothing newer says "up to date" and makes no request.
 
-```bat
-gupkg install C:\Packages\Tool
-```
+Every command takes `--json`. Every mutating command takes `--yes`. The mode comes from `--mode system|user|portable`,
+else from the package's install record or the root that holds it, else from `default_mode` in the settings (`auto`: an
+elevated shell installs in system mode, any other in user mode). A call that needs administrator rights relaunches
+gupkg **once** elevated, after one question, and only when this gupkg itself lives in an admin-only folder.
 
-`install` activates the chosen version and applies its package definition. With
-no path it installs the package in the current directory.
+### Install modes
 
-### Update
+| Mode | Root (default) | Start Menu | Environment and `PATH` | Shims |
+| --- | --- | --- | --- | --- |
+| `user` | `%USERPROFILE%\opt` | `%APPDATA%\Microsoft\Windows\Start Menu\opt` | `HKCU\Environment` | `%USERPROFILE%\bin` |
+| `system` | `C:\opt` (admin-only) | `%ProgramData%\Microsoft\Windows\Start Menu\opt` | `HKLM` environment | `C:\bin` |
+| `portable` | `[roots].portable` | the user's, unless `integrate = "none"` | the user's, unless `integrate = "none"` | `<root>\bin` |
 
-```bat
-gupkg update C:\Packages\Tool
-gupkg update C:\Packages\Tool --check-only
-gupkg update C:\Packages\Tool --download-only
-```
+`gupkg install firefox --mode user` and `gupkg install %USERPROFILE%\opt\firefox` put the same shortcuts, shims and
+`PATH` entries in place, because both use the context built from the settings. A folder outside every root (an unzipped
+distribution) is copied into the mode's root first, unless `--in-place`. With `integrate = "none"` in
+`[integration.portable]`, a portable install touches neither the registry nor the Start Menu, and `gupkg shell` prints the
+line that puts `<root>\bin` on `PATH`.
 
-`update --check-only` is read-only and reports either an available release or
-the current state. `update --download-only` checks again, downloads and verifies the release, and stages
-it as a new version directory without changing `current`. A missing or empty
-`App` remains repairable when upstream reports the same version if the plain
-candidate version is not already present. A full `update` activates the staged
-version and applies its shortcuts,
-environment settings, PATH entries, and wrappers. There is no automatic update
-policy or background update action. A full `update` after an earlier
-`--download-only` activates the version that download staged instead of
-downloading it again. A successful activation consumes its download receipt,
-and the limiting modes never activate a staged version.
+### The machine interface
 
-### Configuration
-
-```bat
-gupkg config-check C:\Packages\Ripgrep
-gupkg config-fix C:\Packages\Ripgrep\14.1.0.local.1
-gupkg config-fix --output C:\OldPackages\Ripgrep\pkg.toml C:\OldPackages\Ripgrep
-```
-
-`config-check` validates a package without changing it. `config-fix` creates a
-starter file, synchronizes directory-owned metadata, or explicitly converts
-recognized legacy files. It creates a timestamped backup before replacement by
-default; `--no-backup` and `--backup=false` suppress it. Shortcut import is
-controlled by `--import-shortcuts true|false`.
-
-All options are accepted by the command parser; the following table notes where
-they have an effect.
+The documents and options below are a public, versioned contract (`"api": 1`); `gupkg-manager` and scripts rely on them.
 
 | Option | Meaning |
 | --- | --- |
-| `--scope auto\|user\|system` | Selects installation scope; defaults to `auto`. |
-| `--format human\|toml` | Selects human output or one parseable TOML result document. With `toml`, the human output (phases, warnings, the summary) goes to standard error so standard output is only the document. |
-| `--events-file <name>` | Also writes the run's events as JSON lines (flushed per event) under the plain file name `<name>` in the run's log directories (see "Output and logs"). A name with a path, a drive, `..`, a device name or other odd characters is refused with exit code 2. |
-| `--sandbox <dir>` | Runs against a pretend machine kept in `<dir>`: environment variables, `PATH`, shortcuts and elevation are recorded in `<dir>\system.json` and below `<dir>` instead of the registry and Start Menu. Package files and downloads stay real. Only `git` and the bundled 7-Zip may start as child processes (identified by the resolved executable, not by name); any other program, such as a package script, fails. `git` and 7-Zip run for real, with whatever the `git` on `PATH` is and its configuration; the sandbox keeps the install's machine integration off the real machine and is not a security boundary for trusted code. Default package and config roots are not redirected: a package given by path is installed where it is. Elevation is the `"elevated"` flag in `system.json`. |
-| `--allow-downgrade` | For `install`, permits replacing `current` when it already targets a newer version. |
-| `--refresh-app` | For `Install`, replaces `App` from `[origin]`, even when it is populated. |
-| `--no-checksum` | Bypasses configured origin or update checksum verification and emits a warning. |
-| `--import-shortcuts true\|false` | For `config-fix`, imports `.lnk` files from `_shortcuts`; defaults to `true`. |
-| `--output <path>` | Selects `config-fix` output for legacy conversion only. |
-| `--no-backup`, `--backup=false` | Suppress the default timestamped `config-fix` backup. |
-| `--check-only`, `--download-only` | Limit `update` or manager update work. |
-| `--shim-linkage dynamic\|static` | For `install`, full `update`, manager update, and `manager self repair`: choose small wrappers with shared runtime DLLs (`dynamic`, default) or self-contained ones. |
-| `--yes` | For `manager update`: skip the confirmation (required without a terminal or with `--format toml`). |
-| `--force` | For `manager init`: replace an existing manager configuration. |
-| `--offline` | For `manager search` and `manager install`: use only the cached registry. |
-| `--config <file>`, `--max-depth N` | For `manager`: choose the configuration file; bound grouping-folder descent. |
-| `--pause` | Waits for a keypress before exit. |
-| `--version` | Prints the `gupkg` version and exits. |
-| `--help` | Prints command help and exits. |
+| `--json` | One result document on standard output (`api`, `command`, `ok`, `exit_code`, then `results` with one entry per target: `package`, `operation`, `ok`, `status`, `version`, `previous`, `mode`, `exit_code`, `receipt`, `log`, `warnings` and, on failure, `error` with `code`, `message`, `hint` and what it carries, such as the `url` of `checksum-missing`). Human output goes to standard error. |
+| `--plan` | `check-updates`, `install`, `update`, `uninstall`, `switch`, `cleanup`, `link` and `self ...` resolve and plan without changing anything (except the run's log files). The plan document has one entry per target with the chosen version, the mode, `requires_elevation`, `sha256` (`present`, `missing` or `invalid`; `invalid` is never skippable), the source `url` and the `effects` to add or remove. |
+| `--events-file NAME` | The run's event stream as JSON lines, flushed per event, under the plain file name `NAME` in the log directories: `<root>\.gupkg\logs\NAME` (global events) and `<root>\<name>\.gupkg\logs\NAME` (one package's events). `run_start` names the run's stop marker; the last line, `run_end`, carries the result document. An elevated child chooses the directory itself, so a normal-shell caller reads the file there. `NAME` with a separator, `..`, a drive or a device name is a usage error. |
+| `--no-input` | Never asks. A question that would be asked (`uninstall --purge`, a call with several targets, the elevation of a relaunch) is exit code 5 with a structured error and nothing changed. `--yes` answers those questions. The command line never asks about checksums. |
+| `--skip-checksum[=REASON]` | Installs a download that has no declared SHA-256, over `https://` only. Bare, the receipt records `skipped-cli`; the manager relays `=setting` or `=user-approved`; any other value is a usage error. |
 
-Exit status is `0` for success, `2` for a user/configuration error, `3` for a
-mutation failure, and `4` for an unexpected internal error.
+A stop request is a file: `run_start.stop_file` is the path of a marker that is unique to the run; creating a file there
+makes the run finish the package it is working on and skip the rest (exit code 5). An elevated run honours it too, since it
+can only make the run stop.
 
-The convenience scripts call the same `gupkg.cli:main` entry point and use
-identical parsing and version information. gupkg runs only on its bundled
-Python: `python -m gupkg` or `bootstrap.py` on any other interpreter, or without
-`-I`, exits with `Start gupkg through gupkg.cmd or gupkg.exe; it runs only on its
-bundled Python.` In a source checkout use `scripts\run.cmd`; the development
-scripts use `.venv` only (`requirements-dev.txt`).
+Exit status: `0` success, `2` user or configuration error (including usage errors), `3` the operation failed,
+`4` internal error, `5` declined or input needed, `6` the package needs a newer gupkg (an unknown `pkg.toml` `format`, or an
+unmet `requires_gupkg`: a package launcher then runs its bundled gupkg).
 
-The internal `src\gupkg\gupkg.cmd` runs only `python\python.exe` from its own
-folder, as `python.exe -I -s -B -S bootstrap.py`. It never consults `GUPKG_PYTHON`,
-a `gupkg.python` file, `python` on `PATH` or the `py` launcher, and it downloads
-nothing. When `python\python.exe` is missing it exits with status 1 and tells
-you to reinstall gupkg from a release ZIP.
+0.17 spellings are not aliases: `config-check`, `config-fix`, `doctor`, `repair-deps` and `update-deps` are unknown
+commands, and `--scope`, `--format`, `--no-checksum`, `update --check-only`, `update --all` and `update --check` are
+usage errors that name what to use now. `gupkg tui`, `gupkg manager` and `gupkg migrate` are permanent forwarders to
+`gupkg-tui`, `gupkg-manager` and `gupkg-migrate` of the same gupkg; they pass the exit code through, and they refuse an
+elevated shell (the programs ask for administrator rights themselves, once per batch).
+
+gupkg runs only on its bundled Python: `python -m gupkg` or `bootstrap.py` on any other interpreter, or without `-I`, exits
+with `Start gupkg through gupkg.cmd or gupkg.exe; it runs only on its bundled Python.` In a source checkout use
+`scripts\run.cmd`. `src\gupkg\gupkg.cmd` runs only `python\python.exe` from its own folder, as
+`python.exe -I -s -B -S bootstrap.py`; when it is missing it exits with status 1 and tells you to reinstall gupkg from a
+release ZIP.
+
+### Settings, registries and authoring
+
+`gupkg settings show` lists every effective setting with the layer it came from; `settings path` names the file of each
+layer; `settings init` and `settings set KEY VALUE` write the user layer (`--mode system` writes the system layer from an
+administrator shell) after the schema accepted the value. `gupkg registry add NAME SOURCE` and `remove NAME` edit
+`[[registry]]` the same way; `registry sync` downloads the registries into `<root>\.gupkg\registry\<name>`.
+Converting a 0.17 manager configuration is `gupkg migrate settings`.
+
+`gupkg pkg new NAME[@VERSION] [--track github:OWNER/REPO]` writes a starter; `pkg check PATH [--install]` validates a
+version directory, a tracker or a whole package folder (`--install` also installs into a throw-away root on a pretend
+machine; the registry's CI can run `gupkg pkg check <path> --json` in place of calling `gupkg.pkgcheck.check_directory`);
+`pkg pin TARGET` copies the hash that a receipt observed for an install made with `--skip-checksum` into `pkg.toml`, after
+it shows the URL, the final URL, the size and the date and says that the hash comes from an unverified download;
+`pkg export VERSION-DIR -o X.zip` writes a distribution ZIP and prints its SHA-256; `pkg bundle VERSION-DIR` copies the
+running gupkg's verified bundle into a version directory.
 
 ### Output and logs
 
-A run reports what it does as events: phases (`Resolve`, `Fetch`, `Shortcuts`, ...),
-steps, download progress, the lines that `git` and package scripts print, warnings and
-errors. On a terminal they appear as coloured phase rules with a check or cross and the
-elapsed time, a live download bar and a closing summary, which is always the last thing
-printed. When output is redirected, or `NO_COLOR` is set, the same events print as plain
-text: `==> Phase` headers, no colour codes, no carriage returns and only the final progress
-line of each download. Every warning and error is printed once.
+A run reports what it does as events: phases (`Resolve`, `Fetch`, `Verify`, `Unpack`, `Prepare`, `Activate`, `Integrate`,
+`Finish`), steps, download progress, the lines that `git` and package scripts print, warnings and errors. On a terminal they
+appear as coloured phase rules with a check or cross and the elapsed time, a live download bar and a closing summary, which
+is always the last thing printed. When output is redirected, or `NO_COLOR` is set, the same events print as plain text:
+`==> Phase` headers, no colour codes, no carriage returns and only the final progress line of each download. Every warning
+and error is printed once.
 
-Every run that acts on a package leaves, in that package's `<root>\<name>\.gupkg\logs\`,
-a `<UTC yyyymmddThhmmssZ>-<command>.log` (plain text, flushed per line) and a `.jsonl` file
-with the same events. The run as a whole leaves a log in `<root>\.gupkg\logs\`
-(`<root>` is the folder that holds the package, or the configured root for `gupkg manager`)
-that holds only global information and the paths of the package logs it links to. The
-closing summary names every log. A run that involves no package, started by a bundled
-gupkg, logs in its own package's `.gupkg\logs\`; one started by an installed gupkg logs in
-its root's `.gupkg\logs\`. `latest.log` in each log folder is a copy of the newest text log.
-The newest 50 runs from the last 90 days are kept per folder, pruned when a run starts. gupkg
-never logs to AppData or ProgramData, and a failure to write a log produces one warning and
-never fails the operation.
+Every run that acts on a package leaves, in that package's `<root>\<name>\.gupkg\logs\`, a
+`<UTC yyyymmddThhmmssZ>-<command>.log` (plain text, flushed per line) and a `.jsonl` file with the same events. The run as a
+whole leaves a log in `<root>\.gupkg\logs\` that holds only global information and the paths of the package logs it links to.
+The closing summary names every log, each receipt stores the log of the run that wrote it, and `gupkg logs <target>` lists,
+prints (`--path`) or opens (`--open`) them. A run that involves no package, started by a bundled gupkg, logs in its own
+package's `.gupkg\logs\`; one started by an installed gupkg logs in its root's `.gupkg\logs\`. `latest.log` in each log
+folder is a copy of the newest text log. `[logs] keep_runs` and `keep_days` of the settings (default 50 runs, 90 days) are
+applied when a run starts. gupkg never logs to AppData or ProgramData, and a failure to write a log produces one warning
+and never fails the operation. `list`, `info`, `search`, `logs`, `shell`, `settings` and `pkg` read or edit and leave no
+log; the lifecycle commands, `registry sync` and `self` do.
 
 Details that scripts and maintainers may rely on:
 
-- **Streams.** As in 0.17, warnings and errors go to standard error and everything else (phases,
-  steps, progress, the summary) to standard output. With `--format toml` all human output goes
-  to standard error, so standard output is only the document.
-- **Every run logs, including read-only ones.** `config-check`, `update --check-only` and
-  `manager list` create `<parent>\.gupkg\logs` next to an ad-hoc package (or in the configured
-  root) like any other run; they change nothing else.
-- **Text from packages is cleaned for display.** Escape sequences and control characters in step,
-  warning, error and child-process text are removed on the console and in the text log. The
-  JSONL logs keep step, warning and error text verbatim (JSON escapes it); child-process lines
-  are cleaned where they are captured.
-- **Event contract.** Each `.jsonl` line is `{"event": <name>, <fields>, "ts": <UTC>}` (`"api": 1`
-  in `run_start`), plus the `log_link` record in run logs. `subprocess_line.stream` is always
-  `"output"` in this release: `System.run`'s `on_line` does not say which stream a line came
-  from, and the contract pins that value.
-- **Retention.** The defaults (50 runs, 90 days) are parameters of the log writer; the settings
-  layers of issues 025 and 029 will feed them.
-- **Events file names.** `--events-file` accepts ASCII letters, digits and `._+-` only. A name
-  that ends in `.log`, starts with `latest.`, or looks like a run's own file is refused, and an
-  existing hard link, link or directory under the name is never opened (a stale plain file is
-  replaced).
+- **Streams.** Without `--json`, warnings and errors go to standard error and everything else (phases, steps, progress, the
+  summary) to standard output. With `--json`, all human output goes to standard error.
+- **Text from packages is cleaned for display.** Escape sequences and control characters in step, warning, error and
+  child-process text are removed on the console and in the text log. The JSONL logs keep step, warning and error text verbatim
+  (JSON escapes it); child-process lines are cleaned where they are captured.
+- **Event contract.** Each `.jsonl` line is `{"event": <name>, <fields>, "ts": <UTC>}` (`"api": 1` in `run_start`), plus the
+  `log_link` record in run logs. `subprocess_line.stream` is always `"output"` in this release.
+- **Events file names.** `--events-file` accepts ASCII letters, digits and `._+-` only. A name that ends in `.log`, starts with
+  `latest.`, or looks like a run's own file is refused, and an existing hard link, link or directory under the name is never
+  opened (a stale plain file is replaced).
 
 ## `pkg.toml` reference
 

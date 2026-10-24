@@ -5,10 +5,9 @@ environment target from ``[roots]`` and ``[integration.*]`` (the built-in values
 settings layer); a bin or Start Menu folder that no layer set follows the machine's own default folder;
 portable mode keeps shims in ``<root>\\bin`` and, with ``integrate = "none"``, touches neither the Start Menu nor the
 environment and offers the ``PATH`` line; the log folders follow D26; a portable run reads the portable root's
-settings instead of the user's; the 0.17 front end gets the same folders through ``scope_context``.
+settings instead of the user's.
 
-Real: ``build_mode_context`` and ``load_settings`` on settings files below pytest's temporary folder, and the
-manager configuration. Fake: ``FakeSystem`` for the machine's default folders. Out of scope: selecting the mode
+Real: ``build_mode_context`` and ``load_settings`` on settings files below pytest's temporary folder. Fake: ``FakeSystem`` for the machine's default folders. Out of scope: selecting the mode
 (``test_mode_selection.py``) and resolving a target (``test_mode_resolve.py``).
 """
 
@@ -18,10 +17,9 @@ from pathlib import Path
 
 import pytest
 
-from gupkg.manager import ManagerConfig, installation_context
 from gupkg.model.mode import ModeChoice, ModeContext, build_mode_context
 from gupkg.model.settings import SettingsError, default_layer, merge_layers
-from gupkg.modes import default_folders, scope_context
+from gupkg.modes import default_folders
 from gupkg.settingsload import settings_file
 from gupkg.system.port import Scope
 from tests.mode_support import Machine, pin_no_ambient_elevation  # noqa: F401
@@ -176,39 +174,10 @@ def test_the_context_is_immutable() -> None:
         builtin("user").mode = "system"  # type: ignore[misc]
 
 
-@pytest.mark.parametrize("scope", [Scope.USER, Scope.MACHINE], ids=["user", "machine"])
-def test_the_old_front_end_gets_the_machines_folders_from_the_same_context(tmp_path: Path, scope: Scope) -> None:
-    """``scope_context`` gives the 0.17 install code the Start Menu and ``bin`` folders the machine reports for the scope."""
-    machine = Machine(tmp_path)
-
-    context = scope_context(scope, machine.fake, env=machine.env)
-
-    folders = machine.fake.scope_folders(scope)
-    assert (context.start_menu, context.bin_dir) == (folders.shortcut_root, folders.bin_dir)
-    assert context.mode == ("system" if scope == Scope.MACHINE else "user")
-
-
-def test_the_manager_destinations_are_a_mode_context_with_the_managers_roots_and_bins(tmp_path: Path) -> None:
-    """The manager's configured roots and ``bin`` folders replace the defaults in the context it hands to an install."""
-    machine = Machine(tmp_path)
-    config = ManagerConfig(
-        tmp_path / "cfg.toml", system_root=tmp_path / "msys", user_root=tmp_path / "muser", user_bin=tmp_path / "ubin",
-    )
-
-    user = installation_context(config, Scope.USER, machine.fake)
-    system = installation_context(config, Scope.MACHINE, machine.fake)
-
-    assert (user.root, user.bin_dir) == (tmp_path / "muser", tmp_path / "ubin")
-    assert system.root == tmp_path / "msys"
-    assert system.bin_dir == machine.fake.scope_folders(Scope.MACHINE).bin_dir
-    with pytest.raises(ValueError, match="explicit scope"):
-        installation_context(config, Scope.AUTO, machine.fake)
-
-
 @pytest.mark.parametrize(
     "name",
     [
-        pytest.param("..\evil", id="dotdot-with-separator"),
+        pytest.param("..\\evil", id="dotdot-with-separator"),
         pytest.param("../evil", id="dotdot-with-slash"),
         pytest.param("a/../../evil", id="dotdot-inside-groups"),
         pytest.param("C:evil", id="drive-colon"),

@@ -7,42 +7,67 @@ the old receipts and ``update.toml`` are read once and removed, and the 1.0 ``un
 without ``current`` is skipped, an adopted one is left alone, a version that is not converted yet is reported with the command
 that converts it, a shortcut whose name has a dot is matched to the file 0.17 wrote, and ``--check`` changes nothing.
 
-Real: the 0.17 install code (``gupkg.gupkg.install_package``), the converter, the adoption, the 1.0 engine and real
-folders and junctions. Mocked: ``FakeSystem`` (registry, shortcuts, elevation).
+Real: the converter, the adoption, the 1.0 engine and real folders and junctions. Mocked: ``FakeSystem`` (registry, shortcuts,
+elevation). The 0.17 installs are RECORDED, not run: ``tests/fixtures/legacy_017/*.json`` hold what the real 0.17 install code
+(commit 4172a00, ``record.py`` there) left on a fake machine for three packages, and ``replay`` puts exactly that state on the
+fake machine of the test (the 0.17 code no longer exists in core).
 Out of scope: the converter's other rules (``test_migrate_package``), real Windows.
 """
 
 from __future__ import annotations
 
+import json
+import os
 import shutil
 from pathlib import Path
 
 import pytest
 
-from gupkg import gupkg as legacy
 from gupkg.catalog.catalog import Catalog
 from gupkg.catalog.record import read_install_record
-from gupkg.system.port import Scope
+from gupkg.system.port import Scope, ShortcutSpec
 from gupkg_migrate import cli
 from gupkg_migrate.adopt import plan_adoption
 from tests.engine_support import World, pin_no_ambient_elevation  # noqa: F401
 from tests.mode_support import tree_snapshot
 
 FIXTURE = Path(__file__).parent / "fixtures" / "GoodApp"
+RECORDED = Path(__file__).parent / "fixtures" / "legacy_017"
 OLD_RECEIPT = 'schemaVersion = 1\ncandidateId = "abc"\nversion = "1.2.4"\nlocalVersion = "1"\n'
 OLD_STATE = 'schemaVersion = 1\nlastSuccessfulCheck = "2026-10-01T00:00:00Z"\nlastStatus = "available"\n'
 
 
+def replay(world: World, package: Path, name: str) -> dict:
+    """Put the recorded machine state of the 0.17 install *name* on the fake machine, and return the record."""
+    recorded = json.loads((RECORDED / f"{name}.json").read_text(encoding="utf-8"))
+    folders = world.fake.scope_folders(Scope.USER)
+
+    def place(text: str) -> str:
+        """Replace the placeholders of the recording by this machine's folders."""
+        return text.replace("<MENU>", str(folders.shortcut_root)).replace("<BIN>", str(folders.bin_dir)).replace("<ROOT>", str(world.user))
+
+    for path, spec in recorded["shortcuts"].items():
+        world.fake.write_shortcut(Path(place(path)), ShortcutSpec(**{key: place(value) for key, value in spec.items()}))
+    for variable, value in recorded["env"].items():
+        if variable != "Path":
+            world.fake.set_env(Scope.USER, variable, place(value["value"]), value["expandable"])
+    world.fake.set_path(Scope.USER, [place(entry) for entry in recorded["path"]])
+    folders.bin_dir.mkdir(parents=True, exist_ok=True)
+    for file_name, content in recorded["bin_files"].items():
+        (folders.bin_dir / file_name).write_text(place(content), encoding="utf-8", newline="")
+    world.fake.create_junction(package / "current", package / recorded["current"])
+    return recorded
+
+
 def install_with_017(world: World, name: str = "GoodApp") -> Path:
-    """Copy the GoodApp fixture into the user root, give it an App and install it with the real 0.17 code."""
+    """Copy the GoodApp fixture into the user root, give it an App and put on the machine what 0.17's install left."""
     package = world.user / name
     shutil.copytree(FIXTURE, package)
     version = next(item for item in package.iterdir() if item.is_dir())
     (version / "App").mkdir(exist_ok=True)
     (version / "App" / "bin").mkdir(exist_ok=True)
     (version / "App" / "GoodApp.exe").write_text("exe", encoding="utf-8")
-    result = legacy.install_package(package, world.fake, scope=Scope.USER)
-    assert result.ok, result.message
+    replay(world, package, "goodapp")
     return package
 
 
@@ -143,47 +168,46 @@ content = "@echo off\\r\\n\\"$App\\\\rich.exe\\" %*\\r\\n"
 
 
 def snapshot_machine(world: World) -> dict:
-    """Return the machine state of a world with its own base folder replaced by a placeholder, for comparing two worlds."""
-    base = str(world.base)
+    """Return the machine state of a world in the form of the recordings (the machine's folders replaced by placeholders)."""
     folders = world.fake.scope_folders(Scope.USER)
 
-    # TOML files spell a backslash twice, so the base folder appears in both spellings.
-    files = {
-        item.name: item.read_bytes().decode("utf-8", "replace").replace(base, "<BASE>").replace(base.replace("\\", "\\\\"), "<BASE>")
-        for item in sorted(folders.bin_dir.glob("*")) if item.suffix in (".toml", ".cmd")
-    }
+    def place(text: str) -> str:
+        """Replace this world's folders by the placeholders of the recordings, in both TOML spellings."""
+        for needle, name in ((str(folders.shortcut_root), "<MENU>"), (str(folders.bin_dir), "<BIN>"), (str(world.user), "<ROOT>")):
+            text = text.replace(needle, name).replace(needle.replace("\\", "\\\\"), name)
+        return text
+
     return {
         "shortcuts": {
-            str(path).replace(base, "<BASE>"): {key: str(value).replace(base, "<BASE>") for key, value in vars(spec).items()}
-            for path, spec in world.fake.shortcuts().items()
+            place(str(path)): {key: place(str(value)) for key, value in vars(spec).items()} for path, spec in world.fake.shortcuts().items()
         },
-        "env": {name: value.value.replace(base, "<BASE>") for name, value in world.fake.env_values(Scope.USER).items() if name != "Path"},
-        "path": [entry.replace(base, "<BASE>") for entry in world.fake.get_path(Scope.USER)],
-        "bin": files,
+        "env": {name: {"value": place(value.value), "expandable": value.expandable} for name, value in world.fake.env_values(Scope.USER).items()},
+        "path": [place(entry) for entry in world.fake.get_path(Scope.USER)],
+        "bin_files": {
+            item.name: place(item.read_text(encoding="utf-8"))
+            for item in sorted(folders.bin_dir.glob("*")) if item.suffix in (".toml", ".cmd")
+        },
         "launchers": sorted(item.name for item in folders.bin_dir.glob("*.exe")),
+        "current": Path(os.path.realpath(world.user / "Rich" / "current")).name if (world.user / "Rich" / "current").exists() else None,
     }
 
 
-def test_the_engine_makes_the_same_machine_state_as_the_0_17_install(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Differential: the same package, installed by the real 0.17 code and (converted) by the 1.0 engine, leaves identical shortcuts, shims, environment and PATH."""
-    old, new = World(tmp_path / "old"), World(tmp_path / "new")
+def test_the_engine_makes_the_same_machine_state_as_the_0_17_install(tmp_path: Path) -> None:
+    """Differential: what the real 0.17 code left for a package (recorded) equals what the 1.0 engine makes from the converted package."""
+    world = World(tmp_path)
+    world.engine.env = {**world.machine.env, "USERPROFILE": "C:\\Users\\same"}
+    version = world.user / "Rich" / "2.0.local.1"
+    (version / "App" / "bin").mkdir(parents=True)
+    (version / "App" / "rich.exe").write_text("exe", encoding="utf-8")
+    (version / "pkg.toml").write_text(LEGACY_RICH, encoding="utf-8")
+    assert run_migration(world, world.user / "Rich", "--no-adopt") == 0
 
-    # 0.17 reads ${USERPROFILE} from the process environment; the engine reads the mapping it is given.
-    monkeypatch.setenv("USERPROFILE", "C:\\Users\\same")
-    new.engine.env = {**new.machine.env, "USERPROFILE": "C:\\Users\\same"}
-    for world in (old, new):
-        version = world.user / "Rich" / "2.0.local.1"
-        (version / "App" / "bin").mkdir(parents=True)
-        (version / "App" / "rich.exe").write_text("exe", encoding="utf-8")
-        (version / "pkg.toml").write_text(LEGACY_RICH, encoding="utf-8")
-    assert legacy.install_package(old.user / "Rich", old.fake, scope=Scope.USER).ok
-    assert run_migration(new, new.user / "Rich", "--no-adopt") == 0
+    result = world.one("install", "Rich")
 
-    result = new.one("install", "Rich")
-
+    recorded = json.loads((RECORDED / "rich.json").read_text(encoding="utf-8"))
     assert result.ok, result.error
-    assert snapshot_machine(new) == snapshot_machine(old)
-    assert snapshot_machine(old)["launchers"] == ["rich.exe"] and len(snapshot_machine(old)["bin"]) == 2
+    assert snapshot_machine(world) == recorded
+    assert recorded["launchers"] == ["rich.exe"] and len(recorded["bin_files"]) == 2
 
 
 def test_adoption_is_idempotent_and_leaves_an_existing_record_alone(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -230,7 +254,7 @@ def test_a_shortcut_name_with_a_dot_is_matched_to_the_file_017_wrote(tmp_path: P
         'name = "Dotted"\nversion = "1.0.0"\nlocalVersion = 0\n\n[[shortcut]]\nname = "Tool 1.0"\ntargetPath = "$App\\\\tool.exe"\n',
         encoding="utf-8",
     )
-    assert legacy.install_package(package, world.fake, scope=Scope.USER).ok
+    replay(world, package, "dotted")
     [legacy_link] = world.fake.shortcuts()
     assert legacy_link.name == "Tool 1.lnk"
 

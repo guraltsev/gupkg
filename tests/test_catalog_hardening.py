@@ -24,7 +24,6 @@ import pytest
 
 from gupkg.catalog.catalog import NoValidVersion, UntrustedLocation, resolve_package_path
 from gupkg.catalog.registry import load_registry, registry_cache_dir, sync_registry
-from gupkg.layout import identity_from_path
 from gupkg.model.state import InstallRecord, Root
 from gupkg.system.fake import FakeSystem
 from gupkg.system.windows import WindowsSystem
@@ -139,15 +138,16 @@ def build_linked_package(system, tmp_path: Path) -> tuple[Path, Path]:
 
 
 @pytest.mark.parametrize("suffix", ["", "1.0"], ids=["package-root", "version-directory"])
-def test_explicit_path_through_a_package_junction_resolves_for_the_0_17_commands(system, tmp_path: Path, suffix: str) -> None:
+def test_explicit_path_through_a_package_junction_resolves_outside_elevation(system, tmp_path: Path, suffix: str) -> None:
     """``opt\\foo`` as a junction to ``dev\\foo`` (and ``opt\\foo\\1.0``) still resolves outside elevation."""
     linked, _ = build_linked_package(system, tmp_path)
+    path = linked / suffix if suffix else linked
 
-    identity, _ = identity_from_path(linked / suffix if suffix else linked, system)
+    bare = resolve_package_path(path, system)
     catalog = make_catalog(system, tmp_path)[0]
-    resolved = catalog.resolve(str(linked / suffix if suffix else linked))
+    resolved = catalog.resolve(str(path))
 
-    assert identity.version_string == "1.0"
+    assert bare.version == "1.0"
     assert resolved.version == "1.0"
 
 
@@ -167,13 +167,13 @@ def test_package_junction_is_still_skipped_by_scanning_and_refused_when_elevated
 
 @pytest.mark.windows_integration
 def test_real_junction_package_root_resolves_for_an_explicit_path(tmp_path: Path) -> None:
-    """With ``WindowsSystem`` junctions the 0.17 path resolution accepts a package root that is a junction."""
+    """With ``WindowsSystem`` junctions the path resolution accepts a package root that is a junction."""
     real = WindowsSystem()
     linked, _ = build_linked_package(real, tmp_path)
 
-    identity, _ = identity_from_path(linked, real)
+    resolved = resolve_package_path(linked, real)
 
-    assert identity.version_string == "1.0"
+    assert resolved.version == "1.0"
 
 
 def test_elevated_path_must_be_in_the_system_root_even_when_admin_only(tmp_path: Path) -> None:

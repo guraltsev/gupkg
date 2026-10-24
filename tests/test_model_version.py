@@ -1,13 +1,13 @@
 """Cover how version directory names are recognised and ordered.
 
-Behavior covered: real versions order exactly as in 0.17 (numeric segments, prereleases
+Behavior covered: real versions order as they always did (numeric segments, prereleases
 before releases, local revisions after the plain version), reserved names (`current`,
 `_check_updates`, `data`, anything starting with `.` or `_`) never appear as versions or
 as the newest version, and a version merely named `bootstrap2` is ordinary.
 
-Real: the pure ``gupkg.model.version`` functions, the 0.17 comparison kept in ``gupkg.core``,
-and the collection scan of ``gupkg.collection`` on folders under a temporary directory.
-Mocked: nothing. Out of scope: version directory contents beyond ``pkg.toml``.
+Real: the pure ``gupkg.model.version`` functions, and the catalog's reading of a package folder under
+a temporary directory. Mocked: the machine boundary is ``FakeSystem``. Out of scope: version directory
+contents beyond ``pkg.toml``.
 """
 
 from __future__ import annotations
@@ -16,8 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from gupkg.collection import discover_collection
-from gupkg.core import compare_package_versions
+from gupkg.catalog.catalog import resolve_package_path
 from gupkg.model.version import (
     compare_versions,
     is_tracker_dir,
@@ -40,11 +39,10 @@ from gupkg.model.version import (
         pytest.param("1.9", "2024.05.01", id="calendar-versions"),
     ],
 )
-def test_real_versions_order_as_in_0_17(older: str, newer: str) -> None:
-    """Each pair keeps its 0.17 order, and the legacy comparison function agrees."""
+def test_real_versions_order_as_they_always_did(older: str, newer: str) -> None:
+    """Each pair keeps its order, in both directions."""
     assert compare_versions(older, newer) == -1
     assert compare_versions(newer, older) == 1
-    assert compare_package_versions(older, newer) == -1
 
 
 def test_equal_versions_compare_equal() -> None:
@@ -60,16 +58,16 @@ def test_reserved_names_never_take_part_in_ordering() -> None:
     assert newest_version(children) == "1.10.0"
 
 
-def test_inventory_lists_only_real_versions(tmp_path: Path) -> None:
-    """A package folder's inventory contains its real versions in order, never `_check_updates`, `data` or `current`."""
+def test_the_catalog_lists_only_real_versions(tmp_path: Path, system) -> None:
+    """A package folder's versions are its real versions in order, never `_check_updates`, `data` or `current`."""
     for name in ("1.10.0", "1.2.0", "_check_updates", "data", "current"):
         (tmp_path / "tool" / name).mkdir(parents=True)
         (tmp_path / "tool" / name / "pkg.toml").write_text("format = 2\n", encoding="utf-8")
 
-    inventory = discover_collection(tmp_path)
+    view = resolve_package_path(tmp_path / "tool", system).view
 
-    assert [package.selector for package in inventory.packages] == ["tool"]
-    assert [m.version_path.name for m in inventory.packages[0].manifests] == ["1.2.0", "1.10.0"]
+    assert view.name == "tool"
+    assert [state.name for state in view.local.versions] == ["1.2.0", "1.10.0"]
 
 
 def test_no_version_means_no_newest_version() -> None:

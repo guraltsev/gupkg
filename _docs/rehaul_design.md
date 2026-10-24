@@ -1314,7 +1314,7 @@ gupkg update   <target>... [--mode M] [--skip-checksum] [--yes]   # activate the
 gupkg switch   <target> <version>                         # activate another local version (rollback)
 gupkg uninstall <target>... [--purge] [--yes]             # remove integration; --purge also deletes the package root and data
 gupkg check    [<target>...] [--fix]                      # health: App fingerprint, current, drift, registry fingerprint (was doctor)
-gupkg list     [--mode M] [--installed|--available|--outdated|--broken|--local] [--details]
+gupkg list     [--mode M] [--installed|--available|--outdated|--broken|--local] [--details] [--names]
 gupkg info     <target>...                                # PackageView: versions, link, tracker, last check, receipts, log
 gupkg search   <query> [--registry R] [--offline]
 gupkg cleanup  [<target>...] [--keep N] [--bundled]       # old Apps, receipts, work, registry trees, logs (section 13.3); --bundled: section 21.8
@@ -1323,7 +1323,7 @@ gupkg logs     [<target>] [--open | --path]
 gupkg shell    [--mode M]                                 # print the PATH line for an integrate = "none" root (section 6.3)
 
 gupkg registry sync|status|list|add|remove
-gupkg pkg new <name> [--track github:owner/repo]          # authoring
+gupkg pkg new <name>[@<version>] [--track github:owner/repo] [--dir D]   # authoring: a starter tracker and/or pinned version
 gupkg pkg check <path> [--install]                        # validate a package definition; --install runs a sandboxed install (section 16)
 gupkg pkg pin <target>                                    # receipt hash -> pkg.toml (explicit)
 gupkg pkg bundle <version-dir>                            # embed the running gupkg + launchers (section 21)
@@ -1339,7 +1339,32 @@ gupkg migrate ...                                         # forwards to gupkg-mi
 The CLI has no `--all` and no interactive UI. Several targets in one call
 run one after another, and the run continues past a failure. For scripts,
 `gupkg update $(gupkg list --outdated --names)` is the batch form; with
-planning and confirmation, the batch form is `gupkg-manager`.
+planning and confirmation, the batch form is `gupkg-manager`. `check` and
+`cleanup` with no target act on every package of the trusted roots (the
+sweep: a package that another run holds is left alone, only there).
+
+Readings that the issue 029 implementation settled:
+
+- **Which commands take what.** `--yes`, `--no-input`, `--json` and `--events-file` belong to every command that runs
+  through the engine (`check-updates`, `install`, `update`, `switch`, `uninstall`, `check`, `cleanup`, `link`, and
+  `self repair|check-updates|update`) and to `registry sync`; `--plan` to every one of those except `check` and
+  `registry sync`; the reading commands take `--json` and `--mode` only. `--skip-checksum[=cli|setting|user-approved]`
+  belongs to `check-updates`, `install`, `update`, `self check-updates|update` and `pkg check`; a bare flag takes no word
+  after it as its reason.
+- **Confirmations (D25)** are asked for `uninstall --purge`, for any engine call with more than one target (including the
+  expansion of `check --fix` and `cleanup` with no target) and for the elevation relaunch. `pkg pin` asks before it writes.
+  The command line never asks about checksums.
+- **`self`.** `self check-updates|update|repair` are `check-updates gupkg`, `update gupkg` and `repair gupkg` in the mode of
+  the root this gupkg is installed in (`--mode` overrides); they produce the same result document as the long spelling.
+  `self status` reports the interpreter and the `MANIFEST.sha256` check and exits 3 when either fails.
+- **Forwarders** find `gupkg-tui.cmd`, `gupkg-manager.cmd` and `gupkg-migrate.cmd` in the gupkg tree they run from
+  (never on `PATH`), pass the rest of the command line and the exit code, refuse an elevated shell (the UI programs call
+  `gupkg` and ask for administrator rights themselves, once per batch) and refuse `--settings` and `--sandbox`, which they
+  could not honour.
+- **Settings, registries and logs.** `settings init|set` and `registry add|remove` write the settings file of the layer of
+  `--mode` (the user layer unless elevated; the system layer only from an administrator shell) after the schema accepted
+  the change; `registry sync|status|list` use the cache in the data directory of that mode's root; `logs` lists the run
+  logs of a package (or of the root), `--path` prints the newest and `--open` opens it.
 
 ### 10.3 What changes for users
 
@@ -1379,10 +1404,46 @@ public, versioned contract (`"api": 1`).
 | `--no-input` | Never prompts. Anything that would need an answer becomes a structured error with exit code 5. |
 
 **Cancelling** (D37). A caller asks a running CLI to stop through a stop
-request named after the run. The CLI checks it between packages, finishes
-the current package cleanly, and reports the rest as skipped. For an
-elevated child the request is user-writable data that can only make the
-run stop, which is safe under section 9.6.
+request named after the run. The name is chosen by the CLI when the run
+starts, unique to the run, and announced in `run_start.stop_file` (a path in
+the temporary folder): the caller creates a file there. A file that exists
+before the run starts is never a request, because the name is chosen after the
+caller could have created anything. The CLI checks it between packages,
+finishes the current package cleanly, reports the rest as skipped (exit code 5)
+and removes the marker. For an elevated child the request is user-writable data
+that can only make the run stop, which is safe under section 9.6.
+
+**The documents.** Every document starts with `api`, `command`, `ok` and
+`exit_code`. A lifecycle call adds `relaunched` and `results` (one entry per
+target: `package`, `operation`, `ok`, `status`, `version`, `previous`, `mode`,
+`exit_code`, `receipt`, `log`, `warnings`, and on failure `error` with `code`,
+`message`, `hint` and the facts the code carries, such as the `url` of
+`checksum-missing`). `--plan` adds `plan: true` and `plans`: one entry per
+target with `target`, `ok`, `exit_code` and either `plan` (`operation`,
+`package`, `path`, `mode`, `requires_elevation`, `version`, `previous`,
+`effects`, `phases`, `notes`, `sha256`, `url`, and `populate` or `copy_in` when
+the plan has them) or `result` (the failure, or "up to date"). A call that
+failed before any target was handled (a usage error, a question that was not
+answered) has `errors` with `code`, `message` and `hint`. The events file ends
+with `run_end`, whose `result` is the same document. Contract tests pin all of
+this.
+
+**The elevated child.** A call that needs the token starts one elevated child
+of the same gupkg with a command line that the parent rebuilds from its parsed
+options, never from its own input: the command, its targets, `--mode`,
+`--no-download`, `--refresh`, `--in-place`, `--purge`, `--bundled`, `--fix`,
+`--unlink`, `--keep`, `--plan`, `--yes` (only when the user gave it),
+`--no-input`, `--skip-checksum[=reason]`, `--events-file NAME`, and the markers
+`--relaunched` (always) and `--batch-confirmed` (the parent already asked "run
+this on N packages"). `--settings`, `--sandbox` and `--json` never travel, and
+the child refuses `--settings` and `--sandbox` itself. `--relaunched` makes the
+child accept only package names and paths inside the system root. Targets that
+name their mode are run in two groups (the others here, the system ones in the
+child); a call whose targets only reveal their mode when they are resolved
+reports each target the child cannot take as `not-run` (`mixed-modes`, exit
+code 2) instead of dropping it. The parent does not wait for the child
+(`ShellExecute` with `runas`): it exits 0 and the caller follows the events
+file.
 
 **Which `gupkg` the UI programs run.** Each always runs the `gupkg`
 launcher next to it in the same gupkg tree. For an installed gupkg that is
@@ -1529,8 +1590,15 @@ gupkg/
   modes.py      target -> mode: install record, containing root, portable target (D42), elevated admission (6.2, 9.6)
   relaunch.py   the up-front elevation step for system mode (9.6)
   distcopy.py   copy a distribution folder into a root, dropping the Mark of the Web (21.4)
-  cli.py        argparse grammar -> lifecycle calls -> exit code; --json/--plan/--events-file/--no-input; the tui/manager forwarders
+  cli.py        argparse grammar -> lifecycle calls -> exit code; --json/--plan/--events-file/--no-input; the tui/manager/migrate forwarders
+  viewdata.py   PackageView -> the plain data of list, info and --json (reads small files, prints nothing)
+  settingsedit.py  create and edit one settings file (settings init/set, registry add/remove), validated by the schema first
+  authoring.py  pkg new, pkg export, pkg bundle
+  report/results.py  the result, plan and error documents of --json, and the text of list, info and --plan
   selfmgmt/     self status/repair: MANIFEST.sha256 check, bundled-runtime enforcement (issues 016, 018); self check-updates/update are aliases (section 20)
+    location.py   where the running gupkg lives (installed, bundled, source): $App, its version directory and root, its sibling launchers
+    status.py     what `gupkg self status` reports
+  services/registrysource.py  the registry transports: trusted Git, the repository archive, the admin-only cache rule
 ```
 
 ```text

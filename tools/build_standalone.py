@@ -53,17 +53,18 @@ import fetch_runtime  # noqa: E402  (a sibling script, not an installed package)
 
 ROOT = Path(__file__).resolve().parents[1]
 
-# Imported by the build probe when the bundle's dependencies are installed. The UI
-# programs are modules of the gupkg package today; the separate programs the rehaul
-# creates (issues 029-030) are probed too as soon as their package directories exist
-# beside ``gupkg`` in the version directory. The migration tool (issue 023) is one of them
-# and is always present, so it is probed unconditionally.
+# Imported by the build probe when the bundle's dependencies are installed: the command line and every
+# module it reaches, so a module that needs something the bundle lacks fails the build. The UI programs
+# that issue 030 creates are probed too as soon as their package directories exist beside ``gupkg`` in the
+# version directory. The migration tool (issue 023) is one of them and is always present, so it is probed
+# unconditionally.
 PROBE_MODULES = (
-    "gupkg.cli", "gupkg.manager", "gupkg.tui", "gupkg.manager_tui", "gupkg_migrate.cli",
+    "gupkg.cli", "gupkg_migrate.cli",
     "gupkg.services.track", "gupkg.services.unpack", "gupkg.services.prepare", "gupkg.hooklib",
     "gupkg.services.artifact", "gupkg.model.manager_policy", "gupkg.pinning",
     "gupkg.engine.lifecycle", "gupkg.model.plan", "gupkg_migrate.adopt", "gupkg.engine.locks", "gupkg.engine.installer",
-    "gupkg.redact",
+    "gupkg.redact", "gupkg.authoring", "gupkg.settingsedit", "gupkg.viewdata", "gupkg.report.results",
+    "gupkg.selfmgmt.location", "gupkg.selfmgmt.status", "gupkg.services.registrysource", "gupkg.catalog.registry",
 )
 OPTIONAL_PROBE_PACKAGES = ("gupkg_ui", "gupkg_tui", "gupkg_manager")
 # Modules of the base probe that need no third-party package (used by --skip-deps builds).
@@ -184,12 +185,15 @@ def build_bundle(
         shutil.copytree(source, payload, dirs_exist_ok=True, ignore=ignored)
 
         # Materialize the audited native launchers and their relocatable
-        # relative configurations as package-owned support files.
+        # relative configurations as package-owned support files, one for each
+        # command whose ``.cmd`` launcher is in the package (the UI programs of
+        # issue 030 add theirs).
         shim = source / "shim" / "shim-console.exe"
+        commands = [name for name in ("gupkg", "gupkg-tui", "gupkg-manager", "gupkg-migrate") if (payload / f"{name}.cmd").is_file()]
         if shim.is_file():
-            shutil.copy2(shim, payload / "gupkg.exe")
-            shutil.copy2(shim, payload / "gupkg-tui.exe")
-        for command in ("gupkg", "gupkg-tui"):
+            for command in commands:
+                shutil.copy2(shim, payload / f"{command}.exe")
+        for command in commands:
             (payload / f"{command}.config.toml").write_text(
                 'target = "%COMSPEC%"\nforward_arguments = true\nelevate = false\n\n'
                 '[[argument]]\nvalue = "/d"\n\n[[argument]]\nvalue = "/s"\n\n[[argument]]\nvalue = "/c"\n\n'
