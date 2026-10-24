@@ -1,5 +1,7 @@
 # Issue 027: Checksum policy
 
+> **Status (2026-10-23):** Implemented at the seams (gate, receipt record, observed hash, manager policy, pin logic); engine, CLI and manager wiring are 028, 029 and 030, with the handoff notes in this file. Merged in 8f8a727. No manual checks owed.
+
 Date: 2026-10-22
 Priority: High (security)
 Epic: 020. Design: `_docs/rehaul_design.md` §9
