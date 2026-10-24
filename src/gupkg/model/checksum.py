@@ -61,6 +61,7 @@ SKIP_REASON_OF = {decision: reason for reason, decision in _SKIP_REASONS.items()
 
 PRESENT = "present"
 MISSING = "missing"
+INVALID = "invalid"
 
 EXIT_CHECKSUM = 3
 
@@ -387,8 +388,10 @@ def verify_observed(
     Raises
     ------
     ChecksumMismatch
-        If the verification expects a digest and the observed one differs (or is malformed), or if a
-        skipped download was served from a URL that is not https.
+        If the verification expects a digest and the observed one differs, or if a skipped download
+        was served from a URL that is not https (or not text).
+    ChecksumInvalid
+        If the observed digest is malformed.
     """
     observed = normalize_sha256(observed_sha256)
     if verification.expected is not None:
@@ -399,8 +402,9 @@ def verify_observed(
                 url, expected=verification.expected, observed=observed,
             )
     elif not is_https_url(final_url):
+        served = _shown(final_url) if isinstance(final_url, str) else "an unknown address"
         raise ChecksumMismatch(
-            f"{_shown(url)} was served from {_shown(final_url)}, which is not https; an unverified download is refused.",
+            f"{_shown(url)} was served from {served}, which is not https; an unverified download is refused.",
             url, observed=observed,
         )
     return ChecksumRecord(
@@ -471,14 +475,15 @@ class ChecksumPlan:
     Attributes
     ----------
     sha256 : str
-        ``present`` or ``missing``.
+        ``present``, ``missing``, or ``invalid`` (a hash is declared but malformed, or a git commit is not a
+        40-digit id; the install would fail with an error, so no skip is ever offered).
     url : str
         The source URL.
     url_from : str
         Where the URL came from (``pkg.toml``, ``tracker``, ``registry <name>``...), for the manager's prompt.
     skippable : bool
         Whether ``--skip-checksum`` could allow this download: only for ``https://``. Always
-        ``False`` when the hash is present (nothing to skip).
+        ``False`` when the hash is present (nothing to skip) and always ``False`` when it is invalid.
     """
 
     sha256: str
@@ -492,14 +497,25 @@ class ChecksumPlan:
 
 
 def plan_checksum(url: str, sha256: str | None, *, url_from: str, commit: str | None = None, git: bool = False) -> ChecksumPlan:
-    """Mark a download ``present`` or ``missing`` before anything is fetched.
+    """Mark a download ``present``, ``missing`` or ``invalid`` before anything is fetched.
 
-    A git source is ``present`` when it pins a commit. A malformed digest is ``missing``
-    (the plan never passes it, and the install would refuse it).
+    A git source is ``present`` when it pins a well-formed commit. A declared value that is
+    malformed (or not text) is ``invalid`` and never skippable: the install would refuse it with
+    an error, and a skip must not be offered for it.
     """
     anchor = commit if git else sha256
-    try:
-        present = anchor is not None and bool(_COMMIT.fullmatch(anchor.strip().lower()) if git else normalize_sha256(anchor))
-    except ChecksumInvalid:
-        present = False
-    return ChecksumPlan(PRESENT if present else MISSING, url, url_from, (not present) and is_https_url(url))
+    if anchor is None:
+        status = MISSING
+    else:
+        try:
+            if not isinstance(anchor, str):
+                raise ChecksumInvalid("not text")
+            if git:
+                if not _COMMIT.fullmatch(anchor.strip().lower()):
+                    raise ChecksumInvalid("not a commit")
+            else:
+                normalize_sha256(anchor)
+            status = PRESENT
+        except ChecksumInvalid:
+            status = INVALID
+    return ChecksumPlan(status, url, url_from, status == MISSING and is_https_url(url))

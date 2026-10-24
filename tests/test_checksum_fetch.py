@@ -33,11 +33,16 @@ from gupkg.model.checksum import (
     ChecksumInvalid,
     ChecksumMismatch,
     ChecksumMissing,
+    ChecksumRecord,
+    check_before_download,
+    git_gate,
+    git_record,
+    verify_observed,
 )
 from gupkg.model.settings import LAYER_SYSTEM, LAYER_USER, Layer, default_layer, merge_layers
 from gupkg.report.events import Warning, use_reporter
 from gupkg.services.artifact import FetchedArtifact, fetch_artifact, fetch_git, reverify
-from gupkg.services.http import HttpClient, HttpError
+from gupkg.services.http import Download, DownloadMismatch as HttpMismatch, HttpClient, HttpError
 from gupkg.system.fake import FakeHttp, FakeSystem
 from gupkg.system.windows import WindowsSystem
 from tests.test_git_services import COMMIT, OTHER, FakeGit, machine
@@ -480,16 +485,83 @@ def test_a_checksum_missing_skip_setting_has_no_effect_on_the_download_rule(
     assert system.request_log == []
 
 
-def test_the_download_rule_modules_do_not_read_settings_or_the_environment() -> None:
-    """The rule's modules import no settings code and touch neither `os.environ` nor `getenv`."""
-    source_root = Path(__file__).resolve().parents[1] / "src" / "gupkg"
-    for relative in ("model/checksum.py", "services/artifact.py"):
-        tree = ast.parse((source_root / relative).read_text(encoding="utf-8"))
-        names = {alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names}
-        names |= {node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
+SOURCE_ROOT = Path(__file__).resolve().parents[1] / "src" / "gupkg"
+# The roots of the download rule: the gate, the fetch, the client it downloads through, and the git checkout.
+RULE_ROOTS = ("gupkg.model.checksum", "gupkg.services.artifact", "gupkg.services.http", "gupkg.services." + "unpack.git" + "source")
+# Modules that read the environment, and why that cannot weaken a check: they only detect an elevated run
+# (``GUPKG_ELEVATED`` and the process token), and an elevated run is stricter.
+ENVIRONMENT_READERS = {"gupkg.system.port", "gupkg.selfmgmt.elevation"}
+FORBIDDEN_ATTRIBUTES = {"environ", "environb", "getenv", "argv", "import_module"}
+FORBIDDEN_NAMES = {"__import__", "getenv"}
+
+
+def module_file(name: str) -> Path | None:
+    """Return the source file of a gupkg module, or ``None`` for anything else."""
+    base = SOURCE_ROOT.joinpath(*name.split(".")[1:])
+    for candidate in (base.with_suffix(".py"), base / "__init__.py"):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def gupkg_imports(name: str, path: Path) -> set[str]:
+    """Return the gupkg modules that the module *name* imports (relative imports resolved)."""
+    package = name.split(".") if path.name == "__init__.py" else name.split(".")[:-1]
+    found: set[str] = set()
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.ImportFrom):
+            base = ".".join(package[: len(package) - (node.level - 1)] + ([node.module] if node.module else [])) if node.level else node.module or ""
+            found.add(base)
+            found |= {f"{base}.{alias.name}" for alias in node.names}
+        elif isinstance(node, ast.Import):
+            found |= {alias.name for alias in node.names}
+    return {item for item in found if item.startswith("gupkg") and module_file(item) is not None}
+
+
+def rule_closure() -> dict[str, Path]:
+    """Return every gupkg module that the download rule imports, directly or through other modules."""
+    seen: dict[str, Path] = {}
+    pending = list(RULE_ROOTS)
+    while pending:
+        name = pending.pop()
+        path = module_file(name)
+        if name not in seen and path is not None:
+            seen[name] = path
+            pending += gupkg_imports(name, path)
+    return seen
+
+
+def test_the_download_rule_and_everything_it_imports_read_neither_settings_nor_the_environment() -> None:
+    """Across the transitive imports of the rule, only the two elevation detectors touch the environment; none imports settings.
+
+    Flags `os.environ`, `os.environb`, `os.getenv`, `sys.argv`, `__import__` and `importlib.import_module`.
+    """
+    closure = rule_closure()
+    assert {"gupkg.model.checksum", "gupkg.services.http", "gupkg.system.port"} <= set(closure), "the closure was not computed"
+    readers: set[str] = set()
+    for name, path in closure.items():
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         attributes = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
-        assert not {name for name in names if "settings" in name or "manager" in name or name == "os"}, relative
-        assert not {"environ", "getenv"} & attributes, relative
+        names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+        if (FORBIDDEN_ATTRIBUTES & attributes) or (FORBIDDEN_NAMES & names):
+            readers.add(name)
+        assert "settings" not in name and "manager" not in name, f"{name} is part of the download rule's imports"
+    assert readers == ENVIRONMENT_READERS, f"unexpected readers of the environment: {sorted(readers ^ ENVIRONMENT_READERS)}"
+    for name in ("gupkg.model.checksum", "gupkg.services.artifact"):
+        tree = ast.parse(closure[name].read_text(encoding="utf-8"))
+        direct = {alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names}
+        assert "os" not in direct and "sys" not in direct, name
+
+
+def test_the_forbidden_name_check_is_not_vacuous() -> None:
+    """The checks used above do flag each spelling when it is present."""
+    spellings = ["import os\nos.environ", "import os\nos.getenv('x')", "import os\nos.environb", "import sys\nsys.argv",
+                 "__import__('os')", "import importlib\nimportlib.import_module('os')"]
+    for text in spellings:
+        tree = ast.parse(text)
+        attributes = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
+        names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+        assert (FORBIDDEN_ATTRIBUTES & attributes) or (FORBIDDEN_NAMES & names), text
 
 
 # ---------------------------------------------------------------------------
@@ -567,3 +639,105 @@ def test_fetch_result_type_is_frozen(system: FakeSystem, tmp_path: Path) -> None
     assert isinstance(fetched, FetchedArtifact)
     with pytest.raises(AttributeError):
         fetched.record = None  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# Near misses: digests and commits that differ only late, or only early
+# ---------------------------------------------------------------------------
+
+POSITIONS = [
+    pytest.param(0, id="first-character"),
+    pytest.param(31, id="last-of-the-first-half"),
+    pytest.param(32, id="first-of-the-second-half"),
+    pytest.param(40, id="middle-of-the-second-half"),
+    pytest.param(62, id="second-to-last"),
+    pytest.param(63, id="last-character"),
+]
+
+
+def flip(digest: str, position: int) -> str:
+    """Return *digest* with the one character at *position* changed."""
+    return digest[:position] + ("0" if digest[position] != "0" else "1") + digest[position + 1:]
+
+
+@pytest.mark.parametrize("position", POSITIONS)
+def test_verify_observed_compares_every_digit(position: int) -> None:
+    """A digest that differs from the expected one in a single digit, wherever it is, is a mismatch, in both directions."""
+    expected = "a" * 64
+    observed = flip(expected, position)
+
+    for left, right in ((expected, observed), (observed, expected)):
+        with pytest.raises(ChecksumMismatch):
+            verify_observed(check_before_download(HTTPS, left), right, url=HTTPS, final_url=HTTPS, size=1)
+
+
+@pytest.mark.parametrize("position", POSITIONS)
+def test_a_download_whose_hash_differs_from_the_declared_one_in_one_digit_is_a_mismatch(
+    system: FakeSystem, tmp_path: Path, position: int
+) -> None:
+    """The client and the policy compare all 64 digits of a freshly downloaded file."""
+    serve_both(system)
+
+    with pytest.raises(ChecksumMismatch):
+        fetch_artifact(make_client(system, tmp_path), HTTPS, expected_sha256=flip(GOOD, position))
+
+    assert cached_files(tmp_path) == []
+
+
+@pytest.mark.parametrize("position", POSITIONS)
+def test_a_cached_file_is_reused_only_for_the_exact_digest(system: FakeSystem, tmp_path: Path, position: int) -> None:
+    """A cache entry whose real digest differs from the expected one in a single digit is not a hit.
+
+    The entry is planted under the key of the near-miss digest; the server now serves other bytes, so the only
+    way to succeed would be to accept the planted file.
+    """
+    near = flip(GOOD, position)
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    key = hashlib.sha256(f"{HTTPS}\n{near}".encode()).hexdigest()[:40]
+    (cache / f"{key}.file").write_bytes(BODY)
+    system.urls[HTTPS] = FakeHttp(b"the server serves something else now")
+
+    with pytest.raises(ChecksumMismatch):
+        fetch_artifact(make_client(system, tmp_path), HTTPS, expected_sha256=near)
+    with pytest.raises(HttpMismatch):
+        make_client(system, tmp_path).download(HTTPS, expected_sha256=near)
+
+    assert system.request_log, "the planted file must not have been accepted without a request"
+
+
+@pytest.mark.parametrize("position", POSITIONS)
+def test_reverify_compares_every_digit(tmp_path: Path, position: int) -> None:
+    """A record whose observed digest differs from the file's in one digit, wherever, fails the re-check."""
+    path = tmp_path / "tool.zip"
+    path.write_bytes(BODY)
+    download = Download(path, len(BODY), GOOD, HTTPS, "tool.zip")
+    fetched = FetchedArtifact(download, ChecksumRecord(VERIFIED, url=HTTPS, final_url=HTTPS, observed_sha256=flip(GOOD, position), size=len(BODY)))
+
+    with pytest.raises(ChecksumMismatch):
+        reverify(fetched)
+    reverify(FetchedArtifact(download, ChecksumRecord(VERIFIED, url=HTTPS, final_url=HTTPS, observed_sha256=GOOD, size=len(BODY))))
+
+
+@pytest.mark.parametrize("position", [pytest.param(0, id="first"), pytest.param(19, id="twentieth"), pytest.param(20, id="twenty-first"), pytest.param(38, id="second-to-last"), pytest.param(39, id="last")])
+def test_a_commit_that_differs_in_one_digit_is_a_mismatch(tmp_path: Path, position: int) -> None:
+    """`git_record` and the checkout compare all 40 digits of the pinned commit."""
+    served = flip(COMMIT, position)
+
+    with pytest.raises(ChecksumMismatch):
+        git_record(git_gate(GIT_URL, COMMIT), served, url=GIT_URL)
+    with pytest.raises(ChecksumMismatch):
+        checkout(tmp_path, FakeGit(served=served), commit=COMMIT)
+
+    assert not (tmp_path / "app").exists()
+
+
+@pytest.mark.parametrize("final_url", [None, 5, b"https://example.org/x"], ids=["none", "integer", "bytes"])
+def test_a_skipped_download_with_a_final_address_that_is_not_text_fails_closed(final_url: object) -> None:
+    """A client that reports a non-text final URL gets a checksum error with exit code 3, never a TypeError."""
+    verification = check_before_download(HTTPS, None, SKIPPED_CLI)
+
+    with pytest.raises(ChecksumMismatch) as raised:
+        verify_observed(verification, GOOD, url=HTTPS, final_url=final_url, size=1)  # type: ignore[arg-type]
+
+    assert raised.value.exit_code == 3

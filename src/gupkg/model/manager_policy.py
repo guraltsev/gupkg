@@ -15,7 +15,8 @@ Usage and API
 
 Implementation Approach
 -----------------------
-Fail-closed everywhere: an unknown policy value, a plan entry that is not clearly ``missing``
+A plan entry marked ``invalid`` (a malformed declared hash) is never asked about and never skipped: the
+target is refused with its own message. Fail-closed everywhere: an unknown policy value, a plan entry that is not clearly ``missing``
 and skippable, no way to ask, a failed answer: all of them mean the target is not run with a
 skip. In an elevated run only admin-only layers count (the settings loader already drops the
 user layer; the source layer is checked again here, and a value from the user or portable layer
@@ -28,12 +29,13 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
-from .checksum import MISSING, SKIP_FLAG, SKIP_REASON_OF, SKIPPED_SETTING, USER_APPROVED, ChecksumPlan
+from .checksum import INVALID, MISSING, SKIP_FLAG, SKIP_REASON_OF, SKIPPED_SETTING, USER_APPROVED, ChecksumPlan
 from .settings import LAYER_PORTABLE, LAYER_USER, Settings
 
 POLICIES = ("ask", "refuse", "skip")
 POLICY_KEY = "manager.checksum_missing"
 REFUSED_NO_CHECKSUM = "refused: no checksum"
+REFUSED_INVALID_CHECKSUM = "refused: the checksum in pkg.toml is malformed (fix it; a malformed checksum cannot be skipped)"
 _USER_LAYERS = (LAYER_USER, LAYER_PORTABLE)
 
 
@@ -114,6 +116,8 @@ def decide_target(
     TargetDecision
         Run as planned (hash present), run with a relayed skip, refuse, or cancel.
     """
+    if plan.sha256 == INVALID:
+        return TargetDecision(False, (), "refused", REFUSED_INVALID_CHECKSUM)
     if plan.sha256 != MISSING:
         return TargetDecision(True) if plan.sha256 == "present" else _refused(plan)
     if not plan.skippable:

@@ -24,6 +24,7 @@ import pytest
 
 from gupkg.model.checksum import SKIPPED_CLI, SKIPPED_SETTING, USER_APPROVED, ChecksumPlan, parse_skip_flag, plan_checksum
 from gupkg.model.manager_policy import (
+    REFUSED_INVALID_CHECKSUM,
     REFUSED_NO_CHECKSUM,
     command_line,
     decide_target,
@@ -46,6 +47,7 @@ HTTPS = "https://example.org/tool.zip"
 PRESENT = plan_checksum(HTTPS, "ab" * 32, url_from="pkg.toml")
 MISSING_HTTPS = plan_checksum(HTTPS, None, url_from="tracker")
 MISSING_HTTP = plan_checksum("http://example.org/tool.zip", None, url_from="tracker")
+INVALID = plan_checksum(HTTPS, "not-a-digest", url_from="pkg.toml")
 
 
 def settings_with(layer: str | None, value: object = None):
@@ -134,6 +136,19 @@ def test_the_manager_policy_matrix(
         assert decision.status == "cancelled"
     elif not runs:
         assert decision.status == "refused" and decision.message.startswith(REFUSED_NO_CHECKSUM)
+
+
+@pytest.mark.parametrize("policy", ["skip", "ask", "refuse"])
+@pytest.mark.parametrize("interactive", [True, False], ids=["interactive", "non-interactive"])
+def test_an_invalid_checksum_is_never_asked_about_never_skipped_and_has_its_own_message(policy: str, interactive: bool) -> None:
+    """A malformed declared hash is refused under every policy, with no question and no relayed flag."""
+    asked: list[ChecksumPlan] = []
+
+    decision = decide_target(INVALID, policy, interactive=interactive, ask=lambda plan: asked.append(plan) or True)
+
+    assert INVALID.sha256 == "invalid" and INVALID.skippable is False
+    assert decision.run is False and decision.arguments == () and asked == []
+    assert decision.message == REFUSED_INVALID_CHECKSUM
 
 
 def test_a_plan_entry_that_is_neither_present_nor_missing_is_refused() -> None:

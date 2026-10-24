@@ -54,7 +54,9 @@ Epic: 020. Design: `_docs/rehaul_design.md` §9
 2. **The plan exposes checksum status.** `gupkg install|update|check-updates
    … --plan --json` (issue 029) reports, for each target, `sha256: present |
    missing` and the source URL, so a caller can decide before anything is
-   downloaded.
+   downloaded. A hash that is declared but malformed is reported as
+   `sha256: invalid`: it is never skippable and the manager never offers or
+   relays a skip for it.
 3. **The manager policy** (`gupkg-manager`, issue 030). The setting is
    `[manager] checksum_missing = "ask" | "refuse" | "skip"`, default `ask`.
    - **`ask`:** one prompt per package, showing the package, version, URL and
@@ -125,6 +127,17 @@ Epic: 020. Design: `_docs/rehaul_design.md` §9
 - [ ] A version directory written by `gupkg check-updates`, where the
       tracker found no checksum, has no `sha256` in its `pkg.toml`, also
       after a download with `--skip-checksum`.
+
+## Notes for issues 028 and 029 (from review of 027)
+
+- **`gupkg pkg pin` (029)** must show the receipt's URL, final URL, size and date before it writes, and
+  say that a hash observed from an unverified (skipped) download is being pinned.
+- **A stored `verified` is not proof (029, `check`).** A user-mode receipt is user-writable and
+  self-reported, so `check` must not treat a stored `verified` decision as evidence of anything.
+- **Cache and work directory (028).** The download's `.part` file is not opened exclusively and the
+  cache directory is supplied by the caller, so in an elevated run the engine must pass an
+  admin-only cache and work directory, and call `reverify` right before unpacking.
+- **Plan (029).** A malformed declared hash appears as `sha256: invalid`, with `skippable: false`.
 
 ## Tests
 

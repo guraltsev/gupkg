@@ -74,3 +74,19 @@ One vacuous test was found and fixed on the way (the reverify test flipped a byt
   `parse_checksum_record` and calls `pin_hash`; show `unverified_note` in `list --details`, `info` and `check`.
 - 030: use `gupkg.model.manager_policy`; the end-to-end manager matrix with a fake `gupkg` executable can then run against the real manager.
 - 031: the registry tool publishes pinned hashes; no bypass exists.
+
+## Review round 1
+
+1. Near-miss tests (digit changed at positions 0, 31, 32, 40, 62, 63; commits at 0, 19, 20, 38, 39) for `verify_observed`, a fresh
+   download, the cache hit (client and `fetch_artifact`, entry planted under the near-miss key), `reverify`, `git_record` and the
+   checkout. Mutants now killed: `verify_observed` on `[:32]` and on all-but-last, http.py mismatch on `[:32]`, http.py cache hit on
+   `[:32]`, `git_record` on `[:20]`, the checkout's own commit comparison on `[:20]`, `hashes_equal` (reverify) on `[:32]`.
+2. `verify_observed` with a non-text `final_url` on a skipped download is a `ChecksumMismatch` (exit 3), not a TypeError.
+3. Docstring fixed: a malformed observed digest raises `ChecksumInvalid`.
+4. New plan status `invalid` (malformed hash, non-text value, bad commit): never skippable. The manager refuses it under every policy
+   with its own message, never asks and never relays a flag. Design 10.4 and the issue text name it.
+5. The environment test follows the imports of the rule transitively (computed from the code) and flags `os.environ`, `os.environb`,
+   `os.getenv`, `sys.argv`, `__import__`, `importlib.import_module`; the only readers are `system/port.py` and `selfmgmt/elevation.py`
+   (elevation detection, which can only make a run stricter), pinned as an exact set. A second test proves each spelling is flagged.
+6. Handoff notes added to the issue text (029: show URL, final URL, size and date before pinning and say the hash comes from an
+   unverified download; `check` must not trust a stored `verified`; 028: admin-only cache and work directory when elevated).
