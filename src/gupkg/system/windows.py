@@ -56,6 +56,7 @@ from ..selfmgmt import elevation
 from ..tls import enable_partial_chain_verification
 from .port import (
     DownloadResponse,
+    ElevatedRun,
     EnvValue,
     HttpResponse,
     ProcessAborted,
@@ -65,6 +66,8 @@ from .port import (
     Scope,
     ScopeFolders,
     ShortcutSpec,
+    elevated_command,
+    unsafe_relaunch_argument,
 )
 
 _REGEX_WORKER = Path(__file__).with_name("regex_worker.py")
@@ -340,24 +343,55 @@ class WindowsSystem(WindowsLinks):
         finally:
             kernel32.CloseHandle(handle)
 
-    def relaunch_elevated(self, argv: Sequence[str]) -> bool:
-        """Request one elevated run of the bundled launcher with *argv*; return whether it started."""
-        if os.name != "nt":
-            return False
+    def relaunch_elevated(
+        self, argv: Sequence[str], *, on_interrupt: Callable[[], None] | None = None, grace: float = 30.0,
+    ) -> ElevatedRun:
+        """Run the bundled gupkg once elevated with *argv*, wait for it and return how it ended.
+
+        The child is ``python.exe -I -s -B -S bootstrap.py`` of this package, started with the ``runas`` verb through
+        ``ShellExecuteEx`` and no shell, so nothing in *argv* is read by ``cmd.exe`` (T1). Both paths come from the
+        location of this module, and the package folder must be admin-only. A value that could mean something to a
+        shell is refused here too. The process handle is closed on every path.
+        """
+        if os.name != "nt" or any(unsafe_relaunch_argument(part) for part in argv):
+            return ElevatedRun(False)
         try:
-            # Go through the package launcher, never "python -m gupkg": the launcher
-            # starts the bundled interpreter in isolated mode, so the elevated
-            # process cannot import from the current directory or user variables.
-            launcher = Path(__file__).resolve().parent.parent / "gupkg.cmd"
-            if not launcher.is_file():
-                return False
-            params = f'/d /s /c ""{launcher}" {subprocess.list2cmdline(list(argv))}"'
-            result = ctypes.windll.shell32.ShellExecuteW(
-                None, "runas", _system_tool("cmd"), params, str(launcher.parent), 1
-            )
-            return result > 32
+            package = Path(__file__).resolve().parent.parent
+            program, parameters, directory = elevated_command(package, argv)
+            if not program.is_file() or not (package / "bootstrap.py").is_file() or elevation.untrusted_reason(package) is not None:
+                return ElevatedRun(False)
+            info = _ShellExecuteInfo()
+            info.cbSize = ctypes.sizeof(_ShellExecuteInfo)
+            info.fMask = _SEE_MASK_NOCLOSEPROCESS
+            info.lpVerb = "runas"
+            info.lpFile = str(program)
+            info.lpParameters = parameters
+            info.lpDirectory = str(directory)
+            info.nShow = 1
+            shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+            shell32.ShellExecuteExW.argtypes = [ctypes.POINTER(_ShellExecuteInfo)]
+            if not shell32.ShellExecuteExW(ctypes.byref(info)) or not info.hProcess:
+                return ElevatedRun(False)
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+            kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+            kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+            handle = info.hProcess
+            try:
+                def done(seconds: float) -> bool:
+                    """Wait up to *seconds* for the child and report whether it ended."""
+                    return kernel32.WaitForSingleObject(handle, int(seconds * 1000)) == 0
+
+                def exit_code() -> int:
+                    """Return the child's exit code."""
+                    code = wintypes.DWORD()
+                    return int(code.value) if kernel32.GetExitCodeProcess(handle, ctypes.byref(code)) else 3
+
+                return wait_for_child(done, exit_code, on_interrupt=on_interrupt, grace=grace)
+            finally:
+                kernel32.CloseHandle(handle)
         except Exception:
-            return False
+            return ElevatedRun(False)
 
     def directory_is_admin_only(self, path: Path) -> bool:
         """Return whether only administrators can modify *path* and replace its parents."""
@@ -737,6 +771,48 @@ def wait_for_keypress() -> None:
 # ---------------------------------------------------------------------------
 # Helpers behind the System methods
 # ---------------------------------------------------------------------------
+
+
+_SEE_MASK_NOCLOSEPROCESS = 0x00000040
+
+
+class _ShellExecuteInfo(ctypes.Structure):
+    """The ``SHELLEXECUTEINFOW`` structure of ``ShellExecuteExW``."""
+
+    _fields_ = [
+        ("cbSize", wintypes.DWORD), ("fMask", ctypes.c_ulong), ("hwnd", wintypes.HWND), ("lpVerb", wintypes.LPCWSTR),
+        ("lpFile", wintypes.LPCWSTR), ("lpParameters", wintypes.LPCWSTR), ("lpDirectory", wintypes.LPCWSTR),
+        ("nShow", ctypes.c_int), ("hInstApp", wintypes.HINSTANCE), ("lpIDList", ctypes.c_void_p),
+        ("lpClass", wintypes.LPCWSTR), ("hkeyClass", wintypes.HKEY), ("dwHotKey", wintypes.DWORD),
+        ("hIconOrMonitor", wintypes.HANDLE), ("hProcess", wintypes.HANDLE),
+    ]
+
+
+def wait_for_child(
+    done: Callable[[float], bool], exit_code: Callable[[], int], *,
+    on_interrupt: Callable[[], None] | None, grace: float, clock: Callable[[], float] = time.monotonic,
+) -> ElevatedRun:
+    """Wait until ``done(seconds)`` says the child ended and return its exit code, handling interrupts.
+
+    The first interrupt (Ctrl-C) calls *on_interrupt* once (it asks the child to stop) and the wait goes on for at most
+    *grace* seconds; a second interrupt or the end of the grace period gives up and returns ``abandoned``.
+    """
+    interrupted_at: float | None = None
+    while True:
+        try:
+            if done(0.25):
+                return ElevatedRun(True, exit_code())
+            if interrupted_at is not None and clock() - interrupted_at >= grace:
+                return ElevatedRun(True, None, True)
+        except KeyboardInterrupt:
+            if interrupted_at is not None:
+                return ElevatedRun(True, None, True)
+            interrupted_at = clock()
+            if on_interrupt is not None:
+                try:
+                    on_interrupt()
+                except OSError:
+                    pass
 
 
 def _system_tool(name: str) -> str:

@@ -73,6 +73,8 @@ class Engine:
         This process is the elevated child of a non-elevated call.
     argv, gupkg_dir, gupkg_root : optional
         The command line for an elevated child and the running gupkg's version directory and root.
+    request_stop : callable, optional
+        Asks the elevated child to stop (creates the child's stop marker); called when the user interrupts the wait for it.
     seven_zip : Path, optional
         The 7-Zip executable (the bundled one by default).
     limits : Limits
@@ -104,6 +106,7 @@ class Engine:
     argv: tuple[str, ...] = ()
     gupkg_dir: Path | None = None
     gupkg_root: Path | None = None
+    request_stop: Callable[[], None] | None = None
     seven_zip: Path | None = None
     limits: Limits = field(default_factory=Limits)
     sleep: Callable[[float], None] = time.sleep

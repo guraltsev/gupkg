@@ -250,23 +250,68 @@ def test_elevated_trust_check_covers_the_version_directory_and_the_whole_bundled
 # ---------------------------------------------------------------------------
 
 
+def _scripted_win32(trusted: bool, *, exit_code: int = 5):
+    """Return (patches, record): the ShellExecuteEx and wait calls replaced by a recording script; nothing is started."""
+    record: dict = {"closed": []}
+    shell32, kernel32 = mock.Mock(), mock.Mock()
+
+    def shell_execute(info) -> int:
+        record.update(verb=info.lpVerb, file=info.lpFile, parameters=info.lpParameters, directory=info.lpDirectory, mask=info.fMask)
+        info.hProcess = 99
+        return 1
+
+    def exit_code_of(handle, code) -> int:
+        code.value = exit_code
+        return 1
+
+    shell32.ShellExecuteExW.side_effect = shell_execute
+    kernel32.WaitForSingleObject.return_value = 0
+    kernel32.GetExitCodeProcess.side_effect = exit_code_of
+    kernel32.CloseHandle.side_effect = lambda handle: record["closed"].append(handle)
+    patches = [
+        mock.patch("ctypes.WinDLL", side_effect=lambda name, **kwargs: {"shell32": shell32, "kernel32": kernel32}[name], create=True),
+        mock.patch("ctypes.byref", side_effect=lambda value: value),
+        mock.patch.object(elevation, "untrusted_reason", return_value=None if trusted else "users can write here"),
+    ]
+    return patches, record
+
+
 @pytest.mark.skipif(os.name != "nt", reason="uses the Windows shell relaunch")
-def test_elevated_relaunch_goes_through_the_isolated_launcher() -> None:
-    """The elevated update relaunch starts gupkg.cmd, never `python -m gupkg` in the caller's directory."""
-    shell_execute = mock.Mock(return_value=42)
-    fake_windll = types.SimpleNamespace(shell32=types.SimpleNamespace(ShellExecuteW=shell_execute))
+def test_elevated_relaunch_runs_the_bundled_python_on_bootstrap_without_a_shell() -> None:
+    """The ShellExecuteEx call gets runas, the bundled python.exe, the isolation flags and bootstrap.py: never cmd.exe, never -m gupkg."""
+    patches, record = _scripted_win32(trusted=True)
 
-    with mock.patch("ctypes.windll", fake_windll, create=True):
-        accepted = WindowsSystem().relaunch_elevated(["manager", "update", "--yes"])
+    with patches[0], patches[1], patches[2]:
+        run = WindowsSystem().relaunch_elevated(["install", "system:tool", "--yes"])
 
-    assert accepted is True
-    _, verb, program, parameters, directory, _ = shell_execute.call_args.args
-    assert verb == "runas"
-    assert Path(program).name.lower() == "cmd.exe"
-    assert "gupkg.cmd" in parameters
-    assert "manager update --yes" in parameters
-    assert "-m gupkg" not in parameters
-    assert Path(directory) == SRC
+    assert (run.started, run.exit_code, run.abandoned) == (True, 5, False)
+    assert record["verb"] == "runas" and record["mask"] & 0x40  # SEE_MASK_NOCLOSEPROCESS: the handle is waited on
+    assert Path(record["file"]) == SRC / "python" / "python.exe" and Path(record["directory"]) == SRC
+    assert record["parameters"].startswith(f'-I -s -B -S {SRC / "bootstrap.py"} install system:tool --yes')
+    assert "cmd" not in Path(record["file"]).name.lower() and "-m gupkg" not in record["parameters"]
+    assert record["closed"] == [99], "the process handle is closed"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="uses the Windows shell relaunch")
+def test_elevated_relaunch_refuses_a_package_folder_that_users_can_write() -> None:
+    """Defence in depth: even when asked, the system call starts nothing from a folder that is not admin-only."""
+    patches, record = _scripted_win32(trusted=False)
+
+    with patches[0], patches[1], patches[2]:
+        run = WindowsSystem().relaunch_elevated(["install", "system:tool"])
+
+    assert run.started is False and "verb" not in record
+
+
+@pytest.mark.skipif(os.name != "nt", reason="uses the Windows shell relaunch")
+def test_elevated_relaunch_closes_the_handle_when_the_wait_fails() -> None:
+    """A failure while waiting still closes the process handle."""
+    patches, record = _scripted_win32(trusted=True)
+
+    with patches[0], patches[1], patches[2], mock.patch("gupkg.system.windows.wait_for_child", side_effect=RuntimeError("boom")):
+        run = WindowsSystem().relaunch_elevated(["install", "system:tool"])
+
+    assert run.started is False and record["closed"] == [99]
 
 
 # ---------------------------------------------------------------------------

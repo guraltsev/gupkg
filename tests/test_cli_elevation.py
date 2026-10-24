@@ -34,17 +34,20 @@ def world(tmp_path: Path) -> CliWorld:
     return machine
 
 
-def child_of(world: CliWorld, *argv: str, stdin: str = "y\n") -> list[str]:
-    """Run *argv* in the normal shell, assert that it relaunched once, and return the child's command line."""
+def child_of(world: CliWorld, *argv: str, stdin: str = "y\n", code: int = 0) -> list[str]:
+    """Run *argv* in the normal shell, assert that it relaunched once, and return the child's command line.
+
+    A fake child writes no events file, so a call that names ``--events-file`` ends with *code* 3 (no ``run_end`` to read).
+    """
     result = world.cli(*argv, stdin=stdin)
-    assert result.code == 0, result.err
+    assert result.code == code, result.err
     assert len(world.fake.relaunches) == 1, world.fake.relaunches
     return world.fake.relaunches[0]
 
 
 def test_system_targets_start_one_elevated_child_with_a_rebuilt_command_line(world: CliWorld) -> None:
     """The child gets the command, the targets, the whitelisted options and --relaunched; nothing is installed by the parent."""
-    argv = child_of(world, "install", "system:tool", "system:other", "--refresh", "--events-file", "run.jsonl", "--yes")
+    argv = child_of(world, "install", "system:tool", "system:other", "--refresh", "--events-file", "run.jsonl", "--yes", code=3)
 
     assert argv[0] == "install" and argv[1:3] == ["system:tool", "system:other"]
     assert "--relaunched" in argv and "--refresh" in argv and "--yes" in argv
@@ -131,7 +134,7 @@ def test_a_source_checkout_that_cannot_name_itself_never_relaunches(tmp_path: Pa
 
 def test_the_child_installs_in_the_system_root_and_writes_the_events_file_there(world: CliWorld) -> None:
     """Run the recorded child command line elevated: the install happens, and the events file ends with the result document."""
-    argv = child_of(world, "install", "system:tool", "--events-file", "run.jsonl", "--yes")
+    argv = child_of(world, "install", "system:tool", "--events-file", "run.jsonl", "--yes", code=3)
     world.fake.elevated = True
 
     child = world.cli(*argv)

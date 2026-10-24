@@ -27,7 +27,9 @@ system root and a fixed set of options, and refuses everything else.
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import re
 import sys
 import uuid
 from collections.abc import Callable, Mapping, Sequence
@@ -58,6 +60,7 @@ from .report.logfile import list_run_logs, running_gupkg_logs_base, validate_log
 from .report.session import RunSession
 from .selfmgmt.location import RunningGupkg, locate_running_gupkg
 from .selfmgmt.status import self_status
+from .system.port import ElevatedRun, unsafe_relaunch_argument
 from .settingsload import settings_file
 from .system.fake import FakeSystem
 from .system.port import System, is_elevated_run
@@ -155,6 +158,11 @@ def _run(args: argparse.Namespace, tokens: list[str], machine: System, env: Mapp
     # The elevated child accepts a fixed set of options only: a standard user cannot steer it through the root options.
     if getattr(args, "relaunched", False) and (args.settings is not None or args.sandbox is not None):
         return _usage_error(tokens, "--settings and --sandbox are not accepted by the elevated child of a relaunch")
+    if getattr(args, "relaunched", False):
+        for token in tokens:
+            reason = unsafe_relaunch_argument(token)
+            if reason is not None:
+                return _usage_error(tokens, f"the elevated child refuses {reason}: none of & | < > ^ \" % ! ` or control characters is accepted")
     try:
         parse_skip_flag(getattr(args, "skip_checksum", None))
     except ChecksumInvalid as error:
@@ -290,27 +298,33 @@ def _execute(
 
     # Targets whose mode is known to need the elevated token are run apart from the rest (one elevation per call).
     merged: list[Any] = []
+    children: list[BatchResult] = []
     relaunched = False
     for group in _groups(targets):
         engine = _engine(run, session, command, group, stop_path, batch_confirmed=confirmed and not args.yes)
         batch = lifecycle.run_batch(engine, [replace(make(item), skip=skip) for item in group])
         merged.extend(batch.results)
         relaunched = relaunched or batch.relaunched
+        children.append(batch)
         if batch.relaunched:
             session.discard_log()
-    combined = BatchResult(tuple(merged), relaunched=relaunched)
+    child_code = next((item.child_exit_code for item in reversed(children) if item.child_exit_code is not None), None)
+    combined = BatchResult(tuple(merged), relaunched=relaunched, child_exit_code=child_code)
     text = combined.summary()
-    if relaunched:
-        text += (
-            "\nAn elevated gupkg was started in a separate window for the system targets."
-            + (f" Follow its events file {args.events_file} in the system root's log folder." if args.events_file else "")
-        )
     extra: dict[str, Any] = {}
+    if relaunched:
+        text += f"\nThe elevated gupkg ended with exit code {child_code} for the system targets."
+        problem = _missing_run_end(run, args.events_file)
+        if problem is not None:
+            text += f"\nerror: {problem}"
+            extra["errors"] = [{"code": "child-no-result", "message": problem, "hint": "The elevated run may have been killed; check the system root's logs."}]
     if sweep and not relaunched:
         extra["root_cleanup"] = _prune_roots(run, session, group_modes=_modes_of(targets), command=command)
     document = results.result_document(command, combined)
     document.update(extra)
-    return combined.exit_code, document, text.strip()
+    if "errors" in extra:
+        document["ok"], document["exit_code"] = False, max(document["exit_code"], EXIT_FAILED)
+    return document["exit_code"], document, text.strip()
 
 
 def _declined(command: str, message: str) -> tuple[int, dict[str, Any], str]:
@@ -401,6 +415,9 @@ def _prune_roots(run: _Run, session: RunSession, *, group_modes: set[str], comma
 # ---------------------------------------------------------------------------
 
 
+_STOP_NAME = re.compile(r"gupkg-stop-[0-9a-f]{32}")
+
+
 def _stop_path(run: _Run) -> Path | None:
     """Return a new, unique path for the run's stop marker, or ``None`` when no temporary folder is known (decision D37).
 
@@ -411,7 +428,33 @@ def _stop_path(run: _Run) -> Path | None:
     folder = run.env.get("TEMP") or run.env.get("TMP")
     if not folder or not Path(folder).is_dir():
         return None
+    given = getattr(run.args, "stop_file", None)
+    if given and getattr(run.args, "relaunched", False):
+        # The parent's marker is accepted only as a fresh name inside this process's own temporary folder.
+        path = Path(given)
+        if _STOP_NAME.fullmatch(path.name) and os.path.normcase(os.path.abspath(path.parent)) == os.path.normcase(os.path.abspath(folder)):
+            return path
     return Path(folder) / f"gupkg-stop-{uuid.uuid4().hex}"
+
+
+def _missing_run_end(run: _Run, events_name: str | None) -> str | None:
+    """Return a message when the elevated child left no ``run_end`` line in its events file, else ``None``.
+
+    Only a call that named ``--events-file`` can be checked: the child writes that file into the system root's log folder.
+    """
+    if not events_name:
+        return None
+    try:
+        _, context = _context(run, "system")
+        lines = (context.log_dir / events_name).read_text(encoding="utf-8").splitlines()
+    except (OSError, ModeRefused, SettingsError, ValueError):
+        return f"The elevated run ended but its events file {events_name} could not be read, so how it ended is not known."
+    last = next((line for line in reversed(lines) if line.strip()), "")
+    try:
+        ended = json.loads(last).get("event") == "run_end"
+    except ValueError:
+        ended = False
+    return None if ended else f"The elevated run ended without a run_end line in its events file {events_name}: treat the run as failed."
 
 
 def _remove_marker(path: Path | None) -> None:
@@ -465,12 +508,15 @@ def _engine(run: _Run, session: RunSession, command: str, targets: Sequence[str]
         system=run.system, env=run.env, load=run.loader, confirm=_ask, yes=bool(args.yes), no_input=bool(args.no_input),
         cancel=stop_marker(stop_path) if stop_path is not None else (lambda: False), log_path=log_path,
         relaunched=bool(getattr(args, "relaunched", False)),
-        argv=_child_argv(run, command, targets, batch_confirmed=batch_confirmed),
+        argv=_child_argv(run, command, targets, batch_confirmed=batch_confirmed, stop_path=stop_path),
         gupkg_dir=run.location.version_dir, gupkg_root=run.location.root,
+        request_stop=(lambda: stop_path.touch()) if stop_path is not None else None,
     )
 
 
-def _child_argv(run: _Run, command: str, targets: Sequence[str], *, batch_confirmed: bool) -> tuple[str, ...]:
+def _child_argv(
+    run: _Run, command: str, targets: Sequence[str], *, batch_confirmed: bool, stop_path: Path | None = None,
+) -> tuple[str, ...]:
     """Return the command line of the elevated child, rebuilt from the parsed options (never copied from the input).
 
     Only the command, its targets and a fixed set of options travel: ``--settings`` and ``--sandbox`` never do, and the
@@ -501,6 +547,8 @@ def _child_argv(run: _Run, command: str, targets: Sequence[str], *, batch_confir
         argv.append("--skip-checksum" if skip == "" else f"--skip-checksum={skip}")
     if getattr(args, "events_file", None):
         argv += ["--events-file", args.events_file]
+    if stop_path is not None and unsafe_relaunch_argument(str(stop_path)) is None:
+        argv += ["--stop-file", str(stop_path)]
     argv.append("--relaunched")
     if batch_confirmed:
         argv.append("--batch-confirmed")
@@ -1161,6 +1209,7 @@ def _options(
         )
     if relaunch:
         parser.add_argument("--relaunched", action="store_true", help=argparse.SUPPRESS)
+        parser.add_argument("--stop-file", default=None, help=argparse.SUPPRESS)
         parser.add_argument("--batch-confirmed", action="store_true", help=argparse.SUPPRESS)
     for option in _REMOVED_OPTIONS:
         parser.add_argument(option, action=_Removed, nargs=0, help=argparse.SUPPRESS)

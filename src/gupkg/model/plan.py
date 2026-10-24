@@ -442,21 +442,27 @@ class BatchResult:
     """The outcome of a call with several targets.
 
     ``relaunched`` is true when the call started one elevated child for its system targets and
-    ran nothing itself; the caller waits for that child.
+    ran nothing itself; the call waited for that child and ``child_exit_code`` is how it ended, which is the call's exit code
+    unless a target left out of the child failed with a higher one.
     """
 
     results: tuple[PackageResult, ...] = ()
     relaunched: bool = False
+    child_exit_code: int | None = None
 
     @property
     def ok(self) -> bool:
-        """Return whether every target succeeded (a skipped one counts as not done)."""
-        return all(item.ok and item.status != "skipped" for item in self.results)
+        """Return whether every target succeeded (a skipped one counts as not done) and the elevated child, if any, ended well."""
+        return all(item.ok and item.status != "skipped" for item in self.results) and not (
+            self.relaunched and self.child_exit_code not in (None, 0)
+        )
 
     @property
     def exit_code(self) -> int:
         """Return the call's exit code: zero when all succeeded, else the highest code of a failure."""
         failed = [item.exit_code or EXIT_FAILED for item in self.results if not item.ok]
+        if self.relaunched and self.child_exit_code is not None:
+            return max([self.child_exit_code, *failed])
         if failed:
             return max(failed)
         return EXIT_INPUT if any(item.status == "skipped" for item in self.results) else EXIT_OK

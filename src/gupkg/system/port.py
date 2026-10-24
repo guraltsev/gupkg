@@ -41,6 +41,7 @@ gupkg.system.fake : the test and sandbox implementation.
 from __future__ import annotations
 
 import os
+import subprocess
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from enum import Enum
@@ -123,6 +124,55 @@ class ProcessNotAllowed(OSError):
 
 class ProcessFailed(RuntimeError):
     """Report that a child process that had to succeed exited with a failure status."""
+
+
+@dataclass(frozen=True)
+class ElevatedRun:
+    """What one elevated relaunch did: whether the child started, and how it ended.
+
+    Attributes
+    ----------
+    started : bool
+        False when the elevation prompt was declined or the child could not be started.
+    exit_code : int, optional
+        The child's exit code once it ended; ``None`` when it never started or this process stopped waiting.
+    abandoned : bool
+        True when this process stopped waiting after an interrupt while the child may still be running.
+    """
+
+    started: bool
+    exit_code: int | None = None
+    abandoned: bool = False
+
+
+# Characters that mean something to ``cmd.exe`` or break a command line: the elevated child must never receive them.
+UNSAFE_RELAUNCH_CHARACTERS = frozenset('&|<>^"%!`')
+
+
+def unsafe_relaunch_argument(value: str) -> str | None:
+    """Return why *value* may not travel to (or arrive in) an elevated child, or ``None`` when it is plain.
+
+    The child is started without a shell, but the value also reaches log files and later shell commands, so the set
+    stays the strict one: none of ``& | < > ^ " % ! ` ``, no control character (newline, NUL, tab...) and no lone surrogate.
+    """
+    for character in str(value):
+        code = ord(character)
+        if character in UNSAFE_RELAUNCH_CHARACTERS or code < 32 or code == 127 or 0xD800 <= code <= 0xDFFF:
+            shown = repr(character) if code < 32 or code == 127 or 0xD800 <= code <= 0xDFFF else character
+            return f"the character {shown} in {str(value)[:60]!r}"
+    return None
+
+
+def elevated_command(package_dir: Path, argv: Sequence[str]) -> tuple[Path, str, Path]:
+    """Return the program, parameter string and working folder of one elevated child (never ``cmd.exe``).
+
+    The child is the bundled interpreter in isolated mode running ``bootstrap.py`` of *package_dir*, the same as
+    ``gupkg.cmd`` does, with *argv* quoted by the rules of ``CreateProcess`` (no shell reads it). The two paths come from
+    the trusted package location, never from the environment.
+    """
+    package = Path(package_dir)
+    parameters = subprocess.list2cmdline(["-I", "-s", "-B", "-S", str(package / "bootstrap.py"), *[str(part) for part in argv]])
+    return package / "python" / "python.exe", parameters, package
 
 
 @dataclass(frozen=True)
@@ -225,8 +275,15 @@ class System(Protocol):
     def is_elevated(self) -> bool:
         """Return whether this process may hold an administrator token (unknown counts as elevated)."""
 
-    def relaunch_elevated(self, argv: Sequence[str]) -> bool:
-        """Ask for one elevated run of the bundled launcher with *argv*; return whether it was started."""
+    def relaunch_elevated(
+        self, argv: Sequence[str], *, on_interrupt: Callable[[], None] | None = None, grace: float = 30.0,
+    ) -> ElevatedRun:
+        """Run the bundled gupkg once elevated with *argv* and wait for it to end.
+
+        The child is the bundled ``python.exe -I -s -B -S bootstrap.py`` (see ``elevated_command``), started with the
+        ``runas`` verb and no shell. An interrupt while waiting calls *on_interrupt* (it asks the child to stop) and the
+        wait continues for *grace* seconds; after that, or on a second interrupt, the wait is abandoned.
+        """
 
     def directory_is_admin_only(self, path: Path) -> bool:
         """Return whether only administrators can modify *path* and replace its parents."""

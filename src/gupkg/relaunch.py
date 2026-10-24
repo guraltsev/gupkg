@@ -12,7 +12,7 @@ Usage and API
 After resolving the mode of every target of a CLI call, pass all the contexts to
 ``ensure_elevation(contexts, system=..., argv=..., version_dir=..., root=...)``. The call checks once for the
 whole call, however many system targets there are, and relaunches at most once. ``ElevationOutcome.relaunched``
-tells the caller to stop and wait for the elevated child. ``ElevationRefused`` (exit code 2) and
+says an elevated child ran to its end; the call waits for it and ``exit_code`` is the child's. ``ElevationRefused`` (exit code 2) and
 ``InputNeeded`` (exit code 5, from ``gupkg.model.mode``) carry the message to print.
 
 Implementation Approach
@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .model.mode import InputNeeded, ModeContext, ModeRefused
-from .system.port import System, is_elevated_run
+from .system.port import System, is_elevated_run, unsafe_relaunch_argument
 
 
 class ElevationRefused(ModeRefused):
@@ -46,6 +46,7 @@ class ElevationOutcome:
 
     needed: bool
     relaunched: bool = False
+    exit_code: int | None = None
 
 
 def ensure_elevation(
@@ -59,6 +60,7 @@ def ensure_elevation(
     no_input: bool = False,
     confirm: Callable[[str], bool] | None = None,
     elevated: bool | None = None,
+    on_interrupt: Callable[[], None] | None = None,
 ) -> ElevationOutcome:
     """Relaunch this gupkg elevated once when any target needs system mode and the process is not elevated.
 
@@ -82,25 +84,38 @@ def ensure_elevation(
         Asks the user and returns whether to relaunch; ``None`` means nobody can be asked.
     elevated : bool, optional
         Overrides the elevation reported by *system*.
+    on_interrupt : callable, optional
+        Called once when the user interrupts the wait for the elevated child; it asks the child to stop.
 
     Returns
     -------
     ElevationOutcome
         ``needed`` is false when no context requires elevation; ``relaunched`` is true when a child
-        was started and the caller should wait for it.
+        was started and has ended, and ``exit_code`` is its exit code.
 
     Raises
     ------
     ElevationRefused
-        If this gupkg runs from a place that standard users can modify.
+        If this gupkg runs from a place that standard users can modify, or an argument holds a character that is
+        refused in an elevated child's command line (checked before anything is asked).
     InputNeeded
-        If the confirmation was declined or could not be asked, or the elevation prompt was refused.
+        If the confirmation was declined or could not be asked, the elevation prompt was refused, or the wait for the
+        elevated child was given up after an interrupt.
     """
     # No target needs the machine, or the process already holds the token: nothing to relaunch.
     if not any(context.requires_elevation for context in contexts):
         return ElevationOutcome(False)
     if (is_elevated_run(system) if elevated is None else elevated):
         return ElevationOutcome(True)
+
+    # The child's command line is built from user-chosen targets: refuse every shell-significant character first (T1).
+    for part in argv:
+        reason = unsafe_relaunch_argument(part)
+        if reason is not None:
+            raise ElevationRefused(
+                f"The elevated gupkg is not started: {reason} is not allowed in a command that runs with administrator rights. "
+                "Rename the package folder or file, or run gupkg from an administrator shell. Nothing was changed."
+            )
 
     # Only an admin-only gupkg may start an elevated copy of itself: judge its own folders first, so a
     # user-writable gupkg refuses before it asks anything.
@@ -122,6 +137,12 @@ def ensure_elevation(
             raise InputNeeded("Elevation was declined. Nothing was changed.")
 
     # One relaunch for every system target of the call.
-    if not system.relaunch_elevated(list(argv)):
+    run = system.relaunch_elevated(list(argv), on_interrupt=on_interrupt)
+    if not run.started:
         raise InputNeeded("The elevation prompt was not accepted. Nothing was changed.")
-    return ElevationOutcome(True, True)
+    if run.abandoned or run.exit_code is None:
+        raise InputNeeded(
+            "Stopped waiting for the elevated gupkg after an interrupt; it may still be running. "
+            "Follow its events file (the stop marker named in its run_start) to see how it ended."
+        )
+    return ElevationOutcome(True, True, run.exit_code)

@@ -205,7 +205,7 @@ def run_batch(engine: Engine, requests: Sequence[Request]) -> BatchResult:
         outcome = ensure_elevation(
             contexts, system=engine.system, argv=engine.argv, version_dir=engine.gupkg_dir or Path(),
             root=engine.gupkg_root or Path(), yes=engine.yes, no_input=engine.no_input, confirm=engine.confirm,
-            elevated=engine.elevated,
+            elevated=engine.elevated, on_interrupt=engine.request_stop,
         )
     except (InputNeeded, ModeRefused) as error:
         return BatchResult(tuple(
@@ -226,7 +226,7 @@ def run_batch(engine: Engine, requests: Sequence[Request]) -> BatchResult:
             )
             for item in resolved if isinstance(item, PackageResult) or not _needs_token(item)
         )
-        return BatchResult(left_out, relaunched=True)
+        return BatchResult(left_out, relaunched=True, child_exit_code=outcome.exit_code)
 
     # One package after another; a stop request is honoured between packages (decision D37).
     results: list[PackageResult] = []
