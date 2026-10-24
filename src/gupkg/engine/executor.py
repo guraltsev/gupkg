@@ -42,7 +42,7 @@ from ..model.plan import InstallPlan, PackageResult, Request
 from ..model.settings import Settings
 from ..model.state import Effect, InstallRecord, Link, PackageView
 from ..model.version import MANIFEST_NAME
-from ..report.events import Step, Warning, emit, phase
+from ..report.events import Step, Warning, emit, phase, release_package_log
 from ..services.safepath import remove_tree
 from .appbuild import Populated, app_section, populate_version
 from .context import Engine, require_work_folder
@@ -731,6 +731,7 @@ def execute_uninstall(engine: Engine, run: ExecutionInput) -> PackageResult:
         if run.request.purge and not failures:
             _forget_adhoc(engine, run, package_path)
             emit(Step(f"Deleting {package_path} (including data\\)", "remove"))
+            release_package_log(package_path)
             remove_tree(package_path)
             return PackageResult(
                 plan.package, "uninstall", True, "purged", plan.previous, plan.previous, context.mode, 0, None, None,

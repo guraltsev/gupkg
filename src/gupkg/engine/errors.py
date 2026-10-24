@@ -33,11 +33,12 @@ from ..catalog.catalog import (
     NotInstalled,
     UntrustedLocation,
 )
+from ..core import ConfigValidationError
 from ..model.checksum import ChecksumError
 from ..redact import redact_text
-from ..model.manifest import ManifestError
+from ..model.manifest import ManifestError, NeedsNewerGupkg
 from ..model.mode import InputNeeded, ModeRefused
-from ..model.plan import EXIT_FAILED, EXIT_INPUT, EXIT_INTERNAL, EXIT_USER, PackageResult
+from ..model.plan import EXIT_FAILED, EXIT_INPUT, EXIT_INTERNAL, EXIT_NEWER_GUPKG, EXIT_USER, PackageResult
 from ..model.settings import SettingsError
 from ..selfmgmt.elevation import UntrustedLocationError
 from ..services.hooks import HookError
@@ -58,6 +59,7 @@ _TABLE: tuple[tuple[type[BaseException], str, int], ...] = (
     (InputNeeded, "input-needed", EXIT_INPUT),
     (ChecksumError, "checksum-error", EXIT_FAILED),
     (ProcessNotAllowed, "needs-real-run", EXIT_FAILED),
+    (NeedsNewerGupkg, "needs-newer-gupkg", EXIT_NEWER_GUPKG),
     (ModeRefused, "refused", EXIT_USER),
     (NoVersionKnown, "no-version-known", EXIT_USER),
     (NoValidVersion, "no-valid-version", EXIT_USER),
@@ -70,6 +72,7 @@ _TABLE: tuple[tuple[type[BaseException], str, int], ...] = (
     (UntrustedLocationError, "untrusted-location", EXIT_USER),
     (PlanError, "cannot-plan", EXIT_USER),
     (SettingsError, "settings", EXIT_USER),
+    (ConfigValidationError, "invalid-configuration", EXIT_USER),
     (ManifestError, "invalid-package", EXIT_USER),
     (HookError, "hook-error", EXIT_FAILED),
     (UnpackError, "unpack-failed", EXIT_FAILED),

@@ -26,6 +26,7 @@ import re
 import shutil
 from pathlib import Path
 
+from ...report.events import subprocess_lines
 from ...system.port import ProcessFailed, System, run_checked
 from ..gitenv import GitUnavailable, git_command, git_environment
 from ..safepath import remove_tree
@@ -82,7 +83,8 @@ def checkout_commit(system: System, url: str, ref: str | None, commit: str | Non
     def git(*arguments: str, cwd: Path | None = None) -> str:
         """Run one Git command and return its stripped output."""
         try:
-            return run_checked(system, git_command(*arguments, system=system), cwd=cwd, env=environment, timeout=1800)
+            command = git_command(*arguments, system=system)
+            return run_checked(system, command, cwd=cwd, env=environment, on_line=subprocess_lines(command), timeout=1800)
         except (ProcessFailed, OSError, TimeoutError, GitUnavailable) as error:
             raise UnpackError(f"git {arguments[0]} failed: {error}") from error
 

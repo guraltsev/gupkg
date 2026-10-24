@@ -28,6 +28,7 @@ from pathlib import Path
 
 from ...model.manifest import TrackResult
 from ...model.trackspec import GitSpec, ModuleSpec
+from ...report.events import subprocess_lines
 from ...system.port import ProcessFailed, run_checked
 from ..gitenv import GitUnavailable, git_command, git_environment
 from ..hooks import HookContext, HookPaths, call_track, load_hook
@@ -52,7 +53,8 @@ def track_git(spec: GitSpec, env: TrackEnvironment) -> TrackResult:
     def git(*arguments: str, cwd: Path | None = None) -> str:
         """Run one Git command and return its stripped output."""
         try:
-            return run_checked(env.system, git_command(*arguments, system=env.system), cwd=cwd, env=environment, timeout=120)
+            command = git_command(*arguments, system=env.system)
+            return run_checked(env.system, command, cwd=cwd, env=environment, on_line=subprocess_lines(command), timeout=120)
         except (ProcessFailed, OSError, TimeoutError, GitUnavailable) as error:
             raise TrackError(f"git {arguments[0]} failed: {error}") from error
 

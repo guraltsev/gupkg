@@ -469,6 +469,18 @@ class RunLog:
                 self._warn(f"Cannot finish the log {sink.text_path}: {exc}")
         self.close()
 
+    def release_package(self, path: str) -> None:
+        """Close the log files of the package folder *path* (it is about to be deleted); its later events go to the run log."""
+        with self._lock:
+            sink = self._packages.get(path)
+            if sink is None:
+                return
+            sink.close()
+            self._packages[path] = None
+            if self._current is sink:
+                self._current = None
+                self._in_package = False
+
     def close(self) -> None:
         """Close every log file; later events are ignored."""
         with self._lock:

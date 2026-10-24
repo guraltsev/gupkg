@@ -42,6 +42,7 @@ from ..model.manifest import (
     manifest_to_toml,
     parse_manifest,
     render_pinned,
+    require_gupkg_version,
 )
 from ..model.mode import ModeContext
 from ..model.plan import PackageResult
@@ -148,6 +149,7 @@ def check_updates_one(
         if writes and plan.tracker.action in ("copy", "refresh"):
             sync_registry_tracker(engine, view, package_path, plan.tracker)
     tracker_manifest, tracker_dir = _tracker(view, plan.tracker, package_path, writes)
+    require_gupkg_version(tracker_manifest.requires_gupkg, engine.version, f"the tracker of {view.name}")
     result = _run_tracker(engine, context, tracker_manifest, tracker_dir, view.name, package_path, writes)
 
     # What the tracker waived (an optional checksum source that held nothing) is shown, returned and kept in the receipt.

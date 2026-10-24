@@ -420,6 +420,29 @@ class WindowsSystem(WindowsLinks):
         """
         return self._run(argv, cwd, env, on_line, input_text=input_text, timeout=timeout, watch=watch, kill_on_close=False)
 
+    def run_foreground(self, argv: Sequence[str], cwd: Path | None = None, env: Mapping[str, str] | None = None) -> int:
+        """Run a child on this console with inherited standard streams and return its exit status.
+
+        Raises
+        ------
+        OSError
+            If the program cannot be started.
+        """
+        process = subprocess.Popen(
+            _script_command(argv), cwd=str(cwd) if cwd is not None else None, env=dict(env) if env is not None else None,
+        )
+        return process.wait()
+
+    def open_path(self, path: Path) -> None:
+        """Open *path* with its associated program, as double-clicking it in Explorer would.
+
+        Raises
+        ------
+        OSError
+            If *path* does not exist or no program is associated with it.
+        """
+        os.startfile(str(path))  # noqa: S606 - the path names a file gupkg itself wrote (a log)
+
     def _run(
         self,
         argv: Sequence[str],

@@ -105,7 +105,8 @@ class FakeHttp:
     ``headers`` are the response headers (any letter case). With ``ranges`` true the
     fixture honours ``Range: bytes=N-`` with a 206 answer, as a resumable server does.
     ``fail_after`` makes ``http_download`` drop the connection (``OSError``) after that
-    many body bytes, leaving the partial file behind.
+    many body bytes, leaving the partial file behind. With ``report_size`` false the server
+    does not announce the size, so ``http_download`` reports progress with an unknown total.
     """
 
     body: bytes | str = b""
@@ -113,6 +114,7 @@ class FakeHttp:
     headers: Mapping[str, str] = field(default_factory=dict)
     ranges: bool = False
     fail_after: int | None = None
+    report_size: bool = True
 
 
 @dataclass(frozen=True)
@@ -192,6 +194,8 @@ class FakeSystem(WindowsLinks):
     fetch_log: list[str] = field(default_factory=list)
     request_log: list[RecordedRequest] = field(default_factory=list)
     process_log: list[list[str]] = field(default_factory=list)
+    foreground_log: list[list[str]] = field(default_factory=list)
+    opened: list[Path] = field(default_factory=list)
     regex_log: list[str] = field(default_factory=list)
     real_programs: dict[str, Path] = field(default_factory=dict)
     _env: dict[str, dict[str, tuple[str, EnvValue]]] = field(
@@ -412,6 +416,24 @@ class FakeSystem(WindowsLinks):
             )
         raise UnexpectedProcess(f"FakeSystem has no process double for {command[0]!r}: {command}")
 
+    def run_foreground(self, argv: Sequence[str], cwd: Path | None = None, env: Mapping[str, str] | None = None) -> int:
+        """Record the request and answer it with a registered double's status; any other program raises ``UnexpectedProcess``."""
+        self._maybe_fail("run_foreground")
+        command = [str(part) for part in argv]
+        self.foreground_log.append(command)
+        program = Path(command[0])
+        double = self.processes.get(program.name.lower()) or self.processes.get(program.stem.lower())
+        if double is None:
+            raise UnexpectedProcess(f"FakeSystem has no process double for {command[0]!r}: {command}")
+        return double(ProcessCall(tuple(command), cwd, env, None)).returncode
+
+    def open_path(self, path: Path) -> None:
+        """Record the request (nothing is opened); a path that does not exist raises ``FileNotFoundError`` like the real call."""
+        self._maybe_fail("open_path")
+        if not Path(path).exists():
+            raise FileNotFoundError(f"{path} does not exist")
+        self.opened.append(Path(path))
+
     def regex_worker(
         self,
         request: str,
@@ -536,7 +558,7 @@ class FakeSystem(WindowsLinks):
             if start >= len(body):
                 return DownloadResponse(416, url, answer_headers)
             status, resumed, payload = 206, True, body[start:]
-        total = len(body)
+        total = len(body) if fixture.report_size else None
         already = len(body) - len(payload)
         if on_progress is not None:
             on_progress(already, total)
@@ -566,7 +588,7 @@ class FakeSystem(WindowsLinks):
         if isinstance(content, FakeHttp):
             return content
         if isinstance(content, FakeResponse):
-            return FakeHttp(content.body)
+            return FakeHttp(content.body, report_size=content.report_size)
         if isinstance(content, str):
             return FakeHttp(content)
         return FakeHttp(bytes(content))

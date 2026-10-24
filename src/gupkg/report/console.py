@@ -180,6 +180,9 @@ class ConsoleReporter:
         Destination (plain text) and prepared Rich console (terminal) for the
         problems when *problems_to_stderr* is set; the current ``sys.stderr``
         by default.
+    color : str, default="auto"
+        The ``[ui] color`` setting: ``never`` prints plain text even on a terminal, ``always`` draws with Rich even when
+        output is redirected, ``auto`` decides by the terminal. ``NO_COLOR`` and ``TERM=dumb`` still turn colour off for ``auto``.
     """
 
     def __init__(
@@ -190,6 +193,7 @@ class ConsoleReporter:
         problems_to_stderr: bool = False,
         problems_stream: TextIO | None = None,
         problems_console: Any = None,
+        color: str = "auto",
     ) -> None:
         self._stream = stream
         self._problems_to_stderr = problems_to_stderr
@@ -206,7 +210,8 @@ class ConsoleReporter:
             self._stream = console.file
         probe = console.file if console is not None else (stream or sys.stdout)
         is_terminal = console.is_terminal if console is not None else _is_terminal(probe)
-        self.fancy = bool(is_terminal) and not os.environ.get("NO_COLOR") and os.environ.get("TERM") != "dumb"
+        automatic = bool(is_terminal) and not os.environ.get("NO_COLOR") and os.environ.get("TERM") != "dumb"
+        self.fancy = color == "always" or (color == "auto" and automatic)
         self._console = None
         if self.fancy:
             from rich.console import Console

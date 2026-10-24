@@ -45,7 +45,7 @@ from .template import (
     render,
 )
 from .trackspec import TrackSpecError, check_header_map, parse_spec
-from .version import TRACKER_DIR_NAME, is_version_name
+from .version import TRACKER_DIR_NAME, compare_versions, is_version_name
 
 FORMAT = 2
 MODES = ("system", "user", "portable")
@@ -161,7 +161,7 @@ def is_reserved_env_name(name: str) -> bool:
     return folded in RESERVED_ENV_NAMES or folded.startswith("processor_")
 
 _TOP_KEYS = (
-    "format", "description", "project_url", "modes", "requires", "record_manifest",
+    "format", "description", "project_url", "modes", "requires", "requires_gupkg", "record_manifest",
     "source", "track", "prepare", "portable", "nonportable", "shortcut", "env", "path", "shim",
 )
 _SOURCE_KEYS = (
@@ -230,6 +230,47 @@ class ManifestError(ValueError):
             super().__init__(self.problems[0])
         else:
             super().__init__("Invalid pkg.toml:\n  - " + "\n  - ".join(self.problems))
+
+
+# The words that mark a problem as "this package is for a newer gupkg" (exit code 6, design 10.1 and 21.3).
+NEEDS_NEWER_GUPKG = "needs a newer gupkg"
+
+# ``requires_gupkg`` is a minimum version: ``>=1.2``.
+_GUPKG_REQUIREMENT = re.compile(r">=\s*([0-9]+(?:\.[0-9]+){0,3})")
+
+
+class NeedsNewerGupkg(ManifestError):
+    """Report that a package is for a newer gupkg than the running one (a newer ``format`` or an unmet ``requires_gupkg``).
+
+    The exit code is 6, which makes a package launcher run the bundled gupkg instead (design 21.3).
+    """
+
+    exit_code = 6  # EXIT_NEWER_GUPKG of ``gupkg.model.plan`` (this module cannot import it)
+
+
+def gupkg_requirement_met(requirement: str, version: str) -> bool:
+    """Return whether the running gupkg *version* satisfies a ``requires_gupkg`` text such as ``>=1.2``.
+
+    A requirement that is not of the form ``>=<number>[.<number>]...`` is not met (it is refused when the manifest is parsed).
+    """
+    match = _GUPKG_REQUIREMENT.fullmatch(requirement.strip())
+    return match is not None and compare_versions(version, match.group(1)) >= 0
+
+
+def require_gupkg_version(requirement: str | None, version: str, label: str) -> None:
+    """Raise ``NeedsNewerGupkg`` when the running gupkg *version* does not satisfy a package's ``requires_gupkg``.
+
+    Parameters
+    ----------
+    requirement : str, optional
+        The package's ``requires_gupkg`` (``None`` when it states none).
+    version : str
+        The running gupkg's version.
+    label : str
+        What the requirement belongs to, for the message (``firefox 135.0``).
+    """
+    if requirement is not None and not gupkg_requirement_met(requirement, version):
+        raise NeedsNewerGupkg(f"{label} {NEEDS_NEWER_GUPKG}: it requires gupkg {requirement}, and this is gupkg {version}.")
 
 
 # ---------------------------------------------------------------------------
@@ -457,6 +498,7 @@ class Manifest:
     project_url: str | None = None
     modes: tuple[str, ...] = DEFAULT_MODES
     requires: tuple[str, ...] = ()
+    requires_gupkg: str | None = None
     record_manifest: bool = True
     source: Source = field(default_factory=Source)
     track: Track | None = None
@@ -760,6 +802,10 @@ def parse_manifest_data(data: Mapping[str, Any], kind: ManifestKind = ManifestKi
     declared = data.get("format")
     if declared != FORMAT or isinstance(declared, bool):
         shown = "missing" if "format" not in data else repr(declared)
+        if isinstance(declared, int) and not isinstance(declared, bool) and declared > FORMAT:
+            raise NeedsNewerGupkg(
+                f"Unsupported pkg.toml format ({shown}): this package {NEEDS_NEWER_GUPKG} (this gupkg reads format {FORMAT})."
+            )
         raise ManifestError(
             f"Unsupported pkg.toml format ({shown}): this gupkg reads only format {FORMAT}; set format = {FORMAT}."
         )
@@ -779,6 +825,10 @@ def parse_manifest_data(data: Mapping[str, Any], kind: ManifestKind = ManifestKi
         project_url = None
     modes = _parse_modes(collector, data)
     requires = collector.strings(data, "requires", "")
+    requires_gupkg = collector.string(data, "requires_gupkg", "")
+    if requires_gupkg is not None and not _GUPKG_REQUIREMENT.fullmatch(requires_gupkg.strip()):
+        collector.error("requires_gupkg", 'must be a minimum version such as ">=1.2"')
+        requires_gupkg = None
     record_manifest = collector.boolean(data, "record_manifest", "")
 
     source = _parse_source(collector, data.get("source"), modes)
@@ -816,6 +866,7 @@ def parse_manifest_data(data: Mapping[str, Any], kind: ManifestKind = ManifestKi
         project_url=project_url,
         modes=modes,
         requires=requires,
+        requires_gupkg=requires_gupkg,
         record_manifest=True if record_manifest is None else record_manifest,
         source=source,
         track=track,
@@ -1409,6 +1460,7 @@ def manifest_to_data(manifest: Manifest) -> dict[str, Any]:
     data: dict[str, Any] = {"format": FORMAT, "description": manifest.description, "project_url": manifest.project_url}
     data["modes"] = list(manifest.modes) if manifest.modes != DEFAULT_MODES else None
     data["requires"] = list(manifest.requires)
+    data["requires_gupkg"] = manifest.requires_gupkg
     data["record_manifest"] = None if manifest.record_manifest else False
     if manifest.track is not None:
         track = {"provider": manifest.track.provider, "check_url": manifest.track.check_url,

@@ -50,7 +50,7 @@ from .checksum import ChecksumPlan
 from .manifest import INSTALLER_LABEL
 from .state import Effect
 
-OPERATIONS = ("install", "update", "switch", "uninstall", "cleanup", "repair", "check-updates", "check")
+OPERATIONS = ("install", "update", "switch", "uninstall", "cleanup", "repair", "check-updates", "check", "link")
 
 # The phases of an install-like plan, in order (design 13.1), and those of ``check-updates``.
 INSTALL_PHASES = ("Resolve", "Fetch", "Verify", "Unpack", "Prepare", "Activate", "Integrate", "Finish")
@@ -65,6 +65,7 @@ EXIT_USER = 2
 EXIT_FAILED = 3
 EXIT_INTERNAL = 4
 EXIT_INPUT = 5
+EXIT_NEWER_GUPKG = 6
 
 
 @dataclass(frozen=True)
@@ -102,6 +103,11 @@ class Request:
     sweep : bool
         ``cleanup`` over every package of a root rather than the packages the user named: a package that another run holds is
         left alone (status ``locked``, not a failure). A package the user names that is busy fails with ``package-busy``.
+    link_to : str, optional
+        ``link``: the ``registry/name`` entry the package follows from now on (without it the package follows the entry with
+        its own name again).
+    unlink : bool
+        ``link --unlink``: the package follows no registry entry.
     """
 
     operation: str
@@ -118,6 +124,8 @@ class Request:
     fix: bool = False
     download_only: bool = False
     sweep: bool = False
+    link_to: str | None = None
+    unlink: bool = False
 
     def __post_init__(self) -> None:
         """Refuse an operation the engine does not know."""

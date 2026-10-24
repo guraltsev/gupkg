@@ -25,7 +25,7 @@ package: an entry with an unsafe tree is skipped, a version or tracker that fail
 checks is dropped, and every problem is reported. The index records the result once per
 revision, so reading the registry never re-validates the whole tree; a missing or stale index
 is rebuilt in memory and never written by a reader. Transport (trusted Git, ZIP extraction)
-is shared with ``gupkg.registry`` and prints nothing. An elevated run refuses a cache that is
+lives in ``gupkg.services.registrysource`` and prints nothing. An elevated run refuses a cache that is
 not in an admin-only folder.
 """
 
@@ -47,7 +47,8 @@ from ..core import ConfigValidationError
 from ..model.state import RegistryEntry, RegistryTracker, RegistryVersion
 from ..model.version import MANIFEST_NAME, TRACKER_DIR_NAME, compare_versions, is_version_name
 from ..pkgcheck import CheckReport, check_directory
-from ..registry import (
+from ..report.events import subprocess_lines
+from ..services.registrysource import (
     archive_revision,
     archive_url,
     extract_archive,
@@ -520,10 +521,12 @@ def _obtain(source: str, git: str | None, work: Path, system: System) -> tuple[P
             "-c", "core.symlinks=false", "-c", f"core.hooksPath={os.devnull}",
             "clone", "--depth", "1", "--single-branch", "--no-tags", "--quiet", source, str(destination),
         ]
-        result = system.run(command, env=git_environment(), timeout=600)
+        result = system.run(command, env=git_environment(system), timeout=600, on_line=subprocess_lines(command))
         if result.returncode != 0:
             raise ConfigValidationError(f"git clone failed: {result.stderr.strip()}")
-        head = system.run([git, "-C", str(destination), "rev-parse", "HEAD"], env=git_environment())
+        head = system.run(
+            [git, "-C", str(destination), "rev-parse", "HEAD"], env=git_environment(system), on_line=subprocess_lines([git]),
+        )
         revision = head.stdout.strip().lower()
         if not re.fullmatch(r"[0-9a-f]{40}", revision):
             raise ConfigValidationError("git clone did not report a commit")

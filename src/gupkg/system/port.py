@@ -278,6 +278,23 @@ class System(Protocol):
         raised with that text (how a caller bounds what a child writes to disk).
         """
 
+    def run_foreground(self, argv: Sequence[str], cwd: Path | None = None, env: Mapping[str, str] | None = None) -> int:
+        """Run a child process on this process's own console and return its exit status.
+
+        The child inherits standard input, output and error, so an interactive program (the UI programs that
+        ``gupkg tui`` and ``gupkg manager`` forward to) works as if it had been started directly. ``argv[0]`` may
+        be a ``.cmd`` or ``.bat`` script, which the implementation starts through its interpreter. Output is not
+        captured and not reported as events.
+
+        Raises ``OSError`` when the program cannot be started.
+        """
+
+    def open_path(self, path: Path) -> None:
+        """Open *path* with the program Windows associates with it (``gupkg logs --open`` opens a log in the editor).
+
+        Raises ``OSError`` when nothing can open it.
+        """
+
     def regex_worker(
         self,
         request: str,
