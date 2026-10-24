@@ -364,3 +364,14 @@ root such as `%TEMP%\gupkg-028`). Everything the tests do on `FakeSystem` is rep
 6. **Cancel between packages.** Start a three-package batch with a slow download in the first and
    create the stop marker while it runs: package 1 finishes and is installed, 2 and 3 are
    reported as skipped. Why manual: timing with a real network.
+7. **A real vendor installer (GIMP).** With a pinned GIMP version (`[source.installer] run =
+   ["/VERYSILENT", "/CURRENTUSER", "/NOICONS", "/DIR=$Stage"]`) and `hooks.allow_vendor_installers = true`,
+   install it into a throwaway user root: the output says `runs vendor installer`, `App` holds the
+   installed program and `current` points at it. Repeat with the setting `false`: nothing is downloaded or
+   run. In an elevated run, make the work folder user-writable (`icacls`) and see the installer refused
+   before it starts. Why manual: a real Inno Setup installer and real ACLs; the tests never run one.
+8. **One run per package.** Start `install` of a large package in one console and, while it downloads,
+   `install`, `cleanup` and `update` of the same package in a second one: the second `install` and `update`
+   fail with `package-busy` naming the first run, `cleanup` skips the package and the first run's
+   `.gupkg\work` folder survives. Kill the first run (Task Manager) and run again: the stale lock is
+   reclaimed. Why manual: two real processes and a real kill.

@@ -62,7 +62,8 @@ PROBE_MODULES = (
     "gupkg.cli", "gupkg.manager", "gupkg.tui", "gupkg.manager_tui", "gupkg_migrate.cli",
     "gupkg.services.track", "gupkg.services.unpack", "gupkg.services.prepare", "gupkg.hooklib",
     "gupkg.services.artifact", "gupkg.model.manager_policy", "gupkg.pinning",
-    "gupkg.engine.lifecycle", "gupkg.model.plan", "gupkg_migrate.adopt",
+    "gupkg.engine.lifecycle", "gupkg.model.plan", "gupkg_migrate.adopt", "gupkg.engine.locks", "gupkg.engine.installer",
+    "gupkg.redact",
 )
 OPTIONAL_PROBE_PACKAGES = ("gupkg_ui", "gupkg_tui", "gupkg_manager")
 # Modules of the base probe that need no third-party package (used by --skip-deps builds).
