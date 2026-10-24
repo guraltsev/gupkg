@@ -45,9 +45,14 @@ def _sandbox(args: argparse.Namespace) -> tuple[Path, bool]:
     return Path(tempfile.mkdtemp(prefix="gupkg-registry-")), True
 
 
+def _push_options(args: argparse.Namespace) -> dict[str, object]:
+    """Return the keyword arguments of ``commit_and_push`` that the command line chose."""
+    return {"allow_computed": args.allow_computed, "remote": args.remote, "branch": args.branch}
+
+
 def _print(outcome: Outcome) -> None:
     """Print one outcome line."""
-    flag = "  [REVIEW]" if outcome.review else ""
+    flag = ("  [REVIEW]" if outcome.review else "") + ("  [UNVERSIONED]" if outcome.unversioned else "")
     print(f"{outcome.status:8} {outcome.package} {outcome.version or ''}: {outcome.message}{flag}".rstrip())
 
 
@@ -66,7 +71,7 @@ def _run_update(args: argparse.Namespace, system: System, environ: Mapping[str, 
         _print(outcome)
     if args.auto_push and report.written:
         try:
-            commit_and_push(system, args.registry, report.outcomes)
+            commit_and_push(system, args.registry, report.outcomes, **_push_options(args))
         except PublishError as error:
             print(f"error: {error}", file=sys.stderr)
             return 1
@@ -92,7 +97,7 @@ def _run_pin(args: argparse.Namespace, system: System, environ: Mapping[str, str
         return 1
     if args.auto_push:
         try:
-            commit_and_push(system, args.registry, [outcome])
+            commit_and_push(system, args.registry, [outcome], **_push_options(args))
         except PublishError as error:
             print(f"error: {error}", file=sys.stderr)
             return 1
@@ -122,6 +127,9 @@ def _parser() -> argparse.ArgumentParser:
     def network(sub: argparse.ArgumentParser) -> None:
         sub.add_argument("--sandbox", type=Path, metavar="DIR", help="scratch folder for downloads and staging (default: temporary)")
         sub.add_argument("--auto-push", action="store_true", help="commit the written versions and push (default: write only)")
+        sub.add_argument("--allow-computed", action="store_true", help="with --auto-push, also publish hashes the tool computed itself (trust on first use)")
+        sub.add_argument("--remote", help="with --auto-push, the remote to push to (default: the branch's upstream)")
+        sub.add_argument("--branch", help="with --auto-push, the branch to push to (default: the branch's upstream)")
 
     update = commands.add_parser("update", help="run trackers and write new pinned versions")
     update.add_argument("packages", nargs="*", help="only these packages (default: all)")

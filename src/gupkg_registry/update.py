@@ -34,6 +34,7 @@ is removed afterwards.
 from __future__ import annotations
 
 import dataclasses
+import re
 import shutil
 import uuid
 from collections.abc import Mapping, Sequence
@@ -73,6 +74,7 @@ class Outcome:
     message: str = ""
     review: bool = False
     path: Path | None = None
+    unversioned: bool = False
 
 
 @dataclass(frozen=True)
@@ -146,6 +148,7 @@ def update_registry(
     sandbox.mkdir(parents=True, exist_ok=True)
     run = _Run(root, system, sandbox, _client(system, sandbox, environ), settings)
     available = {p.name: p for p in package_dirs(root)}
+    _remove_stale_staging(available.values())
     wanted = list(dict.fromkeys(names)) if names else sorted(available)
     outcomes: list[Outcome] = []
     for name in wanted:
@@ -161,6 +164,21 @@ def update_registry(
             outcomes.append(Outcome(name, "failed", message=f"{type(error).__name__}: {error}"))
     write_registry_file(root, run.settings)
     return UpdateReport(tuple(outcomes))
+
+
+_STAGING = re.compile(r"\.new-[0-9a-f]{8}")
+
+
+def _remove_stale_staging(packages) -> None:
+    """Delete the ``.new-xxxxxxxx`` staging folders an interrupted earlier run left in the package folders.
+
+    Only folders whose whole name is ``.new-`` and eight hexadecimal digits, which this tool alone creates,
+    are removed, and never a link.
+    """
+    for package in packages:
+        for entry in package.iterdir():
+            if _STAGING.fullmatch(entry.name) and entry.is_dir() and not is_reparse_point(entry):
+                remove_tree(entry)
 
 
 def pin_version(
@@ -288,7 +306,10 @@ def _update_package(run: _Run, package: Path) -> Outcome:
         remove_tree(destination)
         raise
     note = "sha256 computed by the registry tool: review it" if computed else "verified against the discovered checksum"
-    return Outcome(name, "added", result.version, note, computed, destination)
+    unversioned = name in run.settings.get("unversioned", [])
+    if unversioned:
+        note += "; the download address has no version in it, so this version stops verifying when the vendor replaces the file"
+    return Outcome(name, "added", result.version, note, computed, destination, unversioned)
 
 
 def _copy_support_files(tracker: Path, destination: Path) -> None:

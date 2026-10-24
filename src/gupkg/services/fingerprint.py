@@ -34,6 +34,11 @@ the fingerprint. The registry therefore stores every file byte for byte (``* -te
 ``.gitattributes``). A file with no content is covered (its hash is that of the empty input).
 Links, junctions and other reparse points are refused rather than skipped or followed: a tree that
 contains one is not a tree this fingerprint can vouch for.
+
+Limits and names: a tree with more than ``MAX_FILES`` files or ``MAX_TOTAL_BYTES`` bytes is refused (a
+version directory holds a manifest, scripts and small support files; the payload is ``App``, which is
+skipped), so a hostile directory cannot make the check run for ever. Paths are used exactly as the file
+system reports them: there is **no Unicode normalisation**, so two spellings of one name are two names.
 """
 
 from __future__ import annotations
@@ -50,6 +55,8 @@ FINGERPRINT_ALGORITHM = 1
 HEADER = f"gupkg-fingerprint-{FINGERPRINT_ALGORITHM}\n"
 EXCLUDED_TOP_LEVEL = frozenset({"app", "gupkg"})
 _CHUNK = 1024 * 1024
+MAX_FILES = 10_000
+MAX_TOTAL_BYTES = 512 * 1024 * 1024
 
 
 class FingerprintError(ValueError):
@@ -74,6 +81,7 @@ def _entries(directory: Path) -> dict[str, tuple[str, int]]:
         raise FingerprintError(f"{root} is not a plain directory")
     found: dict[str, tuple[str, int]] = {}
     seen: dict[str, str] = {}
+    total = 0
     stack = [root]
     while stack:
         folder = stack.pop()
@@ -99,6 +107,11 @@ def _entries(directory: Path) -> dict[str, tuple[str, int]]:
             elif stat.S_ISREG(mode):
                 if seen.setdefault(relative.casefold(), relative) != relative:
                     raise FingerprintError(f"{relative} and {seen[relative.casefold()]} differ only in letter case")
+                if len(found) >= MAX_FILES:
+                    raise FingerprintError(f"more than {MAX_FILES} files; not a version directory")
+                total += os.lstat(path).st_size
+                if total > MAX_TOTAL_BYTES:
+                    raise FingerprintError(f"more than {MAX_TOTAL_BYTES} bytes; not a version directory")
                 try:
                     found[relative] = _file_sha256(path)
                 except OSError as error:

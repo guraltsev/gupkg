@@ -9,14 +9,18 @@ with LF line endings (the registry stores every file byte for byte, so fingerpri
 Implementation Approach
 -----------------------
 ``_registry.toml`` holds ``format = 2``, ``name``, ``description``, an optional ``unpinned`` list
-(versions that still wait for their first hash, written as ``"name/version"``) and the
+(versions that still wait for their first hash, written as ``"name/version"``), an optional
+``unversioned`` list (packages whose download address does not contain the version, so an older
+pinned version stops verifying once the vendor replaces the file) and the
 ``[fingerprints]`` table ``"name/version" = "<sha256>"`` that gupkg reads (design 17). Keys are
 written in sorted order so a re-run changes nothing.
 """
 
 from __future__ import annotations
 
+import os
 import re
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -74,19 +78,32 @@ def read_registry_file(root: Path) -> dict[str, Any]:
     unpinned = data.get("unpinned", [])
     if not isinstance(unpinned, list) or any(not isinstance(item, str) or "/" not in item for item in unpinned):
         raise RegistryFileError("'unpinned' must be a list of 'name/version' texts")
+    unversioned = data.get("unversioned", [])
+    if not isinstance(unversioned, list) or any(not isinstance(item, str) or not item or "/" in item for item in unversioned):
+        raise RegistryFileError("'unversioned' must be a list of package names")
     return data
 
 
 def write_registry_file(root: Path, data: dict[str, Any]) -> None:
     """Write ``_registry.toml`` with sorted fingerprints and ``unpinned``, using LF line endings."""
-    clean = {key: value for key, value in data.items() if key not in ("fingerprints", "unpinned")}
+    clean = {key: value for key, value in data.items() if key not in ("fingerprints", "unpinned", "unversioned")}
     unpinned = sorted(set(data.get("unpinned", [])))
     if unpinned:
         clean["unpinned"] = unpinned
+    unversioned = sorted(set(data.get("unversioned", [])))
+    if unversioned:
+        clean["unversioned"] = unversioned
     clean["fingerprints"] = dict(sorted(data.get("fingerprints", {}).items()))
     write_text_bytes(Path(root) / REGISTRY_FILE, dumps(clean))
 
 
 def write_text_bytes(path: Path, text: str) -> None:
-    """Write *text* to *path* as UTF-8 with LF line endings, replacing the file."""
-    Path(path).write_bytes(text.replace("\r\n", "\n").encode("utf-8"))
+    """Write *text* to *path* as UTF-8 with LF line endings, replacing the file atomically (temporary file, then replace)."""
+    path = Path(path)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex[:8]}.tmp")
+    try:
+        temporary.write_bytes(text.replace("\r\n", "\n").encode("utf-8"))
+        os.replace(temporary, path)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise

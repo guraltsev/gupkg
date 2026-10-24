@@ -24,7 +24,7 @@ from gupkg.services.fingerprint import fingerprint_directory
 from gupkg.system.fake import FakeSystem
 from gupkg_migrate.launchers import launcher_text, write_launchers
 from gupkg_registry.layout import read_registry_file, write_registry_file
-from gupkg_registry.validate import MAX_HOOK_FILES, validate_registry
+from gupkg_registry.validate import MAX_HOOK_FILES, _stray_problems, validate_registry
 from tests.http_fixtures import FIXTURES
 
 SNAPSHOT = FIXTURES / "registry_100"
@@ -221,7 +221,48 @@ def no_registry_file(root: Path) -> None:
     (root / "_registry.toml").unlink()
 
 
+def stray_directory(root: Path) -> None:
+    """Leave an empty directory in a package folder."""
+    (root / "gh" / "junk").mkdir()
+
+
+def staging_leftover(root: Path) -> None:
+    """Leave a staging folder of an interrupted run in a package folder."""
+    (root / "gh" / ".new-0123abcd").mkdir()
+
+
+def hostile_version_name(root: Path) -> None:
+    """Add a version directory whose name could expand (``%TEMP%``), with a valid ``pkg.toml``."""
+    target = root / "gh" / "%TEMP%"
+    shutil.copytree(root / "hwinfo" / "10.02", target)
+
+
+def stray_file(root: Path) -> None:
+    """Leave a file in a package folder."""
+    (root / "gh" / "notes.txt").write_text("x", encoding="utf-8")
+
+
+def unversioned_unknown(root: Path) -> None:
+    """List a package that does not exist as unversioned."""
+    settings = read_registry_file(root)
+    settings["unversioned"] = [*settings.get("unversioned", []), "nope"]
+    write_registry_file(root, settings)
+
+
+def exactly_the_allowed_hooks(root: Path) -> None:
+    """Add exactly as many hook files as the registry allows, each with a note (this must pass)."""
+    hook = root / "gh" / "_check_updates" / "pkg.local"
+    hook.mkdir()
+    for index in range(MAX_HOOK_FILES):
+        (hook / f"h{index}.py").write_text('"""Why no service: test."""\nPKG_MODULE_API = 2\nVALUE = 1\n', encoding="utf-8", newline="\n")
+
+
 RULES: list[tuple[str, Callable[[Path], None], str]] = [
+    ("stray-directory", stray_directory, "gh/junk: a directory without pkg.toml"),
+    ("staging-leftover", staging_leftover, "gh/.new-0123abcd: a directory without pkg.toml"),
+    ("hostile-version-name", hostile_version_name, "gh/%TEMP%: not a usable version name"),
+    ("stray-file", stray_file, "gh/notes.txt: a file in a package folder"),
+    ("unversioned-unknown", unversioned_unknown, "'nope' is listed as unversioned but is not a package"),
     ("missing-modes", drop_modes, "gh/_check_updates: 'modes' is not declared"),
     ("no-sha256", drop_sha, "hwinfo/10.02: has no sha256"),
     ("no-provenance", drop_provenance, "sha256 has no sha256_from"),
@@ -267,3 +308,55 @@ def test_a_version_listed_as_unpinned_is_accepted_while_it_has_no_hash(registry:
     write_registry_file(registry, settings)
 
     assert problems_of(registry) == []
+
+
+class _Entry:
+    """A directory entry that is a version directory with a manifest (a stand-in: Windows cannot hold two case-variant names)."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def is_dir(self) -> bool:
+        """Report a directory."""
+        return True
+
+    def __truediv__(self, other: str) -> "_Entry":
+        return self
+
+    def is_file(self) -> bool:
+        """Report that the manifest exists."""
+        return True
+
+
+class _Package:
+    """A package folder listing the given entry names."""
+
+    def __init__(self, *names: str) -> None:
+        self.names = names
+
+    def iterdir(self) -> list[_Entry]:
+        """Return the entries."""
+        return [_Entry(name) for name in self.names]
+
+
+def test_two_versions_that_differ_only_in_letter_case_are_reported() -> None:
+    """A registry cannot be checked out on Windows when two versions differ only in case; the rule names both.
+
+    A real pair cannot be created on a case-insensitive file system, so the folder is a stand-in listing both names.
+    """
+    found = _stray_problems("tool", _Package("1.0-RC1", "1.0-rc1", "2.0"))
+
+    assert found == ["tool/1.0-rc1: differs only in letter case from tool/1.0-RC1"]
+
+
+def test_the_hook_limit_is_exactly_thirteen(registry: Path) -> None:
+    """The limit is the literal 13 of the issue: thirteen documented hook files pass, a fourteenth fails."""
+    assert MAX_HOOK_FILES == 13
+    exactly_the_allowed_hooks(registry)
+    assert problems_of(registry) == []
+
+    (registry / "gh" / "_check_updates" / "pkg.local" / "h13.py").write_text(
+        '"""Why no service: test."""\nPKG_MODULE_API = 2\nVALUE = 1\n', encoding="utf-8", newline="\n"
+    )
+
+    assert any("14 hook files remain" in p for p in problems_of(registry))

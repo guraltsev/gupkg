@@ -102,6 +102,13 @@ def test_a_portable_capable_package_declares_portable_mode(package: str) -> None
     assert data["portable"], "a portable-capable package declares how it enters portable mode"
 
 
+def test_sqlitebrowser_declares_how_its_settings_survive_an_update() -> None:
+    """The portable-only package keeps its settings file in ``data`` (an unverified declaration, listed as such in the registry)."""
+    data = tracker("sqlitebrowser")
+
+    assert data["modes"] == ["portable"] and data["portable"]["persist"] == ["DB4S-settings.ini"]
+
+
 def test_ordinary_packages_do_not_claim_portable_mode() -> None:
     """Only the portable-capable packages (and nobody else) list ``portable`` in their modes."""
     claimed = sorted(name for name in PACKAGES if "portable" in tracker(name)["modes"])

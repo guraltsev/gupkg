@@ -212,3 +212,21 @@ def _registry_tree(tmp_path: Path) -> Path:
     shutil.copytree(SNAPSHOT, tree / "pkgs", ignore=shutil.ignore_patterns("_registry.toml"))
     shutil.copyfile(SNAPSHOT / "_registry.toml", tree / "registry.toml")
     return tree
+
+
+def test_a_tree_with_too_many_files_or_bytes_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A hostile directory cannot make the check run for ever: past the file or byte limit it is refused, at the limit it is accepted."""
+    monkeypatch.setattr("gupkg.services.fingerprint.MAX_FILES", 3)
+    folder = build(tmp_path / "v", {"a": b"1", "b": b"2", "c": b"3"})
+    assert fingerprint_directory(folder)
+
+    (folder / "d").write_bytes(b"4")
+    with pytest.raises(FingerprintError, match="more than 3 files"):
+        fingerprint_directory(folder)
+
+    monkeypatch.setattr("gupkg.services.fingerprint.MAX_FILES", 10)
+    monkeypatch.setattr("gupkg.services.fingerprint.MAX_TOTAL_BYTES", 4)
+    assert fingerprint_directory(folder)
+    (folder / "e").write_bytes(b"5")
+    with pytest.raises(FingerprintError, match="more than 4 bytes"):
+        fingerprint_directory(folder)

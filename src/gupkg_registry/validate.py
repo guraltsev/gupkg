@@ -87,6 +87,33 @@ def _tree_problems(label: str, folder: Path) -> list[str]:
     return problems
 
 
+def _stray_problems(name: str, package: Path) -> list[str]:
+    """Return a problem for each entry of a package folder that is not the tracker or a pinned version.
+
+    A version directory needs a version-safe name (no Windows device name, control character, ``%``,
+    leading dash...) and a ``pkg.toml``; two versions that differ only in letter case cannot both be
+    checked out on Windows; a stray file or a leftover ``.new-*`` staging folder is never expected.
+    """
+    problems: list[str] = []
+    seen: dict[str, str] = {}
+    for entry in sorted(package.iterdir(), key=lambda item: item.name):
+        label = f"{name}/{entry.name}"
+        if not entry.is_dir():
+            problems.append(f"{label}: a file in a package folder (only the tracker and version directories belong there)")
+            continue
+        if entry.name == TRACKER_DIR_NAME:
+            continue
+        if not (entry / MANIFEST_NAME).is_file():
+            problems.append(f"{label}: a directory without {MANIFEST_NAME} (stray or leftover staging folder)")
+        if not is_version_name(entry.name):
+            problems.append(f"{label}: not a usable version name (reserved, device or unsafe)")
+        folded = entry.name.casefold()
+        if folded in seen:
+            problems.append(f"{label}: differs only in letter case from {name}/{seen[folded]}")
+        seen.setdefault(folded, entry.name)
+    return problems
+
+
 def _modes_problem(label: str, directory: Path) -> str | None:
     """Return a problem when ``pkg.toml`` does not state ``modes`` itself (every package declares them)."""
     try:
@@ -140,6 +167,7 @@ def validate_registry(root: Path) -> ValidationReport:
         problems.extend(_tree_problems(name, package))
         tracker = package / TRACKER_DIR_NAME
         children = [c for c in sorted(package.iterdir()) if c.is_dir()]
+        problems.extend(_stray_problems(name, package))
         if not (tracker / MANIFEST_NAME).is_file() and not any((c / MANIFEST_NAME).is_file() for c in children):
             problems.append(f"{name}: has neither a tracker nor a pinned version")
         if (tracker / MANIFEST_NAME).is_file():
@@ -158,8 +186,6 @@ def validate_registry(root: Path) -> ValidationReport:
             problems.extend(_report_problems(key, report))
             mode_problem = _modes_problem(key, child)
             problems.extend([mode_problem] if mode_problem else [])
-            if not is_version_name(child.name):
-                problems.append(f"{key}: not a usable version name")
             manifest = report.manifest
             if manifest is not None and manifest.kind is ManifestKind.VERSION:
                 source = manifest.source
@@ -187,6 +213,10 @@ def validate_registry(root: Path) -> ValidationReport:
         hooks.extend(_hook_files(package))
 
     problems.extend(f"fingerprint of '{key}' names no version directory" for key in sorted(set(fingerprints) - seen_versions))
+    package_names = {p.name for p in package_dirs(root)}
+    for name in sorted(settings.get("unversioned", [])):
+        if name not in package_names:
+            problems.append(f"'{name}' is listed as unversioned but is not a package")
     for key in sorted(unpinned):
         if key not in seen_versions:
             problems.append(f"'{key}' is listed as unpinned but is not a version directory")

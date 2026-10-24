@@ -389,32 +389,94 @@ def test_without_auto_push_the_tool_starts_no_git_process(tmp_path: Path, capsys
     assert "not committed" in output and "[REVIEW]" in output
 
 
-def test_auto_push_commits_only_what_the_run_wrote_and_pushes_once(tmp_path: Path) -> None:
-    """With ``--auto-push``: ``git add`` names the new directory and ``_registry.toml`` only, then one commit and one push."""
+def hwinfo_world(tmp_path: Path, git: Git) -> tuple[Path, FakeSystem]:
+    """A registry with the HWiNFO tracker (its hash is computed by the tool) and a system that serves it, with *git* as the only git."""
     root = registry_of(tmp_path, "hwinfo")
-    git = Git()
-    system = machine(tmp_path, "page_hwinfo", artifacts={"https://www.hwinfo.com/files/hwi_1002.zip": zip_bytes(tmp_path, "h.zip", HWINFO_ZIP)}, git=git)
+    body = zip_bytes(tmp_path, "h.zip", HWINFO_ZIP)
+    return root, machine(tmp_path, "page_hwinfo", artifacts={"https://www.hwinfo.com/files/hwi_1002.zip": body}, git=git)
 
-    status = run_cli(root, system, tmp_path, "update", "hwinfo", "--auto-push")
+
+def test_auto_push_commits_only_what_the_run_wrote_and_pushes_once(tmp_path: Path) -> None:
+    """With ``--auto-push --allow-computed``: add and commit name the new directory and ``_registry.toml`` as pathspecs, then one plain push."""
+    git = Git()
+    root, system = hwinfo_world(tmp_path, git)
+
+    status = run_cli(root, system, tmp_path, "update", "hwinfo", "--auto-push", "--allow-computed")
 
     assert status == 0
     words = git_words(git)
-    assert words[0] == ["add", "--", "hwinfo/10.02", "_registry.toml"]
     assert [w[0] for w in words] == ["add", "commit", "push"]
+    assert words[0] == ["add", "--", "hwinfo/10.02", "_registry.toml"]
+    assert words[1][:2] == ["commit", "-m"] and words[1][3:] == ["--", "hwinfo/10.02", "_registry.toml"]
+    assert words[2] == ["push"]
     assert all(call.cwd == root for call in git.calls)
-    message = words[1][2]
-    assert "hwinfo 10.02" in message and "computed by the registry tool" in message
-    assert "--no-verify" not in sum(words, []) and "--force" not in sum(words, [])
+    assert "hwinfo 10.02" in words[1][2] and "computed by the registry tool" in words[1][2]
+    flat = sum(words, [])
+    assert not {"--no-verify", "--force", "-f", "--force-with-lease", "-A", "--all"} & set(flat)
+
+
+def test_auto_push_refuses_hashes_the_tool_computed_itself_unless_allowed(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Trust-on-first-use hashes are never published unreviewed: no git process starts, the status is 1, the version stays written."""
+    git = Git()
+    root, system = hwinfo_world(tmp_path, git)
+
+    status = run_cli(root, system, tmp_path, "update", "hwinfo", "--auto-push")
+
+    assert status == 1 and git.calls == []
+    assert "refusing to publish hashes the registry tool computed itself" in capsys.readouterr().err
+    assert (root / "hwinfo" / "10.02" / "pkg.toml").is_file()
+
+
+def test_auto_push_publishes_vendor_verified_hashes_without_the_flag(tmp_path: Path) -> None:
+    """A version whose hash was verified against the vendor's checksum needs no ``--allow-computed``."""
+    git = Git()
+    root = registry_of(tmp_path, "volta")
+    body = zip_bytes(tmp_path, "v.zip", VOLTA_ZIP)
+    system = machine(tmp_path, "github_volta", artifacts={"https://github.com/o/r/releases/download/v2.0.1/volta-2.0.1-windows.zip": body}, git=git)
+    patch_digest(system, "9ce45e2deeb806d62a504075f992a4c5de66873173c2e403a49a3de9126fa5d3", hashlib.sha256(body).hexdigest())
+
+    status = run_cli(root, system, tmp_path, "update", "volta", "--auto-push")
+
+    assert status == 0 and [w[0] for w in git_words(git)] == ["add", "commit", "push"]
+
+
+@pytest.mark.parametrize(
+    ("options", "expected"),
+    [
+        pytest.param(["--remote", "mirror"], ["push", "mirror"], id="remote-only"),
+        pytest.param(["--branch", "stable"], ["push", "origin", "HEAD:stable"], id="branch-only"),
+        pytest.param(["--remote", "mirror", "--branch", "stable"], ["push", "mirror", "HEAD:stable"], id="both"),
+    ],
+)
+def test_the_push_goes_where_it_is_told_and_never_forces(tmp_path: Path, options: list[str], expected: list[str]) -> None:
+    """``--remote`` and ``--branch`` choose the push target; the push has no force option."""
+    git = Git()
+    root, system = hwinfo_world(tmp_path, git)
+
+    status = run_cli(root, system, tmp_path, "update", "hwinfo", "--auto-push", "--allow-computed", *options)
+
+    assert status == 0 and git_words(git)[2] == expected
+
+
+@pytest.mark.parametrize("option", ["--remote", "--branch"])
+@pytest.mark.parametrize("value", ["-x", "--upload-pack=calc", "a b", ""], ids=["dash", "option-injection", "space", "empty"])
+def test_an_unsafe_remote_or_branch_name_is_refused_before_git_starts(tmp_path: Path, option: str, value: str) -> None:
+    """A name that git could read as an option is refused; nothing is added, committed or pushed."""
+    git = Git()
+    root, system = hwinfo_world(tmp_path, git)
+
+    status = run_cli(root, system, tmp_path, "update", "hwinfo", "--auto-push", "--allow-computed", f"{option}={value}")
+
+    assert status == 1 and git.calls == []
 
 
 def test_auto_push_with_nothing_new_runs_no_git(tmp_path: Path) -> None:
     """When every version is current there is nothing to commit and git is not started."""
-    root = registry_of(tmp_path, "hwinfo")
     git = Git()
-    system = machine(tmp_path, "page_hwinfo", artifacts={"https://www.hwinfo.com/files/hwi_1002.zip": zip_bytes(tmp_path, "h.zip", HWINFO_ZIP)}, git=git)
+    root, system = hwinfo_world(tmp_path, git)
     run_cli(root, system, tmp_path, "update", "hwinfo")
 
-    status = run_cli(root, system, tmp_path, "update", "hwinfo", "--auto-push")
+    status = run_cli(root, system, tmp_path, "update", "hwinfo", "--auto-push", "--allow-computed")
 
     assert status == 0 and git.calls == []
 
@@ -422,11 +484,10 @@ def test_auto_push_with_nothing_new_runs_no_git(tmp_path: Path) -> None:
 @pytest.mark.parametrize("failing", ["add", "commit", "push"])
 def test_a_failing_git_step_fails_the_run_and_stops_there(tmp_path: Path, failing: str, capsys: pytest.CaptureFixture[str]) -> None:
     """If add, commit or push exits non-zero the status is 1, the error is printed and later steps do not run."""
-    root = registry_of(tmp_path, "hwinfo")
     git = Git(fail=failing)
-    system = machine(tmp_path, "page_hwinfo", artifacts={"https://www.hwinfo.com/files/hwi_1002.zip": zip_bytes(tmp_path, "h.zip", HWINFO_ZIP)}, git=git)
+    root, system = hwinfo_world(tmp_path, git)
 
-    status = run_cli(root, system, tmp_path, "update", "hwinfo", "--auto-push")
+    status = run_cli(root, system, tmp_path, "update", "hwinfo", "--auto-push", "--allow-computed")
 
     assert status == 1
     assert [w[0] for w in git_words(git)] == ["add", "commit", "push"][: ["add", "commit", "push"].index(failing) + 1]
@@ -458,3 +519,35 @@ def test_every_fixture_case_names_a_tracker_that_exists() -> None:
     for name in ("page_hwinfo", "github_volta"):
         document = json.loads((HTTP_CASES / f"{name}.json").read_text(encoding="utf-8"))
         assert (SNAPSHOT / document["tracker"] / "_check_updates" / "pkg.toml").is_file()
+
+
+# -- housekeeping ---------------------------------------------------------------------------------------------
+
+
+def test_a_run_removes_the_staging_folders_an_interrupted_run_left_but_nothing_else(tmp_path: Path) -> None:
+    """Folders named exactly ``.new-`` and eight hex digits are the tool's own and are removed; any other name is left alone."""
+    root = registry_of(tmp_path, "hwinfo")
+    (root / "hwinfo" / ".new-0123abcd").mkdir()
+    (root / "hwinfo" / ".new-0123abcd" / "pkg.toml").write_text("x", encoding="utf-8")
+    (root / "hwinfo" / ".new-keep").mkdir()
+    (root / "hwinfo" / ".new-0123abcdef").mkdir()
+
+    run_update(root, machine(tmp_path), tmp_path, "hwinfo")
+
+    assert sorted(p.name for p in (root / "hwinfo").iterdir()) == [".new-0123abcdef", ".new-keep", "_check_updates"]
+
+
+def test_registry_files_are_written_atomically(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A write that fails at the last step leaves the old file whole and no temporary file behind."""
+    root = registry_of(tmp_path)
+    before = (root / "_registry.toml").read_bytes()
+
+    def fail(source: object, destination: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr("gupkg_registry.layout.os.replace", fail)
+    with pytest.raises(OSError, match="disk full"):
+        write_registry_file(root, {"format": 2, "name": "other", "description": "other"})
+
+    assert (root / "_registry.toml").read_bytes() == before
+    assert [p.name for p in root.iterdir()] == ["_registry.toml"]
