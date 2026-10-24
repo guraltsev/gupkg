@@ -280,12 +280,28 @@ _MACHINE_ROOTS = (
 )
 
 
-def _require_path_entry(entry: str, context: EffectContext, scope: str, label: str) -> None:
+def _under(path: str | Path, root: Path) -> bool:
+    """Return whether *path* is *root* or lies below it (letter case and ``..`` judged on the canonical form)."""
+    return canonical_path(path) == canonical_path(root) or is_inside(path, root)
+
+
+def _machine_roots(context: EffectContext) -> list[Path]:
+    """Return the folders a machine ``PATH`` entry may lie in: the package, its bin folder, the machine-wide variable folders."""
+    folded = {name.casefold(): value for name, value in context.env.items()}
+    return [context.package_path, context.bin_dir] + [
+        Path(folded[name.casefold()]) for name in _MACHINE_ROOTS if folded.get(name.casefold())
+    ]
+
+
+def _require_path_entry(entry: str, context: EffectContext, scope: str, label: str, *, removal: bool = False) -> None:
     """Refuse a ``PATH`` entry that is not one absolute local folder, and, in the system scope, one outside trusted places.
 
     After expansion the entry must pass ``path_entry_shape_problem`` (no ``;``, ``..``, relative or UNC path...). A
     machine ``PATH`` entry must also lie inside the package root, the mode's ``bin`` folder or a machine-wide folder
-    (``ProgramFiles``, ``SystemRoot``...): a folder a standard user can write would let that user run code as everyone.
+    (``ProgramFiles``, ``SystemRoot``...), and, unless it is inside the package (whose ``App`` and ``bin`` may not exist
+    yet), it must already exist: a folder that is missing can be created later by a standard user inside a writable
+    subfolder of ``SystemRoot`` (``Temp``, ``Tasks``...). *removal* skips the existence rule, so a recorded entry whose
+    folder is gone can still be taken off the ``PATH``.
     """
     problem = path_entry_shape_problem(entry, template=False)
     if problem is not None:
@@ -295,27 +311,40 @@ def _require_path_entry(entry: str, context: EffectContext, scope: str, label: s
     if entry.startswith("%"):
         raise EffectError(f"{label} {entry!r} follows an environment variable, which a user can override: not allowed on the machine PATH")
     normalized = os.path.normpath(entry)
-    roots = [context.package_path, context.bin_dir]
-    folded = {name.casefold(): value for name, value in context.env.items()}
-    roots += [Path(folded[name.casefold()]) for name in _MACHINE_ROOTS if folded.get(name.casefold())]
-    if not any(canonical_path(normalized) == canonical_path(root) or is_inside(normalized, root) for root in roots):
+    if not any(_under(normalized, root) for root in _machine_roots(context)):
         raise EffectError(
             f"{label} {entry!r} is not inside the package, the bin folder or a machine-wide folder, so it cannot go on the machine PATH"
         )
+    if not removal and not _under(normalized, context.package_path) and not os.path.lexists(normalized):
+        raise EffectError(
+            f"{label} {entry!r} does not exist and is outside the package: a standard user could create it later, "
+            "so it cannot go on the machine PATH"
+        )
 
 
-def _require_trusted_folder(system: System, entry: str, scope: str) -> None:
-    """Refuse a machine ``PATH`` entry whose folder exists, is a link, or can be changed by a standard user."""
+def _require_trusted_folder(system: System, entry: str, scope: str, context: EffectContext) -> None:
+    """Refuse a machine ``PATH`` entry that is, or sits below, a link or a folder that standard users can change.
+
+    The entry may not exist yet (the package's own ``App`` and ``bin``): its nearest existing ancestor is judged instead, and
+    every existing folder between the entry and its governing root (the package's ``current``, the package, the bin folder or
+    a machine-wide folder) must not be a link or junction.
+    """
     if scope != "system":
         return
-    folder = Path(entry)
-    if not os.path.lexists(folder):
-        return
-    if is_reparse_point(folder):
-        raise EffectError(f"PATH entry {entry!r} is a link or junction and cannot go on the machine PATH")
-    reason = system.directory_untrusted_reason(folder)
+    folder = Path(os.path.normpath(entry))
+    probe = folder
+    while not os.path.lexists(probe) and probe.parent != probe:
+        probe = probe.parent
+    current = context.package_path / "current"
+    governing = next((root for root in (current, *_machine_roots(context)) if _under(folder, root)), None)
+    walker = folder
+    while governing is not None and not canonical_path(walker) == canonical_path(governing) and walker.parent != walker:
+        if os.path.lexists(walker) and is_reparse_point(walker):
+            raise EffectError(f"PATH entry {entry!r} is, or sits below, a link or junction ({walker}) and cannot go on the machine PATH")
+        walker = walker.parent
+    reason = system.directory_untrusted_reason(probe)
     if reason is not None:
-        raise EffectError(f"PATH entry {entry!r} can be changed by standard users ({reason}), so it cannot go on the machine PATH")
+        raise EffectError(f"PATH entry {entry!r} can be changed by standard users ({probe}: {reason}), so it cannot go on the machine PATH")
 
 
 def _require_free_name(name: str) -> None:
@@ -428,7 +457,7 @@ def apply_effect(system: System, effect: Effect, context: EffectContext, previou
             context.bin_dir.mkdir(parents=True, exist_ok=True)
         else:
             _require_path_entry(entry, context, str(fields.get("scope")), "PATH entry")
-            _require_trusted_folder(system, entry, str(fields.get("scope")))
+            _require_trusted_folder(system, entry, str(fields.get("scope")), context)
         current = system.get_path(scope)
         if normalize_entry(entry) in {normalize_entry(item) for item in current}:
             added = bool(previous.fields.get("added")) if previous is not None else False
@@ -485,7 +514,7 @@ def remove_effect(system: System, effect: Effect, context: EffectContext) -> boo
         if not fields.get("added") or fields.get("shared"):
             return False
         scope = _scope(fields)
-        _require_path_entry(str(fields["entry"]), context, str(fields.get("scope")), "recorded PATH entry")
+        _require_path_entry(str(fields["entry"]), context, str(fields.get("scope")), "recorded PATH entry", removal=True)
         current = system.get_path(scope)
         wanted = normalize_entry(str(fields["entry"]))
         kept = [item for item in current if normalize_entry(item) != wanted]

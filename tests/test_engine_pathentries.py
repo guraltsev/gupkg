@@ -95,6 +95,8 @@ def test_the_machine_path_takes_only_trusted_places(tmp_path: Path) -> None:
     inside = str(ctx.package_path / "current" / "App")
     program_files = str(tmp_path / "pf" / "Tool")
     system_root = str(tmp_path / "win" / "System32")
+    for folder in (program_files, system_root, ctx.bin_dir / "x"):
+        Path(folder).mkdir(parents=True)
 
     effects, _ = desired_effects(with_paths(inside, program_files, system_root, str(ctx.bin_dir / "x")), ctx)
 
@@ -177,3 +179,114 @@ def test_a_package_with_a_hostile_path_is_not_installed(tmp_path: Path) -> None:
     result = world.one("install", "system:tool")
 
     assert not result.ok and world.fake.get_path(Scope.MACHINE) == ["C:\\Windows"] and world.fake.fetch_log == []
+
+
+def machine(tmp_path: Path):
+    """A system context with an untrusted `<SystemRoot>\\Temp`, a package with a real `current\\App`, and a fake machine that knows both."""
+    ctx = context(tmp_path, mode="system")
+    temp = tmp_path / "win" / "Temp"
+    temp.mkdir(parents=True)
+    (ctx.package_path / "current" / "App").mkdir(parents=True)
+    system = FakeSystem(tmp_path / "machine", untrusted_dirs={temp})
+    system.set_path(Scope.MACHINE, ["C:\\Windows"])
+    return ctx, system, temp
+
+
+def system_effect(entry: Path | str) -> Effect:
+    """A machine PATH effect for *entry*."""
+    return Effect("path", {"scope": "system", "entry": str(entry), "added": False})
+
+
+@pytest.mark.parametrize("relative", ["", "x", "x\\y"])
+def test_a_machine_path_entry_below_an_untrusted_machine_folder_is_refused_even_when_it_does_not_exist_yet(tmp_path: Path, relative: str) -> None:
+    """`<SystemRoot>\\Temp`, `\\x` and `\\x\\y`: a standard user could create the missing folder later, so none goes on the machine PATH."""
+    ctx, system, temp = machine(tmp_path)
+    entry = temp / relative if relative else temp
+
+    with pytest.raises(EffectError):
+        apply_effect(system, system_effect(entry), ctx)
+    if relative:
+        with pytest.raises(EffectError):
+            desired_effects(with_paths(str(entry)), ctx)  # planning refuses a missing folder outside the package; an existing one is judged on apply
+
+    assert system.get_path(Scope.MACHINE) == ["C:\\Windows"]
+
+
+def test_a_missing_folder_below_a_junction_inside_the_package_is_refused(tmp_path: Path) -> None:
+    """`current\\App\\t` is a junction to `<SystemRoot>\\Temp` and `x` does not exist: the entry is judged through its nearest existing ancestor."""
+    ctx, system, temp = machine(tmp_path)
+    system.create_junction(ctx.package_path / "current" / "App" / "t", temp)
+
+    for entry in (ctx.package_path / "current" / "App" / "t" / "x", ctx.package_path / "current" / "App" / "t" / "x" / "y", ctx.package_path / "current" / "App" / "t"):
+        with pytest.raises(EffectError, match="junction|link|outside the package"):
+            apply_effect(system, system_effect(entry), ctx)
+
+    assert system.get_path(Scope.MACHINE) == ["C:\\Windows"]
+
+
+def test_a_missing_folder_below_an_untrusted_folder_inside_the_package_is_refused(tmp_path: Path) -> None:
+    """The nearest existing ancestor must be admin-only: a user-writable subfolder of the package does not pass."""
+    ctx, system, _ = machine(tmp_path)
+    writable = ctx.package_path / "current" / "App" / "writable"
+    writable.mkdir()
+    system.untrusted_dirs = {Path(str(writable))}
+
+    with pytest.raises(EffectError, match="standard users"):
+        apply_effect(system, system_effect(writable / "later"), ctx)
+
+
+def test_the_bin_folder_variant_is_refused_when_the_bin_folder_is_untrusted(tmp_path: Path) -> None:
+    """`<bin>\\x` with an untrusted bin folder is refused whether `x` exists or not."""
+    ctx, system, _ = machine(tmp_path)
+    ctx.bin_dir.mkdir(parents=True)
+    system.untrusted_dirs = {Path(str(ctx.bin_dir))}
+    (ctx.bin_dir / "there").mkdir()
+
+    for entry in (ctx.bin_dir / "there", ctx.bin_dir / "x", ctx.bin_dir / "x" / "y"):
+        with pytest.raises(EffectError):
+            apply_effect(system, system_effect(entry), ctx)
+
+
+def test_a_not_yet_created_app_bin_in_an_admin_only_package_is_accepted(tmp_path: Path) -> None:
+    """The package's own `$App\\bin` may be created later by the install itself: its existing ancestor `App` is admin-only, so it passes."""
+    ctx, system, _ = machine(tmp_path)
+    entry = ctx.package_path / "current" / "App" / "bin"
+
+    effects, _ = desired_effects(with_paths("$App\\bin"), ctx)
+    applied = apply_effect(system, system_effect(entry), ctx)
+
+    assert [effect.fields["entry"] for effect in effects] == [str(entry)]
+    assert applied.fields["added"] is True and system.get_path(Scope.MACHINE) == ["C:\\Windows", str(entry)]
+
+
+def test_removal_can_delete_a_recorded_entry_whose_folder_is_gone(tmp_path: Path) -> None:
+    """The existence and ancestor rules are for applying; an entry that was added and whose folder vanished still comes off the PATH."""
+    ctx, system, _ = machine(tmp_path)
+    gone = ctx.package_path / "current" / "App" / "bin"
+    system.set_path(Scope.MACHINE, ["C:\\Windows", str(gone)])
+
+    assert remove_effect(system, Effect("path", {"scope": "system", "entry": str(gone), "added": True}), ctx) is True
+
+    assert system.get_path(Scope.MACHINE) == ["C:\\Windows"]
+
+
+def test_apply_effect_judges_a_hostile_effect_itself(tmp_path: Path) -> None:
+    """`apply_effect` has its own check: a hand-made effect with a bad shape is refused although nothing planned it."""
+    ctx, system, _ = machine(tmp_path)
+
+    for entry in ("C:\\a;C:\\evil", "rel", "\\\\srv\\share", "C:\\x\\..\\y"):
+        for scope in ("user", "system"):
+            with pytest.raises(EffectError):
+                apply_effect(system, Effect("path", {"scope": scope, "entry": entry, "added": False}), ctx)
+
+    assert system.get_path(Scope.MACHINE) == ["C:\\Windows"] and system.get_path(Scope.USER) == []
+
+
+def test_user_mode_is_unchanged_by_the_machine_rules(tmp_path: Path) -> None:
+    """A user PATH entry may be a folder that does not exist yet and may be anywhere on a drive."""
+    ctx = context(tmp_path, mode="user")
+    system = FakeSystem(tmp_path / "machine")
+
+    applied = apply_effect(system, Effect("path", {"scope": "user", "entry": str(tmp_path / "later" / "bin"), "added": False}), ctx)
+
+    assert applied.fields["added"] is True and system.get_path(Scope.USER) == [str(tmp_path / "later" / "bin")]
