@@ -287,6 +287,9 @@ Epic: 020. Design: `_docs/rehaul_design.md` §7.4, §13
   the label `runs vendor installer` in the plan (`populate.label`), the output and the receipt. Issue 029 shows the
   label in `list --details` from `INSTALLER_LABEL` (`gupkg.model.manifest`) and the manifest's `source.installer`.
   The rules and the risk are in design 13.4.
+- **Registry (031): every version that runs a vendor installer needs a pinned `sha256`.** `gupkg.engine.installer` refuses a
+  download that was not verified against a hash (design 9.1 rule 6); the registry tool must publish the GIMP version with its
+  `sha256`, and a tracker for it must discover one.
 - **Locks are implemented by 028**: `gupkg.engine.locks`, `System.process_id` and `System.process_is_running`. The code
   `package-busy` (exit 3) is what a front end shows when another run holds the package.
 - **Owners of what is not done.** The `[root_forwarder]` table, `requires_gupkg` and exit code 6, and the launchers belong

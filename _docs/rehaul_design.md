@@ -927,8 +927,9 @@ the setting `allow_vendor_installers` must not be `false`. GIMP, whose
 installer is built with Inno Setup 7, is the only current user. No bundled
 tool extracts it (job 07, spike S3), so 1.0 has no `inno` kind (D39).
 
-The step runs only a downloaded, verified `.exe`, into the staged `App` (`$Stage`), with a scrubbed environment, a
-timeout and arguments that may name only the stage; `require` is judged after it ran. Section 13.4 has the rules and
+The step runs only a downloaded `.exe` that matches a pinned sha256 (section 9.1, rule 6: never skippable), into the staged
+`App` (`$Stage`), with a scrubbed environment, a timeout and arguments that may name only the stage; `require` is judged
+after it ran. Section 13.4 has the rules and
 the risk (vendor code runs with the rights of the gupkg that started it).
 
 ### 8.5 Checksum discovery (`[source.checksum]`)
@@ -1033,6 +1034,12 @@ When the built-in download script downloads a source artifact, during
    without the flag, and a malformed hash is an error, not a missing one.
 4. **Git sources** pin a commit; the commit hash is the integrity anchor.
 5. **Local files** (`file:` URLs on a share) follow the same rules.
+6. **A vendor installer is never skippable.** The skip rules above are for archives. A version with
+   `[source.installer]` (section 8.4) runs only from a download that matches a pinned `sha256` (or a matching
+   registry fingerprint): the plan refuses one with no hash before a byte is fetched, `run_installer` refuses a download
+   whose decision is `skipped-cli`, `skipped-setting`, `user-approved` or `origin-not-verified`, and no flag, setting
+   or approval overrides it, in a user or an elevated run. Pin a hash with `gupkg pkg pin`; the registry tool must
+   publish a `sha256` for every version that runs an installer (GIMP).
 
 `ignore_checksum` is removed from the format. Registry packages publish pinned
 versions with hashes (section 17), so they need no bypass at all.
@@ -1071,7 +1078,10 @@ package itself** (D27): it carries the package's label.
 Details (issue 028). The **fingerprint** of a version directory has one definition, one
 implementation (`gupkg.services.fingerprint`) and one byte-exact contract, in section 17: the
 registry tool, install and `check` all call it. It ignores the top-level `App` and `gupkg` (so a
-shipped `App` is not part of it either) and refuses links. A **distribution folder** is copied, then judged: no
+shipped `App` is not part of it either) and refuses links. A match for a version that ships its `App` is therefore
+labelled **verified (App not covered)**: the receipt's `[origin]` has `app_covered = false`, the run warns and `check` shows a
+`verified-partly` note; the `App` is then compared only with the D41 install-time record. A local version that received
+launchers carried forward from an earlier one (`install.cmd`, `gupkg-tui.cmd`) is compared without them. A **distribution folder** is copied, then judged: no
 published fingerprint labels the install *origin not verified*, a match
 *verified against registry `<name>`*, a mismatch refuses it, names the files that differ and
 removes the copy this run created. The same comparison runs for a version copied from a registry
@@ -1762,8 +1772,9 @@ lock. A lock is stale, and reclaimed, when its process is not running (`System.p
 it is older than a day (no operation takes that long, and a recycled process id cannot keep a lock for
 ever) or when its text is unreadable and not brand new; a lock of another host is judged by age only. A
 lock is released on every exit, failure and cancel included. An elevated run locks only in an admin-only
-`locks` folder. `cleanup` skips a locked package and, even when it holds the lock, removes only the
-`.gupkg\work` entries older than 24 hours, so a run in flight keeps its staging folder.
+`locks` folder. `cleanup` of a package the user names that another run holds fails with `package-busy` (exit 3); a
+sweep over a whole root (`Request.sweep`) leaves it alone and reports it as `locked` (not a failure). Even when it holds
+the lock, `cleanup` removes only the `.gupkg\work` entries older than 24 hours, so a run in flight keeps its staging folder.
 
 **Vendor installers.** `[source.installer]` is implemented by `engine.installer` (section 8.4): the
 verified, hashed-again `.exe` runs once into the staging folder. It needs `hooks.allow_vendor_installers`
@@ -1772,9 +1783,11 @@ not false (read from admin-only layers in an elevated run), the plan, the output
 `list --details` shows the same label from the version's manifest (`INSTALLER_LABEL`). The installer is
 copied to the work folder under its published name, hashed once more and judged admin-only in an elevated
 run; it gets a minimal environment (machine-level variables and a `TEMP` inside the work folder), no
-standard input and `engine.installer_timeout` (30 minutes). `$Stage` expands to the staged `App`;
-an argument whose path part is anything but a path inside the stage (another drive, a UNC path, a `..`
-segment, a relative path with a separator) is refused before the installer starts. After it ran, the
+standard input and `engine.installer_timeout` (30 minutes); in an elevated run its `PATH` holds only the admin-only
+folders of the process `PATH`. `$Stage` expands to the staged `App`; after the expansion every value of an
+option (`/DIR=...`, `-dir:...`, `-o...`) or bare argument must be the stage, a path below it, or a plain word: a value
+that starts with a backslash, `/`, `~` or `%`, holds a `:` that is not in the stage path, a `..`, a separator
+outside the stage or a Windows device name (`con`, `nul`, `com1`) is refused before the installer starts. After it ran, the
 version's `require` paths must exist, and the staged `App` may hold no link or junction. A failing,
 timed-out or refused installer removes the staging folder: nothing is activated. Under a sandbox an
 installer runs only through an explicit process double; without one the result is `needs-real-run`. The risk:
@@ -1783,16 +1796,25 @@ elevated run) and can change anything outside the stage (registry keys, other fo
 or undo; the setting, the label and the warning in the output exist for that reason. A version that runs an
 installer is populated by `check-updates` only when the setting allows it.
 
+**`[[path]]` entries.** One entry is one absolute local folder (`X:\...`, or `%VAR%\...` for a user `PATH`): no `;`
+(one declaration would become two entries and uninstall would not match them), no `..` segment (judged after
+expansion, so `$App\..\..` is refused), no relative, UNC, `\\?\` or device path, no quote or control character. The
+machine `PATH` takes only a path inside the package, the mode's `bin` folder or a machine-wide folder
+(`ProgramFiles`, `SystemRoot`...), never a `%VAR%` prefix (a user can override it), and an existing folder that is a link or that
+standard users can change is refused when the entry is applied. The manifest validator, `desired_effects`,
+`apply_effect` and `remove_effect` all check, so a hostile install record cannot make an uninstall change the `PATH`.
+
 **Names a package may not take.** `[[env]]` and `[portable] env` may not name `Path` (it would replace the
 whole `PATH`; `[[path]]` adds one entry the safe way) or a system variable (`PATHEXT`, `ComSpec`,
 `SystemRoot`, `TEMP`, `USERPROFILE`, `APPDATA`, `PROCESSOR_*`...; any letter case), checked by the manifest
 validator, by `desired_effects` and again when an effect is applied or removed, so an install record in a
 user-writable root cannot make an uninstall delete them. Shortcut and shim names may not be device names
-(`NUL`, `aux.lnk`, `COM1`), NTFS streams (`Tool:ads`) or end in a dot or a space.
+(`NUL`, `aux.lnk`, `COM1`), NTFS streams (`Tool:ads`) or end in a dot or a space, and are at most 255 characters;
+an `[[env]]` name is at most 128 characters and holds no `%`, white space, `=` or invisible character.
 
 **Secrets.** URLs are written to receipts, events, errors and plan data with user information and the values
-of secret-looking query parameters (`token`, `signature`, `key`, `auth`...) replaced by `***`
-(`gupkg.redact`). A receipt larger than 1 MiB is not read (a user-mode receipt is user-writable); an `App`
+of secret-looking query and fragment parameters (`token`, `signature`, `key`, `auth`, `policy`, `session`...,
+separated by `&` or `;`) replaced by `***` (`gupkg.redact`). A secret in the URL *path* cannot be recognised and is not masked. A receipt larger than 1 MiB is not read (a user-mode receipt is user-writable); an `App`
 of more than 4000 files records its count and one digest instead of the file list, and `check` then still
 sees a change but cannot name the file.
 

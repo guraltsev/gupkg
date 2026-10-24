@@ -88,3 +88,16 @@ distribution,effects,planner,populate,security,store}.py`, `tests/test_migrate_a
   `plan_cleanup` takes `CleanupFacts.bundled`; URL credentials are redacted (`gupkg.redact`); the receipt limit is 1 MiB and a
   huge `App` records only its digest; `System.scratch_directory` replaces `tempfile` for report-only checks; `stop_marker`
   documents the unique-path rule for issue 029.
+
+## Review round 2 (after the merge of 031)
+
+- **D1:** an installer runs only from a verified download (design 9.1 rule 6); the plan, the appbuild precheck and `run_installer`
+  all refuse an unpinned version, whatever the skip flag; the registry must publish a sha256 for GIMP.
+- **D2:** `[[path]]` entries are one absolute local folder, validated in the manifest, `desired_effects`, `apply_effect` and
+  `remove_effect`; the machine `PATH` takes trusted places only (`tests/test_engine_pathentries.py`).
+- **D3, D4:** every path-like installer argument must be inside the stage or a plain word; an elevated child gets admin-only
+  `PATH` folders (`safe_process_environment(system=...)`, also used by the git environment).
+- **D5:** `cleanup` of a named busy package fails (`package-busy`, exit 3); `Request.sweep` reports `locked`. (The first report said
+  the lock made cleanup skip with exit 5; the batch result was in fact `ok = False`, exit 5, and the summary said "after cancel".)
+- **D6-D12:** guard test for `_forget_adhoc`; `hand_back` file-vs-folder error; name limits; redaction of fragments and more
+  names; `verified (App not covered)`; carried-forward launchers excluded from the local-version comparison.
