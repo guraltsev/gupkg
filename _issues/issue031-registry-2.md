@@ -47,7 +47,7 @@ Continues issue 014 (new packages), which is now written against this layout.
      from the template of issue 033 (D34). Registry packages do not bundle
      gupkg.
    - **Unpack kinds** (D39): msys2 moves to its `.tar.xz` release with the
-     `tar` kind; GIMP keeps running its vendor installer, since there is no
+     `tar` kind; GIMP keeps running its vendor installer (which the engine runs only from a download with a pinned `sha256`: the registry tool must publish one, design 9.1 rule 6), since there is no
      `inno` kind.
 3. **Declare `modes` and `[portable]` / `[nonportable]` per package.**
    - **Portable-capable:** tixati, SumatraPDF, notepadplusplus, hwinfo,

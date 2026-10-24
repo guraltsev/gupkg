@@ -2,8 +2,8 @@
 
 Usage and API
 -------------
-``compare_versions(left, right)`` orders two version directory names like 0.17
-did. ``sort_versions(names)`` and ``newest_version(names)`` order a listing and
+``compare_versions(left, right)`` orders two version directory names.
+``sort_versions(names)`` and ``newest_version(names)`` order a listing and
 skip every name that is not a version. ``is_version_name(name)`` says whether a
 name can be a version directory, ``is_version_dir(name, children)`` and
 ``is_tracker_dir(name, children)`` add the "contains ``pkg.toml``" test for a
@@ -11,11 +11,11 @@ directory whose child names the caller has listed.
 
 Implementation Approach
 -----------------------
-Ordering is the 0.17 rule, unchanged for real versions: dotted segments compare
+Dotted segments compare
 numerically when both are numbers, a ``-prerelease`` sorts before its release,
 and the text after the first ``.local.`` is a local revision that sorts after the
 plain version. Reserved names are filtered before any ordering happens, so
-``_check_updates`` (and 0.17's ``_bootstrap``, which merely starts with ``_``),
+``_check_updates`` and every other name that starts with ``_`` or ``.``,
 ``current`` and ``data`` can never be the newest version. The module does no
 input or output: directory listings are passed in by the caller.
 """
@@ -214,7 +214,6 @@ def compare_versions(left: str, right: str) -> int:
     -------
     int
         ``1`` when *left* is newer, ``-1`` when *right* is newer, ``0`` when equal.
-        The result for real versions is the 0.17 ordering.
     """
     left_upstream, left_local = split_version(left)
     right_upstream, right_local = split_version(right)

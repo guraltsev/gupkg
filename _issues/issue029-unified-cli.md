@@ -132,6 +132,23 @@ The owner's decisions (2026-10-22) that shape this issue:
     check-updates/install/update/list/info first, then maintenance
     (including `check`), then authoring, then self. Every subcommand has an
     example.
+12. **Delete the 0.17 coordinators (handed over by issue 028, whose scope item 11 stays open until this lands).**
+    Issue 028 built the engine beside the 0.17 front end, as the epic allows ("mergeable on its own behind the existing CLI
+    until 029 switches the front end"), so the old code is still imported by the front end that this issue replaces. When
+    the front end moves to `gupkg.engine.lifecycle`, delete, in one commit, with their tests:
+    - `gupkg.py` (`install_package`, `_run_update`, `update_package`), `updates.py` (`prepare_update` and the
+      receipt-by-mtime logic), `origin.py` (`populate_*`), `components.py`, `downloads.py`, `github_releases.py`,
+      `configuration.py`, `configfix.py`, `metadata.py`, `collection.py`, `distribution.py`, `layout.py` (what only the old
+      front end uses, including `identity_from_path` and `installed_version`), `pinning.py`, `outcome.py`, `commands.py`,
+      the 0.17 command bodies of `cli.py`, `registry.py` (the 0.17 registry client), the executor of `manager.py`, and
+      `legacy_to_gupkg_toml.py` and `shortcuts_to_gupkg_toml.py` (the migration tool `gupkg_migrate` has its own copies);
+      check `bootstrap.py` and `hooklib.py` for remaining importers first;
+    - **first** move the transports that `catalog/registry.py` imports from `registry.py` (`archive_revision`,
+      `archive_url`, `extract_archive`, `git_environment`, `git_remote_revision`, `is_git_source`,
+      `require_trusted_cache`, `trusted_git`): they are the only reason `registry.py`, `origin.py`, `updates.py`,
+      `downloads.py`, `github_releases.py`, `configuration.py` and `metadata.py` are still reachable from the engine;
+    - `tui.py`, `manager_tui.py`, `tui_widgets.py` and `LineStream` go with issue 030.
+    A test that imports every remaining module under the bundled interpreter proves nothing still needs them.
 
 ## Acceptance criteria
 

@@ -1,7 +1,8 @@
 """The command line of ``gupkg-migrate``.
 
 Call ``main(argv)`` from Python or run ``python -m gupkg_migrate``. The commands are
-``package PATH`` (a version directory, a package folder or a whole registry), ``settings
+``package PATH`` (a version directory, a package folder or a whole registry; a package that 0.17
+installed is also adopted: it gets an install record, see ``gupkg_migrate.adopt``), ``settings
 CONFIG`` and ``shortcuts DIRECTORY``. Every command takes ``--check`` for a dry run that prints
 a diff and changes nothing. Exit status is 0 when everything converted (or was already
 converted) and 1 when anything failed validation or could not be read.
@@ -18,12 +19,13 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from gupkg.system.port import System
 from gupkg.system.windows import WindowsSystem
 
+from .adopt import apply_adoption, plan_adoption
 from .package import PackagePlan, apply_plan, plan_package
 from .settings import apply_settings, plan_settings
 from .shortcuts import apply_shortcuts, plan_shortcuts
@@ -31,7 +33,7 @@ from .shortcuts import apply_shortcuts, plan_shortcuts
 _SKIPPED_NAMES = frozenset({"current", "data"})
 
 
-def main(argv: Sequence[str] | None = None, *, system: System | None = None) -> int:
+def main(argv: Sequence[str] | None = None, *, system: System | None = None, env: Mapping[str, str] | None = None) -> int:
     """Run one migration command and return its exit status.
 
     Parameters
@@ -39,7 +41,9 @@ def main(argv: Sequence[str] | None = None, *, system: System | None = None) -> 
     argv : sequence of str, optional
         The command line without the program name; ``sys.argv[1:]`` by default.
     system : System, optional
-        The machine boundary used to read shortcuts; ``WindowsSystem()`` by default.
+        The machine boundary used to read shortcuts and adopt installs; ``WindowsSystem()`` by default.
+    env : mapping, optional
+        The environment used to expand the configured roots when adopting; ``os.environ`` by default.
 
     Returns
     -------
@@ -49,6 +53,7 @@ def main(argv: Sequence[str] | None = None, *, system: System | None = None) -> 
     parser = _parser()
     args = parser.parse_args(list(sys.argv[1:] if argv is None else argv))
     args.system = system if system is not None else WindowsSystem()
+    args.env = env
     return int(args.run(args))
 
 
@@ -103,18 +108,65 @@ def _run_package(args: argparse.Namespace) -> int:
         return 1
     failed = 0
     for directory in directories:
-        plan = plan_package(directory)
-        _report_package(plan, check=args.check)
-        if not plan.ok:
+        # One directory that cannot be read or written must not stop a whole registry run.
+        try:
+            plan = plan_package(directory)
+            _report_package(plan, check=args.check, backup=args.backup)
+            if not plan.ok:
+                failed += 1
+            elif not args.check and plan.changes_anything:
+                for line in apply_plan(plan, backup=args.backup):
+                    print(f"  {line}")
+        except (OSError, ValueError) as error:
+            print(f"[FAILED] {directory}: {error}", file=sys.stderr)
             failed += 1
-        elif not args.check and plan.changes_anything:
-            for line in apply_plan(plan, backup=args.backup):
-                print(f"  {line}")
+
+    # Packages that 0.17 installed (they have `current`) are adopted once their versions are converted.
+    if args.adopt:
+        failed += _adopt_packages(args, directories)
     print(f"{len(directories)} directories, {failed} failed")
     return 1 if failed else 0
 
 
-def _report_package(plan: PackagePlan, *, check: bool) -> None:
+def _adopt_packages(args: argparse.Namespace, directories: list[Path]) -> int:
+    """Adopt the package roots among the parents of *directories*; return how many failed."""
+    roots = sorted({directory.parent for directory in directories if (directory.parent / "current").exists()
+                    or os.path.islink(directory.parent / "current")})
+    failed = 0
+    env = os.environ if args.env is None else args.env
+    for root in roots:
+        try:
+            plan = plan_adoption(root, system=args.system, env=env, mode=args.mode, settings_path=args.settings)
+        except (OSError, ValueError) as error:
+            print(f"[FAILED adopt] {root.name}: {error}", file=sys.stderr)
+            failed += 1
+            continue
+        if plan.skipped:
+            if not plan.skipped.startswith("no current"):
+                print(f"[not adopted] {root.name}: {plan.skipped}")
+            continue
+        state = "already adopted" if plan.already_adopted else "FAILED" if not plan.ok else "would adopt" if args.check else "adopted"
+        if args.check and not plan.ok and plan.version and any("convert it first" in error for error in plan.errors):
+            state = "would adopt after its version is converted"
+        print(f"[{state}] {root.name}" + (f" ({plan.mode}, {plan.version})" if plan.mode else ""))
+        for error in plan.errors:
+            if state != "would adopt after its version is converted":
+                print(f"  error: {error}", file=sys.stderr)
+        for note in plan.notes:
+            print(f"  note: {note}")
+        if not plan.ok and not args.check:
+            failed += 1
+        elif plan.ok and not args.check:
+            try:
+                for line in apply_adoption(plan):
+                    print(f"  {line}")
+            except (OSError, ValueError) as error:
+                print(f"  error: {error}", file=sys.stderr)
+                failed += 1
+    return failed
+
+
+def _report_package(plan: PackagePlan, *, check: bool, backup: bool = True) -> None:
     """Print what happened to, or would happen to, one package directory."""
     name = f"{plan.directory.parent.name}/{plan.target.name}"
     if plan.already_converted:
@@ -128,7 +180,10 @@ def _report_package(plan: PackagePlan, *, check: bool) -> None:
     for error in plan.errors:
         print(f"  error: {error}", file=sys.stderr)
     if plan.ok and not plan.already_converted:
-        print("  note: comments of the 0.17 file are not preserved in the converted file; pkg.toml.bak keeps them")
+        print(
+            "  note: comments of the 0.17 file are not preserved in the converted file"
+            + ("; pkg.toml.bak keeps them" if backup else " and --no-backup keeps no copy of them")
+        )
     for note in plan.notes:
         print(f"  note: {note}")
     for source, destination in plan.moves:
@@ -196,7 +251,12 @@ def _parser() -> argparse.ArgumentParser:
     package.add_argument("path", type=Path, help="a version directory, a package folder or a registry folder")
     package.add_argument("--check", action="store_true", help="print a diff and change nothing")
     package.add_argument("--no-backup", dest="backup", action="store_false", help="do not keep pkg.toml.bak")
-    package.set_defaults(run=_run_package)
+    package.add_argument("--no-adopt", dest="adopt", action="store_false",
+                         help="do not write install records for packages that 0.17 installed")
+    package.add_argument("--mode", choices=("system", "user", "portable"),
+                         help="the install mode of adopted packages when their root does not tell")
+    package.add_argument("--settings", type=Path, help="a settings.toml that names the roots (used to find the install mode)")
+    package.set_defaults(run=_run_package, env=None)
 
     settings = commands.add_parser("settings", help="convert gupkg-config.toml (schema 2) to settings.toml (schema 3)")
     settings.add_argument("config", type=Path, help="the gupkg-config.toml to convert")

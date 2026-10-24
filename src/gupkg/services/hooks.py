@@ -194,7 +194,7 @@ def _is_below(path: Path, root: Path) -> bool:
     return True
 
 
-def load_hook(root: Path, reference: str, system: System) -> ModuleType:
+def load_hook(root: Path, reference: str, system: System, *, forbid_track: bool = False) -> ModuleType:
     """Import the hook module *reference* (``pkg.local/name.py``) found below *root*.
 
     Parameters
@@ -206,6 +206,10 @@ def load_hook(root: Path, reference: str, system: System) -> ModuleType:
     system : System
         The boundary that answers whether the run is elevated and whether *root* is admin-only;
         in an elevated run an untrusted folder is refused before anything is imported.
+    forbid_track : bool, default=False
+        Refuse a module that exposes a name ``track`` once it is loaded. A version directory's hooks have no
+        update discovery (design 9.3); the static scan of ``gupkg.pkgcheck`` cannot see a name that is built at
+        run time, this check can.
 
     Returns
     -------
@@ -264,6 +268,8 @@ def load_hook(root: Path, reference: str, system: System) -> ModuleType:
                 sys.modules.pop(imported, None)
     if getattr(module, "PKG_MODULE_API", None) != PKG_MODULE_API:
         raise HookError(f"{reference} must declare PKG_MODULE_API = {PKG_MODULE_API}")
+    if forbid_track and hasattr(module, "track"):
+        raise HookError(f"{reference} exposes track: a version directory has no update discovery; it lives only in _check_updates")
     return module
 
 

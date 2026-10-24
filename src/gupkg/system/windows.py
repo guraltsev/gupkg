@@ -303,6 +303,43 @@ class WindowsSystem(WindowsLinks):
         """Return whether this process may hold an elevated token; unreadable signals count as elevated."""
         return elevation.is_elevated()
 
+    @contextmanager
+    def scratch_directory(self, prefix: str) -> Iterator[Path]:
+        """Create a private temporary folder, yield it, and delete it (and whatever is left in it) on exit."""
+        with tempfile.TemporaryDirectory(prefix=prefix, ignore_cleanup_errors=True) as folder:
+            yield Path(folder)
+
+    def process_id(self) -> int:
+        """Return the id of this process."""
+        return os.getpid()
+
+    def process_is_running(self, pid: int) -> bool:
+        """Return whether process *pid* is still running (``OpenProcess`` and its exit code); doubt counts as running."""
+        if os.name != "nt":
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return False
+            except OSError:
+                return True
+            return True
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            # ERROR_INVALID_PARAMETER (87): no such process. Anything else (access denied) means it exists.
+            return ctypes.get_last_error() != 87
+        try:
+            code = wintypes.DWORD()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return True
+            return code.value == 259  # STILL_ACTIVE
+        finally:
+            kernel32.CloseHandle(handle)
+
     def relaunch_elevated(self, argv: Sequence[str]) -> bool:
         """Request one elevated run of the bundled launcher with *argv*; return whether it started."""
         if os.name != "nt":

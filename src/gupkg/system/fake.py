@@ -38,9 +38,11 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import uuid
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Iterator, Mapping, Sequence
 
 from ..extractors import find_7z
 from .port import (
@@ -48,6 +50,7 @@ from .port import (
     EnvValue,
     HttpResponse,
     ProcessAborted,
+    ProcessNotAllowed,
     ProcessResult,
     ResponseTooLarge,
     Scope,
@@ -71,6 +74,10 @@ def _find_on_path(name: str) -> Path | None:
 
 class UnexpectedCall(OSError):
     """Report a URL, process or action that the fake was not set up to serve."""
+
+
+class UnexpectedProcess(UnexpectedCall, ProcessNotAllowed):
+    """Report a program that the fake has no double for, so the engine can say the package needs a real run."""
 
 
 @dataclass(frozen=True)
@@ -158,6 +165,10 @@ class FakeSystem(WindowsLinks):
         JSON file that persists the registry, its log and the counters.
     relaunch_result : bool
         What ``relaunch_elevated`` reports.
+    pid : int
+        What ``process_id`` reports.
+    live_pids : set of int
+        Other process ids that ``process_is_running`` reports as running (a lock held by a living second run).
     failures : dict, optional
         Method name to an exception that the next call of that method raises
         (once), to exercise failure paths.
@@ -172,6 +183,8 @@ class FakeSystem(WindowsLinks):
     real_7zip: bool = True
     state_file: Path | None = None
     relaunch_result: bool = True
+    pid: int = field(default_factory=os.getpid)
+    live_pids: set[int] = field(default_factory=set)
     failures: dict[str, BaseException] = field(default_factory=dict)
     registry_log: list[RegistryAccess] = field(default_factory=list)
     broadcasts: int = 0
@@ -313,6 +326,27 @@ class FakeSystem(WindowsLinks):
         """Report the configured elevation flag."""
         return self.elevated
 
+    @contextmanager
+    def scratch_directory(self, prefix: str) -> Iterator[Path]:
+        """Create a private folder below the fake's own root (never the real temporary folder), yield it, delete it on exit."""
+        self._maybe_fail("scratch_directory")
+        folder = self.root / "scratch" / f"{prefix}{uuid.uuid4().hex[:12]}"
+        folder.mkdir(parents=True)
+        try:
+            yield folder
+        finally:
+            shutil.rmtree(folder, ignore_errors=True)
+
+    def process_id(self) -> int:
+        """Return the configured process id (the real one by default)."""
+        return self.pid
+
+    def process_is_running(self, pid: int) -> bool:
+        """Report whether *pid* is this fake process or one of ``live_pids``; a sandbox asks the real system."""
+        if pid == self.pid or pid in self.live_pids:
+            return True
+        return self.delegate.process_is_running(pid) if self.delegate is not None else False
+
     def relaunch_elevated(self, argv: Sequence[str]) -> bool:
         """Record the request and report the configured outcome; nothing is started."""
         self._maybe_fail("relaunch_elevated")
@@ -376,7 +410,7 @@ class FakeSystem(WindowsLinks):
             return (self.delegate or WindowsSystem()).run(
                 [str(target), *command[1:]], cwd, env, on_line, input_text=input_text, timeout=timeout, watch=watch
             )
-        raise UnexpectedCall(f"FakeSystem has no process double for {command[0]!r}: {command}")
+        raise UnexpectedProcess(f"FakeSystem has no process double for {command[0]!r}: {command}")
 
     def regex_worker(
         self,

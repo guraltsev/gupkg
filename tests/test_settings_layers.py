@@ -75,10 +75,10 @@ class World:
             return None
 
     def load(self, *, elevated: bool = False, system_mode: bool = False, settings_path: Path | None = None,
-             untrusted: bool = False):
-        """Load settings for a run on this machine."""
+             untrusted: bool = False, system: FakeSystem | None = None):
+        """Load settings for a run on this machine (on *system* when one is given)."""
         # FakeSystem treats every folder as admin-only unless it is listed as untrusted.
-        system = FakeSystem(self.base / "fake", untrusted_dirs={self.base} if untrusted else set())
+        system = system or FakeSystem(self.base / "fake", untrusted_dirs={self.base} if untrusted else set())
         return load_settings(
             system=system,
             env=self.env, elevated=elevated, system_mode=system_mode, app_dir=self.app,
@@ -301,6 +301,34 @@ def test_a_missing_layer_in_an_untrusted_folder_is_still_refused_in_strict_runs(
     """The folder check covers a settings file that does not exist yet, judged by its nearest existing parent."""
     with pytest.raises(SettingsError, match="Refusing"):
         world.load(untrusted=True, system_mode=True)
+
+
+@pytest.mark.parametrize("flags", [{"elevated": True}, {"system_mode": True}], ids=["elevated", "system-mode"])
+def test_a_folder_that_cannot_be_judged_stops_a_strict_run_with_a_settings_error(world: World, flags: dict) -> None:
+    """When the boundary cannot say whether a folder is admin-only (it raises), the run is refused, not crashed or trusted."""
+    world.system_file('schema = 3\n[ui]\ncolor = "never"\n')
+
+    class Unjudgeable(FakeSystem):
+        """A machine whose permission check fails."""
+
+        def directory_untrusted_reason(self, path):
+            raise PermissionError("access denied")
+
+    with pytest.raises(SettingsError, match="could not be judged admin-only: access denied"):
+        world.load(system=Unjudgeable(world.base / "fake2"), **flags)
+
+
+def test_a_normal_run_does_not_ask_whether_folders_are_admin_only(world: World) -> None:
+    """Outside elevated and system-mode runs the permission check is never made (a failing boundary changes nothing)."""
+    world.user_file('schema = 3\n[ui]\ncolor = "never"\n')
+
+    class Unjudgeable(FakeSystem):
+        """A machine whose permission check fails."""
+
+        def directory_untrusted_reason(self, path):
+            raise PermissionError("access denied")
+
+    assert world.load(system=Unjudgeable(world.base / "fake2")).settings["ui.color"] == "never"
 
 
 def test_unreadable_and_undecodable_files_are_errors_not_skipped_layers(world: World) -> None:

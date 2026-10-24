@@ -26,6 +26,7 @@ from __future__ import annotations
 import difflib
 import re
 import tomllib
+import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
@@ -56,6 +57,108 @@ SCRIPT_SUFFIXES = (".py", ".ps1", ".cmd", ".bat", ".exe")
 SHIM_TYPES = ("console", "gui")
 LOCAL_DIR = "pkg.local"
 APP_MISSING_ERROR = "App is missing and no way to recover it."
+# The label that the plan, the install output and ``list --details`` give a version that runs a vendor installer (design 8.4).
+INSTALLER_LABEL = "runs vendor installer"
+
+# Environment variables a package may not set or delete through ``[[env]]``: ``Path`` would replace the whole PATH
+# (``[[path]]`` adds one entry the safe way), and the others are the system's own. Compared case-insensitively.
+RESERVED_ENV_NAMES = frozenset(
+    name.casefold() for name in (
+        "Path", "PATHEXT", "ComSpec", "SystemRoot", "SystemDrive", "windir", "TEMP", "TMP", "USERPROFILE", "APPDATA",
+        "LOCALAPPDATA", "ProgramData", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "CommonProgramFiles",
+        "CommonProgramFiles(x86)", "CommonProgramW6432", "PSModulePath", "OS", "NUMBER_OF_PROCESSORS", "USERNAME",
+        "COMPUTERNAME", "PUBLIC", "HOMEDRIVE", "HOMEPATH", "USERDOMAIN", "LOGONSERVER",
+    )
+)
+
+
+_DEVICE_NAME = re.compile(r"^(con|prn|aux|nul|conin\$|conout\$|com[0-9¹²³]|lpt[0-9¹²³])(\..*)?$", re.IGNORECASE)
+
+
+# The longest file or folder name Windows accepts, and the longest environment variable name a package may use.
+MAX_NAME_PART = 255
+MAX_ENV_NAME = 128
+
+
+def env_name_problem(name: str) -> str | None:
+    """Return why *name* is not an environment variable a package may set, or ``None``.
+
+    Refused: an empty or longer than ``MAX_ENV_NAME`` name; ``=``, white space, ``%`` (it would be expanded) and any
+    control, format (zero-width), surrogate, private-use or unassigned character; and the system's own names
+    (``is_reserved_env_name``).
+    """
+    if not name:
+        return "is empty"
+    if len(name) > MAX_ENV_NAME:
+        return f"is longer than {MAX_ENV_NAME} characters"
+    if re.search(r"[=%\s]", name) or any(unicodedata.category(char).startswith("C") for char in name):
+        return "holds '=', '%', white space or an invisible or control character"
+    if is_reserved_env_name(name):
+        return "is a reserved system variable; use [[path]] to add a PATH entry"
+    return None
+
+
+def name_part_problem(part: str) -> str | None:
+    """Return why *part* cannot be one file or folder name on Windows (device name, stream, trailing dot or space), or ``None``.
+
+    ``CON``, ``NUL``, ``aux.lnk`` and ``COM1`` name devices whatever the extension; ``Tool:ads`` names an NTFS
+    alternate stream; a trailing dot or space is silently dropped by Windows, so two names would collide.
+    """
+    if len(part) > MAX_NAME_PART:
+        return f"is longer than {MAX_NAME_PART} characters"
+    if re.search(r'[:*?"<>|\x00-\x1f]', part):
+        return "has a character Windows does not allow in a name (including ':', which names an NTFS stream)"
+    if _DEVICE_NAME.match(part):
+        return "is a Windows device name"
+    if part.endswith((".", " ")):
+        return "ends with a dot or a space"
+    return None
+
+
+# Every control, format (zero-width, bidirectional), surrogate, private-use and unassigned character, and the line and paragraph separators.
+_INVISIBLE_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp"})
+_DRIVE_PATH = re.compile(r"^[A-Za-z]:[\\/]")
+_ENV_PREFIX = re.compile(r"^%[A-Za-z_][A-Za-z0-9_()]*%[\\/]")
+
+
+def path_entry_shape_problem(text: str, *, template: bool) -> str | None:
+    """Return why *text* cannot be one ``PATH`` entry, or ``None``. Pure text: no file system is asked.
+
+    A ``PATH`` entry is one absolute local folder: ``X:\\...``. Refused: an empty entry, a ``;`` (one declaration would
+    become several entries, and uninstall would not match them), a control character or a quote, a ``..`` segment,
+    a UNC, ``\\\\?\\`` or device path, a relative path (a relative entry in the machine ``PATH`` resolves against the current
+    directory, so a program could plant itself there), and names Windows treats specially (devices, streams). With
+    *template* true the text is the declaration before expansion, so it may start with a variable (``$App``,
+    ``${ProgramFiles}``) instead of a drive.
+    """
+    if not text.strip():
+        return "is empty"
+    if any(ord(char) < 32 or char in '"<>|*?' or unicodedata.category(char) in _INVISIBLE_CATEGORIES for char in text):
+        return "holds a control, invisible or line-separator character, a quote or one of < > | * ?"
+    if ";" in text:
+        return "holds a ';' (one PATH entry only)"
+    if text.startswith(("\\\\", "//")):
+        return "is a UNC or device path"
+    parts = [part for part in re.split(r"[\\/]+", text) if part]
+    if ".." in parts:
+        return "has a '..' segment"
+    # ``%LOCALAPPDATA%\bin`` is the Windows way to write a PATH entry that follows an environment variable; it is allowed
+    # as a prefix only (the machine PATH refuses it, see the engine), and a second ``%`` is not.
+    prefix = _ENV_PREFIX.match(text)
+    if ("%" in text[prefix.end():]) if prefix else ("%" in text):
+        return "holds a '%' that is not the one environment variable it may start with"
+    if not (_DRIVE_PATH.match(text) or prefix or (template and text.startswith("$"))):
+        return "must be an absolute local path with a drive (X:\\...)" + (" or start with a variable" if template else "")
+    for part in parts[1:]:
+        if (problem := name_part_problem(part)) is not None:
+            return f"has a segment {part!r} that {problem}"
+    return None
+
+
+def is_reserved_env_name(name: str) -> bool:
+    """Return whether *name* is an environment variable a package may not set (``Path``, ``TEMP``, ``PROCESSOR_*`` ...)."""
+    folded = name.strip().casefold()
+    return folded in RESERVED_ENV_NAMES or folded.startswith("processor_")
 
 _TOP_KEYS = (
     "format", "description", "project_url", "modes", "requires", "record_manifest",
@@ -820,6 +923,15 @@ def _parse_source(collector: _Collector, raw: Any, modes: tuple[str, ...]) -> So
     nested = _parse_nested(collector, table.get("nested"))
     extract = _parse_extract(collector, table.get("extract"))
 
+    # A vendor installer replaces the unpack step, so the unpack options and every kind but ``exe`` would be ignored: refuse them.
+    if installer is not None:
+        if kind not in (None, "exe"):
+            collector.error("source.installer", f"runs the downloaded .exe itself, so kind must be \"exe\" or absent, not \"{kind}\"")
+        for key, value in (("strip", strip), ("subdir", subdir), ("nested", nested or None), ("extract", extract or None),
+                           ("verify_manifest", verify_manifest)):
+            if value is not None:
+                collector.error(f"source.{key}", "is an unpack option, and a version that runs a vendor installer does not unpack")
+
     # One populate method per version; shipped needs no populate method.
     if download_url is not None and script is not None:
         collector.error("source", "has both download_url and script: a version has one populate method")
@@ -1106,6 +1218,9 @@ def _parse_portable(collector: _Collector, raw: Any, modes: tuple[str, ...]) -> 
         collector.error("portable.env", "must be a table of strings")
     else:
         env = dict(raw_env)
+        for name in env:
+            if (problem := env_name_problem(name)) is not None:
+                collector.error("portable.env", f"{name!r} is not a usable variable name: it {problem}")
     for text in (*args, *env.values()):
         _check_variables(collector, text, "portable", modes)
     return Portable(persist, tuple(markers), args, env)
@@ -1139,6 +1254,9 @@ def _parse_shortcuts(collector: _Collector, raw: Any, modes: tuple[str, ...]) ->
             text = target if key == "target" else optional[key]
             if text:
                 _check_variables(collector, text, f"{where}.{key}", modes)
+        if name is not None and any(len(part) > MAX_NAME_PART for part in re.split(r"[\\/]", name)):
+            collector.error(f"{where}.name", f"has a part longer than {MAX_NAME_PART} characters")
+            name = None
         if name is not None and target is not None:
             rows.append(Shortcut(name, target, **optional))
     return tuple(rows)
@@ -1154,8 +1272,8 @@ def _parse_envs(collector: _Collector, raw: Any, modes: tuple[str, ...]) -> tupl
         value = collector.string(row, "value", where, required=True)
         if value is not None:
             _check_variables(collector, value, f"{where}.value", modes)
-        if name is not None and re.search(r"[=\x00\s]", name):
-            collector.error(f"{where}.name", f"{name!r} is not a valid environment variable name")
+        if name is not None and (problem := env_name_problem(name)) is not None:
+            collector.error(f"{where}.name", f"{name!r} is not a valid environment variable name: it {problem}")
             name = None
         if name is not None and value is not None:
             rows.append(EnvVar(name, value))
@@ -1174,6 +1292,9 @@ def _parse_paths(collector: _Collector, raw: Any, modes: tuple[str, ...]) -> tup
         value = collector.string(row, "value", where, required=True)
         if value is not None:
             _check_variables(collector, value, f"{where}.value", modes)
+            if (problem := path_entry_shape_problem(value, template=True)) is not None:
+                collector.error(f"{where}.value", f"{value!r} {problem}")
+                continue
             values.append(value)
     return tuple(values)
 
@@ -1187,6 +1308,9 @@ def _parse_shims(collector: _Collector, raw: Any, modes: tuple[str, ...]) -> tup
         name = collector.string(row, "name", where, required=True)
         if name is not None and re.search(r'[\\/:*?"<>|\x00-\x1f]', name):
             collector.error(f"{where}.name", f"{name!r} must be a plain file name")
+            name = None
+        elif name is not None and (problem := name_part_problem(name)) is not None:
+            collector.error(f"{where}.name", f"{name!r} {problem}")
             name = None
         content = collector.string(row, "content", where, empty=True)
         target = collector.string(row, "target", where)
@@ -1397,6 +1521,10 @@ def render_pinned(tracker: Manifest, result: TrackResult) -> Manifest:
     if not is_version_name(result.version):
         raise ManifestError(f"The discovered version {result.version!r} cannot name a version directory")
     values = {**result.captures, "version": result.version}
+
+    # ``${download_url}`` in ``[source.checksum]`` means the address that this version downloads from.
+    if tracker.source.download_url is not None:
+        values["download_url"] = render(tracker.source.download_url, values)
     data = manifest_to_data(tracker)
     data.pop("track", None)
     data = _render_data(data, values)

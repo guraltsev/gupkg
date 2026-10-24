@@ -289,6 +289,27 @@ def test_elevation_is_reported_as_a_bool(machine: System) -> None:
     assert isinstance(machine.is_elevated(), bool)
 
 
+def test_a_scratch_directory_is_private_empty_and_deleted_on_exit(machine: System) -> None:
+    """`scratch_directory` yields an empty existing folder, two calls give two folders, and the folder and its content are gone afterwards."""
+    with machine.scratch_directory("gupkg-contract-") as first, machine.scratch_directory("gupkg-contract-") as second:
+        assert first != second and first.is_dir() and list(first.iterdir()) == []
+        (first / "nested").mkdir()
+        (first / "nested" / "file.txt").write_text("x", encoding="utf-8")
+
+    assert not first.exists() and not second.exists()
+
+
+def test_the_process_id_is_running_and_an_unused_one_is_not(machine: System) -> None:
+    """``process_id`` is a running process on every implementation; a freshly finished child's id is not running."""
+    import subprocess
+    import sys
+
+    assert machine.process_is_running(machine.process_id())
+    child = subprocess.Popen([sys.executable, "-c", "pass"])
+    child.wait()
+    assert not machine.process_is_running(child.pid)
+
+
 @pytest.mark.parametrize("flag", [True, False], ids=["elevated", "ordinary"])
 def test_fake_reports_the_configured_elevation(tmp_path: Path, flag: bool) -> None:
     """The fake's elevation flag is what ``is_elevated`` reports, so elevated and ordinary runs can be staged."""

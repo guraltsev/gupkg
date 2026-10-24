@@ -41,6 +41,7 @@ gupkg.system.fake : the test and sandbox implementation.
 from __future__ import annotations
 
 import os
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -114,6 +115,10 @@ class ProcessAborted(OSError):
 
 class WorkerDidNotStart(TimeoutError):
     """Report that the regex worker never said it was up within its start limit (not a slow pattern)."""
+
+
+class ProcessNotAllowed(OSError):
+    """Report that a sandbox refused to start a program that it has no double for (the package needs a real run)."""
 
 
 class ProcessFailed(RuntimeError):
@@ -228,6 +233,19 @@ class System(Protocol):
 
     def directory_untrusted_reason(self, path: Path) -> str | None:
         """Return why *path* is not admin-only, or ``None`` when it is."""
+
+    def scratch_directory(self, prefix: str) -> AbstractContextManager[Path]:
+        """Return a context manager that creates a private empty temporary folder, yields it, and deletes it on exit.
+
+        For work that must leave no trace in any root (a report-only run). A sandbox keeps it inside its own folder, so
+        nothing is written to the real temporary folder.
+        """
+
+    def process_id(self) -> int:
+        """Return the id of this process (recorded in a package lock so another run can tell whether the holder lives)."""
+
+    def process_is_running(self, pid: int) -> bool:
+        """Return whether a process with id *pid* is running; an id that cannot be judged counts as running."""
 
     # -- locations ---------------------------------------------------------
 
@@ -356,15 +374,74 @@ class System(Protocol):
 _SAFE_ENVIRONMENT_NAMES = ("PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC", "TEMP", "TMP", "PROGRAMDATA")
 
 
-def safe_process_environment(extra: Mapping[str, str] | None = None) -> dict[str, str]:
+def safe_process_environment(extra: Mapping[str, str] | None = None, *, system: "System | None" = None) -> dict[str, str]:
     """Return a minimal environment for a child process: machine-level variables plus *extra*.
 
     Nothing of the user's own settings is passed on (decision D19: an elevated gupkg ignores them,
-    and a normal one gives a child process no more than it needs).
+    and a normal one gives a child process no more than it needs). When *system* is given and the run is elevated, ``PATH``
+    holds only the folders of the process ``PATH`` that only administrators can change (``trusted_path_entries``), because
+    the process ``PATH`` can hold the user's own writable folders and an elevated child must not find a program there.
     """
     kept = {name: value for name, value in os.environ.items() if name.upper() in _SAFE_ENVIRONMENT_NAMES}
+    if system is not None and is_elevated_run(system):
+        # Nothing here may come from the process environment, which a standard user can influence: ``PATH`` is the admin-only
+        # folders, the Windows folder values come from the trusted Windows folder (and are left out when there is none),
+        # ``PATHEXT`` is the fixed default, and ``TEMP``/``TMP``/``PROGRAMDATA`` are left out unless the caller gives them.
+        kept = {}
+        kept["PATH"] = os.pathsep.join(trusted_path_entries(system))
+        root = trusted_system_root(system)
+        if root is not None:
+            kept.update({"SYSTEMROOT": str(root), "WINDIR": str(root), "COMSPEC": str(root / "System32" / "cmd.exe")})
+        kept["PATHEXT"] = ".COM;.EXE;.BAT;.CMD"
     kept.update(extra or {})
     return kept
+
+
+def trusted_path_entries(system: System) -> list[str]:
+    """Return the folders of the process ``PATH`` that only administrators can change, in order.
+
+    An elevated run looks tools up only here (``git``, for example), never in a folder a standard user can
+    write: the process ``PATH`` can hold the user's own entries.
+    """
+    trusted: list[str] = []
+    seen: set[str] = set()
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        folder = entry.strip().strip('"')
+
+        # Only an absolute local folder that exists: a relative entry or `.` is the current directory, `%VAR%` is expanded
+        # by whoever reads it, and a folder that is missing can be created later by anyone.
+        if not folder or "%" in folder or folder.startswith(("\\\\", "//")):
+            continue
+        path = Path(folder)
+        try:
+            if not path.is_absolute() or not path.is_dir():
+                continue
+            key = os.path.normcase(os.path.normpath(folder)).rstrip("\\/")
+            if key in seen or system.directory_untrusted_reason(path) is not None:
+                continue
+        except OSError:
+            continue
+        seen.add(key)
+        trusted.append(folder)
+    return trusted
+
+
+def trusted_system_root(system: System) -> Path | None:
+    """Return the Windows folder named by ``SYSTEMROOT`` or ``WINDIR`` when it is an existing admin-only folder, else ``None``.
+
+    The process environment can be set by a standard user, so the name is only a candidate: the folder itself is judged.
+    """
+    for name in ("SYSTEMROOT", "WINDIR"):
+        value = os.environ.get(name, "").strip()
+        if not value or "%" in value:
+            continue
+        path = Path(value)
+        try:
+            if path.is_absolute() and path.is_dir() and system.directory_untrusted_reason(path) is None:
+                return path
+        except OSError:
+            continue
+    return None
 
 
 def is_elevated_run(system: System) -> bool:

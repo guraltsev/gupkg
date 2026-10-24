@@ -27,7 +27,7 @@ import shutil
 from pathlib import Path
 
 from ...system.port import ProcessFailed, System, run_checked
-from ..gitenv import git_command, git_environment
+from ..gitenv import GitUnavailable, git_command, git_environment
 from ..safepath import remove_tree
 from .extract import UnpackError
 
@@ -74,7 +74,7 @@ def checkout_commit(system: System, url: str, ref: str | None, commit: str | Non
     """
     if url.startswith("-"):
         raise UnpackError("A repository address cannot start with '-'")
-    environment = git_environment()
+    environment = git_environment(system, Path(work))
     checkout = Path(work) / "git-checkout"
     remove_tree(checkout)
     checkout.mkdir(parents=True)
@@ -82,8 +82,8 @@ def checkout_commit(system: System, url: str, ref: str | None, commit: str | Non
     def git(*arguments: str, cwd: Path | None = None) -> str:
         """Run one Git command and return its stripped output."""
         try:
-            return run_checked(system, git_command(*arguments), cwd=cwd, env=environment, timeout=1800)
-        except (ProcessFailed, OSError, TimeoutError) as error:
+            return run_checked(system, git_command(*arguments, system=system), cwd=cwd, env=environment, timeout=1800)
+        except (ProcessFailed, OSError, TimeoutError, GitUnavailable) as error:
             raise UnpackError(f"git {arguments[0]} failed: {error}") from error
 
     try:

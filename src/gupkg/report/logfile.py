@@ -145,6 +145,22 @@ class LogUnavailable(OSError):
 _RUN_FILE = re.compile(r"^(\d{8}T\d{6}Z)-.+\.(log|jsonl)$", re.IGNORECASE)
 
 
+def list_run_logs(package_or_root: Path) -> list[Path]:
+    """Return the text logs of the runs kept in ``<package_or_root>\\.gupkg\\logs``, newest first.
+
+    ``latest.log`` (a copy of the newest) and files that are not run logs are left out; a log folder that is
+    a link is never followed. This is what ``gupkg logs <target>`` lists.
+    """
+    folder = Path(package_or_root) / ".gupkg" / "logs"
+    if _is_reparse_or_link(folder) or not folder.is_dir():
+        return []
+    found = [
+        item for item in folder.iterdir()
+        if item.suffix.lower() == ".log" and _RUN_FILE.match(item.name) and item.is_file() and not _is_reparse_or_link(item)
+    ]
+    return sorted(found, key=lambda item: item.name, reverse=True)
+
+
 def prune_logs(directory: Path, keep_runs: int, keep_days: int, now: datetime) -> None:
     """Delete the oldest runs in *directory* so that at most ``keep_runs - 1`` remain, and any older than ``keep_days``.
 
@@ -514,6 +530,15 @@ class RunLog:
                 if sink is not None:
                     lines.append(f"Log of {self._package_names[path]}: {sink.text_path}")
             return lines
+
+    def package_log(self, package_path: Path | str) -> Path | None:
+        """Return the text log of the package whose folder is *package_path* in this run, or ``None`` when it has none.
+
+        The engine stores this path in the package's receipt (design 14.3).
+        """
+        with self._lock:
+            sink = self._packages.get(str(package_path))
+            return sink.text_path if sink is not None else None
 
     def paths(self) -> list[Path]:
         """Return the text logs written, run log first."""

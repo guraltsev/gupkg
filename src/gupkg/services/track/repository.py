@@ -29,7 +29,7 @@ from pathlib import Path
 from ...model.manifest import TrackResult
 from ...model.trackspec import GitSpec, ModuleSpec
 from ...system.port import ProcessFailed, run_checked
-from ..gitenv import git_command, git_environment
+from ..gitenv import GitUnavailable, git_command, git_environment
 from ..hooks import HookContext, HookPaths, call_track, load_hook
 from ..safepath import remove_tree
 from .common import TrackEnvironment, TrackError, valid_version
@@ -47,13 +47,13 @@ def track_git(spec: GitSpec, env: TrackEnvironment) -> TrackResult:
     """
     if env.work_dir is None:
         raise TrackError("The git provider needs a scratch folder")
-    environment = git_environment()
+    environment = git_environment(env.system, env.work_dir)
 
     def git(*arguments: str, cwd: Path | None = None) -> str:
         """Run one Git command and return its stripped output."""
         try:
-            return run_checked(env.system, git_command(*arguments), cwd=cwd, env=environment, timeout=120)
-        except (ProcessFailed, OSError, TimeoutError) as error:
+            return run_checked(env.system, git_command(*arguments, system=env.system), cwd=cwd, env=environment, timeout=120)
+        except (ProcessFailed, OSError, TimeoutError, GitUnavailable) as error:
             raise TrackError(f"git {arguments[0]} failed: {error}") from error
 
     # Resolve the ref to one commit; the option separator keeps a hostile URL from being a flag.

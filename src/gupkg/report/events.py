@@ -41,6 +41,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterator, Protocol, Sequence
 
+from ..redact import redact_text
+
 # Version of the event JSON contract, reported by ``RunStart``.
 API_VERSION = 1
 
@@ -267,6 +269,7 @@ def emit(event: Any) -> None:
     reporter = _ACTIVE.get()
     if reporter is None:
         return
+    event = _redacted(event)
 
     # Drop a repeated problem. Two packages may report the same words, so a
     # package-scoped problem is keyed by its package; a run-level one is also
@@ -281,6 +284,20 @@ def emit(event: Any) -> None:
             seen.add((package, kind, event.text))
             seen.add((_ANY, kind, event.text))
     reporter.handle(event)
+
+
+def _redacted(event: Any) -> Any:
+    """Return *event* with the credentials of any URL in its text removed (userinfo, ``token=`` and similar query values)."""
+    if isinstance(event, (Step, Warning, Prompt)):
+        text = redact_text(event.text)
+        return event if text == event.text else dataclasses.replace(event, text=text)
+    if isinstance(event, Error):
+        text, hint = redact_text(event.text), redact_text(event.hint) if event.hint else event.hint
+        return event if (text, hint) == (event.text, event.hint) else dataclasses.replace(event, text=text, hint=hint)
+    if isinstance(event, SubprocessLine):
+        line = redact_text(event.line)
+        return event if line == event.line else dataclasses.replace(event, line=line)
+    return event
 
 
 def emit_problems(warnings: Sequence[str], errors: Sequence[str], hint: str | None = None) -> None:

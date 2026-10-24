@@ -333,6 +333,49 @@ what only real sites and real installers show.
    repeat the command: the progress starts from the earlier size (the cache folder holds one
    `.part` file that disappears). Why manual: needs a real flaky connection.
 
+## Execution engine (issue 028)
+
+The engine has no command line until issue 029, so these steps call it from Python
+(`python -c "from gupkg.engine import lifecycle ..."` on a real `WindowsSystem`, in a throwaway
+root such as `%TEMP%\gupkg-028`). Everything the tests do on `FakeSystem` is repeated for real here.
+
+1. **Real integration, install and uninstall.** On a throwaway user root install a package that
+   declares a shortcut, a shim, an environment value and a `PATH` entry, then uninstall it. In Explorer
+   the Start Menu entry appears and disappears, `where tool` finds the shim and then not, `reg query
+   HKCU\Environment` shows the value and the entry and then neither, and one `WM_SETTINGCHANGE`
+   reaches a new `cmd`. Why manual: real Start Menu, registry and broadcast.
+2. **Elevated `check-updates` and the trust checks.** From an admin shell on a real `C:\opt` run
+   `check-updates` for a system package: it writes and populates the new version in `C:\opt\<name>`
+   and leaves `current` alone. Repeat from a normal shell: it only reports and `C:\opt` is unchanged.
+   With the interpreter folder made user-writable (`icacls`), the elevated run refuses before it
+   starts the regex worker. Why manual: UAC and real ACLs cannot be automated.
+3. **Adoption on a copy of a real 0.17 root.** Copy a real `C:\opt` of a 0.17 machine to a
+   throwaway folder, point a settings file at it, run `gupkg-migrate package <copy>`, then
+   `gupkg list` (unchanged), `check` (healthy; shows what was adopted) and `uninstall` of one package:
+   the 0.17 shortcut and wrapper go away. Why manual: needs real 0.17 data.
+4. **Portable state across an update.** Install a real portable application (for example a
+   SumatraPDF zip with `persist = ["SumatraPDF-settings.txt"]`), change a setting, `update` to the next
+   version and `switch` back: the setting survives. Why manual: needs a real application that
+   writes its own settings.
+5. **Mark of the Web.** Install a distribution folder that Explorer extracted from a downloaded
+   ZIP: `gupkg check` shows the install as `origin not verified`, the copies in the root have no
+   `Zone.Identifier` stream (`dir /r`), and the receipt says `source_marked = true`. Why manual: the
+   mark is written by Explorer.
+6. **Cancel between packages.** Start a three-package batch with a slow download in the first and
+   create the stop marker while it runs: package 1 finishes and is installed, 2 and 3 are
+   reported as skipped. Why manual: timing with a real network.
+7. **A real vendor installer (GIMP).** With a pinned GIMP version (`[source.installer] run =
+   ["/VERYSILENT", "/CURRENTUSER", "/NOICONS", "/DIR=$Stage"]`) and `hooks.allow_vendor_installers = true`,
+   install it into a throwaway user root: the output says `runs vendor installer`, `App` holds the
+   installed program and `current` points at it. Repeat with the setting `false`: nothing is downloaded or
+   run. In an elevated run, make the work folder user-writable (`icacls`) and see the installer refused
+   before it starts. Why manual: a real Inno Setup installer and real ACLs; the tests never run one.
+8. **One run per package.** Start `install` of a large package in one console and, while it downloads,
+   `install`, `cleanup` and `update` of the same package in a second one: the second `install` and `update`
+   fail with `package-busy` naming the first run, `cleanup` skips the package and the first run's
+   `.gupkg\work` folder survives. Kill the first run (Task Manager) and run again: the stale lock is
+   reclaimed. Why manual: two real processes and a real kill.
+
 ## Registry 2 (issue 031)
 
 Everything the registry work could prove offline is automated (conversion, validation, the registry tool against recorded

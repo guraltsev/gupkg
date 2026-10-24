@@ -157,9 +157,6 @@ strip = "auto"
 require = ["a.exe"]
 verify_manifest = "MANIFEST.sha256"
 
-[source.installer]
-run = ["/S", "/DIR=$Stage"]
-
 [[source.nested]]
 path = "inner.zip"
 dest = "plugins"
@@ -539,11 +536,35 @@ def test_unknown_variable_is_rejected_with_a_hint() -> None:
 def test_stage_variable_is_valid_only_in_installer_arguments() -> None:
     """`$Stage` belongs to a vendor installer's `run` and is unknown anywhere else."""
     ok = version_manifest(
-        '[source]\ndownload_url = "https://x.test/setup.exe"\nkind = "nsis"\n[source.installer]\nrun = ["/DIR=$Stage"]\n'
+        '[source]\ndownload_url = "https://x.test/setup.exe"\nkind = "exe"\n[source.installer]\nrun = ["/DIR=$Stage"]\n'
     )
 
     assert ok.source.installer.run == ("/DIR=$Stage",)
     assert problems('format = 2\n[[path]]\nvalue = "$Stage"\n')
+
+
+@pytest.mark.parametrize("kind", ["git", "zip", "7z", "nsis", "msi", "tar", "file", "sfx"])
+def test_a_vendor_installer_refuses_a_kind_other_than_exe(kind: str) -> None:
+    """The installer runs the downloaded .exe itself: any other kind would be silently ignored, so it is an error."""
+    extra = '[source.git]\nref = "main"\n' if kind == "git" else ""
+    text = f'format = 2\n[source]\ndownload_url = "https://x.test/setup.exe"\nkind = "{kind}"\n[source.installer]\nrun = ["/DIR=$Stage"]\n{extra}'
+
+    assert any("kind must be" in item and kind in item for item in problems(text))
+
+
+@pytest.mark.parametrize("option", ['strip = 1', 'subdir = "x"', 'verify_manifest = "M.sha256"'])
+def test_a_vendor_installer_refuses_unpack_options(option: str) -> None:
+    """strip, subdir, verify_manifest (and nested, extract) belong to an unpack that does not happen."""
+    text = f'format = 2\n[source]\ndownload_url = "https://x.test/setup.exe"\nkind = "exe"\n{option}\n[source.installer]\nrun = ["/DIR=$Stage"]\n'
+
+    assert any("unpack option" in item for item in problems(text))
+
+
+def test_a_vendor_installer_with_kind_exe_or_none_is_valid() -> None:
+    """The two accepted spellings."""
+    for kind_line in ('kind = "exe"\n', ""):
+        text = f'format = 2\n[source]\ndownload_url = "https://x.test/setup.exe"\n{kind_line}[source.installer]\nrun = ["/DIR=$Stage"]\n'
+        assert parse_manifest(text).source.installer is not None
 
 
 # ---------------------------------------------------------------------------
@@ -716,3 +737,62 @@ def test_render_pinned_keeps_only_hooks_that_source_and_prepare_reference() -> N
 
     assert pinned.referenced_hooks() == ("pkg.local/populate.py", "pkg.local/fix.py")
     assert "check.py" not in manifest_to_toml(pinned)
+
+
+@pytest.mark.parametrize("name", ["Path", "PATH", "pAtH", "PATHEXT", "ComSpec", "SystemRoot", "windir", "TEMP", "tmp", "USERPROFILE",
+                                  "LocalAppData", "ProgramFiles(x86)", "PSModulePath", "PROCESSOR_ARCHITECTURE", "NUMBER_OF_PROCESSORS",
+                                  "UserName", "PUBLIC"])
+def test_an_env_row_may_not_name_a_reserved_system_variable(name: str) -> None:
+    """`[[env]]` named Path (any case) would replace the whole PATH; the system's own variables are refused the same way."""
+    text = f'format = 2\n[source]\ndownload_url = "https://x.test/a.zip"\n\n[[env]]\nname = "{name}"\nvalue = "x"\n'
+
+    with pytest.raises(ManifestError, match="reserved system variable"):
+        parse_manifest(text)
+
+
+@pytest.mark.parametrize("name", ["NUL", "con", "aux.exe", "COM1", "lpt9", "tool:ads", "tool.", "tool "])
+def test_a_shim_may_not_be_named_like_a_device_or_a_stream(name: str) -> None:
+    """Device names (with any extension), NTFS streams and names Windows would rewrite are refused for a shim."""
+    text = f'format = 2\n[source]\ndownload_url = "https://x.test/a.zip"\n\n[[shim]]\nname = "{name}"\ntarget = "$App\\\\a.exe"\n'
+
+    with pytest.raises(ManifestError, match="shim"):
+        parse_manifest(text)
+
+
+def test_a_portable_env_table_may_not_name_a_reserved_variable() -> None:
+    """The same rule holds for the `[portable] env` table."""
+    text = ('format = 2\nmodes = ["portable"]\n[source]\ndownload_url = "https://x.test/a.zip"\n\n[portable]\n'
+            'env = { Path = "x" }\n')
+
+    with pytest.raises(ManifestError, match="not a usable variable name"):
+        parse_manifest(text)
+
+
+@pytest.mark.parametrize("name", ["A" * 129, "A%B", "A\u200bB", "A\u0007B", "A B", "A=B", "A\u2060B", "A\ufeffB"])
+def test_an_env_name_is_capped_and_refuses_percent_and_invisible_characters(name: str) -> None:
+    """128 characters at most, no `%` (it would be expanded), no zero-width or control character, no space or `=`."""
+    shown = name.replace("\x07", "\\u0007")
+    text = f'format = 2\n[source]\ndownload_url = "https://x.test/a.zip"\n\n[[env]]\nname = "{shown}"\nvalue = "x"\n'
+
+    with pytest.raises(ManifestError, match="env\\[0\\].name"):
+        parse_manifest(text)
+
+
+def test_an_env_name_of_128_characters_is_allowed() -> None:
+    """The cap is inclusive."""
+    name = "A" * 128
+    text = f'format = 2\n[source]\ndownload_url = "https://x.test/a.zip"\n\n[[env]]\nname = "{name}"\nvalue = "x"\n'
+
+    assert parse_manifest(text).envs[0].name == name
+
+
+@pytest.mark.parametrize("table", ["shim", "shortcut"])
+def test_shim_and_shortcut_names_are_capped_at_255(table: str) -> None:
+    """255 characters is Windows' limit for one name; 256 is refused, 255 accepted."""
+    target = 'target = "C:\\\\a.exe"\n'
+    head = 'format = 2\n[source]\ndownload_url = "https://x.test/a.zip"\n\n'
+    ok = parse_manifest(head + f'[[{table}]]\nname = "{"a" * 255}"\n{target}')
+    assert getattr(ok, "shims" if table == "shim" else "shortcuts")[0].name == "a" * 255
+
+    with pytest.raises(ManifestError, match=f"{table}\\[0\\].name"):
+        parse_manifest(head + f'[[{table}]]\nname = "{"a" * 256}"\n{target}')

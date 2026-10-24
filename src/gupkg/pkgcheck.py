@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import ast
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from .model.manifest import (
@@ -80,44 +80,98 @@ def defines_track(source: str) -> bool:
         If the source cannot be parsed.
     """
     tree = ast.parse(source)
-    stack: list[ast.AST] = list(tree.body)
-    while stack:
-        node = stack.pop()
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            if node.name == "track":
-                return True
-            continue
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
-            if any((alias.asname or alias.name).split(".")[0] == "track" for alias in node.names):
-                return True
-        for target in _assigned_names(node):
-            if target == "track":
-                return True
-        # Descend into every statement-bearing child: if/for/while/with bodies and else branches,
-        # try bodies, except handlers and finally blocks, and match cases.
-        stack.extend(
-            child for child in ast.iter_child_nodes(node)
-            if isinstance(child, (ast.stmt, ast.ExceptHandler, ast.match_case))
-        )
-    return False
+
+    # ``global track`` anywhere (even in a function that runs at import) can bind the module-level name.
+    if any(isinstance(node, ast.Global) and "track" in node.names for node in ast.walk(tree)):
+        return True
+    finder = _TrackBinding()
+    finder.visit(tree)
+    return finder.found
 
 
-def _assigned_names(node: ast.AST) -> list[str]:
-    """Return the plain names that a module-level statement binds."""
-    targets: list[ast.expr] = []
-    if isinstance(node, ast.Assign):
-        targets = list(node.targets)
-    elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
-        targets = [node.target]
-    names: list[str] = []
-    stack = list(targets)
-    while stack:
-        target = stack.pop()
-        if isinstance(target, ast.Name):
-            names.append(target.id)
-        elif isinstance(target, (ast.Tuple, ast.List)):
-            stack.extend(target.elts)
-    return names
+class _TrackBinding(ast.NodeVisitor):
+    """Find any statement or expression that binds the module-level name ``track``.
+
+    Function and class bodies are separate scopes and are skipped (their decorators, defaults and bases are not).
+    Every way of binding a name counts: assignment, augmented and annotated assignment with a value, ``for`` and
+    ``with`` targets, the walrus operator, starred and tuple targets, ``except ... as``, ``match`` captures,
+    imports, ``def``, ``class`` and ``type``. A bare annotation (``track: int``) binds nothing.
+    """
+
+    def __init__(self) -> None:
+        self.found = False
+
+    def _name(self, name: str | None) -> None:
+        """Record a bound name."""
+        if name == "track":
+            self.found = True
+
+    def visit_Name(self, node: ast.Name) -> None:
+        """Count a store or delete of ``track``."""
+        if isinstance(node.ctx, (ast.Store, ast.Del)):
+            self._name(node.id)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        """A bare annotation does not bind; one with a value does."""
+        if node.value is not None:
+            self.visit(node.target)
+            self.visit(node.value)
+        self.visit(node.annotation)
+
+    def _function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        """Count the name, and visit what is evaluated in the enclosing scope (decorators, defaults, annotations)."""
+        self._name(node.name)
+        for expression in (*node.decorator_list, *node.args.defaults, *(item for item in node.args.kw_defaults if item)):
+            self.visit(expression)
+
+    visit_FunctionDef = _function
+    visit_AsyncFunctionDef = _function
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        """Visit the defaults of a lambda; its body is its own scope."""
+        for expression in (*node.args.defaults, *(item for item in node.args.kw_defaults if item)):
+            self.visit(expression)
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        """Count the name and visit decorators, bases and keywords; the body is a class scope."""
+        self._name(node.name)
+        for expression in (*node.decorator_list, *node.bases, *(item.value for item in node.keywords)):
+            self.visit(expression)
+
+    def visit_comprehension(self, node: ast.comprehension) -> None:
+        """A comprehension's loop variable is local to it; what it iterates and tests can still bind (walrus)."""
+        self.visit(node.iter)
+        for condition in node.ifs:
+            self.visit(condition)
+
+    def visit_Import(self, node: ast.Import) -> None:
+        """Count ``import track`` and ``import x as track``."""
+        for alias in node.names:
+            self._name((alias.asname or alias.name).split(".")[0])
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        """Count ``from x import track`` and ``from x import y as track``."""
+        for alias in node.names:
+            self._name(alias.asname or alias.name)
+
+    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+        """Count ``except E as track``."""
+        self._name(node.name)
+        self.generic_visit(node)
+
+    def visit_MatchAs(self, node: ast.MatchAs) -> None:
+        """Count a ``match`` capture pattern."""
+        self._name(node.name)
+        self.generic_visit(node)
+
+    def visit_MatchStar(self, node: ast.MatchStar) -> None:
+        """Count a ``match`` star capture."""
+        self._name(node.name)
+
+    def visit_MatchMapping(self, node: ast.MatchMapping) -> None:
+        """Count the ``**rest`` capture of a mapping pattern."""
+        self._name(node.rest)
+        self.generic_visit(node)
 
 
 def _inside(path: Path, root: Path) -> bool:

@@ -240,3 +240,69 @@ Epic: 020. Design: `_docs/rehaul_design.md` §7.4, §13
     or PATH changes.
 
   Each runs end to end against `FakeSystem`.
+
+## Notes for issues 029, 030, 031, 032 and 033 (from the implementation of 028)
+
+- **What exists (029).** `gupkg.engine.lifecycle` has `check_updates`, `install`, `update` (with
+  `download_only`), `switch`, `uninstall` (`purge`), `cleanup` (`keep`, `bundled`), `check` (`fix`) and `repair`,
+  all over `run_batch(engine, requests)` and `plan(engine, requests)` (the `--plan` data). Build the
+  `gupkg.engine.context.Engine` once per call: `system`, `env`, `load` (`gupkg.modes.settings_loader`),
+  `confirm`, `yes`, `no_input`, `cancel` (use `stop_marker(path)` for the stop request), `log_path` (give it
+  `lambda path: str(session.log.package_log(path))` so the receipt stores the log), `relaunched`, and `argv`,
+  `gupkg_dir`, `gupkg_root` for the one elevation (without them the engine never relaunches). Results are
+  `BatchResult` and `PackageResult` (`to_data()` is the `--json` shape; `exit_code`; `error` has `code`,
+  `message`, `hint`, and for a checksum refusal `url` and `skippable`). `lifecycle.cleanup_root(engine, context,
+  settings)` prunes a root's logs and old registry trees: call it once per root after a cleanup. Pass
+  `[logs] keep_runs` and `keep_days` from the settings to `RunSession`. `gupkg logs <target>` lists
+  `<package>\.gupkg\logs` (the receipt's `[run] log` names the last one). The CLI maps `--skip-checksum` to
+  `Request.skip` through `parse_skip_flag`; `--in-place`, `--refresh`, `--purge`, `--keep`, `--bundled`,
+  `--no-download`, `--fix` and `--mode` are `Request` fields; `gupkg shell` prints `ModeContext.path_line()`.
+- **Scope item 11 ("Old code is deleted") is formally NOT met by 028, and 029 owns it.** The epic allows this
+  ("Each issue is meant to be mergeable on its own behind the existing CLI until 029 switches the front end",
+  issue 020): the 0.17 front end (`cli.py`, `commands.py`, `tui.py`, `manager_tui.py`, `manager.py`) still runs and
+  still imports the old coordinators, so deleting them in 028 would break the shipped program. The new engine
+  imports none of the modules to delete, except the registry transports named in the last item below. The
+  complete deletion list, now also written into issue 029 (and issue 030 for the TUIs):
+  - `gupkg.py` (`install_package`, `_run_update`, `update_package`), `updates.py` (`prepare_update`, its
+    receipt-by-mtime logic), `origin.py` (`populate_*`), `components.py`, `downloads.py`, `github_releases.py`,
+    `configuration.py`, `configfix.py`, `metadata.py`, `collection.py`, `distribution.py`, `layout.py`
+    (`identity_from_path`, `installed_version` and what only the old front end uses), `pinning.py`, `outcome.py`
+    (its renderers move to `report/`), `commands.py`, `cli.py`'s 0.17 command bodies, `bootstrap.py` and
+    `hooklib.py` if nothing else imports them, `legacy_to_gupkg_toml.py` and `shortcuts_to_gupkg_toml.py`
+    (they live on in `gupkg_migrate`);
+  - `registry.py` (the 0.17 registry client) and the executor of `manager.py`;
+  - for issue 030: `tui.py`, `manager_tui.py`, `tui_widgets.py`, `LineStream`;
+  - before `registry.py` can go, move the transports `catalog/registry.py` imports from it
+    (`archive_revision`, `archive_url`, `extract_archive`, `git_environment`, `git_remote_revision`,
+    `is_git_source`, `require_trusted_cache`, `trusted_git`): they are the only thing that makes `registry.py`,
+    `origin.py`, `updates.py`, `downloads.py`, `github_releases.py`, `configuration.py` and `metadata.py`
+    reachable from the new code.
+- **The fingerprint (031).** There is one implementation of the version-directory fingerprint,
+  `gupkg.services.fingerprint` (issue 031, byte-exact contract in design section 17); the registry tool, the engine's
+  install verification and `check` all call it. `gupkg.engine.fingerprint` keeps only the D41 `App` fingerprint
+  (`app_files`, `aggregate_digest`, `diff_app`). An earlier version of this note said the registry tool must call
+  `engine.fingerprint.version_fingerprint`; that function no longer exists.
+- **Vendor installers are implemented by 028** (owner decision after the first review; design 8.4 and D39,
+  issue 031's GIMP package depends on it): `gupkg.engine.installer`, the setting `hooks.allow_vendor_installers`,
+  the label `runs vendor installer` in the plan (`populate.label`), the output and the receipt. Issue 029 shows the
+  label in `list --details` from `INSTALLER_LABEL` (`gupkg.model.manifest`) and the manifest's `source.installer`.
+  The rules and the risk are in design 13.4.
+- **Registry (031): every version that runs a vendor installer needs a pinned `sha256`.** `gupkg.engine.installer` refuses a
+  download that was not verified against a hash (design 9.1 rule 6); the registry tool must publish the GIMP version with its
+  `sha256`, and a tracker for it must discover one.
+- **Locks are implemented by 028**: `gupkg.engine.locks`, `System.process_id` and `System.process_is_running`. The code
+  `package-busy` (exit 3) is what a front end shows when another run holds the package.
+- **Owners of what is not done.** The `[root_forwarder]` table, `requires_gupkg` and exit code 6, and the launchers belong
+  to issue 033 (check-updates already carries a bundled gupkg and the launchers forward into a new version directory when
+  the root has no forwarder). Issue 032 (hardening) owns: a memory cap and an operating-system-enforced "no network" for
+  the regex worker (a job-object limit in `WindowsSystem`), and the residual race on the parent folders of a distribution
+  copy in `distcopy` (it needs a `System` method that opens a path without following links and returns its final path).
+- **Sandbox (029).** A program that the sandbox has no double for ends a package with the code
+  `needs-real-run` (exit 3), never a crash; `gupkg pkg check --install` should print that and declare the
+  doubles it needs.
+- **Local fixes made on the way.** `render_pinned` now expands `${download_url}` (a tracker's
+  `[source.checksum] sidecar = "${download_url}.sha256"` stayed a template); `defines_track` finds every way
+  of binding `track` (loop, `with`, walrus, starred, match, `type`, `except as`, `global`) and ignores a bare
+  annotation; a version-directory hook that exposes `track` once loaded is refused; `git` is resolved only
+  from admin-only folders in an elevated run; `copy_distribution` is bounded (entries, bytes, depth, size of
+  `pkg.toml`) and refuses a junction at `root\.gupkg\work`, `root\<name>` and `root\<name>\<version>`.

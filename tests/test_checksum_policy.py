@@ -40,6 +40,7 @@ from gupkg.model.checksum import (
     verify_observed,
 )
 from gupkg.model.manifest import ManifestError, parse_manifest
+from gupkg.redact import redact_url
 
 DIGEST = "ab" * 32
 URL = "https://example.org/tool.zip"
@@ -183,7 +184,8 @@ def test_the_gate_applies_the_rows_of_the_policy_table(expected: str | None, ski
             check_before_download(url, expected, skip)
         assert raised.value.skippable is (outcome == "refuse-skippable")
         assert ("run this command again with --skip-checksum" in str(raised.value)) is (outcome == "refuse-skippable")
-        assert raised.value.to_data()["code"] == "checksum-missing" and raised.value.to_data()["url"] == url
+        assert raised.value.to_data()["code"] == "checksum-missing" and raised.value.to_data()["url"] == redact_url(url)
+        assert "good" not in raised.value.to_data()["url"] and "good" not in raised.value.to_data()["message"]
         return
     verification = check_before_download(url, expected, skip)
     assert verification.decision == outcome
@@ -315,6 +317,13 @@ def test_the_git_gate_follows_the_table() -> None:
         git_gate("ssh://h/r.git", None, SKIPPED_CLI)
     with pytest.raises(ChecksumInvalid):
         git_gate("https://h/r.git", "abc123")
+
+
+@pytest.mark.parametrize("commit", [123, ["a" * 40], b"a" * 40, True], ids=["int", "list", "bytes", "bool"])
+def test_a_commit_that_is_not_text_is_an_invalid_checksum_not_an_attribute_error(commit: object) -> None:
+    """A non-text commit fails closed with ChecksumInvalid (the plan reports it as `invalid`, never as a crash)."""
+    with pytest.raises(ChecksumInvalid, match="text"):
+        git_gate("https://h/r.git", commit)
 
 
 def test_a_git_record_requires_the_pinned_commit() -> None:

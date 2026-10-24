@@ -19,7 +19,6 @@ import shutil
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 from gupkg.core import write_text_atomic
 from gupkg.model.manifest import ManifestError, ManifestKind, manifest_to_toml, parse_manifest_data
