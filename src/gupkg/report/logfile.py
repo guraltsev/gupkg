@@ -219,11 +219,11 @@ class _Sink:
             name = stem if attempt == 1 else f"{stem}-{attempt}"
             text_path, json_path = self.directory / f"{name}.log", self.directory / f"{name}.jsonl"
             try:
-                text = open(text_path, "x", encoding="utf-8", newline="\n")
+                text = open(text_path, "x", encoding="utf-8", errors="backslashreplace", newline="\n")
             except FileExistsError:
                 continue
             try:
-                events = open(json_path, "x", encoding="utf-8", newline="\n")
+                events = open(json_path, "x", encoding="utf-8", errors="backslashreplace", newline="\n")
             except FileExistsError:
                 text.close()
                 text_path.unlink(missing_ok=True)
@@ -251,7 +251,7 @@ class _Sink:
 
         # Create it exclusively, so that a link planted after the check above
         # makes the creation fail instead of being followed.
-        handle = open(path, "x", encoding="utf-8", newline="\n")
+        handle = open(path, "x", encoding="utf-8", errors="backslashreplace", newline="\n")
         self._files.append(handle)
         self._json_files.append(handle)
 

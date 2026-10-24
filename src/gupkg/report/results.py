@@ -83,8 +83,12 @@ def plan_document(command: str, plans: Sequence[InstallPlan | PackageResult], ta
 
 
 def dumps(document: Mapping[str, Any]) -> str:
-    """Serialise a document as one JSON line-free text with a trailing newline (``default=str`` renders paths and dates)."""
-    return json.dumps(document, indent=2, default=str, ensure_ascii=False) + "\n"
+    """Serialise a document as JSON text with a trailing newline (``default=str`` renders paths and dates).
+
+    The text is pure ASCII (``ensure_ascii=True``, non-ASCII characters are ``\\uXXXX`` escapes), so it survives any code page
+    of a pipe or a file and a lone surrogate in a path; every JSON reader gives back the same characters.
+    """
+    return json.dumps(document, indent=2, default=str, ensure_ascii=True) + "\n"
 
 
 # ---------------------------------------------------------------------------

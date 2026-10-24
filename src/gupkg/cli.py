@@ -129,6 +129,7 @@ def main(
     """
     # Older bundled interpreters otherwise reject sites whose issuing intermediate, but not newest root, is trusted.
     enable_partial_chain_verification()
+    _configure_streams()
     tokens = list(sys.argv[1:] if argv is None else argv)
     machine = system or WindowsSystem()
     where = location or locate_running_gupkg()
@@ -151,6 +152,26 @@ def main(
         parser.print_help(sys.stderr)
         return EXIT_USER
     return _run(args, tokens, machine, environment, where)
+
+
+def _configure_streams() -> None:
+    """Make writing to standard output and error unable to crash, and make redirected output UTF-8.
+
+    The launcher runs ``python -I``, so ``PYTHONIOENCODING`` and ``PYTHONUTF8`` are ignored and a pipe or a file would use
+    the ANSI code page. A redirected stream is therefore UTF-8 (the UI programs read it as UTF-8); a console keeps its own
+    code page. Either way a character that cannot be encoded (a lone surrogate from a file name) is replaced, never raised.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            if stream.isatty():
+                reconfigure(errors="replace")
+            else:
+                reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):
+            pass
 
 
 def _run(args: argparse.Namespace, tokens: list[str], machine: System, env: Mapping[str, str], where: RunningGupkg) -> int:
