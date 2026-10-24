@@ -691,9 +691,9 @@ def execute_uninstall(engine: Engine, run: ExecutionInput) -> PackageResult:
     # Finish: the record keeps the mode and link; a purge deletes the package root.
     with phase("Finish"):
         if run.request.purge and not failures:
+            _forget_adhoc(engine, run, package_path)
             emit(Step(f"Deleting {package_path} (including data\\)", "remove"))
             remove_tree(package_path)
-            unregister_adhoc(run.settings, engine.env, package_path)
             return PackageResult(
                 plan.package, "uninstall", True, "purged", plan.previous, plan.previous, context.mode, 0, None, None,
                 engine.log_path(package_path), tuple(run.warnings), {"purged": str(package_path)},
@@ -711,6 +711,25 @@ def execute_uninstall(engine: Engine, run: ExecutionInput) -> PackageResult:
         plan.package, "uninstall", True, "uninstalled", plan.previous, plan.previous, context.mode, 0, None, None,
         engine.log_path(package_path), tuple(run.warnings), {"kept_versions": [item.name for item in run.view.local.versions]},
     )
+
+
+def _forget_adhoc(engine: Engine, run: ExecutionInput, package_path: Path) -> None:
+    """Drop an ad-hoc package from the state of its own root before its folder is deleted; a problem is only a warning.
+
+    Only the ``state.toml`` of the root of the package's mode is touched, and only when the package is ad hoc. An elevated
+    run touches the system root's state only: it never reads or writes a user's or a portable folder (decision D19).
+    """
+    if not run.adhoc:
+        return
+    mode = run.context.mode
+    if engine.elevated and mode != "system":
+        return
+    try:
+        unregister_adhoc(run.settings, engine.env, package_path, mode)
+    except (OSError, ValueError) as error:
+        message = f"The ad-hoc entry of {package_path} could not be removed from the {mode} state file: {error}"
+        run.warnings.append(message)
+        emit(Warning(message))
 
 
 # ---------------------------------------------------------------------------

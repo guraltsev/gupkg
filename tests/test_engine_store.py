@@ -268,7 +268,7 @@ def test_adhoc_registration_is_idempotent_and_keeps_the_other_keys(tmp_path: Pat
 
     data = read_toml(state)
     assert data == {"last_sync": "yesterday", "adhoc": [{"path": str(package), "mode": "user"}]}
-    unregister_adhoc(settings, {}, package)
+    unregister_adhoc(settings, {}, package, "user")
     assert read_toml(state) == {"last_sync": "yesterday"}
 
 

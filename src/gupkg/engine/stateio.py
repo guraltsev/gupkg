@@ -7,7 +7,7 @@ last ``check-updates`` of one package (design 4, 13.1).
 
 Usage and API
 -------------
-``register_adhoc(settings, env, package_path, mode)`` and ``unregister_adhoc(...)`` edit the ad-hoc list of the
+``register_adhoc(settings, env, package_path, mode)`` and ``unregister_adhoc(settings, env, package_path, mode)`` edit the ad-hoc list of the
 configured root of *mode*; ``write_track_state(package_path, data)`` records a check; ``read_track_state(package_path)``
 reads it back.
 
@@ -71,21 +71,30 @@ def register_adhoc(settings: Settings, env: Mapping[str, str], package_path: Pat
     _write(path, data)
 
 
-def unregister_adhoc(settings: Settings, env: Mapping[str, str], package_path: Path) -> None:
-    """Remove *package_path* from the ad-hoc list of every configured root's ``state.toml``."""
+def unregister_adhoc(settings: Settings, env: Mapping[str, str], package_path: Path, mode: str) -> None:
+    """Remove *package_path* from the ad-hoc list of the configured root of *mode* (the root that holds the entry).
+
+    Only that one ``state.toml`` is read or written; the other roots' files are never touched (decision D19).
+
+    Raises
+    ------
+    ValueError
+        If ``state.toml`` is a link or cannot be read.
+    OSError
+        If it cannot be written.
+    """
     key = canonical_path(package_path)
-    for mode in ("system", "user", "portable"):
-        path = _state_path(settings, env, mode)
-        if not path.is_file():
-            continue
-        data = _read(path)
-        entries = [item for item in data.get("adhoc", []) if isinstance(item, dict)]
-        kept = [item for item in entries if canonical_path(str(item.get("path", ""))) != key]
-        if len(kept) != len(entries):
-            data["adhoc"] = kept
-            if not kept:
-                del data["adhoc"]
-            _write(path, data)
+    path = _state_path(settings, env, mode)
+    if not path.is_file():
+        return
+    data = _read(path)
+    entries = [item for item in data.get("adhoc", []) if isinstance(item, dict)]
+    kept = [item for item in entries if canonical_path(str(item.get("path", ""))) != key]
+    if len(kept) != len(entries):
+        data["adhoc"] = kept
+        if not kept:
+            del data["adhoc"]
+        _write(path, data)
 
 
 def track_state_path(package_path: Path) -> Path:

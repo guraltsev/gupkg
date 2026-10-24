@@ -569,7 +569,10 @@ def _uninstall(engine: Engine, target: _Target) -> PackageResult:
             question += f" The App of {', '.join(lost)} cannot be rebuilt (no download_url or script): it is lost for good."
         _confirm(engine, question)
     chosen = Chosen(Candidate(view.installed.version if view.installed else "", "local", view.path), Manifest(ManifestKind.VERSION))
-    run = ExecutionInput(uninstall_plan, context, view, chosen, request, resolved.settings, warnings=list(resolved.warnings))
+    run = ExecutionInput(
+        uninstall_plan, context, view, chosen, request, resolved.settings,
+        adhoc=bool(view.root is not None and view.root.adhoc), warnings=list(resolved.warnings),
+    )
     return execute_uninstall(engine, run)
 
 
