@@ -168,6 +168,22 @@ def elevated_mode() -> bool:
 # ---------------------------------------------------------------------------
 
 
+def bundled_runtime_paths(package_directory: Path) -> list[Path]:
+    """Return the folders and files an elevated gupkg trusts before any of its own code runs, in the bundled layout.
+
+    This is the one list that both sides use: the elevated process checks it at start (``enforce_bundled_runtime``) and the
+    parent checks it before it asks for elevation (``System.relaunch_elevated``). It holds the package folder and its parent,
+    the bundled runtime folder, its ``Lib\\site-packages``, ``python.exe``, the ``python*._pth`` search-path file, the
+    ``python*.dll`` libraries and ``bootstrap.py``. Entries that do not exist are listed too (the caller skips them).
+    """
+    package = Path(package_directory)
+    runtime = package / "python"
+    return [
+        package, package.parent, runtime, runtime / "Lib" / "site-packages", runtime / "python.exe",
+        *sorted(runtime.glob("python*._pth")), *sorted(runtime.glob("python*.dll")), package / "bootstrap.py",
+    ]
+
+
 def enforce_bundled_runtime(package_directory: Path, elevated: bool = False) -> None:
     """Refuse any run that is not the isolated bundled interpreter; also check admin-only paths when elevated.
 
@@ -206,12 +222,9 @@ def enforce_bundled_runtime(package_directory: Path, elevated: bool = False) -> 
 
     # Every directory the interpreter can import from, plus the bundled
     # dependency directory that is added to the path later.
-    directories = {package_directory, package_directory.parent, runtime_directory}
-    directories.add(runtime_directory / "Lib" / "site-packages")
-    # The interpreter and its search-path file decide what loads before any of our
-    # code; check them as files too, in case their own entries differ from the folder's.
-    directories.add(expected)
-    directories.update(runtime_directory.glob("python*._pth"))
+    # The interpreter, its libraries and its search-path file decide what loads before any of our
+    # code; they are checked as files too, in case their own entries differ from the folder's.
+    directories = set(bundled_runtime_paths(package_directory))
     for entry in sys.path:
         if entry and os.path.isdir(entry):
             directories.add(Path(entry).resolve())

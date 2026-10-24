@@ -25,6 +25,7 @@ from gupkg.model.settings import default_layer, merge_layers
 from gupkg.relaunch import ElevationRefused, ensure_elevation
 from gupkg.system.fake import FakeSystem
 from gupkg.system.port import ElevatedRun, elevated_command, unsafe_relaunch_argument
+from gupkg.system import windows
 from gupkg.system.windows import WindowsSystem, wait_for_child
 from tests.cli_support import CliWorld
 from tests.mode_support import pin_no_ambient_elevation  # noqa: F401
@@ -44,9 +45,27 @@ HOSTILE = {
     "backtick": "a`b",
     "lone-surrogate": "a\ud800b",
     "tab": "a\tb",
+    "c1-control": "a\u0085b",
+    "bidi-override": "a\u202eb",
+    "bidi-isolate": "a\u2066b",
+    "line-separator": "a\u2028b",
+    "paragraph-separator": "a\u2029b",
+    "zero-width-joiner": "a\u200db",
+    "private-use": "a\ue000b",
+    "unassigned": "a\u0378b",
 }
 # Names that a folder can really have on Windows, so that a package of that name can exist and be targeted.
 POSSIBLE_FOLDER_NAMES = {key: HOSTILE[key] for key in ("ampersand", "percent-variable", "caret", "delayed-expansion", "backtick")}
+
+
+@pytest.fixture(autouse=True)
+def never_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the one call that can show a real UAC prompt fail the test, so no test here can ever elevate for real."""
+    def forbidden(info) -> bool:
+        """Fail: a test must never reach ShellExecuteEx."""
+        raise AssertionError("ShellExecuteEx was called: a test would have shown a real UAC prompt")
+
+    monkeypatch.setattr(windows, "_shell_execute", forbidden)
 
 
 @pytest.fixture
@@ -117,6 +136,101 @@ def test_the_system_boundary_refuses_hostile_arguments_itself(tmp_path: Path, va
     assert WindowsSystem().relaunch_elevated(["install", value]) == ElevatedRun(False)
 
 
+def _package_tree(base: Path) -> Path:
+    """Write a bundled gupkg package folder (python, its dll and search-path file, site-packages, bootstrap.py) under *base*."""
+    package = base / "pkg" / "gupkg"
+    (package / "python" / "Lib" / "site-packages").mkdir(parents=True)
+    for name in ("python.exe", "python312.dll", "python312._pth"):
+        (package / "python" / name).write_text("x", encoding="utf-8")
+    (package / "bootstrap.py").write_text("x", encoding="utf-8")
+    return package
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        pytest.param(".", id="package-folder"), pytest.param("..", id="its-parent"), pytest.param("python", id="runtime-folder"),
+        pytest.param("python/Lib/site-packages", id="site-packages"), pytest.param("python/python.exe", id="python-exe"),
+        pytest.param("python/python312.dll", id="python-dll"), pytest.param("python/python312._pth", id="search-path-file"),
+        pytest.param("bootstrap.py", id="bootstrap"),
+    ],
+)
+def test_every_file_the_child_loads_first_must_be_admin_only_before_anything_is_asked(world: CliWorld, tmp_path: Path, relative: str) -> None:
+    """One user-writable entry of the child's first-loaded set is exit code 2 with no question and no relaunch recorded."""
+    package = _package_tree(tmp_path)
+    world.fake.package_dir = package
+    world.fake.untrusted_dirs.add((package / relative).resolve())
+
+    result = world.cli("install", "system:tool", "--yes", "--json")
+
+    assert result.code == 2, result.out + result.err
+    assert "The elevated gupkg is not started" in result.document()["results"][0]["error"]["message"]
+    assert world.fake.relaunches == [] and world.fake.relaunch_commands == []
+
+
+def test_a_complete_admin_only_package_tree_is_accepted(world: CliWorld, tmp_path: Path) -> None:
+    """The same tree with nothing untrusted starts the child (so the refusals above are about the entries, not the tree)."""
+    world.fake.package_dir = _package_tree(tmp_path)
+
+    result = world.cli("install", "system:tool", "--yes")
+
+    assert result.code == 0, result.out + result.err
+    assert len(world.fake.relaunches) == 1
+
+
+@pytest.mark.parametrize("target", ["--yes", "--no-input", "--mode=user", "-x", "-"])
+def test_a_target_that_starts_with_a_dash_is_refused_by_the_parent_and_by_the_child(world: CliWorld, target: str) -> None:
+    """A package folder named like an option is exit code 2 before any relaunch, and an elevated child refuses it as well."""
+    world.publish(target, "1.0.0", mode="system")
+
+    parent = world.cli("install", "--mode", "system", "--yes", "--json", "--", target)
+
+    assert parent.code == 2, parent.out + parent.err
+    assert world.fake.relaunches == []
+    world.fake.elevated = True
+    child = world.cli("install", "--mode", "system", "--relaunched", "--yes", "--", target)
+    assert child.code == 2 and "never starts with '-'" in child.err
+
+
+def test_the_targets_follow_a_double_dash_so_they_cannot_be_options(world: CliWorld) -> None:
+    """The child's command line is the options first, then `--`, then the targets."""
+    world.cli("install", "system:tool", "--yes")
+
+    [argv] = world.fake.relaunches
+    separator = argv.index("--")
+    assert argv[separator + 1:] == ["system:tool"] and not [item for item in argv[:separator] if item.startswith("system:")]
+
+
+def test_a_failure_while_waiting_after_the_child_started_is_exit_3_with_a_clear_message(world: CliWorld) -> None:
+    """The child may still be running: the call is a failure (exit 3) that says so, never `the prompt was not accepted`."""
+    world.fake.relaunch_error = "waiting for the elevated gupkg failed (WaitForSingleObject returned 0xffffffff)"
+
+    result = world.cli("install", "system:tool", "--yes", "--events-file", "run.jsonl", "--json")
+
+    message = result.document()["results"][0]["error"]["message"]
+    assert result.code == 3 and "may still be running" in message and "not accepted" not in message
+    assert "gupkg-stop-" in message and "run.jsonl" in message
+
+
+def test_a_command_line_that_is_too_long_is_refused_with_a_reason_on_the_fake_boundary_too(tmp_path: Path) -> None:
+    """More than 30000 characters of arguments are `refused` (the CLI turns that into exit code 2), never `not accepted`."""
+    fake = FakeSystem(tmp_path / "machine")
+
+    over = fake.relaunch_elevated(["install", "x" * 31000])
+
+    assert over.started is False and "characters long" in (over.refused or "") and fake.relaunches == []
+
+
+def test_the_abandoned_wait_names_the_stop_marker_and_the_events_file(world: CliWorld) -> None:
+    """When the wait is given up the message says where the child's marker and events file are."""
+    world.fake.relaunch_interrupt = True
+
+    result = world.cli("install", "system:tool", "--yes", "--events-file", "run.jsonl", "--json")
+
+    message = result.document()["results"][0]["error"]["message"]
+    assert result.code == 5 and "gupkg-stop-" in message and "run.jsonl" in message
+
+
 def test_the_elevated_child_is_the_bundled_python_running_bootstrap_and_never_cmd(world: CliWorld) -> None:
     """The program, parameters and folder the ShellExecute call would receive: bundled python.exe, isolation flags, bootstrap.py."""
     result = world.cli("install", "system:tool", "--yes")
@@ -125,7 +239,7 @@ def test_the_elevated_child_is_the_bundled_python_running_bootstrap_and_never_cm
     [(program, parameters, directory)] = world.fake.relaunch_commands
     package = world.fake.package_dir
     assert Path(program) == package / "python" / "python.exe" and Path(directory) == package
-    assert parameters.startswith(f'-I -s -B -S "{package / "bootstrap.py"}" install system:tool --yes')
+    assert parameters.startswith(f'-I -s -B -S "{package / "bootstrap.py"}" install --yes') and parameters.endswith(" -- system:tool")
     assert "cmd" not in Path(program).name.lower() and "/c" not in parameters.split() and "cmd.exe" not in parameters.lower()
 
 

@@ -180,6 +180,10 @@ def _run(args: argparse.Namespace, tokens: list[str], machine: System, env: Mapp
     if getattr(args, "relaunched", False) and (args.settings is not None or args.sandbox is not None):
         return _usage_error(tokens, "--settings and --sandbox are not accepted by the elevated child of a relaunch")
     if getattr(args, "relaunched", False):
+        named = list(getattr(args, "targets", None) or ([args.target] if getattr(args, "target", None) else []))
+        for target in named:
+            if target.startswith("-"):
+                return _usage_error(tokens, f"the elevated child refuses the target {target!r}: a target never starts with '-'")
         for token in tokens:
             reason = unsafe_relaunch_argument(token)
             if reason is not None:
@@ -538,7 +542,18 @@ def _engine(run: _Run, session: RunSession, command: str, targets: Sequence[str]
         argv=_child_argv(run, command, targets, batch_confirmed=batch_confirmed, stop_path=stop_path),
         gupkg_dir=run.location.version_dir, gupkg_root=run.location.root,
         request_stop=(lambda: stop_path.touch()) if stop_path is not None else None,
+        relaunch_note=_relaunch_note(stop_path, getattr(args, "events_file", None)),
     )
+
+
+def _relaunch_note(stop_path: Path | None, events_name: str | None) -> str:
+    """Return where to look when the wait for the elevated child is given up: its stop marker and its events file."""
+    parts = []
+    if stop_path is not None:
+        parts.append(f"the stop marker it was asked to watch is {stop_path}")
+    if events_name:
+        parts.append(f"its events file is {events_name} in the system root's .gupkg\\logs folder")
+    return ("To follow it: " + "; ".join(parts) + ".") if parts else ""
 
 
 def _child_argv(
@@ -548,20 +563,22 @@ def _child_argv(
 
     Only the command, its targets and a fixed set of options travel: ``--settings`` and ``--sandbox`` never do, and the
     child validates all of it again. ``--yes`` travels only when the user gave it: a question the parent answered
-    ("run this on three packages?") does not answer the ones the child asks ("delete the data folder?").
+    ("run this on three packages?") does not answer the ones the child asks ("delete the data folder?"). The options come
+    first and the targets last, after ``--``, so that a package folder named ``--yes`` or ``-x`` can never be read as an option.
     """
     args = run.args
     argv: list[str] = [command]
+    positional: list[str] = []
     if command == "switch":
-        argv += [targets[0], args.version]
+        positional = [targets[0], args.version]
     elif command == "link":
-        argv += [targets[0], *([args.entry] if args.entry else [])]
+        positional = [targets[0], *([args.entry] if args.entry else [])]
     elif command == "cleanup" and _is_sweep(args):
         # A root-wide cleanup keeps its meaning across the relaunch: the child gets no targets, so it sweeps the system root
         # itself (an elevated catalog lists only that root), leaves a busy package alone and prunes the root's logs and trees.
         pass
     else:
-        argv += list(targets)
+        positional = list(targets)
     if getattr(args, "mode", None):
         argv += ["--mode", args.mode]
     for flag, option in (
@@ -583,6 +600,8 @@ def _child_argv(
     argv.append("--relaunched")
     if batch_confirmed:
         argv.append("--batch-confirmed")
+    if positional:
+        argv += ["--", *positional]
     return tuple(argv)
 
 

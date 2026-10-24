@@ -58,9 +58,11 @@ from .port import (
     ScopeFolders,
     ShortcutSpec,
     System,
+    MAX_RELAUNCH_PARAMETERS,
     elevated_command,
     unsafe_relaunch_argument,
 )
+from ..selfmgmt.elevation import bundled_runtime_paths
 from .windows import WindowsLinks, WindowsSystem
 
 
@@ -172,6 +174,8 @@ class FakeSystem(WindowsLinks):
         Whether ``relaunch_elevated`` reports that the child started (False: the elevation prompt was declined).
     relaunch_exit_code : int, optional
         The exit code of the pretend child; ``None`` means the wait ended without one.
+    relaunch_error : str, optional
+        Pretend waiting for the started child failed with this message.
     relaunch_interrupt : bool
         Pretend the user pressed Ctrl-C while waiting: ``on_interrupt`` is called and the wait is abandoned.
     package_dir : Path
@@ -196,6 +200,7 @@ class FakeSystem(WindowsLinks):
     relaunch_result: bool = True
     relaunch_exit_code: int | None = 0
     relaunch_interrupt: bool = False
+    relaunch_error: str | None = None
     package_dir: Path = Path("C:/Program Files/gupkg/1.0.0/gupkg")
     pid: int = field(default_factory=os.getpid)
     live_pids: set[int] = field(default_factory=set)
@@ -375,12 +380,21 @@ class FakeSystem(WindowsLinks):
         self._maybe_fail("relaunch_elevated")
         if any(unsafe_relaunch_argument(part) for part in argv):
             return ElevatedRun(False)
+        _, parameters, _ = elevated_command(self.package_dir, argv)
+        if len(parameters) > MAX_RELAUNCH_PARAMETERS:
+            return ElevatedRun(False, refused=f"the command line is {len(parameters)} characters long; more than {MAX_RELAUNCH_PARAMETERS} cannot be started")
+        for path in bundled_runtime_paths(self.package_dir):
+            reason = self.directory_untrusted_reason(path) if path.exists() else None
+            if reason is not None:
+                return ElevatedRun(False, refused=f"{path}: {reason}")
         self.relaunches.append([str(part) for part in argv])
         program, parameters, directory = elevated_command(self.package_dir, argv)
         self.relaunch_commands.append((str(program), parameters, str(directory)))
         self._save()
         if not self.relaunch_result:
             return ElevatedRun(False)
+        if self.relaunch_error is not None:
+            return ElevatedRun(True, error=self.relaunch_error)
         if self.relaunch_interrupt:
             if on_interrupt is not None:
                 on_interrupt()

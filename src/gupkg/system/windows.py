@@ -66,6 +66,7 @@ from .port import (
     Scope,
     ScopeFolders,
     ShortcutSpec,
+    MAX_RELAUNCH_PARAMETERS,
     elevated_command,
     unsafe_relaunch_argument,
 )
@@ -350,16 +351,34 @@ class WindowsSystem(WindowsLinks):
 
         The child is ``python.exe -I -s -B -S bootstrap.py`` of this package, started with the ``runas`` verb through
         ``ShellExecuteEx`` and no shell, so nothing in *argv* is read by ``cmd.exe`` (T1). Both paths come from the
-        location of this module, and the package folder must be admin-only. A value that could mean something to a
-        shell is refused here too. The process handle is closed on every path.
+        location of this module. Before the prompt every file the child loads first (``bundled_runtime_paths``: the
+        runtime folder, ``python.exe``, ``python*.dll``, ``python*._pth``, ``Lib\\site-packages``, ``bootstrap.py`` and the
+        folders above) must be admin-only, else the call is ``refused`` and nothing is asked. A value that could mean
+        something to a shell, or a command line too long for ``ShellExecuteEx``, is refused the same way.
+
+        A check-then-launch race (TOCTOU) remains: a file could change between the check and the load. It is bounded by the
+        admin-only requirement itself, because only an administrator can change what the check accepted, and the child
+        checks the same set again once it runs (``enforce_bundled_runtime``).
+
+        After the child started this call never reports "not started": a failure while waiting is ``error`` and the process
+        handle is closed on every path.
         """
         if os.name != "nt" or any(unsafe_relaunch_argument(part) for part in argv):
             return ElevatedRun(False)
         try:
             package = Path(__file__).resolve().parent.parent
             program, parameters, directory = elevated_command(package, argv)
-            if not program.is_file() or not (package / "bootstrap.py").is_file() or elevation.untrusted_reason(package) is not None:
+            if len(parameters) > _MAX_PARAMETERS:
+                return ElevatedRun(
+                    False, refused=f"the command line is {len(parameters)} characters long; more than {_MAX_PARAMETERS} cannot be started"
+                )
+            if not program.is_file() or not (package / "bootstrap.py").is_file():
                 return ElevatedRun(False)
+            for path in elevation.bundled_runtime_paths(package):
+                if path.exists():
+                    reason = elevation.untrusted_reason(path)
+                    if reason is not None:
+                        return ElevatedRun(False, refused=f"{path}: {reason}")
             info = _ShellExecuteInfo()
             info.cbSize = ctypes.sizeof(_ShellExecuteInfo)
             info.fMask = _SEE_MASK_NOCLOSEPROCESS
@@ -368,30 +387,37 @@ class WindowsSystem(WindowsLinks):
             info.lpParameters = parameters
             info.lpDirectory = str(directory)
             info.nShow = 1
-            shell32 = ctypes.WinDLL("shell32", use_last_error=True)
-            shell32.ShellExecuteExW.argtypes = [ctypes.POINTER(_ShellExecuteInfo)]
-            if not shell32.ShellExecuteExW(ctypes.byref(info)) or not info.hProcess:
+            if not _shell_execute(info) or not info.hProcess:
                 return ElevatedRun(False)
+        except Exception:
+            return ElevatedRun(False)
+
+        # The child runs now: from here on the answer is never "not started", and the handle is always closed.
+        handle = info.hProcess
+        try:
             kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
             kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
             kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
-            kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-            handle = info.hProcess
-            try:
-                def done(seconds: float) -> bool:
-                    """Wait up to *seconds* for the child and report whether it ended."""
-                    return kernel32.WaitForSingleObject(handle, int(seconds * 1000)) == 0
 
-                def exit_code() -> int:
-                    """Return the child's exit code."""
-                    code = wintypes.DWORD()
-                    return int(code.value) if kernel32.GetExitCodeProcess(handle, ctypes.byref(code)) else 3
+            def done(seconds: float) -> bool:
+                """Wait up to *seconds* for the child; report whether it ended, and raise when the wait itself failed."""
+                state = kernel32.WaitForSingleObject(handle, int(seconds * 1000))
+                if state == 0:
+                    return True
+                if state == _WAIT_TIMEOUT:
+                    return False
+                raise OSError(f"waiting for the elevated gupkg failed (WaitForSingleObject returned {state:#x})")
 
-                return wait_for_child(done, exit_code, on_interrupt=on_interrupt, grace=grace)
-            finally:
-                kernel32.CloseHandle(handle)
-        except Exception:
-            return ElevatedRun(False)
+            def exit_code() -> int:
+                """Return the child's exit code."""
+                code = wintypes.DWORD()
+                return int(code.value) if kernel32.GetExitCodeProcess(handle, ctypes.byref(code)) else 3
+
+            return wait_for_child(done, exit_code, on_interrupt=on_interrupt, grace=grace)
+        except Exception as error:  # noqa: BLE001 - the child is running; say so instead of "not started"
+            return ElevatedRun(True, error=str(error) or type(error).__name__)
+        finally:
+            _close_handle(handle)
 
     def directory_is_admin_only(self, path: Path) -> bool:
         """Return whether only administrators can modify *path* and replace its parents."""
@@ -774,6 +800,25 @@ def wait_for_keypress() -> None:
 
 
 _SEE_MASK_NOCLOSEPROCESS = 0x00000040
+_WAIT_TIMEOUT = 0x102
+_MAX_PARAMETERS = MAX_RELAUNCH_PARAMETERS
+
+
+def _shell_execute(info: "_ShellExecuteInfo") -> bool:
+    """Call ``ShellExecuteExW`` (the one place that can show the UAC prompt); return whether the process was started."""
+    shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+    shell32.ShellExecuteExW.argtypes = [ctypes.POINTER(_ShellExecuteInfo)]
+    return bool(shell32.ShellExecuteExW(ctypes.byref(info)))
+
+
+def _close_handle(handle: Any) -> None:
+    """Close a process handle, ignoring a failure to do so."""
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle(handle)
+    except Exception:  # noqa: BLE001 - nothing more can be done about a handle that will not close
+        pass
 
 
 class _ShellExecuteInfo(ctypes.Structure):

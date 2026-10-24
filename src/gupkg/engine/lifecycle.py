@@ -67,6 +67,7 @@ from ..model.state import InstallRecord, Link, PackageView, Root
 from ..model.version import MANIFEST_NAME
 from ..modes import ModeRequest, ResolvedMode, resolve_mode
 from ..relaunch import ensure_elevation
+from ..system.port import ProcessFailed
 from ..report.events import Diagnostic, Error, Prompt, Step, Warning, emit, package_scope
 from ..report.logfile import prune_logs
 from ..services.safepath import remove_tree
@@ -208,9 +209,9 @@ def run_batch(engine: Engine, requests: Sequence[Request]) -> BatchResult:
         outcome = ensure_elevation(
             contexts, system=engine.system, argv=engine.argv, version_dir=engine.gupkg_dir or Path(),
             root=engine.gupkg_root or Path(), yes=engine.yes, no_input=engine.no_input, confirm=engine.confirm,
-            elevated=engine.elevated, on_interrupt=engine.request_stop,
+            elevated=engine.elevated, on_interrupt=engine.request_stop, note=engine.relaunch_note,
         )
-    except (InputNeeded, ModeRefused) as error:
+    except (InputNeeded, ModeRefused, ProcessFailed) as error:
         return BatchResult(tuple(
             item if isinstance(item, PackageResult) else failure(item.request.selector, item.request.operation, error)
             for item in resolved

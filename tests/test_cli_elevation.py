@@ -51,7 +51,7 @@ def test_system_targets_start_one_elevated_child_with_a_rebuilt_command_line(wor
     """The child gets the command, the targets, the whitelisted options and --relaunched; nothing is installed by the parent."""
     argv = child_of(world, "install", "system:tool", "system:other", "--refresh", "--events-file", "run.jsonl", "--yes", code=3)
 
-    assert argv[0] == "install" and argv[1:3] == ["system:tool", "system:other"]
+    assert argv[0] == "install" and argv[-3:] == ["--", "system:tool", "system:other"]
     assert "--relaunched" in argv and "--refresh" in argv and "--yes" in argv
     assert argv[argv.index("--events-file") + 1] == "run.jsonl"
     assert not (world.system_root / "tool" / "current").exists()
@@ -104,7 +104,7 @@ def test_qualified_targets_of_both_modes_run_the_user_ones_here_and_hand_the_sys
 
     document = result.document()
     assert result.code == 0 and document["relaunched"] is True and len(world.fake.relaunches) == 1
-    assert world.fake.relaunches[0][:2] == ["install", "system:tool"] and "user:mine" not in world.fake.relaunches[0]
+    assert world.fake.relaunches[0][0] == "install" and world.fake.relaunches[0][-2:] == ["--", "system:tool"] and "user:mine" not in world.fake.relaunches[0]
     assert (world.user / "mine" / "current").is_dir() and not (world.system_root / "tool" / "current").exists()
     assert [item["package"] for item in document["results"]] == ["mine"]
 

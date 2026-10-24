@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import unicodedata
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from enum import Enum
@@ -138,12 +139,22 @@ class ElevatedRun:
         The child's exit code once it ended; ``None`` when it never started or this process stopped waiting.
     abandoned : bool
         True when this process stopped waiting after an interrupt while the child may still be running.
+    refused : str, optional
+        Why nothing was started although it was asked for (a gupkg file that users can modify, a command line that is too long):
+        the prompt was never shown.
+    error : str, optional
+        What went wrong while waiting after the child started; the child may still be running.
     """
 
     started: bool
     exit_code: int | None = None
     abandoned: bool = False
+    refused: str | None = None
+    error: str | None = None
 
+
+# ShellExecuteEx fails above about 32 K characters of parameters; both systems refuse above this many.
+MAX_RELAUNCH_PARAMETERS = 30000
 
 # Characters that mean something to ``cmd.exe`` or break a command line: the elevated child must never receive them.
 UNSAFE_RELAUNCH_CHARACTERS = frozenset('&|<>^"%!`')
@@ -153,12 +164,14 @@ def unsafe_relaunch_argument(value: str) -> str | None:
     """Return why *value* may not travel to (or arrive in) an elevated child, or ``None`` when it is plain.
 
     The child is started without a shell, but the value also reaches log files and later shell commands, so the set
-    stays the strict one: none of ``& | < > ^ " % ! ` ``, no control character (newline, NUL, tab...) and no lone surrogate.
+    stays the strict one: none of ``& | < > ^ " % ! ` ``, and no character of a Unicode category starting with ``C`` (control
+    characters including C1, format characters such as the bidi overrides and isolates and the zero-width joiners, lone
+    surrogates, private-use and unassigned code points) nor a line or paragraph separator (U+2028, U+2029).
     """
     for character in str(value):
-        code = ord(character)
-        if character in UNSAFE_RELAUNCH_CHARACTERS or code < 32 or code == 127 or 0xD800 <= code <= 0xDFFF:
-            shown = repr(character) if code < 32 or code == 127 or 0xD800 <= code <= 0xDFFF else character
+        category = unicodedata.category(character)
+        if character in UNSAFE_RELAUNCH_CHARACTERS or category[0] == "C" or category in ("Zl", "Zp"):
+            shown = character if category[0] not in "CZ" else f"U+{ord(character):04X}"
             return f"the character {shown} in {str(value)[:60]!r}"
     return None
 

@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .model.mode import InputNeeded, ModeContext, ModeRefused
-from .system.port import System, is_elevated_run, unsafe_relaunch_argument
+from .system.port import ProcessFailed, System, is_elevated_run, unsafe_relaunch_argument
 
 
 class ElevationRefused(ModeRefused):
@@ -61,6 +61,7 @@ def ensure_elevation(
     confirm: Callable[[str], bool] | None = None,
     elevated: bool | None = None,
     on_interrupt: Callable[[], None] | None = None,
+    note: str = "",
 ) -> ElevationOutcome:
     """Relaunch this gupkg elevated once when any target needs system mode and the process is not elevated.
 
@@ -86,6 +87,8 @@ def ensure_elevation(
         Overrides the elevation reported by *system*.
     on_interrupt : callable, optional
         Called once when the user interrupts the wait for the elevated child; it asks the child to stop.
+    note : str, optional
+        Added to the message of an abandoned wait (where the child's stop marker and events file are).
 
     Returns
     -------
@@ -117,6 +120,15 @@ def ensure_elevation(
                 "Rename the package folder or file, or run gupkg from an administrator shell. Nothing was changed."
             )
 
+    # A target that starts with "-" could be read as an option by the child (the targets follow "--", but never rely on one rule).
+    if "--" in argv:
+        for target in list(argv)[list(argv).index("--") + 1:]:
+            if str(target).startswith("-"):
+                raise ElevationRefused(
+                    f"The elevated gupkg is not started: the target {target!r} starts with '-'. "
+                    "Rename the package folder (a name starting with '-' would be read as an option). Nothing was changed."
+                )
+
     # Only an admin-only gupkg may start an elevated copy of itself: judge its own folders first, so a
     # user-writable gupkg refuses before it asks anything.
     for folder in (version_dir, root):
@@ -138,11 +150,16 @@ def ensure_elevation(
 
     # One relaunch for every system target of the call.
     run = system.relaunch_elevated(list(argv), on_interrupt=on_interrupt)
+    if run.refused is not None:
+        raise ElevationRefused(
+            f"The elevated gupkg is not started: {run.refused}. Nothing was asked and nothing was changed."
+        )
     if not run.started:
         raise InputNeeded("The elevation prompt was not accepted. Nothing was changed.")
+    if run.error is not None:
+        raise ProcessFailed(f"The elevated gupkg was started, but waiting for it failed: {run.error}. It may still be running. {note}".strip())
     if run.abandoned or run.exit_code is None:
         raise InputNeeded(
-            "Stopped waiting for the elevated gupkg after an interrupt; it may still be running. "
-            "Follow its events file (the stop marker named in its run_start) to see how it ended."
+            f"Stopped waiting for the elevated gupkg after an interrupt; it may still be running. {note}".strip()
         )
     return ElevationOutcome(True, True, run.exit_code)

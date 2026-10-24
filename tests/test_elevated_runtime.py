@@ -250,7 +250,7 @@ def test_elevated_trust_check_covers_the_version_directory_and_the_whole_bundled
 # ---------------------------------------------------------------------------
 
 
-def _scripted_win32(trusted: bool, *, exit_code: int = 5):
+def _scripted_win32(trusted: bool, *, exit_code: int = 5, wait_state: int = 0):
     """Return (patches, record): the ShellExecuteEx and wait calls replaced by a recording script; nothing is started."""
     record: dict = {"closed": []}
     shell32, kernel32 = mock.Mock(), mock.Mock()
@@ -267,7 +267,7 @@ def _scripted_win32(trusted: bool, *, exit_code: int = 5):
         return 1
 
     shell32.ShellExecuteExW.side_effect = shell_execute
-    kernel32.WaitForSingleObject.return_value = 0
+    kernel32.WaitForSingleObject.return_value = wait_state
     kernel32.GetExitCodeProcess.side_effect = exit_code_of
     kernel32.CloseHandle.side_effect = lambda handle: record["closed"].append(handle)
     patches = [
@@ -306,14 +306,55 @@ def test_elevated_relaunch_refuses_a_package_folder_that_users_can_write() -> No
 
 
 @pytest.mark.skipif(os.name != "nt", reason="uses the Windows shell relaunch")
-def test_elevated_relaunch_closes_the_handle_when_the_wait_fails() -> None:
-    """A failure while waiting still closes the process handle."""
+def test_after_the_child_started_a_failure_while_waiting_is_never_reported_as_not_started() -> None:
+    """The handle is closed, and the answer says the child started and what failed (it may still be running)."""
     patches, record = _scripted_win32(trusted=True)
 
     with patches[0], patches[1], patches[2], mock.patch("gupkg.system.windows.wait_for_child", side_effect=RuntimeError("boom")):
         run = WindowsSystem().relaunch_elevated(["install", "system:tool"])
 
-    assert run.started is False and record["closed"] == [99]
+    assert run.started is True and run.error == "boom" and run.exit_code is None and record["closed"] == [99]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="uses the Windows shell relaunch")
+@pytest.mark.parametrize("state", [0xFFFFFFFF, 0x80], ids=["wait-failed", "abandoned-mutex"])
+def test_a_wait_that_fails_ends_the_loop_with_an_error_instead_of_spinning(state: int) -> None:
+    """WAIT_FAILED (or any state that is not signalled or timed out) is an error with a clear message, and the handle is closed."""
+    patches, record = _scripted_win32(trusted=True, wait_state=state)
+
+    with patches[0], patches[1], patches[2]:
+        run = WindowsSystem().relaunch_elevated(["install", "system:tool"])
+
+    assert run.started is True and run.exit_code is None and "WaitForSingleObject" in (run.error or "") and record["closed"] == [99]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="uses the Windows shell relaunch")
+def test_a_command_line_that_is_too_long_is_refused_before_the_prompt() -> None:
+    """More than 30000 characters cannot be started by ShellExecuteEx: a refusal that says so, never `not accepted`."""
+    patches, record = _scripted_win32(trusted=True)
+
+    with patches[0], patches[1], patches[2]:
+        run = WindowsSystem().relaunch_elevated(["install", "system:" + "a" * 31000])
+
+    assert run.started is False and "characters long" in (run.refused or "") and "verb" not in record
+
+
+@pytest.mark.skipif(os.name != "nt", reason="uses the Windows shell relaunch")
+def test_every_file_the_child_loads_first_is_checked_before_the_prompt() -> None:
+    """The refusal comes for the first untrusted entry of `bundled_runtime_paths`, and ShellExecuteEx is never called."""
+    for path in elevation.bundled_runtime_paths(SRC):
+        if not path.exists():
+            continue
+        patches, record = _scripted_win32(trusted=True)
+
+        def untrusted(candidate, reader=None, *, _bad=path):
+            return "users can write here" if Path(candidate) == _bad else None
+
+        with patches[0], patches[1], mock.patch.object(elevation, "untrusted_reason", side_effect=untrusted):
+            run = WindowsSystem().relaunch_elevated(["install", "system:tool"])
+
+        assert run.started is False and path.name in (run.refused or ""), path
+        assert "verb" not in record, path
 
 
 # ---------------------------------------------------------------------------
