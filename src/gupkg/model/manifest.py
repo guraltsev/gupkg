@@ -115,6 +115,8 @@ def name_part_problem(part: str) -> str | None:
     return None
 
 
+# Every control, format (zero-width, bidirectional), surrogate, private-use and unassigned character, and the line and paragraph separators.
+_INVISIBLE_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp"})
 _DRIVE_PATH = re.compile(r"^[A-Za-z]:[\\/]")
 _ENV_PREFIX = re.compile(r"^%[A-Za-z_][A-Za-z0-9_()]*%[\\/]")
 
@@ -131,8 +133,8 @@ def path_entry_shape_problem(text: str, *, template: bool) -> str | None:
     """
     if not text.strip():
         return "is empty"
-    if any(ord(char) < 32 or char in '"<>|*?' for char in text):
-        return "holds a control character, a quote or one of < > | * ?"
+    if any(ord(char) < 32 or char in '"<>|*?' or unicodedata.category(char) in _INVISIBLE_CATEGORIES for char in text):
+        return "holds a control, invisible or line-separator character, a quote or one of < > | * ?"
     if ";" in text:
         return "holds a ';' (one PATH entry only)"
     if text.startswith(("\\\\", "//")):
@@ -920,6 +922,15 @@ def _parse_source(collector: _Collector, raw: Any, modes: tuple[str, ...]) -> So
     git = _parse_git(collector, table.get("git"), kind)
     nested = _parse_nested(collector, table.get("nested"))
     extract = _parse_extract(collector, table.get("extract"))
+
+    # A vendor installer replaces the unpack step, so the unpack options and every kind but ``exe`` would be ignored: refuse them.
+    if installer is not None:
+        if kind not in (None, "exe"):
+            collector.error("source.installer", f"runs the downloaded .exe itself, so kind must be \"exe\" or absent, not \"{kind}\"")
+        for key, value in (("strip", strip), ("subdir", subdir), ("nested", nested or None), ("extract", extract or None),
+                           ("verify_manifest", verify_manifest)):
+            if value is not None:
+                collector.error(f"source.{key}", "is an unpack option, and a version that runs a vendor installer does not unpack")
 
     # One populate method per version; shipped needs no populate method.
     if download_url is not None and script is not None:

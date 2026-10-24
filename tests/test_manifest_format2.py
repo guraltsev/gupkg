@@ -157,9 +157,6 @@ strip = "auto"
 require = ["a.exe"]
 verify_manifest = "MANIFEST.sha256"
 
-[source.installer]
-run = ["/S", "/DIR=$Stage"]
-
 [[source.nested]]
 path = "inner.zip"
 dest = "plugins"
@@ -539,11 +536,35 @@ def test_unknown_variable_is_rejected_with_a_hint() -> None:
 def test_stage_variable_is_valid_only_in_installer_arguments() -> None:
     """`$Stage` belongs to a vendor installer's `run` and is unknown anywhere else."""
     ok = version_manifest(
-        '[source]\ndownload_url = "https://x.test/setup.exe"\nkind = "nsis"\n[source.installer]\nrun = ["/DIR=$Stage"]\n'
+        '[source]\ndownload_url = "https://x.test/setup.exe"\nkind = "exe"\n[source.installer]\nrun = ["/DIR=$Stage"]\n'
     )
 
     assert ok.source.installer.run == ("/DIR=$Stage",)
     assert problems('format = 2\n[[path]]\nvalue = "$Stage"\n')
+
+
+@pytest.mark.parametrize("kind", ["git", "zip", "7z", "nsis", "msi", "tar", "file", "sfx"])
+def test_a_vendor_installer_refuses_a_kind_other_than_exe(kind: str) -> None:
+    """The installer runs the downloaded .exe itself: any other kind would be silently ignored, so it is an error."""
+    extra = '[source.git]\nref = "main"\n' if kind == "git" else ""
+    text = f'format = 2\n[source]\ndownload_url = "https://x.test/setup.exe"\nkind = "{kind}"\n[source.installer]\nrun = ["/DIR=$Stage"]\n{extra}'
+
+    assert any("kind must be" in item and kind in item for item in problems(text))
+
+
+@pytest.mark.parametrize("option", ['strip = 1', 'subdir = "x"', 'verify_manifest = "M.sha256"'])
+def test_a_vendor_installer_refuses_unpack_options(option: str) -> None:
+    """strip, subdir, verify_manifest (and nested, extract) belong to an unpack that does not happen."""
+    text = f'format = 2\n[source]\ndownload_url = "https://x.test/setup.exe"\nkind = "exe"\n{option}\n[source.installer]\nrun = ["/DIR=$Stage"]\n'
+
+    assert any("unpack option" in item for item in problems(text))
+
+
+def test_a_vendor_installer_with_kind_exe_or_none_is_valid() -> None:
+    """The two accepted spellings."""
+    for kind_line in ('kind = "exe"\n', ""):
+        text = f'format = 2\n[source]\ndownload_url = "https://x.test/setup.exe"\n{kind_line}[source.installer]\nrun = ["/DIR=$Stage"]\n'
+        assert parse_manifest(text).source.installer is not None
 
 
 # ---------------------------------------------------------------------------
