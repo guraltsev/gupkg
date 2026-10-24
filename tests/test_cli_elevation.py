@@ -16,10 +16,12 @@ Out of scope: the real UAC prompt and ``ShellExecute`` (``tests/manual_smoke.md`
 from __future__ import annotations
 
 import json
+import socket
 from pathlib import Path
 
 import pytest
 
+from gupkg.engine.locks import Holder, lock_path, render_lock
 from tests.cli_support import CliWorld
 from tests.engine_support import zip_bytes
 from tests.mode_support import pin_no_ambient_elevation  # noqa: F401
@@ -200,6 +202,36 @@ def test_the_child_refuses_a_user_root_and_the_root_options(world: CliWorld, tmp
     assert steered.code == 2 and "not accepted" in steered.err
     assert sandboxed.code == 2 and "not accepted" in sandboxed.err
     assert not (world.system_root / "tool" / "current").exists()
+
+
+def test_a_root_wide_cleanup_keeps_its_meaning_across_the_relaunch(world: CliWorld) -> None:
+    """`cleanup` with no target from a normal shell hands the child no targets, so the child sweeps and prunes the system root itself."""
+    world.publish("mine", "1.0.0", mode="user")
+
+    result = world.cli("cleanup", "--yes", "--json")
+
+    assert result.code == 0, result.err
+    [argv] = world.fake.relaunches
+    assert argv[0] == "cleanup" and not [item for item in argv if item.startswith(("system:", "user:"))]
+    document = result.document()
+    assert document["relaunched"] is True and set(document["root_cleanup"]) == {"user"}
+
+
+def test_the_relaunched_sweep_leaves_a_busy_system_package_alone(world: CliWorld) -> None:
+    """The child of a root-wide cleanup skips a package another run holds (it does not fail package-busy) and prunes the root."""
+    world.fake.elevated = True
+    assert world.cli("install", "system:tool", "--yes").code == 0
+    lock = lock_path(world.system_root / "tool")
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text(render_lock(Holder(424242, socket.gethostname(), "update", "2026-10-24T10:00:00", "othertoken")), encoding="utf-8")
+    world.fake.live_pids.add(424242)
+
+    child = world.cli("cleanup", "--relaunched", "--yes", "--json")
+
+    document = child.document()
+    assert child.code == 0, child.err
+    assert {item["package"]: item["status"] for item in document["results"]} == {"other": "cleaned", "tool": "locked"}
+    assert "system" in document["root_cleanup"]
 
 
 def test_check_updates_never_relaunches_and_an_elevated_one_on_a_user_package_refuses(world: CliWorld) -> None:

@@ -342,8 +342,9 @@ def _execute(
         if problem is not None:
             text += f"\nerror: {problem}"
             extra["errors"] = [{"code": "child-no-result", "message": problem, "hint": "The elevated run may have been killed; check the system root's logs."}]
-    if sweep and not relaunched:
-        extra["root_cleanup"] = _prune_roots(run, session, group_modes=_modes_of(targets), command=command)
+    if sweep:
+        # The system root is the elevated child's to prune when one ran.
+        extra["root_cleanup"] = _prune_roots(run, session, group_modes=_modes_of(targets) - ({"system"} if relaunched else set()), command=command)
     document = results.result_document(command, combined)
     document.update(extra)
     if "errors" in extra:
@@ -553,6 +554,10 @@ def _child_argv(
         argv += [targets[0], args.version]
     elif command == "link":
         argv += [targets[0], *([args.entry] if args.entry else [])]
+    elif command == "cleanup" and _is_sweep(args):
+        # A root-wide cleanup keeps its meaning across the relaunch: the child gets no targets, so it sweeps the system root
+        # itself (an elevated catalog lists only that root), leaves a busy package alone and prunes the root's logs and trees.
+        pass
     else:
         argv += list(targets)
     if getattr(args, "mode", None):
