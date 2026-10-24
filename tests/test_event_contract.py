@@ -118,6 +118,18 @@ def test_every_event_type_has_a_pinned_json_shape(event, record) -> None:
     assert json.loads(json.dumps(event_to_dict(event))) == record
 
 
+def test_a_diagnostic_traceback_is_redacted_like_every_other_text() -> None:
+    """A traceback that holds a URL with credentials reaches the reporters (and so the log files) without them."""
+    collector = _Collector()
+    text = "Traceback (most recent call last):\nHttpError: https://user:hunter2@example.org/a.zip?token=SECRET123&x=1 failed"
+
+    with use_reporter(collector):
+        emit(Diagnostic(text))
+
+    [event] = collector.events
+    assert "hunter2" not in event.text and "SECRET123" not in event.text and "Traceback" in event.text and "example.org" in event.text
+
+
 def test_the_contract_covers_every_event_type() -> None:
     """No event type exists without a pinned shape, so adding one forces a contract decision."""
     pinned = {type(param.values[0]) for param in CONTRACT}

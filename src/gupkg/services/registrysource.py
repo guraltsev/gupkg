@@ -39,6 +39,9 @@ from . import gitenv
 # A registry archive that GitHub serves records its commit in the ZIP comment; other archives are named by digest.
 _REVISION = re.compile(r"[0-9a-f]{40}")
 
+# MS-DOS device names, which Windows opens as devices whatever the folder and the extension (``nul.txt`` is ``nul``).
+_DEVICE_NAME = re.compile(r"(?i)(con|prn|aux|nul|conin\$|conout\$|(com|lpt)[0-9¹²³])(\..*)?")
+
 # Bounds on a registry archive (a registry is text files): a larger one is refused, whatever its entries claim about their size.
 MAX_ARCHIVE_ENTRIES = 50_000
 MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
@@ -149,6 +152,10 @@ def extract_archive(archive_path: Path, destination: Path) -> Path:
             parts = PurePosixPath(info.filename)
             if parts.is_absolute() or ".." in parts.parts or ":" in info.filename or "\\" in info.filename:
                 raise ConfigValidationError(f"Registry archive contains an unsafe path: {info.filename}")
+            for component in info.filename.split("/"):
+                # Windows drops trailing dots and spaces (".. " and "..." mean ".."), and a device name opens the device.
+                if component not in ("", ".") and (component != component.rstrip(" .") or _DEVICE_NAME.fullmatch(component)):
+                    raise ConfigValidationError(f"Registry archive contains a name Windows treats specially: {info.filename}")
             key = "/".join(parts.parts).casefold()
             if key in seen:
                 raise ConfigValidationError(f"Registry archive contains the name {info.filename} twice")

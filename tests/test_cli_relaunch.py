@@ -426,6 +426,27 @@ def test_the_child_accepts_the_parents_stop_marker_only_as_a_fresh_name_in_its_o
     assert first["stop_file"] == str(good) and second["stop_file"] not in (str(other), str(good))
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        pytest.param("gupkg-stop-" + "a" * 31, id="one-digit-short"), pytest.param("gupkg-stop-" + "a" * 33, id="one-digit-long"),
+        pytest.param("gupkg-stop-" + "A" * 32, id="upper-case-hex"), pytest.param("gupkg-stop-" + "g" * 32, id="not-hex"),
+        pytest.param("other-stop-" + "a" * 32, id="other-prefix"), pytest.param("gupkg-stop-" + "a" * 32 + ".txt", id="extension"),
+        pytest.param("gupkg-stop-" + "a" * 32 + " ", id="trailing-space"), pytest.param("gupkg-stop-", id="no-id"),
+    ],
+)
+def test_the_child_ignores_a_stop_marker_whose_name_has_the_wrong_shape_even_in_its_own_folder(world: CliWorld, name: str) -> None:
+    """Only `gupkg-stop-<32 lower-case hex>` is accepted from the parent; any other name in the right folder gets a fresh marker."""
+    world.fake.elevated = True
+    given = world.temp / name
+
+    result = world.cli("install", "--mode", "system", "--relaunched", "--yes", "--events-file", "w.jsonl", "--stop-file", str(given), "--", "tool")
+
+    first = json.loads((world.system_root / ".gupkg" / "logs" / "w.jsonl").read_text(encoding="utf-8").splitlines()[0])
+    assert result.code == 0, result.err
+    assert first["stop_file"] != str(given) and re.fullmatch(r"gupkg-stop-[0-9a-f]{32}", Path(first["stop_file"]).name)
+
+
 class _Process:
     """A scripted child process: ``done`` says it ended after *steps* waits; *interrupts* raise KeyboardInterrupt on given waits."""
 
