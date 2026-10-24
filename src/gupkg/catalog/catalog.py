@@ -513,6 +513,14 @@ class Catalog:
             view = PackageView(entry.name, self._root_for_mode(parsed.mode), None, registry=entry)
         return Resolved(view, parsed.version, named_version=parsed.version is not None)
 
+    def registry_entry(self, name: str, mode: str | None) -> RegistryEntry | None:
+        """Return the entry called *name* in the first registry that has it for packages of *mode*, or ``None``.
+
+        Used for a distribution folder that is not a package of any root yet: the registry may publish the
+        fingerprint that verifies it (design 9.2).
+        """
+        return self._first_entry(name, mode)
+
     # -- decisions ------------------------------------------------------------
 
     def candidates(self, view: PackageView) -> list[Candidate]:

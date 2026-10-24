@@ -48,6 +48,7 @@ from .port import (
     EnvValue,
     HttpResponse,
     ProcessAborted,
+    ProcessNotAllowed,
     ProcessResult,
     ResponseTooLarge,
     Scope,
@@ -71,6 +72,10 @@ def _find_on_path(name: str) -> Path | None:
 
 class UnexpectedCall(OSError):
     """Report a URL, process or action that the fake was not set up to serve."""
+
+
+class UnexpectedProcess(UnexpectedCall, ProcessNotAllowed):
+    """Report a program that the fake has no double for, so the engine can say the package needs a real run."""
 
 
 @dataclass(frozen=True)
@@ -376,7 +381,7 @@ class FakeSystem(WindowsLinks):
             return (self.delegate or WindowsSystem()).run(
                 [str(target), *command[1:]], cwd, env, on_line, input_text=input_text, timeout=timeout, watch=watch
             )
-        raise UnexpectedCall(f"FakeSystem has no process double for {command[0]!r}: {command}")
+        raise UnexpectedProcess(f"FakeSystem has no process double for {command[0]!r}: {command}")
 
     def regex_worker(
         self,

@@ -100,6 +100,7 @@ _SCHEMA: dict[str, Any] = {
     "cleanup": {"auto": _boolean},
     "ui": {"color": _choice("auto", "always", "never")},
     "hooks": {"allow_vendor_installers": _boolean},
+    "install": {"record_manifest": _boolean},
 }
 _TOP_LEVEL = ("schema", "registry", *_SCHEMA)
 
@@ -286,6 +287,7 @@ def default_layer() -> Layer:
             "cleanup": {"auto": False},
             "ui": {"color": "auto"},
             "hooks": {"allow_vendor_installers": True},
+            "install": {"record_manifest": True},
         },
         origin="built-in",
     )

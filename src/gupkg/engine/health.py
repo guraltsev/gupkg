@@ -1,0 +1,221 @@
+"""Diagnose the health of an installed package (design 9.2, 9.5 and 13; decision D21).
+
+``diagnose`` answers what ``gupkg check`` reports for one package: whether ``current`` is valid and the active ``App`` is
+non-empty, whether every effect of the install record is on the machine (a deleted shim, a missing ``PATH`` entry, a changed
+shortcut), whether the files of ``App`` still match the fingerprint recorded at install time (decision D41), whether the
+version directory still matches the fingerprint that the followed registry publishes (decision D29), and what is
+unverified about the install (skipped checksums, an origin that was not verified, shadowing across modes). It reads and
+reports; it never repairs. ``gupkg.engine.lifecycle.check`` repairs with ``--fix`` by running the install repair plan.
+
+Usage and API
+-------------
+Call ``diagnose(system, view, elevated=..., record_manifest=..., shadowing=...)``; the ``Diagnosis`` lists problems (what
+makes the package unhealthy), notes (what is only worth knowing) and the keys of drifted effects, which the repair plan
+applies again.
+
+Implementation Approach
+-----------------------
+A receipt is a self-report: in user and portable mode the user can edit it, so a stored ``verified`` is shown as a record
+and never as proof. What can be checked again is checked again: the files of ``App`` against the recorded hashes and the
+version directory against the registry's fingerprint. Nothing is followed through a link and nothing outside the package
+is read, except the machine state that the install record names.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from dataclasses import dataclass
+from pathlib import Path
+
+from ..model.checksum import unverified_note
+from ..model.plan import effect_key
+from ..model.state import PackageView
+from ..system.port import System
+from .effects import verify_each
+from .fingerprint import diff_app, tree_differences, version_fingerprint
+from .receipts import read_receipt, receipt_checksum
+
+
+@dataclass(frozen=True)
+class Problem:
+    """One finding: its ``kind`` (``current``, ``app-missing``, ``drift``, ``app-modified``, ``registry-fingerprint``...), text and whether ``--fix`` can repair it."""
+
+    kind: str
+    message: str
+    fixable: bool = False
+
+    def to_data(self) -> dict[str, object]:
+        """Return the JSON-ready finding."""
+        return {"kind": self.kind, "message": self.message, "fixable": self.fixable}
+
+
+@dataclass(frozen=True)
+class Diagnosis:
+    """The outcome of a health check of one package.
+
+    Attributes
+    ----------
+    installed : bool
+        Whether ``current`` is valid (a package that is not installed has nothing to check).
+    problems : tuple of Problem
+        What makes the package unhealthy.
+    notes : tuple of Problem
+        What is only worth knowing: unverified installs, shadowing, effects that could not be verified.
+    drifted : frozenset
+        The ``effect_key`` of recorded effects that are missing or changed, for the repair plan.
+    """
+
+    installed: bool
+    problems: tuple[Problem, ...] = ()
+    notes: tuple[Problem, ...] = ()
+    drifted: frozenset[tuple[str, ...]] = frozenset()
+
+    @property
+    def healthy(self) -> bool:
+        """Return whether nothing needs attention."""
+        return not self.problems
+
+    @property
+    def fixable(self) -> bool:
+        """Return whether ``--fix`` can repair at least one problem."""
+        return any(item.fixable for item in self.problems)
+
+
+def diagnose(
+    system: System, view: PackageView, *, elevated: bool, record_manifest: bool, shadowing: Sequence[str] = ()
+) -> Diagnosis:
+    """Diagnose one package.
+
+    Parameters
+    ----------
+    system : System
+        The machine boundary, used only to read what the install record says gupkg wrote.
+    view : PackageView
+        The package, built without verifying effects.
+    elevated : bool
+        Whether the run is elevated (the user's environment is then not read).
+    record_manifest : bool
+        The global ``install.record_manifest`` setting; when off, ``App`` files are not compared.
+    shadowing : sequence of str
+        The shadowing warnings of the listing, filtered here to this package.
+
+    Returns
+    -------
+    Diagnosis
+        The findings.
+    """
+    problems: list[Problem] = []
+    notes: list[Problem] = []
+    if view.local is None:
+        return Diagnosis(False, (Problem("not-local", f"'{view.name}' has no package root on disk"),))
+
+    # ``current`` and the install record itself.
+    current = view.local.current
+    if current.status not in ("absent", "valid"):
+        problems.append(Problem("current", current.problem or f"current is {current.status}"))
+    problems.extend(Problem("record", text) for text in view.problems)
+    if view.installed is None:
+        return Diagnosis(False, tuple(problems), tuple(_shadow_notes(view, shadowing)))
+
+    # The active App must exist and be non-empty; a missing one is repaired when its source can rebuild it.
+    version = view.installed.version
+    state = view.local.version(version)
+    manifest = state.manifest if state is not None else None
+    if not view.installed.app_populated:
+        recoverable = bool(manifest is not None and manifest.source.recoverable)
+        problems.append(Problem(
+            "app-missing", view.installed.app_problem or f"the App of {version} is missing or empty", recoverable,
+        ))
+
+    # Every effect of the install record must still be on the machine.
+    drifted: set[tuple[str, ...]] = set()
+    for effect, drift, unverified in verify_each(system, view.installed.effects, elevated=elevated):
+        if drift:
+            drifted.add(effect_key(effect))
+            problems.append(Problem("drift", drift, True))
+        if unverified:
+            notes.append(Problem("unverified-effect", f"not verified: {unverified}"))
+
+    # What the receipt says, and what can be checked again.
+    receipt = read_receipt(view.local.path, version)
+    if receipt.problem:
+        notes.append(Problem("receipt", receipt.problem))
+    elif receipt.data is not None:
+        notes.extend(_receipt_notes(receipt.data, view))
+        if view.installed.app_populated and record_manifest:
+            problems.extend(_app_problems(receipt.data, view, state, manifest))
+    if state is not None and manifest is not None:
+        problems.extend(_registry_problems(view, version, state.path, manifest))
+    notes.extend(_shadow_notes(view, shadowing))
+    return Diagnosis(True, tuple(problems), tuple(notes), frozenset(drifted))
+
+
+def _receipt_notes(data: dict, view: PackageView) -> list[Problem]:
+    """Return the notes of a receipt: skipped checksums, an origin that was not verified, a self-reported ``verified``."""
+    notes: list[Problem] = []
+    record = receipt_checksum(data)
+    if "checksum" in data and record is None:
+        return [Problem("receipt", "the receipt's checksum record is not valid; the install is treated as unverified")]
+    if record is None:
+        return notes
+    note = unverified_note(record.decision)
+    if note is not None:
+        notes.append(Problem("unverified", note))
+    elif view.mode in ("user", "portable"):
+        notes.append(Problem(
+            "self-reported",
+            f"recorded as {record.decision} in the receipt; in {view.mode} mode the receipt can be edited by the user, so this is "
+            "the install's own report, not proof",
+        ))
+    return notes
+
+
+def _app_problems(data: dict, view: PackageView, state, manifest) -> list[Problem]:
+    """Compare the files of the active ``App`` with the fingerprint recorded at install time (decision D41)."""
+    app_record = data.get("app")
+    if not isinstance(app_record, dict) or not app_record.get("recorded") or not isinstance(app_record.get("files"), dict):
+        return []
+    skip: tuple[str, ...] = ()
+    if view.mode == "portable" and manifest is not None and manifest.portable is not None:
+        skip = manifest.portable.persist
+    app = Path(view.installed.path) / "App"
+    try:
+        modified, missing, extra = diff_app(app, {str(k): str(v) for k, v in app_record["files"].items()}, skip)
+    except OSError as error:
+        return [Problem("app-unreadable", f"The App of {view.installed.version} cannot be read: {error}")]
+    found = []
+    for kind, names, text in (("modified", modified, "changed"), ("missing", missing, "deleted"), ("extra", extra, "added")):
+        if names:
+            shown = ", ".join(names[:10]) + (f" and {len(names) - 10} more" if len(names) > 10 else "")
+            found.append(Problem(f"app-{kind}", f"files of the App were {text} since the install: {shown}"))
+    return found
+
+
+def _registry_problems(view: PackageView, version: str, directory: Path, manifest) -> list[Problem]:
+    """Compare the version directory with the fingerprint the followed registry publishes (decision D29)."""
+    if view.registry is None:
+        return []
+    published = view.registry.version(version)
+    if published is None or published.fingerprint is None:
+        return []
+    try:
+        found = version_fingerprint(directory, include_app=manifest.source.shipped)
+    except OSError as error:
+        return [Problem("registry-fingerprint", f"The fingerprint of {directory} cannot be computed: {error}")]
+    if found == published.fingerprint.lower():
+        return []
+    try:
+        differing = tree_differences(directory, published.path, include_app=manifest.source.shipped)
+    except OSError:
+        differing = []
+    return [Problem(
+        "registry-fingerprint",
+        f"{view.name} {version} does not match the fingerprint of registry {view.registry.registry}"
+        + (f"; files that differ: {', '.join(differing[:20])}" if differing else ""),
+    )]
+
+
+def _shadow_notes(view: PackageView, shadowing: Sequence[str]) -> list[Problem]:
+    """Return the shadowing warnings of the listing that name this package."""
+    mine = f"'{view.name}'"
+    return [Problem("shadowing", text) for text in shadowing if mine in text]

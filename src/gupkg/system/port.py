@@ -116,6 +116,10 @@ class WorkerDidNotStart(TimeoutError):
     """Report that the regex worker never said it was up within its start limit (not a slow pattern)."""
 
 
+class ProcessNotAllowed(OSError):
+    """Report that a sandbox refused to start a program that it has no double for (the package needs a real run)."""
+
+
 class ProcessFailed(RuntimeError):
     """Report that a child process that had to succeed exited with a failure status."""
 
