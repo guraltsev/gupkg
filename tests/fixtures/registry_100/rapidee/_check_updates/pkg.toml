@@ -1,0 +1,23 @@
+format = 2
+description = "Rapid Environment Editor for Windows environment variables."
+project_url = "https://www.rapidee.com/"
+modes = ["system", "user"]
+
+[track]
+provider = "page"
+check_url = "https://www.rapidee.com/en/download"
+match = 'Current version \((?P<version>\d+(?:\.\d+)+)\)'
+download = "https://gitlab.com/api/v4/projects/olegd%2Frapidee/packages/generic/release-assets/v${version}/RapidEE.zip"
+
+[track.headers]
+User-Agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) gupkg-update-check/1"
+Accept = "text/html,application/xhtml+xml,*/*"
+
+[source]
+download_url = "${download_url}"
+require = ["RapidEE.exe"]
+
+[[shortcut]]
+name = "Rapid Environment Editor"
+target = "$App\\RapidEE.exe"
+description = "Environment variable editor"

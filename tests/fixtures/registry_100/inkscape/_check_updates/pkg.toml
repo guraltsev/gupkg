@@ -1,0 +1,44 @@
+format = 2
+description = "Vector graphics editor for illustrations, logos, and diagrams."
+project_url = "https://inkscape.org/"
+modes = ["system", "user"]
+
+# inkscape.org answers browsers only (the 0.17 hook sent "Mozilla/5.0") and
+# intermittently with gateway errors (the shared client retries those).
+[track]
+provider = "chain"
+download = "https://inkscape.org${path}"
+
+[[track.fetch]]
+url = "https://inkscape.org/release/"
+match = 'href="(?:/[a-z]{2}(?:-[a-z]+)?)?/release/inkscape-(?P<version>\d+(?:\.\d+)+)/"'
+headers = { User-Agent = "Mozilla/5.0" }
+
+[[track.fetch]]
+url = "https://inkscape.org/en/release/inkscape-${version}/windows/64-bit/compressed-7z/dl/"
+match = 'href="(?P<path>/gallery/item/\d+/[^"]+-x64[^"]*\.7z)"'
+headers = { User-Agent = "Mozilla/5.0" }
+
+[[track.fetch]]
+url = "https://inkscape.org/en/release/inkscape-${version}/windows/64-bit/compressed-7z/dl/"
+match = 'href="(?P<digest_url>https://[^"]+-x64\.7z[^"]*\.sha256)"'
+headers = { User-Agent = "Mozilla/5.0" }
+
+[[track.fetch]]
+url = "${digest_url}"
+match = '(?P<sha256>[0-9a-fA-F]{64})'
+headers = { User-Agent = "Mozilla/5.0" }
+
+[source]
+download_url = "${download_url}"
+strip = "auto"
+headers = { User-Agent = "Mozilla/5.0" }
+
+[[shortcut]]
+name = "Inkscape"
+target = "$App\\bin\\inkscape.exe"
+description = "Vector graphics editor"
+
+[[shim]]
+name = "inkscape"
+target = "$App\\bin\\inkscape.com"

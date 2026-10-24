@@ -1,0 +1,18 @@
+format = 2
+description = "Bulk uninstaller for removing unwanted programs."
+project_url = "https://www.bcuninstaller.com/"
+modes = ["system", "user"]
+
+[track]
+provider = "github"
+repo = "BCUninstaller/Bulk-Crap-Uninstaller"
+asset_pattern = 'BCUninstaller_\d+(?:\.\d+)+_portable\.7z'
+
+[source]
+download_url = "${asset_url}"
+strip = "auto"
+
+[[shortcut]]
+name = "Bulk Crap Uninstaller"
+target = "$App\\BCUninstaller.exe"
+description = "Bulk uninstaller"

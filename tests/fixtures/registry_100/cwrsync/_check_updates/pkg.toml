@@ -1,0 +1,21 @@
+format = 2
+description = "Barebone rsync client for Windows from itefix, bundling rsync and ssh."
+project_url = "https://itefix.net/cwrsync"
+modes = ["system", "user"]
+
+[track]
+provider = "page"
+check_url = "https://itefix.net/cwrsync"
+match = '/downloads/cwrsync/cwrsync_(?P<version>\d+(?:\.\d+)*)_x64_free\.zip'
+download = "https://itefix.net/downloads/cwrsync/cwrsync_${version}_x64_free.zip"
+
+[source]
+download_url = "${download_url}"
+require = ["bin\\rsync.exe"]
+
+[[path]]
+value = "$App\\bin"
+
+[[shim]]
+name = "rsync"
+target = "$App\\bin\\rsync.exe"

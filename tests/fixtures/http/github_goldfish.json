@@ -1,0 +1,24 @@
+{
+ "case": "github_goldfish",
+ "tracker": "goldfish",
+ "provider": "github latest, exact asset",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (tests/fixtures/registry_017/goldfish/_bootstrap/pkg.toml, the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "17.11.26",
+  "download_url": "https://github.com/MoganLab/goldfish/releases/download/v17.11.26/goldfish-scheme-x64-v17.11.26-win.zip",
+  "sha256": "d52d86650ffad735935413d4a71b2ec0ebaad619ff6f160c943256e74b2c43f5",
+  "sha256_from": "github-digest"
+ },
+ "responses": [
+  {
+   "url": "https://api.github.com/repos/MoganLab/goldfish/releases/latest",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"tag_name\": \"v17.11.26\", \"name\": \"v17.11.26\", \"draft\": false, \"prerelease\": false, \"html_url\": \"https://github.com/MoganLab/goldfish/releases/tag/v17.11.26\", \"assets\": [{\"name\": \"goldfish-scheme-x64-v17.11.26-linux.tar.gz\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/MoganLab/goldfish/releases/download/v17.11.26/goldfish-scheme-x64-v17.11.26-linux.tar.gz\", \"digest\": \"sha256:151bd2ef7dc7724e4df13560e368c47ad46741baa7de15b621205a29778f290e\"}, {\"name\": \"goldfish-scheme-x64-v17.11.26-win.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/MoganLab/goldfish/releases/download/v17.11.26/goldfish-scheme-x64-v17.11.26-win.zip\", \"digest\": \"sha256:d52d86650ffad735935413d4a71b2ec0ebaad619ff6f160c943256e74b2c43f5\"}]}"
+  }
+ ]
+}

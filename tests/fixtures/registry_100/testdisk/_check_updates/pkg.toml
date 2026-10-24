@@ -1,0 +1,38 @@
+format = 2
+description = "Partition recovery and file undelete utility."
+project_url = "https://www.cgsecurity.org/"
+modes = ["system", "user"]
+
+# Only stable releases match: a testdisk-<version>-WIP build is not followed.
+[track]
+provider = "page"
+check_url = "https://www.cgsecurity.org/wiki/TestDisk_Download"
+match = 'testdisk-(?P<version>\d+(?:\.\d+)*)\.win64\.zip'
+download = "https://www.cgsecurity.org/testdisk-${version}.win64.zip"
+
+[track.headers]
+User-Agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) gupkg-update-check/1"
+Accept = "text/html,application/xhtml+xml,*/*"
+
+[source]
+download_url = "${download_url}"
+strip = "auto"
+require = ["testdisk_win.exe", "photorec_win.exe"]
+
+[[shim]]
+name = "testdisk"
+target = "$App\\testdisk_win.exe"
+
+[[shim]]
+name = "photorec"
+target = "$App\\photorec_win.exe"
+
+[[shortcut]]
+name = "TestDisk"
+target = "$App\\testdisk_win.exe"
+description = "Partition and data recovery"
+
+[[shortcut]]
+name = "PhotoRec"
+target = "$App\\qphotorec_win.exe"
+description = "File carving recovery"

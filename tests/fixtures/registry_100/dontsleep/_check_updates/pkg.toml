@@ -1,0 +1,27 @@
+format = 2
+description = "Prevents Windows from sleeping, hibernating, shutting down, or restarting."
+project_url = "https://www.softwareok.com/?Download=DontSleep"
+modes = ["system", "user"]
+
+# SoftwareOK publishes unversioned file names; the download page announces the
+# version and lists the SHA-256 of every ZIP.
+[track]
+provider = "page"
+check_url = "https://www.softwareok.com/?Download=DontSleep"
+match = 'Download Don(?:\x27|&#0?39;|&apos;)t Sleep (?P<version>\d+(?:\.\d+)*)'
+download = "https://www.softwareok.com/Download/DontSleep_x64_Portable.zip"
+
+[track.headers]
+User-Agent = "Mozilla/5.0 gupkg-dontsleep-check/1"
+
+[source]
+download_url = "${download_url}"
+require = ["DontSleep_x64_p.exe"]
+
+[source.checksum]
+page_match = '(?s)DontSleep_x64_Portable\.zip<div[^>]*>.{0,400}?>(?P<sha256>[0-9a-fA-F]{64})<'
+
+[[shortcut]]
+name = "Dont Sleep"
+target = "$App\\DontSleep_x64_p.exe"
+description = "Prevent Windows from sleeping"

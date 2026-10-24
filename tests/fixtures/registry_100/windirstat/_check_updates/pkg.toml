@@ -1,0 +1,19 @@
+format = 2
+description = "Free and open-source disk-usage statistics viewer and cleanup tool for Windows."
+project_url = "https://windirstat.net/"
+modes = ["system", "user"]
+
+[track]
+provider = "github"
+repo = "windirstat/windirstat"
+asset = "WinDirStat.zip"
+tag_prefix = "release/"
+
+[source]
+download_url = "${asset_url}"
+require = ["x64/WinDirStat.exe"]
+
+[[shortcut]]
+name = "Tools\\WinDirStat"
+target = "$App\\x64\\WinDirStat.exe"
+description = "WinDirStat disk usage statistics viewer"

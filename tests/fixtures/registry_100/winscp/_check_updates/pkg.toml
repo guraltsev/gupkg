@@ -1,0 +1,32 @@
+format = 2
+description = "Free SFTP, SCP, FTP, and WebDAV client."
+project_url = "https://winscp.net/"
+modes = ["system", "user", "portable"]
+
+# The download page names the portable ZIP; the file's own page then issues a short-lived mirror link.
+[track]
+provider = "chain"
+download = "${download_url}"
+
+[[track.fetch]]
+url = "https://winscp.net/eng/downloads.php"
+match = 'WinSCP-(?P<version>\d+(?:\.\d+)+)-Portable\.zip\b(?!-)'
+
+[[track.fetch]]
+url = "https://winscp.net/download/WinSCP-${version}-Portable.zip/download"
+match = 'href="(?P<download_url>https://cdn\.winscp\.net/files/WinSCP-${version}-Portable\.zip\?[^"]+)"'
+
+# The publisher provides no checksum in a machine-readable place: no [source.checksum].
+[source]
+download_url = "${download_url}"
+
+# UNVERIFIED upstream portable mechanism
+# WinSCP keeps its settings in WinSCP.ini beside the exe when that file exists.
+[portable]
+persist = ["WinSCP.ini"]
+markers = [{ path = "WinSCP.ini", content = "" }]
+
+[[shortcut]]
+name = "WinSCP"
+target = "$App\\WinSCP.exe"
+description = "SFTP and FTP client"

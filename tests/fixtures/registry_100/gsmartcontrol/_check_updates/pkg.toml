@@ -1,0 +1,21 @@
+format = 2
+description = "Graphical front end for smartctl hard disk health checks."
+project_url = "https://gsmartcontrol.shaduri.dev/"
+modes = ["system", "user"]
+
+[track]
+provider = "github"
+repo = "ashaduri/gsmartcontrol"
+asset = "gsmartcontrol-${version}-win64.zip"
+
+[source]
+download_url = "${asset_url}"
+
+[[source.extract]]
+src = "gsmartcontrol-*/"
+dest = ""
+
+[[shortcut]]
+name = "GSmartControl"
+target = "$App\\gsmartcontrol.exe"
+description = "Disk S.M.A.R.T. health viewer"

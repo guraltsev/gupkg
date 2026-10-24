@@ -1,0 +1,24 @@
+{
+ "case": "github_sqlitebrowser",
+ "tracker": "sqlitebrowser",
+ "provider": "github latest, exact asset",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (tests/fixtures/registry_017/sqlitebrowser/_bootstrap/pkg.toml, the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "3.13.1",
+  "download_url": "https://github.com/sqlitebrowser/sqlitebrowser/releases/download/v3.13.1/DB.Browser.for.SQLite-v3.13.1-win64.zip",
+  "sha256": "ceaa6bcbdc83326c970af10fa9a976fa8ffa2cb6a88d6411e5f4056154315581",
+  "sha256_from": "github-digest"
+ },
+ "responses": [
+  {
+   "url": "https://api.github.com/repos/sqlitebrowser/sqlitebrowser/releases/latest",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"tag_name\": \"v3.13.1\", \"name\": \"v3.13.1\", \"draft\": false, \"prerelease\": false, \"html_url\": \"https://github.com/sqlitebrowser/sqlitebrowser/releases/tag/v3.13.1\", \"assets\": [{\"name\": \"DB.Browser.for.SQLite-v3.13.1-win32.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/sqlitebrowser/sqlitebrowser/releases/download/v3.13.1/DB.Browser.for.SQLite-v3.13.1-win32.zip\", \"digest\": \"sha256:2cb03d6064716a9c87e2887511aa9b6244c83f3159984e1dfe567fefd44c3ffe\"}, {\"name\": \"DB.Browser.for.SQLite-v3.13.1-win64.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/sqlitebrowser/sqlitebrowser/releases/download/v3.13.1/DB.Browser.for.SQLite-v3.13.1-win64.zip\", \"digest\": \"sha256:ceaa6bcbdc83326c970af10fa9a976fa8ffa2cb6a88d6411e5f4056154315581\"}, {\"name\": \"DB.Browser.for.SQLite-v3.13.1-win64.msi\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/sqlitebrowser/sqlitebrowser/releases/download/v3.13.1/DB.Browser.for.SQLite-v3.13.1-win64.msi\", \"digest\": \"sha256:5c9e4fb8ea22291f6e6d34bb6282fe65d41d20d8f3bdffe24b832b103ee96768\"}]}"
+  }
+ ]
+}

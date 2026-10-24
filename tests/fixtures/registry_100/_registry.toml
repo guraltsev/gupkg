@@ -1,0 +1,9 @@
+format = 2
+name = "gupkg-registry"
+description = "The official gupkg package registry: one tracker per package, pinned versions with hashes and fingerprints."
+unpinned = [
+    "qbittorrent/5.2.3",
+]
+
+[fingerprints]
+"qbittorrent/5.2.3" = "52292942b31e8da520dd55448d58e71784ed0a0e8fbe232b05848d3eb9ccae61"

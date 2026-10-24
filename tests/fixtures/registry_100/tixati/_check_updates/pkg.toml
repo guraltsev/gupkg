@@ -1,0 +1,32 @@
+format = 2
+description = "Peer-to-peer file sharing program that uses the BitTorrent protocol."
+project_url = "https://www.tixati.com/"
+modes = ["portable"]
+
+# The page lists exactly one portable edition; its file name carries the version.
+[track]
+provider = "page"
+check_url = "https://tixati.com/windows"
+match = '(?P<file>tixati-(?P<version>\d+(?:\.\d+)*-\d+)\.portable\.zip)'
+download = "https://download.tixati.com/${file}"
+
+[track.headers]
+User-Agent = "Mozilla/5.0 gupkg-tixati-check/1"
+
+# Tixati publishes only GPG signatures, not SHA-256 digests. Keep the 64-bit
+# program; the Linux and 32-bit builds are skipped.
+[source]
+download_url = "${download_url}"
+
+[[source.extract]]
+src = "Tixati_portable/tixati_Windows64bit.exe"
+dest = ""
+
+# UNVERIFIED upstream portable mechanism
+[portable]
+markers = ["tixati_portable_mode.txt"]
+
+[[shortcut]]
+name = "Tixati"
+target = "$App\\tixati_Windows64bit.exe"
+description = "Peer-to-peer BitTorrent client"

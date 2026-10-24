@@ -1,0 +1,24 @@
+{
+ "case": "github_gsmartcontrol",
+ "tracker": "gsmartcontrol",
+ "provider": "github latest, exact asset",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (tests/fixtures/registry_017/gsmartcontrol/_bootstrap/pkg.toml, the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "2.0.2",
+  "download_url": "https://github.com/ashaduri/gsmartcontrol/releases/download/v2.0.2/gsmartcontrol-2.0.2-win64.zip",
+  "sha256": "e6a62883db11b314fc4694e346cc5d8e3fe666334ad1b6dc11ca8840ef5d2259",
+  "sha256_from": "github-digest"
+ },
+ "responses": [
+  {
+   "url": "https://api.github.com/repos/ashaduri/gsmartcontrol/releases/latest",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"tag_name\": \"v2.0.2\", \"name\": \"v2.0.2\", \"draft\": false, \"prerelease\": false, \"html_url\": \"https://github.com/ashaduri/gsmartcontrol/releases/tag/v2.0.2\", \"assets\": [{\"name\": \"gsmartcontrol-2.0.2.tar.bz2\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/ashaduri/gsmartcontrol/releases/download/v2.0.2/gsmartcontrol-2.0.2.tar.bz2\", \"digest\": \"sha256:6b37ada9196293d921b03b697bf23452b5c8d9e449869c16886016bf59b3c9da\"}, {\"name\": \"gsmartcontrol-2.0.2-win64.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/ashaduri/gsmartcontrol/releases/download/v2.0.2/gsmartcontrol-2.0.2-win64.zip\", \"digest\": \"sha256:e6a62883db11b314fc4694e346cc5d8e3fe666334ad1b6dc11ca8840ef5d2259\"}]}"
+  }
+ ]
+}

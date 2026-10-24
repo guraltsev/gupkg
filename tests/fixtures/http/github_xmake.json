@@ -1,0 +1,24 @@
+{
+ "case": "github_xmake",
+ "tracker": "xmake",
+ "provider": "github latest, exact asset",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (tests/fixtures/registry_017/xmake/_bootstrap/pkg.toml, the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "2.9.7",
+  "download_url": "https://github.com/xmake-io/xmake/releases/download/v2.9.7/xmake-master.win64.zip",
+  "sha256": "12180284d6d4f4718d3570c69af38d1d8142eb6cab9c1a64ddbdf36681f0ee5a",
+  "sha256_from": "github-digest"
+ },
+ "responses": [
+  {
+   "url": "https://api.github.com/repos/xmake-io/xmake/releases/latest",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"tag_name\": \"v2.9.7\", \"name\": \"v2.9.7\", \"draft\": false, \"prerelease\": false, \"html_url\": \"https://github.com/xmake-io/xmake/releases/tag/v2.9.7\", \"assets\": [{\"name\": \"xmake-v2.9.7.win64.exe\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/xmake-io/xmake/releases/download/v2.9.7/xmake-v2.9.7.win64.exe\", \"digest\": \"sha256:8c1be5af3cabecfc7b3d5d559bcf78c22261d1660a320bb207264dfe44750d7b\"}, {\"name\": \"xmake-master.win64.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/xmake-io/xmake/releases/download/v2.9.7/xmake-master.win64.zip\", \"digest\": \"sha256:12180284d6d4f4718d3570c69af38d1d8142eb6cab9c1a64ddbdf36681f0ee5a\"}, {\"name\": \"xmake-master.win32.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/xmake-io/xmake/releases/download/v2.9.7/xmake-master.win32.zip\", \"digest\": \"sha256:b3e1d2df91a202e09a8f3018687fb22ff3988378fb18c4e0c6198cdecd0bae86\"}]}"
+  }
+ ]
+}

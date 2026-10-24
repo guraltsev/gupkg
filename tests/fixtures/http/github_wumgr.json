@@ -1,0 +1,24 @@
+{
+ "case": "github_wumgr",
+ "tracker": "wumgr",
+ "provider": "github latest, asset pattern (tag v1.1, asset WuMgr_v1.1b.zip)",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/wumgr/_bootstrap/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "1.1",
+  "download_url": "https://github.com/o/r/releases/download/v1.1/WuMgr_v1.1b.zip",
+  "sha256": "d095c4e673b7445836610a3754a14899156ee0450aea15e35bed3a0e8c0c5a68",
+  "sha256_from": "github-digest"
+ },
+ "responses": [
+  {
+   "url": "https://api.github.com/repos/DavidXanatos/wumgr/releases/latest",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"tag_name\": \"v1.1\", \"name\": \"v1.1\", \"draft\": false, \"prerelease\": false, \"html_url\": \"https://github.com/o/r/releases/tag/v1.1\", \"assets\": [{\"name\": \"WuMgr_v1.1b.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/o/r/releases/download/v1.1/WuMgr_v1.1b.zip\", \"digest\": \"sha256:d095c4e673b7445836610a3754a14899156ee0450aea15e35bed3a0e8c0c5a68\"}, {\"name\": \"WuMgr_src_v1.1.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/o/r/releases/download/v1.1/WuMgr_src_v1.1.zip\", \"digest\": \"sha256:56de3131563d14a8db2dd82abdaf817113b5b6b89b887da422c6b73de9e562a9\"}, {\"name\": \"WuMgr_v1.1b_setup.exe\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/o/r/releases/download/v1.1/WuMgr_v1.1b_setup.exe\", \"digest\": \"sha256:33ba1d3cafa9184a7bea24ff74772b90f6839963a2046dfa48cb0e053f2b6f3b\"}]}"
+  }
+ ]
+}

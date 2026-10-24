@@ -1,0 +1,26 @@
+format = 2
+description = "7-Zip is a file archiver with a high compression ratio."
+project_url = "https://www.7-zip.org/"
+modes = ["system", "user"]
+
+[track]
+provider = "page"
+check_url = "https://www.7-zip.org/"
+match = 'Download\s+7-Zip\s+(?P<version>\d+(?:\.\d+)+)\s*\([^)]{0,40}\)\s*for\s+Windows'
+# The installer is named after the version without its dot: 24.09 -> 7z2409-x64.exe.
+download = "https://www.7-zip.org/a/7z${version|nodots}-x64.exe"
+
+[source]
+download_url = "${download_url}"
+require = ["7z.exe", "7zFM.exe"]
+
+[[shim]]
+name = "7z"
+target = "$App\\7z.exe"
+working_dir = "$App"
+
+[[shortcut]]
+name = "7-Zip File Manager"
+target = "$App\\7zFM.exe"
+working_dir = "$App"
+description = "7-Zip File Manager"

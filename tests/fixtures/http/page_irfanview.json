@@ -1,0 +1,24 @@
+{
+ "case": "page_irfanview",
+ "tracker": "irfanview",
+ "provider": "page (three digits turned into major.minor)",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/irfanview/_bootstrap/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "4.72",
+  "download_url": "https://www.irfanview.info/files/iview472_x64.zip",
+  "sha256": null,
+  "sha256_from": null
+ },
+ "responses": [
+  {
+   "url": "https://www.irfanview.com/main_download_engl.htm",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/html"
+   },
+   "body": "<html><body><a href=\"https://www.irfanview.info/files/iview471_x64.zip\">old 64-bit</a>\n<a href=\"https://www.irfanview.info/files/iview471.zip\">old 32-bit</a>\n<a href=\"https://www.irfanview.info/files/iview472.zip\">ZIP 32-bit</a>\n<a href=\"https://www.irfanview.info/files/iview472_x64.zip\">ZIP 64-bit</a>\n<a href=\"https://www.irfanview.info/files/iview472_plugins_x64.zip\">Plugins</a></body></html>"
+  }
+ ]
+}

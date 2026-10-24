@@ -1,0 +1,24 @@
+{
+ "case": "github_paintdotnet",
+ "tracker": "paintdotnet",
+ "provider": "github latest, exact asset",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (tests/fixtures/registry_017/paintdotnet/_bootstrap/pkg.toml, the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "5.1.1",
+  "download_url": "https://github.com/paintdotnet/release/releases/download/v5.1.1/paint.net.5.1.1.portable.x64.zip",
+  "sha256": "a024b3da5a86de1df27bad6f0849f901dc0916b8591588c65968fc055ede3c4a",
+  "sha256_from": "github-digest"
+ },
+ "responses": [
+  {
+   "url": "https://api.github.com/repos/paintdotnet/release/releases/latest",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"tag_name\": \"v5.1.1\", \"name\": \"v5.1.1\", \"draft\": false, \"prerelease\": false, \"html_url\": \"https://github.com/paintdotnet/release/releases/tag/v5.1.1\", \"assets\": [{\"name\": \"paint.net.5.1.1.install.x64.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/paintdotnet/release/releases/download/v5.1.1/paint.net.5.1.1.install.x64.zip\", \"digest\": \"sha256:f384df3ae513558e8b8a7c79805c6be1bd5a0f8678d6e630f58ab265c1883f13\"}, {\"name\": \"paint.net.5.1.1.portable.x64.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/paintdotnet/release/releases/download/v5.1.1/paint.net.5.1.1.portable.x64.zip\", \"digest\": \"sha256:a024b3da5a86de1df27bad6f0849f901dc0916b8591588c65968fc055ede3c4a\"}]}"
+  }
+ ]
+}

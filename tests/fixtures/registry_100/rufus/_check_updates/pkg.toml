@@ -1,0 +1,26 @@
+format = 2
+description = "Creates bootable USB drives."
+project_url = "https://rufus.ie/"
+modes = ["system", "user", "portable"]
+
+[track]
+provider = "github"
+repo = "pbatard/rufus"
+asset = "rufus-${version}p.exe"
+
+[source]
+download_url = "${asset_url}"
+kind = "exe"
+
+[[prepare]]
+rename = { from = "rufus-${version}p.exe", to = "rufus.exe" }
+
+# UNVERIFIED upstream portable mechanism
+[portable]
+markers = [{ path = "rufus.ini", content = "" }]
+persist = ["rufus.ini"]
+
+[[shortcut]]
+name = "Tools\\Rufus"
+target = "$App\\rufus.exe"
+description = "Bootable USB creator"

@@ -1,0 +1,24 @@
+{
+ "case": "github_npbackup",
+ "tracker": "npbackup",
+ "provider": "github latest, exact asset",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (tests/fixtures/registry_017/npbackup/_bootstrap/pkg.toml, the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "3.0.2",
+  "download_url": "https://github.com/netinvent/npbackup/releases/download/v3.0.2/npbackup-windows-x64-gui-public.zip",
+  "sha256": "c0499f84b496672a31c1d47f7a8e38e9d9044cfb9805d47ce365467c9ea5173f",
+  "sha256_from": "github-digest"
+ },
+ "responses": [
+  {
+   "url": "https://api.github.com/repos/netinvent/npbackup/releases/latest",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"tag_name\": \"v3.0.2\", \"name\": \"v3.0.2\", \"draft\": false, \"prerelease\": false, \"html_url\": \"https://github.com/netinvent/npbackup/releases/tag/v3.0.2\", \"assets\": [{\"name\": \"npbackup-windows-x64-cli-public.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/netinvent/npbackup/releases/download/v3.0.2/npbackup-windows-x64-cli-public.zip\", \"digest\": \"sha256:7c6411420e560385776a8b4a0a592257d39dbbfc3242674108daf95a4bc6334d\"}, {\"name\": \"npbackup-windows-x64-gui-public.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/netinvent/npbackup/releases/download/v3.0.2/npbackup-windows-x64-gui-public.zip\", \"digest\": \"sha256:c0499f84b496672a31c1d47f7a8e38e9d9044cfb9805d47ce365467c9ea5173f\"}, {\"name\": \"npbackup-linux-x64-gui-public.tar.gz\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/netinvent/npbackup/releases/download/v3.0.2/npbackup-linux-x64-gui-public.tar.gz\", \"digest\": \"sha256:b73b8510ad95ced6ff507056b8e7936f63889ad577f36162e04e3e1f7d3ab946\"}]}"
+  }
+ ]
+}

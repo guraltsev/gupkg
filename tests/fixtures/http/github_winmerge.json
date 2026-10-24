@@ -1,0 +1,24 @@
+{
+ "case": "github_winmerge",
+ "tracker": "winmerge",
+ "provider": "github latest, exact asset",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (tests/fixtures/registry_017/winmerge/_bootstrap/pkg.toml, the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "2.16.46",
+  "download_url": "https://github.com/WinMerge/winmerge/releases/download/v2.16.46/winmerge-2.16.46-x64-exe.zip",
+  "sha256": "0086a53ef9481a47757a1be073334b3fc8f9473987f028c746c180d48b01563b",
+  "sha256_from": "github-digest"
+ },
+ "responses": [
+  {
+   "url": "https://api.github.com/repos/WinMerge/winmerge/releases/latest",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"tag_name\": \"v2.16.46\", \"name\": \"v2.16.46\", \"draft\": false, \"prerelease\": false, \"html_url\": \"https://github.com/WinMerge/winmerge/releases/tag/v2.16.46\", \"assets\": [{\"name\": \"winmerge-2.16.46-x64-setup.exe\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/WinMerge/winmerge/releases/download/v2.16.46/winmerge-2.16.46-x64-setup.exe\", \"digest\": \"sha256:e32330b22c61a6692e3c4292ea20b6dfd3259094097e0af3f35afe0a3f6cdacd\"}, {\"name\": \"winmerge-2.16.46-x64-exe.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/WinMerge/winmerge/releases/download/v2.16.46/winmerge-2.16.46-x64-exe.zip\", \"digest\": \"sha256:0086a53ef9481a47757a1be073334b3fc8f9473987f028c746c180d48b01563b\"}, {\"name\": \"winmerge-2.16.46-x86-exe.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/WinMerge/winmerge/releases/download/v2.16.46/winmerge-2.16.46-x86-exe.zip\", \"digest\": \"sha256:12988c3afe3d2f41a6b6b010a60e5bc4fe0caa597c539281282673d3e20d3abb\"}]}"
+  }
+ ]
+}

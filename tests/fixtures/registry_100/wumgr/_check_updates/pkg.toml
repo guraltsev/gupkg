@@ -1,0 +1,19 @@
+format = 2
+description = "Windows Update manager that controls update installation."
+project_url = "https://github.com/DavidXanatos/wumgr"
+modes = ["system", "user"]
+
+# The tag (v1.1) differs from the asset name (WuMgr_v1.1b.zip): select the asset by pattern.
+[track]
+provider = "github"
+repo = "DavidXanatos/wumgr"
+asset_pattern = 'WuMgr_v[\d.]+[a-z]?\.zip'
+
+# The GitHub asset digest is the checksum (found by the github provider).
+[source]
+download_url = "${asset_url}"
+
+[[shortcut]]
+name = "Tools\\WuMgr"
+target = "$App\\wumgr.exe"
+description = "Windows Update manager"

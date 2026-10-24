@@ -1,6 +1,6 @@
 """Show that eleven registry packages need no hook: their trackers validate, run and populate ``App``.
 
-For each package the committed format 2 tracker (``tests/fixtures/registry2``) is validated
+For each package the committed format 2 tracker (``tests/fixtures/registry_100``) is validated
 with ``check_directory`` (no error, no warning, no ``pkg.local``), run against the fixture
 vendor responses, rendered to a pinned version directory that validates too, and then used to
 populate an ``App`` from an archive built with the vendor's layout. Real services run
@@ -56,12 +56,12 @@ def pidgin(system: FakeSystem, work: Path) -> Built:
 
 
 def keypirinha(system: FakeSystem, work: Path) -> Built:
-    """A 7z with one wrapper folder and a `portable` marker folder that must not remain."""
+    """A 7z with one wrapper folder and a `portable` marker folder: unpacking keeps it, `[nonportable] remove` (engine, issue 028) drops it outside portable mode."""
     archive = make_7z(system, work / "k.7z", {
         "keypirinha-2.26-x64-portable/keypirinha.exe": "k", "keypirinha-2.26-x64-portable/bin/x.dll": "d",
         "keypirinha-2.26-x64-portable/portable/.portable": "marker",
     })
-    return archive, "keypirinha-2.26-x64-portable.7z", {"keypirinha.exe": "k", "bin/x.dll": "d"}, None
+    return archive, "keypirinha-2.26-x64-portable.7z", {"keypirinha.exe": "k", "bin/x.dll": "d", "portable/.portable": "marker"}, None
 
 
 def lockhunter(system: FakeSystem, work: Path) -> Built:

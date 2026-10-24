@@ -1,0 +1,24 @@
+{
+ "case": "page_openhardwaremonitor",
+ "tracker": "openhardwaremonitor",
+ "provider": "page (several releases listed, newest chosen)",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/openhardwaremonitor/_bootstrap/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "0.9.6",
+  "download_url": "https://openhardwaremonitor.org/files/openhardwaremonitor-v0.9.6.zip",
+  "sha256": null,
+  "sha256_from": null
+ },
+ "responses": [
+  {
+   "url": "https://openhardwaremonitor.org/downloads/",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/html"
+   },
+   "body": "<html><body><a href=\"https://openhardwaremonitor.org/files/openhardwaremonitor-v0.9.5.zip\">0.9.5</a>\n<a href=\"https://openhardwaremonitor.org/files/openhardwaremonitor-v0.9.6.zip\">0.9.6</a>\n<a href=\"https://openhardwaremonitor.org/files/openhardwaremonitor-v0.8.zip\">old</a></body></html>"
+  }
+ ]
+}

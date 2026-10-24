@@ -1,0 +1,30 @@
+format = 2
+description = "Hassle-free JavaScript tool manager that pins node, npm, pnpm, and yarn per project."
+project_url = "https://volta.sh/"
+modes = ["system", "user"]
+
+[track]
+provider = "github"
+repo = "volta-cli/volta"
+asset = "volta-${version}-windows.zip"
+
+# The GitHub asset digest is the checksum (found by the github provider).
+[source]
+download_url = "${asset_url}"
+require = ["volta.exe", "volta-shim.exe"]
+
+# What `volta setup` does on Windows: volta-shim.exe dispatches on the name it is launched as,
+# so each tool gets its own byte-for-byte copy.
+[[prepare]]
+copy = { from = "volta-shim.exe", to = ["node.exe", "npm.exe", "npx.exe", "pnpm.exe", "yarn.exe"] }
+
+[[path]]
+value = "$App"
+
+# Shims for globally installed tools (e.g. tsc) are created here by Volta.
+[[path]]
+value = "%LOCALAPPDATA%\\Volta\\bin"
+
+[[shim]]
+name = "volta"
+target = "$App\\volta.exe"

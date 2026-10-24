@@ -1,0 +1,24 @@
+format = 2
+description = "DB Browser for SQLite, a visual tool for creating, designing, and editing SQLite database files."
+project_url = "https://sqlitebrowser.org/"
+modes = ["portable"]
+
+[track]
+provider = "github"
+repo = "sqlitebrowser/sqlitebrowser"
+asset = "DB.Browser.for.SQLite-v${version}-win64.zip"
+
+[source]
+download_url = "${asset_url}"
+require = ["DB Browser for SQLite.exe"]
+
+[[shortcut]]
+name = "DB Browser for SQLite"
+target = "$App\\DB Browser for SQLite.exe"
+icon_location = "$App\\DB Browser for SQLite.exe"
+description = "DB Browser for SQLite"
+
+[[shim]]
+name = "sqlitebrowser"
+target = "$App\\DB Browser for SQLite.exe"
+type = "gui"

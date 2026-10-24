@@ -1,0 +1,24 @@
+{
+ "case": "github_perl",
+ "tracker": "perl",
+ "provider": "github latest, version from asset name (tag SP_54231_64bit)",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/perl/_bootstrap/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "5.42.3.1",
+  "download_url": "https://github.com/o/r/releases/download/SP_54231_64bit/strawberry-perl-5.42.3.1-64bit-portable.zip",
+  "sha256": "ec8b5f60aa81b1502b12f0c4f1267feb4279aa2956d1414d1b5d8318f9d5be60",
+  "sha256_from": "github-digest"
+ },
+ "responses": [
+  {
+   "url": "https://api.github.com/repos/StrawberryPerl/Perl-Dist-Strawberry/releases/latest",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"tag_name\": \"SP_54231_64bit\", \"name\": \"SP_54231_64bit\", \"draft\": false, \"prerelease\": false, \"html_url\": \"https://github.com/o/r/releases/tag/SP_54231_64bit\", \"assets\": [{\"name\": \"strawberry-perl-5.42.3.1-64bit-portable.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/o/r/releases/download/SP_54231_64bit/strawberry-perl-5.42.3.1-64bit-portable.zip\", \"digest\": \"sha256:ec8b5f60aa81b1502b12f0c4f1267feb4279aa2956d1414d1b5d8318f9d5be60\"}, {\"name\": \"strawberry-perl-5.42.3.1-64bit-PDL.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/o/r/releases/download/SP_54231_64bit/strawberry-perl-5.42.3.1-64bit-PDL.zip\", \"digest\": \"sha256:41248ddfcd0b798c3acf62f37e81a4d86e2216d014cda35265117214ac02b04e\"}, {\"name\": \"strawberry-perl-5.42.3.1-64bit.msi\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/o/r/releases/download/SP_54231_64bit/strawberry-perl-5.42.3.1-64bit.msi\", \"digest\": \"sha256:ee140f3afb5cb889878e05e1b7854f7d476d0f8b855488bbe28aac9edf64f56d\"}, {\"name\": \"strawberry-perl-5.42.3.1-32bit-portable.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/o/r/releases/download/SP_54231_64bit/strawberry-perl-5.42.3.1-32bit-portable.zip\", \"digest\": \"sha256:15484175c1e1fdcc5c890c15622dcdab19e6cebae7c8b402dae0380da4b6f789\"}]}"
+  }
+ ]
+}

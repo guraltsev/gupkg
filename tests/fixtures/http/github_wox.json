@@ -1,0 +1,24 @@
+{
+ "case": "github_wox",
+ "tracker": "wox",
+ "provider": "github latest, exact asset",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (tests/fixtures/registry_017/wox/_bootstrap/pkg.toml, the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "2.0.0",
+  "download_url": "https://github.com/Wox-launcher/Wox/releases/download/v2.0.0/wox-windows-amd64.exe",
+  "sha256": "d28ec20269ae96a0b066249008e976d805219dba45f180e741cde82664d5dc28",
+  "sha256_from": "github-digest"
+ },
+ "responses": [
+  {
+   "url": "https://api.github.com/repos/Wox-launcher/Wox/releases/latest",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"tag_name\": \"v2.0.0\", \"name\": \"v2.0.0\", \"draft\": false, \"prerelease\": false, \"html_url\": \"https://github.com/Wox-launcher/Wox/releases/tag/v2.0.0\", \"assets\": [{\"name\": \"wox-linux-amd64\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/Wox-launcher/Wox/releases/download/v2.0.0/wox-linux-amd64\", \"digest\": \"sha256:1e21e3a5d996ddc7705361b6fc6942ce55d8bab69c0a804f988f8a7be9f2db06\"}, {\"name\": \"wox-windows-amd64.exe\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/Wox-launcher/Wox/releases/download/v2.0.0/wox-windows-amd64.exe\", \"digest\": \"sha256:d28ec20269ae96a0b066249008e976d805219dba45f180e741cde82664d5dc28\"}, {\"name\": \"wox-macos-arm64\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/Wox-launcher/Wox/releases/download/v2.0.0/wox-macos-arm64\", \"digest\": \"sha256:dc0cb3090e6ec4961b58ba4b33a5b7c5bd77d2047bba0463e80c2242fb084b70\"}]}"
+  }
+ ]
+}

@@ -1,0 +1,24 @@
+{
+ "case": "github_gh",
+ "tracker": "gh",
+ "provider": "github latest, exact asset",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (tests/fixtures/registry_017/gh/_bootstrap/pkg.toml, the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "2.63.2",
+  "download_url": "https://github.com/cli/cli/releases/download/v2.63.2/gh_2.63.2_windows_amd64.zip",
+  "sha256": "77deacf71001e64d5cf2dadba6ff4f36e60a18d5d2623eb86a036d40ab1d46ca",
+  "sha256_from": "github-digest"
+ },
+ "responses": [
+  {
+   "url": "https://api.github.com/repos/cli/cli/releases/latest",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"tag_name\": \"v2.63.2\", \"name\": \"v2.63.2\", \"draft\": false, \"prerelease\": false, \"html_url\": \"https://github.com/cli/cli/releases/tag/v2.63.2\", \"assets\": [{\"name\": \"gh_2.63.2_windows_arm64.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/cli/cli/releases/download/v2.63.2/gh_2.63.2_windows_arm64.zip\", \"digest\": \"sha256:33e6b26fbf840a6453d0405119dc926d85b2cdc3eeb7480e30c0dbac2bf02a04\"}, {\"name\": \"gh_2.63.2_windows_amd64.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/cli/cli/releases/download/v2.63.2/gh_2.63.2_windows_amd64.zip\", \"digest\": \"sha256:77deacf71001e64d5cf2dadba6ff4f36e60a18d5d2623eb86a036d40ab1d46ca\"}, {\"name\": \"gh_2.63.2_linux_amd64.tar.gz\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/cli/cli/releases/download/v2.63.2/gh_2.63.2_linux_amd64.tar.gz\", \"digest\": \"sha256:7728b0bdfc9fc56fe886d7a1d8a452ec741826aa83e4021a3bb4a98dff817905\"}, {\"name\": \"gh_2.63.2_checksums.txt\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/cli/cli/releases/download/v2.63.2/gh_2.63.2_checksums.txt\", \"digest\": \"sha256:68f325d5eb0af5e1873e8a54238e20dcf75728fa7e32569d4ebdd5a567eaf7be\"}]}"
+  }
+ ]
+}

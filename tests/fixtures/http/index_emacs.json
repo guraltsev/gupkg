@@ -1,0 +1,33 @@
+{
+ "case": "index_emacs",
+ "tracker": "emacs",
+ "provider": "index (major folder, then the newest UCRT64 ZIP)",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/emacs/_bootstrap/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "30.2",
+  "download_url": "https://ftp.gnu.org/gnu/emacs/windows/emacs-30/emacs-30.2-UCRT64.zip",
+  "sha256": null,
+  "sha256_from": null
+ },
+ "responses": [
+  {
+   "url": "https://ftp.gnu.org/gnu/emacs/windows/",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/html"
+   },
+   "body": "<html><head><title>Index of /gnu/emacs/windows</title></head><body><pre>\n<a href=\"../\">../</a>\n<a href=\"emacs-28/\">emacs-28/</a>\n<a href=\"emacs-29/\">emacs-29/</a>\n<a href=\"emacs-9/\">emacs-9/</a>\n<a href=\"emacs-30/\">emacs-30/</a>\n<a href=\"README\">README</a></pre></body></html>"
+  },
+  {
+   "url": "https://ftp.gnu.org/gnu/emacs/windows/emacs-30/",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/html"
+   },
+   "body": "<html><head><title>Index of /gnu/emacs/windows/emacs-30</title></head><body><pre>\n<a href=\"emacs-30.1-installer.exe\">emacs-30.1-installer.exe</a>\n<a href=\"emacs-30.1-no-deps.zip\">emacs-30.1-no-deps.zip</a>\n<a href=\"emacs-30.1-UCRT64.zip\">emacs-30.1-UCRT64.zip</a>\n<a href=\"emacs-30.1-UCRT64.zip.sig\">emacs-30.1-UCRT64.zip.sig</a>\n<a href=\"emacs-30.2-no-deps.zip\">emacs-30.2-no-deps.zip</a>\n<a href=\"emacs-30.2-UCRT64.zip\">emacs-30.2-UCRT64.zip</a>\n<a href=\"emacs-30.2-sha256sums.txt\">emacs-30.2-sha256sums.txt</a></pre></body></html>"
+  }
+ ]
+}

@@ -1,0 +1,24 @@
+{
+ "case": "page_SumatraPDF-portable",
+ "tracker": "SumatraPDF-portable",
+ "provider": "page (select unique, browser User-Agent for the download)",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/SumatraPDF-portable/_bootstrap/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "3.5.2",
+  "download_url": "https://www.sumatrapdfreader.org/dl/rel/3.5.2/SumatraPDF-3.5.2-64.zip",
+  "sha256": null,
+  "sha256_from": null
+ },
+ "responses": [
+  {
+   "url": "https://www.sumatrapdfreader.org/download-free-pdf-viewer",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/html"
+   },
+   "body": "<html><body><h1>Download SumatraPDF</h1>\n<a href=\"/dl/rel/3.5.2/SumatraPDF-3.5.2-64-install.exe\">Installer 64-bit</a>\n<a href=\"/dl/rel/3.5.2/SumatraPDF-3.5.2-64.zip\">Portable 64-bit</a>\n<a href=\"/dl/rel/3.5.2/SumatraPDF-3.5.2.zip\">Portable 32-bit</a>\n<a href=\"/dl/rel/3.5.2/SumatraPDF-3.5.2-arm64.zip\">Portable ARM64</a>\n<a href=\"/dl/rel/3.5.2/SumatraPDF-3.5.2-64.zip\">direct link</a>\n<a href=\"/dl/rel/3.5.1/SumatraPDF-3.5.1-64-install.exe\">Previous installer</a></body></html>"
+  }
+ ]
+}

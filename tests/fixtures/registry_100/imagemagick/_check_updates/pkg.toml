@@ -1,0 +1,20 @@
+format = 2
+description = "Command-line suite for creating, converting, and editing images."
+project_url = "https://imagemagick.org/"
+modes = ["system", "user"]
+
+[track]
+provider = "github"
+repo = "ImageMagick/ImageMagick"
+asset = "ImageMagick-${version}-portable-Q16-HDRI-x64.7z"
+
+[source]
+download_url = "${asset_url}"
+strip = "auto"
+
+[[path]]
+value = "$App"
+
+[[shim]]
+name = "magick"
+target = "$App\\magick.exe"

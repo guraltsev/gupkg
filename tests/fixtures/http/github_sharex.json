@@ -1,0 +1,24 @@
+{
+ "case": "github_sharex",
+ "tracker": "sharex",
+ "provider": "github latest, exact asset",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (tests/fixtures/registry_017/sharex/_bootstrap/pkg.toml, the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "17.0.0",
+  "download_url": "https://github.com/ShareX/ShareX/releases/download/v17.0.0/ShareX-17.0.0-portable-x64.zip",
+  "sha256": "3a047bca5e75a1a67fecd5336793298aec852197a038eb561c2223993aa10c4d",
+  "sha256_from": "github-digest"
+ },
+ "responses": [
+  {
+   "url": "https://api.github.com/repos/ShareX/ShareX/releases/latest",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"tag_name\": \"v17.0.0\", \"name\": \"v17.0.0\", \"draft\": false, \"prerelease\": false, \"html_url\": \"https://github.com/ShareX/ShareX/releases/tag/v17.0.0\", \"assets\": [{\"name\": \"ShareX-17.0.0-setup.exe\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/ShareX/ShareX/releases/download/v17.0.0/ShareX-17.0.0-setup.exe\", \"digest\": \"sha256:f1c26d495afe1d5925c0db847d3093fce9f2681ca381fe44362ed6224ce9838b\"}, {\"name\": \"ShareX-17.0.0-portable-x64.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/ShareX/ShareX/releases/download/v17.0.0/ShareX-17.0.0-portable-x64.zip\", \"digest\": \"sha256:3a047bca5e75a1a67fecd5336793298aec852197a038eb561c2223993aa10c4d\"}]}"
+  }
+ ]
+}

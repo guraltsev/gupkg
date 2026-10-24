@@ -1,0 +1,20 @@
+format = 2
+description = "Goldfish Scheme, a Scheme interpreter and standard library (gf command)."
+project_url = "https://github.com/MoganLab/goldfish"
+modes = ["system", "user"]
+
+[track]
+provider = "github"
+repo = "MoganLab/goldfish"
+asset = "goldfish-scheme-x64-v${version}-win.zip"
+
+[source]
+download_url = "${asset_url}"
+require = ["bin/gf.exe"]
+
+[[path]]
+value = "$App\\bin"
+
+[[shim]]
+name = "gf"
+target = "$App\\bin\\gf.exe"

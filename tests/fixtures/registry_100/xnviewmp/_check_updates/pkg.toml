@@ -1,0 +1,30 @@
+format = 2
+description = "Image viewer, browser, and converter."
+project_url = "https://www.xnview.com/en/xnview-mp/"
+modes = ["system", "user"]
+
+# The product page's structured data announces the release the unversioned ZIP serves.
+[track]
+provider = "page"
+check_url = "https://www.xnview.com/en/xnview-mp/"
+match = '"softwareVersion":\s*"(?P<version>\d+(?:\.\d+)*)"'
+download = "https://download.xnview.com/XnViewMP-win-x64.zip"
+
+[track.headers]
+User-Agent = "Mozilla/5.0 gupkg-xnviewmp-check/1"
+
+# The ZIP wraps everything in one XnViewMP folder.
+[source]
+download_url = "${download_url}"
+subdir = "XnViewMP"
+require = ["xnviewmp.exe"]
+
+[[shim]]
+name = "xnviewmp"
+target = "$App\\xnviewmp.exe"
+type = "gui"
+
+[[shortcut]]
+name = "XnView MP"
+target = "$App\\xnviewmp.exe"
+description = "Image viewer and manager"

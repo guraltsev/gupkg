@@ -1,0 +1,20 @@
+format = 2
+description = "Secure, efficient file backup built on restic with a GUI for end users and a CLI for administrators."
+project_url = "https://github.com/netinvent/npbackup"
+modes = ["system", "user"]
+
+[track]
+provider = "github"
+repo = "netinvent/npbackup"
+asset = "npbackup-windows-x64-gui-public.zip"
+
+[source]
+download_url = "${asset_url}"
+subdir = "npbackup-gui"
+require = ["npbackup-gui.exe"]
+
+[[shortcut]]
+name = "NPbackup"
+target = "$App\\npbackup-gui.exe"
+working_dir = "$App"
+description = "Backup system based on restic"

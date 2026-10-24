@@ -1,0 +1,23 @@
+format = 2
+description = "Hardware voltage, temperature, and fan monitor."
+project_url = "https://www.cpuid.com/softwares/hwmonitor.html"
+modes = ["system", "user"]
+
+[track]
+provider = "page"
+check_url = "https://www.cpuid.com/softwares/hwmonitor.html"
+match = 'hwmonitor_(?P<version>\d+\.\d+)\.zip'
+download = "https://download.cpuid.com/hwmonitor/hwmonitor_${version}.zip"
+
+[track.headers]
+User-Agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) gupkg-update-check/1"
+Accept = "text/html,application/xhtml+xml,*/*"
+
+[source]
+download_url = "${download_url}"
+require = ["HWMonitor_x64.exe"]
+
+[[shortcut]]
+name = "HWMonitor"
+target = "$App\\HWMonitor_x64.exe"
+description = "Hardware monitor"

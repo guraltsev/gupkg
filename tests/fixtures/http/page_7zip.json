@@ -1,0 +1,24 @@
+{
+ "case": "page_7zip",
+ "tracker": "7zip",
+ "provider": "page (version in the announcement, URL from the dotless version)",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/7zip/_bootstrap/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "25.01",
+  "download_url": "https://www.7-zip.org/a/7z2501-x64.exe",
+  "sha256": null,
+  "sha256_from": null
+ },
+ "responses": [
+  {
+   "url": "https://www.7-zip.org/",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/html"
+   },
+   "body": "<html><body><P><B>Download 7-Zip 25.01 (2025-08-03) for Windows</B></P>\n<TABLE><TR><TD><A href=\"a/7z2501-x64.exe\">Download</A></TD><TD>.exe</TD><TD>64-bit x64</TD></TR>\n<TR><TD><A href=\"a/7z2501.exe\">Download</A></TD><TD>.exe</TD><TD>32-bit x86</TD></TR>\n<TR><TD><A href=\"a/7z2501-arm64.exe\">Download</A></TD><TD>.exe</TD><TD>64-bit ARM64</TD></TR></TABLE>\n<P>Archive: Download 7-Zip 24.09 (2024-11-29) for Windows and older builds.</P>\n<P>Download 7-Zip for Linux: 7z2501-linux-x64.tar.xz</P></body></html>"
+  }
+ ]
+}

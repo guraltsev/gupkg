@@ -1,0 +1,20 @@
+format = 2
+description = "GitHub's official command-line tool."
+project_url = "https://cli.github.com/"
+modes = ["system", "user"]
+
+[track]
+provider = "github"
+repo = "cli/cli"
+asset = "gh_${version}_windows_amd64.zip"
+
+[source]
+download_url = "${asset_url}"
+require = ["bin/gh.exe"]
+
+[[path]]
+value = "$App\\bin"
+
+[[shim]]
+name = "gh"
+target = "$App\\bin\\gh.exe"

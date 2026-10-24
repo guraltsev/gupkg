@@ -1,0 +1,24 @@
+{
+ "case": "page_rapidee",
+ "tracker": "rapidee",
+ "provider": "page (announced current version, GitLab package URL)",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/rapidee/_bootstrap/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "10.2.1",
+  "download_url": "https://gitlab.com/api/v4/projects/olegd%2Frapidee/packages/generic/release-assets/v10.2.1/RapidEE.zip",
+  "sha256": null,
+  "sha256_from": null
+ },
+ "responses": [
+  {
+   "url": "https://www.rapidee.com/en/download",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/html"
+   },
+   "body": "<html><body><h2>Current version (10.2.1)</h2><p>Changes since the previous version.</p>\n<div class=\"old\">Current version (9.9) was replaced.</div></body></html>"
+  }
+ ]
+}

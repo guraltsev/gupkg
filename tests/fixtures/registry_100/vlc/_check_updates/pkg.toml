@@ -1,0 +1,27 @@
+format = 2
+description = "Free and open-source cross-platform multimedia player and framework."
+project_url = "https://www.videolan.org/vlc/"
+modes = ["system", "user"]
+
+# Only numeric version folders count; a folder must hold the win64 ZIP (probe), so alias folders such as last/ never match.
+[track]
+provider = "index"
+check_url = "https://download.videolan.org/pub/videolan/vlc/"
+download = "https://download.videolan.org/pub/videolan/vlc/${version}/win64/vlc-${version}-win64.zip"
+
+[[track.level]]
+match = 'href="(?P<version>\d+(?:\.\d+)+)/"'
+probe = "${version}/win64/vlc-${version}-win64.zip"
+
+[source]
+download_url = "${download_url}"
+strip = "auto"
+
+# VideoLAN publishes a SHA-256 sidecar next to every archive.
+[source.checksum]
+sidecar = "${download_url}.sha256"
+
+[[shortcut]]
+name = "VLC media player"
+target = "$App\\vlc.exe"
+description = "VLC media player"

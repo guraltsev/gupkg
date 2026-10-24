@@ -1,0 +1,24 @@
+{
+ "case": "github_windirstat",
+ "tracker": "windirstat",
+ "provider": "github latest, exact asset",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (tests/fixtures/registry_017/windirstat/_bootstrap/pkg.toml, the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "2.2.2",
+  "download_url": "https://github.com/windirstat/windirstat/releases/download/release%2F2.2.2/WinDirStat.zip",
+  "sha256": "b751f43cc3ad5ee88b4146efe394a4ef6b8654198aa302e920b8c57446d02c6f",
+  "sha256_from": "github-digest"
+ },
+ "responses": [
+  {
+   "url": "https://api.github.com/repos/windirstat/windirstat/releases/latest",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"tag_name\": \"release/2.2.2\", \"name\": \"release/2.2.2\", \"draft\": false, \"prerelease\": false, \"html_url\": \"https://github.com/windirstat/windirstat/releases/tag/release%2F2.2.2\", \"assets\": [{\"name\": \"WinDirStat-x64.msi\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/windirstat/windirstat/releases/download/release%2F2.2.2/WinDirStat-x64.msi\", \"digest\": \"sha256:5efd0c0de2d52f8c04ce9dcf338e11123a0673a92d6e522a87a43cdbbfaa06aa\"}, {\"name\": \"WinDirStat.zip\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/windirstat/windirstat/releases/download/release%2F2.2.2/WinDirStat.zip\", \"digest\": \"sha256:b751f43cc3ad5ee88b4146efe394a4ef6b8654198aa302e920b8c57446d02c6f\"}, {\"name\": \"WinDirStat-Hashes.txt\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/windirstat/windirstat/releases/download/release%2F2.2.2/WinDirStat-Hashes.txt\", \"digest\": \"sha256:6a28ba3cf1841aebf560c5963f6eab36d9d9ae260780c988aef965812e957248\"}]}"
+  }
+ ]
+}

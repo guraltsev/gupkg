@@ -2,7 +2,7 @@
 
 This is a maintainer tool for the development tree; it is never shipped and the tests never
 run it. Each file ``tests/fixtures/http/<case>.json`` names a ``tracker`` (a folder of
-``tests/fixtures/registry2``), holds the ``responses`` that tracker's provider reads, and the
+``tests/fixtures/registry_100``), holds the ``responses`` that tracker's provider reads, and the
 ``expected`` result the replay test asserts. Recording runs the real tracker against the live
 sites through a ``System`` that logs every request and answer, so the **whole walk** is
 recorded: an index walk or chain that now visits other pages records those pages, and pages the
@@ -47,7 +47,7 @@ from gupkg.system.port import HttpResponse, System  # noqa: E402
 from gupkg.system.windows import WindowsSystem  # noqa: E402
 
 FIXTURES = ROOT / "tests" / "fixtures" / "http"
-TRACKERS = ROOT / "tests" / "fixtures" / "registry2"
+TRACKERS = ROOT / "tests" / "fixtures" / "registry_100"
 KEPT_HEADERS = ("content-type", "location", "last-modified", "content-disposition", "content-length", "etag")
 MAX_BODY = 4 * 1024 * 1024
 USER_AGENT = "gupkg-fixture-recorder/1"
