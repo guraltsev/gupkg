@@ -38,7 +38,7 @@ from typing import Any
 
 from ..catalog.local import canonical_path, is_inside
 from ..core import write_bytes_atomic
-from ..model.manifest import Manifest
+from ..model.manifest import Manifest, is_reserved_env_name
 from ..model.mode import ENV_MACHINE, ModeContext
 from ..model.plan import effect_key, normalize_entry
 from ..model.state import Effect
@@ -222,10 +222,12 @@ def desired_effects(manifest: Manifest, context: EffectContext) -> tuple[tuple[E
     elif wants_environment:
         scope = "system" if context.scope is Scope.MACHINE else "user"
         for row in manifest.envs:
+            _require_free_name(row.name)
             effects.append(Effect("env", {
                 "scope": scope, "name": row.name, "value": _expand(row.value, values, context.env, f"environment variable '{row.name}'"),
             }))
         for name, value in (portable.env if portable else {}).items():
+            _require_free_name(name)
             effects.append(Effect("env", {
                 "scope": scope, "name": name, "value": _expand(value, values, context.env, f"[portable] env '{name}'"),
             }))
@@ -270,6 +272,12 @@ def _wrapper_bytes(path: Path, content: str) -> bytes:
         return content.encode("ascii")
     except UnicodeEncodeError:
         return content.encode("utf-8-sig")
+
+
+def _require_free_name(name: str) -> None:
+    """Refuse an environment variable that is the system's own (``Path`` would clobber the whole PATH)."""
+    if is_reserved_env_name(name):
+        raise EffectError(f"'{name}' is a reserved system variable and is never set or deleted by a package")
 
 
 def _expand(text: str, values: Mapping[str, str], env: Mapping[str, str], label: str, *, literal_unknown: bool = False) -> str:
@@ -361,6 +369,7 @@ def apply_effect(system: System, effect: Effect, context: EffectContext, previou
         write_bytes_atomic(path, _wrapper_bytes(path, str(fields["content"])))
         return effect
     if effect.kind == "env":
+        _require_free_name(str(fields["name"]))
         system.set_env(_scope(fields), str(fields["name"]), str(fields["value"]), True)
         return effect
     if effect.kind == "path":
@@ -417,6 +426,7 @@ def remove_effect(system: System, effect: Effect, context: EffectContext) -> boo
         _prune_empty(path.parent, context.bin_dir)
         return removed
     if effect.kind == "env":
+        _require_free_name(str(fields["name"]))
         system.delete_env(_scope(fields), str(fields["name"]))
         return True
     if effect.kind == "path":

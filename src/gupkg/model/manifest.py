@@ -57,6 +57,23 @@ SHIM_TYPES = ("console", "gui")
 LOCAL_DIR = "pkg.local"
 APP_MISSING_ERROR = "App is missing and no way to recover it."
 
+# Environment variables a package may not set or delete through ``[[env]]``: ``Path`` would replace the whole PATH
+# (``[[path]]`` adds one entry the safe way), and the others are the system's own. Compared case-insensitively.
+RESERVED_ENV_NAMES = frozenset(
+    name.casefold() for name in (
+        "Path", "PATHEXT", "ComSpec", "SystemRoot", "SystemDrive", "windir", "TEMP", "TMP", "USERPROFILE", "APPDATA",
+        "LOCALAPPDATA", "ProgramData", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "CommonProgramFiles",
+        "CommonProgramFiles(x86)", "CommonProgramW6432", "PSModulePath", "OS", "NUMBER_OF_PROCESSORS", "USERNAME",
+        "COMPUTERNAME", "PUBLIC", "HOMEDRIVE", "HOMEPATH", "USERDOMAIN", "LOGONSERVER",
+    )
+)
+
+
+def is_reserved_env_name(name: str) -> bool:
+    """Return whether *name* is an environment variable a package may not set (``Path``, ``TEMP``, ``PROCESSOR_*`` ...)."""
+    folded = name.strip().casefold()
+    return folded in RESERVED_ENV_NAMES or folded.startswith("processor_")
+
 _TOP_KEYS = (
     "format", "description", "project_url", "modes", "requires", "record_manifest",
     "source", "track", "prepare", "portable", "nonportable", "shortcut", "env", "path", "shim",
@@ -1097,6 +1114,9 @@ def _parse_portable(collector: _Collector, raw: Any, modes: tuple[str, ...]) -> 
         collector.error("portable.env", "must be a table of strings")
     else:
         env = dict(raw_env)
+        for name in env:
+            if is_reserved_env_name(name) or re.search(r"[=\x00\s]", name) or not name:
+                collector.error("portable.env", f"{name!r} is not a usable variable name (reserved or malformed)")
     for text in (*args, *env.values()):
         _check_variables(collector, text, "portable", modes)
     return Portable(persist, tuple(markers), args, env)
@@ -1147,6 +1167,9 @@ def _parse_envs(collector: _Collector, raw: Any, modes: tuple[str, ...]) -> tupl
             _check_variables(collector, value, f"{where}.value", modes)
         if name is not None and re.search(r"[=\x00\s]", name):
             collector.error(f"{where}.name", f"{name!r} is not a valid environment variable name")
+            name = None
+        if name is not None and is_reserved_env_name(name):
+            collector.error(f"{where}.name", f"{name!r} is a reserved system variable; use [[path]] to add a PATH entry")
             name = None
         if name is not None and value is not None:
             rows.append(EnvVar(name, value))

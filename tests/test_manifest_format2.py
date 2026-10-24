@@ -706,3 +706,23 @@ def test_render_pinned_keeps_only_hooks_that_source_and_prepare_reference() -> N
 
     assert pinned.referenced_hooks() == ("pkg.local/populate.py", "pkg.local/fix.py")
     assert "check.py" not in manifest_to_toml(pinned)
+
+
+@pytest.mark.parametrize("name", ["Path", "PATH", "pAtH", "PATHEXT", "ComSpec", "SystemRoot", "windir", "TEMP", "tmp", "USERPROFILE",
+                                  "LocalAppData", "ProgramFiles(x86)", "PSModulePath", "PROCESSOR_ARCHITECTURE", "NUMBER_OF_PROCESSORS",
+                                  "UserName", "PUBLIC"])
+def test_an_env_row_may_not_name_a_reserved_system_variable(name: str) -> None:
+    """`[[env]]` named Path (any case) would replace the whole PATH; the system's own variables are refused the same way."""
+    text = f'format = 2\n[source]\ndownload_url = "https://x.test/a.zip"\n\n[[env]]\nname = "{name}"\nvalue = "x"\n'
+
+    with pytest.raises(ManifestError, match="reserved system variable"):
+        parse_manifest(text)
+
+
+def test_a_portable_env_table_may_not_name_a_reserved_variable() -> None:
+    """The same rule holds for the `[portable] env` table."""
+    text = ('format = 2\nmodes = ["portable"]\n[source]\ndownload_url = "https://x.test/a.zip"\n\n[portable]\n'
+            'env = { Path = "x" }\n')
+
+    with pytest.raises(ManifestError, match="not a usable variable name"):
+        parse_manifest(text)

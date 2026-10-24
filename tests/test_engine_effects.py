@@ -12,6 +12,7 @@ Real: the effect code and real folders. Mocked: ``FakeSystem`` (registry, shortc
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -24,7 +25,7 @@ from gupkg.engine.effects import (
     remove_effect,
     verify_each,
 )
-from gupkg.model.manifest import parse_manifest
+from gupkg.model.manifest import EnvVar, parse_manifest
 from gupkg.model.state import Effect
 from gupkg.system.fake import FakeSystem
 from gupkg.system.port import Scope
@@ -209,3 +210,28 @@ def test_verification_reads_the_machine_environment_only_for_what_gupkg_wrote(tm
     rows = verify_each(system, applied, elevated=True)
 
     assert system.registry_log == [] and all(unverified and not drift for _, drift, unverified in rows)
+
+
+@pytest.mark.parametrize("name", ["Path", "PATH", "TEMP", "ComSpec"])
+def test_a_reserved_variable_is_never_set_or_deleted_by_an_effect(tmp_path: Path, system: FakeSystem, name: str) -> None:
+    """Defence in depth: a recorded `env` effect named like a system variable is refused on apply and on removal, and PATH is untouched."""
+    ctx = context(tmp_path)
+    system.set_path(Scope.USER, ["C:\\A", "C:\\B"])
+    effect = Effect("env", {"scope": "user", "name": name, "value": "C:\\only"})
+
+    with pytest.raises(EffectError, match="reserved"):
+        apply_effect(system, effect, ctx)
+    with pytest.raises(EffectError, match="reserved"):
+        remove_effect(system, effect, ctx)
+
+    assert system.get_path(Scope.USER) == ["C:\\A", "C:\\B"]
+
+
+def test_a_manifest_with_a_reserved_variable_cannot_become_effects(tmp_path: Path) -> None:
+    """A manifest built without the parser (a hostile version directory) is still refused when the effects are derived."""
+    ctx = context(tmp_path)
+    parsed = manifest('[[env]]\nname = "A"\nvalue = "1"\n')
+    hostile = replace(parsed, envs=(EnvVar("Path", "C:\\only"),))
+
+    with pytest.raises(EffectError, match="reserved"):
+        desired_effects(hostile, ctx)
