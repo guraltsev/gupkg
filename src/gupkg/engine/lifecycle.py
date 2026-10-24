@@ -326,7 +326,11 @@ def _run_one(engine: Engine, target: _Target, sole: bool) -> PackageResult:
         name = target.resolved.source.parent.name
     else:
         name = request.selector
-    path = view.path if view is not None and view.path is not None else context.package_dir(name) if _safe_name(name) else context.root
+    if target.resolved.source is not None:
+        # A distribution folder is only the copy's source (design 21.4): logs, lock and receipt belong to the destination.
+        path = context.package_dir(name) if _safe_name(name) else context.root
+    else:
+        path = view.path if view is not None and view.path is not None else context.package_dir(name) if _safe_name(name) else context.root
     with package_scope(name, path, root=str(context.root), sole=sole) as scope:
         try:
             with _held(engine, request, context, name, path):
