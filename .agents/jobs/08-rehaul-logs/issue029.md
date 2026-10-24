@@ -32,4 +32,4 @@ Deleted: the 0.17 front end (module list in issue item 12), `core.py` trimmed to
 ## Unclear points / open
 
 - The parent of an elevated relaunch does not wait for the child (`ShellExecute runas`); its exit code is 0 with `relaunched: true`.
-- `pkg bundle` writes no launchers (issue 033's template); `[ui] color` is not read.
+- `pkg bundle` writes no launchers (issue 033's template).

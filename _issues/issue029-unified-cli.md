@@ -11,7 +11,7 @@ Epic: 020. Design: `_docs/rehaul_design.md` §10, §11. Supersedes issue 013's g
 > `requires_gupkg` and a newer `format` give exit code 6; the forwarders refuse an elevated shell and `--settings`/`--sandbox`;
 > `allow_unc_file_urls` is not a setting (`file:` URLs naming a network host stay refused, design 13.4); the parent of an elevated
 > relaunch does not wait for the child. Not done: `pkg bundle` copies the verified bundle but writes no launchers (the template is
-> issue 033's); `[ui] color` is not read by the console renderer. Manual checks owed: `tests/manual_smoke.md`, "The unified command
+> issue 033's); Manual checks owed: `tests/manual_smoke.md`, "The unified command
 > line and machine interface (issue 029)" items 1-10.
 
 ## Problem
