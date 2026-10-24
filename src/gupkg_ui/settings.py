@@ -12,7 +12,7 @@ target of that mode, ``keep_screen`` and ``cleanup_auto`` are the booleans, and 
 Implementation Approach
 -----------------------
 The loader runs as a normal (non-elevated) process. Because a system target is run by an elevated child, the policy for a system
-target is evaluated as an elevated run would see it: a value that comes from the user or portable layer does not count, so a
+target is evaluated as an elevated run would see it: a value that comes from the user or portable layer (or from ``--settings``, which an elevated child ignores) does not count, so a
 setting a standard user can edit never lets an administrator-run install skip a missing checksum (design 9.6).
 """
 
@@ -23,8 +23,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from gupkg.model.manager_policy import manager_checksum_policy
-from gupkg.model.settings import Settings, SettingsError, expand_env
+from gupkg.model.manager_policy import POLICY_KEY, manager_checksum_policy
+from gupkg.model.settings import LAYER_CLI, Settings, SettingsError, expand_env
 from gupkg.modes import settings_loader
 from gupkg.selfmgmt.location import RunningGupkg, locate_running_gupkg
 from gupkg.system.port import System
@@ -48,7 +48,12 @@ class UiSettings:
 
     def checksum_policy(self, mode: str | None) -> str:
         """Return ``ask``, ``refuse`` or ``skip`` for a target of *mode*; a system target is judged as an elevated run would judge it."""
-        return manager_checksum_policy(self.settings, elevated=mode == "system")
+        policy = manager_checksum_policy(self.settings, elevated=mode == "system")
+
+        # An elevated child ignores ``--settings`` unless the file is in the system root, so a value that came from it is not trusted for a system target either.
+        if mode == "system" and self.settings.source_of(POLICY_KEY) == LAYER_CLI:
+            return "refuse"
+        return policy
 
     @property
     def keep_screen(self) -> bool:

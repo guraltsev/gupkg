@@ -1,0 +1,165 @@
+{
+  "api": 1,
+  "command": "update",
+  "ok": true,
+  "exit_code": 0,
+  "plan": true,
+  "plans": [
+    {
+      "target": "user:alpha",
+      "ok": true,
+      "exit_code": 0,
+      "plan": {
+        "operation": "update",
+        "package": "alpha",
+        "path": "@ROOT@\\home\\opt\\alpha",
+        "mode": "user",
+        "requires_elevation": false,
+        "version": "2.0.0",
+        "previous": "1.0.0",
+        "effects": [],
+        "phases": [
+          {
+            "name": "Resolve",
+            "skipped": false,
+            "steps": [
+              "alpha  1.0.0  ->  2.0.0 (local version directory)",
+              "mode: user (selector)"
+            ]
+          },
+          {
+            "name": "Fetch",
+            "skipped": true,
+            "steps": [],
+            "reason": "App is already populated"
+          },
+          {
+            "name": "Verify",
+            "skipped": true,
+            "steps": [],
+            "reason": "App is already populated"
+          },
+          {
+            "name": "Unpack",
+            "skipped": true,
+            "steps": [],
+            "reason": "App is already populated"
+          },
+          {
+            "name": "Prepare",
+            "skipped": true,
+            "steps": [],
+            "reason": "App is already populated"
+          },
+          {
+            "name": "Activate",
+            "skipped": false,
+            "steps": [
+              "switch current to 2.0.0"
+            ]
+          },
+          {
+            "name": "Integrate",
+            "skipped": true,
+            "steps": [],
+            "reason": "no effect changes"
+          },
+          {
+            "name": "Finish",
+            "skipped": false,
+            "steps": [
+              "write the receipt and the install record"
+            ]
+          }
+        ],
+        "notes": [],
+        "populate": {
+          "kind": "shipped",
+          "needed": false,
+          "reason": "App is already populated",
+          "recoverable": false
+        },
+        "sha256": null,
+        "url": null
+      }
+    },
+    {
+      "target": "user:beta",
+      "ok": true,
+      "exit_code": 0,
+      "plan": {
+        "operation": "update",
+        "package": "beta",
+        "path": "@ROOT@\\home\\opt\\beta",
+        "mode": "user",
+        "requires_elevation": false,
+        "version": "2.0.0",
+        "previous": "1.0.0",
+        "effects": [],
+        "phases": [
+          {
+            "name": "Resolve",
+            "skipped": false,
+            "steps": [
+              "beta  1.0.0  ->  2.0.0 (local version directory)",
+              "mode: user (selector)"
+            ]
+          },
+          {
+            "name": "Fetch",
+            "skipped": true,
+            "steps": [],
+            "reason": "App is already populated"
+          },
+          {
+            "name": "Verify",
+            "skipped": true,
+            "steps": [],
+            "reason": "App is already populated"
+          },
+          {
+            "name": "Unpack",
+            "skipped": true,
+            "steps": [],
+            "reason": "App is already populated"
+          },
+          {
+            "name": "Prepare",
+            "skipped": true,
+            "steps": [],
+            "reason": "App is already populated"
+          },
+          {
+            "name": "Activate",
+            "skipped": false,
+            "steps": [
+              "switch current to 2.0.0"
+            ]
+          },
+          {
+            "name": "Integrate",
+            "skipped": true,
+            "steps": [],
+            "reason": "no effect changes"
+          },
+          {
+            "name": "Finish",
+            "skipped": false,
+            "steps": [
+              "write the receipt and the install record"
+            ]
+          }
+        ],
+        "notes": [],
+        "populate": {
+          "kind": "shipped",
+          "needed": false,
+          "reason": "App is already populated",
+          "recoverable": false
+        },
+        "sha256": null,
+        "url": null
+      }
+    }
+  ]
+}

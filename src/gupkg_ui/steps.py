@@ -144,6 +144,15 @@ def make_steps(
         extra = tuple((skips or {}).get(subject.target, ()))
         groups.setdefault((wants_token, extra), []).append(subject)
 
+    # ``--skip-checksum`` is a per-call flag, but it only ever covers a missing hash (a declared hash is always verified, with or without it), and a
+    # target that needed a skip was approved while the others were not run without one. So targets that need no skip join the one call that carries
+    # it, which keeps a batch at one call per group; only a second, different skip reason would need a call of its own.
+    for elevated in (False, True):
+        needing = [key for key in groups if key[0] is elevated and key[1]]
+        plain = (elevated, ())
+        if len(needing) == 1 and plain in groups:
+            groups[needing[0]] = [*groups.pop(plain), *groups[needing[0]]]
+
     # One call per group; the non-elevated ones come first, so the administrator prompt appears last.
     for (elevated, extra), members in sorted(groups.items(), key=lambda item: item[0][0]):
         targets = tuple(item.target for item in members)

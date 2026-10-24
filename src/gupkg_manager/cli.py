@@ -189,14 +189,14 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog=PROGRAM, description="The general gupkg manager: a browser over every package, and batch commands for schedules.")
     add_root_options(parser)
     commands = parser.add_subparsers(dest="command", metavar="<command>")
-    commands.add_parser("tui", description="Open the browser (the default).")
+    commands.add_parser("tui", help="Open the browser (the default).", description="Open the browser (the default).")
 
     for name, text in (
         ("check-updates", "Write and populate the new version of every package; activate nothing."),
         ("update", "Update every package that has a newer known version."),
         ("check", "Health check of every package (drift, App fingerprint, unverified installs)."),
     ):
-        leaf = commands.add_parser(name, description=text)
+        leaf = commands.add_parser(name, help=text, description=text)
         if name != "check":
             leaf.add_argument("--all", action="store_true", help="act on every package (required)")
         leaf.add_argument("--mode", choices=("system", "user", "portable"), help="only the packages of this install mode")
