@@ -155,6 +155,51 @@ def test_track_defined_in_handlers_cases_and_else_branches_is_found(code: str) -
     assert defines_track(code)
 
 
+@pytest.mark.parametrize(
+    "code",
+    [
+        pytest.param("for track in range(3):\n    pass\n", id="for-target"),
+        pytest.param("with open('x') as track:\n    pass\n", id="with-target"),
+        pytest.param("(track := 1)\n", id="walrus"),
+        pytest.param("[(track := n) for n in range(3)]\n", id="walrus-in-comprehension"),
+        pytest.param("first, *track = [1, 2, 3]\n", id="starred-target"),
+        pytest.param("(a, (b, track)) = (1, (2, 3))\n", id="nested-tuple-target"),
+        pytest.param("match [1, 2]:\n    case [1, *track]:\n        pass\n", id="match-star-capture"),
+        pytest.param("match 5:\n    case track:\n        pass\n", id="match-capture"),
+        pytest.param("match {'a': 1}:\n    case {**track}:\n        pass\n", id="match-mapping-rest"),
+        pytest.param("type track = int\n", id="type-alias"),
+        pytest.param("try:\n    pass\nexcept Exception as track:\n    pass\n", id="except-as"),
+        pytest.param("import track.sub\n", id="import-package-named-track"),
+        pytest.param("track: int = 5\n", id="annotated-assignment-with-value"),
+        pytest.param("track += 1\n", id="augmented-assignment"),
+        pytest.param("def make():\n    global track\n    track = 1\nmake()\n", id="global-statement"),
+        pytest.param("def f(default=(track := 1)):\n    pass\n", id="walrus-in-default"),
+        pytest.param("@(track := print)\ndef f():\n    pass\n", id="walrus-in-decorator"),
+    ],
+)
+def test_every_way_of_binding_track_counts_as_defining_it(code: str) -> None:
+    """Loop and context targets, the walrus operator, starred and nested targets, match captures, `type`, except-as and `global` all bind `track`."""
+    assert defines_track(code)
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        pytest.param("track: int\n", id="bare-annotation"),
+        pytest.param("x = [track for track in range(3)]\n", id="comprehension-variable"),
+        pytest.param("def f():\n    for track in range(3):\n        pass\n", id="local-loop-variable"),
+        pytest.param("class A:\n    track = 1\n", id="class-attribute"),
+        pytest.param("x = lambda track: track\n", id="lambda-parameter"),
+        pytest.param("def f(track):\n    return track\n", id="function-parameter"),
+        pytest.param("import tracker\nfrom helpers import tracking\n", id="similar-names"),
+        pytest.param("print(track)\n", id="only-a-use"),
+    ],
+)
+def test_names_that_do_not_bind_a_module_level_track_are_not_flagged(code: str) -> None:
+    """A bare annotation, a comprehension or local variable, a class attribute, a parameter and a mere use do not define `track`."""
+    assert not defines_track(code)
+
+
 def test_modules_that_merely_mention_track_are_fine(tmp_path: Path) -> None:
     """A helper that calls or names `track` inside a function, or a method called `track`, does not count as defining it."""
     code = "def run(context):\n    track = 1\n    return track\n\nclass A:\n    def track(self):\n        pass\n"

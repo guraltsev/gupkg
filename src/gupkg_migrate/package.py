@@ -16,6 +16,7 @@ touched, so a result that fails validation leaves the original in place.
 from __future__ import annotations
 
 import difflib
+import os
 import re
 import shutil
 import tempfile
@@ -47,7 +48,7 @@ LEGACY_TRACKER_DIR_NAME = "_bootstrap"
 _ARTIFACT = re.compile(r"\.(zip|7z|tar|tgz|txz|tbz2|gz|xz|bz2|exe|msi)(\?.*)?$|/releases/download/|/archive/", re.IGNORECASE)
 _GITHUB_REPO = re.compile(r"https?://(?:www\.)?github\.com/([^/\s]+)/([^/\s#?]+?)(?:\.git)?/?$", re.IGNORECASE)
 _GITLAB_REPO = re.compile(r"https?://(?:www\.)?gitlab\.com/[^/\s]+/[^/\s#?]+(?:/[^/\s#?]+)*?/?$", re.IGNORECASE)
-_SHA256 = re.compile(r"sha256:([0-9A-Fa-f]{64})")
+_SHA256 = re.compile(r"sha256:([0-9A-Fa-f]{64})", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -345,6 +346,12 @@ def _convert_version(new: dict[str, Any], origin: dict[str, Any], update: dict[s
     if entries:
         notes.append(f"dissolved [[origin.versions]] ({len(entries)} entries): only this directory's own source is kept")
     source = _origin_source(chosen, plan, directory, "origin") if chosen is not None else None
+
+    # An inline origin that is only a project page names no artifact: the version's own entry still may.
+    if source is None and inline is not None and own_entry is not None:
+        source = _origin_source(own_entry, plan, directory, f"origin.versions[{own_entry.get('version')}]")
+        if source is not None:
+            notes.append(f"the inline [origin] url is a project page, so this version's own [[origin.versions]] entry was used")
     # No artifact and no script: this version's App is shipped in the directory.
     new["source"] = source if source is not None else {"shipped": True}
     if update is not None:
@@ -541,25 +548,29 @@ def apply_plan(plan: PackagePlan, *, backup: bool = True) -> list[str]:
     undo: list[Callable[[], None]] = []
     manifest_path = plan.directory / "pkg.toml"
     original = manifest_path.read_bytes()
+    original_stat = manifest_path.stat()
     try:
         # The backup of the old pkg.toml stays in the directory; comments are only kept there.
         if backup:
             destination = _numbered_backup(manifest_path)
             shutil.copy2(manifest_path, destination)
-            undo.append(lambda path=destination: path.unlink(missing_ok=True))
+            undo.append(lambda path=destination: _remove_file(path))
             done.append(f"backup {destination.name} (it keeps the comments of the old file and stays in the directory)")
 
-        # Scripts are copied, not moved, until everything else has worked.
+        # Scripts are copied, not moved, until everything else has worked. A pkg.local folder that this
+        # step creates is removed again, when it is empty, if a later step fails.
         for source, destination in plan.moves:
             target = plan.directory / destination
+            if not target.parent.exists():
+                undo.append(lambda folder=target.parent: _remove_empty_folder(folder))
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(plan.directory / source, target)
-            undo.append(lambda path=target: path.unlink(missing_ok=True))
+            undo.append(lambda path=target: _remove_file(path))
             done.append(f"moved {source} to {destination}")
 
         # The new pkg.toml is written under a temporary name and swapped in atomically.
         write_text_atomic(manifest_path, plan.new_text)
-        undo.append(lambda: manifest_path.write_bytes(original))
+        undo.append(lambda: _restore_file(manifest_path, original, original_stat))
         done.append(f"wrote {manifest_path}")
 
         # Launchers that exist are backed up before they are replaced.
@@ -589,8 +600,33 @@ def apply_plan(plan: PackagePlan, *, backup: bool = True) -> list[str]:
                 pass
         raise
 
-    # Everything worked: now the originals of moved scripts can go.
+    # Everything worked: now the originals of moved scripts can go. A script that cannot be removed is
+    # reported, not an error: the conversion is complete and the copy in pkg.local is what is used.
     base = plan.target
     for source, _destination in plan.moves:
-        (base / source).unlink(missing_ok=True)
+        try:
+            _remove_file(base / source)
+        except OSError as error:
+            done.append(f"could not remove the original {source}: {error}")
     return done
+
+
+def _remove_file(path: Path) -> None:
+    """Delete a file, making a read-only one writable first; a missing file is not an error."""
+    if path.exists():
+        os.chmod(path, 0o666)
+    path.unlink(missing_ok=True)
+
+
+def _remove_empty_folder(folder: Path) -> None:
+    """Delete *folder* when it is empty; anything else is left alone."""
+    try:
+        folder.rmdir()
+    except OSError:
+        pass
+
+
+def _restore_file(path: Path, content: bytes, stat: os.stat_result) -> None:
+    """Put the original bytes and the original modification time back."""
+    path.write_bytes(content)
+    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))

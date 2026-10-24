@@ -13,7 +13,6 @@ Out of scope: the install flow around them (the lifecycle tests).
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
@@ -34,7 +33,7 @@ from gupkg.engine.receipts import list_receipts, read_receipt, receipt_checksum,
 from gupkg.engine.stateio import read_track_state, register_adhoc, unregister_adhoc, write_track_state
 from gupkg.model.checksum import ChecksumMismatch, ChecksumMissing
 from gupkg.model.mode import InputNeeded, ModeRefused
-from gupkg.model.settings import LAYER_DEFAULTS, default_layer, merge_layers
+from gupkg.model.settings import Layer, default_layer, merge_layers
 from gupkg.system.fake import FakeSystem
 from gupkg.system.port import ProcessNotAllowed
 from gupkg.tomlio import read_toml, write_toml
@@ -241,8 +240,6 @@ def test_portable_first_population_moves_the_vendor_default_into_data_and_state_
 
 def settings_for(tmp_path: Path):
     """Return settings whose roots are below *tmp_path*."""
-    from gupkg.model.settings import Layer
-
     layer = Layer("system", {"schema": 3, "roots": {
         "system": str(tmp_path / "sys"), "user": str(tmp_path / "user"), "portable": str(tmp_path / "portable")}})
     return merge_layers([default_layer(), layer])

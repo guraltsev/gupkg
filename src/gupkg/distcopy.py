@@ -61,6 +61,28 @@ class DistributionRefused(ModeRefused):
 
 
 @dataclass(frozen=True)
+class CopyLimits:
+    """Bounds on what one copy may read, because a standard user may have written the source of an elevated copy.
+
+    Attributes
+    ----------
+    entries : int
+        Files and folders together (the unpack limit is the same).
+    bytes : int
+        Total size of the files.
+    depth : int
+        Folder nesting below the source.
+    manifest_bytes : int
+        Size of ``pkg.toml``, which is parsed before anything else is trusted.
+    """
+
+    entries: int = 200_000
+    bytes: int = 8 * 1024**3
+    depth: int = 64
+    manifest_bytes: int = 1024 * 1024
+
+
+@dataclass(frozen=True)
 class CopyResult:
     """The outcome of a copy: where it went, what happened to an existing copy, and whether the source was marked."""
 
@@ -70,7 +92,9 @@ class CopyResult:
     files: int
 
 
-def copy_distribution(source: Path, root: Path, *, required: ModeChoice | None = None) -> CopyResult:
+def copy_distribution(
+    source: Path, root: Path, *, required: ModeChoice | None = None, limits: CopyLimits = CopyLimits()
+) -> CopyResult:
     """Copy the version directory *source* to ``<root>\\<name>\\<version>``, never overwriting.
 
     Parameters
@@ -82,6 +106,8 @@ def copy_distribution(source: Path, root: Path, *, required: ModeChoice | None =
     required : ModeChoice, optional
         The mode the install will use. The staged ``pkg.toml`` must list it in ``modes``; otherwise the copy is
         refused (``ModeRefused``) before anything is moved into the root.
+    limits : CopyLimits
+        Bounds on entries, bytes, depth and the size of ``pkg.toml``; a source beyond them is refused.
 
     Returns
     -------
@@ -93,8 +119,9 @@ def copy_distribution(source: Path, root: Path, *, required: ModeChoice | None =
     Raises
     ------
     DistributionRefused
-        If a name is unsafe, ``pkg.toml`` is missing or invalid, the source holds (or is swapped for) a link or
-        junction, or the root or its work folder is a link.
+        If a name is unsafe, ``pkg.toml`` is missing, too large or invalid, the source holds (or is swapped for) a link or
+        junction, the source is larger than *limits* allow or changes while it is read, or the root, its data or work
+        folder, the package folder or the destination is a link.
     ModeRefused
         If *required* is not in the package's ``modes``.
     OSError
@@ -113,7 +140,15 @@ def copy_distribution(source: Path, root: Path, *, required: ModeChoice | None =
             )
     if is_reparse_point(source) or not source.is_dir() or not (source / MANIFEST_NAME).is_file():
         raise DistributionRefused(f"{source} must be a real folder with a {MANIFEST_NAME}")
-    for folder in (root, root / DATA_DIR_NAME):
+    try:
+        manifest_size = (source / MANIFEST_NAME).stat().st_size
+    except OSError as error:
+        raise DistributionRefused(f"{source / MANIFEST_NAME} cannot be read: {error}") from error
+    if manifest_size > limits.manifest_bytes:
+        raise DistributionRefused(f"{source / MANIFEST_NAME} is {manifest_size} bytes; a pkg.toml over {limits.manifest_bytes} is refused")
+
+    # Nothing is written through a link: not the root, its data and work folders, the package folder or the destination.
+    for folder in (root, root / DATA_DIR_NAME, root / DATA_DIR_NAME / "work", root / name, root / name / version):
         if is_reparse_point(folder):
             raise DistributionRefused(f"{folder} is a link; refusing to write through it")
 
@@ -123,7 +158,11 @@ def copy_distribution(source: Path, root: Path, *, required: ModeChoice | None =
     staged = work / version
     try:
         staged.mkdir(parents=True)
-        marked, count = _copy_tree(source, staged)
+        try:
+            marked, count = _copy_tree(source, staged, limits)
+        except (FileNotFoundError, NotADirectoryError) as error:
+            # Something that was listed is gone or is not what it was: the source changed while it was being read.
+            raise DistributionRefused(f"{source} changed while it was being read ({error}); refusing the copy") from error
 
         # Check the package's own modes on the staged copy, before anything reaches the root.
         if required is not None:
@@ -169,13 +208,20 @@ def _name_problem(name: str) -> str | None:
     return None
 
 
-def _copy_tree(source: Path, target: Path) -> tuple[bool, int]:
-    """Copy *source* into the existing folder *target*; return whether any file was marked and the file count."""
+def _copy_tree(source: Path, target: Path, limits: CopyLimits) -> tuple[bool, int]:
+    """Copy *source* into the existing folder *target*; return whether any file was marked and the file count.
+
+    The walk stops with ``DistributionRefused`` as soon as the entries, the bytes or the depth pass *limits*.
+    """
     marked = False
     count = 0
-    stack = [(source, target)]
+    entries_seen = 0
+    total = [0]
+    stack = [(source, target, 0)]
     while stack:
-        folder, mirror = stack.pop()
+        folder, mirror, depth = stack.pop()
+        if depth > limits.depth:
+            raise DistributionRefused(f"{folder} is nested deeper than {limits.depth} folders; refusing the copy")
 
         # List a directory only when it is a plain directory inside the source, and accept the listing only
         # if it is still the same directory afterwards: a swap for a junction in between is refused.
@@ -187,6 +233,9 @@ def _copy_tree(source: Path, target: Path) -> tuple[bool, int]:
             raise DistributionRefused(f"{folder} changed while it was being read; refusing the copy")
         _require_plain(folder, source)
 
+        entries_seen += len(entries)
+        if entries_seen > limits.entries:
+            raise DistributionRefused(f"{source} holds more than {limits.entries} files and folders; refusing the copy")
         for entry in entries:
             path = Path(entry.path)
             problem = _name_problem(entry.name)
@@ -200,18 +249,19 @@ def _copy_tree(source: Path, target: Path) -> tuple[bool, int]:
             _require_inside(mirror, target)
             if entry.is_dir(follow_symlinks=False):
                 destination.mkdir()
-                stack.append((path, destination))
+                stack.append((path, destination, depth + 1))
                 continue
-            marked = _copy_file(path, destination, source) or marked
+            marked = _copy_file(path, destination, source, limits, total) or marked
             count += 1
     return marked, count
 
 
-def _copy_file(path: Path, destination: Path, source: Path) -> bool:
+def _copy_file(path: Path, destination: Path, source: Path, limits: CopyLimits, total: list[int]) -> bool:
     """Copy the data stream of one source file; return whether it carried a Mark of the Web.
 
     The file is opened first. The handle must be the very file that the path names (so the path was not
-    swapped for a link after the check) and the path must still lead inside the source.
+    swapped for a link after the check) and the path must still lead inside the source. The bytes copied are
+    counted as they are read, so a file that grows while it is copied cannot pass the byte limit.
     """
     marked = _is_marked(path)
     descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0))
@@ -224,7 +274,11 @@ def _copy_file(path: Path, destination: Path, source: Path) -> bool:
 
         # Stream only the data stream, into a file that this call creates inside the staging folder.
         with os.fdopen(descriptor, "rb", closefd=False) as reader, open(destination, "xb") as writer:
-            shutil.copyfileobj(reader, writer, 1024 * 1024)
+            while chunk := reader.read(1024 * 1024):
+                total[0] += len(chunk)
+                if total[0] > limits.bytes:
+                    raise DistributionRefused(f"{source} holds more than {limits.bytes} bytes; refusing the copy")
+                writer.write(chunk)
     finally:
         os.close(descriptor)
     os.utime(destination, ns=(named.st_atime_ns, named.st_mtime_ns))

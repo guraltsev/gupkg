@@ -135,7 +135,7 @@ def run_custom_populate(context: HookContext, script: str, timeout: float | None
     """
     root = context.paths.version_root
     if script.lower().endswith(".py"):
-        call_populate(load_hook(root, script, context.system), context)
+        call_populate(load_hook(root, script, context.system, forbid_track=True), context)
         return
     require_trusted_code(context.system, root)
     try:

@@ -317,3 +317,121 @@ def test_the_packages_modes_are_checked_on_the_staged_copy_before_anything_reach
     assert not root.exists()
 
     assert copy_distribution(source, root, required=ModeChoice("user", "--mode")).status == COPIED
+
+
+# ---------------------------------------------------------------------------
+# Resource bounds, links in the root, and a source that changes while it is read (issue 028 handoff)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("limits", "build", "word"),
+    [
+        pytest.param(distcopy.CopyLimits(entries=3), lambda folder: [(folder / f"f{n}.txt").write_text("x") for n in range(4)], "files and folders", id="entries"),
+        pytest.param(distcopy.CopyLimits(bytes=10), lambda folder: (folder / "big.bin").write_bytes(b"x" * 11), "bytes", id="bytes"),
+        pytest.param(distcopy.CopyLimits(depth=2), lambda folder: (folder / "a" / "b" / "c" / "d").mkdir(parents=True), "nested", id="depth"),
+        pytest.param(distcopy.CopyLimits(manifest_bytes=8), lambda folder: None, "pkg.toml", id="manifest-size"),
+    ],
+)
+def test_a_source_beyond_the_limits_is_refused_and_the_root_is_unchanged(tmp_path: Path, limits, build, word: str) -> None:
+    """A source with too many entries, bytes, folder levels or a huge pkg.toml is refused and nothing is written."""
+    source = distribution(tmp_path / "downloads")
+    build(source)
+    root = tmp_path / "opt"
+
+    with pytest.raises(DistributionRefused, match=word):
+        copy_distribution(source, root, limits=limits)
+
+    assert not root.exists()
+
+
+def test_the_default_limits_are_the_unpack_limits() -> None:
+    """The copy bounds a source like an archive: 200,000 entries and 8 GiB, plus a depth and a manifest size."""
+    limits = distcopy.CopyLimits()
+
+    assert (limits.entries, limits.bytes) == (200_000, 8 * 1024**3) and limits.depth == 64 and limits.manifest_bytes == 1024 * 1024
+
+
+@pytest.mark.windows_integration
+@pytest.mark.parametrize("which", ["work", "package", "version"])
+def test_a_root_with_a_junction_where_the_copy_writes_is_refused(tmp_path: Path, which: str) -> None:
+    """A junction at root\\.gupkg\\work, root\\<name> or root\\<name>\\<version> would send the copy elsewhere: it is refused."""
+    source = distribution(tmp_path / "downloads")
+    root = tmp_path / "opt"
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    fake = FakeSystem(tmp_path / "machine")
+    place = {"work": root / ".gupkg" / "work", "package": root / "tool", "version": root / "tool" / "1.0.0"}[which]
+    place.parent.mkdir(parents=True, exist_ok=True)
+    fake.create_junction(place, elsewhere)
+
+    with pytest.raises(DistributionRefused, match="link"):
+        copy_distribution(source, root)
+
+    assert list(elsewhere.iterdir()) == []
+
+
+def test_a_source_that_loses_a_file_while_it_is_read_is_refused_not_a_raw_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A file that disappears between the listing and the open is a DistributionRefused (the source changed), not FileNotFoundError."""
+    source = distribution(tmp_path / "downloads")
+    real_open = os.open
+
+    def vanishing_open(path, *args, **kwargs):
+        """Delete the file just before it is opened."""
+        if Path(path).name == "tool.exe":
+            Path(path).unlink()
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(distcopy.os, "open", vanishing_open)
+    root = tmp_path / "opt"
+
+    with pytest.raises(DistributionRefused, match="changed while it was being read"):
+        copy_distribution(source, root)
+
+    assert not root.exists()
+
+
+def test_a_path_that_names_another_file_than_the_one_opened_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The open handle must be the file the path names: when the path's identity differs (a swap), the copy stops."""
+    source = distribution(tmp_path / "downloads")
+    decoy = tmp_path / "decoy.bin"
+    decoy.write_bytes(b"decoy")
+    real_lstat = os.lstat
+
+    def lying_lstat(path, *args, **kwargs):
+        """Report the decoy's identity for the file that was opened, as if the path had been swapped."""
+        if Path(path).name == "tool.exe":
+            return real_lstat(decoy, *args, **kwargs)
+        return real_lstat(path, *args, **kwargs)
+
+    monkeypatch.setattr(distcopy.os, "lstat", lying_lstat)
+    root = tmp_path / "opt"
+
+    with pytest.raises(DistributionRefused, match="not the file that was checked"):
+        copy_distribution(source, root)
+
+    assert not root.exists()
+
+
+def test_a_listing_taken_while_the_folder_changed_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A folder whose identity differs before and after it is listed is refused (it was replaced while read)."""
+    source = distribution(tmp_path / "downloads")
+    other = tmp_path / "other"
+    other.mkdir()
+    real_lstat = os.lstat
+    calls: list[int] = []
+
+    def changing_lstat(path, *args, **kwargs):
+        """Give the folder a different identity on every other look, so the look before and after the listing disagree."""
+        if Path(path).name == "bin":
+            calls.append(1)
+            return real_lstat(other if len(calls) % 2 == 0 else path, *args, **kwargs)
+        return real_lstat(path, *args, **kwargs)
+
+    monkeypatch.setattr(distcopy.os, "lstat", changing_lstat)
+    root = tmp_path / "opt"
+
+    with pytest.raises(DistributionRefused, match="changed while it was being read"):
+        copy_distribution(source, root)
+
+    assert len(calls) >= 2 and not root.exists()

@@ -24,7 +24,7 @@ from gupkg.engine.effects import (
     remove_effect,
     verify_each,
 )
-from gupkg.model.manifest import ManifestKind, parse_manifest
+from gupkg.model.manifest import parse_manifest
 from gupkg.model.state import Effect
 from gupkg.system.fake import FakeSystem
 from gupkg.system.port import Scope

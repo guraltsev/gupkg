@@ -13,14 +13,13 @@ import io
 import json
 import shutil
 import zipfile
-from collections.abc import Callable
 from pathlib import Path
 
 from gupkg.catalog.registry import registry_cache_dir
 from gupkg.engine import lifecycle
 from gupkg.engine.context import Engine
 from gupkg.engine.fingerprint import version_fingerprint
-from gupkg.model.plan import BatchResult, PackageResult, Request
+from gupkg.model.plan import BatchResult, PackageResult
 from gupkg.system.fake import FakeSystem, ProcessCall
 from gupkg.system.port import ProcessResult
 from gupkg.tomlio import write_toml
@@ -263,14 +262,3 @@ class World:
         return batch.results[0]
 
 
-def shortcut_names(world: World) -> list[str]:
-    """Return the names of the shortcuts the fake machine holds, sorted."""
-    return sorted(path.stem for path in world.fake.shortcuts())
-
-
-def requests(operation: str, selectors: list[str], **options) -> list[Request]:
-    """Build requests for a batch."""
-    return [Request(operation, item, **options) for item in selectors]
-
-
-Collector = Callable[[object], None]

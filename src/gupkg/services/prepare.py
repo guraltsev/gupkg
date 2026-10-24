@@ -153,7 +153,7 @@ def _module(root: Path, step: PrepareModule, context: HookContext | None) -> Non
     """Run the ``prepare(ctx)`` hook of a ``pkg.local`` module."""
     if context is None:
         raise PrepareError("a module step needs a hook context")
-    module = load_hook(context.paths.version_root, step.module, context.system)
+    module = load_hook(context.paths.version_root, step.module, context.system, forbid_track=True)
     call_prepare(module, context)
 
 

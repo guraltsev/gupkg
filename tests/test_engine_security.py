@@ -24,7 +24,8 @@ from gupkg.catalog.record import read_install_record, write_install_record
 from gupkg.model.state import Effect, InstallRecord
 from gupkg.services.gitenv import GitUnavailable, git_command, git_environment, git_executable
 from gupkg.system.port import Scope
-from tests.engine_support import World, pin_no_ambient_elevation  # noqa: F401
+from gupkg.system.fake import FakeSystem
+from tests.engine_support import World, pin_no_ambient_elevation, pkg_text  # noqa: F401
 
 ENV = '[[env]]\nname = "TOOL_HOME"\nvalue = "$App"\n'
 SHIM = '[[shim]]\nname = "tool"\ntarget = "$App\\\\app.exe"\n' + ENV
@@ -126,6 +127,22 @@ def test_a_gupkg_folder_that_is_a_junction_elsewhere_is_never_written_through(tm
     assert not (world.user / "tool" / "current").exists()
 
 
+def test_a_hook_that_builds_the_name_track_at_run_time_is_refused_when_it_loads(tmp_path: Path) -> None:
+    """The static scan cannot see `globals()["tr" + "ack"]`; the loader refuses a version-directory hook that exposes `track`."""
+    world = World(tmp_path)
+    folder = world.user / "tool" / "1.0.0"
+    (folder / "pkg.local").mkdir(parents=True)
+    (folder / "pkg.local" / "populate.py").write_text(
+        'PKG_MODULE_API = 2\nglobals()["tr" + "ack"] = lambda ctx: None\n\ndef populate(ctx):\n    pass\n', encoding="utf-8"
+    )
+    (folder / "pkg.toml").write_text(pkg_text(None, script="pkg.local/populate.py", tables=ENV), encoding="utf-8")
+
+    result = world.one("install", "tool")
+
+    assert not result.ok and "exposes track" in result.error["message"]
+    assert not (folder / "App").exists()
+
+
 def test_a_sandbox_without_a_double_says_the_package_needs_a_real_run(tmp_path: Path) -> None:
     """A populate script that the sandbox has no double for is a clear result with code needs-real-run, not a crash."""
     world = World(tmp_path)
@@ -158,8 +175,6 @@ def path_with(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *folders: tuple[s
 
 def test_an_elevated_run_resolves_git_only_from_admin_only_folders_of_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The first folder of PATH is user-writable and holds a git.exe: it is skipped; the admin-only one is used by its full path."""
-    from gupkg.system.fake import FakeSystem
-
     folders = path_with(tmp_path, monkeypatch, ("user-bin", True), ("tools", True))
     system = FakeSystem(tmp_path / "machine", elevated=True, untrusted_dirs={folders[0]})
 
@@ -170,8 +185,6 @@ def test_an_elevated_run_resolves_git_only_from_admin_only_folders_of_path(tmp_p
 
 def test_an_elevated_run_with_no_trusted_git_refuses_instead_of_using_the_users(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """When every git.exe on PATH is in a user-writable folder, an elevated run has no git and says why."""
-    from gupkg.system.fake import FakeSystem
-
     folders = path_with(tmp_path, monkeypatch, ("user-bin", True))
     system = FakeSystem(tmp_path / "machine", elevated=True, untrusted_dirs={folders[0]})
 
@@ -181,8 +194,6 @@ def test_an_elevated_run_with_no_trusted_git_refuses_instead_of_using_the_users(
 
 def test_a_normal_run_uses_the_bare_git_name_and_keeps_its_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Outside an elevated run nothing changes: `git` is looked up as before and PATH is passed on."""
-    from gupkg.system.fake import FakeSystem
-
     folders = path_with(tmp_path, monkeypatch, ("user-bin", True))
     system = FakeSystem(tmp_path / "machine", elevated=False, untrusted_dirs={folders[0]})
 

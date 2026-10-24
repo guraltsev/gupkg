@@ -11,13 +11,14 @@ the 1.0 launchers are written; hooks that match a known service are reported.
 Real: the command line (``gupkg_migrate.cli.main``), the real 0.17 registry manifests and
 hooks copied into ``tests/fixtures/registry_017`` and then into a temporary folder, and
 ``gupkg.pkgcheck`` as the validator. Mocked: nothing. Out of scope: shortcuts, settings
-(their own test modules), running the launchers, and adoption of installed 0.17 packages,
-which waits for the install record of issue 024.
+(their own test modules), running the launchers, and adoption of installed 0.17 packages
+(``test_migrate_adopt``).
 """
 
 from __future__ import annotations
 
 import hashlib
+import os
 import shutil
 from pathlib import Path
 
@@ -25,6 +26,7 @@ import pytest
 
 from gupkg.model.manifest import ManifestKind, parse_manifest
 from gupkg.pkgcheck import check_directory
+from gupkg_migrate import package as package_module
 from gupkg_migrate.cli import main
 from gupkg_migrate.package import apply_plan, plan_package
 
@@ -459,3 +461,95 @@ def test_an_existing_launcher_is_backed_up_before_it_is_replaced(tmp_path: Path)
 
     assert (folder / "install.cmd.bak").read_text(encoding="utf-8") == "my own\n"
     assert "gupkg.cmd" in (folder / "install.cmd").read_text(encoding="ascii")
+
+
+def test_a_failed_apply_restores_the_modification_time_and_removes_what_it_created(tmp_path: Path) -> None:
+    """After a late failure the original keeps its time, a read-only backup is removed, and an empty pkg.local that the move created is gone."""
+    manifest = 'description = "x"\n[origin]\nscript = "tools/fetch.ps1"\n'
+    folder = write_package(tmp_path, "p", "1.0", manifest, {"tools/fetch.ps1": "new\n", "App/a.exe": "x"})
+    plan = plan_package(folder)
+    assert plan.ok and plan.launchers
+    manifest_path = folder / "pkg.toml"
+    manifest_path.chmod(0o444)
+    os.utime(manifest_path, ns=(1_000_000_000_000_000_000, 1_000_000_000_000_000_000))
+    (folder / "install.cmd").mkdir()
+    before = snapshot(tmp_path)
+
+    with pytest.raises(OSError):
+        apply_plan(plan)
+
+    assert snapshot(tmp_path) == before
+    assert manifest_path.stat().st_mtime_ns == 1_000_000_000_000_000_000
+    assert not (folder / "pkg.toml.bak").exists() and not (folder / "pkg.local").exists()
+    manifest_path.chmod(0o666)
+
+
+def test_an_original_script_that_cannot_be_removed_is_reported_not_raised(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The conversion is complete once the new files are in place; a script left behind is a line in the report."""
+    manifest = 'description = "x"\n[origin]\nscript = "tools/fetch.ps1"\n'
+    folder = write_package(tmp_path, "p", "1.0", manifest, {"tools/fetch.ps1": "new\n", "App/a.exe": "x"})
+    plan = plan_package(folder)
+    real_remove = package_module._remove_file
+
+    def refusing(path: Path) -> None:
+        """Refuse to delete the original script, as a locked file would."""
+        if path.name == "fetch.ps1" and path.parent.name == "tools":
+            raise PermissionError("locked")
+        real_remove(path)
+
+    monkeypatch.setattr(package_module, "_remove_file", refusing)
+
+    lines = apply_plan(plan)
+
+    assert any("could not remove the original tools/fetch.ps1" in line for line in lines)
+    assert (folder / "pkg.local" / "fetch.ps1").is_file() and "script" in (folder / "pkg.toml").read_text(encoding="utf-8")
+
+
+def test_a_directory_that_cannot_be_converted_does_not_stop_the_other_directories(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """An OSError on one directory is reported and counted; the rest of the run continues."""
+    write_package(tmp_path, "a", "1.0", 'description = "x"\n', {"App/a.exe": "x"})
+    broken = write_package(tmp_path, "b", "1.0", 'description = "x"\n', {"App/a.exe": "x"})
+    write_package(tmp_path, "c", "1.0", 'description = "x"\n', {"App/a.exe": "x"})
+    (broken / "install.cmd").mkdir()
+
+    status = main(["package", str(tmp_path), "--no-adopt"])
+
+    captured = capsys.readouterr()
+    assert status == 1 and "3 directories, 1 failed" in captured.out
+    assert "[FAILED]" in captured.err and (tmp_path / "c" / "1.0" / "install.cmd").is_file()
+
+
+@pytest.mark.parametrize("prefix", ["sha256:", "SHA256:", "Sha256:"])
+def test_the_sha256_prefix_is_read_without_regard_to_letter_case(tmp_path: Path, prefix: str) -> None:
+    """A 0.17 checksum spelled `SHA256:<hex>` is carried over like `sha256:<hex>`."""
+    digest = "ab" * 32
+    manifest = f'description = "x"\n[origin]\nurl = "https://example.org/a.zip"\nchecksum = "{prefix}{digest}"\n'
+    folder = write_package(tmp_path, "p", "1.0", manifest)
+
+    plan = plan_package(folder)
+
+    assert plan.ok and f'sha256 = "{digest}"' in plan.new_text
+
+
+def test_the_own_versions_entry_is_used_when_the_inline_origin_is_a_project_page(tmp_path: Path) -> None:
+    """An inline [origin] url that is only a repository page does not drop the entry for this very version."""
+    manifest = (
+        'description = "x"\n[origin]\nurl = "https://github.com/owner/tool"\n'
+        '[[origin.versions]]\nversion = "1.0"\nurl = "https://example.org/tool-1.0.zip"\nchecksum = "sha256:' + "cd" * 32 + '"\n'
+    )
+    folder = write_package(tmp_path, "tool", "1.0", manifest)
+
+    plan = plan_package(folder)
+
+    assert plan.ok and 'download_url = "https://example.org/tool-1.0.zip"' in plan.new_text
+    assert any("project page, so this version's own" in note for note in plan.notes)
+
+
+def test_no_backup_says_that_no_copy_of_the_comments_is_kept(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """With --no-backup the note no longer claims a .bak keeps the comments."""
+    folder = write_package(tmp_path, "tool", "1.0", 'description = "x"\n', {"App/tool.exe": "x"})
+
+    main(["package", str(folder), "--no-backup"])
+
+    output = capsys.readouterr().out
+    assert "pkg.toml.bak keeps them" not in output and "--no-backup keeps no copy" in output
