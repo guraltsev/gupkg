@@ -10,10 +10,14 @@ Usage and API
 parameter replaced by ``***``; a URL without either is returned unchanged. ``redact_text(text)`` does the same for every
 ``http://`` or ``https://`` address inside a sentence.
 
+Limits: a secret that is part of the *path* (``https://host/<token>/file.zip``, a signed folder name) cannot be told from
+an ordinary name, so it is not masked; keep secrets in the query, in a header or in the user information, where they are.
+
 Implementation Approach
 -----------------------
-A query parameter is secret when its name contains one of ``SECRET_WORDS`` (case-insensitive): ``token``, ``secret``,
-``passw``, ``signature``, ``credential``, ``auth``, ``key`` and ``sig``. The match is deliberately broad: hiding a harmless
+A query or fragment parameter (separated by ``&`` or ``;``) is secret when its name contains one of ``SECRET_WORDS`` (case-insensitive): ``token``, ``secret``,
+``passw``, ``signature``, ``credential``, ``auth``, ``key`` (``AWSAccessKeyId``, ``Key-Pair-Id``), ``sig``, ``policy`` and
+``session``. The match is deliberately broad: hiding a harmless
 value costs nothing, showing a secret does. The URL is split and joined with the standard library; its path is never
 changed. Text that is not a URL is returned as it was.
 """
@@ -23,9 +27,10 @@ from __future__ import annotations
 import re
 from urllib.parse import urlsplit, urlunsplit
 
-SECRET_WORDS = ("token", "secret", "passw", "signature", "credential", "auth", "key", "sig")
+SECRET_WORDS = ("token", "secret", "passw", "signature", "credential", "auth", "key", "sig", "policy", "session")
 MASK = "***"
 
+_PARAMETER = re.compile(r"(?P<name>[^&;=#]+)=(?P<value>[^&;#]*)")
 _ADDRESS = re.compile(r"https?://[^\s'\"<>]+", re.IGNORECASE)
 _TRAILING = ".,;:)]}"
 
@@ -45,16 +50,19 @@ def redact_url(url: str) -> str:
     netloc = parts.netloc
     if "@" in netloc:
         netloc = f"{MASK}@{netloc.rsplit('@', 1)[1]}"
-    query = parts.query
-    if query:
-        pieces = []
-        for piece in query.split("&"):
-            name, separator, _value = piece.partition("=")
-            pieces.append(f"{name}={MASK}" if separator and _is_secret(name) else piece)
-        query = "&".join(pieces)
-    if netloc == parts.netloc and query == parts.query:
+    query, fragment = _mask_parameters(parts.query), _mask_parameters(parts.fragment)
+    if netloc == parts.netloc and query == parts.query and fragment == parts.fragment:
         return url
-    return urlunsplit((parts.scheme, netloc, parts.path, query, parts.fragment))
+    return urlunsplit((parts.scheme, netloc, parts.path, query, fragment))
+
+
+def _mask_parameters(text: str) -> str:
+    """Mask the value of every secret-looking ``name=value`` pair of a query or a fragment (``&`` or ``;`` separated)."""
+
+    def replace(match: re.Match[str]) -> str:
+        return f"{match.group('name')}={MASK}" if _is_secret(match.group("name")) else match.group(0)
+
+    return _PARAMETER.sub(replace, text)
 
 
 def redact_text(text: str) -> str:

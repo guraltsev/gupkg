@@ -33,6 +33,11 @@ from tests.engine_support import World, pin_no_ambient_elevation, pkg_text, zip_
         ("https://s3.example/b/a.zip?X-Amz-Signature=abc&X-Amz-Credential=AKIA/x&X-Amz-Date=2026", "https://s3.example/b/a.zip?X-Amz-Signature=***&X-Amz-Credential=***&X-Amz-Date=2026"),
         ("https://example.org/a.zip?API_KEY=1&sig=2&Password=3&auth=4", "https://example.org/a.zip?API_KEY=***&sig=***&Password=***&auth=***"),
         ("https://u:p@example.org/a.zip?token=T#frag", "https://***@example.org/a.zip?token=***#frag"),
+        ("https://example.org/a.zip#access_token=S&state=ok", "https://example.org/a.zip#access_token=***&state=ok"),
+        ("https://example.org/a.zip?v=1;token=S;arch=x64", "https://example.org/a.zip?v=1;token=***;arch=x64"),
+        ("https://cdn.example/a.zip?Policy=P&Signature=S&Key-Pair-Id=K", "https://cdn.example/a.zip?Policy=***&Signature=***&Key-Pair-Id=***"),
+        ("https://b.s3.example/a.zip?AWSAccessKeyId=AKIA&Expires=1&X-Amz-Credential=C", "https://b.s3.example/a.zip?AWSAccessKeyId=***&Expires=1&X-Amz-Credential=***"),
+        ("https://example.org/a.zip?sessionid=1&x-ms-session=2", "https://example.org/a.zip?sessionid=***&x-ms-session=***"),
     ],
 )
 def test_credentials_in_a_url_are_masked_and_the_rest_is_kept(url: str, expected: str) -> None:
