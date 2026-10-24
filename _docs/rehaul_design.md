@@ -1054,6 +1054,24 @@ and again in `check`:
 An `App` filled by a custom populate script is **as verified as the
 package itself** (D27): it carries the package's label.
 
+Details (issue 028). The **fingerprint** is one SHA-256 over every file of the version
+directory: the file names (letter case folded, `/` separators) and the SHA-256 of each file's
+content, in sorted order. `App` is part of it only when the version is shipped (a downloaded
+`App` is a product of the version, not part of its definition), and `.gupkg` never is. The
+registry tool computes it the same way. A **distribution folder** is copied, then judged: no
+published fingerprint labels the install *origin not verified*, a match
+*verified against registry `<name>`*, a mismatch refuses it, names the files that differ and
+removes the copy this run created. The same comparison runs for a version copied from a registry
+and, as a report only, for a version that was already in the root (the user's own edit wins,
+design 5.3). An install that downloads records the download's own checksum record instead; a
+script-populated version in a root of its own (no registry, no distribution) records no label,
+because it makes no claim. The receipt's `[origin]` table has `kind` (`local`, `distribution` or
+`registry`), `copied_from` and `source_marked`. A version's `App` fingerprint is the `[app]`
+table of its receipt (`recorded`, `count`, `fingerprint` and the SHA-256 of every file); it is
+written once and never overwritten by a repair, so a repair cannot bless a changed file.
+`check` compares the files with it (skipping the persisted paths of a portable package) and
+shows a stored `verified` as a self-report in user and portable mode, never as proof.
+
 `list --details` and `check` show unverified installs.
 
 gupkg never writes an observed hash into `pkg.toml` automatically.
@@ -1427,6 +1445,9 @@ color = "auto"                # auto | always | never (NO_COLOR is honoured)
 allow_vendor_installers = true
 # There is no dependency-install switch. Per issue 016, hooks may import only
 # the standard library, what the release bundle ships, and their own pkg.local\.
+
+[install]
+record_manifest = true        # false: no package records the SHA-256 of every App file (D41)
 ```
 
 Machine state that is not configuration lives in `state.toml` in the same root
@@ -1467,6 +1488,13 @@ gupkg/
   engine/       planning and execution
     planner.py      PackageView + request -> InstallPlan (pure)
     executor.py     runs phases, emits events, writes receipts/install record, rollback
+    appbuild.py     the built-in download script and the custom populate runner (atomic App)
+    effects.py      declarations -> effects; apply, remove, verify (shortcuts, shims, env, PATH)
+    portable.py     portable data hand-over, markers, [nonportable] removal
+    fingerprint.py  App fingerprint and version-directory fingerprint
+    receipts.py     receipt files; stateio.py: [[adhoc]] and track.toml
+    checkupdates.py the check-updates plan: track, write, populate, stop
+    health.py       what `check` reports
     lifecycle.py    check-updates/install/update/switch/uninstall/cleanup/check entry points
   report/       events and rendering
     events.py       event dataclasses + Reporter protocol (contextvar)
@@ -1610,6 +1638,105 @@ implementations.
   `gupkg-manager update --all` (D43).
 - **Bundled gupkg copies stay**, also in old version directories. Only
   `cleanup --bundled` removes them (section 21.8, D32).
+
+### 13.4 Details of the engine (issue 028)
+
+These readings settle what sections 13.1 to 13.3 leave open. They are what `gupkg.engine` does.
+
+**Effects and the install record.** An effect is one of five kinds, each with the fields that
+apply, remove and verify it: `shortcut` (`path`, `target`, `arguments`, `working_dir`,
+`icon_location`, `description`), `shim` (`path`, `config`, `type`, `linkage`, `target`,
+`arguments`, `forward_args`, `elevate`, `working_dir`, `config_sha256`), `file` (a content
+wrapper: `path`, `content`, `sha256`), `env` (`scope`, `name`, `value`) and `path` (`scope`,
+`entry`, `added`, `shared`). `$App`, `$VersionRoot` and the other variables expand against
+`<package>\current`, so a link or shim keeps working when `current` moves. An effect is
+identified by its path (an `env` by scope and name, a `PATH` entry by scope and normalised
+entry): same identity with other fields is an *update*, a recorded effect that is no longer
+declared is *stale* and is removed after the new ones are applied, and the environment change
+is broadcast once. The `bin` folder's `PATH` entry (`shared`) belongs to the mode and is never
+removed by one package; any other entry is removed only when this install added it
+(`added`). The registry is only written: an environment value is set and deleted without being
+read, `PATH` is read as part of its read-modify-write, and `check` reads exactly the values the
+record lists (an elevated run does not read the user's). The install record always lists the
+effects that are really on the machine: when one effect fails, the others are still applied, the
+failure is reported, the record keeps the previous state of the failed effect, and `check --fix`
+or a repeat converges. A recorded path outside the folder the mode owns is never acted on: it is
+ignored with a warning and dropped from the record. A mode without a Start Menu or an
+environment target (`integrate = "none"`) leaves those rows out and says so; `[portable]`
+`args` are appended to shortcut and shim arguments and `[portable]` `env` becomes environment
+values (set only when the mode touches the environment).
+
+**Order and failure.** Resolve (including the copy-in) and every population phase come before
+Activate, so a failure before Activate changes nothing outside the version directory (a copied-in
+or check-updates-written directory is a valid version, not a leftover) and `<package>\.gupkg\work`.
+A distribution folder that is refused (a fingerprint mismatch, a source that changed while it was
+copied) leaves nothing of its copy behind. If the junction cannot be switched, the previous one is
+put back. `App` is staged in `.gupkg\work` and renamed into place; with `--refresh` the old `App`
+is moved aside first and restored if the new one cannot be put in place. The receipt
+(`.gupkg\receipts\<version>.toml`: `[source]`, `[checksum]`, `[origin]`, `[app]`, `[inputs]`,
+`[run]` with the log path) and then the install record are written last; a download-only update
+(`update` preparing a version) writes the receipt only.
+
+**Repair.** `install` of an installed package, `repair` and `check --fix` rebuild a missing `App`
+(from the `download_url`, or the script when its inputs exist, whatever `shipped` says) and apply
+again every recorded effect that `check` finds missing; `--refresh` also rebuilds an `App` that can
+be rebuilt and never a shipped one. A shipped `App` with neither URL nor script cannot be recovered:
+`App is missing and no way to recover it.`.
+
+**Cleanup.** For each package, `cleanup` drops the `App` of recoverable versions that are not
+`current` beyond the newest `--keep N` older ones (default 1; with nothing installed, beyond the
+newest N). It keeps shipped Apps, Apps of versions newer than `current` (an update `check-updates`
+prepared), and Apps of script-populated versions whose recorded inputs (the top-level entries of the
+version directory and the files of `pkg.local`, listed in the receipt) are no longer all there. It
+removes receipts of versions that no longer exist and the entries of `.gupkg\work`. `cleanup_root`
+prunes the root's logs and every package's logs beyond `[logs]` and the registry trees that are not
+the active revision.
+
+**Uninstall.** It removes every recorded effect and `current`, keeps the version directories (and
+every `App`) and `data\`, and leaves the install record with its mode and link and no effects.
+`--purge` asks first (the question names the package root, `data\` and every `App` that cannot be
+rebuilt, `--no-input` or no way to ask is exit 5) and then deletes the package root; it refuses a root
+that is a drive, the root itself or a folder that holds it.
+
+**Portable.** `data\` holds what `[portable] persist` names. The first population moves the vendor's
+defaults there; every activation copies the outgoing `App`'s persisted state back into `data\` and
+then links it into the incoming `App` (a folder becomes a junction, a file is copied in), and saved
+state wins over what a new `App` ships. Markers are created and `[nonportable] remove` globs are applied
+only to an `App` that gupkg built, never to a shipped one. The `App` comparison of `check` skips the
+persisted paths.
+
+**Origin copies.** A registry pinned version is copied into the package root only when it is chosen
+(into a root with no forwarder it carries the package's own bundled gupkg and launchers from the
+active version, like a `check-updates` directory),
+and its tracker when the package follows the registry and has none or an unedited older one (the hash
+and the revision recorded in the install record's `[link]` say whether the local copy was edited). A
+distribution folder is copied by `copy_distribution` (with bounds on entries, bytes, depth and the
+size of `pkg.toml`), the copy's `pkg.toml` must equal the one that was planned, and an existing
+directory that differs from the source is never overwritten: the install is refused and says so.
+An elevated run reads a distribution folder only while it copies it and plans from the admin-only
+copy.
+
+**Batches.** `run_batch` resolves every target once, asks `ensure_elevation` once for the whole call
+(read-only operations never relaunch; a run that cannot name its own gupkg's folders never relaunches),
+runs the targets in order and returns one typed result each. A stop request (a callable the front end
+supplies; `stop_marker(path)` is true once a file exists, which is safe in an elevated run because it
+can only stop the run) is checked between packages: the package that is running finishes, the rest are
+`skipped`, the batch's exit code is 5.
+
+**Trust in an elevated run.** `${NAME}` in a package's declarations sees only the machine's variables
+(`SystemRoot`, `ProgramData`, `ProgramFiles`, `ALLUSERSPROFILE`, `COMSPEC`... never `USERPROFILE`,
+`APPDATA` or `TEMP`), so the user's environment cannot steer what an elevated install writes. The download
+cache, the package's work folder, the interpreter that
+starts the regex worker, the worker script and 7-Zip must be in admin-only folders, judged before
+anything starts; `git` is resolved only from admin-only folders of `PATH` and started by its full
+path with a `PATH` that holds only such folders; hooks and populate scripts are judged by
+`require_trusted_code`. `file:` URLs naming a network host stay refused (no setting enables them). A
+hook of a version directory that exposes a name `track` once loaded is refused, whatever the static
+scan saw. A package that needs a program the sandbox has no double for ends with the code
+`needs-real-run`.
+
+**Not in the engine.** `[source.installer]` (a vendor installer, section 8.4) is refused with a
+clear message rather than ignored; running one is not part of this engine.
 
 ## 14. Events, console output, and logs
 
@@ -1883,6 +2010,10 @@ bundle and is called as `gupkg migrate …` (D45). 1.0 core contains no code for
   components, and marks those components "adopted". It reads old receipts
   and `.gupkg\state\update.toml` once, then removes them. Converting a
   package also writes its 1.0 launchers (`install.cmd`, `gupkg-tui.cmd`).
+  `gupkg-migrate package <root-or-package>` does both (`--no-adopt` only converts;
+  `--mode` and `--settings` decide the mode when the root does not): the effects of the
+  record are the ones the engine would apply, each marked adopted, and a package whose
+  active version is not converted yet is reported with the command that converts it.
 - **gupkg's own package** (`src\pkg.toml`, `src\pkg.local\check_update.py`,
   `unpack_app.py`) is rewritten for format 2 as described in section 21.6:
   a custom tracker and a custom populate script.

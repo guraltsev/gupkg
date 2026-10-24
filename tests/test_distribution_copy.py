@@ -9,6 +9,11 @@ Also: a name that Windows cannot hold (reserved device names, trailing dots) is 
 swapped for a junction between the check and the use is never copied; a refused copy leaves the root as it was; and
 the package's ``modes`` are checked on the staged copy before anything is moved into the root.
 
+Bounds (issue 028): a source with too many entries, bytes, folder levels or a huge ``pkg.toml`` is refused; a junction at
+``root\\.gupkg\\work``, ``root\\<name>`` or ``root\\<name>\\<version>`` is refused; a file that vanishes while the source is read is
+a ``DistributionRefused``; and the identity checks (open handle against the path, folder before and after its listing) are
+exercised by lying about the identity.
+
 Real: the copy on real folders and real NTFS alternate data streams below pytest's temporary folder (the
 streams need NTFS, so the marked-source tests are ``windows_integration``), and a real junction. Out of scope:
 the engine's receipt, which records ``source_marked`` (issue 028).

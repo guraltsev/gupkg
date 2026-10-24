@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from gupkg.model.checksum import parse_skip_flag
+from gupkg.report.events import PhaseEnd, PhaseStart, Warning, use_reporter
 from gupkg.system.port import Scope
 from tests.engine_support import World, pin_no_ambient_elevation  # noqa: F401
 
@@ -123,6 +124,33 @@ def test_a_skipped_checksum_is_listed_as_unverified(tmp_path: Path) -> None:
 
     notes = [note["message"] for note in result.details["notes"] if note["kind"] == "unverified"]
     assert notes == ["installed without a checksum (the manager's checksum_missing = skip)"]
+
+
+def test_a_skipped_checksum_is_shown_in_the_verify_phase_of_the_run(tmp_path: Path) -> None:
+    """The run reports an unverified download as a warning inside its Verify phase, and the log carries it."""
+    world = World(tmp_path)
+    world.publish("tool", "1.0.0", hashed=False)
+    events: list[object] = []
+
+    class Collect:
+        """Keep every event."""
+
+        def handle(self, event: object) -> None:
+            events.append(event)
+
+    with use_reporter(Collect()):
+        assert world.one("install", "tool", skip=parse_skip_flag("")).ok
+
+    inside = []
+    current = None
+    for event in events:
+        if isinstance(event, PhaseStart):
+            current = event.phase
+        elif isinstance(event, PhaseEnd):
+            current = None
+        elif isinstance(event, Warning) and current == "Verify":
+            inside.append(event.text)
+    assert any("installed without a checksum (--skip-checksum)" in text for text in inside)
 
 
 def test_a_stored_verified_is_shown_as_a_self_report_in_user_mode(world: World) -> None:

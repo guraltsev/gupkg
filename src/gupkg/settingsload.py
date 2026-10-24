@@ -174,7 +174,12 @@ def load_settings(
             folder = path.parent
             while not folder.exists() and folder.parent != folder:
                 folder = folder.parent
-            reason = system.directory_untrusted_reason(folder)
+            try:
+                reason = system.directory_untrusted_reason(folder)
+            except OSError as exc:
+                raise SettingsError(
+                    f"Refusing the {name} settings {path} for this run: {folder} could not be judged admin-only: {exc}"
+                ) from exc
             if reason is not None:
                 raise SettingsError(f"Refusing the {name} settings {path} for this run: {folder} is not admin-only: {reason}")
 

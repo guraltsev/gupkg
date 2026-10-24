@@ -57,14 +57,12 @@ from ..services.track import TrackEnvironment, run_tracker
 from .appbuild import populate_version
 from .context import Engine, require_trusted_tools, require_work_folder, tracker_tools
 from .errors import describe
-from .executor import emit_skipped, sync_registry_tracker
+from .executor import carry_forward, emit_skipped, sync_registry_tracker
 from .planner import PlanError, plan_check_updates
 from .portable import scratch_name
 from .receipts import update_receipt
 from .stateio import write_track_state
 
-# Names a bundled install carries from one version directory to the next (design 21.2, decision D32).
-_CARRIED = ("gupkg", "install.cmd", "gupkg-tui.cmd")
 
 
 def writes_root(engine: Engine, context: ModeContext) -> bool:
@@ -280,7 +278,7 @@ def _write_version(
 
         # In a root with no forwarder (a bundled install) the package's own gupkg and launchers are carried forward.
         if not (context.root / DATA_DIR_NAME / "gupkg.cmd").is_file():
-            _carry_forward(view, staged)
+            carry_forward(view, staged)
 
         report = check_directory(staged)
         if not report.ok:
@@ -323,22 +321,3 @@ def _defines_track(path: Path) -> bool:
         return defines_track(path.read_text(encoding="utf-8-sig"))
     except (OSError, UnicodeDecodeError, SyntaxError, ValueError):
         return True
-
-
-def _carry_forward(view: PackageView, staged: Path) -> None:
-    """Copy the package's own bundled gupkg and launchers from its active (else newest) version into *staged*."""
-    source: Path | None = None
-    if view.installed is not None:
-        source = view.installed.path
-    elif view.local is not None and view.local.valid_versions:
-        source = view.local.valid_versions[-1].path
-    if source is None:
-        return
-    for name in _CARRIED:
-        item = source / name
-        if not os.path.lexists(item) or is_reparse_point(item):
-            continue
-        if item.is_dir():
-            shutil.copytree(item, staged / name, symlinks=True)
-        else:
-            shutil.copy2(item, staged / name)

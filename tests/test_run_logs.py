@@ -21,7 +21,7 @@ import pytest
 
 from gupkg import cli, commands
 from gupkg.report.events import PackageEnd, PackageStart, PhaseEnd, PhaseStart, RunEnd, RunStart, Step, Warning
-from gupkg.report.logfile import RunLog, running_gupkg_logs_base, validate_log_file_name
+from gupkg.report.logfile import RunLog, list_run_logs, running_gupkg_logs_base, validate_log_file_name
 from gupkg.report.session import RunSession
 from gupkg.system.fake import FakeSystem
 from gupkg.system.port import ProcessResult
@@ -911,3 +911,27 @@ def test_the_cli_keeps_warnings_and_errors_on_standard_error_and_toml_mode_moves
     toml_run = capsys.readouterr()
     assert toml_run.out.startswith("output_schema = 1") and "==>" not in toml_run.out
     assert "==> Done" in toml_run.err and "WARNING: failed to broadcast" in toml_run.err
+
+
+def test_the_run_logs_of_a_package_are_listed_newest_first_without_latest_or_strangers(tmp_path: Path) -> None:
+    """`gupkg logs <target>` lists the run text logs, newest first; latest.log, event files and other files are not runs."""
+    logs = _logs(tmp_path / "tool")
+    logs.mkdir(parents=True)
+    for name in ("20261020T080000Z-install.log", "20261022T101500Z-update.log", "20261021T090000Z-check.log",
+                 "20261022T101500Z-update.jsonl", "latest.log", "notes.txt", "events.jsonl"):
+        (logs / name).write_text("x", encoding="utf-8")
+
+    assert [item.name for item in list_run_logs(tmp_path / "tool")] == [
+        "20261022T101500Z-update.log", "20261021T090000Z-check.log", "20261020T080000Z-install.log"]
+    assert list_run_logs(tmp_path / "none") == []
+
+
+def test_a_log_folder_that_is_a_junction_is_not_listed(tmp_path: Path, system: FakeSystem) -> None:
+    """The listing never follows a `.gupkg\\logs` junction to another folder."""
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "20261022T101500Z-update.log").write_text("x", encoding="utf-8")
+    (tmp_path / "tool" / ".gupkg").mkdir(parents=True)
+    system.create_junction(tmp_path / "tool" / ".gupkg" / "logs", elsewhere)
+
+    assert list_run_logs(tmp_path / "tool") == []

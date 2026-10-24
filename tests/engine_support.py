@@ -19,7 +19,9 @@ from gupkg.catalog.registry import registry_cache_dir
 from gupkg.engine import lifecycle
 from gupkg.engine.context import Engine
 from gupkg.engine.fingerprint import version_fingerprint
+from gupkg.model.mode import ModeChoice, ModeContext, build_mode_context
 from gupkg.model.plan import BatchResult, PackageResult
+from gupkg.modes import default_folders
 from gupkg.system.fake import FakeSystem, ProcessCall
 from gupkg.system.port import ProcessResult
 from gupkg.tomlio import write_toml
@@ -121,6 +123,13 @@ class World:
     def root(self, mode: str) -> Path:
         """Return the root of *mode*."""
         return {"user": self.user, "system": self.system_root, "portable": self.portable}[mode]
+
+    def mode_context(self, mode: str = "user") -> ModeContext:
+        """Return the resolved install-mode context of *mode* on this machine (for tests that call the services directly)."""
+        loaded = self.engine.load(system_mode=mode == "system")
+        return build_mode_context(
+            ModeChoice(mode, "test"), loaded.settings, self.machine.env, defaults=default_folders(self.fake),
+        )
 
     # -- publishing ---------------------------------------------------------------
 

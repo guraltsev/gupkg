@@ -125,6 +125,19 @@ class _Origin:
 def execute_install(engine: Engine, run: ExecutionInput) -> PackageResult:
     """Run an install-like plan and return its result.
 
+    Parameters
+    ----------
+    engine : Engine
+        The machine boundary, the clock, the HTTP client factory and the log lookup.
+    run : ExecutionInput
+        The plan with everything it was made from (the view, the chosen version, the settings, the registry's facts).
+
+    Returns
+    -------
+    PackageResult
+        ``installed``, ``repaired``, ``updated``, ``switched`` or ``prepared`` when it succeeded; a failed result with
+        the code ``integrate-failed`` when some effects could not be applied (the others are applied and recorded).
+
     Raises
     ------
     ChecksumError, UnpackError, PrepareError, HookError, HttpError, AppBuildError
@@ -256,6 +269,10 @@ def _copy_in(engine: Engine, run: ExecutionInput) -> _Origin:
         created = not os.path.lexists(version_dir)
         copy_registry_version(engine, run.context, plan.package_path, copy.source, plan.version or "")
         origin = _Origin("registry", f"{copy.registry}", None)
+
+        # A bundled install (no root forwarder) keeps its own gupkg: it is carried into the version just copied in.
+        if created and not (context.root / DATA_DIR_NAME / "gupkg.cmd").is_file():
+            carry_forward(run.view, version_dir)
         emit(Step(f"Copied {plan.version} from registry {copy.registry}", "add"))
         _require_same_manifest(run, version_dir, created=created)
         _verify_distribution(run, version_dir, origin, created=created)
@@ -277,7 +294,7 @@ def _require_same_manifest(run: ExecutionInput, version_dir: Path, *, created: b
     if copied != run.chosen.manifest:
         if created:
             remove_tree(version_dir)
-            _prune_empty_package(run.plan.package_path)
+            prune_empty_package(run.plan.package_path)
         raise DistributionRefused(f"{version_dir / MANIFEST_NAME} changed while it was being copied ({problem}); nothing was installed.")
 
 
@@ -299,7 +316,7 @@ def _verify_distribution(run: ExecutionInput, version_dir: Path, origin: _Origin
     differing = tree_differences(version_dir, run.registry_path, include_app=manifest.source.shipped) if run.registry_path else []
     if created:
         remove_tree(version_dir)
-        _prune_empty_package(run.plan.package_path)
+        prune_empty_package(run.plan.package_path)
     raise FingerprintMismatch(
         f"{run.plan.package} {run.plan.version} is not what registry {run.registry_name} publishes: the fingerprint "
         f"differs ({found}, expected {run.registry_fingerprint})"
@@ -354,6 +371,30 @@ def copy_registry_version(engine: Engine, context: ModeContext, package_path: Pa
     return destination
 
 
+def carry_forward(view: PackageView, target: Path) -> None:
+    """Copy the package's own bundled gupkg and launchers from its active (else newest) version into *target*.
+
+    A root with no forwarder has no installed gupkg to manage the package, so every new version directory of a
+    bundled install carries the package's own copy (design 5.3 rule 1, 21.4, decision D32). A name that *target*
+    already has is left alone.
+    """
+    source: Path | None = None
+    if view.installed is not None:
+        source = view.installed.path
+    elif view.local is not None and view.local.valid_versions:
+        source = view.local.valid_versions[-1].path
+    if source is None or canonical_path(source) == canonical_path(target):
+        return
+    for name in ("gupkg", "install.cmd", "gupkg-tui.cmd"):
+        item = source / name
+        if not os.path.lexists(item) or is_reparse_point(item) or os.path.lexists(target / name):
+            continue
+        if item.is_dir():
+            shutil.copytree(item, target / name, symlinks=True)
+        else:
+            shutil.copy2(item, target / name)
+
+
 def sync_registry_tracker(engine: Engine, view: PackageView, package_path: Path, sync: TrackerSync) -> str | None:
     """Copy (or refresh) the followed registry's tracker into ``<package>\\_check_updates``; return the new content hash.
 
@@ -392,7 +433,7 @@ def _refuse_links(folder: Path) -> None:
                 raise DistributionRefused(f"{Path(current) / name} is a link; links are never copied into a package")
 
 
-def _prune_empty_package(package_path: Path) -> None:
+def prune_empty_package(package_path: Path) -> None:
     """Remove a package root that this run created and that holds nothing but empty gupkg folders."""
     try:
         data = package_path / DATA_DIR_NAME
@@ -464,10 +505,10 @@ def _integrate(engine: Engine, run: ExecutionInput) -> tuple[list[Effect], list[
     stops the others, and a failed removal stays in the record so that the next run retries it.
     """
     plan = run.plan
-    if not plan.effects:
+    if not any(item.action != "keep" for item in plan.effects):
         emit_skipped("Integrate")
-        return [], [], None
-    effect_ctx = effect_context(run.context, plan.package_path, engine.env)
+        return [item.effect for item in plan.effects], [], None
+    effect_ctx = effect_context(run.context, plan.package_path, engine.effect_env)
     applied: list[Effect] = []
     failures: list[str] = []
     changed_environment = False
@@ -577,6 +618,23 @@ def execute_uninstall(engine: Engine, run: ExecutionInput) -> PackageResult:
 
     A failed removal stays in the install record so that the next run retries it. Version directories (and every
     ``App``, shipped ones above all) stay unless ``--purge`` was given and confirmed by the caller.
+
+    Parameters
+    ----------
+    engine : Engine
+        The machine boundary and the log lookup.
+    run : ExecutionInput
+        The uninstall plan (``plan_uninstall``) and its package view.
+
+    Returns
+    -------
+    PackageResult
+        ``uninstalled`` or ``purged``; a failed result with the code ``integrate-failed`` when an effect could not be removed.
+
+    Raises
+    ------
+    PlanError
+        If ``--purge`` names a folder that is a drive, the root, or holds the root.
     """
     plan, context = run.plan, run.context
     package_path = plan.package_path
@@ -587,7 +645,7 @@ def execute_uninstall(engine: Engine, run: ExecutionInput) -> PackageResult:
         or is_inside(context.root, package_path)
     ):
         raise PlanError(f"Refusing to purge {package_path}: it is not a package folder inside its root ({context.root}).")
-    effect_ctx = effect_context(context, package_path, engine.env)
+    effect_ctx = effect_context(context, package_path, engine.effect_env)
     remaining: list[Effect] = []
     failures: list[str] = []
     changed_environment = False

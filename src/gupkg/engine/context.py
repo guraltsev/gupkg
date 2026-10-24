@@ -38,6 +38,14 @@ from ..services.unpack import Limits
 from ..system.port import System, is_elevated_run, require_admin_only
 
 
+# The variables an elevated run lets a package's ``${NAME}`` see: the machine's own, never the user's (D19).
+MACHINE_VARIABLES = frozenset(name.casefold() for name in (
+    "SystemRoot", "SystemDrive", "WINDIR", "ProgramData", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432",
+    "CommonProgramFiles", "CommonProgramFiles(x86)", "CommonProgramW6432", "ALLUSERSPROFILE", "PUBLIC", "COMSPEC",
+    "PATHEXT", "OS", "PROCESSOR_ARCHITECTURE", "NUMBER_OF_PROCESSORS",
+))
+
+
 @dataclass
 class Engine:
     """Everything a lifecycle call needs besides its requests.
@@ -105,6 +113,17 @@ class Engine:
     def version(self) -> str:
         """Return the running gupkg's version."""
         return __version__
+
+    @property
+    def effect_env(self) -> Mapping[str, str]:
+        """Return the environment that ``${NAME}`` references in a package's declarations resolve against.
+
+        An elevated run ignores the user's environment (decision D19): only the machine-level variables of
+        ``MACHINE_VARIABLES`` are visible to a package then. A normal run sees everything it was given.
+        """
+        if not self.elevated:
+            return self.env
+        return {name: value for name, value in self.env.items() if name.casefold() in MACHINE_VARIABLES}
 
     def seven_zip_path(self) -> Path | None:
         """Return the 7-Zip executable to use, or ``None`` when none is found (an archive then fails with its own message)."""

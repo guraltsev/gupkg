@@ -140,6 +140,22 @@ def test_a_download_the_checksum_rules_refuse_leaves_the_version_without_app(tmp
     assert read_receipt(package, "1.1.0").data["checksum"]["decision"] == "skipped-cli"
 
 
+def test_check_updates_with_skip_checksum_populates_a_version_that_has_no_hash(tmp_path: Path) -> None:
+    """With the flag the unhashed https download is populated and the receipt records the skip; without it D46 applies."""
+    world = World(tmp_path)
+    world.publish("tool", "1.0.0", tables=ENV_ONLY)
+    world.tracker("tool", tables=ENV_ONLY, checksum=False)
+    world.one("install", "tool")
+    world.announce("tool", "1.1.0", sidecar=False)
+
+    result = world.one("check-updates", "tool", skip=parse_skip_flag("user-approved"))
+
+    package = world.user / "tool"
+    assert result.ok and (package / "1.1.0" / "App" / "app.exe").is_file()
+    assert read_receipt(package, "1.1.0").data["checksum"]["decision"] == "user-approved"
+    assert "sha256" not in (package / "1.1.0" / "pkg.toml").read_text()
+
+
 def test_check_updates_reports_nothing_new_when_the_version_is_known(tmp_path: Path) -> None:
     """A tracker result that equals the active version writes nothing and says so."""
     world = World(tmp_path)

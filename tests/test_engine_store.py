@@ -167,6 +167,17 @@ def test_a_receipt_is_never_written_through_a_link(tmp_path: Path, system: FakeS
     assert read_receipt(package, "1.0.0").problem and list(elsewhere.iterdir()) == []
 
 
+def test_a_receipt_over_the_size_limit_is_refused_unread(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A user-writable receipt cannot make `check` read an enormous file."""
+    package = tmp_path / "tool"
+    update_receipt(package, "1.0.0", {"source": {"kind": "download"}})
+    monkeypatch.setattr("gupkg.engine.receipts.MAX_RECEIPT_BYTES", 10)
+
+    read = read_receipt(package, "1.0.0")
+
+    assert read.data is None and "is not read" in read.problem
+
+
 def test_a_receipt_with_an_unknown_schema_or_broken_text_is_a_problem_not_data(tmp_path: Path) -> None:
     """An unreadable or foreign receipt is reported, and a checksum table that is not valid yields no record."""
     package = tmp_path / "tool"

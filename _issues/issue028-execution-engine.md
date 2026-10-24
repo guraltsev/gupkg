@@ -240,3 +240,46 @@ Epic: 020. Design: `_docs/rehaul_design.md` §7.4, §13
     or PATH changes.
 
   Each runs end to end against `FakeSystem`.
+
+## Notes for issues 029, 030, 031, 032 and 033 (from the implementation of 028)
+
+- **What exists (029).** `gupkg.engine.lifecycle` has `check_updates`, `install`, `update` (with
+  `download_only`), `switch`, `uninstall` (`purge`), `cleanup` (`keep`, `bundled`), `check` (`fix`) and `repair`,
+  all over `run_batch(engine, requests)` and `plan(engine, requests)` (the `--plan` data). Build the
+  `gupkg.engine.context.Engine` once per call: `system`, `env`, `load` (`gupkg.modes.settings_loader`),
+  `confirm`, `yes`, `no_input`, `cancel` (use `stop_marker(path)` for the stop request), `log_path` (give it
+  `lambda path: str(session.log.package_log(path))` so the receipt stores the log), `relaunched`, and `argv`,
+  `gupkg_dir`, `gupkg_root` for the one elevation (without them the engine never relaunches). Results are
+  `BatchResult` and `PackageResult` (`to_data()` is the `--json` shape; `exit_code`; `error` has `code`,
+  `message`, `hint`, and for a checksum refusal `url` and `skippable`). `lifecycle.cleanup_root(engine, context,
+  settings)` prunes a root's logs and old registry trees: call it once per root after a cleanup. Pass
+  `[logs] keep_runs` and `keep_days` from the settings to `RunSession`. `gupkg logs <target>` lists
+  `<package>\.gupkg\logs` (the receipt's `[run] log` names the last one). The CLI maps `--skip-checksum` to
+  `Request.skip` through `parse_skip_flag`; `--in-place`, `--refresh`, `--purge`, `--keep`, `--bundled`,
+  `--no-download`, `--fix` and `--mode` are `Request` fields; `gupkg shell` prints `ModeContext.path_line()`.
+- **Deleted by 029, not by 028 (the engine is built beside the 0.17 front end, decision D13).**
+  `gupkg.py` (`install_package`, `_run_update`, `update_package`), `updates.prepare_update` and its
+  receipt-by-mtime logic, `origin.populate_*`, the `manager.py` executor, `components.py`, `downloads.py`,
+  `github_releases.py` and `configuration.py`, `configfix.py`, `metadata.py`, `legacy_to_gupkg_toml.py` and
+  `shortcuts_to_gupkg_toml.py` are imported by `cli.py`, `commands.py`, `tui.py`, `manager_tui.py`, `registry.py`
+  and `manager.py`, which 0.17 still runs. Nothing in the new engine imports any of them. When 029 replaces
+  the front end it deletes them in one commit (plus `layout.identity_from_path`, `installed_version` and the
+  shared registry transports that `catalog/registry.py` still imports from `gupkg.registry`, see issue 024).
+- **The fingerprint (031).** The registry tool must compute a version's fingerprint with
+  `gupkg.engine.fingerprint.version_fingerprint(directory)` (names with letter case folded, SHA-256 of
+  each file, sorted; `App` only for a shipped version, `.gupkg` never) and publish it in `_registry.toml`
+  `[fingerprints]`. Design 9.2 has the text.
+- **Not done by 028 (033, owner).** Running a vendor installer (`[source.installer]`, design 8.4) is refused
+  with a message; the `[root_forwarder]` table, `requires_gupkg` and exit code 6, and the launchers belong to
+  issue 033 (check-updates already carries a bundled gupkg and the launchers forward into a new version
+  directory when the root has no forwarder). A memory cap and an operating-system-enforced "no network"
+  for the regex worker were not built (they need a job object limit in `WindowsSystem`).
+- **Sandbox (029).** A program that the sandbox has no double for ends a package with the code
+  `needs-real-run` (exit 3), never a crash; `gupkg pkg check --install` should print that and declare the
+  doubles it needs.
+- **Local fixes made on the way.** `render_pinned` now expands `${download_url}` (a tracker's
+  `[source.checksum] sidecar = "${download_url}.sha256"` stayed a template); `defines_track` finds every way
+  of binding `track` (loop, `with`, walrus, starred, match, `type`, `except as`, `global`) and ignores a bare
+  annotation; a version-directory hook that exposes `track` once loaded is refused; `git` is resolved only
+  from admin-only folders in an elevated run; `copy_distribution` is bounded (entries, bytes, depth, size of
+  `pkg.toml`) and refuses a junction at `root\.gupkg\work`, `root\<name>` and `root\<name>\<version>`.

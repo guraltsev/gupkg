@@ -82,6 +82,35 @@ def test_an_elevated_run_never_starts_a_populate_script_from_an_untrusted_folder
     assert double.calls == [] and world.fake.process_log == []
 
 
+@pytest.mark.parametrize("url", ["file://fileserver/share/tool.zip", "file:////fileserver/share/tool.zip"], ids=["host", "unc-share"])
+def test_a_download_from_a_network_share_through_a_file_url_is_refused(tmp_path: Path, url: str) -> None:
+    """Windows would authenticate to that server, so the engine's client refuses `file:` URLs that name a host or share."""
+    world = World(tmp_path)
+    folder = world.user / "tool" / "1.0.0"
+    folder.mkdir(parents=True)
+    (folder / "pkg.toml").write_text(pkg_text(url, sha256="ab" * 32, tables=ENV), encoding="utf-8")
+    world.fake.add_url(url, b"never served")
+
+    result = world.one("install", "tool")
+
+    assert not result.ok and result.error["code"] == "network-error" and url not in world.fake.fetch_log
+
+
+def test_an_elevated_run_expands_only_machine_variables_in_a_packages_declarations(tmp_path: Path) -> None:
+    """`${ProgramData}` resolves, `${USERPROFILE}` (the user's) does not: the install is refused and nothing is applied."""
+    world = World(tmp_path, elevated=True)
+    world.engine.env = {**world.machine.env, "ProgramData": "C:\\ProgramData", "USERPROFILE": "C:\\Users\\mallory"}
+    world.publish("good", "1.0.0", mode="system", tables='[[env]]\nname = "GOOD"\nvalue = "${ProgramData}\\\\good"\n')
+    world.publish("bad", "1.0.0", mode="system", tables='[[env]]\nname = "BAD"\nvalue = "${USERPROFILE}\\\\bad"\n')
+
+    good = world.one("install", "good")
+    bad = world.one("install", "bad")
+
+    assert good.ok and world.fake.env_values(Scope.MACHINE)["GOOD"].value == "C:\\ProgramData\\good"
+    assert not bad.ok and "USERPROFILE" in bad.error["message"] and "BAD" not in world.fake.env_values(Scope.MACHINE)
+    assert not (world.system_root / "bad" / "current").exists()
+
+
 def test_an_elevated_run_does_not_read_a_system_root_that_users_can_change(tmp_path: Path) -> None:
     """When the system root itself is not admin-only an elevated run ignores it: the package is not found, nothing is written."""
     world = World(tmp_path, elevated=True, untrusted={tmp_path / "sys" / "opt"})

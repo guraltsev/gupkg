@@ -104,6 +104,88 @@ def test_after_adoption_check_is_healthy_and_uninstall_removes_the_old_component
     assert not (package / "current").exists() and (package / "1.2.3.local.1" / "App" / "GoodApp.exe").is_file()
 
 
+LEGACY_RICH = """name = "Rich"
+version = "2.0"
+localVersion = 1
+
+[[shortcut]]
+name = "Rich App"
+targetPath = "$App\\\\rich.exe"
+arguments = "--flag"
+workingDirectory = "$App"
+iconLocation = "$App\\\\rich.ico,0"
+description = "Rich"
+
+[[environment]]
+Name = "RICH_HOME"
+Value = "$App"
+
+[[environment]]
+Name = "RICH_BIN"
+Value = "$App\\\\bin;${USERPROFILE}"
+
+[[path]]
+value = "$App\\\\bin"
+
+[[bin]]
+name = "rich"
+target = "$App\\\\rich.exe"
+type = "gui"
+arguments = ["--a", "$App\\\\x"]
+forward_args = false
+elevate = true
+working_dir = "$App"
+
+[[bin]]
+name = "rich-run.cmd"
+content = "@echo off\\r\\n\\"$App\\\\rich.exe\\" %*\\r\\n"
+"""
+
+
+def snapshot_machine(world: World) -> dict:
+    """Return the machine state of a world with its own base folder replaced by a placeholder, for comparing two worlds."""
+    base = str(world.base)
+    folders = world.fake.scope_folders(Scope.USER)
+
+    # TOML files spell a backslash twice, so the base folder appears in both spellings.
+    files = {
+        item.name: item.read_bytes().decode("utf-8", "replace").replace(base, "<BASE>").replace(base.replace("\\", "\\\\"), "<BASE>")
+        for item in sorted(folders.bin_dir.glob("*")) if item.suffix in (".toml", ".cmd")
+    }
+    return {
+        "shortcuts": {
+            str(path).replace(base, "<BASE>"): {key: str(value).replace(base, "<BASE>") for key, value in vars(spec).items()}
+            for path, spec in world.fake.shortcuts().items()
+        },
+        "env": {name: value.value.replace(base, "<BASE>") for name, value in world.fake.env_values(Scope.USER).items() if name != "Path"},
+        "path": [entry.replace(base, "<BASE>") for entry in world.fake.get_path(Scope.USER)],
+        "bin": files,
+        "launchers": sorted(item.name for item in folders.bin_dir.glob("*.exe")),
+    }
+
+
+def test_the_engine_makes_the_same_machine_state_as_the_0_17_install(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Differential: the same package, installed by the real 0.17 code and (converted) by the 1.0 engine, leaves identical shortcuts, shims, environment and PATH."""
+    old, new = World(tmp_path / "old"), World(tmp_path / "new")
+
+    # 0.17 reads ${USERPROFILE} from the process environment; the engine reads the mapping it is given.
+    monkeypatch.setenv("USERPROFILE", "C:\\Users\\same")
+    new.engine.env = {**new.machine.env, "USERPROFILE": "C:\\Users\\same"}
+    for world in (old, new):
+        version = world.user / "Rich" / "2.0.local.1"
+        (version / "App" / "bin").mkdir(parents=True)
+        (version / "App" / "rich.exe").write_text("exe", encoding="utf-8")
+        (version / "pkg.toml").write_text(LEGACY_RICH, encoding="utf-8")
+    assert legacy.install_package(old.user / "Rich", old.fake, scope=Scope.USER).ok
+    assert run_migration(new, new.user / "Rich", "--no-adopt") == 0
+
+    result = new.one("install", "Rich")
+
+    assert result.ok, result.error
+    assert snapshot_machine(new) == snapshot_machine(old)
+    assert snapshot_machine(old)["launchers"] == ["rich.exe"] and len(snapshot_machine(old)["bin"]) == 2
+
+
 def test_adoption_is_idempotent_and_leaves_an_existing_record_alone(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """A second run reports the package as already adopted and changes nothing."""
     world = World(tmp_path)

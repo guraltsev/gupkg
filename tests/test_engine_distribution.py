@@ -19,8 +19,11 @@ from pathlib import Path
 import pytest
 
 from gupkg.catalog.local import read_adhoc_roots
+from gupkg.catalog.record import read_install_record
+from gupkg.engine import executor
 from gupkg.engine.fingerprint import version_fingerprint
 from gupkg.engine.receipts import read_receipt
+from gupkg.system.port import Scope
 from tests.engine_support import World, pin_no_ambient_elevation  # noqa: F401
 from tests.mode_support import tree_snapshot
 
@@ -161,6 +164,50 @@ def test_a_registry_only_package_is_copied_in_with_its_tracker(world: World) -> 
     assert read_receipt(package, "1.1.0").data["origin"] == {"kind": "registry", "copied_from": "main"}
 
 
+def test_the_registrys_tracker_is_refreshed_when_it_changed_and_kept_when_the_local_copy_was_edited(world: World) -> None:
+    """A copied tracker follows the registry while it is unedited (the hash recorded at copy time says so), and an edited one is never replaced."""
+    first = world.tracker("tool", root=world.base / "scratch", tables="# first\n").joinpath("pkg.toml").read_text(encoding="utf-8")
+    world.registry({"tool": {"versions": {"1.0.0": {"app.exe": "x"}}, "tracker": first, "tables": SHIM}}, revision="a" * 40)
+    assert world.one("install", "tool").ok
+    local = world.user / "tool" / "_check_updates" / "pkg.toml"
+    assert local.read_text(encoding="utf-8") == first
+    link = read_install_record(world.user / "tool").record.link
+    assert link.tracker_sha256 and link.revision == "a" * 40
+
+    second = first + "# second\n"
+    world.registry({"tool": {"versions": {"1.0.0": {"app.exe": "x"}}, "tracker": second, "tables": SHIM}}, revision="b" * 40)
+    assert world.one("install", "tool").ok
+    assert local.read_text(encoding="utf-8") == second
+
+    local.write_text(second + "# my edit\n", encoding="utf-8")
+    third = second + "# third\n"
+    world.registry({"tool": {"versions": {"1.0.0": {"app.exe": "x"}}, "tracker": third, "tables": SHIM}}, revision="c" * 40)
+    assert world.one("install", "tool").ok
+
+    assert local.read_text(encoding="utf-8").endswith("# my edit\n")
+
+
+@pytest.mark.parametrize("forwarder", [False, True], ids=["bundled-install", "root-with-a-forwarder"])
+def test_a_registry_version_copied_into_a_bundled_install_carries_the_packages_own_gupkg(world: World, forwarder: bool) -> None:
+    """Without a root forwarder the package's gupkg and launchers go into the version that is copied in; with one they do not (D32)."""
+    world.publish("tool", "1.0.0", tables=SHIM)
+    world.one("install", "tool")
+    active = world.user / "tool" / "1.0.0"
+    (active / "gupkg").mkdir()
+    (active / "gupkg" / "gupkg.cmd").write_text("@echo off\n", encoding="utf-8")
+    (active / "install.cmd").write_text("@echo off\n", encoding="utf-8")
+    if forwarder:
+        (world.user / ".gupkg").mkdir(exist_ok=True)
+        (world.user / ".gupkg" / "gupkg.cmd").write_text("@echo off\n", encoding="utf-8")
+    world.registry({"tool": {"versions": {"1.0.0": {"app.exe": "x"}, "1.2.0": {"app.exe": "new"}}, "tables": SHIM}})
+
+    result = world.one("update", "tool")
+
+    new = world.user / "tool" / "1.2.0"
+    assert result.ok and result.version == "1.2.0"
+    assert (new / "gupkg" / "gupkg.cmd").is_file() == (not forwarder) and (new / "install.cmd").is_file() == (not forwarder)
+
+
 def test_a_registry_with_only_a_tracker_copies_it_and_stops_with_a_hint(world: World) -> None:
     """Case R with no pinned version: the tracker is copied in and the install says to run check-updates first."""
     tracker = world.tracker("tool", root=world.base / "scratch").joinpath("pkg.toml").read_text(encoding="utf-8")
@@ -171,6 +218,89 @@ def test_a_registry_with_only_a_tracker_copies_it_and_stops_with_a_hint(world: W
 
     assert not result.ok and "check-updates tool" in result.error["message"] and world.fake.fetch_log == []
     assert (world.user / "tool" / "_check_updates" / "pkg.toml").is_file() and not (world.user / "tool" / "current").exists()
+
+
+def test_an_administrator_installs_a_distribution_system_wide_from_an_admin_only_copy(tmp_path: Path) -> None:
+    """From an admin shell the folder in Downloads is only read and copied into the system root; the install runs from the copy."""
+    world = World(tmp_path, elevated=True)
+    folder = distribution(world)
+
+    result = world.one("install", str(folder), mode="system")
+
+    package = world.system_root / "tool"
+    assert result.ok and result.mode == "system" and (package / "1.0.0" / "pkg.local" / "populate.cmd").is_file()
+    assert (package / "current" / "App" / "app.exe").is_file()
+    assert read_receipt(package, "1.0.0").data["origin"]["copied_from"] == str(folder)
+    assert not (world.user / "tool").exists()
+
+
+def test_a_distribution_copied_by_an_elevated_run_is_taken_back_when_the_install_cannot_be_planned(tmp_path: Path) -> None:
+    """The elevated run copies before it can read the manifest; when the plan then fails the copy and its package folder are removed."""
+    world = World(tmp_path, elevated=True)
+    folder = distribution(world)
+    manifest = folder / "pkg.toml"
+    manifest.write_text(manifest.read_text(encoding="utf-8") + '\n[[shortcut]]\nname = "..\\\\..\\\\evil"\ntarget = "$App\\\\a.exe"\n', encoding="utf-8")
+
+    result = world.one("install", str(folder), mode="system")
+
+    assert not result.ok and "outside" in result.error["message"]
+    assert not (world.system_root / "tool").exists()
+
+
+def test_the_relaunched_elevated_child_refuses_a_folder_outside_the_system_root(tmp_path: Path) -> None:
+    """The elevated child accepts only names and paths in the system root: a folder in Downloads is refused, nothing is copied."""
+    world = World(tmp_path, elevated=True)
+    folder = distribution(world)
+    world.engine.relaunched = True
+
+    result = world.one("install", str(folder), mode="system")
+
+    assert not result.ok and result.exit_code == 2 and "system root" in result.error["message"]
+    assert not (world.system_root / "tool").exists()
+
+
+def test_a_source_that_changes_between_the_plan_and_the_copy_is_refused_and_the_copy_removed(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The plan was made from the source folder; the copy is what gets installed, so a different pkg.toml in the copy stops the install."""
+    folder = distribution(world)
+    real_copy = executor.copy_distribution
+
+    def changing_copy(source, root, **options):
+        """Rewrite the source's pkg.toml just before it is copied, as a user changing the folder would."""
+        text = (source / "pkg.toml").read_text(encoding="utf-8")
+        (source / "pkg.toml").write_text(text + '\n[[env]]\nname = "SNEAKY"\nvalue = "1"\n', encoding="utf-8")
+        return real_copy(source, root, **options)
+
+    monkeypatch.setattr(executor, "copy_distribution", changing_copy)
+
+    result = world.one("install", str(folder))
+
+    assert not result.ok and "changed while it was being copied" in result.error["message"]
+    assert not (world.user / "tool" / "1.0.0").exists() and "SNEAKY" not in world.fake.env_values(Scope.USER)
+
+
+def test_a_hostile_distribution_is_refused_before_anything_is_installed(world: World) -> None:
+    """A junction inside the folder is never copied or followed, and the root is left as it was."""
+    folder = distribution(world)
+    secret = world.base / "secret"
+    secret.mkdir()
+    (secret / "secret.txt").write_text("private", encoding="utf-8")
+    world.fake.create_junction(folder / "linked", secret)
+    before = tree_snapshot(world.user)
+
+    result = world.one("install", str(folder))
+
+    assert not result.ok and result.exit_code == 2 and "link or junction" in result.error["message"]
+    assert tree_snapshot(world.user) == before and not (world.user / "tool").exists()
+
+
+def test_a_version_that_runs_a_vendor_installer_is_refused_instead_of_being_ignored(world: World) -> None:
+    """`[source.installer]` is not executed by this engine: the install says so rather than installing a different App."""
+    world.publish("tool", "1.0.0", source='[source.installer]\nrun = ["/VERYSILENT", "/DIR=$Stage"]\n')
+
+    result = world.one("install", "tool")
+
+    assert not result.ok and "vendor installer" in result.error["message"]
+    assert not (world.user / "tool" / "1.0.0" / "App").exists()
 
 
 def test_the_fingerprint_of_a_version_directory_ignores_a_downloaded_app(world: World) -> None:

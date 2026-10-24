@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Any
 
 from ..catalog.local import DATA_DIR_NAME, is_reparse_point
-from ..model.checksum import ChecksumMismatch, ChecksumRecord, git_gate, git_record
+from ..model.checksum import ChecksumMismatch, ChecksumRecord, git_gate, git_record, unverified_note
 from ..model.manifest import Manifest
 from ..model.mode import ModeContext
 from ..report.events import Step, Warning, emit, phase
@@ -190,6 +190,11 @@ def _download_and_unpack(
             f"SHA-256 {fetched.record.observed_sha256} ({fetched.record.decision})",
             "ok" if fetched.record.verified else "info",
         ))
+
+        # A download that was allowed to go unverified is shown here, where the run reports verification (design 9.1).
+        note = unverified_note(fetched.record.decision)
+        if note is not None:
+            emit(Warning(f"{name} {version} is {note}"))
     with phase("Unpack"):
         # The cached file is hashed again right before it is used (it could have been replaced since).
         reverify(fetched)
@@ -240,7 +245,14 @@ def _move_into_place(staged: Path, target: Path, work_root: Path, replace: bool)
         os.replace(staged, target)
     except OSError as error:
         if old is not None:
-            os.replace(old, target)
+            try:
+                os.replace(old, target)
+            except OSError as restore_error:
+                # The old App stays where it was moved to (outside the scratch folder that is deleted): nothing is lost.
+                raise AppBuildError(
+                    f"The App cannot be moved into place at {target}: {error}; the previous App is kept in {old} "
+                    f"(it could not be put back: {restore_error})"
+                ) from error
         raise AppBuildError(f"The App cannot be moved into place at {target}: {error}") from error
     if old is not None:
         remove_tree(old)

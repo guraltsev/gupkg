@@ -34,6 +34,9 @@ from ..tomlio import read_toml, write_toml
 
 RECEIPT_SCHEMA = 1
 
+# The largest receipt that is read (200,000 files at about 130 bytes each fit with room to spare).
+MAX_RECEIPT_BYTES = 64 * 1024 * 1024
+
 
 @dataclass(frozen=True)
 class ReceiptRead:
@@ -101,6 +104,14 @@ def read_receipt(package_path: Path, version: str) -> ReceiptRead:
             return ReceiptRead(problem=f"{entry} is a link and is not followed")
     if not path.is_file():
         return ReceiptRead()
+
+    # A receipt of a user-mode install is user-writable: an absurdly large one is refused unread.
+    try:
+        size = path.stat().st_size
+    except OSError as exc:
+        return ReceiptRead(problem=f"Cannot read the receipt {path}: {exc}")
+    if size > MAX_RECEIPT_BYTES:
+        return ReceiptRead(problem=f"The receipt {path} is {size} bytes; one over {MAX_RECEIPT_BYTES} is not read")
     try:
         data = read_toml(path)
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:

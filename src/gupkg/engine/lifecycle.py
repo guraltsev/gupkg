@@ -26,7 +26,7 @@ before anything changes.
 from __future__ import annotations
 
 import os
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
 
@@ -59,7 +59,14 @@ from .checkupdates import check_updates_one, plan_check
 from .context import Engine
 from .effects import desired_effects, effect_context, verify_each
 from .errors import failure
-from .executor import ExecutionInput, execute_cleanup, execute_install, execute_uninstall, sync_registry_tracker
+from .executor import (
+    ExecutionInput,
+    execute_cleanup,
+    execute_install,
+    execute_uninstall,
+    prune_empty_package,
+    sync_registry_tracker,
+)
 from .health import Diagnosis, diagnose
 from .planner import Chosen, CleanupFacts, CleanupPlan, PlanError, plan_cleanup, plan_install, plan_uninstall
 from .receipts import list_receipts, read_receipt
@@ -227,7 +234,10 @@ def _resolve(engine: Engine, request: Request) -> _Target | PackageResult:
         _require_supported_mode(target)
         return target
     except Exception as error:  # noqa: BLE001 - every failure of one target is that target's result
-        return failure(request.selector, request.operation, error)
+        result = failure(request.selector, request.operation, error)
+        data = result.error or {}
+        emit(Error(f"{request.selector}: {data.get('message', error)}", data.get("hint")))
+        return result
 
 
 def _require_supported_mode(target: _Target) -> None:
@@ -350,19 +360,30 @@ def _view(target: _Target) -> PackageView:
 
 def _install_like(engine: Engine, target: _Target) -> PackageResult:
     """Plan and run ``install``, ``update``, ``switch`` or ``repair`` for one target."""
-    run = _prepare_install(engine, target, execute=True)
+    undo: list[Callable[[], None]] = []
     try:
-        return execute_install(engine, run)
+        return execute_install(engine, _prepare_install(engine, target, execute=True, undo=undo))
     except BaseException:
         # A distribution that an elevated run copied before it could plan is removed again when nothing was installed.
-        outcome = run.precopied
-        if outcome is not None and outcome.status == COPIED and run.view.installed is None:
-            remove_tree(outcome.destination)
+        for step in reversed(undo):
+            step()
         raise
 
 
-def _prepare_install(engine: Engine, target: _Target, *, execute: bool) -> ExecutionInput:
+def _drop_copy(catalog: Catalog, name: str, context: ModeContext, copied: CopyResult) -> None:
+    """Remove a distribution copy that this call made, unless the package turned out to be installed already."""
+    if copied.status == COPIED and _describe_destination(catalog, name, context).installed is None:
+        remove_tree(copied.destination)
+        prune_empty_package(copied.destination.parent)
+
+
+def _prepare_install(
+    engine: Engine, target: _Target, *, execute: bool, undo: list[Callable[[], None]] | None = None
+) -> ExecutionInput:
     """Choose the version, build the effects and the plan, and return what the executor needs.
+
+    *undo* receives what has to be done to take back a change made while preparing (an elevated run copies a
+    distribution folder before it can plan from it).
 
     Raises
     ------
@@ -398,6 +419,8 @@ def _prepare_install(engine: Engine, target: _Target, *, execute: bool) -> Execu
             if not execute:
                 raise PlanError("an elevated run reads a distribution folder only while it copies it into the root")
             precopied = copy_distribution(distribution, context.root, required=resolved.choice)
+            if undo is not None:
+                undo.append(lambda copied=precopied: _drop_copy(catalog, name, context, copied))
             if precopied.status == DIVERGED:
                 raise DistributionRefused(f"{precopied.destination} exists and differs from {distribution}; it was left alone.")
             candidate = Candidate(version, "local", precopied.destination)
@@ -433,7 +456,7 @@ def _prepare_install(engine: Engine, target: _Target, *, execute: bool) -> Execu
         package_path = view.path if view.path is not None else context.package_dir(view.name)
 
     # Effects the version declares for this mode, and what a repair found missing on the machine.
-    desired, notes = desired_effects(manifest, effect_context(context, package_path, engine.env))
+    desired, notes = desired_effects(manifest, effect_context(context, package_path, engine.effect_env))
     notes = (*notes, *resolved.warnings)
     drifted: frozenset[tuple[str, ...]] = frozenset()
     repairing = (
@@ -621,7 +644,9 @@ def cleanup_root(engine: Engine, context: ModeContext, settings: Settings) -> di
         folders += [item / DATA_DIR_NAME / "logs" for item in context.root.iterdir() if item.is_dir() and not item.name.startswith(".")]
     for folder in folders:
         if folder.is_dir():
-            prune_logs(folder, keep_runs, keep_days, engine.now())
+            # The cleanup run already has its own log in the root's folder, and pruning keeps one run less than it
+            # is told so that a run that is about to start fits: telling it one more leaves `keep_runs` runs.
+            prune_logs(folder, keep_runs + 1, keep_days, engine.now())
             done["logs"].append(str(folder))
 
     # Registry trees other than the active revision.
@@ -673,7 +698,7 @@ def _repair(engine: Engine, target: _Target, diagnosis: Diagnosis) -> PackageRes
     if state is None or state.manifest is None:
         raise PlanError(f"{view.name} {view.installed.version} is not a valid version directory, so it cannot be repaired")
     chosen = Chosen(Candidate(view.installed.version, "local", view.installed.path), state.manifest, state)
-    desired, notes = desired_effects(state.manifest, effect_context(context, view.path, engine.env))
+    desired, notes = desired_effects(state.manifest, effect_context(context, view.path, engine.effect_env))
     repair_plan = plan_install(
         target.request, view, context, chosen, desired, notes=notes, package_path=view.path, drifted=diagnosis.drifted
     )

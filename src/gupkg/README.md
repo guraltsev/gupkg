@@ -37,6 +37,17 @@ domains used by the `gupkg.cli` command boundary and package workflows:
   `populate.py` joins unpack and prepare; `hints.py` suggests the service that replaces a hook;
   `safepath.py` judges untrusted names. The pure parts (`model/patterns.py`, `jsonpath.py`,
   `trackspec.py`) validate what a `[track]` table says.
+- `engine/`: planning and execution of the lifecycle (design section 13), built beside the 0.17 workflows
+  below until the new command line (issue 029) replaces them. `model/plan.py` is the pure data (request,
+  effect diff, phases, `InstallPlan`, typed results); `planner.py` turns a package view into a plan without
+  touching the machine; `executor.py` runs it (copy in, populate atomically, switch `current`, integrate,
+  write the receipt and the install record last); `appbuild.py` is the built-in download script and the
+  custom populate runner; `effects.py` builds, applies, removes and verifies shortcuts, shims, environment
+  values and `PATH` entries; `portable.py` keeps portable state in `data\`; `fingerprint.py`, `receipts.py`
+  and `stateio.py` are the records beside a package; `checkupdates.py` is the separate check-updates plan;
+  `health.py` is what `check` reports; `lifecycle.py` has the entry points (`install`, `update`, `switch`,
+  `uninstall`, `cleanup`, `check`, `repair`, `check_updates`, `run_batch`, `plan`) and returns typed results.
+  `gupkg_migrate/adopt.py` writes install records for packages that 0.17 installed.
 - `selfmgmt/`: the elevated-run trust checks (`elevation.py`: elevation signals,
   access-control reading and the admin-only policy). `bootstrap.py` loads it by
   file path before the package is importable, so it stays self-contained.

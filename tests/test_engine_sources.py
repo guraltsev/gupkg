@@ -270,6 +270,18 @@ def test_check_reports_a_modified_app_file_unless_the_fingerprint_is_switched_of
     assert result.ok == (opt_out != "none")
 
 
+def test_a_repair_never_blesses_a_file_that_was_changed_since_the_install(world: World) -> None:
+    """The App fingerprint is recorded once: installing again does not record the modified file as the new baseline."""
+    world.publish_shipped("tool", "1.0.0", tables=SHIM)
+    world.one("install", "tool")
+    (world.user / "tool" / "1.0.0" / "App" / "app.exe").write_text("modified", encoding="utf-8")
+
+    repaired = world.one("install", "tool")
+    checked = world.one("check", "tool")
+
+    assert repaired.ok and not checked.ok and "app-modified" in [item["kind"] for item in checked.details["problems"]]
+
+
 def test_check_reports_deleted_and_added_app_files(world: World) -> None:
     """Deleted and extra files of the active App are named in the report."""
     world.publish_shipped("tool", "1.0.0", files={"app.exe": "a", "lib.dll": "b"}, tables=SHIM)

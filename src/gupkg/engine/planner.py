@@ -220,6 +220,11 @@ def plan_populate(
         With ``App is missing and no way to recover it.`` when nothing can populate a missing ``App``.
     """
     source = manifest.source
+    if source.installer is not None:
+        raise PlanError(
+            "This version runs a vendor installer ([source.installer]), which this gupkg does not run yet; "
+            "nothing was installed. (Design 8.4 allows it as an explicit step; it is not part of the execution engine.)"
+        )
     kind = "script" if source.populate == "script" else "shipped" if source.populate == "none" else (
         "git" if source.kind == "git" else "download"
     )
