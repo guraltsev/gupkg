@@ -39,7 +39,7 @@ MAX_RECORD_BYTES = 1 << 20
 CHUNK_BYTES = 1 << 18
 MAX_READS_PER_POLL = 8
 # Records one poll returns at most; the rest stay in the file for the next poll.
-MAX_RECORDS_PER_POLL = 2000
+MAX_RECORDS_PER_POLL = 500
 
 _DUPLICATES_IN_PACKAGE_FILE = frozenset({"run_start", "package_start", "package_end"})
 
