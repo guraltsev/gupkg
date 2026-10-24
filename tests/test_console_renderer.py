@@ -50,6 +50,7 @@ def _install_events() -> list:
 
 
 def _feed(reporter: ConsoleReporter, events: list) -> None:
+    """Hand every event to *reporter* in order."""
     for event in events:
         reporter.handle(event)
 

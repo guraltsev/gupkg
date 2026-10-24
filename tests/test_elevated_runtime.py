@@ -256,11 +256,13 @@ def _scripted_win32(trusted: bool, *, exit_code: int = 5):
     shell32, kernel32 = mock.Mock(), mock.Mock()
 
     def shell_execute(info) -> int:
+        """Record the ShellExecuteEx request and hand back a process handle (99)."""
         record.update(verb=info.lpVerb, file=info.lpFile, parameters=info.lpParameters, directory=info.lpDirectory, mask=info.fMask)
         info.hProcess = 99
         return 1
 
     def exit_code_of(handle, code) -> int:
+        """Report the scripted exit code of the child."""
         code.value = exit_code
         return 1
 

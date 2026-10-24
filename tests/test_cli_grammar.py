@@ -87,7 +87,7 @@ def test_every_subcommand_has_an_example_in_its_help(world: CliWorld, group: str
     assert result.code == 0 and "example:" in result.out and f"gupkg {group} {action}" in result.out
 
 
-@pytest.mark.parametrize("word", ["config-check", "config-fix", "doctor", "repair-deps", "update-deps"])
+@pytest.mark.parametrize("word", [pytest.param(word, id=word.replace("-", "_")) for word in ("config-check", "config-fix", "doctor", "repair-deps", "update-deps")])
 def test_the_old_commands_are_unknown(world: CliWorld, word: str) -> None:
     """0.17 command names are not aliases (D33): argparse reports an invalid choice and nothing runs."""
     result = world.cli(word, ".")
@@ -255,7 +255,7 @@ def test_a_forwarder_records_the_launcher_and_passes_the_exit_code_on_the_fake_m
     assert code == 9 and system.foreground_log == [[str(location.launcher_dirs[0] / "gupkg-tui.cmd"), "somewhere"]]
 
 
-@pytest.mark.parametrize("word", ["tui", "manager", "migrate"])
+@pytest.mark.parametrize("word", [pytest.param(word, id=f"gupkg-{word}") for word in ("tui", "manager", "migrate")])
 def test_a_missing_program_is_a_clear_message_and_exit_2(tmp_path: Path, word: str, capsys: pytest.CaptureFixture[str]) -> None:
     """When the launcher is not in the gupkg tree the command says which file is missing, and starts nothing."""
     location, _ = stand_in(tmp_path)

@@ -38,7 +38,7 @@ from ..model.checksum import ChecksumError
 from ..redact import redact_text
 from ..model.manifest import ManifestError, NeedsNewerGupkg
 from ..model.mode import InputNeeded, ModeRefused
-from ..model.plan import EXIT_FAILED, EXIT_INPUT, EXIT_INTERNAL, EXIT_NEWER_GUPKG, EXIT_USER, PackageResult
+from ..model.plan import EXIT_FAILED, EXIT_INTERNAL, EXIT_USER, PackageResult
 from ..model.settings import SettingsError
 from ..selfmgmt.elevation import UntrustedLocationError
 from ..services.hooks import HookError
@@ -54,13 +54,14 @@ from .locks import PackageBusy
 from .planner import PlanError
 from .portable import PortableError
 
-# (exception type, stable code, exit code): the first entry that matches wins.
-_TABLE: tuple[tuple[type[BaseException], str, int], ...] = (
-    (InputNeeded, "input-needed", EXIT_INPUT),
+# (exception type, stable code, exit code): the first entry that matches wins. ``None`` means the exception class carries
+# its own ``exit_code`` (the one place it is defined), which ``describe`` reads.
+_TABLE: tuple[tuple[type[BaseException], str, int | None], ...] = (
+    (InputNeeded, "input-needed", None),
     (ChecksumError, "checksum-error", EXIT_FAILED),
     (ProcessNotAllowed, "needs-real-run", EXIT_FAILED),
-    (NeedsNewerGupkg, "needs-newer-gupkg", EXIT_NEWER_GUPKG),
-    (ModeRefused, "refused", EXIT_USER),
+    (NeedsNewerGupkg, "needs-newer-gupkg", None),
+    (ModeRefused, "refused", None),
     (NoVersionKnown, "no-version-known", EXIT_USER),
     (NoValidVersion, "no-valid-version", EXIT_USER),
     (NotInstalled, "not-installed", EXIT_USER),
@@ -112,7 +113,8 @@ def describe(error: BaseException) -> tuple[int, dict[str, Any]]:
             hint = getattr(error, "hint", None)
             if hint:
                 data["hint"] = hint
-            return getattr(error, "exit_code", exit_code), data
+            own = getattr(error, "exit_code", None)
+            return own if own is not None else exit_code, data
     return EXIT_INTERNAL, {"code": "internal-error", "message": f"{type(error).__name__}: {error}"}
 
 

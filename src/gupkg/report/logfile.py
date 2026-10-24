@@ -44,7 +44,7 @@ from typing import Any, Callable
 
 from .console import PlainFormatter
 from .events import (
-    PackageEnd, PackageStart, RunEnd, RunStart, event_to_dict,
+    Diagnostic, PackageEnd, PackageStart, RunEnd, RunStart, event_to_dict,
 )
 
 
@@ -507,6 +507,9 @@ class RunLog:
             else:
                 for line in sink.formatter.feed(payload):
                     sink.write_line(line)
+                if isinstance(payload, Diagnostic):
+                    for line in payload.text.rstrip().splitlines():
+                        sink.write_line(f"DIAGNOSTIC: {line}")
                 sink.write_record(self._record(payload, moment))
         except Exception as exc:  # noqa: BLE001 - logging must never fail the operation
             self._disable(sink, exc)

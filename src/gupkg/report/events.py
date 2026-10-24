@@ -148,6 +148,17 @@ class Error:
 
 
 @dataclass(frozen=True)
+class Diagnostic:
+    """Carry detail for the log files only, such as the traceback of an internal error.
+
+    The console renderer never shows it, so a person sees the structured error and reads the log for the cause. It is part of the
+    event stream (the ``diagnostic`` record of the events file) and may be ignored by any reporter.
+    """
+
+    text: str
+
+
+@dataclass(frozen=True)
 class PhaseEnd:
     """End a phase: ``status`` is ``ok``, ``failed`` or ``skipped``; ``elapsed`` is in seconds."""
 
@@ -179,7 +190,7 @@ class RunEnd:
 # Every event type, in the order the design lists them.
 EVENT_TYPES = (
     RunStart, PackageStart, PhaseStart, Step, Progress, SubprocessLine,
-    Prompt, Warning, Error, PhaseEnd, PackageEnd, RunEnd,
+    Prompt, Warning, Error, PhaseEnd, PackageEnd, RunEnd, Diagnostic,
 )
 
 
@@ -308,7 +319,7 @@ def emit(event: Any) -> None:
 
 def _redacted(event: Any) -> Any:
     """Return *event* with the credentials of any URL in its text removed (userinfo, ``token=`` and similar query values)."""
-    if isinstance(event, (Step, Warning, Prompt)):
+    if isinstance(event, (Step, Warning, Prompt, Diagnostic)):
         text = redact_text(event.text)
         return event if text == event.text else dataclasses.replace(event, text=text)
     if isinstance(event, Error):

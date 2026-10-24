@@ -35,6 +35,7 @@ def record(base: Path, user_root: Path, fake: FakeSystem, package: Path) -> dict
     folders = fake.scope_folders(Scope.USER)
 
     def place(text: str) -> str:
+        """Replace the machine's folders in *text* with placeholders."""
         for needle, name in ((str(folders.shortcut_root), "<MENU>"), (str(folders.bin_dir), "<BIN>"), (str(user_root), "<ROOT>"), (str(base), "<BASE>")):
             text = text.replace(needle, name).replace(needle.replace("\\", "\\\\"), name)
         return text
@@ -54,6 +55,7 @@ def record(base: Path, user_root: Path, fake: FakeSystem, package: Path) -> dict
 
 
 def scenario(name: str, prepare) -> dict:
+    """Run *prepare* in a fresh temporary tree on a fake machine and return the recorded state."""
     base = Path(tempfile.mkdtemp(prefix="rec017-"))
     user_root = base / "home" / "opt"
     fake = FakeSystem(base / "machine")
@@ -66,6 +68,7 @@ def scenario(name: str, prepare) -> dict:
 
 
 def good_app(user_root: Path) -> Path:
+    """Record a plain 0.17 package with one shim and one shortcut."""
     package = user_root / "GoodApp"
     shutil.copytree(FIXTURE, package)
     version = next(item for item in package.iterdir() if item.is_dir())
@@ -76,6 +79,7 @@ def good_app(user_root: Path) -> Path:
 
 
 def dotted(user_root: Path) -> Path:
+    """Record a 0.17 package whose name holds a dot."""
     package = user_root / "Dotted"
     version = package / "1.0.0"
     (version / "App").mkdir(parents=True)
@@ -126,6 +130,7 @@ content = "@echo off\\r\\n\\"$App\\\\rich.exe\\" %*\\r\\n"
 
 
 def rich(user_root: Path) -> Path:
+    """Record the 0.17 package with every table that the migration tool reads."""
     version = user_root / "Rich" / "2.0.local.1"
     (version / "App" / "bin").mkdir(parents=True)
     (version / "App" / "rich.exe").write_text("exe", encoding="utf-8")

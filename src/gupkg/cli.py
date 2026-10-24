@@ -289,8 +289,9 @@ def _lifecycle(run: _Run, command: str, targets: list[str], make: Callable[[str]
                 engine = _engine(run, session, command, targets, stop_path, batch_confirmed=False)
                 plans = lifecycle.plan(engine, [replace(make(item), skip=skip) for item in targets])
                 document = results.plan_document(command, plans, targets)
-                text = "\n".join(results.format_plan(entry) for entry in document["plans"])
-                session.finish(text, document["exit_code"], document)
+                # The plan is the answer, so it is shown before the closing line (a step of the run, so the log keeps it).
+                emit(Step("\n".join(results.format_plan(entry) for entry in document["plans"])))
+                session.finish("", document["exit_code"], document)
             else:
                 code, document, text = _execute(run, session, command, targets, make, skip, stop_path, sweep)
                 session.finish(text, code, document)

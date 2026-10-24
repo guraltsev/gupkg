@@ -198,7 +198,14 @@ def test_the_events_file_is_json_lines_that_end_with_the_result_document(world: 
     assert any(json.loads(line)["event"] == "phase_start" for line in package_lines)
 
 
-@pytest.mark.parametrize("name", ["..\\x.jsonl", "sub/x.jsonl", "C:x.jsonl", "..", "x:y", "con.jsonl", "a b.jsonl", "x.log"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        pytest.param("..\\x.jsonl", id="parent-backslash"), pytest.param("sub/x.jsonl", id="subfolder"),
+        pytest.param("C:x.jsonl", id="drive-relative"), pytest.param("..", id="dot-dot"), pytest.param("x:y", id="stream"),
+        pytest.param("con.jsonl", id="device-name"), pytest.param("a b.jsonl", id="space"), pytest.param("x.log", id="text-log-name"),
+    ],
+)
 def test_an_events_file_that_is_not_a_plain_name_is_a_usage_error_and_writes_nothing(world: CliWorld, name: str) -> None:
     """A path, a drive, a stream, a device name or a text-log name is refused before any work: exit 2 and no new file anywhere."""
     before = tree_snapshot(world.user)
@@ -218,6 +225,7 @@ class StopDouble(ScriptDouble):
     """A populate script that, like a user pressing Esc in the manager, creates the stop marker the run announced."""
 
     def __init__(self, files: dict[str, str], logs: Path) -> None:
+        """Remember the folder where the run writes its logs."""
         super().__init__(files)
         self.logs = logs
 
@@ -287,6 +295,7 @@ def test_exit_code_6_is_a_package_that_needs_a_newer_gupkg(world: CliWorld) -> N
 def test_exit_code_4_is_an_internal_error_and_is_structured(world: CliWorld, monkeypatch: pytest.MonkeyPatch) -> None:
     """Something unexpected is exit code 4 with a structured error and no traceback."""
     def broken(*args, **kwargs):
+        """Raise an unexpected error, as a bug would."""
         raise RuntimeError("boom")
 
     monkeypatch.setattr(lifecycle, "run_batch", broken)
@@ -295,6 +304,21 @@ def test_exit_code_4_is_an_internal_error_and_is_structured(world: CliWorld, mon
 
     assert result.code == 4 and "Traceback" not in result.err + result.out
     assert result.document()["errors"][0]["code"] == "internal-error"
+
+
+def test_an_internal_error_in_one_package_keeps_its_traceback_in_the_package_log_only(world: CliWorld, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unexpected exception of one target is exit code 4 for it; the traceback is in its log file, never on the console."""
+    def broken(*args, **kwargs):
+        """Raise an unexpected error, as a bug would."""
+        raise RuntimeError("kaboom")
+
+    monkeypatch.setattr(lifecycle, "_dispatch", broken)
+
+    result = world.cli("update", "tool", "--json")
+
+    assert result.code == 4 and "Traceback" not in result.err + result.out and "kaboom" in result.err
+    [package_log] = (world.user / "tool" / ".gupkg" / "logs").glob("*-update.log")
+    assert "DIAGNOSTIC: Traceback" in package_log.read_text(encoding="utf-8") and "RuntimeError: kaboom" in package_log.read_text(encoding="utf-8")
 
 
 def test_exit_codes_2_3_and_5_are_distinguished(world: CliWorld) -> None:

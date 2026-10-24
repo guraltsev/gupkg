@@ -22,11 +22,12 @@ bound late, because the root is only known after the target has been resolved.
 
 from __future__ import annotations
 
+import traceback as traceback_module
 from pathlib import Path
 from typing import Any, Sequence
 
 from .events import (
-    MultiReporter, Reporter, RunEnd, RunStart, Warning, emit, use_reporter,
+    Diagnostic, MultiReporter, Reporter, RunEnd, RunStart, Warning, emit, use_reporter,
 )
 from .logfile import RunLog
 
@@ -138,6 +139,8 @@ class RunSession:
         try:
             if not self._finished:
                 detail = f": {exc}" if exc is not None else ""
+                if exc is not None:
+                    emit(Diagnostic("".join(traceback_module.format_exception(exc_type, exc, traceback))))
                 self.finish(f"gupkg stopped unexpectedly{detail}", 4)
         finally:
             if self.log is not None:

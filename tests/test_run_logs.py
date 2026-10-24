@@ -406,6 +406,7 @@ def test_events_file_appears_in_the_run_and_package_log_directories(tmp_path: Pa
 def test_a_failing_git_clone_shows_gits_error_lines_in_the_unpack_phase_of_console_and_log(tmp_path: Path) -> None:
     """A git clone that fails prints git's own error lines inside the Fetch phase, on the console and in the package log, and the install fails."""
     def git(call) -> ProcessResult:
+        """Answer the git command that was started."""
         return ProcessResult(128, "", "Cloning into 'App.new'...\nfatal: unable to access 'https://example.invalid/x.git/': Could not resolve host\n")
 
     world = CliWorld(tmp_path)

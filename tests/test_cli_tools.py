@@ -164,6 +164,21 @@ def test_settings_init_then_set_writes_the_user_file_after_validation(world: Cli
     assert rows["logs.keep_runs"]["value"] == 20 and rows["logs.keep_runs"]["layer"] == "user"
 
 
+def test_the_toml_reader_accepts_a_utf8_bom_and_settings_set_edits_such_a_file(world: CliWorld, tmp_path: Path) -> None:
+    """A settings file saved by an editor with a UTF-8 BOM is read, and `settings set` rewrites it (without the BOM)."""
+    plain = tmp_path / "bom.toml"
+    plain.write_bytes('﻿name = "tool"\n'.encode("utf-8"))
+    path = world.user / ".gupkg" / "settings.toml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes("﻿schema = 3\n[logs]\nkeep_days = 10\n".encode("utf-8"))
+
+    result = world.cli("settings", "set", "logs.keep_runs", "20")
+
+    assert read_toml(plain)["name"] == "tool"
+    assert result.code == 0, result.err
+    assert read_toml(path)["logs"] == {"keep_days": 10, "keep_runs": 20} and not path.read_bytes().startswith(b"\xef\xbb\xbf")
+
+
 @pytest.mark.parametrize(
     ("key", "value", "says"),
     [

@@ -17,7 +17,7 @@ import pytest
 from tests.cli_support import CliWorld
 from gupkg.report import events
 from gupkg.report.events import (
-    EVENT_TYPES, Error, MultiReporter, PackageEnd, PackageStart, PhaseEnd, PhaseStart,
+    EVENT_TYPES, Diagnostic, Error, MultiReporter, PackageEnd, PackageStart, PhaseEnd, PhaseStart,
     Progress, Prompt, RunEnd, RunStart, Step, SubprocessLine, Warning, current_reporter,
     emit, emit_problems, event_to_dict, package_scope, phase, subprocess_lines, use_reporter,
 )
@@ -81,6 +81,7 @@ CONTRACT = [
         id="prompt",
     ),
     pytest.param(Warning("careful"), {"event": "warning", "text": "careful"}, id="warning"),
+    pytest.param(Diagnostic("Traceback"), {"event": "diagnostic", "text": "Traceback"}, id="diagnostic"),
     pytest.param(
         Error("it broke", "run gupkg check --fix"),
         {"event": "error", "text": "it broke", "hint": "run gupkg check --fix"},

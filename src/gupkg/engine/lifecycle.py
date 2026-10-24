@@ -26,6 +26,7 @@ before anything changes.
 from __future__ import annotations
 
 import os
+import traceback
 from collections.abc import Callable, Sequence
 from contextlib import nullcontext
 from dataclasses import replace
@@ -49,6 +50,7 @@ from ..model.manifest import (
 from ..model.mode import InputNeeded, ModeContext, ModeRefused, check_supported
 from ..model.plan import (
     EXIT_INPUT,
+    EXIT_INTERNAL,
     EXIT_USER,
     BatchResult,
     CopyIn,
@@ -64,7 +66,7 @@ from ..model.state import InstallRecord, Link, PackageView, Root
 from ..model.version import MANIFEST_NAME
 from ..modes import ModeRequest, ResolvedMode, resolve_mode
 from ..relaunch import ensure_elevation
-from ..report.events import Error, Prompt, Step, Warning, emit, package_scope
+from ..report.events import Diagnostic, Error, Prompt, Step, Warning, emit, package_scope
 from ..report.logfile import prune_logs
 from ..services.safepath import remove_tree
 from .checkupdates import check_updates_one, plan_check
@@ -356,6 +358,8 @@ def _run_one(engine: Engine, target: _Target, sole: bool) -> PackageResult:
             result = failure(name, request.operation, error, mode=context.mode, log=engine.log_path(path))
             data = result.error or {}
             emit(Error(str(data.get("message", error)), data.get("hint")))
+            if result.exit_code == EXIT_INTERNAL:
+                emit(Diagnostic(traceback.format_exc()))
         scope.result.update({"ok": result.ok, "status": result.status, "version": result.version})
     return result
 

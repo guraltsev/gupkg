@@ -298,6 +298,30 @@ def test_the_several_target_question_can_be_answered_on_the_terminal(world: CliW
     assert accepted.code == 0 and (world.user / "one" / "current").is_dir()
 
 
+def test_an_install_never_rewrites_a_path_that_cannot_be_read(world: CliWorld) -> None:
+    """An unreadable registry PATH fails the install (exit 3, naming the path effect) and nothing is written to the registry."""
+    world.publish("tool", "1.0.0", tables='\n[[path]]\nvalue = "$App"\n')
+    world.fake.failures["get_env"] = PermissionError("denied")
+
+    result = world.cli("install", "tool", "--json")
+
+    assert result.code == 3, result.out + result.err
+    assert "path " in result.document()["results"][0]["error"]["message"] and "denied" in result.document()["results"][0]["error"]["message"]
+    assert [access for access in world.fake.registry_log if access.operation != "read"] == []
+
+
+def test_a_plan_is_printed_before_the_closing_line(world: CliWorld) -> None:
+    """The plan text comes first and `==> Done` last, so the answer is not buried under a finished-looking line."""
+    world.publish("tool", "1.0.0")
+
+    result = world.cli("install", "tool", "--plan")
+
+    assert result.code == 0, result.err
+    lines = result.out.splitlines()
+    done = lines.index("==> Done")
+    assert any("tool" in line and "1.0.0" in line for line in lines[:done]) and not any("1.0.0" in line for line in lines[done:])
+
+
 def test_no_input_never_asks_even_when_standard_input_holds_an_answer(world: CliWorld) -> None:
     """--no-input is exit code 5 with a structured error for the several-target question and for --purge, although stdin says yes."""
     world.publish("one", "1.0.0")

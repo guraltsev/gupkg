@@ -245,6 +245,7 @@ class _Process:
     """A scripted child process: ``done`` says it ended after *steps* waits; *interrupts* raise KeyboardInterrupt on given waits."""
 
     def __init__(self, steps: int, interrupts: tuple[int, ...] = ()) -> None:
+        """Script a child that ends after *steps* waits, interrupted on the waits in *interrupts*."""
         self.steps, self.interrupts, self.waits = steps, interrupts, 0
         self.now = 0.0
 

@@ -40,6 +40,7 @@ def _git_double(revision: str = REVISION, calls: list[ProcessCall] | None = None
     """Return a ``git`` process double that answers ls-remote, clone and rev-parse."""
 
     def run(call: ProcessCall) -> ProcessResult:
+        """Answer the git command that was started, from the double's script."""
         command = list(call.argv)
         if calls is not None:
             calls.append(call)

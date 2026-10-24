@@ -60,4 +60,3 @@ def test_every_module_imports_on_the_bundled_interpreter_without_writing_bytecod
     assert int(result.stdout.splitlines()[0]) > 100
     after = {path for path in SOURCE.rglob("*.pyc") if "python" not in path.relative_to(SOURCE).parts[:2]}
     assert after == before
-
