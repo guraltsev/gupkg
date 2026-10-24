@@ -289,3 +289,35 @@ launchers find an installed gupkg only through that forwarder:
   - `cleanup --bundled`.
 - **Manual smoke tests on real Windows** cover UAC, permission inheritance
   from `C:\opt`, Mark of the Web, and the clean-VM bootstrap.
+
+## Left by issue 029
+
+Issue 029 switched the front end to the 1.0 command line and deleted the 0.17 one. These pieces still speak 0.17 and are this
+issue's to rewrite (029 changed none of them, except that the bootstrap no longer fails when `manager init` is missing):
+
+- **`gupkg-bootstrap.ps1`.** It runs `gupkg --scope $Scope install $target` (`--scope` is now a usage error: use
+  `install <folder> --mode <mode>`, mind that `<folder>` is a distribution folder that gupkg copies into the root) and then
+  `gupkg manager init`, which forwards to a `gupkg-manager.cmd` that does not exist (exit 2). 029 only turned a failing
+  `manager init` into a warning; the bootstrap's final lines (`gupkg manager registry sync`) and its header text are 0.17 too.
+  Also decide where the manager configuration of 0.17 (`gupkg\gupkg-config.toml`) goes: 1.0 has `settings.toml` files only.
+- **gupkg's own package** (`src\pkg.toml`, `src\pkg.local\check_update.py`, `src\pkg.local\unpack_app.py`): `src\pkg.toml` is
+  format 1 (`[update]`) and its bins and shortcut name the deleted `gupkg\gupkg-tui.cmd` and `manager tui`; `check_update.py`
+  and `unpack_app.py` are the 0.17 hooks.
+- **`src\gupkg-tui.cmd` and `src\package-tui.cmd`** (the package launcher template, section 21.2): rewrite them for the root
+  forwarder, exit code 6 and `--no-system-gupkg=true`.
+- **The README section "Installing gupkg"**, which says the bootstrap "runs `gupkg manager init`".
+- **`pkg bundle`** (`gupkg pkg bundle`) copies a verified bundled tree into a distribution but writes no launchers, because the
+  launcher template is this issue's: add them (design sections 10.2 and 21.2 say `+ launchers`).
+- **Where `MANIFEST.sha256` sits in the 1.0 layout.** `gupkg self status` (`selfmgmt/status.py`) looks under
+  `<version>\gupkg\`; confirm that against the layout this issue fixes.
+- **The self-update security tests that 029 deleted with the 0.17 `self update`** (`tests/test_self_release_update.py`,
+  `tests/test_update_hooks.py`) come back against the new hook, each as its own test:
+  - the release ZIP's digest is checked against the `RELEASES.md` row before anything is unpacked;
+  - a row without a digest is refused (and `check_update` rejects such a row);
+  - the unpacked tree matches its own `MANIFEST.sha256` exactly (no modified, missing or extra file);
+  - `RELEASE.txt` names the commit the row lists;
+  - the declared version equals the candidate's version;
+  - an update to a 1.x release installs nothing and names the bootstrap (the 1.x guard);
+  - nothing of the old runtime is carried over, and on any failure the active version is unchanged;
+  - `check_update` returns the asset URL and digest of the newest row, and asks for a newer gupkg when it cannot fetch text;
+  - a hook that imports an unavailable module fails the update naming the module.

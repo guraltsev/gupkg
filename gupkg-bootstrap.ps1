@@ -274,7 +274,9 @@ try {
         } else {
             Step 'Setting up manager mode (configuration is stored in the gupkg folder)'
             & $launcher manager init
-            if ($LASTEXITCODE -ne 0) { throw "gupkg manager init failed (exit $LASTEXITCODE)." }
+            # gupkg 1.0 has no "manager init": the command forwards to a gupkg-manager that is not part of this gupkg yet.
+            # Issue 033 replaces this bootstrap; until then a missing manager init is a warning, not a failure.
+            if ($LASTEXITCODE -ne 0) { Step "Warning: 'gupkg manager init' is not available in gupkg 1.0 (exit $LASTEXITCODE); skipping it." }
         }
     }
     Step 'Done. Open a NEW terminal, then try:  gupkg --help'

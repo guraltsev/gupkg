@@ -197,3 +197,15 @@ Epic: 020. Design: `_docs/rehaul_design.md` §15, §10.4, §13.2. Supersedes the
 - **UI behaviour:** Pilot-driven tests that assert on visible text and on
   reachable actions, not on widget IDs. They replace the layout-string
   assertions in `tests/test_tui.py` and `tests/test_manager_tui.py`.
+
+## Left by issue 029
+
+- **`gupkg-tui.cmd` in the gupkg tree.** 029 deleted `src\gupkg\gupkg-tui.cmd` (it called `gupkg tui`, which now forwards to
+  the launcher of the same name: an endless loop). `gupkg tui PATH` and `gupkg manager ...` look for `gupkg-tui.cmd` and
+  `gupkg-manager.cmd` beside the running gupkg's folder and say so when they are missing. This issue recreates both launchers
+  in the gupkg **tree** (design section 21.2) and adds a test that `gupkg tui` through the real launchers does not loop.
+- **`gupkg migrate` and elevation.** The forwarder starts `gupkg-migrate.cmd` from an elevated shell (the migration tool is
+  elevation-aware); `tui` and `manager` refuse an elevated shell and must be started from a normal shell.
+- **The elevated parent waits.** `gupkg install system:X` from a normal shell waits for the elevated child and returns its exit
+  code (`relaunched: true`); the UI programs rely on that exit code and on the `run_end` line of the events file, and treat a
+  missing `run_end` as a failure. Cancelling is the stop marker in the child's `run_start.stop_file`.
