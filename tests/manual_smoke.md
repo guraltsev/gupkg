@@ -447,7 +447,8 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
    standard output a single document. Why manual: only a real console shows colour and the bar.
 2. **The real UAC relaunch (needs the system gupkg).** From a normal shell with the system gupkg on `PATH`, run
    `gupkg install system:<name> --yes --events-file run.jsonl --json`. Expect exactly one UAC prompt, an elevated window that runs
-   the install and waits for a key, and `C:\opt\.gupkg\logs\run.jsonl` (and `C:\opt\<name>\.gupkg\logs\run.jsonl`) that a normal
+   the install and waits for a key, the calling shell waits for it and ends with the child's exit code (`echo %ERRORLEVEL%`),
+   and `C:\opt\.gupkg\logs\run.jsonl` (and `C:\opt\<name>\.gupkg\logs\run.jsonl`) that a normal
    shell can read and that ends with `run_end` carrying the result document. Read `stop_file` from the first line, create that
    file during a run of three packages: the elevated run stops after the package it is working on and exits 5. Why manual: needs
    UAC and the real admin-only `C:\opt`.
@@ -472,3 +473,20 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
 10. **`uninstall --purge` on a real machine.** After a purge the package folder is gone including this run's own package log (it
     cannot stay open), and the root's run log under `<root>\.gupkg\logs` records the deletion. Why manual: only real file locking
     shows whether the log files were released.
+11. **A hostile target under real UAC.** With the system gupkg, make a folder `C:\opt\a&calc` (or any system package whose name
+    holds `&`, `%`, `!` or `^`) and run `gupkg install "system:a&calc" --yes` from a normal shell: expect exit 2, "not allowed in a
+    command that runs with administrator rights", **no UAC prompt** and no Calculator. Then, from an elevated prompt, run
+    `gupkg install "system:a&calc" --relaunched --yes`: expect exit 2 ("the elevated child refuses"). Finally run an ordinary
+    `gupkg install system:<name> --yes` and check in Task Manager's details tab (command line column) that the elevated process
+    is the bundled `python.exe -I -s -B -S ...\bootstrap.py ...` and that no `cmd.exe` was started for it. Why manual: needs the
+    real UAC prompt, the real elevated token and a real process list.
+12. **The parent waits for the elevated child.** From a normal shell run `gupkg install system:<name> --yes` (a package that
+    installs) and then one that fails (for example a corrupt `pkg.toml` in `C:\opt`): the command line stays busy until the
+    elevated window closes, and `%ERRORLEVEL%` is 0 and then the failing code. Press Ctrl-C during a long install: the stop marker
+    is created, the child finishes its package and the call ends with exit code 5 (or 5 after 30 seconds when the child does not
+    end). Decline the UAC prompt: exit code 5. Why manual: needs UAC and a real second process.
+13. **Redirected output with non-ASCII names.** Make a package folder `жук` in the user root, then run `gupkg list > out.txt`,
+    `gupkg list --json > out.json` and `gupkg list | more` in `cmd`: exit code 0, `out.txt` is UTF-8 (open it in an editor that
+    shows the encoding), `out.json` is pure ASCII with `\u` escapes that parse back to `жук`. In a console set to a legacy code
+    page (`chcp 437`) the listing shows replacement marks for what the page cannot draw, with no error. Why manual: only a real
+    console has a code page.

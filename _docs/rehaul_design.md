@@ -1326,7 +1326,7 @@ gupkg registry sync|status|list|add|remove
 gupkg pkg new <name>[@<version>] [--track github:owner/repo] [--dir D]   # authoring: a starter tracker and/or pinned version
 gupkg pkg check <path> [--install]                        # validate a package definition; --install runs a sandboxed install (section 16)
 gupkg pkg pin <target>                                    # receipt hash -> pkg.toml (explicit)
-gupkg pkg bundle <version-dir>                            # embed the running gupkg + launchers (section 21)
+gupkg pkg bundle <version-dir>                            # embed the running gupkg (section 21; the launchers are added by issue 033)
 gupkg pkg export <version-dir> -o X.zip                   # write a distribution ZIP; print its SHA-256
 gupkg settings show|path|init|set KEY VALUE
 gupkg self status|repair|check-updates|update             # check-updates/update = `gupkg check-updates gupkg` / `gupkg update gupkg` (section 20)
@@ -1424,7 +1424,7 @@ target with `target`, `ok`, `exit_code` and either `plan` (`operation`,
 `effects`, `phases`, `notes`, `sha256`, `url`, and `populate` or `copy_in` when
 the plan has them) or `result` (the failure, or "up to date"). A call that
 failed before any target was handled (a usage error, a question that was not
-answered) has `errors` with `code`, `message` and `hint`. The events file ends
+answered) has `errors` with `code`, `message` and, when there is one, `hint`. The events file ends
 with `run_end`, whose `result` is the same document. Contract tests pin all of
 this.
 
@@ -1441,9 +1441,37 @@ child accept only package names and paths inside the system root. Targets that
 name their mode are run in two groups (the others here, the system ones in the
 child); a call whose targets only reveal their mode when they are resolved
 reports each target the child cannot take as `not-run` (`mixed-modes`, exit
-code 2) instead of dropping it. The parent does not wait for the child
-(`ShellExecute` with `runas`): it exits 0 and the caller follows the events
-file.
+code 2) instead of dropping it. A root-wide `cleanup` (no target) hands the child no
+targets either, so the child sweeps the system root itself.
+
+*How the child is started (T1).* There is no shell in between: `ShellExecuteEx` with
+the `runas` verb starts the bundled `python.exe -I -s -B -S bootstrap.py <arguments>`
+of this gupkg, both paths taken from the location of the running gupkg after its
+folders were checked admin-only; the arguments are quoted by the rules of
+`CreateProcess`. In addition, the parent refuses (exit code 2, before any question)
+every argument value that holds `& | < > ^ " % ! `` ` ``, a control character or a lone
+surrogate, and the child refuses the same characters in its own command line.
+A package whose name holds one of them is installed from an administrator shell.
+
+*The parent waits.* The parent keeps the process handle (`SEE_MASK_NOCLOSEPROCESS`),
+waits for the child and exits with the **child's exit code** (the highest of it and
+the codes of targets that were left out); the document has `relaunched: true` and
+the same `exit_code`. A declined UAC prompt is exit code 5. The progress channel stays
+the events file. When the call named `--events-file`, the parent reads the child's
+last line afterwards: no `run_end` (a killed child, an unreadable file) is a failure,
+exit code 3 with the error `child-no-result`. Ctrl-C while waiting creates the stop
+marker (the parent passes its own marker to the child as the hidden `--stop-file`; the
+child accepts only a fresh `gupkg-stop-<32 hex>` name inside its own temporary folder),
+keeps waiting for 30 seconds, and then gives up with exit code 5. Scheduled and CI
+callers use a unique `--events-file` name per run and treat a missing `run_end` as
+failure; a multi-target call under `--no-input` needs `--yes` (the question "run this
+on N packages?" is otherwise exit code 5).
+
+*Text encoding.* The launcher runs `python -I`, which ignores `PYTHONIOENCODING`. A
+redirected standard output or error is therefore UTF-8, a console keeps its code
+page, and text that cannot be encoded is replaced, never raised. The `--json`
+document is pure ASCII (non-ASCII characters are `\uXXXX` escapes), so it survives any
+code page.
 
 **Which `gupkg` the UI programs run.** Each always runs the `gupkg`
 launcher next to it in the same gupkg tree. For an installed gupkg that is
@@ -2703,7 +2731,7 @@ target = '$PackageRoot\current\App'
 | Exit code **6** | 10.1 | "This package needs a newer gupkg." It drives the launcher fallback. |
 | `--no-system-gupkg=true` (launchers) | 21.3 | Use the bundled gupkg even when an installed one is reachable (D32). |
 | `gupkg install PATH --in-place` | 10.2, 21.4 | Install a distribution folder where it is (an ad-hoc root) instead of copying it into the mode's root. |
-| `gupkg pkg bundle <version-dir>` | 10.2 | Copy the *running* gupkg's verified bundle into `<version-dir>\gupkg\`, and write the two launchers. There is no lite bundle in 1.0 (D43). |
+| `gupkg pkg bundle <version-dir>` | 10.2 | Copy the *running* gupkg's verified bundle into `<version-dir>\gupkg\`. Issue 033 adds writing the two launchers (the template is theirs). There is no lite bundle in 1.0 (D43). |
 | `gupkg pkg export <version-dir> -o X.zip` | 10.2 | Write a distribution ZIP (`<name>\<version>\…`, plus `_check_updates` if present) and print its SHA-256. |
 | Registry fingerprints | 9.2, 17 | Verify a package that is installed without a download (D29). |
 

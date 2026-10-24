@@ -245,7 +245,13 @@ the followed registry, and prepares its `App` first if it has none. `install` an
 Every command takes `--json`. Every mutating command takes `--yes`. The mode comes from `--mode system|user|portable`,
 else from the package's install record or the root that holds it, else from `default_mode` in the settings (`auto`: an
 elevated shell installs in system mode, any other in user mode). A call that needs administrator rights relaunches
-gupkg **once** elevated, after one question, and only when this gupkg itself lives in an admin-only folder.
+gupkg **once** elevated, after one question, and only when this gupkg itself lives in an admin-only folder. The call then
+waits for the elevated child and exits with the child's exit code (`relaunched: true` in the document); a target or option
+value holding `& | < > ^ " % ! `` ` ``, a control character or a lone surrogate is refused (exit code 2) before anything is asked,
+because it would travel on the elevated command line. Scheduled callers pass a unique `--events-file NAME` and treat a missing
+`run_end` line as a failure; a call with several targets needs `--yes` under `--no-input` (the question "run this on N
+packages?" is exit code 5 otherwise).
+Redirected output is UTF-8 and the `--json` document is pure ASCII, whatever the code page.
 
 ### Install modes
 
