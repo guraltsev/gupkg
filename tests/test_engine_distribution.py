@@ -14,6 +14,7 @@ Out of scope: bundled launchers and the bootstrap (issue 033), publishing finger
 from __future__ import annotations
 
 import shutil
+import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -21,8 +22,8 @@ import pytest
 
 from gupkg.catalog.local import read_adhoc_roots
 from gupkg.catalog.record import read_install_record
-from gupkg.engine.fingerprint import version_fingerprint
 from gupkg.engine.receipts import read_receipt
+from gupkg.services.fingerprint import fingerprint_directory
 from gupkg.system.port import Scope
 from tests.engine_support import World, pin_no_ambient_elevation  # noqa: F401
 from tests.mode_support import tree_snapshot
@@ -65,6 +66,55 @@ def test_a_distribution_with_a_matching_fingerprint_is_verified_against_the_regi
     record = read_receipt(world.user / "tool", "1.0.0").data["checksum"]
     assert result.ok and record == {"decision": "registry-fingerprint", "registry": "main"}
     assert not [note for note in world.one("check", "tool").details["notes"] if note["kind"] == "unverified"]
+
+
+def test_the_real_registrys_published_fingerprint_is_accepted_and_one_changed_byte_is_refused(world: World) -> None:
+    """qbittorrent 5.2.3 of the real registry snapshot, with the fingerprint the registry tool published for it.
+
+    The engine computes the same value (`gupkg.services.fingerprint`, one implementation): the copy passes verification (the install
+    then stops at the checksum rules, because this version is unpinned and has no sha256), and a copy with one byte changed is refused,
+    naming the file, with nothing left in the root.
+    """
+    snapshot = Path(__file__).parent / "fixtures" / "registry_100"
+    published = tomllib.loads((snapshot / "_registry.toml").read_text(encoding="utf-8"))["fingerprints"]["qbittorrent/5.2.3"]
+    version = snapshot / "qbittorrent" / "5.2.3"
+    world.registry({"qbittorrent": {"versions": {"5.2.3": version}}}, published_raw={"qbittorrent/5.2.3": published})
+    good = world.base / "downloads" / "qbittorrent" / "5.2.3"
+    shutil.copytree(version, good)
+
+    accepted = world.one("install", str(good))
+
+    assert not accepted.ok and accepted.error["code"] == "checksum-missing"
+    assert (world.user / "qbittorrent" / "5.2.3" / "install.cmd").read_bytes() == (version / "install.cmd").read_bytes()
+    shutil.rmtree(world.user / "qbittorrent")
+
+    bad = world.base / "downloads2" / "qbittorrent" / "5.2.3"
+    shutil.copytree(version, bad)
+    launcher = bad / "install.cmd"
+    launcher.write_bytes(launcher.read_bytes() + b" ")
+
+    refused = world.one("install", str(bad))
+
+    assert not refused.ok and refused.error["code"] == "registry-fingerprint-mismatch" and "install.cmd (changed)" in refused.error["message"]
+    assert not (world.user / "qbittorrent" / "5.2.3").exists()
+
+
+def test_a_bundled_install_verifies_a_registry_copy_before_it_adds_the_launchers(world: World) -> None:
+    """Carry-forward adds launchers that are part of the fingerprint, so the copy is verified first: a published fingerprint still matches."""
+    world.publish("tool", "1.0.0", tables=SHIM)
+    assert world.one("install", "tool").ok
+    installed = world.user / "tool" / "1.0.0"
+    (installed / "install.cmd").write_text("@echo off\n", encoding="utf-8")
+    (installed / "gupkg").mkdir()
+    (installed / "gupkg" / "gupkg.cmd").write_text("@echo off\n", encoding="utf-8")
+    world.publish("tool", "1.1.0", tables=SHIM, root=world.base / "registry-src")
+    world.registry({"tool": {"versions": {"1.1.0": world.base / "registry-src" / "tool" / "1.1.0"}}}, fingerprints=[("tool", "1.1.0")])
+
+    result = world.one("update", "tool")
+
+    assert result.ok and result.version == "1.1.0"
+    assert (world.user / "tool" / "1.1.0" / "install.cmd").is_file() and (world.user / "tool" / "1.1.0" / "gupkg" / "gupkg.cmd").is_file()
+    assert read_receipt(world.user / "tool", "1.1.0").data["checksum"]["decision"] == "verified"
 
 
 def test_a_distribution_with_a_mismatching_fingerprint_is_refused_and_nothing_changes(world: World) -> None:
@@ -309,8 +359,8 @@ def test_the_fingerprint_of_a_version_directory_ignores_a_downloaded_app(world: 
     """A downloaded App is a product of the version, so populating it does not change the version's fingerprint."""
     world.publish("tool", "1.0.0", tables=SHIM)
     folder = world.user / "tool" / "1.0.0"
-    before = version_fingerprint(folder)
+    before = fingerprint_directory(folder)
 
     world.one("install", "tool")
 
-    assert version_fingerprint(folder) == before and version_fingerprint(folder, include_app=True) != before
+    assert (folder / "App" / "app.exe").is_file() and fingerprint_directory(folder) == before

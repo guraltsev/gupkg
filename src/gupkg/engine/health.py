@@ -32,7 +32,8 @@ from ..model.plan import effect_key
 from ..model.state import PackageView
 from ..system.port import System
 from .effects import verify_each
-from .fingerprint import aggregate_digest, app_files, diff_app, tree_differences, version_fingerprint
+from ..services.fingerprint import verify_directory
+from .fingerprint import aggregate_digest, app_files, diff_app
 from .receipts import read_receipt, receipt_checksum
 
 
@@ -217,19 +218,14 @@ def _registry_problems(view: PackageView, version: str, directory: Path, manifes
     if published is None or published.fingerprint is None:
         return []
     try:
-        found = version_fingerprint(directory, include_app=manifest.source.shipped)
+        problems = verify_directory(directory, published.fingerprint.lower(), published.path)
     except OSError as error:
         return [Problem("registry-fingerprint", f"The fingerprint of {directory} cannot be computed: {error}")]
-    if found == published.fingerprint.lower():
+    if not problems:
         return []
-    try:
-        differing = tree_differences(directory, published.path, include_app=manifest.source.shipped)
-    except OSError:
-        differing = []
     return [Problem(
         "registry-fingerprint",
-        f"{view.name} {version} does not match the fingerprint of registry {view.registry.registry}"
-        + (f"; files that differ: {', '.join(differing[:20])}" if differing else ""),
+        f"{view.name} {version} does not match the fingerprint of registry {view.registry.registry}: " + "; ".join(problems[:21]),
     )]
 
 

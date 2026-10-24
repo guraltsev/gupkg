@@ -149,24 +149,31 @@ def check_updates_one(
             sync_registry_tracker(engine, view, package_path, plan.tracker)
     tracker_manifest, tracker_dir = _tracker(view, plan.tracker, package_path, writes)
     result = _run_tracker(engine, context, tracker_manifest, tracker_dir, view.name, package_path, writes)
+
+    # What the tracker waived (an optional checksum source that held nothing) is shown, returned and kept in the receipt.
+    notes = tuple(result.notes)
+    for note in notes:
+        emit(Warning(f"{view.name}: {note}"))
     comparison = catalog.compare(view, result)
     if not comparison.newer:
         emit(Step(f"{view.name}: {comparison.reason}", "info"))
         if writes:
             write_track_state(package_path, {"checked": engine.now().isoformat(), "found": result.version, "outcome": "no-new-version"})
         return PackageResult(view.name, "check-updates", True, "no-new-version", result.version, None, context.mode,
-                             details={"found": result.version, "reason": comparison.reason})
+                             warnings=notes, details={"found": result.version, "reason": comparison.reason, "notes": list(notes)})
     emit(Step(f"{view.name}: new version {result.version} (newest known: {comparison.newest_known or 'none'})", "add"))
     if not writes:
         return PackageResult(view.name, "check-updates", True, "new-version", result.version, None, context.mode,
-                             details={"written": False, "populated": False, "reason": "report only"})
+                             warnings=notes, details={"written": False, "populated": False, "reason": "report only", "notes": list(notes)})
 
     # Write: render the pinned pkg.toml, strip update-check code, validate, move into place atomically.
     pinned = render_pinned(tracker_manifest, result)
     with phase("Write"):
         version_dir = _write_version(engine, context, view, package_path, tracker_dir, pinned, result.version)
         emit(Step(f"wrote {version_dir}", "add"))
-    details: dict[str, Any] = {"found": result.version, "written": True, "populated": False, "path": str(version_dir)}
+    details: dict[str, Any] = {
+        "found": result.version, "written": True, "populated": False, "path": str(version_dir), "notes": list(notes),
+    }
 
     # Fetch, Verify, Unpack, Prepare: populate unless --no-download; a refused checksum leaves the directory without App (D46).
     error: dict[str, Any] | None = None
@@ -197,6 +204,8 @@ def check_updates_one(
         sections: dict[str, Any] = {} if populated is None else dict(populated.sections)
         if populated is not None and populated.checksum is not None:
             sections["checksum"] = populated.checksum.to_data()
+        if notes:
+            sections["track"] = {"notes": list(notes)}
         sections["run"] = {
             "operation": "check-updates", "mode": context.mode, "activated": False, "finished": engine.now().isoformat(),
             "gupkg": engine.version, "log": engine.log_path(package_path) or "",
@@ -208,7 +217,7 @@ def check_updates_one(
         })
     return PackageResult(
         view.name, "check-updates", error is None, "new-version", result.version, None, context.mode, exit_code, error,
-        str(receipt), engine.log_path(package_path), (), details,
+        str(receipt), engine.log_path(package_path), notes, details,
     )
 
 

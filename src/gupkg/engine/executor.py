@@ -47,7 +47,8 @@ from ..services.safepath import remove_tree
 from .appbuild import Populated, app_section, populate_version
 from .context import Engine, require_work_folder
 from .effects import EffectError, apply_effect, changes_environment, effect_context, remove_effect
-from .fingerprint import app_files, tree_differences, version_fingerprint
+from ..services.fingerprint import verify_directory
+from .fingerprint import app_files
 from .planner import Chosen, CleanupPlan, PlanError
 from .portable import hand_back, hand_over, scratch_name
 from .receipts import read_receipt, update_receipt
@@ -270,13 +271,14 @@ def _copy_in(engine: Engine, run: ExecutionInput) -> _Origin:
         created = not os.path.lexists(version_dir)
         copy_registry_version(engine, run.context, plan.package_path, copy.source, plan.version or "")
         origin = _Origin("registry", f"{copy.registry}", None)
-
-        # A bundled install (no root forwarder) keeps its own gupkg: it is carried into the version just copied in.
-        if created and not (context.root / DATA_DIR_NAME / "gupkg.cmd").is_file():
-            carry_forward(run.view, version_dir)
         emit(Step(f"Copied {plan.version} from registry {copy.registry}", "add"))
         _require_same_manifest(run, version_dir, created=created)
         _verify_distribution(run, version_dir, origin, created=created)
+
+        # A bundled install (no root forwarder) keeps its own gupkg: it is carried in after the copy was verified, because
+        # the launchers it adds are part of the fingerprint.
+        if created and not (context.root / DATA_DIR_NAME / "gupkg.cmd").is_file():
+            carry_forward(run.view, version_dir)
     return origin
 
 
@@ -309,19 +311,17 @@ def _verify_distribution(run: ExecutionInput, version_dir: Path, origin: _Origin
     if run.registry_fingerprint is None:
         origin.record = ChecksumRecord(ORIGIN_NOT_VERIFIED)
         return
-    found = version_fingerprint(version_dir, include_app=manifest.source.shipped)
-    if found == run.registry_fingerprint.lower():
+    problems = verify_directory(version_dir, run.registry_fingerprint.lower(), run.registry_path)
+    if not problems:
         origin.record = ChecksumRecord(REGISTRY_FINGERPRINT, registry=run.registry_name)
         emit(Step(f"Verified against registry {run.registry_name}: the fingerprint matches", "ok"))
         return
-    differing = tree_differences(version_dir, run.registry_path, include_app=manifest.source.shipped) if run.registry_path else []
     if created:
         remove_tree(version_dir)
         prune_empty_package(run.plan.package_path)
     raise FingerprintMismatch(
-        f"{run.plan.package} {run.plan.version} is not what registry {run.registry_name} publishes: the fingerprint "
-        f"differs ({found}, expected {run.registry_fingerprint})"
-        + (f"; files that differ: {', '.join(differing[:20])}" if differing else "") + ". Nothing was installed.",
+        f"{run.plan.package} {run.plan.version} is not what registry {run.registry_name} publishes: "
+        + "; ".join(problems[:21]) + ". Nothing was installed.",
     )
 
 
@@ -332,8 +332,7 @@ def _label_local(engine: Engine, run: ExecutionInput, version_dir: Path, origin:
     """
     if run.registry_fingerprint is None:
         return origin
-    found = version_fingerprint(version_dir, include_app=run.chosen.manifest.source.shipped)
-    if found == run.registry_fingerprint.lower():
+    if not verify_directory(version_dir, run.registry_fingerprint.lower()):
         origin.record = ChecksumRecord(REGISTRY_FINGERPRINT, registry=run.registry_name)
     else:
         origin.record = ChecksumRecord(ORIGIN_NOT_VERIFIED)

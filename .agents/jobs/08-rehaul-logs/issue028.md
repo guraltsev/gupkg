@@ -40,8 +40,8 @@ distribution,effects,planner,populate,security,store}.py`, `tests/test_migrate_a
   against `<package>\current`, so a shim or shortcut survives a switch.
 - **The bin folder's PATH entry is shared** and never removed by one package; other PATH entries are removed only when the install
   added them (`added`); an environment value is deleted without being read (D18/D38: the install, update and uninstall read only `PATH`).
-- **Version fingerprint** (D29): SHA-256 over file names (case folded) and content hashes; `App` only for a shipped version,
-  `.gupkg` never. The registry tool (031) must compute the same. A mismatch refuses a distribution and a registry copy; for a
+- **Version fingerprint** (D29): one implementation, `gupkg.services.fingerprint` (issue 031, contract in design 17); the engine
+  calls it (an earlier text here said the engine had its own; removed after the merge of 031). A mismatch refuses a distribution and a registry copy; for a
   version already in the root it is a report only (the user's own edit wins, 5.3).
 - **Labels.** A download records its own checksum record; a version with no download copied from a distribution or a registry records
   `registry-fingerprint` or `origin-not-verified`; a script- or shipped version already in the root records no label (it makes no

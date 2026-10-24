@@ -1,26 +1,22 @@
-"""Fingerprint an ``App`` folder and a version directory, and compare either with what was recorded.
+"""Fingerprint an ``App`` folder and compare it with what was recorded (decision D41).
 
-Every install records the SHA-256 of every file of its ``App`` (decision D41), so ``gupkg check`` can say
-which files were modified, deleted or added. A version directory has one more fingerprint: a single SHA-256
-over its files, which a registry may publish and which verifies a package that was installed without a
-download (decision D29). Neither walk follows a link or junction: a link is hashed by name and never entered,
-so a persisted portable folder or a planted junction cannot lead the walk out of the tree.
+Every install records the SHA-256 of every file of its ``App``, so ``gupkg check`` can say which files were modified,
+deleted or added. The walk follows no link or junction: a link is hashed by name and never entered, so a persisted
+portable folder or a planted junction cannot lead the walk out of the tree.
+
+The fingerprint of a *version directory* (what a registry publishes and what verifies a package installed without a
+download, decision D29) is not computed here: there is one implementation, ``gupkg.services.fingerprint``
+(``fingerprint_directory``, ``file_digests``, ``differing_files``, ``verify_directory``), whose byte-exact contract is in
+design section 17.
 
 Usage and API
 -------------
-``app_files(app)`` returns ``{relative path: sha256}`` for an ``App``; ``diff_app(app, recorded, skip=...)``
-returns the modified, missing and extra paths against a record. ``version_fingerprint(directory,
-include_app=...)`` returns the single digest of a version directory and ``tree_differences(first, second)``
-names the files that differ between two such directories.
+``app_files(app)`` returns ``{relative path: sha256}`` for an ``App``; ``aggregate_digest(files)`` folds such a record into
+one digest; ``diff_app(app, recorded, skip=...)`` returns the modified, missing and extra paths against a record.
 
 Implementation Approach
 -----------------------
 Paths are recorded with ``/`` separators and compared without regard to letter case, as Windows does.
-The version fingerprint covers the file names (letter case folded) and the SHA-256 of each file's content,
-in sorted order, so it does not depend on directory order, and covers every file below the version
-directory except ``.gupkg`` and, unless the version ships its ``App``, the ``App`` folder (a downloaded ``App``
-is a product of the version, not part of its definition). A shipped ``App`` is part of what the package
-distributes, so it is included.
 """
 
 from __future__ import annotations
@@ -122,54 +118,3 @@ def diff_app(app: Path, recorded: Mapping[str, str], skip: Collection[str] = ())
     missing = sorted(before_by_name[name][0] for name in before_by_name if name not in now_by_name)
     extra = sorted(now_by_name[name][0] for name in now_by_name if name not in before_by_name)
     return modified, missing, extra
-
-
-def _version_entries(directory: Path, include_app: bool) -> dict[str, Path | None]:
-    """Return ``{folded relative path: file}`` (``None`` for a link) of the files a version fingerprint covers."""
-    entries: dict[str, Path | None] = {}
-    for relative, path, is_link in _walk(directory):
-        top = relative.split("/", 1)[0].casefold()
-        if top == ".gupkg" or (top == "app" and not include_app):
-            continue
-        entries[relative.casefold() + ("\0link" if is_link else "")] = None if is_link else path
-    return entries
-
-
-def version_fingerprint(directory: Path, *, include_app: bool = False) -> str:
-    """Return the single SHA-256 that fingerprints the version directory *directory*.
-
-    Parameters
-    ----------
-    directory : Path
-        A version directory.
-    include_app : bool
-        Whether ``App`` is part of the fingerprint: true for a version that ships its ``App``.
-
-    Returns
-    -------
-    str
-        Lower-case hexadecimal digest over the sorted file names and contents.
-
-    Raises
-    ------
-    OSError
-        If a file cannot be read.
-    """
-    digest = hashlib.sha256()
-    for label, path in sorted(_version_entries(directory, include_app).items()):
-        digest.update(label.encode("utf-8") + b"\0")
-        if path is not None:
-            digest.update(bytes.fromhex(_file_digest(path)))
-    return digest.hexdigest()
-
-
-def tree_differences(first: Path, second: Path, *, include_app: bool = False) -> list[str]:
-    """Name the files that differ between two version directories (present in one, absent in the other, or changed)."""
-    left, right = _version_entries(first, include_app), _version_entries(second, include_app)
-    differing = []
-    for label in sorted(set(left) | set(right)):
-        if label not in left or label not in right:
-            differing.append(label.split("\0")[0])
-        elif left[label] is not None and _file_digest(left[label]) != _file_digest(right[label]):
-            differing.append(label.split("\0")[0])
-    return differing

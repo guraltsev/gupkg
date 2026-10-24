@@ -277,10 +277,11 @@ Epic: 020. Design: `_docs/rehaul_design.md` §7.4, §13
     `is_git_source`, `require_trusted_cache`, `trusted_git`): they are the only thing that makes `registry.py`,
     `origin.py`, `updates.py`, `downloads.py`, `github_releases.py`, `configuration.py` and `metadata.py`
     reachable from the new code.
-- **The fingerprint (031).** The registry tool must compute a version's fingerprint with
-  `gupkg.engine.fingerprint.version_fingerprint(directory)` (names with letter case folded, SHA-256 of
-  each file, sorted; `App` only for a shipped version, `.gupkg` never) and publish it in `_registry.toml`
-  `[fingerprints]`. Design 9.2 has the text.
+- **The fingerprint (031).** There is one implementation of the version-directory fingerprint,
+  `gupkg.services.fingerprint` (issue 031, byte-exact contract in design section 17); the registry tool, the engine's
+  install verification and `check` all call it. `gupkg.engine.fingerprint` keeps only the D41 `App` fingerprint
+  (`app_files`, `aggregate_digest`, `diff_app`). An earlier version of this note said the registry tool must call
+  `engine.fingerprint.version_fingerprint`; that function no longer exists.
 - **Vendor installers are implemented by 028** (owner decision after the first review; design 8.4 and D39,
   issue 031's GIMP package depends on it): `gupkg.engine.installer`, the setting `hooks.allow_vendor_installers`,
   the label `runs vendor installer` in the plan (`populate.label`), the output and the receipt. Issue 029 shows the

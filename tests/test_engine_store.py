@@ -27,8 +27,6 @@ from gupkg.engine.fingerprint import (
     aggregate_digest,
     app_files,
     diff_app,
-    tree_differences,
-    version_fingerprint,
 )
 from gupkg.engine.planner import PlanError
 from gupkg.engine.portable import PortableError, hand_back, hand_over
@@ -109,35 +107,6 @@ def test_the_aggregate_digest_does_not_depend_on_order_or_letter_case() -> None:
     first = aggregate_digest({"A.txt": "1", "b.txt": "2"})
 
     assert first == aggregate_digest({"b.TXT": "2", "a.txt": "1"}) and first != aggregate_digest({"A.txt": "1", "b.txt": "3"})
-
-
-def test_the_version_fingerprint_covers_scripts_and_shipped_files_but_not_a_downloaded_app(tmp_path: Path) -> None:
-    """pkg.toml, scripts and (for a shipped version) App count; a downloaded App and .gupkg do not."""
-    folder = tmp_path / "1.0.0"
-    write(folder / "pkg.toml", "format = 2")
-    write(folder / "pkg.local" / "populate.cmd", "rem")
-    base = version_fingerprint(folder)
-
-    write(folder / "App" / "a.exe", "a")
-    write(folder / ".gupkg" / "receipts" / "1.0.0.toml", "x")
-    assert version_fingerprint(folder) == base
-    assert version_fingerprint(folder, include_app=True) != base
-    write(folder / "pkg.local" / "populate.cmd", "rem changed")
-    assert version_fingerprint(folder) != base
-
-
-def test_tree_differences_names_the_files_that_differ(tmp_path: Path) -> None:
-    """Changed, added and removed files are named."""
-    first, second = tmp_path / "a", tmp_path / "b"
-    for folder in (first, second):
-        write(folder / "pkg.toml", "same")
-        write(folder / "keep.txt", "same")
-    write(first / "changed.txt", "1")
-    write(second / "changed.txt", "2")
-    write(first / "only-first.txt")
-    write(second / "only-second.txt")
-
-    assert tree_differences(first, second) == ["changed.txt", "only-first.txt", "only-second.txt"]
 
 
 # ---------------------------------------------------------------------------

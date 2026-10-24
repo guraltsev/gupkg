@@ -20,6 +20,7 @@ import pytest
 
 from gupkg.engine.receipts import read_receipt
 from gupkg.engine.stateio import read_track_state
+from gupkg.report.events import Warning, use_reporter
 from gupkg.model.checksum import parse_skip_flag
 from tests.engine_support import BASE_URL, World, pin_no_ambient_elevation  # noqa: F401
 from tests.mode_support import tree_snapshot
@@ -226,3 +227,42 @@ def test_a_bundled_install_carries_its_own_gupkg_into_the_new_version(tmp_path: 
 
     new = world.user / "tool" / "1.1.0"
     assert result.ok and (new / "gupkg" / "gupkg.cmd").is_file() and (new / "install.cmd").is_file()
+
+
+def test_a_waived_optional_checksum_source_is_shown_returned_and_recorded(tmp_path: Path) -> None:
+    """`[source.checksum] optional = true` with nothing behind it: the version is written unpinned and the note reaches the events, the result and the receipt."""
+    world = World(tmp_path)
+    world.publish("tool", "1.0.0", tables=ENV_ONLY)
+    world.tracker("tool", tables="optional = true\n" + ENV_ONLY)
+    assert world.one("install", "tool").ok
+    world.announce("tool", "1.1.0", sidecar=False)
+    seen: list[str] = []
+
+    class Collect:
+        """Keep the warnings."""
+
+        def handle(self, event: object) -> None:
+            if isinstance(event, Warning):
+                seen.append(event.text)
+
+    with use_reporter(Collect()):
+        result = world.one("check-updates", "tool", no_download=True)
+
+    text = (world.user / "tool" / "1.1.0" / "pkg.toml").read_text(encoding="utf-8")
+    assert result.ok and result.version == "1.1.0" and "sha256" not in text and "[source.checksum]" not in text
+    assert len(result.warnings) == 1 and "optional checksum source" in result.warnings[0] and result.details["notes"] == list(result.warnings)
+    assert any("optional checksum source" in line for line in seen)
+    assert read_receipt(world.user / "tool", "1.1.0").data["track"]["notes"] == list(result.warnings)
+
+
+@pytest.mark.parametrize("version", ["con", "NUL.txt", "1.0 ", "..", "a%b"])
+def test_a_discovered_version_that_cannot_name_a_directory_writes_nothing(tmp_path: Path, version: str) -> None:
+    """A tracker that finds a device name or an unsafe string as a version is refused before any directory is made."""
+    world = World(tmp_path)
+    installed(world)
+    world.fake.add_url(f"{BASE_URL}/tool-latest.json", f'{{"version": "{version}"}}')
+    before = sorted(item.name for item in (world.user / "tool").iterdir())
+
+    result = world.one("check-updates", "tool")
+
+    assert not result.ok and sorted(item.name for item in (world.user / "tool").iterdir()) == before

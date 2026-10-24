@@ -18,10 +18,10 @@ from pathlib import Path
 from gupkg.catalog.registry import registry_cache_dir
 from gupkg.engine import lifecycle
 from gupkg.engine.context import Engine
-from gupkg.engine.fingerprint import version_fingerprint
 from gupkg.model.mode import ModeChoice, ModeContext, build_mode_context
 from gupkg.model.plan import BatchResult, PackageResult
 from gupkg.modes import default_folders
+from gupkg.services.fingerprint import fingerprint_directory
 from gupkg.system.fake import FakeSystem, ProcessCall
 from gupkg.system.port import ProcessResult
 from gupkg.tomlio import write_toml
@@ -227,13 +227,14 @@ class World:
 
     def registry(
         self, packages: dict[str, dict[str, object]], *, mode: str = "user", fingerprints: list[tuple[str, str]] = (),
-        revision: str = "a" * 40,
+        revision: str = "a" * 40, published_raw: dict[str, str] | None = None,
     ) -> Path:
         """Publish a registry cache named ``main`` for the packages of *mode* and return its cache folder.
 
         *packages* maps a name to ``{"versions": {version: members}, "tracker": text or None}``; each version is
-        written pinned with its digest and served. *fingerprints* lists ``(name, version)`` pairs whose fingerprint
-        ``_registry.toml`` publishes (computed from the files as written).
+        written pinned with its digest and served (a ``Path`` as *members* is copied as it is). *fingerprints* lists
+        ``(name, version)`` pairs whose fingerprint ``_registry.toml`` publishes (computed from the files as written by
+        ``gupkg.services.fingerprint``); *published_raw* adds ``{"name/version": fingerprint}`` entries as given.
         """
         cache = registry_cache_dir(self.root(mode), "main")
         tree = cache / "trees" / revision
@@ -250,7 +251,8 @@ class World:
             if spec.get("tracker"):
                 (folder / "_check_updates").mkdir(exist_ok=True)
                 (folder / "_check_updates" / "pkg.toml").write_text(str(spec["tracker"]), encoding="utf-8")
-        published = {f"{name}/{version}": version_fingerprint(tree / "pkgs" / name / version) for name, version in fingerprints}
+        published = {f"{name}/{version}": fingerprint_directory(tree / "pkgs" / name / version) for name, version in fingerprints}
+        published.update(published_raw or {})
         data: dict[str, object] = {"format": 2, "name": "main"}
         if published:
             data["fingerprints"] = published

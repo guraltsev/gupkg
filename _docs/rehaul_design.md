@@ -1068,11 +1068,10 @@ and again in `check`:
 An `App` filled by a custom populate script is **as verified as the
 package itself** (D27): it carries the package's label.
 
-Details (issue 028). The **fingerprint** is one SHA-256 over every file of the version
-directory: the file names (letter case folded, `/` separators) and the SHA-256 of each file's
-content, in sorted order. `App` is part of it only when the version is shipped (a downloaded
-`App` is a product of the version, not part of its definition), and `.gupkg` never is. The
-registry tool computes it the same way. A **distribution folder** is copied, then judged: no
+Details (issue 028). The **fingerprint** of a version directory has one definition, one
+implementation (`gupkg.services.fingerprint`) and one byte-exact contract, in section 17: the
+registry tool, install and `check` all call it. It ignores the top-level `App` and `gupkg` (so a
+shipped `App` is not part of it either) and refuses links. A **distribution folder** is copied, then judged: no
 published fingerprint labels the install *origin not verified*, a match
 *verified against registry `<name>`*, a mismatch refuses it, names the files that differ and
 removes the copy this run created. The same comparison runs for a version copied from a registry
@@ -1508,7 +1507,7 @@ gupkg/
     portable.py     portable data hand-over, markers, [nonportable] removal
     locks.py        the per-package lock (.gupkg\locks\package.lock)
     installer.py    vendor installers ([source.installer]): the guarded run into the stage
-    fingerprint.py  App fingerprint and version-directory fingerprint
+    fingerprint.py  the D41 App fingerprint (the version-directory fingerprint is services/fingerprint.py, section 17)
     receipts.py     receipt files; stateio.py: [[adhoc]] and track.toml
     checkupdates.py the check-updates plan: track, write, populate, stop
     health.py       what `check` reports
