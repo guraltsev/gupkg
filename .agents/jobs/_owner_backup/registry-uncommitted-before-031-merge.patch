@@ -1,0 +1,132 @@
+diff --git a/msys2/_bootstrap/config.default/configure_nsswitch.py b/msys2/_bootstrap/config.default/configure_nsswitch.py
+index db0b208..e59eb5d 100644
+--- a/msys2/_bootstrap/config.default/configure_nsswitch.py
++++ b/msys2/_bootstrap/config.default/configure_nsswitch.py
+@@ -1,9 +1,10 @@
+-"""Configure MSYS2 name-service settings for Windows home directories.
++"""Configure MSYS2 to use the user's Windows home and temporary directories.
+ 
+ Run this script through ``configure_nsswitch.cmd`` after setting
+ ``MSYS2_INSTALL_PATH`` to the MSYS2 installation directory. It updates the
+-installation's ``etc/nsswitch.conf`` in place and fails clearly when the
+-expected configuration or ``db_home`` setting is absent.
++installation's ``etc/nsswitch.conf`` (home directory) and ``etc/fstab``
++(``/tmp`` mount) in place and fails clearly when the expected configuration
++or ``db_home`` setting is absent.
+ """
+ 
+ from __future__ import annotations
+@@ -12,29 +13,25 @@ import os
+ import re
+ from pathlib import Path
+ 
++# Mounts /tmp on the Windows user's %TEMP% directory, so the read-only
++# installation tree never needs a writable tmp folder.
++TMP_MOUNT = "none /tmp usertemp binary,posix=0,noacl 0 0"
+ 
+-def main() -> int:
++
++def configure_home(etc_path: Path) -> None:
+     """Set the MSYS2 ``db_home`` setting to ``windows``.
+ 
+-    Returns
+-    -------
+-    int
+-        Zero after updating the setting or confirming it already has the
+-        requested value.
++    Parameters
++    ----------
++    etc_path : Path
++        The installation's ``etc`` directory.
+ 
+     Raises
+     ------
+     RuntimeError
+-        If the MSYS2 installation path, configuration file, or setting is
+-        unavailable.
++        If the configuration file or setting is unavailable.
+     """
+-    install_path = os.environ.get("MSYS2_INSTALL_PATH")
+-    if not install_path:
+-        raise RuntimeError("MSYS2_INSTALL_PATH is not set.")
+-
+-    # The bootstrap package promotes MSYS2's ``msys64`` contents directly into
+-    # this root, so its configuration lives at this stable relative path.
+-    nsswitch_path = Path(install_path) / "etc" / "nsswitch.conf"
++    nsswitch_path = etc_path / "nsswitch.conf"
+     if not nsswitch_path.is_file():
+         raise RuntimeError(f"MSYS2 nsswitch configuration was not found: {nsswitch_path}")
+ 
+@@ -58,6 +55,72 @@ def main() -> int:
+     else:
+         print(f"db_home is already set to windows in {nsswitch_path}")
+ 
++
++def configure_tmp(etc_path: Path) -> None:
++    """Mount ``/tmp`` on the Windows user's temporary directory.
++
++    Parameters
++    ----------
++    etc_path : Path
++        The installation's ``etc`` directory.
++
++    Raises
++    ------
++    RuntimeError
++        If the mount table is unavailable.
++    """
++    fstab_path = etc_path / "fstab"
++    if not fstab_path.is_file():
++        raise RuntimeError(f"MSYS2 mount table was not found: {fstab_path}")
++
++    # Replace an existing /tmp mount line, or append one, keeping the file's
++    # line endings and every other mount as supplied by MSYS2.
++    contents = fstab_path.read_bytes().decode("utf-8")
++    newline = "\r\n" if "\r\n" in contents else "\n"
++    updated_contents, replacements = re.subn(
++        r"^[ \t]*\S+[ \t]+/tmp[ \t][^\r\n]*(\r?)$",
++        lambda match: TMP_MOUNT + match.group(1),
++        contents,
++        count=1,
++        flags=re.MULTILINE,
++    )
++    if not replacements:
++        if updated_contents and not updated_contents.endswith("\n"):
++            updated_contents += newline
++        updated_contents += TMP_MOUNT + newline
++
++    # Avoid touching the file when MSYS2 already has the desired mount.
++    if updated_contents != contents:
++        fstab_path.write_bytes(updated_contents.encode("utf-8"))
++        print(f"Mounted /tmp on the user's temporary directory in {fstab_path}")
++    else:
++        print(f"/tmp is already mounted on the user's temporary directory in {fstab_path}")
++
++
++def main() -> int:
++    """Configure the MSYS2 home directory and ``/tmp`` mount.
++
++    Returns
++    -------
++    int
++        Zero after updating the settings or confirming they already have the
++        requested values.
++
++    Raises
++    ------
++    RuntimeError
++        If the MSYS2 installation path, a configuration file, or the
++        ``db_home`` setting is unavailable.
++    """
++    install_path = os.environ.get("MSYS2_INSTALL_PATH")
++    if not install_path:
++        raise RuntimeError("MSYS2_INSTALL_PATH is not set.")
++
++    # The bootstrap package promotes MSYS2's ``msys64`` contents directly into
++    # this root, so its configuration lives at this stable relative path.
++    etc_path = Path(install_path) / "etc"
++    configure_home(etc_path)
++    configure_tmp(etc_path)
+     return 0
+ 
+ 
