@@ -239,8 +239,9 @@ HOSTILE_ARCHIVES = {
     "drive-relative": [("C:escape.txt", "x")],
     "backslash-traversal": [("wrap\\..\\..\\escape.txt", "x")],
     "symlink": [(_symlink("wrap/link"), "C:\\Windows")],
-    "duplicate-name": [("wrap/tool/1.0.0/pkg.toml", "a"), ("wrap/tool/1.0.0/pkg.toml", "b")],
-    "duplicate-name-other-case": [("wrap/tool/1.0.0/pkg.toml", "a"), ("wrap/Tool/1.0.0/PKG.toml", "b")],
+    # Both copies are valid packages: only the repeated name itself can make the sync fail.
+    "duplicate-name": [("wrap/tool/1.0.0/pkg.toml", version_text("1.0.0"))],
+    "duplicate-name-other-case": [("wrap/Tool/1.0.0/PKG.toml", version_text("1.0.0"))],
 }
 
 
