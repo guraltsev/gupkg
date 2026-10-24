@@ -29,18 +29,31 @@ from collections.abc import Mapping
 from ..model.jsonpath import JsonPathError, parse_path
 from ..model.manifest import Checksum, DiscoveredChecksum
 from ..model.patterns import PatternError
-from .http import HttpClient, decode_body
+from .http import HttpClient, HttpError, decode_body
 from .regexrun import RegexRunner
 from .values import TrackError, absolute_url, compile_runtime, expand
 
 _HEX = re.compile(r"(?<![0-9A-Fa-f])[0-9A-Fa-f]{64}(?![0-9A-Fa-f])")
 _GNU_LINE = re.compile(r"^\s*(?P<digest>[0-9A-Fa-f]{64})\s+[ *]?(?P<name>\S.*?)\s*$")
 _BSD_LINE = re.compile(r"^\s*SHA256\s*\((?P<name>.+)\)\s*=\s*(?P<digest>[0-9A-Fa-f]{64})\s*$", re.IGNORECASE)
+_LOOSE_LINE = re.compile(r"^\s*(?P<digest>\S+)\s+[ *]?(?P<name>\S.*?)\s*$")
 _MAX_LINES = 200_000
 
 
 class ChecksumDiscoveryError(RuntimeError):
     """Report that a configured checksum source could not supply a digest."""
+
+
+class ChecksumAbsent(ChecksumDiscoveryError):
+    """Report that the source holds no digest for this download: ``kind`` is ``not listed``, ``not found`` or ``fetch failed``.
+
+    Only an absence can be waived by ``[source.checksum] optional = true``; a source that holds
+    something wrong (a malformed digest line) is a plain ``ChecksumDiscoveryError`` and always stops.
+    """
+
+    def __init__(self, message: str, kind: str) -> None:
+        super().__init__(message)
+        self.kind = kind
 
 
 def discover_checksum(
@@ -81,6 +94,8 @@ def discover_checksum(
             text = _text(client, url)
             entry = expand(checksum.entry or "", values)
             digest = find_digest(text, entry)
+            if digest is None and _malformed_entry(text, entry):
+                raise ChecksumDiscoveryError(f"{url} lists {entry!r} with something that is not a SHA-256: refused, not skipped")
             where = f"{url} (entry {entry!r})"
         elif checksum.json is not None:
             url = absolute_url(expand(checksum.json, values))
@@ -103,10 +118,17 @@ def discover_checksum(
                     digest = candidate.strip()
                     break
             where = page
-    except (OSError, TrackError, JsonPathError, PatternError) as error:
+    except ChecksumDiscoveryError:
+        raise
+    except HttpError as error:
+        kind = "not found" if error.status in (404, 410) else "fetch failed"
+        raise ChecksumAbsent(f"Could not discover the checksum: {error}", kind) from error
+    except (OSError, TrackError) as error:
+        raise ChecksumAbsent(f"Could not discover the checksum: {error}", "fetch failed") from error
+    except (JsonPathError, PatternError) as error:
         raise ChecksumDiscoveryError(f"Could not discover the checksum: {error}") from error
     if digest is None:
-        raise ChecksumDiscoveryError(f"{where} does not contain a SHA-256 for this download")
+        raise ChecksumAbsent(f"{where} does not contain a SHA-256 for this download", "not listed")
     return DiscoveredChecksum(digest.lower(), "vendor-sums")
 
 
@@ -127,6 +149,18 @@ def find_digest(text: str, name: str | None) -> str | None:
         if match is not None and _normal(match.group("name")) == wanted:
             return match.group("digest").lower()
     return None
+
+
+def _malformed_entry(text: str, name: str) -> bool:
+    """Return whether a line of sums-file text names *name* with a first field that is not a 64-digit hexadecimal digest."""
+    wanted = _normal(name)
+    for count, line in enumerate(text.splitlines()):
+        if count > _MAX_LINES:
+            break
+        match = _LOOSE_LINE.match(line)
+        if match is not None and _normal(match.group("name")) == wanted and not _HEX.fullmatch(match.group("digest")):
+            return True
+    return False
 
 
 def _only_digest(text: str) -> str | None:

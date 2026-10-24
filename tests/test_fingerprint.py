@@ -230,3 +230,23 @@ def test_a_tree_with_too_many_files_or_bytes_is_refused(tmp_path: Path, monkeypa
     (folder / "e").write_bytes(b"5")
     with pytest.raises(FingerprintError, match="more than 4 bytes"):
         fingerprint_directory(folder)
+
+
+def test_a_tree_with_too_many_directories_or_levels_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Many empty directories or a very deep chain are refused as well; at the limit the tree is accepted."""
+    monkeypatch.setattr("gupkg.services.fingerprint.MAX_DIRECTORIES", 3)
+    wide = build(tmp_path / "wide", {"f": b"1"})
+    for name in ("a", "b", "c"):
+        (wide / name).mkdir()
+    assert fingerprint_directory(wide)
+    (wide / "d").mkdir()
+    with pytest.raises(FingerprintError, match="more than 3 directories"):
+        fingerprint_directory(wide)
+
+    monkeypatch.setattr("gupkg.services.fingerprint.MAX_DIRECTORIES", 100)
+    monkeypatch.setattr("gupkg.services.fingerprint.MAX_DEPTH", 3)
+    deep = build(tmp_path / "deep", {"a/b/c/f": b"1"})
+    assert fingerprint_directory(deep)
+    build(deep / "a" / "b" / "c", {"d/f": b"2"})
+    with pytest.raises(FingerprintError, match="deeper than 3 levels"):
+        fingerprint_directory(deep)

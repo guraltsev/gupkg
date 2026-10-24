@@ -12,7 +12,7 @@ download = "${link}"
 [[track.fetch]]
 url = "https://www.shutterencoder.com/"
 select = "each"    # the page links several systems; keep the first link whose answer names the Windows 64-bit file
-match = 'href="(?P<link>https://www\.shutterencoder\.com/sdc_download/\d+/\?key=[A-Za-z0-9]+)"'
+match = '(?P<link>https://www\.shutterencoder\.com/sdc_download/\d+/\?key=[A-Za-z0-9]+)'
 headers = { User-Agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36" }
 
 [[track.fetch]]

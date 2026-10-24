@@ -103,6 +103,18 @@ def test_shutter_encoder_finds_the_windows_build_in_whatever_order_the_page_list
     assert len(heads) == order.index("windows") + 1 and heads[-1] == SHUTTER.format(1234, "abcDEF123")
 
 
+def test_shutter_encoder_also_finds_links_that_are_plain_text(tmp_path: Path) -> None:
+    """Like the 0.17 hook's search, the tracker does not need an ``href=`` around the address: a bare URL in the page counts."""
+    system = shutter_system(tmp_path, ("mac", "windows"))
+    system.urls["https://www.shutterencoder.com/"] = FakeHttp(
+        f"Mac {SHUTTER.format(9999, 'zzzMAC999')} and Windows {SHUTTER.format(1234, 'abcDEF123')} (also in an href)"
+    )
+
+    result, pinned = discover(system, tmp_path, "shutter-encoder")
+
+    assert pinned.source.download_url == SHUTTER.format(1234, "abcDEF123") and result.version == "18.4"
+
+
 def test_shutter_encoder_fails_closed_when_no_link_names_the_windows_build(tmp_path: Path) -> None:
     """With only other systems linked the tracker fails and says every candidate was tried."""
     system = shutter_system(tmp_path, ("mac", "linux", "gone", "old"))
@@ -191,6 +203,17 @@ def test_inkscape_is_still_found_without_a_usable_digest(tmp_path: Path, name: s
     assert result.version == "1.4"
     assert pinned.source.download_url == "https://inkscape.org/gallery/item/53697/inkscape-1.4_2024-10-11_86a8ad7-x64.7z"
     assert pinned.source.sha256 is None and pinned.source.sha256_from is None
+
+
+def test_inkscape_takes_a_digest_only_as_a_whole_64_digit_token(tmp_path: Path) -> None:
+    """A run of 65 or more hexadecimal digits is no digest (no slice of it is taken); a real digest after other text still is one."""
+    longer = inkscape_system(tmp_path, digest=FakeHttp("a" * 70 + "\n"))
+    _result, pinned = discover(longer, tmp_path, "inkscape")
+    assert pinned.source.sha256 is None
+
+    framed = inkscape_system(tmp_path, digest=FakeHttp("sha256:" + "b" * 64 + " (inkscape)\n"))
+    _result, pinned = discover(framed, tmp_path, "inkscape")
+    assert pinned.source.sha256 == "b" * 64
 
 
 def test_inkscape_still_needs_its_download_link(tmp_path: Path) -> None:

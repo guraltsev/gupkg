@@ -28,6 +28,19 @@ from .layout import REGISTRY_FILE
 from .update import Outcome
 
 
+def _usable_ref_name(name: str, what: str) -> bool:
+    """Return whether *name* passes the rules of ``git check-ref-format`` (and is no option, and for a branch no ``refs/`` name)."""
+    if not name or name.startswith(("-", "/", ".")) or name.endswith(("/", ".", ".lock")):
+        return False
+    if ".." in name or "@{" in name or "//" in name or name == "@" or "\\" in name:
+        return False
+    if any(ord(ch) < 33 or ord(ch) == 127 or ch in "~^:?*[" for ch in name):
+        return False
+    if any(part.startswith(".") or part.endswith(".lock") for part in name.split("/")):
+        return False
+    return not (what == "branch" and name.startswith("refs/"))
+
+
 class PublishError(RuntimeError):
     """Report a ``git`` command that failed while committing or pushing."""
 
@@ -90,10 +103,10 @@ def commit_and_push(
             "refusing to publish hashes the registry tool computed itself (trust on first use): "
             + ", ".join(computed) + ". Review them and commit by hand, or run again with --allow-computed."
         )
-    for name in (remote, branch):
-        if name is not None and (not name or name.startswith("-") or any(ch.isspace() for ch in name)):
-            raise PublishError(f"{name!r} is not a usable remote or branch name")
-    paths = [o.path.relative_to(root).as_posix() for o in written] + [REGISTRY_FILE]
+    for name, what in ((remote, "remote"), (branch, "branch")):
+        if name is not None and not _usable_ref_name(name, what):
+            raise PublishError(f"{name!r} is not a usable {what} name")
+    paths = [f":(literal){o.path.relative_to(root).as_posix()}" for o in written] + [f":(literal){REGISTRY_FILE}"]
     push = ["git", "push"]
     if remote or branch:
         push += [remote or "origin", f"HEAD:{branch}"] if branch else [remote]

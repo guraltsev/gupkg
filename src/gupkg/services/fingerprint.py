@@ -35,7 +35,8 @@ the fingerprint. The registry therefore stores every file byte for byte (``* -te
 Links, junctions and other reparse points are refused rather than skipped or followed: a tree that
 contains one is not a tree this fingerprint can vouch for.
 
-Limits and names: a tree with more than ``MAX_FILES`` files or ``MAX_TOTAL_BYTES`` bytes is refused (a
+Limits and names: a tree with more than ``MAX_FILES`` files, ``MAX_DIRECTORIES`` directories, ``MAX_DEPTH`` levels
+or ``MAX_TOTAL_BYTES`` bytes is refused (a
 version directory holds a manifest, scripts and small support files; the payload is ``App``, which is
 skipped), so a hostile directory cannot make the check run for ever. Paths are used exactly as the file
 system reports them: there is **no Unicode normalisation**, so two spellings of one name are two names.
@@ -56,6 +57,8 @@ HEADER = f"gupkg-fingerprint-{FINGERPRINT_ALGORITHM}\n"
 EXCLUDED_TOP_LEVEL = frozenset({"app", "gupkg"})
 _CHUNK = 1024 * 1024
 MAX_FILES = 10_000
+MAX_DIRECTORIES = 2_000
+MAX_DEPTH = 32
 MAX_TOTAL_BYTES = 512 * 1024 * 1024
 
 
@@ -82,9 +85,10 @@ def _entries(directory: Path) -> dict[str, tuple[str, int]]:
     found: dict[str, tuple[str, int]] = {}
     seen: dict[str, str] = {}
     total = 0
-    stack = [root]
+    stack = [(root, 0)]
+    directories = 0
     while stack:
-        folder = stack.pop()
+        folder, depth = stack.pop()
         try:
             children = sorted(os.scandir(folder), key=lambda entry: entry.name)
         except OSError as error:
@@ -103,7 +107,12 @@ def _entries(directory: Path) -> dict[str, tuple[str, int]]:
                 raise FingerprintError(f"{relative}: {error}") from error
             mode = os.lstat(path).st_mode
             if stat.S_ISDIR(mode):
-                stack.append(path)
+                directories += 1
+                if directories > MAX_DIRECTORIES or depth + 1 > MAX_DEPTH:
+                    raise FingerprintError(
+                        f"more than {MAX_DIRECTORIES} directories or deeper than {MAX_DEPTH} levels; not a version directory"
+                    )
+                stack.append((path, depth + 1))
             elif stat.S_ISREG(mode):
                 if seen.setdefault(relative.casefold(), relative) != relative:
                     raise FingerprintError(f"{relative} and {seen[relative.casefold()]} differ only in letter case")

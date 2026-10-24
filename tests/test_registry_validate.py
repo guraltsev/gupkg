@@ -314,6 +314,7 @@ class _Entry:
     """A directory entry that is a version directory with a manifest (a stand-in: Windows cannot hold two case-variant names)."""
 
     def __init__(self, name: str) -> None:
+        """Keep the entry's name."""
         self.name = name
 
     def is_dir(self) -> bool:
@@ -321,6 +322,7 @@ class _Entry:
         return True
 
     def __truediv__(self, other: str) -> "_Entry":
+        """Return the same entry for any child, so ``entry / "pkg.toml"`` also exists."""
         return self
 
     def is_file(self) -> bool:
@@ -332,6 +334,7 @@ class _Package:
     """A package folder listing the given entry names."""
 
     def __init__(self, *names: str) -> None:
+        """Keep the entry names."""
         self.names = names
 
     def iterdir(self) -> list[_Entry]:

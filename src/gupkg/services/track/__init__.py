@@ -45,7 +45,8 @@ from ...model.trackspec import (
     TrackSpecError,
     parse_spec,
 )
-from ..checksum import ChecksumDiscoveryError, discover_checksum
+from ...report.events import Warning, emit
+from ..checksum import ChecksumAbsent, ChecksumDiscoveryError, discover_checksum
 from .common import TrackEnvironment, TrackError
 from .index import track_index, track_redirect
 from .page import track_chain, track_page, track_rss
@@ -112,11 +113,14 @@ def run_tracker(manifest: Manifest, env: TrackEnvironment) -> TrackResult:
         values["download_url"] = render(manifest.source.download_url, values)
     try:
         checksum = discover_checksum(env.http, declared, values, env.regex)
-    except ChecksumDiscoveryError as error:
+    except ChecksumAbsent as error:
         # An optional source (the vendor publishes a digest for some builds only) falls back to no
-        # discovered checksum, never past a regular-expression failure, which stops the check.
+        # discovered checksum, and says so. Only an absence is waived: a malformed digest line and a
+        # regular-expression failure (a deadline, a crashed worker) always stop the check.
         if declared.optional and not _pattern_failure(error):
-            return result
+            note = f"the optional checksum source had nothing ({error.kind}): {error}"
+            emit(Warning(note))
+            return replace(result, notes=(*result.notes, note))
         raise
     return replace(result, checksum=checksum)
 

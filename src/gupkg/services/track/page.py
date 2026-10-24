@@ -81,6 +81,24 @@ def track_rss(spec: RssSpec, env: TrackEnvironment) -> TrackResult:
 
 
 MAX_EACH_CANDIDATES = 20
+MAX_CHAIN_REQUESTS = 60
+
+
+class ChainBudgetExceeded(TrackError):
+    """Report that a chain walk made more requests than ``MAX_CHAIN_REQUESTS``; never skipped, never retried."""
+
+
+class _Budget:
+    """Count the requests of one chain walk, so candidates of an ``each`` step cannot multiply without bound."""
+
+    def __init__(self) -> None:
+        self.used = 0
+
+    def spend(self, position: int) -> None:
+        """Count one request; raise ``ChainBudgetExceeded`` past the limit."""
+        self.used += 1
+        if self.used > MAX_CHAIN_REQUESTS:
+            raise ChainBudgetExceeded(f"The chain made more than {MAX_CHAIN_REQUESTS} requests (at step {position}); it is stopped")
 
 
 def track_chain(spec: ChainSpec, env: TrackEnvironment) -> TrackResult:
@@ -101,41 +119,43 @@ def track_chain(spec: ChainSpec, env: TrackEnvironment) -> TrackResult:
         If a required step cannot be fetched or matches nothing, or no candidate of an ``each`` step
         gets through the later steps.
     """
-    captures, last_url = _run_steps(spec, env, 0, {}, None)
+    captures, last_url = _run_steps(spec, env, 0, {}, None, _Budget())
     captures = dict(captures)
     captures["page_url"] = last_url or ""
     return finish(captures, spec.version, spec.download, last_url)
 
 
 def _run_steps(
-    spec: ChainSpec, env: TrackEnvironment, start: int, captures: Mapping[str, str], last_url: str | None
+    spec: ChainSpec, env: TrackEnvironment, start: int, captures: Mapping[str, str], last_url: str | None,
+    budget: "_Budget",
 ) -> tuple[Mapping[str, str], str | None]:
     """Run the steps from index *start* and return the captures and the last address."""
     for index in range(start, len(spec.steps)):
         step = spec.steps[index]
         position = index + 1
         try:
-            outcome = _fetch_step(env, step, position, captures, last_url)
+            outcome = _fetch_step(env, step, position, captures, last_url, budget)
         except TrackError as error:
-            if step.optional and not _is_pattern_failure(error):
+            if step.optional and not _is_fatal(error):
                 continue
             raise
         if outcome is None:
             continue
         found, text_url = outcome
         if step.select == "each":
-            return _try_each(spec, env, index, found, text_url)
+            return _try_each(spec, env, index, found, text_url, budget)
         captures, last_url = dict(choose(found, step.select, f"Step {position} of the chain ({text_url})")[0]), text_url
     return captures, last_url
 
 
-def _fetch_step(env, step, position, captures, last_url):
+def _fetch_step(env, step, position, captures, last_url, budget):
     """Fetch one step and return ``(matches, response address)``, or ``None`` for a step with no ``match``."""
     values = dict(captures)
     url = urllib.parse.urljoin(last_url or "", expand(step.url, values))
     if urllib.parse.urlsplit(url).scheme.lower() not in ("http", "https"):
         raise TrackError(f"Step {position} of the chain has the address {url[:100]!r}, which is not http or https")
 
+    budget.spend(position)
     # A step reads either the page body or one response header (shutter-encoder
     # takes the version from ``Content-Disposition``).
     if step.header is not None:
@@ -158,7 +178,7 @@ def _fetch_step(env, step, position, captures, last_url):
     return found, response.url
 
 
-def _try_each(spec, env, index, found, address):
+def _try_each(spec, env, index, found, address, budget):
     """Return the result of the first candidate of step *index* that the later steps accept."""
     failures: list[str] = []
     seen: set[tuple[tuple[str, str], ...]] = set()
@@ -172,9 +192,9 @@ def _try_each(spec, env, index, found, address):
             break
         tried += 1
         try:
-            return _run_steps(spec, env, index + 1, dict(candidate), address)
+            return _run_steps(spec, env, index + 1, dict(candidate), address, budget)
         except TrackError as error:
-            if _is_pattern_failure(error):
+            if _is_fatal(error):
                 raise
             failures.append(str(error)[:160])
     detail = "; ".join(failures[:3])
@@ -184,9 +204,9 @@ def _try_each(spec, env, index, found, address):
     )
 
 
-def _is_pattern_failure(error: TrackError) -> bool:
-    """Return whether *error* came from a regular-expression failure (a deadline, a crashed worker), which is never skipped."""
-    return isinstance(error.__cause__, PatternError)
+def _is_fatal(error: TrackError) -> bool:
+    """Return whether *error* is never skipped: a regular-expression failure (a deadline, a crashed worker) or the request budget."""
+    return isinstance(error, ChainBudgetExceeded) or isinstance(error.__cause__, PatternError)
 
 
 # ---------------------------------------------------------------------------

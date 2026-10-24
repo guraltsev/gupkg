@@ -23,7 +23,7 @@ from gupkg_registry.layout import read_registry_file, write_registry_file
 from gupkg_registry.update import update_registry
 from tests.catalog_support import write_version
 
-REAL = ["1.2.3", "2024.10.1", "v1.2", "1.0.0-rc.1", "20261022-101500-ab12cd3", "0.17.0.local.1", "bootstrap2", "10.02", "3.31-1", "2.26"]
+REAL = ["1.2.3", "2024.10.1", "v1.2", "1.0.0-rc.1", "20261022-101500-ab12cd3", "0.17.0.local.1", "bootstrap2", "10.02", "3.31-1", "2.26", "1" + "0" * 127, "v1.0b2", "2024-10-22_rc"]
 HOSTILE = [
     "CON", "con", "Con.txt", "con.tar.gz", "PRN", "AUX", "aux", "NUL", "nul.txt", "CONIN$", "conout$", "COM1", "com9", "COM1.txt", "LPT1", "lpt9.x",
     "COM¹", "LPT²", "LPT³.txt", "con .txt", "a‮b", "⁦x", "a\x00b", "a\x1fb", "a\x7fb", "a\x85b", "a​b", "a‏b",
@@ -36,6 +36,14 @@ HOSTILE = [
 def test_real_version_names_are_accepted(name: str) -> None:
     """Dotted, dated, prerelease, local-revision and Git-style versions can be directories."""
     assert is_version_name(name)
+
+
+# Unicode format, separator, private-use, unassigned and surrogate characters, variation selectors and over-long names.
+HOSTILE += [
+    "a\u00adb", "a\u2060b", "a\u2061b", "a\u2062b", "a\u2063b", "a\u2064b", "a\u061cb", "a\u180eb",
+    "a\U000e0041b", "a\U000e0001b", "a\ufe0fb", "a\ufe00b", "a\U000e0100b", "a\ue000b", "a\U000f0000b",
+    "a\u0378b", "a\ud800b", "1" + "0" * 128,
+]
 
 
 @pytest.mark.parametrize("name", [pytest.param(name, id=ascii(name)) for name in HOSTILE])

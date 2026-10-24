@@ -654,6 +654,8 @@ def _chain(view: _View) -> ChainSpec:
         select = sub.choice("select", (*SELECTS, "each"), "max")
         if select == "each" and position == len(raw) - 1:
             sub.error("select", 'is "each" on the last step; "each" tries the candidates of a step against the steps after it')
+        if select == "each" and any(step.select == "each" for step in steps):
+            sub.error("select", 'is "each" on a second step; a chain may try the candidates of one step only')
         steps.append(Step(url or "", match, match_text, select, sub.string("header"),
                           _View({}, row, view.problems).headers(), sub.boolean("optional", False)))
     allowed = groups | set(BUILTIN_CAPTURES["chain"])

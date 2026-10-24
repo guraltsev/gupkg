@@ -27,7 +27,7 @@ optional = true    # a release without a digest link is still found; the registr
 
 [[track.fetch]]
 url = "${digest_url}"
-match = '(?P<sha256>[0-9a-fA-F]{64})'
+match = '(?P<sha256>(?<![0-9a-fA-F])[0-9a-fA-F]{64}(?![0-9a-fA-F]))'
 headers = { User-Agent = "Mozilla/5.0" }
 optional = true
 

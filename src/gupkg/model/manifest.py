@@ -397,6 +397,8 @@ class TrackResult:
     version: str
     captures: Mapping[str, str] = field(default_factory=dict)
     checksum: DiscoveredChecksum | None = None
+    notes: tuple[str, ...] = ()
+    """What the tracker waived and a maintainer should know (an optional checksum source that held nothing)."""
 
 
 # ---------------------------------------------------------------------------
@@ -697,6 +699,11 @@ def parse_manifest_data(data: Mapping[str, Any], kind: ManifestKind = ManifestKi
             collector.error("track", f"a tracker ({TRACKER_DIR_NAME}) needs a [track] table")
         if source.sha256 is not None or source.sha256_from is not None:
             collector.error("source", "a tracker has no sha256 or sha256_from: check-updates sets them from a discovered checksum")
+    elif source.checksum is not None:
+        collector.error(
+            "source.checksum",
+            "finds the hash of a discovered version and belongs to a tracker; a version directory carries the sha256 itself",
+        )
 
     if collector.problems:
         raise ManifestError(collector.problems)
@@ -1396,6 +1403,7 @@ def render_pinned(tracker: Manifest, result: TrackResult) -> Manifest:
 
     source = data.setdefault("source", {})
     source["shipped"] = tracker.source.shipped
+    source.pop("checksum", None)  # tracker-only: a version carries the sha256 it was given (D10)
     checksum = result.checksum
     if checksum is not None:
         if checksum.sha256_from not in DISCOVERED_SHA256_FROM:

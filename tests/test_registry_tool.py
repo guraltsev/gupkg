@@ -20,13 +20,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
+import time
 from pathlib import Path
 
 import pytest
 
 from gupkg.model.manifest import ManifestKind, parse_manifest
 from gupkg.pkgcheck import check_directory
+from gupkg.report.events import Warning, use_reporter
 from gupkg.services.fingerprint import fingerprint_directory, verify_directory
 from gupkg.system.fake import FakeHttp, FakeSystem, ProcessCall
 from gupkg.system.port import ProcessResult
@@ -42,6 +45,17 @@ from tests.http_fixtures import FIXTURES, HTTP_CASES, load_case
 SNAPSHOT = FIXTURES / "registry_100"
 HWINFO_ZIP = {"HWiNFO64.EXE": "exe", "HWiNFO64.INI": "ini"}
 VOLTA_ZIP = {"volta.exe": "v", "volta-shim.exe": "s", "volta-migrate.exe": "m"}
+
+
+class Collect:
+    """A reporter that keeps every event."""
+
+    def __init__(self) -> None:
+        self.events: list[object] = []
+
+    def handle(self, event: object) -> None:
+        """Keep one event."""
+        self.events.append(event)
 
 
 class Git:
@@ -406,8 +420,9 @@ def test_auto_push_commits_only_what_the_run_wrote_and_pushes_once(tmp_path: Pat
     assert status == 0
     words = git_words(git)
     assert [w[0] for w in words] == ["add", "commit", "push"]
-    assert words[0] == ["add", "--", "hwinfo/10.02", "_registry.toml"]
-    assert words[1][:2] == ["commit", "-m"] and words[1][3:] == ["--", "hwinfo/10.02", "_registry.toml"]
+    literal = [":(literal)hwinfo/10.02", ":(literal)_registry.toml"]  # a version name is never read as a pattern
+    assert words[0] == ["add", "--", *literal]
+    assert words[1][:2] == ["commit", "-m"] and words[1][3:] == ["--", *literal]
     assert words[2] == ["push"]
     assert all(call.cwd == root for call in git.calls)
     assert "hwinfo 10.02" in words[1][2] and "computed by the registry tool" in words[1][2]
@@ -459,7 +474,14 @@ def test_the_push_goes_where_it_is_told_and_never_forces(tmp_path: Path, options
 
 
 @pytest.mark.parametrize("option", ["--remote", "--branch"])
-@pytest.mark.parametrize("value", ["-x", "--upload-pack=calc", "a b", ""], ids=["dash", "option-injection", "space", "empty"])
+@pytest.mark.parametrize(
+    "value",
+    [
+        "-x", "--upload-pack=calc", "a b", "", "a..b", "/x", "x/", ".x", "x.", "x.lock", "a@{b", "a\\b", "a~b", "a^b", "a:b",
+        "a?b", "a*b", "a[b", "a//b", "a\x01b", "a\x7fb", "@", "x/.y", "x/y.lock",
+    ],
+    ids=lambda value: ascii(value),
+)
 def test_an_unsafe_remote_or_branch_name_is_refused_before_git_starts(tmp_path: Path, option: str, value: str) -> None:
     """A name that git could read as an option is refused; nothing is added, committed or pushed."""
     git = Git()
@@ -468,6 +490,21 @@ def test_an_unsafe_remote_or_branch_name_is_refused_before_git_starts(tmp_path: 
     status = run_cli(root, system, tmp_path, "update", "hwinfo", "--auto-push", "--allow-computed", f"{option}={value}")
 
     assert status == 1 and git.calls == []
+
+
+def test_a_branch_may_not_be_a_full_reference_but_ordinary_names_pass(tmp_path: Path) -> None:
+    """``refs/heads/x`` is not a branch name for ``--branch`` (it would name another namespace); ``release/1.x`` is fine."""
+    git = Git()
+    root, system = hwinfo_world(tmp_path, git)
+    assert run_cli(root, system, tmp_path, "update", "hwinfo", "--auto-push", "--allow-computed", "--branch=refs/heads/x") == 1
+    assert git.calls == []
+
+    (tmp_path / "again").mkdir()
+    git = Git()
+    root, system = hwinfo_world(tmp_path / "again", git)
+    status = run_cli(root, system, tmp_path / "again", "update", "hwinfo", "--auto-push", "--allow-computed", "--branch=release/1.x", "--remote=my-mirror_2")
+
+    assert status == 0 and git_words(git)[2] == ["push", "my-mirror_2", "HEAD:release/1.x"]
 
 
 def test_auto_push_with_nothing_new_runs_no_git(tmp_path: Path) -> None:
@@ -525,16 +562,39 @@ def test_every_fixture_case_names_a_tracker_that_exists() -> None:
 
 
 def test_a_run_removes_the_staging_folders_an_interrupted_run_left_but_nothing_else(tmp_path: Path) -> None:
-    """Folders named exactly ``.new-`` and eight hex digits are the tool's own and are removed; any other name is left alone."""
+    """Old folders named exactly ``.new-`` and eight hex digits are the tool's own and are removed; young ones (another run) and other names stay."""
     root = registry_of(tmp_path, "hwinfo")
-    (root / "hwinfo" / ".new-0123abcd").mkdir()
-    (root / "hwinfo" / ".new-0123abcd" / "pkg.toml").write_text("x", encoding="utf-8")
+    old = root / "hwinfo" / ".new-0123abcd"
+    old.mkdir()
+    (old / "pkg.toml").write_text("x", encoding="utf-8")
+    long_ago = time.time() - 2 * 3600
+    os.utime(old, (long_ago, long_ago))
+    (root / "hwinfo" / ".new-fedcba98").mkdir()  # a live run's folder: created just now
     (root / "hwinfo" / ".new-keep").mkdir()
     (root / "hwinfo" / ".new-0123abcdef").mkdir()
 
     run_update(root, machine(tmp_path), tmp_path, "hwinfo")
 
-    assert sorted(p.name for p in (root / "hwinfo").iterdir()) == [".new-0123abcdef", ".new-keep", "_check_updates"]
+    assert sorted(p.name for p in (root / "hwinfo").iterdir()) == [".new-0123abcdef", ".new-fedcba98", ".new-keep", "_check_updates"]
+
+
+def test_a_staging_folder_that_cannot_be_removed_is_a_warning_not_a_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An error while cleaning one folder is reported and the run goes on with the packages."""
+    root = registry_of(tmp_path, "hwinfo")
+    stale = root / "hwinfo" / ".new-0123abcd"
+    stale.mkdir()
+    os.utime(stale, (1_000_000, 1_000_000))
+
+    def refuse(path: Path) -> None:
+        raise PermissionError("in use")
+
+    monkeypatch.setattr("gupkg_registry.update.remove_tree", refuse)
+    reporter = Collect()
+    with use_reporter(reporter):
+        report = run_update(root, machine(tmp_path), tmp_path, "hwinfo")
+
+    assert stale.is_dir() and [o.package for o in report.outcomes] == ["hwinfo"]
+    assert any(isinstance(e, Warning) and "in use" in e.text for e in reporter.events)
 
 
 def test_registry_files_are_written_atomically(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

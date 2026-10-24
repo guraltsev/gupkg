@@ -36,6 +36,7 @@ from __future__ import annotations
 import dataclasses
 import re
 import shutil
+import time
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -44,6 +45,7 @@ from pathlib import Path
 from gupkg.model.checksum import SKIPPED_CLI
 from gupkg.model.manifest import ManifestKind, manifest_to_toml, parse_manifest, render_pinned
 from gupkg.model.version import MANIFEST_NAME, TRACKER_DIR_NAME
+from gupkg.report.events import Warning, emit
 from gupkg.pkgcheck import check_directory, defines_track
 from gupkg.services.artifact import fetch_artifact, reverify
 from gupkg.services.fingerprint import fingerprint_directory
@@ -166,6 +168,7 @@ def update_registry(
     return UpdateReport(tuple(outcomes))
 
 
+STALE_STAGING_SECONDS = 3600
 _STAGING = re.compile(r"\.new-[0-9a-f]{8}")
 
 
@@ -173,12 +176,19 @@ def _remove_stale_staging(packages) -> None:
     """Delete the ``.new-xxxxxxxx`` staging folders an interrupted earlier run left in the package folders.
 
     Only folders whose whole name is ``.new-`` and eight hexadecimal digits, which this tool alone creates,
-    are removed, and never a link.
+    are removed, never a link, and only when they are older than ``STALE_STAGING_SECONDS`` (an hour), so a
+    run that is still working in another process keeps its folder. A folder that cannot be inspected or
+    removed is reported as a warning and the run goes on.
     """
     for package in packages:
         for entry in package.iterdir():
-            if _STAGING.fullmatch(entry.name) and entry.is_dir() and not is_reparse_point(entry):
-                remove_tree(entry)
+            if not _STAGING.fullmatch(entry.name):
+                continue
+            try:
+                if entry.is_dir() and not is_reparse_point(entry) and time.time() - entry.stat().st_mtime >= STALE_STAGING_SECONDS:
+                    remove_tree(entry)
+            except OSError as error:
+                emit(Warning(f"Could not remove the leftover staging folder {entry}: {error}"))
 
 
 def pin_version(
@@ -306,6 +316,8 @@ def _update_package(run: _Run, package: Path) -> Outcome:
         remove_tree(destination)
         raise
     note = "sha256 computed by the registry tool: review it" if computed else "verified against the discovered checksum"
+    if result.notes:
+        note += "; " + "; ".join(result.notes)
     unversioned = name in run.settings.get("unversioned", [])
     if unversioned:
         note += "; the download address has no version in it, so this version stops verifying when the vendor replaces the file"
