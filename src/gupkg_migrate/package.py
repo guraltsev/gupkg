@@ -40,7 +40,7 @@ from gupkg.model.version import TRACKER_DIR_NAME, split_version
 from gupkg.pkgcheck import check_directory
 
 from .hooks import HookFinding, scan_hooks
-from .launchers import write_launchers
+from gupkg.launchers import TRACKER_LAUNCHER, VERSION_LAUNCHERS, write_launchers
 
 LEGACY_TRACKER_DIR_NAME = "_bootstrap"
 
@@ -75,6 +75,7 @@ class PackagePlan:
     other_versions: list[OtherVersion] = field(default_factory=list)
     moves: list[tuple[str, str]] = field(default_factory=list)
     launchers: list[str] = field(default_factory=list)
+    stale_launchers: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -153,9 +154,12 @@ def plan_package(directory: Path) -> PackagePlan:
     plan.new_text = manifest_to_toml(manifest)
     plan.errors.extend(_without_hook_api_errors(_validate_staged(plan, directory), plan))
     if plan.ok and plan.kind is ManifestKind.VERSION:
-        plan.launchers = ["install.cmd", "gupkg-tui.cmd"]
-    elif plan.ok and (directory / "gupkg-tui.cmd").is_file():
-        plan.launchers = ["gupkg-tui.cmd"]
+        plan.launchers = list(VERSION_LAUNCHERS)
+    elif plan.ok:
+        # A tracker only checks: it gets check-updates.cmd, and the 0.17 gupkg-tui.cmd (which searched PATH) is taken out.
+        plan.launchers = [TRACKER_LAUNCHER]
+        if (directory / "gupkg-tui.cmd").is_file():
+            plan.stale_launchers = ["gupkg-tui.cmd"]
     return plan
 
 
@@ -585,6 +589,14 @@ def apply_plan(plan: PackagePlan, *, backup: bool = True) -> list[str]:
             write_launchers(plan.directory, (name,))
             undo.append(lambda p=path, old=previous: p.write_bytes(old) if old is not None else p.unlink(missing_ok=True))
             done.append(f"wrote {path}")
+
+        # A tracker's 0.17 gupkg-tui.cmd searched PATH; it is moved aside (kept as a backup), never left in place.
+        for name in plan.stale_launchers:
+            path = plan.directory / name
+            saved = _numbered_backup(path)
+            path.rename(saved)
+            undo.append(lambda p=path, s=saved: s.rename(p))
+            done.append(f"removed {name} (kept as {saved.name}); a tracker carries only {TRACKER_LAUNCHER}")
 
         # Renaming the folder is last: it is the one step that changes the directory's own name.
         if plan.target != plan.directory:

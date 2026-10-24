@@ -1,33 +1,21 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
+rem gupkg-tui of this tree: the text interface program (the `gupkg tui` command and the gupkg-tui shim start it).
+rem It starts only the program beside this file (gupkg\gupkg-tui.exe, else gupkg\gupkg-tui.cmd); nothing is searched.
 
-rem In a source checkout, prefer the adjacent bootstrap script so the command
-rem can run without a prebuilt native launcher. Packaged payloads carry the
-rem same script and use it as the relocatable entry point as well.
-set "GUPKG_TUI_SOURCE=%~dp0gupkg\gupkg-tui.cmd"
-if exist "%GUPKG_TUI_SOURCE%" if not exist "%GUPKG_TUI_SOURCE%\NUL" goto :source_tui
-
-rem Otherwise select the package-local native command before looking for an installed one.
-set "GUPKG_TUI_LOCAL=%~dp0gupkg\gupkg-tui.exe"
-if not exist "%GUPKG_TUI_LOCAL%" goto :find_system
-if exist "%GUPKG_TUI_LOCAL%\NUL" goto :find_system
-set "GUPKG_TUI_LOCAL=" & "%GUPKG_TUI_LOCAL%" %*
+set "GUPKG_NATIVE=%~dp0gupkg\gupkg-tui.exe"
+if not exist "%GUPKG_NATIVE%" goto :script
+if exist "%GUPKG_NATIVE%\NUL" goto :script
+"%GUPKG_NATIVE%" %*
 exit /b %ERRORLEVEL%
 
-:find_system
-rem Search PATH entries explicitly, excluding an unrelated executable in cwd.
-set "GUPKG_SYSTEM="
-if not defined PATH goto :no_system
-for %%P in ("%PATH:;=" "%") do if not defined GUPKG_SYSTEM if not "%%~P"=="" if /I not "%%~fP\gupkg.exe"=="%CD%\gupkg.exe" if exist "%%~P\gupkg.exe" if not exist "%%~P\gupkg.exe\NUL" set "GUPKG_SYSTEM=%%~fP\gupkg.exe"
-:no_system
-if not defined GUPKG_SYSTEM (
-    >&2 echo [gupkg] No package-local TUI or PATH gupkg.exe was found.
-    exit /b 9009
-)
-
-set "GUPKG_SYSTEM=" & "%GUPKG_SYSTEM%" tui %*
+:script
+set "GUPKG_TARGET=%~dp0gupkg\gupkg-tui.cmd"
+if not exist "%GUPKG_TARGET%" goto :missing
+if exist "%GUPKG_TARGET%\NUL" goto :missing
+call "%GUPKG_TARGET%" %*
 exit /b %ERRORLEVEL%
 
-:source_tui
-call "%GUPKG_TUI_SOURCE%" %*
-exit /b %ERRORLEVEL%
+:missing
+>&2 echo [gupkg] This gupkg is incomplete: %GUPKG_TARGET% is missing.
+exit /b 9009

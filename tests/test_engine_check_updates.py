@@ -20,6 +20,7 @@ import pytest
 
 from gupkg.engine.receipts import read_receipt
 from gupkg.engine.stateio import read_track_state
+from gupkg.launchers import launcher_text
 from gupkg.report.events import Warning, use_reporter
 from gupkg.model.checksum import parse_skip_flag
 from tests.engine_support import BASE_URL, World, pin_no_ambient_elevation  # noqa: F401
@@ -87,7 +88,7 @@ def test_a_report_only_check_takes_its_scratch_folder_from_the_system_boundary(t
 
 
 def test_a_normal_shell_with_no_download_writes_only_the_manifest_and_support_files(tmp_path: Path) -> None:
-    """Non-elevated, on a user package, --no-download: pkg.toml and support files are written and nothing is downloaded."""
+    """Non-elevated, on a user package, --no-download: pkg.toml, support files and the version's own launchers are written; nothing is downloaded."""
     world = World(tmp_path)
     installed(world)
     (world.user / "tool" / "_check_updates" / "icons").mkdir()
@@ -99,7 +100,7 @@ def test_a_normal_shell_with_no_download_writes_only_the_manifest_and_support_fi
 
     version = world.user / "tool" / "1.1.0"
     assert result.ok and result.details["populated"] is False
-    assert sorted(item.name for item in version.iterdir()) == ["icons", "pkg.toml"]
+    assert sorted(item.name for item in version.iterdir()) == ["gupkg-tui.cmd", "icons", "install.cmd", "pkg.toml"]
     assert f"{BASE_URL}/tool-1.1.0.zip" not in world.fake.fetch_log
 
 
@@ -214,7 +215,7 @@ def test_the_registrys_tracker_is_copied_in_and_run(tmp_path: Path) -> None:
 
 
 def test_a_bundled_install_carries_its_own_gupkg_into_the_new_version(tmp_path: Path) -> None:
-    """In a root with no forwarder the package's bundled gupkg and launchers are copied into the new directory (decision D32)."""
+    """In a root with no forwarder the package's bundled gupkg is copied into the new directory, next to launchers written fresh (decision D32)."""
     world = World(tmp_path)
     installed(world)
     version = world.user / "tool" / "1.0.0"
@@ -226,7 +227,36 @@ def test_a_bundled_install_carries_its_own_gupkg_into_the_new_version(tmp_path: 
     result = world.one("check-updates", "tool", no_download=True)
 
     new = world.user / "tool" / "1.1.0"
-    assert result.ok and (new / "gupkg" / "gupkg.cmd").is_file() and (new / "install.cmd").is_file()
+    assert result.ok and (new / "gupkg" / "gupkg.cmd").read_text(encoding="utf-8") == "@echo off\n"
+    assert (new / "install.cmd").read_bytes() == launcher_text("install").encode("ascii")
+
+
+def test_every_new_version_directory_gets_the_launchers_also_in_a_root_with_a_forwarder(tmp_path: Path) -> None:
+    """With an installed gupkg in the root (a forwarder) the new version still carries its own install.cmd and gupkg-tui.cmd, and no bundled gupkg."""
+    world = World(tmp_path)
+    installed(world)
+    (world.user / ".gupkg").mkdir(exist_ok=True)
+    (world.user / ".gupkg" / "gupkg.cmd").write_text("@echo off\n", encoding="utf-8")
+    world.announce("tool", "1.1.0")
+
+    result = world.one("check-updates", "tool", no_download=True)
+
+    new = world.user / "tool" / "1.1.0"
+    assert result.ok and not (new / "gupkg").exists()
+    assert (new / "install.cmd").read_bytes() == launcher_text("install").encode("ascii")
+    assert (new / "gupkg-tui.cmd").read_bytes() == launcher_text("tui").encode("ascii")
+
+
+def test_the_trackers_launcher_is_never_copied_into_a_version_directory(tmp_path: Path) -> None:
+    """`check-updates.cmd` of `_check_updates` stays there; the new version has install.cmd and gupkg-tui.cmd instead."""
+    world = World(tmp_path)
+    installed(world)
+    (world.user / "tool" / "_check_updates" / "check-updates.cmd").write_text("@echo off\n", encoding="utf-8")
+    world.announce("tool", "1.1.0")
+
+    result = world.one("check-updates", "tool", no_download=True)
+
+    assert result.ok and not (world.user / "tool" / "1.1.0" / "check-updates.cmd").exists()
 
 
 def test_a_waived_optional_checksum_source_is_shown_returned_and_recorded(tmp_path: Path) -> None:

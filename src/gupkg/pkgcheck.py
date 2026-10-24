@@ -215,6 +215,10 @@ def check_directory(path: Path) -> CheckReport:
     except ManifestError as exc:
         return CheckReport(path, kind, errors=(*errors, *exc.problems))
 
+    # The root forwarder is how the installed gupkg is found; no other package may write one.
+    if manifest.root_forwarder is not None and path.resolve().parent.name.casefold() != "gupkg":
+        errors.append("[root_forwarder] is valid only in the gupkg package")
+
     # The files the manifest names must exist and must stay inside this directory.
     named = list(manifest.referenced_hooks())
     if manifest.track is not None and manifest.track.provider == "module":

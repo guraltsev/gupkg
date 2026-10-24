@@ -76,6 +76,7 @@ from .checkupdates import check_updates_one, plan_check
 from .context import Engine
 from .effects import desired_effects, effect_context, verify_each
 from .errors import failure
+from .effects import forwarder_target
 from .executor import (
     ExecutionInput,
     execute_cleanup,
@@ -739,7 +740,7 @@ def _cleanup(engine: Engine, target: _Target) -> PackageResult:
     context = target.resolved.context
     view = _view(target)
     cleanup_plan = _cleanup_plan(engine, target, view)
-    forwarder = context.root if (context.root / DATA_DIR_NAME / "gupkg.cmd").is_file() else None
+    forwarder = context.root if forwarder_target(context.root / DATA_DIR_NAME) is not None else None
     return execute_cleanup(engine, view.path, cleanup_plan, forwarder)
 
 

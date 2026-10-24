@@ -47,6 +47,7 @@ from ..services.safepath import remove_tree
 from .appbuild import Populated, app_section, populate_version
 from .context import Engine, require_work_folder
 from .effects import EffectError, apply_effect, changes_environment, effect_context, remove_effect
+from ..launchers import VERSION_LAUNCHERS
 from ..services.fingerprint import FingerprintError, differing_files, file_digests, verify_directory
 from .fingerprint import app_files
 from .planner import Chosen, CleanupPlan, PlanError
@@ -108,8 +109,8 @@ class ExecutionInput:
     warnings: list[str] = field(default_factory=list)
 
 
-# The launchers a bundled install copies into every new version directory next to the bundled ``gupkg`` folder (decision D32).
-CARRIED_FILES = ("install.cmd", "gupkg-tui.cmd")
+# The launchers gupkg writes into every new version directory (``check-updates``), from the one template of ``gupkg.launchers``.
+WRITTEN_LAUNCHERS = tuple(VERSION_LAUNCHERS)
 
 
 @dataclass
@@ -348,26 +349,22 @@ def _label_local(engine: Engine, run: ExecutionInput, version_dir: Path, origin:
     if run.registry_fingerprint is None:
         return origin
     expected = run.registry_fingerprint.lower()
-    if not verify_directory(version_dir, expected) or _differs_only_by_carried_files(version_dir, run.registry_path):
+    if not verify_directory(version_dir, expected) or _differs_only_by_launchers(version_dir, run.registry_path):
         origin.record = ChecksumRecord(REGISTRY_FINGERPRINT, registry=run.registry_name)
         _note_uncovered_app(run, origin)
     else:
         origin.record = ChecksumRecord(ORIGIN_NOT_VERIFIED)
-        carried = [name for name in CARRIED_FILES if os.path.lexists(version_dir / name)]
-        run.warnings.append(
-            f"{run.plan.package} {run.plan.version} differs from registry {run.registry_name}'s fingerprint"
-            + (f" ({', '.join(carried)} may have been carried forward from an earlier version; the fingerprint covers them)" if carried else "")
-        )
+        run.warnings.append(f"{run.plan.package} {run.plan.version} differs from registry {run.registry_name}'s fingerprint")
         emit(Warning(run.warnings[-1]))
     return origin
 
 
-def _differs_only_by_carried_files(version_dir: Path, registry_copy: Path | None) -> bool:
-    """Return whether the only difference from the registry's copy is launchers that were carried forward into this version.
+def _differs_only_by_launchers(version_dir: Path, registry_copy: Path | None) -> bool:
+    """Return whether the only difference from the registry's copy is launchers that this version has and the copy lacks.
 
-    A bundled install adds ``install.cmd`` and ``gupkg-tui.cmd`` to every new version directory (decision D32); the fingerprint
-    covers them, so a version that received them would otherwise look edited. Compared without them, it is the registry's copy.
-    A launcher that the registry copy also has and that differs is a real difference.
+    ``check-updates`` writes ``install.cmd`` and ``gupkg-tui.cmd`` into every new version directory; the fingerprint covers
+    them, so a version written next to a registry copy that has none would otherwise look edited. Compared without them, it is
+    the registry's copy. A launcher that the registry copy also has and that differs is a real difference.
     """
     if registry_copy is None:
         return False
@@ -375,7 +372,7 @@ def _differs_only_by_carried_files(version_dir: Path, registry_copy: Path | None
         found = differing_files(file_digests(registry_copy), file_digests(version_dir))
     except FingerprintError:
         return False
-    return bool(found) and all(line in {f"{name} (extra)" for name in CARRIED_FILES} for line in found)
+    return bool(found) and all(line in {f"{name} (extra)" for name in WRITTEN_LAUNCHERS} for line in found)
 
 
 def copy_registry_version(engine: Engine, context: ModeContext, package_path: Path, source: Path, version: str) -> Path:
@@ -409,11 +406,12 @@ def copy_registry_version(engine: Engine, context: ModeContext, package_path: Pa
 
 
 def carry_forward(view: PackageView, target: Path) -> None:
-    """Copy the package's own bundled gupkg and launchers from its active (else newest) version into *target*.
+    """Copy the package's own bundled ``gupkg`` folder from its active (else newest) version into *target*.
 
     A root with no forwarder has no installed gupkg to manage the package, so every new version directory of a
-    bundled install carries the package's own copy (design 5.3 rule 1, 21.4, decision D32). A name that *target*
-    already has is left alone.
+    bundled install carries the package's own copy (design 5.3 rule 1, 21.4, decision D32), whichever gupkg runs the
+    operation. The launchers are not copied: every gupkg writes them from the template. A folder that *target* already
+    has is left alone.
     """
     source: Path | None = None
     if view.installed is not None:
@@ -422,14 +420,9 @@ def carry_forward(view: PackageView, target: Path) -> None:
         source = view.local.valid_versions[-1].path
     if source is None or canonical_path(source) == canonical_path(target):
         return
-    for name in ("gupkg", *CARRIED_FILES):
-        item = source / name
-        if not os.path.lexists(item) or is_reparse_point(item) or os.path.lexists(target / name):
-            continue
-        if item.is_dir():
-            shutil.copytree(item, target / name, symlinks=True)
-        else:
-            shutil.copy2(item, target / name)
+    item = source / "gupkg"
+    if os.path.lexists(item) and not is_reparse_point(item) and item.is_dir() and not os.path.lexists(target / "gupkg"):
+        shutil.copytree(item, target / "gupkg", symlinks=True)
 
 
 def sync_registry_tracker(engine: Engine, view: PackageView, package_path: Path, sync: TrackerSync) -> str | None:
@@ -812,6 +805,13 @@ def execute_cleanup(engine: Engine, package_path: Path, plan: CleanupPlan, forwa
         if is_inside(entry, work) and canonical_path(entry) != canonical_path(work):
             remove_tree(entry)
             removed["work"].append(name)
+    if plan.drop_bundled and plan.package.casefold() == "gupkg":
+        emit(Step("kept the bundled gupkg of gupkg itself: it is the populate script's input", "info"))
+    elif plan.drop_bundled and forwarder_root is None:
+        emit(Warning(
+            "kept the bundled gupkg copies: this root has no root forwarder to an installed gupkg that could take over "
+            "(install gupkg into this root first)"
+        ))
     if forwarder_root is not None and plan.package.casefold() != "gupkg":
         for version in plan.drop_bundled:
             bundled = package_path / version / "gupkg"
@@ -821,5 +821,6 @@ def execute_cleanup(engine: Engine, package_path: Path, plan: CleanupPlan, forwa
                 emit(Step(f"removed the bundled gupkg of {version}", "remove"))
     return PackageResult(
         plan.package, "cleanup", True, "cleaned", None, None, None, 0, None, None, engine.log_path(package_path), (),
-        {**removed, "kept": [{"version": version, "why": why} for version, why in plan.kept_apps]},
+        {**removed, "kept": [{"version": version, "why": why} for version, why in plan.kept_apps],
+         **({"bundled_kept": "no root forwarder to an installed gupkg"} if plan.drop_bundled and forwarder_root is None else {})},
     )
