@@ -3,8 +3,11 @@
 This is a build tool for the development tree; it is never shipped. A release
 is one ZIP, ``gupkg-<version>-win-amd64.zip``, that already contains everything
 gupkg needs to run: the embedded CPython, the locked dependencies, the native
-shims and the application. Hashes are computed here, once, and published with
-the bundle; installed code only checks them.
+shims and the application. The ZIP is a package-root fragment of the gupkg
+package (design 21.2): ``gupkg\\<version>\\`` (``pkg.toml``, ``pkg.local``, the launchers
+``install.cmd`` and ``gupkg-tui.cmd``, and the bundled tree ``gupkg\\``) and
+``gupkg\\_check_updates\\`` (the tracker, its hook and ``check-updates.cmd``).
+Hashes are computed here, once, and published with the bundle; installed code only checks them.
 
 Usage and API
 -------------
@@ -20,10 +23,13 @@ Implementation Approach
 1. The CPython archive is verified against the pinned digest and the wheels
    are installed with ``--require-hashes`` (see ``fetch_runtime.py``); a
    mismatch stops the build.
-2. The version-directory tree is assembled in a temporary folder.
-3. ``gupkg/RELEASE.txt`` records the version and the commit, and
-   ``gupkg/MANIFEST.sha256`` lists ``<sha256>  <relative path>`` for every
-   other file in the tree, sorted by path. The manifest is written last.
+2. The package folder is assembled in a temporary folder: the bundled tree
+   (``gupkg.cmd``, the ``gupkg`` package with its interpreter, the separate programs),
+   the version directory around it and the tracker folder beside it.
+3. ``gupkg/RELEASE.txt`` and ``gupkg/VERSION`` of the tree record the version and the
+   commit, and ``gupkg/MANIFEST.sha256`` lists ``<sha256>  <relative path>`` for every
+   other file of the tree (paths relative to the version directory), sorted by path.
+   The manifest is written last.
 4. The staged ``python\\python.exe -I -s -B`` runs the build probe: it imports
    every top-level package of the lock (by import name) and the gupkg modules,
    and confirms pip and ensurepip are not importable. A bundle that contains
@@ -78,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--runtime", type=Path, help="embeddable CPython ZIP (default: fetch the pinned one)")
     parser.add_argument("--runtime-sha256", default=fetch_runtime.PYTHON_SHA256, help="digest the runtime must have")
     parser.add_argument("--source", type=Path, default=ROOT / "src" / "gupkg")
-    parser.add_argument("--manifest", type=Path, default=ROOT / "src" / "gupkg" / "pkg.toml")
+    parser.add_argument("--manifest", type=Path, default=ROOT / "src" / "pkg.toml", help="the tracker pkg.toml of the gupkg package")
     parser.add_argument("--version", help="assert the version declared in _version.py")
     parser.add_argument("--commit", help="commit recorded in RELEASE.txt (default: HEAD)")
     parser.add_argument("--output", type=Path, help="default: dist/gupkg-<version>-win-amd64.zip")
@@ -138,7 +144,7 @@ def build_bundle(
     source : Path
         The ``gupkg`` package directory (``src/gupkg``).
     manifest : Path
-        The ``pkg.toml`` that becomes the version directory's manifest.
+        The tracker ``pkg.toml`` of the gupkg package (``src/pkg.toml``); the version directory's own ``pkg.toml`` is derived from it.
     runtime_zip : Path
         Embeddable CPython archive; verified against *runtime_sha256*.
     commit : str
@@ -174,14 +180,17 @@ def build_bundle(
         raise SystemExit("embedded runtime digest does not match --runtime-sha256")
     version = source_version(source)
 
-    # Step 2: assemble the version-directory tree in a temporary folder.
+    # Step 2: assemble the package folder of the ZIP in a temporary folder: ``gupkg\\<version>\\`` (the version directory)
+    # with the bundled tree ``gupkg\\`` inside it, and the tracker folder ``gupkg\\_check_updates\\`` beside it.
     with tempfile.TemporaryDirectory(prefix="gupkg-standalone-") as temporary:
-        root = Path(temporary) / f"gupkg-{version}"
-        payload = root / "gupkg"
+        top = Path(temporary) / "gupkg"
+        root = top / version
+        tree = root / "gupkg"
+        payload = tree / "gupkg"
         payload.mkdir(parents=True)
 
         # Install-specific and generated files never belong in a release.
-        ignored = shutil.ignore_patterns("python", "__pycache__", "*.pyc", "gupkg-config.toml", "digest.txt")
+        ignored = shutil.ignore_patterns("python", "__pycache__", "*.pyc", "gupkg-config.toml", "digest.txt", "pkg.toml")
         shutil.copytree(source, payload, dirs_exist_ok=True, ignore=ignored)
 
         # Materialize the audited native launchers and their relocatable
@@ -200,23 +209,34 @@ def build_bundle(
                 f'[[argument]]\nvalue = "{command}.cmd"\n',
                 encoding="utf-8",
             )
-        for wrapper_name in ("gupkg.cmd", "gupkg-tui.cmd"):
+
+        # The commands of the tree: what the root forwarder, the shims and the package launchers call (design 21.2).
+        for wrapper_name in ("gupkg.cmd", "gupkg-tui.cmd", "gupkg-manager.cmd"):
             wrapper = source.parent / wrapper_name
             if wrapper.is_file():
-                shutil.copy2(wrapper, root / wrapper_name)
-        shutil.copy2(manifest, root / "pkg.toml")
+                shutil.copy2(wrapper, tree / wrapper_name)
 
-        # The update hooks sit beside the manifest, not inside the payload.
-        hooks = source.parent / "pkg.local"
-        if hooks.is_dir():
-            shutil.copytree(hooks, root / "pkg.local", ignore=shutil.ignore_patterns("__pycache__"))
-
-        # The migration tool is a separate program beside the gupkg package (design section 12).
-        # The UI programs of issue 030 and their shared library sit beside it in the same way.
+        # The separate programs (the migration tool, the UI programs and their shared library) sit beside the ``gupkg``
+        # package in the tree (design section 12).
         for program in ("gupkg_migrate", "gupkg_ui", "gupkg_tui", "gupkg_manager"):
             program_dir = source.parent / program
             if program_dir.is_dir():
-                shutil.copytree(program_dir, root / program, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+                shutil.copytree(program_dir, tree / program, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+
+        # The package files of gupkg's own package: the version is the tracker's pkg.toml without ``[track]`` (fully pinned,
+        # no download_url), its populate script and the launchers; the tracker keeps its own hook and check-updates.cmd.
+        tracker_text = manifest.read_text(encoding="utf-8")
+        (root / "pkg.toml").write_text(version_manifest_text(tracker_text), encoding="utf-8", newline="\n")
+        (top / "_check_updates").mkdir()
+        (top / "_check_updates" / "pkg.toml").write_text(tracker_text, encoding="utf-8", newline="\n")
+        hooks = source.parent / "pkg.local"
+        if hooks.is_dir():
+            ignore_pycache = shutil.ignore_patterns("__pycache__", "*.pyc")
+            shutil.copytree(hooks, top / "_check_updates" / "pkg.local", ignore=ignore_pycache)
+            shutil.copytree(hooks, root / "pkg.local", ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "track.py"))
+        launchers = load_launchers(source)
+        launchers.write_launchers(root)
+        launchers.write_launchers(top / "_check_updates", (launchers.TRACKER_LAUNCHER,))
 
         # The interpreter, configured to import from its own site-packages,
         # then the locked dependencies (every wheel is hash-checked by pip).
@@ -239,22 +259,23 @@ def build_bundle(
         # and a stale .pyc would be trusted by its source's size and mtime alone.
         for leftover in list(payload.rglob("__pycache__")):
             shutil.rmtree(leftover, ignore_errors=True)
-        for leftover in list(root.rglob("*.pyc")):
+        for leftover in list(top.rglob("*.pyc")):
             leftover.unlink()
 
-        # Step 3: record where the bundle came from, then its manifest, last.
-        (payload / "RELEASE.txt").write_text(f"gupkg {version}\ncommit {commit}\n", encoding="utf-8", newline="\n")
+        # Step 3: record where the bundle came from (its version and commit), then its manifest, last.
+        (tree / "RELEASE.txt").write_text(f"gupkg {version}\ncommit {commit}\n", encoding="utf-8", newline="\n")
+        (tree / "VERSION").write_text(f"{version}\n", encoding="utf-8", newline="\n")
         write_manifest(root)
 
         # Step 4: the last check before zipping runs the staged interpreter on the staged tree.
-        run_build_probe(root, deps_lock, skip_deps=skip_deps, modules=probe_modules)
+        run_build_probe(tree, deps_lock, skip_deps=skip_deps, modules=probe_modules)
 
-        # Step 5: zip the tree in a fixed order and report the ZIP's digest.
+        # Step 5: zip the package folder in a fixed order and report the ZIP's digest.
         output.parent.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            for path in sorted(root.rglob("*")):
+            for path in sorted(top.rglob("*")):
                 if path.is_file():
-                    archive.write(path, path.relative_to(root.parent))
+                    archive.write(path, path.relative_to(top.parent))
     zip_digest = hashlib.sha256(output.read_bytes()).hexdigest()
     output.with_name(output.name + ".sha256").write_text(f"{zip_digest}  {output.name}\n", encoding="ascii")
     return zip_digest
@@ -360,14 +381,51 @@ def run_build_probe(
 
 
 def write_manifest(root: Path) -> None:
-    """Write ``gupkg/MANIFEST.sha256`` for every other file below *root*, sorted by path."""
-    manifest = root / "gupkg" / "MANIFEST.sha256"
+    """Write ``gupkg/MANIFEST.sha256`` for every file of the bundled tree ``<root>/gupkg``, sorted by path.
+
+    *root* is the version directory; the entries are relative to it (``gupkg/gupkg/cli.py``), so the manifest names only the
+    tree. ``pkg.toml``, ``pkg.local`` and the launchers of the version directory are not listed: ``check-updates`` writes
+    them itself and the registry fingerprint covers them.
+    """
+    tree = root / "gupkg"
+    manifest = tree / "MANIFEST.sha256"
     entries = []
-    for path in root.rglob("*"):
+    for path in tree.rglob("*"):
         if path.is_file() and path != manifest:
             entries.append((path.relative_to(root).as_posix(), hashlib.sha256(path.read_bytes()).hexdigest()))
     lines = [f"{digest}  {relative}" for relative, digest in sorted(entries)]
     manifest.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+
+
+def version_manifest_text(tracker_text: str) -> str:
+    """Return the ``pkg.toml`` of a pinned version from the text of the package's tracker: the same file without ``[track]``.
+
+    The tracker of gupkg's own package carries no template and no checksum, so dropping its ``[track]`` table (and the comment
+    lines right above it) leaves the pinned version that ``check-updates`` would render.
+    """
+    kept: list[str] = []
+    skipping = False
+    for line in tracker_text.splitlines():
+        if re.match(r"\[track\]\s*(#.*)?$", line):
+            skipping = True
+            while kept and kept[-1].startswith("#"):
+                kept.pop()
+            continue
+        if skipping and re.match(r"\[", line):
+            skipping = False
+        if not skipping:
+            kept.append(line)
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip() + "\n"
+
+
+def load_launchers(source: Path):
+    """Load ``gupkg/launchers`` of the source tree by path (it needs nothing but the standard library)."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("gupkg_launchers_build", source / "launchers" / "__init__.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def source_version(source: Path) -> str:

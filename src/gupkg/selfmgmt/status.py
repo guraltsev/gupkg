@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from .._version import __version__
-from ..integrity import MANIFEST_RELATIVE_PATH, IntegrityReport, ManifestError, verify_version_directory
+from ..integrity import MANIFEST_RELATIVE_PATH, IntegrityReport, ManifestError, verify_tree, verify_version_directory
 from .location import RunningGupkg
 
 
@@ -46,7 +46,7 @@ class SelfStatus:
     location : str
         The folder of the gupkg package.
     version_root : str or None
-        The version directory whose manifest was checked, or ``None`` when there is none (a source checkout).
+        The version directory whose manifest was checked (an installed gupkg checks its ``App``, a bundled one its ``gupkg`` tree), or ``None`` when there is none (a source checkout).
     interpreter : str
         The running interpreter.
     interpreter_bundled : bool
@@ -126,7 +126,11 @@ def self_status(location: RunningGupkg) -> SelfStatus:
         notes.append("no MANIFEST.sha256 beside this gupkg (a source checkout): its files are not checked")
     else:
         try:
-            integrity = verify_version_directory(version_root)
+            # An installed gupkg runs from App, a copy of the bundled tree: App is what is checked against the manifest.
+            if location.kind == "installed" and location.app_dir is not None:
+                integrity = verify_tree(location.app_dir, Path(version_root) / MANIFEST_RELATIVE_PATH)
+            else:
+                integrity = verify_version_directory(version_root)
         except (ManifestError, OSError) as error:
             problem = f"cannot check the files against {MANIFEST_RELATIVE_PATH}: {error}"
     return SelfStatus(

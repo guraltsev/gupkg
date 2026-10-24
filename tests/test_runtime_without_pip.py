@@ -79,7 +79,7 @@ def build(tmp_path: Path, build_python: str, runtime_zip_factory, lock_text: str
     output = tmp_path / "out.zip"
     build_standalone.build_bundle(
         source=SOURCE,
-        manifest=SOURCE / "pkg.toml",
+        manifest=SOURCE.parent / "pkg.toml",
         runtime_zip=runtime,
         runtime_sha256=digest,
         output=output,
@@ -186,13 +186,13 @@ def test_the_build_installs_stand_in_wheels_without_pip_and_the_probe_imports_th
     with zipfile.ZipFile(output) as archive:
         names = archive.namelist()
         archive.extractall(tmp_path / "unpacked")
-    site_packages = "gupkg/python/Lib/site-packages/"
+    site_packages = "gupkg/gupkg/python/Lib/site-packages/"
     assert any(name.endswith(site_packages + "fakedep/__init__.py") for name in names)
     assert any(name.endswith(site_packages + "fakesingle.py") for name in names)
     assert not any(re.search(r"site-packages/(pip|setuptools|_distutils_hack|bin/)", name) for name in names)
     assert not any("__pycache__" in name or name.endswith(".pyc") for name in names)
-    unpacked = next((tmp_path / "unpacked").iterdir())
-    record = (unpacked / "gupkg" / "python" / "Lib" / "site-packages" / "fakedep-1.0.dist-info" / "RECORD").read_text(
+    (unpacked,) = [path for path in (tmp_path / "unpacked" / "gupkg").iterdir() if path.name != "_check_updates"]
+    record = (unpacked / "gupkg" / "gupkg" / "python" / "Lib" / "site-packages" / "fakedep-1.0.dist-info" / "RECORD").read_text(
         encoding="utf-8"
     )
     assert "fakecmd" not in record and "fakedep/__init__.py" in record

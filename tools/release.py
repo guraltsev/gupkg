@@ -98,7 +98,7 @@ def check_release_zip(archive: Path, version: str, commit: str) -> None:
         If ``gupkg/RELEASE.txt`` is missing or names another version or commit.
     """
     with zipfile.ZipFile(archive) as zipped:
-        notes = [name for name in zipped.namelist() if re.fullmatch(r"[^/]+/gupkg/RELEASE\.txt", name)]
+        notes = [name for name in zipped.namelist() if re.fullmatch(r"(?:[^/]+/){1,2}gupkg/RELEASE\.txt", name)]
         if len(notes) != 1:
             raise SystemExit(f"{archive.name} has no gupkg/RELEASE.txt; it is not a gupkg release ZIP")
         recorded = zipped.read(notes[0]).decode("utf-8")
