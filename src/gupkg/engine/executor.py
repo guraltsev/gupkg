@@ -47,7 +47,7 @@ from ..services.safepath import remove_tree
 from .appbuild import Populated, app_section, populate_version
 from .context import Engine, require_work_folder
 from .effects import EffectError, apply_effect, changes_environment, effect_context, remove_effect
-from ..services.fingerprint import verify_directory
+from ..services.fingerprint import FingerprintError, differing_files, file_digests, verify_directory
 from .fingerprint import app_files
 from .planner import Chosen, CleanupPlan, PlanError
 from .portable import hand_back, hand_over, scratch_name
@@ -108,6 +108,10 @@ class ExecutionInput:
     warnings: list[str] = field(default_factory=list)
 
 
+# The launchers a bundled install copies into every new version directory next to the bundled ``gupkg`` folder (decision D32).
+CARRIED_FILES = ("install.cmd", "gupkg-tui.cmd")
+
+
 @dataclass
 class _Origin:
     """Where the version directory came from and how far that is vouched for."""
@@ -116,6 +120,8 @@ class _Origin:
     copied_from: str | None = None
     source_marked: bool | None = None
     record: ChecksumRecord | None = None
+    app_covered: bool | None = None
+    """``False`` when a registry fingerprint matched a version that ships its ``App``: the fingerprint ignores that ``App``."""
 
 
 # ---------------------------------------------------------------------------
@@ -315,6 +321,7 @@ def _verify_distribution(run: ExecutionInput, version_dir: Path, origin: _Origin
     if not problems:
         origin.record = ChecksumRecord(REGISTRY_FINGERPRINT, registry=run.registry_name)
         emit(Step(f"Verified against registry {run.registry_name}: the fingerprint matches", "ok"))
+        _note_uncovered_app(run, origin)
         return
     if created:
         remove_tree(version_dir)
@@ -325,6 +332,14 @@ def _verify_distribution(run: ExecutionInput, version_dir: Path, origin: _Origin
     )
 
 
+def _note_uncovered_app(run: ExecutionInput, origin: _Origin) -> None:
+    """Say, when the version ships its ``App``, that the registry fingerprint (which ignores ``App``) does not vouch for it."""
+    if run.chosen.manifest.source.shipped:
+        origin.app_covered = False
+        run.warnings.append(f"{run.plan.package} {run.plan.version}: verified (App not covered): the shipped App is not covered by the registry fingerprint (it ships inside the version but version 1 of the fingerprint ignores it)")
+        emit(Warning(run.warnings[-1]))
+
+
 def _label_local(engine: Engine, run: ExecutionInput, version_dir: Path, origin: _Origin) -> _Origin:
     """Label a version directory that was already in the root: compare it with the registry's fingerprint when one exists.
 
@@ -332,13 +347,35 @@ def _label_local(engine: Engine, run: ExecutionInput, version_dir: Path, origin:
     """
     if run.registry_fingerprint is None:
         return origin
-    if not verify_directory(version_dir, run.registry_fingerprint.lower()):
+    expected = run.registry_fingerprint.lower()
+    if not verify_directory(version_dir, expected) or _differs_only_by_carried_files(version_dir, run.registry_path):
         origin.record = ChecksumRecord(REGISTRY_FINGERPRINT, registry=run.registry_name)
+        _note_uncovered_app(run, origin)
     else:
         origin.record = ChecksumRecord(ORIGIN_NOT_VERIFIED)
-        run.warnings.append(f"{run.plan.package} {run.plan.version} differs from registry {run.registry_name}'s fingerprint")
+        carried = [name for name in CARRIED_FILES if os.path.lexists(version_dir / name)]
+        run.warnings.append(
+            f"{run.plan.package} {run.plan.version} differs from registry {run.registry_name}'s fingerprint"
+            + (f" ({', '.join(carried)} may have been carried forward from an earlier version; the fingerprint covers them)" if carried else "")
+        )
         emit(Warning(run.warnings[-1]))
     return origin
+
+
+def _differs_only_by_carried_files(version_dir: Path, registry_copy: Path | None) -> bool:
+    """Return whether the only difference from the registry's copy is launchers that were carried forward into this version.
+
+    A bundled install adds ``install.cmd`` and ``gupkg-tui.cmd`` to every new version directory (decision D32); the fingerprint
+    covers them, so a version that received them would otherwise look edited. Compared without them, it is the registry's copy.
+    A launcher that the registry copy also has and that differs is a real difference.
+    """
+    if registry_copy is None:
+        return False
+    try:
+        found = differing_files(file_digests(registry_copy), file_digests(version_dir))
+    except FingerprintError:
+        return False
+    return bool(found) and all(line in {f"{name} (extra)" for name in CARRIED_FILES} for line in found)
 
 
 def copy_registry_version(engine: Engine, context: ModeContext, package_path: Path, source: Path, version: str) -> Path:
@@ -385,7 +422,7 @@ def carry_forward(view: PackageView, target: Path) -> None:
         source = view.local.valid_versions[-1].path
     if source is None or canonical_path(source) == canonical_path(target):
         return
-    for name in ("gupkg", "install.cmd", "gupkg-tui.cmd"):
+    for name in ("gupkg", *CARRIED_FILES):
         item = source / name
         if not os.path.lexists(item) or is_reparse_point(item) or os.path.lexists(target / name):
             continue
@@ -594,9 +631,10 @@ def _write_receipt(
         sections["checksum"] = checksum.to_data()
     elif populated is not None:
         sections.pop("checksum", None)
-    if origin.kind != "local" or origin.source_marked is not None:
+    if origin.kind != "local" or origin.source_marked is not None or origin.app_covered is not None:
         sections["origin"] = {
             "kind": origin.kind,
+            **({"app_covered": origin.app_covered} if origin.app_covered is not None else {}),
             **({"copied_from": origin.copied_from} if origin.copied_from else {}),
             **({"source_marked": origin.source_marked} if origin.source_marked is not None else {}),
         }

@@ -162,7 +162,15 @@ def _receipt_notes(data: dict, view: PackageView) -> list[Problem]:
     note = unverified_note(record.decision)
     if note is not None:
         notes.append(Problem("unverified", note))
-    elif view.mode in ("user", "portable"):
+    else:
+        origin = data.get("origin")
+        if record.decision == "registry-fingerprint" and isinstance(origin, dict) and origin.get("app_covered") is False:
+            notes.append(Problem(
+                "verified-partly",
+                "verified (App not covered): the shipped App is not covered by the registry fingerprint (version 1 of the "
+                "fingerprint ignores App); its files are compared only with the install-time record",
+            ))
+    if note is None and view.mode in ("user", "portable"):
         notes.append(Problem(
             "self-reported",
             f"recorded as {record.decision} in the receipt; in {view.mode} mode the receipt can be edited by the user, so this is "

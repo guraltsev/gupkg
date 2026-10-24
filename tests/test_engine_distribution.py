@@ -117,6 +117,64 @@ def test_a_bundled_install_verifies_a_registry_copy_before_it_adds_the_launchers
     assert read_receipt(world.user / "tool", "1.1.0").data["checksum"]["decision"] == "verified"
 
 
+def test_a_shipped_app_is_labelled_as_not_covered_by_the_registry_fingerprint(world: World) -> None:
+    """Fingerprint v1 ignores the top-level App, so a match for a version that ships its App says `verified (App not covered)`."""
+    world.publish_shipped("tool", "1.0.0", root=world.base / "downloads", tables=SHIM)
+    folder = world.base / "downloads" / "tool" / "1.0.0"
+    world.registry({"tool": {"versions": {"1.0.0": folder}}}, fingerprints=[("tool", "1.0.0")])
+    (folder / "App" / "app.exe").write_text("a different shipped App with the same fingerprint\n", encoding="utf-8")
+
+    result = world.one("install", str(folder))
+
+    receipt = read_receipt(world.user / "tool", "1.0.0").data
+    assert result.ok and receipt["checksum"]["decision"] == "registry-fingerprint" and receipt["origin"]["app_covered"] is False
+    assert any("verified (App not covered)" in warning for warning in result.warnings)
+    notes = world.one("check", "tool").details["notes"]
+    assert [note["kind"] for note in notes if note["kind"] == "verified-partly"] == ["verified-partly"]
+    assert "verified (App not covered)" in next(note["message"] for note in notes if note["kind"] == "verified-partly")
+
+
+def test_launchers_carried_forward_into_a_local_version_do_not_make_it_look_edited(world: World) -> None:
+    """A local version that received install.cmd and gupkg-tui.cmd from an earlier one still matches the registry's copy without them."""
+    local = world.publish("tool", "1.0.0", tables=SHIM)
+    published = world.base / "published" / "1.0.0"
+    shutil.copytree(local, published)
+    world.registry({"tool": {"versions": {"1.0.0": published}}}, fingerprints=[("tool", "1.0.0")])
+    (local / "install.cmd").write_text("@echo off\n", encoding="utf-8")
+    (local / "gupkg-tui.cmd").write_text("@echo off\n", encoding="utf-8")
+
+    result = world.one("install", "tool")
+
+    assert result.ok and result.details["label"] == "registry-fingerprint"
+    assert not [warning for warning in result.warnings if "differs from registry" in warning]
+
+
+def test_a_real_edit_of_a_local_version_is_still_reported_and_names_the_carried_launchers(world: World) -> None:
+    """Any other difference (here pkg.local) keeps the label `origin not verified`; the message mentions launchers that may have been carried."""
+    local = world.publish("tool", "1.0.0", tables=SHIM)
+    published = world.base / "published" / "1.0.0"
+    shutil.copytree(local, published)
+    world.registry({"tool": {"versions": {"1.0.0": published}}}, fingerprints=[("tool", "1.0.0")])
+    (local / "install.cmd").write_text("@echo off\n", encoding="utf-8")
+    (local / "extra.txt").write_text("my own edit\n", encoding="utf-8")
+
+    result = world.one("install", "tool")
+
+    assert result.ok and result.details["label"] == "origin-not-verified"
+    assert any("differs from registry" in warning and "install.cmd may have been carried forward" in warning for warning in result.warnings)
+
+
+def test_a_version_without_a_shipped_app_has_no_such_label(world: World) -> None:
+    """The label appears only when there is an App the fingerprint ignores."""
+    folder = distribution(world)
+    world.registry({"tool": {"versions": {"1.0.0": folder}}}, fingerprints=[("tool", "1.0.0")])
+
+    world.one("install", str(folder))
+
+    assert "app_covered" not in read_receipt(world.user / "tool", "1.0.0").data.get("origin", {})
+    assert not [note for note in world.one("check", "tool").details["notes"] if note["kind"] == "verified-partly"]
+
+
 def test_a_distribution_with_a_mismatching_fingerprint_is_refused_and_nothing_changes(world: World) -> None:
     """A different fingerprint refuses the install like a checksum mismatch, naming the files that differ."""
     folder = distribution(world)
