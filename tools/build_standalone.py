@@ -55,9 +55,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 # Imported by the build probe when the bundle's dependencies are installed: the command line and every
 # module it reaches, so a module that needs something the bundle lacks fails the build. The UI programs
-# that issue 030 creates are probed too as soon as their package directories exist beside ``gupkg`` in the
-# version directory. The migration tool (issue 023) is one of them and is always present, so it is probed
-# unconditionally.
+# of issue 030 (``gupkg_ui``, ``gupkg_tui``, ``gupkg_manager``) and the migration tool are probed through their entry modules; any other
+# package directory named in ``OPTIONAL_PROBE_PACKAGES`` is probed as soon as it exists beside ``gupkg`` in the version directory.
 PROBE_MODULES = (
     "gupkg.cli", "gupkg_migrate.cli",
     "gupkg.services.track", "gupkg.services.unpack", "gupkg.services.prepare", "gupkg.hooklib",
@@ -65,6 +64,7 @@ PROBE_MODULES = (
     "gupkg.engine.lifecycle", "gupkg.model.plan", "gupkg_migrate.adopt", "gupkg.engine.locks", "gupkg.engine.installer",
     "gupkg.redact", "gupkg.authoring", "gupkg.settingsedit", "gupkg.viewdata", "gupkg.report.results",
     "gupkg.selfmgmt.location", "gupkg.selfmgmt.status", "gupkg.services.registrysource", "gupkg.catalog.registry",
+    "gupkg_ui.client", "gupkg_ui.app", "gupkg_manager.cli", "gupkg_tui.cli",
 )
 OPTIONAL_PROBE_PACKAGES = ("gupkg_ui", "gupkg_tui", "gupkg_manager")
 # Modules of the base probe that need no third-party package (used by --skip-deps builds).
@@ -212,9 +212,11 @@ def build_bundle(
             shutil.copytree(hooks, root / "pkg.local", ignore=shutil.ignore_patterns("__pycache__"))
 
         # The migration tool is a separate program beside the gupkg package (design section 12).
-        migration_tool = source.parent / "gupkg_migrate"
-        if migration_tool.is_dir():
-            shutil.copytree(migration_tool, root / "gupkg_migrate", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        # The UI programs of issue 030 and their shared library sit beside it in the same way.
+        for program in ("gupkg_migrate", "gupkg_ui", "gupkg_tui", "gupkg_manager"):
+            program_dir = source.parent / program
+            if program_dir.is_dir():
+                shutil.copytree(program_dir, root / program, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
 
         # The interpreter, configured to import from its own site-packages,
         # then the locked dependencies (every wheel is hash-checked by pip).
