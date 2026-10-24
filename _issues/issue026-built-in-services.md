@@ -1,5 +1,7 @@
 # Issue 026: Built-in services replacing hook scripts
 
+> **Status (2026-10-23):** Implemented. Merged in 9670cf4. Accepted by the owner with two deviations: provider fixtures are synthetic (marked `recorded: null`, to be re-recorded with `tools/record_http_fixtures.py`) and NSIS/MSI are tested with a 7-Zip process double; both are owed to issue 031 (explicit acceptance items) and the owner (a makensis-built NSIS sample). The regex runner (subprocess with a hard deadline) was delivered in 026; issue 028 wires the elevated-run trust checks and resolves git/ssh from admin-only paths. Manual checks still owed: `tests/manual_smoke.md`, issue 026 section, 1-5.
+
 Date: 2026-10-22
 Priority: High
 Epic: 020. Design: `_docs/rehaul_design.md` §8
