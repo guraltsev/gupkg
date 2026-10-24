@@ -1,0 +1,22 @@
+format = 2
+description = "Markdown knowledge base and note-taking app."
+project_url = "https://obsidian.md/"
+
+[track]
+provider = "github"
+repo = "obsidianmd/obsidian-releases"
+asset = "Obsidian-${version}.exe"
+
+[source]
+download_url = "${asset_url}"
+kind = "nsis"
+
+[[source.nested]]
+path = "$PLUGINSDIR/app-64.7z"
+dest = ""
+replace = true
+
+[[shortcut]]
+name = "Obsidian"
+target = "$App\\Obsidian.exe"
+description = "Markdown knowledge base"

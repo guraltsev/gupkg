@@ -32,12 +32,19 @@ gupkg.system.port : the protocol this class implements.
 from __future__ import annotations
 
 import ctypes
+import http.client
 import locale
 import os
 import re
+import socket
 import struct
 import subprocess
+import sys
+import tempfile
 import threading
+import time
+import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from contextlib import contextmanager
@@ -46,7 +53,22 @@ from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping, Sequence
 
 from ..selfmgmt import elevation
-from .port import EnvValue, ProcessResult, Scope, ScopeFolders, ShortcutSpec
+from ..tls import enable_partial_chain_verification
+from .port import (
+    DownloadResponse,
+    EnvValue,
+    HttpResponse,
+    ProcessAborted,
+    ProcessResult,
+    ResponseTooLarge,
+    WorkerDidNotStart,
+    Scope,
+    ScopeFolders,
+    ShortcutSpec,
+)
+
+_REGEX_WORKER = Path(__file__).with_name("regex_worker.py")
+_WORKER_START_SECONDS = 30.0  # how long a regex worker may take to say it is up
 
 if os.name == "nt":
     import winreg
@@ -348,6 +370,7 @@ class WindowsSystem(WindowsLinks):
         *,
         input_text: str | None = None,
         timeout: float | None = None,
+        watch: Callable[[], str | None] | None = None,
     ) -> ProcessResult:
         """Run a child process to completion, streaming each output line to *on_line*.
 
@@ -355,8 +378,24 @@ class WindowsSystem(WindowsLinks):
         ------
         OSError
             If the program cannot be started; ``TimeoutError`` when *timeout*
-            seconds pass first (the process is killed).
+            seconds pass first (the process is killed); ``ProcessAborted`` when *watch*
+            returns a reason (the process is killed).
         """
+        return self._run(argv, cwd, env, on_line, input_text=input_text, timeout=timeout, watch=watch, kill_on_close=False)
+
+    def _run(
+        self,
+        argv: Sequence[str],
+        cwd: Path | None,
+        env: Mapping[str, str] | None,
+        on_line: Callable[[str], None] | None,
+        *,
+        input_text: str | None,
+        timeout: float | None,
+        watch: Callable[[], str | None] | None,
+        kill_on_close: bool,
+    ) -> ProcessResult:
+        """Implement ``run``; with *kill_on_close* the child's job object also ends it (and its helpers) when the job handle closes, even if this process is killed first."""
         command = _script_command(argv)
         process = subprocess.Popen(
             command,
@@ -388,24 +427,106 @@ class WindowsSystem(WindowsLinks):
         for reader in readers:
             reader.start()
 
-        # Feed standard input, then wait; a timeout kills the whole child.
+        # Feed standard input from its own thread, so a child that never reads it cannot
+        # keep this call from enforcing the timeout; then wait. A timeout kills the whole child.
+        job: _ProcessJob | None = None
+        feeder = None
         try:
+            # Every process the child starts is tracked by a job object, so a kill reaches a helper
+            # that outlived its parent (``taskkill /T`` cannot find the children of a dead process).
+            # A failure here is inside the try: the child is killed and the error reaches the caller.
+            job = _ProcessJob.around(process, kill_on_close=kill_on_close)
             if input_text is not None:
+                payload = input_text.encode(locale.getpreferredencoding(False), errors="replace")
+
+                def feed() -> None:
+                    """Write the input and close the pipe; a child that is gone closes it for us."""
+                    try:
+                        process.stdin.write(payload)
+                        process.stdin.close()
+                    except OSError:
+                        pass
+
+                feeder = threading.Thread(target=feed, daemon=True)
+                feeder.start()
+            # Wait in short slices when a watcher is given, so it can stop a runaway child.
+            started = time.monotonic()
+            while True:
+                slice_seconds = 0.2 if watch is not None else timeout
+                if timeout is not None and slice_seconds is not None:
+                    slice_seconds = min(slice_seconds, max(timeout - (time.monotonic() - started), 0.0))
                 try:
-                    process.stdin.write(input_text.encode(locale.getpreferredencoding(False), errors="replace"))
-                    process.stdin.close()
-                except OSError:
-                    pass
-            try:
-                returncode = process.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
-                raise TimeoutError(f"{command[0]} did not finish within {timeout} seconds") from None
+                    returncode = process.wait(timeout=slice_seconds)
+                    break
+                except subprocess.TimeoutExpired:
+                    if timeout is not None and time.monotonic() - started >= timeout:
+                        raise TimeoutError(f"{command[0]} did not finish within {timeout} seconds") from None
+                    reason = watch() if watch is not None else None
+                    if reason is not None:
+                        raise ProcessAborted(reason) from None
+            # Like the test double, ask the watcher once more after the child has finished.
+            reason = watch() if watch is not None else None
+            if reason is not None:
+                raise ProcessAborted(reason)
+        except BaseException:
+            # A timeout, an abort, a raising watcher, Ctrl-C or any other failure must not leave the
+            # child (or a helper it started, even one that outlived it) running, because the
+            # reader threads below would wait for it.
+            _kill_tree(process, job)
+            process.wait()
+            raise
         finally:
             for reader in readers:
                 reader.join()
+            if feeder is not None:
+                feeder.join(5)
+            if job is not None:
+                job.close()
         return ProcessResult(returncode, "".join(collected["stdout"]), "".join(collected["stderr"]))
+
+    def regex_worker(
+        self,
+        request: str,
+        timeout: float,
+        *,
+        on_line: Callable[[str], None] | None = None,
+    ) -> ProcessResult:
+        """Run ``regex_worker.py`` on *request* in an isolated child with a hard deadline (see the port).
+
+        The deadline counts from the moment the worker reports ``pid <n>`` (the interpreter and its
+        imports are up), so a slow process start (antivirus, a cold disk) is not mistaken for a slow
+        pattern; the start itself has its own generous limit. The watcher polls five times a second,
+        so the kill happens within about 0.2 seconds of the deadline.
+        """
+        command = [sys.executable, "-I", "-s", "-B", "-S", str(_REGEX_WORKER)]
+        environment = {"SystemRoot": os.environ.get("SystemRoot", r"C:\Windows")}
+        began = time.monotonic()
+        ready: list[float] = []
+
+        def heard(line: str) -> None:
+            """Note when the worker says it is up, and pass the line on."""
+            if not ready and line.startswith("pid "):
+                ready.append(time.monotonic())
+            if on_line is not None:
+                on_line(line)
+
+        def late() -> str | None:
+            """Return a reason once the worker has overrun its start limit or its deadline."""
+            now = time.monotonic()
+            if not ready:
+                return "start" if now - began > _WORKER_START_SECONDS else None
+            return "deadline" if now - ready[0] > timeout else None
+
+        with tempfile.TemporaryDirectory(prefix="gupkg-regex-", ignore_cleanup_errors=True) as folder:
+            try:
+                return self._run(
+                    command, Path(folder), environment, heard,
+                    input_text=request, timeout=None, watch=late, kill_on_close=True,
+                )
+            except ProcessAborted as error:
+                if str(error) == "start":
+                    raise WorkerDidNotStart(f"the regex worker did not start within {_WORKER_START_SECONDS:g} seconds") from None
+                raise TimeoutError(f"the regex worker was still running {timeout:g} seconds after it started") from None
 
     # -- network -----------------------------------------------------------
 
@@ -440,6 +561,87 @@ class WindowsSystem(WindowsLinks):
         request = urllib.request.Request(url, headers=dict(headers or {}))
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return response.read().decode("utf-8")
+
+    def http_request(
+        self,
+        url: str,
+        headers: Mapping[str, str] | None = None,
+        *,
+        method: str = "GET",
+        timeout: float = 60,
+        max_bytes: int | None = None,
+        total_timeout: float | None = None,
+    ) -> HttpResponse:
+        """Send one request without following redirects and return the response of any status."""
+        deadline = _Deadline(total_timeout)
+        try:
+            with _open_without_redirects(url, headers, method, timeout, deadline) as response:
+                status, final_url, response_headers = _response_parts(response, url)
+                if 200 <= status < 300:
+                    _refuse_encoding(response_headers)
+                expected = _expected_length(response, method, status)
+                body = _read_limited(response, max_bytes, deadline, expected)
+        except http.client.HTTPException as error:
+            raise _transport_error(deadline, error) from error
+        except OSError as error:
+            if deadline.hit and not isinstance(error, TimeoutError):
+                raise _transport_error(deadline, error) from error
+            raise
+        finally:
+            deadline.finish()
+        return HttpResponse(status, final_url, response_headers, body)
+
+    def http_download(
+        self,
+        url: str,
+        headers: Mapping[str, str] | None,
+        dest: Path,
+        on_progress: Callable[[int, int | None], None] | None = None,
+        *,
+        timeout: float = 60,
+        append: bool = False,
+        on_headers: Callable[[int, Mapping[str, str]], None] | None = None,
+        total_timeout: float | None = None,
+    ) -> DownloadResponse:
+        """Stream a 2xx response into *dest* (appending a 206 answer when asked); write nothing otherwise."""
+        deadline = _Deadline(total_timeout)
+        try:
+            with _open_without_redirects(url, headers, "GET", timeout, deadline) as response:
+                status, final_url, response_headers = _response_parts(response, url)
+                if on_headers is not None:
+                    on_headers(status, response_headers)
+                if not 200 <= status < 300:
+                    return DownloadResponse(status, final_url, response_headers)
+                _refuse_encoding(response_headers)
+
+                # A 206 answer to a range request continues the existing file; any other
+                # 2xx answer is the whole body and replaces it.
+                resumed = append and status == 206
+                already = Path(dest).stat().st_size if resumed else 0
+                length = _expected_length(response, "GET", status)
+                total = already + length if length is not None else None
+                if on_progress is not None:
+                    on_progress(already, total)
+                received = already
+                with open(dest, "ab" if resumed else "wb") as handle:
+                    while chunk := _read_some(response):
+                        handle.write(chunk)
+                        received += len(chunk)
+                        if on_progress is not None:
+                            on_progress(received, total)
+                        if deadline.expired():
+                            raise TimeoutError(f"{url} took longer than {total_timeout} seconds in total")
+                if length is not None and received - already != length:
+                    raise OSError(f"{url} sent {received - already} of {length} bytes: the transfer was cut short")
+        except http.client.HTTPException as error:
+            raise _transport_error(deadline, error) from error
+        except OSError as error:
+            if deadline.hit and not isinstance(error, TimeoutError):
+                raise _transport_error(deadline, error) from error
+            raise
+        finally:
+            deadline.finish()
+        return DownloadResponse(status, final_url, response_headers, received - already, resumed)
 
 
 # ---------------------------------------------------------------------------
@@ -591,6 +793,366 @@ def _script_command(argv: Sequence[str]) -> list[str]:
     if suffix in {".cmd", ".bat"}:
         return [_system_tool("cmd"), "/c", program, *rest]
     return [program, *rest]
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Hand a 3xx answer to the caller instead of following it."""
+
+    def redirect_request(self, *args: Any, **kwargs: Any) -> None:
+        """Decline every redirect, so urllib reports the 3xx response itself."""
+        return None
+
+
+_ALLOWED_SCHEMES = ("http", "https", "file")
+
+
+class _Deadline:
+    """An absolute time limit for one request, enforced from a timer thread as well as between reads.
+
+    ``socket`` timeouts only bound the idle time of each operation, so a server that drips header
+    lines or body bytes could keep a request alive for ever. When the limit passes, the timer shuts
+    the connection's sockets down, which wakes a blocked read with an error.
+    """
+
+    def __init__(self, seconds: float | None) -> None:
+        """Start the clock (no limit when *seconds* is falsy)."""
+        self.seconds = seconds
+        self.expires = time.monotonic() + seconds if seconds else None
+        self.hit = False
+        self._sockets: list[socket.socket] = []
+        self._timer: threading.Timer | None = None
+        if seconds:
+            self._timer = threading.Timer(seconds, self._expire)
+            self._timer.daemon = True
+            self._timer.start()
+
+    def expired(self) -> bool:
+        """Return whether the limit has passed."""
+        return self.expires is not None and time.monotonic() > self.expires
+
+    def register(self, sock: socket.socket) -> None:
+        """Watch *sock*; if the limit already passed, shut it down at once."""
+        self._sockets.append(sock)
+        if self.hit:
+            self._shutdown(sock)
+
+    def finish(self) -> None:
+        """Stop the timer; the request is over."""
+        if self._timer is not None:
+            self._timer.cancel()
+
+    def _expire(self) -> None:
+        """Mark the limit as hit and wake every blocked read."""
+        self.hit = True
+        for sock in list(self._sockets):
+            self._shutdown(sock)
+
+    @staticmethod
+    def _shutdown(sock: socket.socket) -> None:
+        """Shut a socket down in both directions, ignoring a socket that is already closed."""
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+
+
+class _CutHeaders(http.client.HTTPException):
+    """The server closed the connection in the middle of the response headers."""
+
+
+class _EofWatch:
+    """Wrap a response file to note whether a line read came back empty (end of file) inside the headers."""
+
+    def __init__(self, inner: Any) -> None:
+        """Wrap *inner*."""
+        self.inner = inner
+        self.hit_eof = False
+
+    def readline(self, *args: Any) -> bytes:
+        """Read a line and remember an end of file."""
+        line = self.inner.readline(*args)
+        if not line:
+            self.hit_eof = True
+        return line
+
+    def __getattr__(self, name: str) -> Any:
+        """Delegate everything else to the wrapped file."""
+        return getattr(self.inner, name)
+
+
+class _StrictResponse(http.client.HTTPResponse):
+    """An HTTP response that fails when the headers end by end of file instead of by a blank line.
+
+    The standard library treats a connection closed in the middle of the headers as a normal end of
+    the headers, so a cut-short answer would look like a successful (empty) one.
+    """
+
+    def begin(self) -> None:
+        """Read the status line and headers; refuse a connection that closed before the blank line."""
+        watch = _EofWatch(self.fp)
+        self.fp = watch
+        try:
+            super().begin()
+        finally:
+            self.fp = watch.inner
+        if watch.hit_eof:
+            raise _CutHeaders("the server closed the connection in the middle of the response headers")
+
+
+def _timed(base: type, deadline: _Deadline):
+    """Return a connection class like *base* whose socket is watched by *deadline*."""
+
+    class Timed(base):  # type: ignore[misc, valid-type]
+        """A connection that registers its socket with the request's deadline."""
+
+        response_class = _StrictResponse
+
+        def connect(self) -> None:
+            """Connect, then hand the socket to the deadline."""
+            super().connect()
+            deadline.register(self.sock)
+
+    return Timed
+
+
+class _DeadlineHTTP(urllib.request.HTTPHandler):
+    """Open ``http`` URLs with connections that obey a request deadline."""
+
+    def __init__(self, deadline: _Deadline) -> None:
+        """Remember the deadline."""
+        super().__init__()
+        self._deadline = deadline
+
+    def http_open(self, req: Any) -> Any:
+        """Open *req* on a watched connection."""
+        return self.do_open(_timed(http.client.HTTPConnection, self._deadline), req)
+
+
+class _DeadlineHTTPS(urllib.request.HTTPSHandler):
+    """Open ``https`` URLs with connections that obey a request deadline."""
+
+    def __init__(self, deadline: _Deadline) -> None:
+        """Remember the deadline."""
+        super().__init__()
+        self._deadline = deadline
+
+    def https_open(self, req: Any) -> Any:
+        """Open *req* on a watched connection."""
+        return self.do_open(_timed(http.client.HTTPSConnection, self._deadline), req, context=self._context)
+
+
+def _transport_error(deadline: _Deadline, error: BaseException) -> OSError:
+    """Map a protocol exception (not an ``OSError`` in the standard library) to the port's error type."""
+    if deadline.hit:
+        return TimeoutError(f"The request took longer than {deadline.seconds} seconds in total")
+    if isinstance(error, OSError):
+        return error
+    return OSError(f"HTTP protocol error: {type(error).__name__}: {error}")
+
+
+def _refuse_encoding(headers: Mapping[str, str]) -> None:
+    """Refuse a body with a ``Content-Encoding`` other than identity: gupkg never decompresses a response."""
+    encoding = headers.get("content-encoding", "").strip().lower()
+    if encoding not in ("", "identity"):
+        raise OSError(f"The response uses Content-Encoding {encoding!r}, which is not accepted")
+
+
+def _open_without_redirects(url: str, headers: Mapping[str, str] | None, method: str, timeout: float,
+                            deadline: _Deadline | None = None):
+    """Open *url* and return its response object, a 3xx or error answer included.
+
+    Only ``http``, ``https`` and ``file`` URLs are opened. HTTPS verification
+    uses the system store with partial-chain support (``gupkg.tls``).
+    """
+    scheme = urllib.parse.urlsplit(url).scheme.lower()
+    if scheme not in _ALLOWED_SCHEMES:
+        raise OSError(f"Only http, https and file URLs are fetched, not {url!r}")
+    enable_partial_chain_verification()
+    watched = deadline or _Deadline(None)
+    opener = urllib.request.build_opener(_NoRedirect, _DeadlineHTTP(watched), _DeadlineHTTPS(watched))
+    request = urllib.request.Request(url, headers=dict(headers or {}), method=method)
+    try:
+        return opener.open(request, timeout=timeout)
+    except urllib.error.HTTPError as error:
+        # An HTTPError is itself a readable response; the caller maps it like any other.
+        return error
+
+
+def _response_parts(response: Any, requested: str) -> tuple[int, str, dict[str, str]]:
+    """Return ``(status, url, lower-case headers)`` of a urllib response or ``HTTPError``."""
+    status = getattr(response, "status", None) or getattr(response, "code", None) or 200
+    collected: dict[str, str] = {}
+    for name, value in response.headers.items():
+        key = name.lower()
+        collected[key] = f"{collected[key]}, {value}" if key in collected else value
+    return int(status), requested, collected
+
+
+class _JobBasicLimits(ctypes.Structure):
+    """``JOBOBJECT_BASIC_LIMIT_INFORMATION``."""
+
+    _fields_ = [
+        ("PerProcessUserTimeLimit", ctypes.c_int64),
+        ("PerJobUserTimeLimit", ctypes.c_int64),
+        ("LimitFlags", wintypes.DWORD),
+        ("MinimumWorkingSetSize", ctypes.c_size_t),
+        ("MaximumWorkingSetSize", ctypes.c_size_t),
+        ("ActiveProcessLimit", wintypes.DWORD),
+        ("Affinity", ctypes.c_size_t),
+        ("PriorityClass", wintypes.DWORD),
+        ("SchedulingClass", wintypes.DWORD),
+    ]
+
+
+class _JobIoCounters(ctypes.Structure):
+    """``IO_COUNTERS``."""
+
+    _fields_ = [(name, ctypes.c_uint64) for name in (
+        "ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
+        "ReadTransferCount", "WriteTransferCount", "OtherTransferCount")]
+
+
+class _JobExtendedLimits(ctypes.Structure):
+    """``JOBOBJECT_EXTENDED_LIMIT_INFORMATION``."""
+
+    _fields_ = [
+        ("BasicLimitInformation", _JobBasicLimits),
+        ("IoInfo", _JobIoCounters),
+        ("ProcessMemoryLimit", ctypes.c_size_t),
+        ("JobMemoryLimit", ctypes.c_size_t),
+        ("PeakProcessMemoryUsed", ctypes.c_size_t),
+        ("PeakJobMemoryUsed", ctypes.c_size_t),
+    ]
+
+
+class _ProcessJob:
+    """A Windows job object holding a child process and every process it starts.
+
+    ``TerminateJobObject`` ends all of them, including a helper whose parent has already exited,
+    which ``taskkill /T`` cannot find. By default the job does not kill anything when it is closed,
+    so a helper that is meant to outlive a normal run keeps running; with ``kill_on_close`` closing
+    the last handle (also when this process is killed) ends everything in the job, which is what
+    the regex worker wants. A process started in the instant before it is assigned to the job is
+    the one gap; the child needs far longer than that to start a helper of its own.
+    """
+
+    _KILL_ON_JOB_CLOSE = 0x2000
+    _EXTENDED_LIMIT_INFORMATION = 9
+
+    _PROCESS_SET_QUOTA = 0x0100
+    _PROCESS_TERMINATE = 0x0001
+
+    def __init__(self, handle: Any, kernel32: Any) -> None:
+        """Hold the job *handle* of the ``kernel32`` library."""
+        self._handle, self._kernel32 = handle, kernel32
+
+    @classmethod
+    def around(cls, process: "subprocess.Popen[bytes]", *, kill_on_close: bool = False) -> "_ProcessJob | None":
+        """Put *process* in a new job; ``None`` when Windows refuses (the caller falls back to ``taskkill``).
+
+        With *kill_on_close* the job ends all its processes when its last handle closes. If that
+        limit cannot be set the job is not used (``None``): the caller must not believe in a guarantee it lacks.
+        """
+        if os.name != "nt":
+            return None
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        kernel32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        kernel32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD]
+        job = kernel32.CreateJobObjectW(None, None)
+        if not job:
+            return None
+        if kill_on_close:
+            limits = _JobExtendedLimits()
+            limits.BasicLimitInformation.LimitFlags = cls._KILL_ON_JOB_CLOSE
+            if not kernel32.SetInformationJobObject(
+                job, cls._EXTENDED_LIMIT_INFORMATION, ctypes.byref(limits), ctypes.sizeof(limits)
+            ):
+                kernel32.CloseHandle(job)
+                return None
+        member = kernel32.OpenProcess(cls._PROCESS_SET_QUOTA | cls._PROCESS_TERMINATE, False, process.pid)
+        assigned = bool(member) and bool(kernel32.AssignProcessToJobObject(job, member))
+        if member:
+            kernel32.CloseHandle(member)
+        if not assigned:
+            kernel32.CloseHandle(job)
+            return None
+        return cls(job, kernel32)
+
+    def terminate(self) -> bool:
+        """End every process of the job; report whether Windows did it."""
+        return bool(self._kernel32.TerminateJobObject(self._handle, 1))
+
+    def close(self) -> None:
+        """Release the job handle; processes still in the job keep running unless the job was made with ``kill_on_close``."""
+        self._kernel32.CloseHandle(self._handle)
+
+
+def _kill_tree(process: "subprocess.Popen[bytes]", job: "_ProcessJob | None" = None) -> None:
+    """Kill *process* and every process it started: through its job object when it has one, else ``taskkill /T``, then the process itself.
+
+    ``Popen.kill`` ends only the child, so a script that started a helper would leave it running.
+    """
+    if job is not None and job.terminate():
+        process.kill()
+        return
+    try:
+        subprocess.run(
+            [os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "taskkill.exe"),
+             "/PID", str(process.pid), "/T", "/F"],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), timeout=15, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
+    process.kill()
+
+
+def _read_some(response: Any) -> bytes:
+    """Return up to 64 KiB as soon as some bytes are available (``read1``), so a deadline can be checked between reads."""
+    reader = getattr(response, "read1", None)
+    return reader(64 * 1024) if reader is not None else response.read(64 * 1024)
+
+
+def _read_limited(response: Any, max_bytes: int | None, deadline: _Deadline | None = None,
+                  expected: int | None = None) -> bytes:
+    """Read the body in blocks.
+
+    Fails with ``ResponseTooLarge`` past *max_bytes*, ``TimeoutError`` past the deadline, and ``OSError``
+    when the body ends before the *expected* ``Content-Length`` (a cut-short transfer is never data).
+    """
+    if max_bytes == 0:
+        return b""
+    pieces: list[bytes] = []
+    size = 0
+    while True:
+        block = _read_some(response)
+        if not block:
+            if expected is not None and size != expected:
+                raise OSError(f"The response ended after {size} of {expected} bytes: the transfer was cut short")
+            return b"".join(pieces)
+        size += len(block)
+        if max_bytes is not None and size > max_bytes:
+            raise ResponseTooLarge(f"The response is larger than {max_bytes} bytes")
+        pieces.append(block)
+        if deadline is not None and deadline.expired():
+            raise TimeoutError("The response took longer than its total time limit")
+
+
+def _expected_length(response: Any, method: str, status: int) -> int | None:
+    """Return the body size to verify, or ``None`` when the answer has no body (HEAD, 1xx, 204, 304).
+
+    A body without a ``Content-Length`` (HTTP/1.0 or ``Connection: close``) cannot be verified;
+    like a browser, gupkg accepts it, and the checksum rules cover integrity.
+    """
+    if method == "HEAD" or status < 200 or status in (204, 304):
+        return None
+    return _content_length(response)
 
 
 def _content_length(response: Any) -> int | None:

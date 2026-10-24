@@ -1,0 +1,19 @@
+format = 2
+description = "Shutter Encoder."
+project_url = "https://www.shutterencoder.com/"
+
+[track]
+provider = "chain"
+download = "${link}"
+
+[[track.fetch]]
+url = "https://www.shutterencoder.com/"
+match = 'href="(?P<link>https://www\.shutterencoder\.com/sdc_download/\d+/\?key=[A-Za-z0-9]+)"'
+
+[[track.fetch]]
+url = "${link}"
+header = "Content-Disposition"
+match = 'filename="?(?P<name>Shutter Encoder (?P<version>\d+(?:\.\d+)*) Windows 64bits\.zip)"?'
+
+[source]
+download_url = "${download_url}"

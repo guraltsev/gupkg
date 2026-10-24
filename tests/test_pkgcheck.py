@@ -82,7 +82,7 @@ def test_shipped_version_with_a_source_recovers_a_missing_app_with_a_warning(tmp
 def test_custom_populate_script_in_pkg_local_validates(tmp_path: Path, suffix: str) -> None:
     """A version whose source names a Python, PowerShell, cmd, bat or executable script that exists validates."""
     script = f"pkg.local/populate.{suffix}"
-    report = check_directory(make_dir(tmp_path, "1.0", f'[source]\nscript = "{script}"\n', files={script: "x"}))
+    report = check_directory(make_dir(tmp_path, "1.0", f'[source]\nscript = "{script}"\n', files={script: "PKG_MODULE_API = 2\n"}))
 
     assert report.ok, report.errors
     assert report.app_kind == "script-populated"
@@ -98,7 +98,7 @@ def test_populate_script_that_does_not_exist_is_an_error(tmp_path: Path) -> None
 
 def test_version_hook_that_imports_urllib_validates_without_a_warning(tmp_path: Path) -> None:
     """Network use by a version-directory script is allowed: no error and no warning for `urllib` (decision D28)."""
-    hook = "import urllib.request\n\ndef run(context):\n    return urllib.request.urlopen('https://example.org').read()\n"
+    hook = "PKG_MODULE_API = 2\nimport urllib.request\n\ndef populate(context):\n    return urllib.request.urlopen('https://example.org').read()\n"
     report = check_directory(make_dir(
         tmp_path, "1.0", '[source]\nscript = "pkg.local/populate.py"\n', files={"pkg.local/populate.py": hook},
     ))
@@ -192,7 +192,7 @@ def test_tracker_with_a_module_provider_needs_its_module_file(tmp_path: Path) ->
 
     missing = check_directory(make_dir(tmp_path / "a", "_check_updates", manifest))
     present = check_directory(make_dir(
-        tmp_path / "b", "_check_updates", manifest, files={"pkg.local/check_update.py": "def track(ctx):\n    pass\n"},
+        tmp_path / "b", "_check_updates", manifest, files={"pkg.local/check_update.py": "PKG_MODULE_API = 2\ndef track(ctx):\n    pass\n"},
     ))
 
     assert any("pkg.local/check_update.py is named in pkg.toml but does not exist" in e for e in missing.errors)
@@ -225,3 +225,22 @@ def test_missing_directory_and_missing_manifest_are_errors(tmp_path: Path) -> No
 
     assert not check_directory(tmp_path / "nope").ok
     assert any("Cannot read" in e for e in check_directory(tmp_path / "1.0").errors)
+
+
+@pytest.mark.parametrize(
+    "hook",
+    [
+        pytest.param("PKG_MODULE_API = 1\ndef populate(context):\n    pass\n", id="api-1"),
+        pytest.param("def populate(context):\n    pass\n", id="no-declaration"),
+        pytest.param("PKG_MODULE_API = '2'\ndef populate(ctx):\n    pass\n", id="api-as-a-string"),
+        pytest.param("import sys\nPKG_MODULE_API = int(sys.argv[0] and 2)\n", id="api-computed-at-import"),
+    ],
+)
+def test_a_hook_that_does_not_declare_api_2_is_rejected(tmp_path: Path, hook: str) -> None:
+    """A version directory's hook with API 1, no declaration or a non-literal declaration fails with the plain API message."""
+    report = check_directory(make_dir(
+        tmp_path, "1.0", '[source]\nscript = "pkg.local/populate.py"\n', files={"pkg.local/populate.py": hook},
+    ))
+
+    assert not report.ok
+    assert "pkg.local/populate.py must declare PKG_MODULE_API = 2" in report.errors

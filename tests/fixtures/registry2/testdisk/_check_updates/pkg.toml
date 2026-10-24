@@ -1,0 +1,13 @@
+format = 2
+description = "Partition recovery and file undelete utility."
+project_url = "https://www.cgsecurity.org/"
+
+[track]
+provider = "page"
+check_url = "https://www.cgsecurity.org/wiki/TestDisk_Download"
+match = 'testdisk-(?P<version>\d+(?:\.\d+)*)\.win64\.zip'
+download = "https://www.cgsecurity.org/testdisk-${version}.win64.zip"
+
+[source]
+download_url = "${download_url}"
+strip = "auto"

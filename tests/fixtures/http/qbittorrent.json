@@ -1,0 +1,24 @@
+{
+ "case": "qbittorrent",
+ "tracker": "qbittorrent",
+ "provider": "json (path + match)",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/qbittorrent/5.2.3/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "5.0.0",
+  "download_url": "https://sourceforge.net/projects/qbittorrent/files/qBittorrent/qbittorrent-5.0.0/qbittorrent_5.0.0_x64_setup.exe/download",
+  "sha256": null,
+  "sha256_from": null
+ },
+ "responses": [
+  {
+   "url": "https://sourceforge.net/projects/qbittorrent/best_release.json",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"platform_releases\": {\"windows\": {\"filename\": \"/qBittorrent/qbittorrent-5.0.0/qbittorrent_5.0.0_x64_setup.exe\", \"bytes\": 33000000, \"mime_type\": \"application/x-msdownload\"}, \"mac\": {\"filename\": \"/qBittorrent/qbittorrent-5.0.0/qbittorrent-5.0.0.dmg\"}}, \"release\": {\"filename\": \"/qBittorrent/qbittorrent-5.0.0/qbittorrent-5.0.0.tar.xz\"}}"
+  }
+ ]
+}

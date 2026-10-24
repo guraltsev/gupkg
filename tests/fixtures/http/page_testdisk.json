@@ -1,0 +1,24 @@
+{
+ "case": "page_testdisk",
+ "tracker": "testdisk",
+ "provider": "page (WIP pre-release excluded)",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/testdisk/_bootstrap/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "7.2",
+  "download_url": "https://www.cgsecurity.org/testdisk-7.2.win64.zip",
+  "sha256": null,
+  "sha256_from": null
+ },
+ "responses": [
+  {
+   "url": "https://www.cgsecurity.org/wiki/TestDisk_Download",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/html"
+   },
+   "body": "<html><body><ul>\n<li><a href=\"/download/testdisk-7.3-WIP.win64.zip\">TestDisk 7.3-WIP</a></li>\n<li><a href=\"/download/testdisk-7.2.win64.zip\">TestDisk 7.2</a></li>\n<li><a href=\"/download/testdisk-7.1.win64.zip\">TestDisk 7.1</a></li></ul></body></html>"
+  }
+ ]
+}

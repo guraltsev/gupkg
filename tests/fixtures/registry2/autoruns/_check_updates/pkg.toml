@@ -1,0 +1,16 @@
+format = 2
+description = "Shows what runs automatically at startup and logon."
+project_url = "https://learn.microsoft.com/sysinternals/"
+
+[track]
+provider = "last_modified"
+check_url = "https://download.sysinternals.com/files/Autoruns.zip"
+format = "%Y%m%d"
+
+[source]
+download_url = "https://download.sysinternals.com/files/Autoruns.zip"
+
+[[shortcut]]
+name = "Tools\\Autoruns"
+target = "$App\\Autoruns64.exe"
+description = "Shows what runs automatically at startup and logon."

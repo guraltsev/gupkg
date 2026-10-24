@@ -749,9 +749,9 @@ counted are from the 2026-10-22 registry.
 | `github` | built-in github mode + 6 hand-rolled clients (bcu, perl, portablegit, wumgr, systeminformer, msys2) | `repo`, `asset` (exact or `asset_pattern` regex with `(?P<version>)`), `version_from = "tag"\|"asset"`, `tag_pattern`, `tag_prefix`, `release = "latest"\|"newest-matching"`, `prerelease = false` |
 | `gitlab` | restic-backup-gx | `project`, `link_name`/`asset_pattern` |
 | `page` | 9 template scrapers + 7zip, SumatraPDF, cwrsync, tixati, dontsleep | `check_url`, `match` (regex with named groups), `select = "max"\|"first"\|"unique"`, `version` template, `download` template, `headers` |
-| `index` | emacs, gimp, python, vlc, pidgin | `check_url`, ordered `[[track.level]]` with `match`, `select`, optional `probe` (descend until a file exists) |
+| `index` | emacs, gimp, python, vlc, pidgin | `check_url`, ordered `[[track.level]]` with `match`, `select`, `key`, `next`, optional `probe` (descend until a file exists) |
 | `redirect` | crystaldiskinfo, crystaldiskmark, geogebra, geogebra5, zotero | `check_url`, `match`, `unwrap_query` |
-| `json` | firefox, julia, vscode, qbittorrent | `check_url`, `version` (JSONPath), `download`, `filter` |
+| `json` | firefox, julia, vscode, qbittorrent | `check_url`, `version` (JSONPath), `download`, `filter`, `records`, `match`, `checksum`, `captures` |
 | `last_modified` | autoruns, processexplorer | `check_url`, `format = "%Y.%m.%d"` |
 | `rss` | netio-gui | `check_url`, `match` |
 | `git` | latex-toolkit, overleaf-sync, windebloattools | `repo_url`, `ref`; version = `YYYYMMDD-HHMMSS-<short sha>` (the commit is the integrity anchor) |
@@ -765,6 +765,80 @@ Every provider:
   when it is set;
 - returns `TrackResult(version, captures, checksum?)`;
 - leaves version comparison to the manager.
+
+**Provider details (issue 026).** The values of every `[track]` key are validated when the
+manifest is parsed (`gupkg.model.trackspec`).
+
+- **Captures.** A provider's named regex groups become captures, usable as `${name}` in
+  `[source]` and `[[prepare]]`. Built in: `github` and `gitlab` give `tag`, `asset_name`,
+  `asset_url` and `release_url`; `page`, `index`, `rss` and `chain` give `page_url`; `redirect`
+  gives `final_url` and `file_name`; every URL provider gives `download_url` (the expanded
+  `download` template or a `download_url` group); `git` gives `commit`, `short_commit`, `ref` and
+  `commit_date`. `gupkg pkg check` rejects a `${name}` in a tracker's `[source]` that its provider
+  never produces.
+- **`version` and `download`** are templates over the captures (`version = "${major}.${minor}"`,
+  `download = "${href}"`); the default `version` is `${version}`. Several matches are ordered with
+  the one shared version comparison (`1.10` is newer than `1.3`); `select` is `max`, `first` or
+  `unique`. `headers` (a table) set the User-Agent or other headers of the check; a `[source]`
+  `headers` table does the same for the download (hwinfo needs a browser User-Agent and a Referer).
+- **`github` / `gitlab`.** The version comes from the tag (`tag_prefix`, else a leading `v`
+  dropped, or `tag_pattern` with named groups) or, with `version_from = "asset"`, from the asset
+  name. The asset is the exact `asset` name or the full match of `asset_pattern`; both may contain
+  `${version}`. `release = "newest-matching"` reads up to 100 releases and takes the newest that
+  has a usable version and the asset; drafts are skipped and prereleases only with `prerelease =
+  true`. A GitHub asset `digest` becomes the discovered checksum (`github-digest`).
+- **`index`.** A level's `match` may contain `${name}` for what earlier levels captured (the value
+  is escaped); `key` orders entries when the version is split over groups (`${major}.${minor}`);
+  `next` is the page of the next level; `probe` is a file that must exist for an entry to count.
+  The walk tries entries newest first and backtracks, within 60 requests.
+- **`json`.** JSONPath subset: `$`, `.key`, `['key']`, `[n]`, `[*]`, `.*`, filters `[?a==b && c!=d]`
+  (`==`, `!=`, `=~`), and a trailing `~` for keys. `records` selects the objects to look at, `filter`
+  (one condition or an array) keeps some, and `version`, `download`, `checksum` and `captures` are
+  read from each record; `match` extracts the version from the value (qbittorrent).
+- **`last_modified`** formats the UTC `Last-Modified` date with `format` (default `%Y.%m.%d`;
+  only `%Y %y %m %d %H %M %S %j` and literal characters allowed). **`rss`** matches the links,
+  titles, ids and enclosure addresses of a feed (a document type declaration is refused).
+  **`chain`** steps have `url`, `match`, `select`, `headers`, and `header` (match a response
+  header such as `Content-Disposition` instead of the body); `${capture}` in a later step's `url`
+  and `match` come from earlier steps, and a `sha256` group becomes the discovered checksum.
+- **Safety.** Responses are data: a page over 8 MiB is refused. **The safety property for regular
+  expressions is a deadline, not a check of the pattern.** Python's `re` backtracks and cannot be
+  interrupted, so every match of a manifest pattern against fetched text (page, index, redirect, RSS and
+  chain providers, `page_match`, `=~` filters on JSON values, tag and asset names) runs in a worker process
+  (`gupkg/system/regex_worker.py`, started through `System.regex_worker` with the running interpreter's
+  `-I -s -B -S`, a minimal environment holding only `SystemRoot`, and an empty temporary folder as its
+  working directory). The parent (`gupkg.services.regexrun.RegexRunner`) sends the pattern, flags, prepared
+  texts and operation as ASCII JSON on standard input and reads the matches (spans and groups, size-capped)
+  from standard output. Each call has a deadline (2 s, counted from the worker's first line so a slow
+  process start is not blamed on the pattern) and each provider run a total (10 s of matching); past the
+  deadline the worker's whole process tree is killed (job object) and the call raises `RegexTimeout`
+  naming the pattern and the address or field. The runner fails closed: a worker that crashes, prints
+  something malformed or oversized, or is refused is an error, never "no match", so a hostile page cannot
+  turn into "no version found". What it does not give: a memory cap (a worker can allocate during its
+  deadline), and no network access is enforced by the operating system (the worker never opens a socket).
+  The static guard is only a cheap first filter that refuses obviously dangerous shapes early with a clear
+  message; it is **not** the safety property and a pattern that passes it can still be slow. It rejects
+  patterns that repeat a repeated group, an empty-matching body, or overlapping alternatives inside a repeat
+  of four or more, an unbounded `.` repeat next to another unbounded repeat (and more than one), more than
+  three wildcard (`.`, `[^x]`) repeats, and more than 24 unbounded repeats or 6 in a row without a literal
+  between them; groups are looked through at any depth, flags (`(?i)`, `re.X`) are honoured, and an
+  iteration that holds an inner repeat is accepted only when it begins or ends with a required character
+  that no inner repeat can consume (`(?:\d{1,3}\.){1,5}`, `\d+(?:[._]\d+)*`), judged by comparing character
+  sets. Runs of word characters or of one character in a text are cut to 1024 and at most a mebibyte is sent.
+  Redirects are followed by the client: HTTPS to HTTP and any non-http(s) target are refused, and
+  `Authorization`, `Cookie` and any header whose name contains auth, key, token, secret, password,
+  cookie or session are dropped when the host changes. A manifest `headers` table may not set
+  `Host`, `Content-Length`, `Connection`, `Transfer-Encoding`, `Upgrade`, `TE`, `Proxy-*` and similar.
+  Every request and download has a total deadline (120 s and one hour), not only an idle timeout.
+  A body that ends before its `Content-Length`, a connection closed in the middle of the headers and
+  a non-identity `Content-Encoding` are errors (a 204, 304, 1xx or HEAD answer has no body to check).
+  A body with no length (HTTP/1.0 or `Connection: close`) cannot be verified and is accepted, like a
+  browser does; the checksum rules cover integrity.
+  `file:` URLs naming a network host or UNC share are refused unless the client is built with
+  `allow_unc_file_urls` (Windows would authenticate to that server). `GITHUB_TOKEN` goes only to
+  `api.github.com`, `github.com` and `uploads.github.com` over HTTPS and is read from an explicit
+  mapping (dropped in an elevated run), never from `os.environ`; `git` runs with a scrubbed
+  environment, null Git configuration files, no hooks, no credential helper and no prompts.
 
 ### 8.2 Unpacking (`[source]`)
 
@@ -781,6 +855,32 @@ Every provider:
 Every unpack service is safe-extracting: no paths escape, there are no reparse
 points, and partial failures leave nothing behind. Every one works for every
 archive kind; today `extract`/`rename` are limited to zip.
+
+**Unpack details (issue 026).** The kind is read from the file's signature (a `.exe` is asked of
+7-Zip: `Nsis` is `nsis`, an archive with a data offset is `sfx`, a plain executable is `exe`); a
+declared `kind` is checked against it. `msi` is unpacked by 7-Zip, never by `msiexec`. The options
+apply in this order, each addressing the tree as it is at that point: `nested`, `strip`,
+`subdir`, `extract`, `require`, `verify_manifest`.
+
+- `[[source.nested]]` unpacks the inner archive `path` and merges it at `dest` (an existing file is
+  never overwritten); with `replace = true` the inner contents replace everything at `dest` (obsidian:
+  `dest = ""` drops the rest of the installer). The inner archive file is deleted once unpacked.
+- Names are judged before anything is written: absolute paths, drives, `..`, `:` (streams),
+  Windows device names, a trailing dot or space, link entries, encryption and names that differ only by
+  letter case are refused, and so are archives over 200,000 entries, 8 GiB in total or 4 GiB in one
+  file (zip bombs); the limits are one budget shared by the artifact and every archive nested in it.
+  Declared sizes are only a hint, so the limits are enforced while data is written: gzip, bzip2 and xz
+  wrappers are decompressed in process with a byte cap (xz with a 256 MiB decoder memory limit), and
+  every 7-Zip run is watched (the staging folder is measured about five times a second, junctions are
+  not followed, and 7-Zip is killed within one poll of the limit being passed, not at the moment it is
+  passed). A bomb that declares its size is caught earlier, by the check of the listing; the watcher
+  is for archives that declare nothing or lie. Package code is trusted per file as well as per folder
+  (script and parent chain), and a `sys.exit` at hook import or inside an entry point is a
+  `HookError`. Residual: sibling modules that a hook imports from `pkg.local` are covered only by the
+  whole-directory check, not one by one. Concatenated xz streams are all decompressed (zero padding
+  in multiples of four bytes allowed); anything else after a stream is an error. The
+  finished tree is walked again for links and special files. The tree appears under its final name by
+  one rename, so a failed unpack leaves no `App` and no scratch folder.
 
 `sfx` covers only self-extractors whose codecs the bundled 7-Zip supports.
 Firefox and Zotero extract; MSYS2's `.sfx.exe` uses Zstandard and does not
@@ -807,6 +907,11 @@ module = "pkg.local/fix_nsswitch.py"               # escape hatch
 `rename` keeps today's rule: it never overwrites an existing destination.
 Paths are always confined to `App`.
 
+Details (issue 026): `remove` and `rename`/`copy` sources may be globs; `rename` and `copy` need
+exactly one match, and `copy` never overwrites either; `remove` ignores a path that is not there and
+deletes a link itself, never its target; `write` replaces a regular file but never writes through a
+link. A path may not pass through a link or junction. If a step fails the staged `App` is deleted.
+
 ### 8.4 Vendor installers
 
 `kind = "nsis"` extracts the installer without running it. Running vendor
@@ -828,6 +933,17 @@ The fields are `sidecar = "${download_url}.sha256"`, `sums_file`/`entry`,
 `json`/`path`, and `page_match`. GitHub and GitLab digests are picked up
 implicitly. This replaces discovery code in 13 hooks.
 
+Details (issue 026): every address is a template over the discovered captures, `${download_url}`
+being the `[source]` download address. `sidecar` and `sums_file` read `<digest>  <name>` and
+`SHA256 (<name>) = <digest>` lines (a one-digest sidecar needs no name); `entry` must equal the listed
+path exactly; `page_match` runs on the page the version came from (`${page_url}`) and takes the
+`sha256` group; only a 64-digit hexadecimal token is ever accepted, and the provenance is
+`vendor-sums`. A configured source that has no digest for the version is an error
+(`ChecksumDiscoveryError`), not a silent skip: what a missing hash means is the checksum policy
+(issue 027). A GitHub asset's `digest` is found by the `github` provider (`github-digest`). GitLab's
+releases API publishes no digest today, so a GitLab link's `sha256` or `digest` field is used if it
+ever appears, and otherwise the tracker declares `[source.checksum]`.
+
 ### 8.6 Hook library
 
 The hook library covers what remains after the services above. `gupkg.hooklib`
@@ -845,6 +961,16 @@ is the supported API for `pkg.local` modules:
 Hooks receive a typed `HookContext`, never raw dictionaries. The API version
 becomes `PKG_MODULE_API = 2`. Non-Python populate scripts receive the same
 context as JSON on standard input (section 4).
+
+The entry points are `track(ctx) -> TrackResult` (trackers only), `unpack(ctx)`, `prepare(ctx)` and
+`populate(ctx)`. The context carries `package`, `version`, `system`, `http` (the shared client),
+`paths` (`package_root`, `version_root`, `app`, `artifact`, `work`, `cache`), `options`,
+`captures` and a `reporter`; the helpers of `gupkg.hooklib` take it as their first argument
+(`fetch_text(ctx, url)`). A module that does not declare `PKG_MODULE_API = 2` is rejected like any
+other invalid hook. **Trust:** `load_hook`, `run_custom_populate` and the `[[prepare]] module` step
+take the `System` and, in an elevated run (or with `GUPKG_ELEVATED=1`), refuse a version directory or
+`pkg.local` that is not admin-only before importing or starting anything (decision D19). Any
+exception from a hook's import-time code is a `HookError`.
 
 Every hook's context carries the shared HTTP client, so proxy, TLS,
 retries and the GitHub token behave the same everywhere. Hooks may also

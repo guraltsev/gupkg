@@ -62,7 +62,7 @@ def test_core_validates_and_loads_format_2_without_the_migration_tool(tmp_path: 
     (root / "tool" / "1.0" / "pkg.toml").write_text('format = 2\n[source]\nshipped = true\n', encoding="utf-8")
     (root / "tool" / "_check_updates").mkdir()
     (root / "tool" / "_check_updates" / "pkg.toml").write_text(
-        'format = 2\n[track]\nprovider = "page"\ncheck_url = "https://example.org/dl"\nmatch = "x"\n'
+        'format = 2\n[track]\nprovider = "page"\ncheck_url = "https://example.org/dl"\nmatch = "tool-(?P<version>[0-9.]+)"\n'
         '[source]\ndownload_url = "https://example.org/${version}.zip"\n', encoding="utf-8",
     )
     (root / "old" / "1.0").mkdir(parents=True)

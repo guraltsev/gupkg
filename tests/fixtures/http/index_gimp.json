@@ -1,0 +1,33 @@
+{
+ "case": "index_gimp",
+ "tracker": "gimp",
+ "provider": "index (two levels, key template)",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/gimp/_bootstrap/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "3.0.2",
+  "download_url": "https://download.gimp.org/gimp/v3.0/gimp-3.0.2-setup.exe",
+  "sha256": null,
+  "sha256_from": null
+ },
+ "responses": [
+  {
+   "url": "https://download.gimp.org/gimp/",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/html"
+   },
+   "body": "<a href=\"v2.10/\">v2.10/</a> <a href=\"v3.0/\">v3.0/</a> <a href=\"v2.8/\">v2.8/</a> <a href=\"gimp-help-2.0.html\">x</a>"
+  },
+  {
+   "url": "https://download.gimp.org/gimp/v3.0/",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "text/html"
+   },
+   "body": "<a href=\"gimp-3.0.0-setup.exe\">gimp-3.0.0-setup.exe</a> <a href=\"gimp-3.0.2-setup.exe\">gimp-3.0.2-setup.exe</a> <a href=\"gimp-3.0.2-setup-1.exe\">gimp-3.0.2-setup-1.exe</a> <a href=\"gimp-3.0.1-setup.exe\">gimp-3.0.1-setup.exe</a>"
+  }
+ ]
+}

@@ -128,7 +128,7 @@ def plan_package(directory: Path) -> PackagePlan:
     if old.get("format") == FORMAT:
         plan.already_converted = True
         plan.new_text = plan.old_text
-        plan.errors.extend(check_directory(directory).errors)
+        plan.errors.extend(_without_hook_api_errors(check_directory(directory).errors, plan))
         return plan
     if "format" in old:
         plan.errors.append(f"pkg.toml has format = {old['format']!r}; only format 1 (no format key) is converted")
@@ -150,7 +150,7 @@ def plan_package(directory: Path) -> PackagePlan:
         plan.new_text = _dump(data)
         return plan
     plan.new_text = manifest_to_toml(manifest)
-    plan.errors.extend(_validate_staged(plan, directory))
+    plan.errors.extend(_without_hook_api_errors(_validate_staged(plan, directory), plan))
     if plan.ok and plan.kind is ManifestKind.VERSION:
         plan.launchers = ["install.cmd", "gupkg-tui.cmd"]
     elif plan.ok and (directory / "gupkg-tui.cmd").is_file():
@@ -165,6 +165,25 @@ class _Unconvertible(Exception):
 def _dump(data: dict[str, Any]) -> str:
     """Return TOML text for *data* even when it is not valid format 2 (for the report)."""
     return tomli_w.dumps(data)
+
+
+def _without_hook_api_errors(errors: list[str], plan: PackagePlan) -> list[str]:
+    """Move "must declare PKG_MODULE_API = 2" errors to the plan's notes and return the other errors.
+
+    A 0.17 hook cannot run in 1.0, but the converted ``pkg.toml`` is still the right file: the
+    author rewrites the hook (or replaces it with a built-in service), so this is a note for
+    the author and not a reason to refuse the conversion.
+    """
+    kept: list[str] = []
+    for error in errors:
+        if error.endswith("must declare PKG_MODULE_API = 2"):
+            plan.notes.append(
+                f"{error.removesuffix(' must declare PKG_MODULE_API = 2')} is a 0.17 hook that 1.0 does not run; "
+                "rewrite it for hook API 2 (gupkg.hooklib) or replace it with a built-in service"
+            )
+        else:
+            kept.append(error)
+    return kept
 
 
 def _validate_staged(plan: PackagePlan, directory: Path) -> list[str]:
@@ -274,7 +293,7 @@ def _origin_source(origin: dict[str, Any], plan: PackagePlan, directory: Path, c
         script = origin.get("module") or origin.get("script")
         source = {"script": _local_script(script, plan, directory, context), "shipped": False}
         if origin.get("module"):
-            notes.append(f"{context} module {source['script']} uses hook API 1; rewrite it for hook API 2 (issue 026)")
+            notes.append(f"{context} module {source['script']} uses hook API 1; rewrite it for hook API 2 (gupkg.hooklib)")
     elif url and _is_project_page(url):
         # A repository or project page is information, not an artifact.
         notes.append(f"{context} url {url} is a repository or project page, not an artifact: not used as a download_url")
@@ -376,7 +395,7 @@ def _convert_tracker(new: dict[str, Any], origin: dict[str, Any], update: dict[s
     else:
         raise _Unconvertible(f"unknown update.check mode {mode!r}")
     new["track"] = {key: value for key, value in track.items() if value is not None}
-    notes.append("check hook and any other 0.17 hook use hook API 1; rewrite them for hook API 2 (issue 026)")
+    notes.append("check hook and any other 0.17 hook use hook API 1; rewrite them for hook API 2 (gupkg.hooklib) or replace them with a built-in service")
 
     source: dict[str, Any]
     payload_mode = payload.get("mode")
@@ -392,9 +411,9 @@ def _convert_tracker(new: dict[str, Any], origin: dict[str, Any], update: dict[s
     elif payload_mode == "zip":
         source = {"download_url": captured, "shipped": False}
         if captured == "${asset_url}":
-            notes.append("source.download_url uses the github provider's asset_url capture; confirm the name with issue 026")
+            notes.append("source.download_url uses the github provider's asset_url capture")
         else:
-            notes.append("source.download_url uses a download_url capture from the track hook; confirm with issue 026")
+            notes.append("source.download_url uses a download_url capture: the track hook must return it in TrackResult.captures, or use a built-in provider (gupkg pkg check suggests one)")
         if payload.get("extractSubdir"):
             source["subdir"] = payload["extractSubdir"]
         if payload.get("extract"):

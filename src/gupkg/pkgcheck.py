@@ -33,9 +33,14 @@ from .model.manifest import (
     Manifest,
     ManifestError,
     ManifestKind,
+    manifest_to_data,
     parse_manifest,
 )
+from .model.template import TemplateError, references
+from .model.trackspec import TrackSpecError, parse_spec, provider_captures
 from .model.version import MANIFEST_NAME, TRACKER_DIR_NAME, is_version_name
+from .services.hints import scan_directory
+from .services.hooks import PKG_MODULE_API
 
 
 @dataclass(frozen=True)
@@ -167,6 +172,15 @@ def check_directory(path: Path) -> CheckReport:
         elif not _inside(target, path):
             errors.append(f"{name} resolves to a place outside this directory")
 
+    # Hooks must be API 2 modules; a hook that matches a built-in service gets a hint.
+    errors.extend(_hook_api_errors(path, named))
+    for hint in scan_directory(path):
+        warnings.append(f"{hint.file} looks like the built-in service '{hint.service}'; replace it with: {hint.suggestion}")
+
+    # A tracker's [source] may refer only to values its provider produces.
+    if kind is ManifestKind.TRACKER:
+        errors.extend(_capture_errors(manifest))
+
     if kind is ManifestKind.VERSION:
         errors.extend(_track_hook_errors(path))
         app_error = _app_error(path, manifest)
@@ -179,6 +193,73 @@ def check_directory(path: Path) -> CheckReport:
         path, kind, manifest, tuple(errors), tuple(warnings),
         app_kind=manifest.source.app_kind if kind is ManifestKind.VERSION else None,
     )
+
+
+def _declared_api(source: str) -> object:
+    """Return the constant a module assigns to ``PKG_MODULE_API`` at module level, or ``None``."""
+    for node in ast.parse(source).body:
+        targets: list[ast.expr] = []
+        value: ast.expr | None = None
+        if isinstance(node, ast.Assign):
+            targets, value = list(node.targets), node.value
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            targets, value = [node.target], node.value
+        if any(isinstance(target, ast.Name) and target.id == "PKG_MODULE_API" for target in targets):
+            return value.value if isinstance(value, ast.Constant) else None
+    return None
+
+
+def _hook_api_errors(path: Path, named: list[str]) -> list[str]:
+    """Return an error for every named hook that does not declare ``PKG_MODULE_API = 2``."""
+    errors: list[str] = []
+    for name in dict.fromkeys(named):
+        target = path / name
+        if not target.is_file() or not name.lower().endswith(".py"):
+            continue
+        try:
+            declared = _declared_api(target.read_text(encoding="utf-8-sig"))
+        except (SyntaxError, ValueError, OSError) as exc:
+            errors.append(f"{name} cannot be read as a Python hook ({exc})")
+            continue
+        if declared != PKG_MODULE_API:
+            errors.append(f"{name} must declare PKG_MODULE_API = {PKG_MODULE_API}")
+    return errors
+
+
+def _capture_errors(manifest: Manifest) -> list[str]:
+    """Return an error for every ``${name}`` in ``[source]`` that the tracker's provider never produces."""
+    track = manifest.track
+    if track is None:
+        return []
+    try:
+        spec = parse_spec(
+            track.provider, {"check_url": track.check_url, "repo": track.repo, "repo_url": track.repo_url}, track.options
+        )
+    except TrackSpecError:
+        return []
+    known = provider_captures(spec)
+    if known is None:
+        return []
+    errors: list[str] = []
+    source = manifest_to_data(manifest).get("source", {})
+    stack: list[object] = [source]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, str):
+            try:
+                names = {reference.name for reference in references(item)}
+            except TemplateError:
+                continue
+            for name in sorted(names - known):
+                errors.append(
+                    f"[source] refers to ${{{name}}}, which the '{track.provider}' provider does not produce; "
+                    f"it produces: {', '.join(sorted(known))}"
+                )
+        elif isinstance(item, dict):
+            stack.extend(item.values())
+        elif isinstance(item, list):
+            stack.extend(item)
+    return list(dict.fromkeys(errors))
 
 
 def _has_content(folder: Path) -> bool:

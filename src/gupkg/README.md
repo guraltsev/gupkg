@@ -21,11 +21,22 @@ domains used by the `gupkg.cli` command boundary and package workflows:
   `log_link` (`package`, `log`, `events`, `events_file`), in the run log.
 - `system/`: the one side-effect boundary. `port.py` defines the `System`
   protocol (links, environment and `PATH`, shortcuts, elevation, processes,
-  downloads); `windows.py` implements it for a real machine (junctions, registry,
+  downloads and single HTTP requests); `windows.py` implements it for a real machine (junctions, registry,
   Shell COM shortcuts, `WM_SETTINGCHANGE`, child processes, HTTP); `fake.py` is
   the in-memory implementation behind the tests and `gupkg --sandbox DIR`. Only
   `system/windows.py` and `selfmgmt/` use `winreg`, `ctypes`, `urlopen` or start
   processes; every workflow receives a `System` explicitly.
+- `services/`: the built-in services that replace hook scripts (design section 8). `http.py`
+  is the one HTTP client (User-Agent, retries, redirects, `GITHUB_TOKEN`, resumable cached
+  downloads) over `System.http_request` and `System.http_download`; `track/` has the
+  version-discovery providers (`github`, `gitlab`, `page`, `index`, `redirect`, `json`,
+  `last_modified`, `rss`, `git`, `chain`, `module`) and `run_tracker`; `unpack/` safely unpacks
+  `zip`, `7z`, `tar`, `sfx`, `nsis`, `msi`, `exe`/`file` and `git` with `strip`, `subdir`,
+  `nested`, `extract`, `require` and `verify_manifest`; `prepare.py` runs `[[prepare]]`;
+  `checksum.py` discovers vendor digests; `hooks.py` and `gupkg/hooklib.py` are hook API 2;
+  `populate.py` joins unpack and prepare; `hints.py` suggests the service that replaces a hook;
+  `safepath.py` judges untrusted names. The pure parts (`model/patterns.py`, `jsonpath.py`,
+  `trackspec.py`) validate what a `[track]` table says.
 - `selfmgmt/`: the elevated-run trust checks (`elevation.py`: elevation signals,
   access-control reading and the admin-only policy). `bootstrap.py` loads it by
   file path before the package is importable, so it stays self-contained.

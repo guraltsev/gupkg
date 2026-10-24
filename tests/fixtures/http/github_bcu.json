@@ -1,0 +1,24 @@
+{
+ "case": "github_bcu",
+ "tracker": "bulkcrapuninstaller",
+ "provider": "github latest, digest, asset_pattern",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/bulkcrapuninstaller/_bootstrap/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "5.8.2",
+  "download_url": "https://github.com/o/r/releases/download/v5.8.2/BCUninstaller_5.8.2_portable.7z",
+  "sha256": "5c77c0fded08ffe00dea0ebdd9aeffa697b9ebe65a1be7c92c82d2e15be182a3",
+  "sha256_from": "github-digest"
+ },
+ "responses": [
+  {
+   "url": "https://api.github.com/repos/BCUninstaller/Bulk-Crap-Uninstaller/releases/latest",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": "{\"tag_name\": \"v5.8.2\", \"name\": \"v5.8.2\", \"draft\": false, \"prerelease\": false, \"html_url\": \"https://github.com/o/r/releases/tag/v5.8.2\", \"assets\": [{\"name\": \"BCUninstaller_5.8.2_portable.7z\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/o/r/releases/download/v5.8.2/BCUninstaller_5.8.2_portable.7z\", \"digest\": \"sha256:5c77c0fded08ffe00dea0ebdd9aeffa697b9ebe65a1be7c92c82d2e15be182a3\"}, {\"name\": \"BCUninstaller_5.8.2_setup.exe\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/o/r/releases/download/v5.8.2/BCUninstaller_5.8.2_setup.exe\", \"digest\": \"sha256:3a6a26a0d92d5620321f4a030a0d82287fdbce38ce68145dfe31aa02bbd253a8\"}, {\"name\": \"BCUninstaller_5.8.2_portable.7z.asc\", \"state\": \"uploaded\", \"browser_download_url\": \"https://github.com/o/r/releases/download/v5.8.2/BCUninstaller_5.8.2_portable.7z.asc\"}]}"
+  }
+ ]
+}

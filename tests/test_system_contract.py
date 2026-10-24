@@ -14,8 +14,11 @@ answers; the fake's own bookkeeping is covered in ``tests/test_fake_system.py``.
 
 from __future__ import annotations
 
+import json
 import os
+import subprocess
 import sys
+import time
 import uuid
 from pathlib import Path
 from typing import Iterator
@@ -23,8 +26,8 @@ from typing import Iterator
 import pytest
 
 from gupkg.system.fake import FakeSystem
-from gupkg.system.port import EnvValue, Scope, ShortcutSpec, System
-from gupkg.system.windows import WindowsSystem
+from gupkg.system.port import EnvValue, ProcessAborted, ProcessResult, Scope, ShortcutSpec, System, WorkerDidNotStart
+from gupkg.system.windows import WindowsSystem, _ProcessJob
 
 windows_only = pytest.mark.skipif(os.name != "nt", reason="needs Windows")
 
@@ -318,6 +321,19 @@ def test_windows_distinguishes_admin_only_folders_from_user_writable_ones(tmp_pa
     assert system.directory_untrusted_reason(tmp_path)
 
 
+@pytest.mark.windows_integration
+@windows_only
+def test_windows_judges_a_single_file_by_its_own_permissions(tmp_path: Path) -> None:
+    """A user-writable file is untrusted, and a file of an admin-only folder is trusted (the per-file check of the hook rule)."""
+    system = WindowsSystem()
+    mine = tmp_path / "script.py"
+    mine.write_text("x", encoding="utf-8")
+    system_file = Path(os.environ["SystemRoot"]) / "System32" / "cmd.exe"
+
+    assert system.directory_untrusted_reason(mine)
+    assert system.directory_untrusted_reason(system_file) is None
+
+
 def test_machine_and_user_scopes_have_different_shortcut_and_bin_folders(machine: System) -> None:
     """Each scope has its own Start Menu ``opt`` folder and its own ``bin`` folder."""
     user, machine_scope = machine.scope_folders(Scope.USER), machine.scope_folders(Scope.MACHINE)
@@ -406,3 +422,378 @@ def test_windows_run_kills_a_child_that_outlives_its_timeout(tmp_path: Path) -> 
     """A child that runs past the timeout is killed and the caller gets a ``TimeoutError``."""
     with pytest.raises(TimeoutError):
         WindowsSystem().run([sys.executable, "-c", "import time; time.sleep(30)"], tmp_path, None, None, timeout=0.5)
+
+
+# ---------------------------------------------------------------------------
+# Processes under a watcher (System.run(watch=...))
+# ---------------------------------------------------------------------------
+
+
+def _watched_command(machine: System, script: str, output: str = "") -> list[str]:
+    """Return a command for *machine* that behaves like the Python *script* (a double on the fake).
+
+    The fake runs no real child: it gets a double that finishes at once with *output* and, like the
+    contract says, asks the watcher once after the child has run.
+    """
+    if isinstance(machine, FakeSystem):
+        machine.processes["probe"] = lambda call: ProcessResult(0, output)
+        return ["probe"]
+    return [sys.executable, "-c", script]
+
+
+def test_a_watcher_that_names_a_reason_aborts_the_run_with_that_reason(machine: System, tmp_path: Path) -> None:
+    """``watch`` returning text raises ``ProcessAborted`` carrying it; on the real system the child is killed first."""
+    command = _watched_command(machine, "import time; time.sleep(30)")
+    started = time.monotonic()
+
+    with pytest.raises(ProcessAborted, match="too much output"):
+        machine.run(command, tmp_path, None, None, watch=lambda: "too much output")
+
+    assert time.monotonic() - started < 15
+
+
+def test_a_watcher_that_returns_nothing_leaves_the_run_unchanged(machine: System, tmp_path: Path) -> None:
+    """``watch`` returning ``None`` gives the normal status and output, and ``on_line`` still streams each line."""
+    command = _watched_command(machine, "print('one'); print('two')", "one\ntwo\n")
+    lines: list[str] = []
+    calls: list[int] = []
+
+    result = machine.run(command, tmp_path, None, lines.append, watch=lambda: calls.append(1))
+
+    # A child shorter than one poll may never be watched, so the number of polls is not part of the contract.
+    assert result.returncode == 0 and result.stdout.split() == ["one", "two"] and lines == ["one", "two"]
+    assert len(calls) < 50
+
+
+@pytest.mark.windows_integration
+@windows_only
+def test_windows_watcher_is_polled_while_the_child_runs_and_the_timeout_still_applies(tmp_path: Path) -> None:
+    """A slow child sees several polls; with a watcher that never objects, ``timeout`` still raises ``TimeoutError``."""
+    polls: list[float] = []
+
+    with pytest.raises(TimeoutError):
+        WindowsSystem().run(
+            [sys.executable, "-c", "import time; time.sleep(30)"], tmp_path, None, None,
+            timeout=1.0, watch=lambda: polls.append(time.monotonic()),
+        )
+
+    assert len(polls) >= 3
+
+
+@pytest.mark.windows_integration
+@windows_only
+def test_windows_aborted_child_is_gone_and_so_is_a_grandchild_it_started(tmp_path: Path) -> None:
+    """After an abort neither the child nor the helper process it started is still running to write its marker file."""
+    marker = tmp_path / "survivor.txt"
+    grandchild = f"import time, pathlib; time.sleep(3); pathlib.Path({str(marker)!r}).write_text('alive')"
+    script = (
+        "import subprocess, sys, time; "
+        f"subprocess.Popen([sys.executable, '-c', {grandchild!r}]); time.sleep(30)"
+    )
+    state = {"polls": 0}
+
+    def watch() -> str | None:
+        """Let the child start its helper, then ask for the abort."""
+        state["polls"] += 1
+        return "stop" if state["polls"] >= 3 else None
+
+    with pytest.raises(ProcessAborted):
+        WindowsSystem().run([sys.executable, "-c", script], tmp_path, None, None, watch=watch)
+    time.sleep(5)
+
+    assert not marker.exists()
+
+
+def test_a_watcher_that_raises_stops_the_run_at_once_and_its_error_reaches_the_caller(machine: System, tmp_path: Path) -> None:
+    """An exception from ``watch`` propagates and the child is killed (a leaked child would keep the call for 30 s)."""
+    command = _watched_command(machine, "import time; time.sleep(30)")
+    calls = {"count": 0}
+
+    def watch() -> str | None:
+        """Fail on the second look, so the child is running when it is raised."""
+        calls["count"] += 1
+        if calls["count"] >= 2 or isinstance(machine, FakeSystem):
+            raise RuntimeError("watcher broke")
+        return None
+
+    started = time.monotonic()
+
+    with pytest.raises(RuntimeError, match="watcher broke"):
+        machine.run(command, tmp_path, None, None, watch=watch)
+
+    assert time.monotonic() - started < 15
+
+
+GRANDCHILD_SCRIPT = (
+    "import subprocess, sys; "
+    "subprocess.Popen([sys.executable, '-c', "
+    "\"import time, pathlib; time.sleep(3); pathlib.Path(r'%s').write_text('alive')\"]); "
+)
+
+
+@pytest.mark.windows_integration
+@windows_only
+@pytest.mark.parametrize("how", [pytest.param("raises", id="the-final-poll-raises"), pytest.param("aborts", id="the-final-poll-names-a-reason")])
+def test_a_helper_that_outlived_a_finished_child_is_killed_when_the_last_watcher_poll_fails(tmp_path: Path, how: str) -> None:
+    """The child exits at once leaving a helper; the final poll fails: the helper is killed (job object) and the call is quick."""
+    marker = tmp_path / "survivor.txt"
+    script = GRANDCHILD_SCRIPT % marker.as_posix()
+    state = {"polls": 0}
+
+    def watch() -> str | None:
+        """Let the child start its helper and finish, then fail on the final look."""
+        state["polls"] += 1
+        time.sleep(0.5) if state["polls"] == 1 else None
+        if how == "raises":
+            raise RuntimeError("watcher broke")
+        return "stop"
+
+    started = time.monotonic()
+    with pytest.raises(RuntimeError if how == "raises" else ProcessAborted):
+        WindowsSystem().run([sys.executable, "-c", script], tmp_path, None, None, watch=watch)
+    elapsed = time.monotonic() - started
+    time.sleep(5)
+
+    assert not marker.exists() and elapsed < 3
+
+
+@pytest.mark.windows_integration
+@windows_only
+def test_a_helper_started_by_a_normal_run_is_left_running_when_nothing_went_wrong(tmp_path: Path) -> None:
+    """The job object kills nothing on a clean finish: a helper that is meant to outlive its parent keeps running."""
+    marker = tmp_path / "survivor.txt"
+    script = GRANDCHILD_SCRIPT % marker.as_posix()
+
+    result = WindowsSystem().run([sys.executable, "-c", script], tmp_path, None, None)
+    time.sleep(6)
+
+    assert result.returncode == 0 and marker.read_text() == "alive"
+
+
+@pytest.mark.windows_integration
+@windows_only
+def test_a_child_that_never_reads_its_input_cannot_keep_the_call_past_its_timeout(tmp_path: Path) -> None:
+    """Two megabytes of input to a child that sleeps: the timeout still fires (input is fed from its own thread)."""
+    started = time.monotonic()
+
+    with pytest.raises(TimeoutError):
+        WindowsSystem().run(
+            [sys.executable, "-c", "import time; time.sleep(30)"], tmp_path, None, None,
+            input_text="x" * 2_000_000, timeout=1.0,
+        )
+
+    assert time.monotonic() - started < 8
+
+
+REQUEST = '{"op":"search","pattern":"(?P<v>\\\\d+)","flags":32,"texts":["tool 42"],"limit":1,"cap":1000}'
+HANGING = '{"op":"search","pattern":"(a+)+$","flags":32,"texts":["%s!"],"limit":1,"cap":1000}' % ("a" * 40)
+
+
+def _alive(pid: int) -> bool:
+    """Return whether a process with this id is running (``tasklist`` lists it)."""
+    listing = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"], capture_output=True, text=True, timeout=30)
+    return f'"{pid}"' in listing.stdout
+
+
+def test_the_regex_worker_answers_a_request_in_isolation(machine: System, tmp_path: Path) -> None:
+    """A benign request gets an `ok` answer with the match; the first line on standard error is the worker's pid."""
+    lines: list[str] = []
+
+    result = machine.regex_worker(REQUEST, 20, on_line=lines.append)
+
+    assert result.returncode == 0 and lines[0].startswith("pid ")
+    assert '"ok":true' in result.stdout and '"42"' in result.stdout
+
+
+def test_the_regex_worker_is_killed_at_its_deadline_and_is_gone(machine: System) -> None:
+    """A catastrophic pattern raises TimeoutError about a second after the worker is up, and its process no longer exists."""
+    lines: list[str] = []
+    started = time.monotonic()
+
+    with pytest.raises(TimeoutError):
+        machine.regex_worker(HANGING, 1.0, on_line=lines.append)
+
+    assert time.monotonic() - started < 1.0 + 0.5 + 4  # the deadline, a poll, and a slow process start
+    pid = int(lines[0].split()[1])
+    time.sleep(0.5)
+    assert not _alive(pid)
+
+
+PROBE = (
+    "import json, os, sys\n"
+    "sys.stderr.write('pid %d\\n' % os.getpid()); sys.stderr.flush()\n"
+    "print(json.dumps({'isolated': sys.flags.isolated, 'no_site': sys.flags.no_site, 'no_bytecode': sys.flags.dont_write_bytecode,\n"
+    "                  'no_user_site': sys.flags.no_user_site, 'env': sorted(os.environ), 'cwd': os.getcwd(), 'stdin': sys.stdin.read()}))\n"
+)
+
+
+@pytest.mark.windows_integration
+@windows_only
+def test_the_regex_worker_runs_isolated_with_a_minimal_environment_in_an_empty_temporary_folder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The worker is started with -I -s -B -S, only SystemRoot in its environment, and an empty temporary folder as cwd."""
+    probe = tmp_path / "probe.py"
+    probe.write_text(PROBE, encoding="utf-8")
+    monkeypatch.setattr("gupkg.system.windows._REGEX_WORKER", probe)
+    monkeypatch.setenv("GITHUB_TOKEN", "secret-token")
+
+    result = WindowsSystem().regex_worker("the request", 20)
+
+    seen = json.loads(result.stdout)
+    assert seen["isolated"] == seen["no_site"] == seen["no_bytecode"] == seen["no_user_site"] == 1
+    assert [name.upper() for name in seen["env"]] == ["SYSTEMROOT"] and seen["stdin"] == "the request"
+    assert "gupkg-regex-" in seen["cwd"] and "secret-token" not in result.stdout
+
+
+@pytest.mark.windows_integration
+@windows_only
+def test_the_regex_deadline_counts_from_the_pid_line_not_from_the_process_start(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A worker that is slow to say it is up (1.5 s) but quick afterwards is not timed out by a 0.5 s deadline."""
+    slow = tmp_path / "slow_start.py"
+    slow.write_text(
+        "import os, sys, time\ntime.sleep(1.5)\nsys.stderr.write('pid %d\\n' % os.getpid()); sys.stderr.flush()\n"
+        "print('{\"ok\":true,\"names\":{},\"results\":[[]]}')\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("gupkg.system.windows._REGEX_WORKER", slow)
+
+    result = WindowsSystem().regex_worker(REQUEST, 0.5)
+
+    assert result.returncode == 0 and '"ok":true' in result.stdout
+
+
+@pytest.mark.windows_integration
+@windows_only
+def test_a_worker_that_overruns_its_start_limit_is_reported_as_not_started_with_that_limit(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The error names the start limit, not the (shorter) matching deadline."""
+    silent = tmp_path / "silent2.py"
+    silent.write_text("import time\ntime.sleep(60)\n", encoding="utf-8")
+    monkeypatch.setattr("gupkg.system.windows._REGEX_WORKER", silent)
+    monkeypatch.setattr("gupkg.system.windows._WORKER_START_SECONDS", 1.0)
+
+    with pytest.raises(WorkerDidNotStart, match="did not start within 1 seconds"):
+        WindowsSystem().regex_worker(REQUEST, 0.5)
+
+
+@pytest.fixture
+def job_closes(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Count the calls of ``_ProcessJob.close`` (one per job handle released)."""
+    closed: list[int] = []
+    original = _ProcessJob.close
+
+    def spy(self: _ProcessJob) -> None:
+        """Record the release, then do it."""
+        closed.append(1)
+        original(self)
+
+    monkeypatch.setattr(_ProcessJob, "close", spy)
+    return closed
+
+
+@pytest.mark.windows_integration
+@windows_only
+@pytest.mark.parametrize("path", ["finishes", "times-out", "watcher-raises", "worker-deadline"])
+def test_the_job_handle_is_closed_on_every_path(job_closes: list[int], tmp_path: Path, path: str) -> None:
+    """A clean finish, a timeout, a raising watcher and a regex deadline each release their job handle exactly once."""
+    system = WindowsSystem()
+    sleeper = [sys.executable, "-c", "import time; time.sleep(30)"]
+
+    if path == "finishes":
+        system.run([sys.executable, "-c", "pass"], tmp_path)
+    elif path == "times-out":
+        with pytest.raises(TimeoutError):
+            system.run(sleeper, tmp_path, timeout=0.5)
+    elif path == "watcher-raises":
+        with pytest.raises(RuntimeError):
+            system.run(sleeper, tmp_path, watch=lambda: (_ for _ in ()).throw(RuntimeError("broke")))
+    else:
+        with pytest.raises(TimeoutError):
+            system.regex_worker(HANGING, 0.5)
+
+    assert job_closes == [1]
+
+
+@pytest.mark.windows_integration
+@windows_only
+def test_a_failure_to_create_the_job_kills_the_child_and_reaches_the_caller(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """If the job object code raises, the child is killed (no leaked process or reader thread) and the error is raised."""
+    lines: list[str] = []
+
+    def broken(process: object, *, kill_on_close: bool = False) -> None:
+        """Fail the way a ctypes problem would."""
+        raise OSError("job objects are unavailable")
+
+    monkeypatch.setattr(_ProcessJob, "around", broken)
+    started = time.monotonic()
+
+    with pytest.raises(OSError, match="job objects are unavailable"):
+        WindowsSystem().run(
+            [sys.executable, "-c", "import os, time; print(os.getpid(), flush=True); time.sleep(30)"], tmp_path, None, lines.append
+        )
+
+    assert time.monotonic() - started < 10
+    time.sleep(0.5)
+    assert not _alive(int(lines[0])) if lines else True
+
+
+@pytest.mark.windows_integration
+@windows_only
+def test_the_regex_worker_runs_in_a_kill_on_close_job_and_an_ordinary_child_does_not(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Only the regex worker's job ends its processes when the handle closes; a normal run's helpers may outlive it."""
+    asked: list[bool] = []
+    original = _ProcessJob.around.__func__
+
+    def spy(cls: type, process: object, *, kill_on_close: bool = False) -> object:
+        """Record the flag, then create the job as usual."""
+        asked.append(kill_on_close)
+        return original(cls, process, kill_on_close=kill_on_close)
+
+    monkeypatch.setattr(_ProcessJob, "around", classmethod(spy))
+
+    WindowsSystem().regex_worker(REQUEST, 20)
+    WindowsSystem().run([sys.executable, "-c", "pass"], tmp_path)
+
+    assert asked == [True, False]
+
+
+@pytest.mark.windows_integration
+@windows_only
+def test_closing_a_kill_on_close_job_ends_the_process_in_it(tmp_path: Path) -> None:
+    """With kill_on_close the process dies when the job handle is closed (as it would if the parent were killed); without it, it lives."""
+    mortal = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    spared = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        _ProcessJob.around(mortal, kill_on_close=True).close()
+        _ProcessJob.around(spared).close()
+
+        assert mortal.wait(timeout=10) is not None
+        time.sleep(0.5)
+        assert spared.poll() is None
+    finally:
+        spared.kill()
+        mortal.kill()
+        spared.wait()
+        mortal.wait()
+
+
+@pytest.mark.windows_integration
+@windows_only
+def test_a_regex_worker_that_never_starts_is_stopped(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A worker that does not report within the start limit is killed and reported as a timeout, not waited for."""
+    silent = tmp_path / "silent.py"
+    silent.write_text("import time\ntime.sleep(60)\n", encoding="utf-8")  # never prints the pid line
+    monkeypatch.setattr("gupkg.system.windows._REGEX_WORKER", silent)
+    monkeypatch.setattr("gupkg.system.windows._WORKER_START_SECONDS", 1.0)
+    started = time.monotonic()
+
+    with pytest.raises(TimeoutError, match="did not start"):
+        WindowsSystem().regex_worker(REQUEST, 20)
+
+    assert time.monotonic() - started < 15
+
+
+def test_a_child_that_finishes_at_once_is_still_judged_by_one_last_look_of_the_watcher(machine: System, tmp_path: Path) -> None:
+    """A watcher that only objects after the child ended still aborts the run, on the fake and on Windows alike."""
+    command = _watched_command(machine, "pass")
+
+    with pytest.raises(ProcessAborted, match="late objection"):
+        machine.run(command, tmp_path, None, None, watch=lambda: "late objection")

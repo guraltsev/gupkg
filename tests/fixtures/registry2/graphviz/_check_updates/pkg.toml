@@ -1,0 +1,13 @@
+format = 2
+description = "Graph visualization software."
+project_url = "https://graphviz.org/"
+
+[track]
+provider = "page"
+check_url = "https://graphviz.org/download/"
+match = 'graphviz-releases/(?P<version>\d+(?:\.\d+)+)/windows_10_cmake_Release_Graphviz-(?P=version)-win64\.zip'
+download = "https://gitlab.com/api/v4/projects/4207231/packages/generic/graphviz-releases/${version}/windows_10_cmake_Release_Graphviz-${version}-win64.zip"
+
+[source]
+download_url = "${download_url}"
+strip = "auto"

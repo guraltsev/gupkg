@@ -14,6 +14,10 @@ the user or machine target of an environment or shortcut operation. Use
 ``run_checked(system, argv, ...)`` for the three patterns that every caller
 repeats.
 
+``http_request`` returns the response of any status without following redirects, and
+``http_download`` streams a body into a file (appending a ``206`` answer when asked); redirect,
+retry and token policy live in ``gupkg.services.http``, not in the implementations.
+
 Beyond the groups in the issue, the protocol has ``scope_folders`` (the Start Menu
 ``opt`` and ``bin`` folders of a scope, so the sandbox can keep them off the real
 machine), ``directory_untrusted_reason`` (why a folder is not admin-only, next to
@@ -104,8 +108,51 @@ class ProcessResult:
     stderr: str = ""
 
 
+class ProcessAborted(OSError):
+    """Report a child process that gupkg killed because its watcher asked for it."""
+
+
+class WorkerDidNotStart(TimeoutError):
+    """Report that the regex worker never said it was up within its start limit (not a slow pattern)."""
+
+
 class ProcessFailed(RuntimeError):
     """Report that a child process that had to succeed exited with a failure status."""
+
+
+@dataclass(frozen=True)
+class HttpResponse:
+    """Hold one HTTP response whatever its status: final URL, lower-case headers and body.
+
+    ``http_request`` never follows a redirect, so ``url`` is the URL that was
+    requested and a 3xx response carries its ``location`` header. Repeated
+    headers are joined with ``", "``.
+    """
+
+    status: int
+    url: str
+    headers: Mapping[str, str]
+    body: bytes = b""
+
+
+@dataclass(frozen=True)
+class DownloadResponse:
+    """Report one ``http_download`` call: status, headers, and how the file was written.
+
+    ``written`` counts the bytes this call wrote to the file. ``resumed`` is true
+    only when the server answered a ``Range`` request with 206 and the bytes were
+    appended. A 3xx or error status writes nothing.
+    """
+
+    status: int
+    url: str
+    headers: Mapping[str, str]
+    written: int = 0
+    resumed: bool = False
+
+
+class ResponseTooLarge(OSError):
+    """Report that a response body is larger than the size the caller allows."""
 
 
 class System(Protocol):
@@ -201,13 +248,35 @@ class System(Protocol):
         *,
         input_text: str | None = None,
         timeout: float | None = None,
+        watch: Callable[[], str | None] | None = None,
     ) -> ProcessResult:
         """Run a child process to completion and return its status and output.
 
         ``on_line`` receives each output line (both streams) as it is read.
         ``argv[0]`` may be a ``.ps1``, ``.cmd`` or ``.bat`` script, which the
         implementation starts through its interpreter. A non-zero exit status
-        is returned, not raised.
+        is returned, not raised. ``watch`` is called about five times a second while the
+        process runs; when it returns text the process is killed and ``ProcessAborted`` is
+        raised with that text (how a caller bounds what a child writes to disk).
+        """
+
+    def regex_worker(
+        self,
+        request: str,
+        timeout: float,
+        *,
+        on_line: Callable[[str], None] | None = None,
+    ) -> ProcessResult:
+        """Run the isolated regular-expression worker on *request* and return its status and output.
+
+        The worker is ``gupkg/system/regex_worker.py`` started with the running interpreter and
+        ``-I -s -B -S``, a minimal environment and an empty temporary folder as its working
+        directory. *request* is sent on standard input; ``stdout`` of the result is the answer
+        (see the worker for the protocol). When the worker is still running *timeout* seconds
+        after it reported that it is up (its first line, ``pid <number>``, so a slow process
+        start does not count) its whole process tree is killed and ``TimeoutError`` is raised,
+        so a pattern that makes ``re`` run for ever costs the caller about *timeout* seconds. ``on_line``
+        receives each line the worker writes, the first being ``pid <number>``.
         """
 
     # -- network -----------------------------------------------------------
@@ -233,10 +302,69 @@ class System(Protocol):
     ) -> str:
         """Return the UTF-8 text served at *url*."""
 
+    def http_request(
+        self,
+        url: str,
+        headers: Mapping[str, str] | None = None,
+        *,
+        method: str = "GET",
+        timeout: float = 60,
+        max_bytes: int | None = None,
+        total_timeout: float | None = None,
+    ) -> HttpResponse:
+        """Send one request and return the response of any status, without following redirects.
+
+        Only ``http://``, ``https://`` and ``file://`` URLs are served. At most
+        *max_bytes* of the body are read; a longer body raises
+        ``ResponseTooLarge``, and ``max_bytes=0`` returns the headers only. Network
+        failures raise ``OSError``; *timeout* is the idle time of each socket operation and
+        *total_timeout* the time the whole answer may take (``TimeoutError``). Redirect, retry and header policy belong to
+        ``gupkg.services.http``, which calls this method once per hop.
+        """
+
+    def http_download(
+        self,
+        url: str,
+        headers: Mapping[str, str] | None,
+        dest: Path,
+        on_progress: Callable[[int, int | None], None] | None = None,
+        *,
+        timeout: float = 60,
+        append: bool = False,
+        on_headers: Callable[[int, Mapping[str, str]], None] | None = None,
+        total_timeout: float | None = None,
+    ) -> DownloadResponse:
+        """Stream one response body into *dest* and report how it went; redirects are not followed.
+
+        A 2xx answer is written to *dest*. With ``append=True`` the caller has sent
+        a ``Range`` header: a 206 answer is appended to *dest*, and any other 2xx
+        answer replaces it (the server ignored the range). A 3xx, 4xx or 5xx answer
+        leaves *dest* untouched and writes nothing. ``on_progress(received, total)``
+        counts the bytes of the whole file, resumed ones included. ``on_headers(status,
+        headers)`` is called once, before the first body byte, for every answer, so a
+        caller can remember the validators (``etag``, ``last-modified``) of a file whose
+        body is then interrupted.
+        """
+
 
 # ---------------------------------------------------------------------------
 # Shared patterns
 # ---------------------------------------------------------------------------
+
+
+# The only variables a child process such as git inherits: machine-level paths, never user settings.
+_SAFE_ENVIRONMENT_NAMES = ("PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC", "TEMP", "TMP", "PROGRAMDATA")
+
+
+def safe_process_environment(extra: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Return a minimal environment for a child process: machine-level variables plus *extra*.
+
+    Nothing of the user's own settings is passed on (decision D19: an elevated gupkg ignores them,
+    and a normal one gives a child process no more than it needs).
+    """
+    kept = {name: value for name, value in os.environ.items() if name.upper() in _SAFE_ENVIRONMENT_NAMES}
+    kept.update(extra or {})
+    return kept
 
 
 def is_elevated_run(system: System) -> bool:

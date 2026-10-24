@@ -79,8 +79,14 @@ def test_the_whole_0_17_registry_converts_to_valid_format_2(registry: Path, caps
     checked = [path.parent for path in registry.glob("*/*/pkg.toml")]
     assert len(checked) == 79
     for directory in checked:
+        # A 0.17 hook is not run by 1.0: the only errors left are the "rewrite for hook API 2" ones,
+        # which the converter reports as notes for the author.
         report = check_directory(directory)
-        assert report.errors == (), f"{directory.relative_to(registry)}: {report.errors}"
+        leftover = [error for error in report.errors if not error.endswith("must declare PKG_MODULE_API = 2")]
+        assert leftover == [], f"{directory.relative_to(registry)}: {leftover}"
+        if directory.parent.name == "firefox":
+            # The filter above must not be vacuous: firefox keeps 0.17 hooks, and they are reported.
+            assert any("PKG_MODULE_API" in error for error in report.errors)
 
 
 def test_converted_registry_keeps_the_meaning_of_representative_packages(registry: Path) -> None:

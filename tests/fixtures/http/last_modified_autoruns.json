@@ -1,0 +1,26 @@
+{
+ "case": "last_modified_autoruns",
+ "tracker": "autoruns",
+ "provider": "last_modified",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/autoruns/_bootstrap/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "20240911",
+  "download_url": "https://download.sysinternals.com/files/Autoruns.zip",
+  "sha256": null,
+  "sha256_from": null
+ },
+ "responses": [
+  {
+   "url": "https://download.sysinternals.com/files/Autoruns.zip",
+   "method": "HEAD",
+   "status": 200,
+   "headers": {
+    "Last-Modified": "Wed, 11 Sep 2024 17:31:09 GMT",
+    "Content-Length": "2957000",
+    "Content-Type": "application/x-zip-compressed"
+   },
+   "body": ""
+  }
+ ]
+}

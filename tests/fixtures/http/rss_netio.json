@@ -1,0 +1,24 @@
+{
+ "case": "rss_netio",
+ "tracker": "netio-gui",
+ "provider": "rss",
+ "recorded": null,
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (gupkg-registry/netio-gui/_bootstrap/pkg.local/check_update.py); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "expected": {
+  "version": "1.10",
+  "download_url": "https://sourceforge.net/projects/netiogui/files/netio-gui_v1.10_portable.zip/download",
+  "sha256": null,
+  "sha256_from": null
+ },
+ "responses": [
+  {
+   "url": "https://sourceforge.net/projects/netiogui/rss?path=/",
+   "method": "GET",
+   "status": 200,
+   "headers": {
+    "Content-Type": "application/rss+xml; charset=utf-8"
+   },
+   "body": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<rss xmlns:media=\"http://video.search.yahoo.com/mrss/\" version=\"2.0\"><channel><title>NetIO-GUI</title>\n<item><title><![CDATA[/netio-gui_v1.3_portable.zip]]></title><link>https://sourceforge.net/projects/netiogui/files/netio-gui_v1.3_portable.zip/download</link>\n<guid>https://sourceforge.net/projects/netiogui/files/netio-gui_v1.3_portable.zip/download</guid></item>\n<item><title><![CDATA[/netio-gui_v1.10_portable.zip]]></title><link>https://sourceforge.net/projects/netiogui/files/netio-gui_v1.10_portable.zip/download</link>\n<guid>https://sourceforge.net/projects/netiogui/files/netio-gui_v1.10_portable.zip/download</guid></item>\n<item><title><![CDATA[/netio-gui_v1.9_setup.exe]]></title><link>https://sourceforge.net/projects/netiogui/files/netio-gui_v1.9_setup.exe/download</link></item>\n</channel></rss>"
+  }
+ ]
+}

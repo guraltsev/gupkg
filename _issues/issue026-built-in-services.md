@@ -150,3 +150,26 @@ other.
 ## Out of scope
 
 Converting the registry. That is issue 031, which uses these services.
+
+## Closing notes
+
+- **Accepted as delivered (owner decision):** the provider fixtures under `tests/fixtures/http/` are
+  synthetic, modelled on the registry hooks' regular expressions and marked `"recorded": null`, and the
+  NSIS and MSI kinds are tested with a 7-Zip process double. Each fixture carries its own `expected` block;
+  `tools/record_http_fixtures.py` records the whole tracker walk against the live sites and rewrites it.
+- **Owed to issue 031 and the owner:** (1) record the fixtures with `tools/record_http_fixtures.py` and
+  review the diff (an explicit acceptance item of issue 031, plus manual check 1 of `tests/manual_smoke.md`);
+  (2) commit a small real NSIS sample when the owner provides one, and replace the NSIS process double.
+- **Delivered here, not in 028 (owner decision):** the subprocess regex runner. Every manifest pattern applied to
+  fetched text runs in `gupkg/system/regex_worker.py` through `System.regex_worker` with a hard deadline
+  (kill of the process tree, fail closed; design section 8.1). The static guard is only a first filter.
+  The runner does not cap memory. Issue 028 only wires an elevated run: the trust checks of
+  `gupkg.services.hooks.require_trusted_code` and `gupkg.services.http.github_environment`, and resolving
+  the version-control and ssh programs from machine or admin-only paths (they are found through the
+  inherited `PATH` today). Also owed to 028: in an elevated run the worker's interpreter
+  (`sys.executable`) and `gupkg/system/regex_worker.py` (found today as `Path(__file__)` beside
+  `windows.py`) must come from an admin-only location, with that trust checked before the worker is
+  launched, the same rule as for package code.
+- **Runner cost:** one worker process per call (50 to 400 ms to start here); a release run is two calls
+  (all tags, all asset names) when the asset pattern does not depend on the release, and a runner stops
+  with a clear error after 120 s of wall-clock time (`WALL_SECONDS`), separate from its 10 s of matching.
