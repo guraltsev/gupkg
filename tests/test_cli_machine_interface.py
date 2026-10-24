@@ -28,6 +28,20 @@ from tests.mode_support import pin_no_ambient_elevation, tree_snapshot  # noqa: 
 
 RESULT_KEYS = {"api", "command", "ok", "exit_code", "relaunched", "results", "warnings"}
 ENTRY_KEYS = {"package", "operation", "ok", "status", "version", "previous", "mode", "exit_code", "receipt", "log", "warnings"}
+# A successful entry also carries ``details``, a failed one ``error``; plans add keys that belong to their operation only.
+SUCCESS_ENTRY_KEYS = ENTRY_KEYS | {"details"}
+FAILED_ENTRY_KEYS = ENTRY_KEYS | {"error"}
+ERROR_KEYS = {"code", "message"}  # plus "hint", present only when there is one
+
+
+def assert_error_shape(error: dict) -> None:
+    """Assert the pinned shape of one structured error: ``code`` and ``message``, and ``hint`` only when it has text."""
+    assert set(error) in (ERROR_KEYS, ERROR_KEYS | {"hint"}) and error["code"] and error["message"]
+    assert "hint" not in error or (isinstance(error["hint"], str) and error["hint"])
+PLAN_EXTRA: dict[str, set[str]] = {
+    "check-updates": {"download", "writes"}, "install": {"populate"}, "update": {"populate"}, "switch": {"populate"},
+    "uninstall": set(), "cleanup": {"cleanup"},
+}
 PLAN_KEYS = {
     "operation", "package", "path", "mode", "requires_elevation", "version", "previous", "effects", "phases", "notes", "sha256", "url",
 }
@@ -51,7 +65,7 @@ def test_the_result_document_has_the_pinned_keys(world: CliWorld) -> None:
     assert set(document) == RESULT_KEYS and document["api"] == 1 and document["command"] == "update"
     assert document["ok"] is True and document["exit_code"] == 0 and document["relaunched"] is False
     (entry,) = document["results"]
-    assert ENTRY_KEYS <= set(entry) and entry["package"] == "tool" and entry["status"] == "updated"
+    assert set(entry) == SUCCESS_ENTRY_KEYS and entry["package"] == "tool" and entry["status"] == "updated"
     assert (entry["version"], entry["previous"], entry["mode"]) == ("2.0.0", "1.0.0", "user")
     assert Path(entry["receipt"]).is_file() and Path(entry["log"]).is_file()
 
@@ -92,7 +106,7 @@ def test_every_command_that_accepts_plan_prints_a_plan_document_and_changes_noth
     assert document["plan"] is True and document["command"] == operation and document["ok"] is True
     entry = document["plans"][0]
     assert entry["target"] == "tool" and entry["ok"] is True
-    assert PLAN_KEYS <= set(entry["plan"]) and entry["plan"]["operation"] == operation
+    assert set(entry) == {"target", "ok", "exit_code", "plan"} and set(entry["plan"]) == PLAN_KEYS | PLAN_EXTRA.get(operation, set()) and entry["plan"]["operation"] == operation
     assert entry["plan"]["mode"] == "user" and entry["plan"]["requires_elevation"] is False
     after = [tree_snapshot(root) for root in roots]
     for old, new in zip(before, after):
@@ -142,6 +156,23 @@ def test_a_plan_that_cannot_be_made_is_the_targets_failure_with_its_exit_code(wo
     assert result.code == 2 and document["ok"] is False and document["exit_code"] == 2
     entry = document["plans"][0]
     assert entry["ok"] is False and entry["result"]["error"]["code"] == "not-found"
+    assert set(entry) == {"target", "ok", "exit_code", "result"} and set(entry["result"]) == FAILED_ENTRY_KEYS
+    assert_error_shape(entry["result"]["error"])
+    assert set(document) == {"api", "command", "ok", "exit_code", "plan", "plans"}
+
+
+def test_a_failed_entry_and_an_error_document_have_exactly_the_pinned_keys(world: CliWorld) -> None:
+    """A failed target has the base keys plus ``error`` (code, message, hint); a document-level error has errors[] and nothing else."""
+    failed = world.cli("install", "nothing-like-this", "--json").document()
+    usage = world.cli("install", "tool", "--mode", "nowhere", "--json").document()
+    declined = world.cli("uninstall", "tool", "--purge", "--no-input", "--json").document()
+
+    assert set(failed) == RESULT_KEYS and set(failed["results"][0]) == FAILED_ENTRY_KEYS
+    assert_error_shape(failed["results"][0]["error"])
+    assert set(usage) == {"api", "command", "ok", "exit_code", "errors"}
+    assert_error_shape(usage["errors"][0])
+    assert set(declined) == RESULT_KEYS and set(declined["results"][0]) == FAILED_ENTRY_KEYS
+    assert_error_shape(declined["results"][0]["error"])
 
 
 def test_a_usage_error_is_exit_2_with_an_error_document_when_json_is_asked(world: CliWorld) -> None:

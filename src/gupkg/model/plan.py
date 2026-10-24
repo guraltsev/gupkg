@@ -212,7 +212,7 @@ class PopulatePlan:
     url : str, optional
         The address the built-in download script fetches (the only one: design section 4).
     checksum : ChecksumPlan, optional
-        What ``--plan`` reports for the download (``present``, ``missing`` or ``invalid``).
+        What ``--plan`` reports for the download (``present`` or ``missing``; a malformed declared hash makes the version invalid, so no plan exists).
     script : str, optional
         The custom populate script.
     recoverable : bool
@@ -327,7 +327,7 @@ class InstallPlan:
         """Return the JSON-ready plan document of ``--plan --json`` (design 10.4).
 
         Per target: the chosen version, the mode, whether elevation is required,
-        ``sha256: present | missing | invalid``, the source URL, and the effects to add or remove.
+        ``sha256: present | missing``, the source URL, and the effects to add or remove.
         """
         data: dict[str, Any] = {
             "operation": self.operation,
