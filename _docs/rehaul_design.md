@@ -1652,14 +1652,20 @@ gupkg/
 ```
 
 ```text
-gupkg_ui/       shared by the two UI programs; may import gupkg core (D44)
-  client.py       runs `gupkg` subprocesses; parses --json / --plan; follows --events-file
-  render.py       event stream -> phase-styled Textual widgets
-gupkg_tui/      separate program (gupkg-tui.exe shim): one package's view and actions
-gupkg_manager/  separate program (gupkg-manager.exe shim)
-  batch.py        inventory -> plan -> confirm -> grouped execution (one elevated call per batch)
-  policy.py       [manager] checksum_missing ask/refuse/skip
-  app/            Textual UI: browser, run view
+gupkg_ui/       shared by the two UI programs; may import gupkg core for reading (D44), never the engine
+  client.py       the only module that starts a program: the sibling gupkg.cmd, argument lists, api check, stop request
+  follow.py       follows --events-file files (global file + the package files it links to), bounded and strict
+  render.py       event records -> phase-styled Rich text (literal, cleaned), verdict and summary lines
+  plans.py        reads list/info/--plan documents; decides each planned target with model/manager_policy.py (ask/refuse/skip)
+  steps.py        groups targets into calls: one non-elevated call and ONE call for all system targets
+  session.py      runs the calls of a batch, combines their results, cancel through the stop marker
+  flows.py        plan -> one confirmation -> policy -> grouped execution -> cleanup (shared by both programs)
+  settings.py, startup.py, console.py, interaction.py
+  screens/        frame (key-hint line, status line), run view, package view, log view, dialogs
+gupkg_tui/      separate program (gupkg-tui launcher): one package's view and actions (cli.py, app.py)
+gupkg_manager/  separate program (gupkg-manager launcher)
+  batch.py        inventory, selection of what an --all batch acts on, the batch commands
+  app/            Textual UI: the application and the browser
   cli.py          gupkg-manager [tui] | check-updates --all | update --all [--mode M] [--yes] | check
 ```
 
