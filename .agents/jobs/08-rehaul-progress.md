@@ -146,3 +146,5 @@ Deferred deep review (open items for NEXT WEEK, not done this week):
 - Flakiness loops (pilot tests, CPU-busy), 100k-line responsiveness numbers, NO_COLOR/resize checks.
 - Full multi-environment passes (scrubbed env, GUPKG_ELEVATED=1, windows_integration) by an independent reviewer.
 - Bundle MANIFEST inspection and a second review round for any issue that needed fixes.
+
+- 2026-10-24: 030 basic review (clean; minor notes: `_follow` re-kills in a loop after the first taskkill, warning text when `end['result']` is missing, reader reset vs `EventStream.run_end` untraced) then merged (2828520). Post-merge suite on main running (log `08-rehaul-logs/main-after-030.txt`). Worker for 033 dispatched from main (basic review only, per owner decision).
