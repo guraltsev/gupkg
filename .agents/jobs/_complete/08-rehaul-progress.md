@@ -28,25 +28,31 @@ on `main` before dispatching the first worker.
 | 027 | Checksum policy | 023, 026 | merged | rehaul/issue027 | 8f8a727 | 2122 passed, 0 failed, 0 skipped (also GUPKG_ELEVATED=1, scrubbed env) | none |
 | 028 | Execution engine | 021, 022, 024, 025, 026, 027 | merged | rehaul/issue028 | 20bbe94 | 3301 passed, 0 failed, 0 skipped (scrubbed env, ambient, GUPKG_ELEVATED=1) | 028-1..028-8 in tests/manual_smoke.md (real install/update/uninstall/repair; elevated system install; portable; GIMP vendor installer with pinned sha256; concurrent processes) |
 | 029 | Unified command-line interface and machine interface | 028 | merged | rehaul/issue029 | 198affd | 3495 passed, 0 failed, 0 skipped (scrubbed env, ambient, GUPKG_ELEVATED=1) | 029-1..029-13 in tests/manual_smoke.md (real console; real UAC relaunch + wait + Ctrl-C; hostile target under UAC; redirected non-ASCII output; forwarders; pkg check --install; shell; purge) |
-| 030 | `gupkg-tui` and `gupkg-manager` | 018, 022, 027, 029 | in review | rehaul/issue030 | | | |
+| 030 | `gupkg-tui` and `gupkg-manager` | 018, 022, 027, 029 | merged | rehaul/issue030 | 2828520 | 3760 passed, 0 failed, 0 skipped (worker: ambient, scrubbed, GUPKG_ELEVATED=1, windows_integration) | manual smoke items listed in the closed issue 030 and `tests/manual_smoke.md` (incl. close-window/Ctrl-C leaves no python.exe) |
 | 031 | Registry 2 | 023, 026, 027 | merged (this repo; registry branch NOT merged, see notes) | rehaul/issue031 | e457d7c | 2718 passed, 0 failed, 0 skipped (scrubbed env, ambient, GUPKG_ELEVATED=1); registry `_tests` 100 passed, 80 directories pass the checker | Registry 2 manual items 1-14 in tests/manual_smoke.md: first population with network (review every [REVIEW] hash), `pin qbittorrent/5.2.3`, `--auto-push` on a scratch remote, strict-default install of every package (user and portable), verify PORTABLE-UNVERIFIED.md, re-record 76 HTTP fixtures + real NSIS sample, distribution install vs fingerprint, GIMP installer, SSH git URLs, CI + SHA-pin actions, msys2 tar.xz, GitHub digests, shutter-encoder page, device-name probe |
-| 033 | Bundled mode, package launchers, and bootstrap | 016, 023, 026, 028, 029, 030 | waiting | | | | |
-| 032 | Migration path, documentation, issue hygiene, 1.0 release | all | waiting | | | | |
+| 033 | Bundled mode, package launchers, and bootstrap | 016, 023, 026, 028, 029, 030 | merged | rehaul/issue033 | d48404a | 3804 passed, 11 skipped (10 `needs_admin` + 1) on main | 033-1..033-9 in `tests/manual_smoke.md` |
+| 032 | Migration path, documentation, issue hygiene, 1.0 release | all | merged | rehaul/issue032 | f48b883 | 3830 passed, 11 skipped on main | 032-1..032-4 in `tests/manual_smoke.md` |
 
 ## Releases
 
 - **0.18:** prepared locally 2026-10-22. Version bumped (0a4a63f), tag `v0.18.0` on 0a4a63f, `RELEASES.md` row committed in the "Release 0.18.0" commit, ZIP `dist/gupkg-0.18.0-win-amd64.zip` (sha256 `240d4ace40059a6ca65d85241459881f7692aa4029ff084408f16823f437d124`, built from a real fetch with pinned digests; the build probe passed). **Nothing was pushed, published or uploaded.** The owner must: push the branch and tag (`git push github main` and `git push github v0.18.0`; the tool printed `origin`, but this repo's remote is `github`), then create the GitHub release `v0.18.0` with the ZIP as asset (`gh release create v0.18.0 dist\gupkg-0.18.0-win-amd64.zip --title "gupkg 0.18.0" --notes ...`). The `RELEASES.md` row's digest must stay equal to the uploaded bytes: upload this exact file. The ZIP was built with `tools/build_standalone.py --python <base Python with pip>` because the repo `.venv` is uv-made and has no pip (see Owner questions); the real-network build is otherwise manual check 019-1.
-- **1.0:** not prepared (issue 032).
+- **1.0:** prepared locally 2026-10-24. Version bumped (e858796), tag `v1.0.0` on e858796, `RELEASES.md` row committed in "Release 1.0.0" (69886d9), ZIP `dist/gupkg-1.0.0-win-amd64.zip` (sha256 `22e520905afe0666051e4917be722bcc8144ae14e687b8422be65c32411a2673`, built with `tools/build_standalone.py --python <base python>` because the repo `.venv` has no pip, then `tools/release.py --zip ... --no-publish`). **Nothing was pushed, published or uploaded.** The owner must: push (`git push github main` and `git push github v1.0.0`), then `gh release create v1.0.0 dist\gupkg-1.0.0-win-amd64.zip --title "gupkg 1.0.0" --notes ...` uploading this exact file. Registry: the local registry repo `gupkg-registry` main (ea23322) has the 1.0 launcher files committed; push it yourself. Do NOT publish 1.0 before the checks marked REQUIRED below.
 
 ## Owner checks pending
 
-- **Spike S1, elevated re-run.** Run
-  `.agents/jobs/_complete/07-spikes/s1/run-s1.ps1` from an elevated shell
-  and record the result. It gates merging issue 033.
-- **Spike S2, clean VM.** Download a distribution ZIP with Edge, with Smart
-  App Control in evaluation mode, and run
-  `.agents/jobs/_complete/07-spikes/s2/run-s2.ps1`. Record the result. It
-  gates merging issue 033.
+- **REQUIRED before publishing 1.0:** (1) `tests/manual_smoke.md` 033-3 / 033-4 (real bootstrap, user and system scope, squatted `C:\opt`) and 032-4 (the 1.0 ZIP on a clean VM or at least a clean user); (2) 033-1 run `scripts	est.cmd tests	est_package_launcher.py -v` from an ELEVATED shell (10 tests skip otherwise); (3) 033-5 double-click `install.cmd` in a registry folder copied into a root.
+- **Spike S1:** done (recorded in `_complete/07-spikes/s1/`).
+- **Spike S2 / Smart App Control (033-7):** a clean VM is not available. The real Edge Mark-of-the-Web result and the interactive security prompt were recorded on the owner machine. Smart App Control evaluation was NOT tested; owner approved the 033 merge on that basis. Do the check when a Windows VM is available, or accept the risk.
+- Other manual checks: 032-1 (real 0.17 tree migrated), 032-2 (follow getting_started/cookbook literally), 032-3 (self check-updates/update 1.0.0 -> 1.0.1 on a fork), the per-issue lists in the closed issues' status lines, 019-1 (real-network build), 030 close-window check.
+- Registry: run the registry tool with network to pin real versions and hashes (the `unpinned` marker for qbittorrent/5.2.3); push the registry.
+- 0.18: prepared locally (see Releases); optional, recommended to hold in favour of going straight to 1.0.
+
+## Deferred review (NEXT WEEK, owner decision 2026-10-24: basic review only this week)
+
+- 030 round 2 deep checks: 20-mutant run on final code, hostile-input probes, flakiness loops, NO_COLOR/resize, bundle MANIFEST inspection, independent multi-environment passes. Minor 030 notes: reader reset vs `EventStream.run_end` untraced; warning text when `end['result']` missing.
+- 033: mutation and adversarial review of launchers, bootstrap, self-update tracker; launcher ACL check does not cover `install.cmd` as its own object (theoretical TOCTOU); `package-launcher.cmd` re-expands `%`, `^`, embedded `"` in forwarded arguments (documented, not hardened); no dedicated tests for the `registrysource` device-name change and the kill-once change; no default `settings.toml` written at bootstrap.
+- 032 / 016: shim `.exe` + config pairs pass a relative `gupkg.cmd` (documented as unused, not fixed). 029 leftovers: relaunch events file never pruned by `prune_logs`; exit 5 vs `refused` on a missing runtime in `relaunch_elevated`; `bundled_runtime_paths` gaps; 027 closure-test gaps.
+- Doc nits: `_docs/troubleshooting.md:30` should say `invalid-checksum`; `tests/README.md:1` points to `/docs/tests.md` (now `_docs/tests.md`); issues 029 and 030 carry two status lines; `_issues/issue014` is still open (re-targeted).
 
 ## Owner questions
 

@@ -1,6 +1,6 @@
 # Job 08: Rehaul controller (implement gupkg 1.0)
 
-Status: Open
+Status: Closed (final commit: see git log, "Job 08: closed")
 
 Depends on: job 07 (closed, `_complete/07-rehaul-pre-implementation-confirmation.md`).
 
