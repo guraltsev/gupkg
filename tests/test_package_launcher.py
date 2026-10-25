@@ -54,7 +54,7 @@ def run(
     """
     environment = {
         "SystemRoot": os.environ["SystemRoot"], "ComSpec": os.environ["ComSpec"], "GUPKG_NO_PAUSE": "1",
-        "FORWARDER_EXIT": str(forwarder_exit), "BUNDLED_EXIT": str(bundled_exit), "PATH": path or os.environ["SystemRoot"] + "\System32",
+        "FORWARDER_EXIT": str(forwarder_exit), "BUNDLED_EXIT": str(bundled_exit), "PATH": path or os.environ["SystemRoot"] + "\\System32",
     }
     if inherit:
         environment = {**os.environ, **environment, "PATH": os.environ["PATH"]}

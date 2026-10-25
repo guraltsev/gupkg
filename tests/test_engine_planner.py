@@ -243,3 +243,11 @@ def test_diff_effects_keeps_the_recorded_added_fact_of_a_path_entry() -> None:
     [item] = diff_effects(recorded, desired)
 
     assert item.action == "keep" and item.effect.fields["added"] is True
+
+
+@pytest.mark.parametrize("code", [True, False, 2.0, "3", None])
+def test_an_exit_code_that_is_not_an_integer_never_passes_through_as_one(code: object) -> None:
+    """A bool, float, text or missing child exit code is exit code 4, not 0 to 6 (`True == 1` would pass as a usage error)."""
+    from gupkg.model.plan import EXIT_INTERNAL, clamp_child_exit_code
+
+    assert clamp_child_exit_code(code) == EXIT_INTERNAL  # type: ignore[arg-type]
