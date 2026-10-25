@@ -40,7 +40,7 @@ on `main` before dispatching the first worker.
 
 ## Owner checks pending
 
-- **REQUIRED before publishing 1.0:** (1) `tests/manual_smoke.md` 033-3 / 033-4 (real bootstrap, user and system scope, squatted `C:\opt`) and 032-4 (the 1.0 ZIP on a clean VM or at least a clean user); (2) 033-1 run `scripts	est.cmd tests	est_package_launcher.py -v` from an ELEVATED shell (10 tests skip otherwise); (3) 033-5 double-click `install.cmd` in a registry folder copied into a root.
+- **REQUIRED before publishing 1.0:** (1) `tests/manual_smoke.md` 033-3 / 033-4 (real bootstrap, user and system scope, squatted `C:\opt`) and 032-4 (the 1.0 ZIP on a clean VM or at least a clean user); (2) 033-1 run `scripts\test.cmd tests\test_package_launcher.py -v` from an ELEVATED shell (10 tests skip otherwise); (3) 033-5 double-click `install.cmd` in a registry folder copied into a root.
 - **Spike S1:** done (recorded in `_complete/07-spikes/s1/`).
 - **Spike S2 / Smart App Control (033-7):** a clean VM is not available. The real Edge Mark-of-the-Web result and the interactive security prompt were recorded on the owner machine. Smart App Control evaluation was NOT tested; owner approved the 033 merge on that basis. Do the check when a Windows VM is available, or accept the risk.
 - Other manual checks: 032-1 (real 0.17 tree migrated), 032-2 (follow getting_started/cookbook literally), 032-3 (self check-updates/update 1.0.0 -> 1.0.1 on a fork), the per-issue lists in the closed issues' status lines, 019-1 (real-network build), 030 close-window check.
@@ -143,7 +143,7 @@ For information (not a question):
 
 ## Owner decision (2026-10-24): basic review only, deep review deferred
 
-The owner needs a working 1.0 quickly and has few credits left this week, but does not want corners cut too much. From here: ONE basic review per remaining issue (030 delta, 033, 032): a fresh reviewer reads the new code for correctness, security and acceptance criteria and runs the suite once; at most one fix round; then the controller runs `scripts	est.cmd` and `git diff --check` on main after the merge. Merge of 033 still waits for the owner (S1/S2 question).
+The owner needs a working 1.0 quickly and has few credits left this week, but does not want corners cut too much. From here: ONE basic review per remaining issue (030 delta, 033, 032): a fresh reviewer reads the new code for correctness, security and acceptance criteria and runs the suite once; at most one fix round; then the controller runs `scripts\test.cmd` and `git diff --check` on main after the merge. Merge of 033 still waits for the owner (S1/S2 question).
 
 Deferred deep review (open items for NEXT WEEK, not done this week):
 
