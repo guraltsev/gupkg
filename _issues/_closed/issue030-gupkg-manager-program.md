@@ -4,6 +4,8 @@
 
 # Issue 030: `gupkg-tui` and `gupkg-manager` — separate UI programs, and the UI redesign
 
+> **Status (2026-10-24):** Implemented. Merged in 2828520. Manual checks still owed: tests/manual_smoke.md, 030-1 to 030-8 (both programs in a real terminal, update --all with real elevation, cancelling an elevated run, a user copy, a schedule, a hostile package name, closing while a call runs, the summary after closing). The acceptance row "Check for updates with one user and one system package" follows decision D22 (a system package is only reported from a normal shell), not the earlier wording.
+
 Date: 2026-10-22
 Priority: High (daily usability)
 Epic: 020. Design: `_docs/rehaul_design.md` §15, §10.4, §13.2. Supersedes the remaining parts of issue 015.

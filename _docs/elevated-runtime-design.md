@@ -4,18 +4,17 @@ Status: implemented. Where the implementation differs from the original
 proposal, the text below has been updated and the difference is listed in
 section 9.
 
-> **Superseded in part by issue 016.** gupkg no longer installs, repairs or
+> **Superseded in part by issues 016, 019 and the 1.0 rehaul.** gupkg no longer installs, repairs or
 > checks dependencies at run time, and it never probes for another Python:
-> `gupkg manager self repair-deps` / `update-deps`, the dependency advisory
-> notice and `gupkg.dependencies` were removed. The dependency lock now lives in
-> `tools/gupkg-deps.lock` and is maintained with `tools/update_deps.py` and
-> `tools/check_deps.py`; the release build installs it, and `gupkg manager self
-> status` checks the installed files against `MANIFEST.sha256`. The elevated
-> trust rules below (bundled interpreter only, isolated mode, admin-only
-> directories) still apply unchanged. The text below is kept as the record of
-> the original design. Issue 019 also removed pip from the bundle and from the
-> lock: the build machine's pip installs the wheels, and a build probe checks the
-> staged tree.
+> `repair-deps` / `update-deps`, the dependency advisory notice, `gupkg.dependencies`,
+> `gupkg.locked_deps` and `gupkg.dependency_notices` were removed. The dependency lock lives in
+> `tools/gupkg-deps.lock` and is maintained with `tools/update_deps.py` and `tools/check_deps.py`; the
+> release build installs it (the build machine's pip installs the wheels; pip is not in the bundle and not in
+> the lock), a build probe checks the staged tree, and `gupkg self status` checks the installed files against
+> `MANIFEST.sha256`. The elevated trust rules below (bundled interpreter only, isolated mode, admin-only
+> directories) still apply unchanged, and 1.0 extends them to package launchers (design 21.3) and to the
+> elevated relaunch (`gupkg.relaunch`, design 9.6). Sections 3.4 to 3.6, 4 to 7 and the `manager`/`pip`
+> commands they mention are kept as the record of the original design; section 9 says what is true now.
 
 ## 1. Problem
 
@@ -297,9 +296,8 @@ Following `_docs/tests.md`:
 
 ## 9. Implementation notes and deviations
 
-- Modules: `gupkg.selfmgmt.elevation` (detection and ACL policy), `gupkg.locked_deps`
-  (lockfile, staged install, `repair-deps`, `update-deps`),
-  `gupkg.dependency_notices` (advisory warning).
+- Modules: `gupkg.selfmgmt.elevation` (detection and ACL policy). The dependency modules of the first
+  implementation are gone (issue 016); `gupkg.relaunch` owns the elevated relaunch (design 9.6).
 - **Launcher detection.** Since issue 018, `gupkg.cmd` no longer probes for
   elevation (no `fltmc.exe`, no `--elevated`, no `GUPKG_FORCE_ELEVATED`).
   `bootstrap.py` checks the process token (`GUPKG_ELEVATED=1` can only make a run
@@ -316,43 +314,28 @@ Following `_docs/tests.md`:
   `.pyd` files load from it before any Python code runs, so the install location
   must be admin-only before launch, and the elevated check is a refusal gate for
   later imports, not a defence against a hostile python directory.
-- **Dependencies ship in the bundle.** `tools/build_standalone.py` installs the
-  locked wheels into `python\Lib\site-packages` and writes the `._pth` file, so
-  an elevated first run needs no installation. The lock also pins `pip`,
-  because the directory swap replaces everything in `site-packages` and
-  `repair-deps` runs `pip` from it. Update and repair run the bundled
-  interpreter with `-I` and `--isolated`, ignoring `PIP_*` variables and user
-  pip configuration.
-- **Elevated relaunch.** `windows.relaunch_elevated` now starts `cmd.exe` with
-  the package `gupkg.cmd` instead of `python -m gupkg`, which put the caller's
-  current directory on the elevated import path. System tools (`powershell`,
-  `cmd`) are resolved under `%SystemRoot%`; an elevated run never searches
-  `PATH` for them.
-- **Notification scope.** The warning is shown only for elevated runs, the only
-  runs governed by the pins. The cache records the pins it was computed for.
-  The setting is `[self] dependency_update_check = false` in the manager
-  configuration, or `GUPKG_NO_DEPENDENCY_UPDATE_CHECK=1`.
-- **Package hooks** are not refused under elevation (open question 4 resolved as
-  proposed): they run as arbitrary package-local code, and a package folder
-  that is not admin-only can therefore still run code as administrator. Install
-  system-scope packages under an admin-only root.
-- **Self-update.** `gupkg update` carries the bundled runtime and its
-  dependencies into the new version. When the new version pins different
-  dependencies, run `gupkg manager self repair-deps` once.
+- **Dependencies ship in the bundle.** `tools/build_standalone.py` installs the locked wheels into
+  `python\Lib\site-packages` (with `--require-hashes`, cross-targeted at the bundled CPython by the build
+  machine's pip) and writes the `._pth` file, so an elevated first run needs no installation. The bundle has
+  no pip, setuptools or ensurepip (issue 019), and nothing is installed at run time.
+- **Elevated relaunch.** `gupkg.relaunch` starts the elevated copy through the package's `gupkg.cmd`
+  (never `python -m gupkg`, which put the caller's current directory on the import path), builds the
+  command line from arguments it has checked for shell-significant characters, waits for the child and
+  returns its exit code. System tools (`powershell`, `cmd`) are resolved under `%SystemRoot%`; an elevated
+  run never searches `PATH` for them.
+- **Package hooks** run as trusted package-local code. Since 1.0 (design 8.6, D19) an elevated run refuses a
+  version directory or `pkg.local` that is not admin-only before importing or starting anything; install
+  system packages under the admin-only system root.
+- **Self-update.** gupkg is an ordinary package of itself: `gupkg self check-updates` and `gupkg self update`
+  prepare and activate a new release, and the populate script copies the verified bundled tree into `App`
+  (nothing of the old runtime is carried over).
 - **Lockfile provenance.** The shipped `gupkg-deps.lock` was resolved from PyPI
   for CPython 3.12 on Windows (amd64). Review it as you would any dependency
   change.
-- **Manager configuration.** `gupkg-config.toml` decides package roots,
-  executable folders and the registry source, so it is read only from the gupkg
-  package folder (or an explicit `--config`); `%APPDATA%`, `GUPKG_HOME` and the
-  working directory are no longer searched. An elevated run additionally
-  requires the configuration's folder to pass the trusted-location check.
-  The registry cache defaults to `App\registry` in the gupkg version folder, so an
-  administrator's install keeps it in the same admin-only tree. An elevated
-  `manager install` still refuses a cache in a folder non-administrators can
-  modify, so a configured `[registry] cache` must also be admin-only.
-- **Registry source.** The package registry is its own repository
-  (`gupkg-registry`). It is cloned only with a `git.exe` from an admin-only
-  folder (user-writable copies on `PATH` are skipped, never run), with HTTPS only,
-  no hooks and user Git settings ignored; otherwise the GitHub archive is
-  downloaded. Each registry is cached in `<cache>\<registry name>`.
+- **Settings.** The 0.17 `gupkg-config.toml` is replaced by the layered `settings.toml` (design section 11), every
+  layer of which is a file inside a root; an elevated run ignores the user layer and a `--settings` file outside
+  the admin-only system root, and refuses a layer whose folder is not admin-only.
+- **Registry source.** The package registry is its own repository (`gupkg-registry`). It is cloned only with a
+  trusted `git` from an admin-only folder (user-writable copies on `PATH` are skipped, never run), with HTTPS only,
+  no hooks and user Git settings ignored; otherwise the repository archive is downloaded. Each registry is
+  cached in `<root>\.gupkg\registry\<registry name>`, and a system run uses only the system root's cache.

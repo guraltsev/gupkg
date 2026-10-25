@@ -1,381 +1,321 @@
 # Operations guide
 
-This is the operational guide for the standalone Windows distribution and the
-central manager. The top-level [README](../README.md) explains the package
-model; this page is the runbook for installing, configuring, repairing, and
-operating `gupkg`.
+This is the runbook for installing, configuring, scheduling, repairing and
+migrating `gupkg` 1.0. The top-level [README](../README.md) explains the package
+model and the command reference; [Getting started](getting_started.md) and the
+[cookbook](cookbook.md) are task-oriented; [Troubleshooting](troubleshooting.md)
+lists every error message.
 
-## Choose an operating mode
+## The pieces
 
-Use package-local mode when you already have a package directory and want to
-install or repair that one package. Use manager mode when one centrally
-installed `gupkg` should discover packages in separate user and system roots.
+| Program | What it is | Start it with |
+| --- | --- | --- |
+| `gupkg` | The command line: every operation, no screens, no `--all`. | `gupkg ...` |
+| `gupkg-tui` | One package's interactive view. A separate program that only calls `gupkg`. | `gupkg-tui NAME` or `gupkg tui NAME` |
+| `gupkg-manager` | The browser over every package, and the batch commands for schedules (`check-updates --all`, `update --all`, `check`). A separate program that only calls `gupkg`. | `gupkg-manager` or `gupkg manager ...` |
+| `gupkg-migrate` | The one-time converter for 0.17 data (see [Migrating](#migrating-from-017-and-018)). | `gupkg migrate ...` |
 
-| Need                                         | Entry point                                           |
-| -------------------------------------------- | :---------------------------------------------------- |
-| Install gupkg itself and set up manager mode | `gupkg-bootstrap.cmd [-Scope auto|user|system]`       |
-| Create the manager configuration             | `gupkg manager init`                                  |
-| Install or repair one package                | `gupkg install [PATH]`, `gupkg config-fix [PATH]`     |
-| Inspect or update one package                | `gupkg config-check [PATH]`, `gupkg update [PATH]`    |
-| Inspect all managed packages                 | `gupkg manager list`, `gupkg manager doctor`          |
-| Check or apply managed updates               | `gupkg manager update [--check-only|--download-only]` |
-| Find packages in the registry                | `gupkg manager registry sync`, `gupkg manager search` |
-| Install a registry selector                  | `gupkg --scope user|system manager install SELECTOR`  |
-| Open an interactive interface                | `gupkg tui [PATH]`, `gupkg manager tui`               |
+All four live in one gupkg tree, and the UI programs call the `gupkg.cmd` of **their own tree**, never one found on
+`PATH`. `gupkg tui`, `gupkg manager` and `gupkg migrate` are permanent forwarders to them.
 
-Every invocation names its command explicitly. Package paths are optional only
-when the current directory resolves as a package. Manager selection never
-occurs implicitly from the current directory.
+## Installing gupkg
 
-## Standalone installation
-
-`gupkg-bootstrap.ps1` (with its `gupkg-bootstrap.cmd` launcher, which only
-bypasses the script execution policy for one run) is the supported entry point.
-It runs on stock Windows PowerShell 5.1:
+`gupkg-bootstrap.ps1` (with `gupkg-bootstrap.cmd`, which only bypasses the script execution policy for one run) is the
+supported entry point and runs on stock Windows PowerShell 5.1. It is thin: it fetches the release ZIP, verifies it,
+unpacks it and runs the `install.cmd` of the version directory it holds. It writes no settings.
 
 ```bat
 gupkg-bootstrap.cmd                      :: auto: system scope if elevated, otherwise user
 gupkg-bootstrap.cmd -Scope user          :: force per-user, even when elevated
 gupkg-bootstrap.cmd -Scope system        :: force all users, elevated shell required
-gupkg-bootstrap.cmd -Source \\server\share\gupkg-0.18.0-win-amd64.zip -Sha256 <digest>
+gupkg-bootstrap.cmd -Source \\server\share\gupkg-1.0.0-win-amd64.zip -Sha256 <digest>
+gupkg-bootstrap.cmd -SkipInstall         :: only verify and unpack
 ```
 
-What it does, in order: choose the root (`%USERPROFILE%\opt` or `C:\opt`, or
-`-Root`); fetch the release ZIP from `-Source` (a URL, ZIP, or extracted folder;
-default: the newest row of `RELEASES.md` of the official repository, whose asset
-URL is derived from the version) and verify the download against `-Sha256` (for
-the default source, the digest in that same `RELEASES.md` row; a `-Source` ZIP
-without `-Sha256` prints a warning); refuse a payload without
-`gupkg\python\python.exe`; check every file against `gupkg\MANIFEST.sha256` and
-stop on any modified, missing or extra file; place it at `<root>\gupkg\<version>`,
-reusing a matching folder unless `-Force`; run `gupkg install` on it, which
-creates the `current` junction, the `gupkg` and `gupkg-tui` commands, and the
-PATH entry; and run `gupkg manager init` unless `-SkipManagerInit` (an existing
-configuration is left untouched). Every step is repeatable. It needs no Python in
-advance, and the only downloads are `RELEASES.md` and the ZIP. Keep the version
-directory immutable; repairs and upgrades replace or activate a complete version
-rather than editing the runtime in place.
+What it does, in order: choose the root (`%USERPROFILE%\opt` or `C:\opt`, or `-Root`); fetch the ZIP from `-Source` (a URL,
+a ZIP, or in user scope an extracted folder; default: the newest row of `RELEASES.md` of the official repository) and
+verify it against `-Sha256` (default: the digest in that same row; a `-Source` without `-Sha256` prints a warning);
+refuse a payload without `gupkg\python\python.exe`; check every file against `gupkg\MANIFEST.sha256`; unpack to
+`<root>\gupkg\<version>` (system scope: straight into an admin-only `C:\opt`, which the script creates, or refuses when an
+existing `C:\opt` is not admin-only); and run that version's `install.cmd`, which starts the bundled gupkg and installs
+the `gupkg` package like any other. That creates the `current` junction, the `gupkg`, `gupkg-tui` and `gupkg-manager`
+shims, their `PATH` entry, the Start Menu entry, and the root data folder `<root>\.gupkg\` with the **root forwarder**
+`<root>\.gupkg\gupkg.cmd` that the package launchers of that root use to find the installed gupkg. Every step is
+repeatable. The only downloads are `RELEASES.md` and the ZIP, and nothing needs to be installed first.
 
-There is one distribution: the release ZIP `gupkg-<version>-win-amd64.zip`. It
-contains a version directory with the embedded CPython, the hash-locked
-dependencies, the native shims, the application, package metadata, the update
-hooks, `gupkg\RELEASE.txt` (version and commit) and `gupkg\MANIFEST.sha256` (one
-`<sha256>  <relative path>` line for every other file, sorted by path). It ships
-no manager configuration: roots and registry settings belong to the
-administrator and are created by `manager init`.
+There is one distribution: the release ZIP `gupkg-<version>-win-amd64.zip`, holding the version directory with the
+embedded CPython, the hash-locked dependencies, the native shims, the programs, the package files, `gupkg\RELEASE.txt`
+(version and commit) and `gupkg\MANIFEST.sha256` (one `<sha256>  <relative path>` line per file). A ZIP downloaded with a
+browser and extracted with Explorer has the Mark of the Web on every file, so Windows asks before the first `install.cmd`
+runs; see [the troubleshooting entry](troubleshooting.md#a-security-warning-when-running-installcmd-or-smartscreen-and-smart-app-control).
 
-The ZIP and every digest that verifies it are produced by the build, never by
-installed code:
+## Settings
 
-```bat
-scripts\build-standalone.cmd              :: dist\gupkg-<version>-win-amd64.zip, SHA-256 printed
-```
+There is one format, `settings.toml`, in layers. From lowest to highest priority:
 
-The build (`tools\build_standalone.py`) verifies the CPython archive against the
-digest pinned in `tools\fetch_runtime.py` (the only place the URL and digest
-live), installs the locked wheels with `--require-hashes`, assembles the tree,
-writes `RELEASE.txt` and then `MANIFEST.sha256`, zips it, and prints and saves
-(`<zip>.sha256`) the ZIP's SHA-256. `tools\release.py` uploads the ZIP as the
-asset of GitHub release `v<version>` and records that digest in `RELEASES.md`.
-`MANIFEST.sha256` is protected in transit by the ZIP digest in `RELEASES.md`, and
-at rest by the admin-only folder permissions that a system-scope install sets;
-signing it is out of scope.
+1. built-in defaults (roots `C:\opt`, `%USERPROFILE%\opt`, `%USERPROFILE%\opt-portable`);
+2. `$App\settings.toml` of the running gupkg (shipped with a release; optional);
+3. the **system layer** `C:\opt\.gupkg\settings.toml` (the data folder of the system root; it may change `[roots]`);
+4. the **user layer** `<user root>\.gupkg\settings.toml` (ignored in elevated and system-mode runs; a portable run uses the
+   portable root's own file instead);
+5. `--settings PATH` (ignored in elevated runs unless `PATH` is inside the admin-only system root).
 
-For a source checkout, the `src\gupkg.cmd` launcher remains available for
-development. It selects a packaged `gupkg\gupkg.exe` when present and otherwise
-delegates to the adjacent `gupkg\gupkg.cmd`, which runs the committed
-`src\gupkg\python` like any other install: there is no system Python, `PATH`
-lookup, `GUPKG_PYTHON` override or download, not even for development.
-
-## Manager configuration
-
-Manager mode is enabled by a 2 `gupkg-config.toml`. It is read from:
-
-1. an explicit `--config PATH`; or
-2. the file beside the imported `gupkg.cli` module (the gupkg package folder).
-
-The configuration chooses package roots, executable folders and the registry
-source, and an elevated run acts on all of them, so nothing user-writable is
-searched: not the current directory or its parents, not `%GUPKG_HOME%`, and not
-`%APPDATA%`. An elevated run also refuses any configuration (including one given
-with `--config`) whose folder is not admin-only. `gupkg manager init` writes the
-file into the package folder, and `gupkg update` carries it into the new
-version. A configuration left in `%APPDATA%\gupkg` by an older version is
-ignored; review it and copy it into the package folder if you still want it.
-
-The `gupkg-tui` launcher is a convenience wrapper for the package `tui`
-command; it does not select manager mode implicitly. Use `gupkg manager tui`
-when manager mode is intended. Without a package path, package `tui` requires
-the current directory to resolve as a package.
-
-Use this shape for a new manager configuration:
+A bundled gupkg reads the same files when they exist. Commands: `gupkg settings show` (every effective value and the layer
+it came from), `settings path` (the file of each layer), `settings init` and `settings set KEY VALUE` (write the user layer;
+`--mode system` writes the system layer from an administrator shell; the schema checks a value before it is written).
 
 ```toml
-mode = "manager"
-schema_version = 2
+schema = 3
+default_mode = "auto"         # auto (elevated -> system, otherwise user) | system | user
 
-[packages]
+[roots]
 system = 'C:\opt'
 user = '%USERPROFILE%\opt'
+portable = '%USERPROFILE%\opt-portable'
 
-[bin]
-system = 'C:\bin'
-user = '%USERPROFILE%\bin'
+[integration.system]
+bin = 'C:\bin'
+start_menu = '%ProgramData%\Microsoft\Windows\Start Menu\opt'
+[integration.user]
+bin = '%USERPROFILE%\bin'
+start_menu = '%APPDATA%\Microsoft\Windows\Start Menu\opt'
+[integration.portable]
+integrate = "user"            # user | none
 
-# Optional. These are the defaults; change them to move the cache or use a mirror.
-[registry]
-cache = 'C:\opt\gupkg\current\App\registry'
+[manager]                     # read only by gupkg-manager
+checksum_missing = "ask"      # ask | refuse | skip
+keep_screen = true            # print the last run's summary after a UI program closes
+
+[[registry]]
+name = "main"
 source = "https://github.com/guraltsev/gupkg-registry.git"
+
+[logs]
+keep_runs = 50
+keep_days = 90
+
+[cleanup]
+auto = false                  # true: gupkg-manager update --all ends with cleanup
+
+[ui]
+color = "auto"                # auto | always | never (NO_COLOR is honoured)
+
+[hooks]
+allow_vendor_installers = true
+
+[install]
+record_manifest = true        # false: no package records the SHA-256 of every App file
 ```
 
-`packages.system` and `packages.user` are required, distinct, non-nesting
-collection roots. The two `bin` directories must also be distinct. The whole
-`[registry]` table is optional: `cache` defaults to
-`App\registry` inside the running gupkg version (so an administrator's install keeps
-it in the same admin-only tree as the code that trusts it). It must be outside
-both package roots, except inside a package version's `App` folder, and
-`source` defaults to the official `gupkg-registry` repository. It may instead
-be the URL of any ZIP archive whose single top-level folder holds the packages
-(an `https://` mirror or a `file:` share). Existing configured paths must be
-directories; loading the configuration does not create roots. Relative paths
-are resolved relative to the configuration file, `%NAME%` references use the
-case-insensitive process environment, and a leading `~` means the current
-user's home directory. Unknown variables, shell substitutions, and unsafe path
-relationships are rejected.
+Machine state that is not configuration (the ad-hoc roots, the last registry sync) lives in `state.toml` beside the
+settings. gupkg owns no file outside its roots: no `AppData`, no `ProgramData`, and the Windows registry is only ever
+written to (an environment value, `PATH`), never read to learn anything.
 
-Only schema version 2 is accepted. Older files must be converted as a separate
-administrative operation before they can select manager mode.
+## Install modes, elevation and the root forwarder
 
-## First-time setup
+`system` installs into `C:\opt` (admin-only), `user` into `%USERPROFILE%\opt`, `portable` into the portable root with its
+state in `<package>\data`. `default_mode = "auto"` means an elevated shell installs `system` and any other shell `user`; it
+never means `portable`. A call that needs administrator rights relaunches gupkg **once** elevated, after one question
+(`--yes` answers it, `--no-input` turns it into exit code 5), and only when this gupkg lives in an admin-only folder: a
+user-writable or bundled gupkg never elevates and says that system installs need the system gupkg.
+
+The elevated side runs only what a standard user cannot change: the bundled `python\python.exe` in isolated mode, the
+version folder, the runtime and every folder on the import path must be writable by Administrators and SYSTEM only, and
+the elevated launchers of a package check everything they will run, recursively, before they start. An elevated gupkg
+never acts on a user or portable root (use a normal shell), and ignores the user's proxy, environment and settings layers.
+A portable root is never machine-wide and never lies inside the system root.
+
+## Checksum policy
+
+A declared SHA-256 is always verified; a mismatch always fails. A download with none is refused by the command line unless
+the call carries `--skip-checksum` (https only, this call only); `gupkg-manager` decides with `[manager] checksum_missing`:
+`ask` (a question per package at a terminal; `refuse` in a schedule), `refuse`, or `skip` (relayed as
+`--skip-checksum=setting`). A malformed declared hash and a plain `http://` address are never skippable, and a version with
+a vendor installer needs a pinned hash. For a system target, a value from the user settings layer or from `--settings` is not
+trusted. `check` and `list --details` flag installs that were not verified.
+
+## Registries
+
+`[[registry]]` entries name one or more registries (the official one and, for example, a private share);
+`gupkg registry add NAME SOURCE` and `remove NAME` edit them. `gupkg registry sync` downloads each into
+`<root>\.gupkg\registry\<name>` (cache survives self-updates; a failed sync leaves the previous validated tree). A source is
+a Git URL (cloned shallow over HTTPS, no hooks, only when `git.exe` lives in an admin-only folder), the repository's archive
+URL, or a ZIP on a share. Registry data is untrusted metadata: manifests are validated, never executed, and one invalid package
+is reported and skipped. `registry status` and `registry list` read only the cache, `search` takes `--offline`, and
+`name`, `registry/name` or `user:name` selects an entry (the first registry that has a name wins, otherwise use the prefix).
+A local package follows the registry entry of the same name automatically; `gupkg link NAME [registry/name]` follows another
+entry and `--unlink` follows none.
+
+A registry package install is verified against its **fingerprint** (`_registry.toml`) when it is installed without a download;
+`gupkg check` reports a mismatch.
+
+### The registry tool
+
+The registry (a separate repository) is kept current by `gupkg_registry`, a maintainer tool that is not part of the release
+bundle (`python -m gupkg_registry`, or `_scripts\registry-tool.cmd` in the registry):
 
 ```bat
-gupkg manager init            :: write gupkg-config.toml with defaults and create its folders
-gupkg manager registry sync   :: download the package catalogue
-gupkg manager doctor          :: confirm everything is healthy
+_scripts\registry-tool.cmd update [PACKAGE...]   :: run trackers, write new pinned versions with sha256 and fingerprint
+_scripts\registry-tool.cmd update --auto-push    :: also commit and push (a hash the tool computed itself needs --allow-computed)
+_scripts\registry-tool.cmd pin NAME/VERSION      :: give a version without a hash its first one
+_scripts\registry-tool.cmd launchers             :: rewrite install.cmd, gupkg-tui.cmd and check-updates.cmd
+_scripts\registry-tool.cmd validate              :: what CI runs: every tracker and version, fingerprints, launchers
 ```
 
-`manager init` refuses to overwrite an existing configuration unless you pass
-`--force`, and reports (without failing) any folder it could not create, such as
-the system root without Administrator rights. Edit the file afterwards to move
-any location.
+Without `--auto-push` the tool writes the new directories and starts no `git` process; the maintainer reviews and pushes. A hash the
+tool computed itself (`sha256_from = "registry"`) is flagged `[REVIEW]`. A package is its unit of failure, and `--sandbox DIR`
+chooses where downloads are staged.
 
-## Registry workflow
+## Scheduled updates
 
-The official registry is the separate repository
-[`gupkg-registry`](https://github.com/guraltsev/gupkg-registry): one folder per package at its top level.
-`gupkg manager registry sync` clones it (shallow, HTTPS only, no hooks, user Git
-settings ignored) when a `git.exe` in a folder that only administrators can
-modify is on `PATH`; a user-writable Git is never run. Otherwise it downloads the
-repository's GitHub archive with Python's standard library. Registry data is
-treated as untrusted metadata: sync validates manifests and selectors with
-path-safety checks, publishes no Git metadata, and does not import or execute
-package code. The cache keeps each registry in its own folder
-(`<cache>\gupkg-registry`, with room for other registries later); the active
-revision is the commit ID, and a failed sync leaves the previous validated tree
-in place.
+Update is two commands on purpose, so a schedule can look first and switch later:
 
 ```bat
-gupkg manager registry sync
-gupkg manager registry status
-gupkg manager search ripgrep
-gupkg manager search --offline
+gupkg-manager check-updates --all --json   :: find and prepare new versions; activates nothing
+gupkg-manager update --all --yes --json    :: activate what is prepared
+gupkg-manager check --json                 :: health: drift, fingerprints
 ```
 
-Use `--offline` with `search` when network access is forbidden. Offline search
-uses only the last validated cache. `registry status` reports cache and active
-tree state without downloading.
+Run them as a **normal user**: the manager programs refuse an elevated shell, and a Task Scheduler task with "Run with highest
+privileges" is refused (exit 2). From a normal shell, `check-updates` of a *system* package only reports (design 9.3, D22); an
+administrator writes and prepares the new version with `gupkg check-updates NAME...` from an elevated shell, which is how a
+scheduled system update runs. `update` of a system package asks for administrator rights once for the whole batch. Pass a unique
+`--events-file NAME` when you want a log of the run and treat a missing `run_end` line as a failure; a call with several targets
+needs `--yes` under `--no-input` (otherwise exit 5). `[cleanup] auto = true` ends an update with `gupkg cleanup` for each root
+it updated.
 
-Install a registry package by its selector:
+## The health check
+
+`gupkg check [TARGET...]` reports a package that drifted from its install record (a missing shortcut, shim or `PATH` entry), an
+`App` whose files differ from the recorded fingerprint, a version that differs from its registry fingerprint, and installs that
+nothing verified. `check --fix` repairs drift without downloading. `gupkg list --broken --details` and `gupkg info NAME` show the
+same facts. `gupkg self status` checks gupkg's own tree against its `MANIFEST.sha256`.
+
+## Logs
+
+Every run that acts on a package writes `<UTC>-<command>.log` and a `.jsonl` file with the same events into
+`<root>\<name>\.gupkg\logs\`; the run as a whole writes a log holding only global information and the paths of the package logs
+into `<root>\.gupkg\logs\` (a run with no package, started by a bundled gupkg, logs into its own package's `.gupkg\logs\`).
+`latest.log` in each folder copies the newest text log. `[logs] keep_runs` and `keep_days` (50 runs, 90 days) are applied when a
+run starts, and `gupkg cleanup` prunes old logs. `gupkg logs NAME` lists them, `--path` prints one, `--open` opens it. A failure to
+write a log is one warning and never fails the operation. Elevated relaunches write their events into the system root's logs; a
+caller reads them there.
+
+## Sandbox runs
+
+`gupkg --sandbox DIR COMMAND ...` runs the real command line against a pretend machine kept in `DIR`: environment values,
+`PATH`, shortcuts and elevation are recorded in `DIR` (`system.json` and `.lnk.json` records) instead of the registry and the
+Start Menu, while files and downloads are real. Use it to rehearse an install, an update or an uninstall on a real machine
+without touching it, and for the smoke tests in [`tests/manual_smoke.md`](../tests/manual_smoke.md). `gupkg pkg check PATH
+--install` uses the same machinery with a throw-away root. A sandbox whose `system.json` says `"elevated": true` makes the CLI
+ignore `--settings`.
+
+## Migrating from 0.17 and 0.18
+
+Core 1.0 carries no 0.17 code: no format 1 reader, no `_bootstrap` handling, no aliases. `gupkg config-check` is an unknown
+command, and a format 1 `pkg.toml` is reported as an unsupported format. Migration is two one-time steps.
+
+**1. Re-run the bootstrap (0.17 and 0.18 installs of gupkg).** 0.18's `self update` stops and names the bootstrap when it sees a
+1.0 release. Run `gupkg-bootstrap.cmd` (same `-Scope` as the old install). It installs 1.0 as an ordinary package, creates the
+root data folder and the root forwarder, and leaves the old version directories as they were; only an explicit `gupkg cleanup`
+(and `--bundled` for bundled copies) removes them. Open a new terminal: `gupkg` is now 1.0.
+
+**2. Convert data with the migration tool** (`gupkg migrate ...`, also callable as `gupkg-migrate`):
 
 ```bat
-gupkg --scope user manager install ripgrep
-gupkg --scope user manager install vscode --offline
+gupkg migrate settings C:\opt\gupkg\0.18.0\gupkg\gupkg-config.toml --check   :: print the result, change nothing
+gupkg migrate settings C:\opt\gupkg\0.18.0\gupkg\gupkg-config.toml           :: write <system root>\.gupkg\settings.toml
+gupkg migrate package C:\opt --check                                         :: diff every package; change nothing
+gupkg migrate package C:\opt                                                 :: convert and adopt every package in the root
+gupkg migrate shortcuts C:\opt\tool\1.0                                      :: .lnk files in _shortcuts -> [[shortcut]]
 ```
 
-The selector resolves to a validated manifest, then the normal package install
-workflow applies its origin and integration declarations. `--offline` allows
-use of the registry cache but does not make a missing application payload
-available: an origin still needs its own local files or cached/offline-capable
-source. Local package paths never contact the registry.
+- `migrate settings` converts the 0.17 manager configuration (schema 2) into `settings.toml` (schema 3): the package roots,
+  the `bin` folders and the registry source. It refuses to replace an existing settings file
+  without `--force`. The 0.17 configuration lived beside `cli.py`; 1.0 reads only the layers listed under [Settings](#settings).
+- `migrate package` converts a version directory, a package folder or a whole root to format 2 (`[origin]` and `[update.*]`
+  become `[source]` and `[track]`; an overloaded `[origin] url` is split into `project_url`, `[track] repo` or `download_url`;
+  `[[origin.versions]]` is dissolved into the single `[source]` of the matching directory, the other entries are reported and
+  dropped; camelCase keys become `snake_case`; `only_portable` becomes `modes`; `ignore_checksum` is dropped with a note;
+  `_bootstrap` is renamed `_check_updates`; hooks that match a known service are reported with the declarative replacement). It
+  keeps a `pkg.toml.bak` (`--no-backup` opts out) and validates the result before replacing the file.
+- **Adoption.** For each converted package that 0.17 installed, the tool writes `.gupkg\package.toml` from the existing
+  `current` and the declared components (each marked adopted), reads the old receipts and `.gupkg\state\update.toml` once and
+  removes them, and writes the 1.0 launchers `install.cmd` and `gupkg-tui.cmd` over the 0.17 `gupkg-tui.cmd`. No reinstall is
+  needed, and a following `gupkg uninstall X` removes the shortcuts and wrappers that 0.17 created. `--no-adopt` only converts;
+  `--mode` and `--settings` decide the mode when the root does not. A package whose active version is not converted yet is
+  reported with the command that converts it.
+
+Then `gupkg list` shows the same installed set and versions as before. The checks to run on a copy of a real 0.17 tree are
+manual smoke check 032-1 in [`tests/manual_smoke.md`](../tests/manual_smoke.md).
 
 ## Self-health and recovery
 
-The self commands inspect the bundled runtime, the installed files, and the
-scope-specific shim/configuration pair:
-
 ```bat
-gupkg manager self status
-gupkg --scope user manager self repair
-gupkg --scope system manager self repair
-gupkg --scope user manager self update
+gupkg self status            :: the interpreter, and every file of the running version against its MANIFEST.sha256
+gupkg self repair            :: re-apply gupkg's own commands, shims and PATH entry from the installed version
+gupkg self check-updates     :: the same as gupkg check-updates gupkg
+gupkg self update            :: the same as gupkg update gupkg
 ```
 
-`manager self status` is read-only and report-only. It checks every file of the
-running version against its `MANIFEST.sha256` and lists the modified, missing and
-extra files (`gupkg\gupkg-config.toml`, `App`, `Icons`, `Shortcuts` and
-`__pycache__` folders are installation state, not release content). Exit status
-`3` means the install is damaged. `manager self repair` restores missing or
-inconsistent launch metadata and shims from the installed version. `manager self
-update` finds the newest row of `RELEASES.md`, downloads that release ZIP,
-verifies the ZIP against the row's SHA-256 and the unpacked tree against its own
-manifest, and activates the new version with its own `python\`; nothing of the
-previous runtime is carried over, and a failed check leaves the active version
-unchanged. When the newest release is major version 1 or later, `self update`
-installs nothing and names the bootstrap command to run instead. System scope
-requires elevation.
+`self status` is read-only; exit code 3 means the install is damaged (the installed `App` and `Icons` folders, `__pycache__` and
+other install state are not release content). `self check-updates` runs gupkg's own tracker, which finds the newest row of
+`RELEASES.md`; `self update` then activates the prepared version. The release ZIP is checked against the SHA-256 of its row
+before anything is unpacked, a row without a digest is refused, the unpacked tree is checked against its own `MANIFEST.sha256`
+and the recorded commit, nothing of the old runtime is carried over, and a failed check leaves the active version unchanged.
+A release of a newer **major** version than the running gupkg is never installed this way: the tracker names the bootstrap.
+Because gupkg is an ordinary package, rollback is `gupkg switch gupkg <version>`.
 
-A missing or damaged runtime is an installation error with one fix: install the
-release ZIP again with `gupkg-bootstrap.cmd` (`-Source` with a ZIP and `-Sha256`
-for a vetted copy, `-Force` to replace the folder). gupkg does not download or
-repair a runtime itself.
+A missing or damaged runtime is an installation error with one fix: run `gupkg-bootstrap.cmd` again (`-Source` with a ZIP and
+`-Sha256` for a vetted copy, `-Force` to replace the folder). gupkg never downloads or repairs its runtime at run time, and
+never installs a dependency.
 
 ## Routine recovery
 
-When a manager command fails, preserve the evidence before changing anything:
+When a call fails, preserve the evidence before changing anything:
 
-1. Run `gupkg manager registry status` and `gupkg manager doctor`.
-2. Run `gupkg --format toml manager list` to capture scoped inventory and health fields.
-3. For a registry problem, retry `gupkg manager registry sync`; if it fails, continue
-   using the previous validated cache or add `--offline`.
-4. For a package problem, fix the package root or manifest, then run
-   `gupkg config-check <path>` and `gupkg install <path>`.
-5. For a standalone problem, run `gupkg manager self status`, then the appropriate
-   scoped `manager self repair`.
+1. `gupkg check` and `gupkg registry status`; keep `gupkg list --details --json`.
+2. `gupkg logs NAME --path` and read the newest log; the receipt (`<name>\.gupkg\receipts\<version>.toml`) stores the log of the
+   run that wrote it.
+3. For a registry problem retry `gupkg registry sync`; a failed sync keeps the previous validated cache, and `--offline` uses it.
+4. For a package problem fix `pkg.toml`, run `gupkg pkg check <path>`, then `gupkg install NAME`.
+5. For gupkg itself run `gupkg self status`, then re-run the bootstrap if files differ.
 
-Manager update planning is non-mutating. Use `gupkg --scope auto manager update
---check-only` before a confirmed full update; a failed target does not invalidate successful targets,
-and a later safe rerun revalidates already-current packages. Declining mixed
-scope elevation must leave user packages unchanged.
+A failing package never invalidates the others in a batch, and a rerun revalidates what is already current.
 
-## Elevated runs
+## Release and maintenance (development tree)
 
-An elevated (Administrator) `gupkg` executes only code that non-administrators
-cannot modify. `gupkg.cmd` is the same for every run; `bootstrap.py` detects
-elevation itself (the process token) and then:
-
-- requires the bundled `python\python.exe` in isolated mode (`-I -s -B -S`), as for
-  every run (an ordinary run is refused too on any other interpreter, so `python -m
-  gupkg` works only on the bundled Python; use `scripts\run.cmd` in a checkout);
-  `GUPKG_PYTHON`, `gupkg.python`, `python`, `py`, and `PYTHONPATH` are never consulted;
-- verifies that the version folder, the package folder, the runtime and its
-  `Lib\site-packages`, and every directory on the import path are writable by
-  Administrators and SYSTEM only, and refuses otherwise, printing the offending
-  principal and an `icacls` command;
-- never runs `pip` and never downloads a runtime, in any run.
-
-`gupkg-bootstrap.ps1 -Scope system` installs under `%SystemDrive%\opt` and
-restricts `opt\gupkg` accordingly. For any other location, run the printed
-`icacls` command from an elevated prompt. A folder created under the root of
-`C:` is writable by Authenticated Users until it is restricted.
-
-The dependencies are installed by the build, from the hash-pinned
-`tools\gupkg-deps.lock`, and ship inside the release ZIP. An `ImportError` in
-gupkg itself therefore means a damaged install, and `manager self status` finds
-the file. Dependency freshness is a maintainer concern (see the development
-guide): `tools\check_deps.py` compares the pins with PyPI and
-`tools\update_deps.py` updates the lock and the committed runtime. Package-local
-update hooks run once and may import only the standard library, what the bundle
-ships and modules in their own `pkg.local` folder; a missing import fails the
-update with the module's name. The earlier design is recorded in
-`docs/elevated-runtime-design.md`.
-
-### Portable roots are never machine-wide
-
-The 1.0 install modes (design section 6) include `portable`, where an application's
-settings and state live in `<package>\data` so the package folder can be copied or
-carried. A portable root is never the system root and never lies inside it (and the
-system root never lies inside a portable root). The reason is the threat model of
-section 9.6: state that a package keeps inside its own folder is writable by whoever runs
-the package, and in the admin-only system root that would be shared, writable state
-next to code that an elevated gupkg runs. An elevated gupkg also never acts on a user or
-portable root: use a normal shell for those. A gupkg that
-runs from a user-writable place never relaunches itself elevated: system installs need the
-system gupkg.
-
-## Maintenance scripts
-
-Every routine job has a script in `scripts\`, so no Python needs to be typed.
-They use the repository's `.venv` only and never search for another Python; without
-it they exit 9009 and print how to create it
-(`<python> -m venv .venv && .venv\Scripts\pip install -r requirements-dev.txt`;
-`python -m venv` puts pip into the `.venv`).
-`scripts\run.cmd` runs `src\gupkg\gupkg.cmd`, so a manual test uses the bundled
-Python like a user does. The committed runtime has no pip, and neither does any
-release: the build scripts and `tools\update_deps.py` need the pip of the
-repository's `.venv`. These are development-tree tools: none ships in the
-release ZIP and gupkg cannot reach them.
+Every routine job has a script in `scripts\`. They use the repository's `.venv` only and never search for another Python; without
+it they exit 9009 and print how to create it. None of them ships in the release ZIP.
 
 | Script | What it does |
 |---|---|
 | `test.cmd [pytest args]` | Run the test suite. |
 | `run.cmd [gupkg args]` | Run `src\gupkg\gupkg.cmd` from the source tree. |
-| `bump.cmd <version>` | Set the version in `_version.py` and both `pkg.toml` files and commit. |
-| `release.cmd "notes" [--no-push]` | Test, build the ZIP, tag, upload it to GitHub release `v<version>`, add the `RELEASES.md` row (with the ZIP's SHA-256), and push the branch. `--no-push` keeps everything local. |
-| `build-standalone.cmd [output.zip]` | Build the release ZIP in `dist\` with the pinned, verified Python and the locked dependencies, and print its SHA-256. |
-| `fetch-runtime.cmd [--destination DIR] [--force]` | Fetch the pinned embeddable CPython, verify it, write `._pth` and install the locked dependencies (default destination: the committed `src\gupkg\python`). |
+| `bump.cmd <version>` | Set the version in `_version.py` and the `pkg.toml` files and commit. |
+| `release.cmd "notes" [--no-push]` | Test, build the ZIP, tag, upload it to GitHub release `v<version>`, add the `RELEASES.md` row (with the ZIP's SHA-256), and push the branch. `--no-push` keeps everything local and uploads nothing. |
+| `build-standalone.cmd [output.zip]` | Build the release ZIP in `dist\` and print its SHA-256. |
+| `fetch-runtime.cmd [--destination DIR] [--force]` | Fetch the pinned embeddable CPython, verify it, write `._pth` and install the locked dependencies. |
 
-Dependency maintenance runs the tools directly: `python tools\update_deps.py`
-(resolve newer releases, show the plan, ask; `--yes`, `--repair`) and
-`python tools\check_deps.py` (report newer releases; exit 1 when there are any).
+Dependency maintenance runs the tools directly: `python tools\update_deps.py` and `python tools\check_deps.py`.
 
-## Releasing gupkg itself
-
-`RELEASES.md` is the release registry: a table of version, full commit hash,
-date, SHA-256 and notes, newest first. The SHA-256 is that of the release ZIP
-`gupkg-<version>-win-amd64.zip`, attached to the GitHub release `v<version>`.
-gupkg's own `pkg.local/check_update.py` reads the table from `main`, so
-`gupkg manager self update` finds the newest row, downloads the asset, and has
-its normal download verification compare it with that digest; then
-`unpack_app.py` checks the unpacked tree against `MANIFEST.sha256` and the
-recorded commit before the new `<version>` folder is committed. A row without a
-digest (written before ZIPs had digests) is an error for the updater, and
-`gupkg-bootstrap.ps1` installs the newest row on a fresh machine the same way.
-
-To release (from a clean, committed tree, with the GitHub CLI `gh` signed in):
+`RELEASES.md` is the release registry: a table of version, full commit hash, date, SHA-256 and notes, newest first. The
+SHA-256 is that of `gupkg-<version>-win-amd64.zip`, attached to GitHub release `v<version>`. gupkg's own tracker
+(`pkg.local\track.py`) reads the table from `main`. To release, from a clean tree with the GitHub CLI signed in:
 
 ```bat
-scripts\bump.cmd 0.14.0
+scripts\bump.cmd 1.0.0
 scripts\release.cmd "one-line notes"
 ```
 
-`scripts\release.cmd` runs the tests, then `tools\release.py`, then pushes the
-branch to the first Git remote (`--no-push` keeps everything local and uploads
-nothing). `tools\release.py` refuses a dirty tree, a version that is already
-listed, and a ZIP that was not built from `HEAD` (the commit is recorded in the
-ZIP as `gupkg\RELEASE.txt`). It builds the ZIP, tags the released commit
-`v<version>`, pushes the tag, creates the GitHub release with the ZIP as its
-asset, and commits the new row naming `HEAD` as the release and the ZIP's
-SHA-256. The row is committed after the upload, so `RELEASES.md` never advertises
-a release that was not published; the branch push makes it visible.
+`tools\release.py` refuses a dirty tree, a version already listed and a ZIP that was not built from `HEAD`; it tags, pushes the tag,
+creates the release with the ZIP and commits the new row after the upload, so the table never advertises an unpublished release.
 
-## Release and validation checks
-
-Before releasing gupkg or a standalone bundle, run:
-
-```bat
-scripts\test.cmd
-```
-
-(Registry changes are checked in the registry repository; see below.) The test
-suite covers manager schema/discovery, registry parsing
-and cache behavior, standalone assembly, payload variables, and the existing
-package/update workflows. The Windows-specific cases in
-`tests\manual_smoke.md` still require a real Windows environment.
+Before a release run `scripts\test.cmd`. The Windows-only checks (UAC, the Start Menu, the `PATH` broadcast, a real GitHub release)
+are the numbered entries of [`tests/manual_smoke.md`](../tests/manual_smoke.md).
 
 ## The registry repository
 
-The packages live in their own repository, `gupkg-registry`, checked out beside
-this one as `gupkg-registry\` (ignored by this repository). Changing a package
-needs no gupkg version bump or release: commit and push in that repository and
-the next `gupkg manager registry sync` picks it up.
-
-Everything that checks package consistency lives in that repository, not here:
-its tests (manifests, per-package update hooks, and that every package ships the
-same `gupkg-tui.cmd` as `src\package-tui.cmd`), `_scripts\test.cmd`,
-`_scripts\validate.cmd`, and `_scripts\sync-launchers.cmd` for refreshing the
-launcher copies after `src\package-tui.cmd` changes. `gupkg-tui.cmd` opens gupkg's
-text interface for its package (a gupkg beside it, else `gupkg.exe` on `PATH`), so
-installing a package needs no command line. They use this repository's code,
-found beside the registry checkout or in `GUPKG_REPO`. Top-level folders whose
-names start with `_` or `.` are repository furniture and never packages.
-
+The packages live in their own repository, `gupkg-registry`, checked out beside this one (ignored here). Changing a package needs
+no gupkg release: commit and push there, and the next `gupkg registry sync` picks it up. Its CI runs `gupkg pkg check <path> --json`
+and the registry tool's `validate`. Top-level folders starting with `_` or `.` are repository furniture, never packages.

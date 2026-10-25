@@ -1,98 +1,74 @@
 # Manual smoke checklist
 
-The supported executable boundary is `gupkg.cli:main`, available as `gupkg` or
-the source-checkout wrapper (`scripts\run.cmd`). Implementation domains live
-directly under `gupkg/`, covering shared
-utilities, Windows integration, package layout, configuration, metadata
-editing, components, origins, and update staging.
+The automated suite covers behaviour through `FakeSystem` and fixtures. This checklist covers what it cannot: a real console, UAC,
+the real registry, the Start Menu and the `PATH` broadcast, a real GitHub release, a machine without Python, and a copy of a real 0.17
+tree. Each numbered entry says why it is manual. The entries are grouped by the issue that introduced them; the ids (for example
+`033-6`) are what the closing notes of an issue refer to.
 
-Suggested manual checks on a Windows machine:
+## How to run most of it without touching the machine
 
-1. Run `gupkg --help`.
-2. Run `gupkg --version`.
-3. Run `gupkg config-fix <version-dir>` against a package without
-   `pkg.toml` and confirm a documented starter config with commented examples
-   is created.
-4. Run `gupkg install <version-dir>` against a package with shortcuts,
-   environment variables, PATH entries, and wrapper files.
-5. Confirm the package `current` junction points to the expected version.
-6. Confirm shortcuts and environment changes land in the selected scope.
+`gupkg --sandbox DIR COMMAND ...` runs the real command line against a pretend machine kept in `DIR`: environment values, `PATH`,
+shortcuts and elevation are recorded in `DIR` (`system.json` and `.lnk.json` files) instead of the registry and the Start Menu, while
+files and downloads are real. Put the package roots under the sandbox too, with `--settings DIR\settings.toml` naming them:
 
-Manager release checks:
+```bat
+mkdir %TEMP%\s
+gupkg --sandbox %TEMP%\s settings init
+:: edit %TEMP%\s\settings.toml: [roots] user = '%TEMP%\s\opt' (and system, portable)
+gupkg --sandbox %TEMP%\s --settings %TEMP%\s\settings.toml install <package> --mode user
+type %TEMP%\s\system.json
+```
 
-1. Create the documented `gupkg-config.toml`; run user-only and system-only
-   `list`, including a missing root, and inspect human and `--toml` output.
-2. Put one selector in both roots and verify separate scoped rows, then test
-   valid, absent, broken, and bootstrap `current` entries.
-3. Run `manager doctor`, `manager update --check-only`, and `manager update --download-only`. Open TUI Upgrade
-   All and verify planning performs no install, settings are visible, and the
-   result scrolls with per-target states.
-4. Run a mixed-scope batch with UAC accepted and declined; declined elevation
-   must leave user packages unchanged.
-5. Make one target fail while another succeeds, repair the failed target, and
-   safely rerun. Confirm returning to the browser shows new versions.
-6. Repeat in narrow and short terminals; verify human and TOML output remains
-   usable without relying on color or fixed widths.
+Use it for every check below that only needs to see what gupkg *would do to the machine*. Only the checks listed under "Real Windows
+only" need the real thing.
 
-Standalone and registry checks:
+## Real Windows only: the short list
 
-1. Build a release ZIP with `scripts\build-standalone.cmd` (network needed).
-   Confirm the printed SHA-256 equals the digest in `dist\*.zip.sha256`, a
-   source-checkout `python\` directory is not copied, and the ZIP contains the
-   embedded runtime with its locked dependencies, `pkg.toml`, native shims,
-   `gupkg\RELEASE.txt` and `gupkg\MANIFEST.sha256`.
-2. Install the release once with
-   `gupkg-bootstrap.cmd -Source <bundle.zip> -Sha256 <digest>` (user scope), then
-   repeat the same command. Confirm the second run reuses the folder, neither run
-   requires elevation, a new terminal finds `gupkg`, `gupkg manager init` created a
-   configuration, and `gupkg manager self status` reports a healthy bundled
-   runtime. Repeat with `-Scope system` from an elevated shell, and confirm a
-   non-elevated shell is refused with a clear message. The automated tests
-   cover only `-SkipInstall`; this step is the only coverage of the live
-   junction, shim, and PATH changes.
-3. Run `gupkg --scope user manager self repair` after removing or renaming only a
-   user-scope shim/configuration file. Confirm repair restores it. Repeat in
-   system scope with UAC accepted and declined; a declined prompt must leave
-   system files unchanged.
-4. Create a schema-v2 manager config with separate package roots, bin roots,
-   and an external registry cache. Verify `gupkg manager doctor`, `gupkg manager
-   registry status`, and `gupkg manager search --offline` are read-only and do not create
-   missing package roots.
-5. Run `gupkg manager registry sync` with network available, then run `gupkg manager search`
-   and install one known selector. Disconnect the network and verify cached
-   `search --offline` still works while a selector absent from the cache fails
-   cleanly.
-6. Corrupt or make unavailable a temporary registry checkout and retry sync.
-   Confirm the last validated active tree remains usable and the failed sync
-   does not replace it.
-7. Confirm that a v1 manager config is rejected with a migration diagnostic;
-   schema migration is an explicit administrative task outside the runtime CLI.
+These are the checks that no sandbox or fake can replace.
 
-## Progress, scrolling, and saved update status (issue 015)
+- **UAC and elevation:** entries 025-1 to 025-3, 029-2, 029-3, 030-2, 030-3, 033-1 and 033-3.
+- **The Start Menu, the registry and the `PATH` broadcast:** 021-1, 021-2 and 028-1.
+- **A real GitHub release and a real second version:** 016-5, 033-6 and 032-3.
+- **A real 0.17 `C:\opt` tree:** 023-3 and 032-1.
+- **Smart App Control and the Mark of the Web:** 033-7.
 
-These steps need a real console because they depend on `\r` handling in
-`conhost` and Windows Terminal. Use a package whose update is a download of
-several MiB.
+## Migration, documentation and the 1.0 release (issue 032)
 
-1. In a console, run `gupkg update --download-only <package>`. Confirm one
-   progress line updates in place and ends at `(100%)`. Repeat with output
-   redirected to a file: only the `total size` line and the final `(100%)`
-   line are written.
-2. Repeat step 1 in both `conhost` and Windows Terminal, with a narrow window,
-   and confirm the progress line never wraps onto a second line.
-3. In `gupkg tui`, run the same update. Confirm progress changes on the
-   `Running: ...` status line and the output view gains one final `(100%)` line.
-4. Make output longer than the window (for example a verbose hook). Confirm the
-   view follows new lines, scrolling up stops following, scrolling back to the
-   bottom resumes it, and PgUp/PgDn/Home/End work without a mouse.
-5. In `gupkg manager`, choose `Refresh update status`. Confirm
-   `Checking i of N: <target>` and one result line per target appear during the
-   check, and Escape stops after the current target. Repeat for `Update all`.
-6. Refresh, open a package from the browser, run `Update: check`, and return.
-   Confirm statuses are kept, the browser reopens with the same filters and
-   highlight, and a package updated meanwhile shows `Current`.
-7. Quit and start a new `gupkg manager` session. Confirm the saved statuses
-   are shown and the Details screen shows the check time.
+1. **032-1. A real 0.17 tree, migrated.** Copy a real 0.17 `C:\opt` (or `%USERPROFILE%\opt`) tree and its `gupkg-config.toml` to a
+   scratch folder, write a `settings.toml` that names the copy as the user root, and run everything with
+   `gupkg --sandbox <dir> --settings <settings.toml> ...` so the real registry and Start Menu stay untouched (a 0.17 install made its
+   shortcuts and `PATH` entries on the real machine, which the sandbox does not know; for the uninstall half of this check use a
+   scratch virtual machine).
+   - Before migrating: `gupkg config-check` is an unknown command, and `gupkg pkg check <a 0.17 package>` reports the missing
+     `format = 2` with no mention of format 1 or of a migration tool. `gupkg list` shows no 0.17 package as healthy.
+   - Run the bootstrap (`gupkg-bootstrap.cmd -Scope user -Source <1.0 zip> -Sha256 <digest>` on the VM), then
+     `gupkg migrate settings <gupkg-config.toml> --check`, then without `--check`, then `gupkg migrate package <root> --check` and
+     `gupkg migrate package <root>`.
+   - Expect: `gupkg list` shows the same installed set and versions as before the migration; `_bootstrap` folders are now
+     `_check_updates`; each package has `.gupkg\package.toml`, `install.cmd` and `gupkg-tui.cmd`; the old `gupkg-tui.cmd` is
+     replaced; `gupkg uninstall X` removes the Start Menu shortcuts, shims, `PATH` entries and environment values that 0.17
+     created for X (compare the Start Menu folder, `HKCU\Environment` and `<bin>` before and after); a package that cannot be
+     converted is reported with its reason and left alone.
+   Why manual: it needs a real 0.17 installation and the real registry and Start Menu to compare against.
+2. **032-2. Documentation reads true.** On a machine where gupkg 1.0 is installed, follow
+   [Getting started](../_docs/getting_started.md) from step 0 to step 7 literally (pandoc, user mode), then the
+   [cookbook](../_docs/cookbook.md) recipes "Update everything", "Roll back an update" and "Uninstall", and the scheduled-task
+   example of "Update unattended every night" (as a normal user). Every command must behave as written and every message in
+   [Troubleshooting](../_docs/troubleshooting.md) that you meet must match. Why manual: it needs a network, a real
+   GitHub release and Task Scheduler. (The links and the README command list are checked by
+   `tests/test_documentation.py`.)
+3. **032-3. `self check-updates` then `self update`, 1.0.0 to 1.0.1.** With 1.0.0 installed from the bootstrap, publish a
+   1.0.1 test release (a throwaway fork: `scripts\bump.cmd 1.0.1`, `scripts\release.cmd "test"`; point the tracker at the fork
+   by testing with the fork's `RELEASES.md`), run `gupkg self check-updates` and then `gupkg self update`. Expect: a `1.0.1` version
+   directory with a populated `App` after the check (the ZIP was verified against its `RELEASES.md` row and the tree against
+   its `MANIFEST.sha256` before anything was unpacked), `current` and `gupkg --version` still 1.0.0 until `self update`, then
+   1.0.1 everywhere, the old version directory untouched, and `gupkg self status` healthy. Also confirm gupkg's own package has no
+   `download_url` (`gupkg info gupkg`). Why manual: it needs two real releases, the junction switch and the real shims. (The
+   verification rules are covered by `tests/test_self_release_update.py`.)
+4. **032-4. The 1.0 release itself.** After `scripts\bump.cmd 1.0.0` and `scripts\release.cmd "<notes>" --no-push`, on a clean VM
+   run the built ZIP's `install.cmd` (or `gupkg-bootstrap.cmd -Source <zip> -Sha256 <digest>`), then `gupkg --help`, `gupkg --version`
+   and `gupkg self status`. Confirm `RELEASES.md` has the new row with the digest of that exact ZIP and that nothing was pushed. Why
+   manual: it publishes a real artifact and needs a clean machine.
 
 ## One self-contained release ZIP (issue 016)
 
@@ -108,24 +84,23 @@ activation.
    the network (for example with a proxy log): the only downloads are
    `RELEASES.md` and `gupkg-<version>-win-amd64.zip`. In a new terminal,
    `gupkg --version` prints the release version. Then confirm
-   `gupkg manager self status` reports a healthy install (the installed `Icons`,
-   `Shortcuts` and `App` folders and `gupkg-config.toml` must not be listed as
-   extra files). Why manual: it needs the real GitHub asset, the registry
+   `gupkg self status` reports a healthy install (the installed `Icons`,
+   `Shortcuts` and `App` folders must not be listed as extra files). Why manual: it needs the real GitHub asset, the registry
    `PATH` change and a machine with no Python.
 2. **Same VM, elevated, `-Scope system`.** From an elevated prompt run
    `gupkg-bootstrap.cmd -Scope system`, open a new elevated terminal, and run
-   `gupkg --version` and `gupkg manager self status`. Both succeed, and the
+   `gupkg --version` and `gupkg self status`. Both succeed, and the
    elevated run reports no untrusted folder. Why manual: it needs a real
    administrator token and the `C:\opt` ACL change.
 3. **Self-update.** With release N installed and release N+1 published, run
-   `gupkg manager self update`. Confirm the new version folder appears beside the
+   `gupkg self check-updates` and then `gupkg self update`. Confirm the new version folder appears beside the
    old one with its own `gupkg\python\`, `gupkg\MANIFEST.sha256` verifies
-   (`gupkg manager self status` is healthy), `current` points at it, and the old
+   (`gupkg self status` is healthy), `current` points at it, and the old
    version folder is untouched. Why manual: it needs two real releases and the
    junction and shim activation.
 4. **Edited file.** In the installed version folder change one file (for
    example append a line to `gupkg\README.md`), then run
-   `gupkg manager self status`. It exits with status 3 and names that file as
+   `gupkg self status`. It exits with status 3 and names that file as
    modified. Why manual: the automated test uses an unpacked copy, not an
    activated install with the real shims.
 5. **Publishing.** From a clean tree on a throwaway fork run
@@ -148,7 +123,7 @@ Shortcut and junction checks (issue 017):
 One interpreter (issue 018):
 
 1. On a machine with a system Python 3.13 on `PATH` (and `py` installed), install
-   a release ZIP and run `gupkg manager self status`. Confirm `sys.executable`
+   a release ZIP and run `gupkg self status`. Confirm `sys.executable`
    is the bundled `...\gupkg\python\python.exe`. Run the same command from an
    elevated shell and confirm the same interpreter. Why manual: needs a real
    machine with other Pythons and a real administrator token.
@@ -214,12 +189,12 @@ prompt and the broadcast to running programs.
 1. **Sandbox leaves the machine alone.** Note the `PATH` of the User environment
    (`[Environment]::GetEnvironmentVariable('Path','User')`) and the contents of
    `%APPDATA%\Microsoft\Windows\Start Menu\opt`. Run
-   `gupkg --sandbox %TEMP%\s --scope user install <fixture package with a shortcut,
-   an [[environment]] row and a [[path]] row>`. Confirm the `PATH`, the HKCU
+   `gupkg --sandbox %TEMP%\s install <fixture package with a shortcut,
+   an [[env]] row and a [[path]] row> --mode user`. Confirm the `PATH`, the HKCU
    environment values and the Start Menu folder are unchanged, and that
    `%TEMP%\s\system.json` lists the environment value and `PATH` entry while a
    `.lnk.json` record exists below `%TEMP%\s`. Run the same install a second time and
-   confirm `system.json` keeps the first run's log. Repeat with `--scope system` after setting
+   confirm `system.json` keeps the first run's log. Repeat with `--mode system` after setting
    `"elevated": true` in `system.json` (the sandbox never reads the real token) and
    confirm the HKLM environment and `%ProgramData%` Start Menu are unchanged too.
    Limits to expect: default package and config roots are not redirected (a package
@@ -228,16 +203,16 @@ prompt and the broadcast to running programs.
    the automated tests never read.
 2. **Real environment broadcast.** After a normal user-scope install of a package with
    a `[[path]]` row, open a new terminal and confirm the entry is on `PATH`; then run
-   `gupkg manager self repair` and confirm no error mentions the broadcast. Why manual:
+   `gupkg self repair` and confirm no error mentions the broadcast. Why manual:
    `WM_SETTINGCHANGE` reaches every open window, so the tests only exercise it through a
    mocked `user32`.
 3. **Elevated relaunch through the launcher.** From a non-elevated shell, start a
-   `manager update` that includes a system-scope package and accept UAC. Confirm the
+   `gupkg-manager update --all` that includes a system package and accept UAC. Confirm the
    elevated window runs `gupkg.cmd` from the installed version folder. Decline UAC and
    confirm nothing changes. Why manual: UAC cannot be automated.
 4. **Administrator detection.** In an elevated and a non-elevated shell run
-   `gupkg manager self status` and `gupkg install <package>` with `--scope auto`; confirm
-   the elevated shell selects system scope and the other user scope. Why manual: needs
+   `gupkg self status` and `gupkg install <package>` with no `--mode`; confirm
+   the elevated shell selects system mode and the other user mode. Why manual: needs
    real tokens.
 
 ## Install modes (issue 025)
@@ -279,23 +254,23 @@ The automated tests render with a recording Rich console and write logs below py
 temporary directories. These steps cover real consoles, real permissions and a real TUI.
 
 1. **Real terminal rendering.** In Windows Terminal, then in a classic console window
-   (`conhost`), run `gupkg --scope user install <package with a download origin>`. Confirm
+   (`conhost`), run `gupkg install <package with a download_url> --mode user`. Confirm
    coloured phase rules, a ✓ or ✗ with the time, a download bar that disappears and leaves one
    line, and a closing summary that names the logs and is the last thing printed. Run it again
    with `set NO_COLOR=1` and with output redirected (`> out.txt`); `out.txt` has `==>` headers,
    no escape characters and no carriage returns (`findstr /R "\x1b" out.txt` finds nothing).
    Why manual: terminal modes and fonts cannot be asserted offline.
-2. **System logs are admin-only.** From an elevated shell run `gupkg --scope system install
-   <package>`. In a normal shell confirm `icacls C:\opt\.gupkg\logs` and
+2. **System logs are admin-only.** From an elevated shell run `gupkg install
+   <package> --mode system`. In a normal shell confirm `icacls C:\opt\.gupkg\logs` and
    `icacls C:\opt\<name>\.gupkg\logs` show write access only for administrators and SYSTEM,
    and that a standard user can neither create nor modify a file there. Why manual: needs
    a real admin-only root.
 3. **A standard user cannot steer an elevated log write.** As a standard user prepare
    `<user folder>\events.jsonl` and a junction `mklink /J <user folder>\link C:\Windows\Temp`.
-   From an elevated shell run `gupkg --events-file ..\link\x.jsonl install <package>` and
-   `gupkg --events-file C:\Windows\x.jsonl install <package>`; both are refused (exit 2) and
+   From an elevated shell run `gupkg install <package> --events-file ..\link\x.jsonl` and
+   `gupkg install <package> --events-file C:\Windows\x.jsonl`; both are refused (exit 2) and
    nothing is created outside the log directories. Why manual: UAC cannot be automated.
-4. **Nothing behind the TUI.** Open `gupkg tui` on a package whose `[origin]` is an
+4. **Nothing behind the TUI.** Open `gupkg tui` on a package whose `[source]` is an
    unreachable Git URL and run Install. The screen shows git's error lines inside the Fetch
    phase and no text appears outside the TUI. Quit and confirm
    `<root>\<name>\.gupkg\logs\` holds the `.log` and `.jsonl` of that run and the screen's

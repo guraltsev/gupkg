@@ -5,11 +5,38 @@ built from, and the SHA-256 of the release ZIP `gupkg-<version>-win-amd64.zip`,
 which is attached to the GitHub release `v<version>`. The ZIP is self-contained
 (embedded CPython, locked dependencies, native shims and the application).
 
-`gupkg manager self update` and `gupkg-bootstrap.ps1` read this table from the
-`main` branch: the newest row is the current release, its ZIP is downloaded from
-the release asset URL, and the download is checked against the SHA-256 in the
-same row before anything is unpacked. A row marked `-` was published before ZIPs
-had digests and cannot be installed by this method.
+`gupkg self check-updates` (gupkg's own tracker; 0.17 and 0.18 call it `manager self
+update`) and `gupkg-bootstrap.ps1` read this table from the `main` branch: the newest
+row is the current release, its ZIP is downloaded from the release asset URL, and the
+download is checked against the SHA-256 in the same row before anything is unpacked.
+A row marked `-` was published before ZIPs had digests and cannot be installed by this
+method.
+
+## Migrating to 1.0 from 0.17 or 0.18
+
+1.0 changes the package format (`pkg.toml` format 2), the settings file
+(`settings.toml`) and the command line, and it carries no code for 0.17 data. Moving an
+existing machine is two one-time steps; nothing is converted automatically.
+
+1. **Re-run the bootstrap once.** 0.18's `self update` stops at a 1.0 release and names the
+   bootstrap; 0.17 has no such notice. Download `gupkg-bootstrap.cmd` and run it with the
+   scope of the old install (`-Scope system` from an elevated shell for an all-users
+   install). It installs 1.0 as an ordinary package, creates the root data folder
+   `<root>\.gupkg\` and the root forwarder, and leaves the old version directories
+   untouched (`gupkg cleanup` removes them when you choose).
+2. **Convert your data with the migration tool.** `gupkg migrate settings
+   <gupkg-config.toml>` converts the manager configuration, and `gupkg migrate package
+   <root>` converts every package definition (`_bootstrap` becomes `_check_updates`) and
+   adopts the installed packages, so no reinstall is needed and `gupkg uninstall` still
+   removes what 0.17 created. Add `--check` first to see the result without changing
+   anything.
+
+What changed for you: checking for updates and installing are two commands
+(`gupkg check-updates NAME`, then `gupkg update NAME`); `gupkg manager ...` and `gupkg tui`
+start the separate programs `gupkg-manager` and `gupkg-tui`; `--scope` is `--mode`;
+`--no-checksum` is `--skip-checksum` (missing hashes only); `config-check` is `gupkg pkg
+check`; `doctor` is `gupkg check`. The full table is in `_docs/rehaul_design.md` section 10.3
+and the runbook is `_docs/operations.md`.
 
 Add rows with `python tools/release.py "notes"` rather than by hand. Each row
 names the commit that contains the released code, not the commit that adds the

@@ -1,5 +1,7 @@
 # Issue 020: gupkg 1.0 rehaul (epic)
 
+> **Status (2026-10-24):** Implemented. Closed with issue 032. Manual checks still owed: the epic closes with issue 032; its children list their own owed checks.
+
 Date: 2026-10-22
 Priority: Critical
 Change type: Architecture, package format, CLI, UI, registry. Breaking, with migration tools.

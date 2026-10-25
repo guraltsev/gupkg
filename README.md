@@ -14,14 +14,15 @@ gupkg install pandoc                   :: download, verify, install, wire up Win
 gupkg check-updates pandoc             :: look for a new release and prepare it; nothing is activated
 gupkg update pandoc                    :: activate the newest prepared release; the old one stays
 gupkg switch pandoc 3.6.1              :: roll back
-gupkg manager update --all --yes       :: the same for every package you manage (starts gupkg-manager)
+gupkg-manager update --all --yes       :: the same for every package you manage (the separate manager program)
 ```
 
 **Why use it**
 
 - **Minimal friction.** One folder per program, one readable file per folder.
   No installers to click through, no registry archaeology.
-- **Safe by construction.** Downloads are checksummed and built in a separate
+- **Safe by construction.** A declared SHA-256 is always verified, a download with none is
+  refused unless you say `--skip-checksum`, and every version is built in a separate
   folder; the working version is never modified in place. A failed update
   changes nothing.
 - **Repairable.** `install` re-applies shortcuts, PATH, and wrappers without
@@ -39,8 +40,8 @@ gupkg manager update --all --yes       :: the same for every package you manage 
 | Install my first program in five minutes | [Getting started](_docs/getting_started.md) |
 | Do a specific task (nightly updates, rollback, CI checks, ...) | [Cookbook](_docs/cookbook.md) |
 | Fix an error message | [Troubleshooting](_docs/troubleshooting.md) |
-| Set up and run the multi-package manager, registry, self-repair | [Operations guide](_docs/operations.md) |
-| Look up every `pkg.toml` field | [`pkg.toml` reference](#pkgtoml-reference) below |
+| Run gupkg for many machines: settings, registries, schedules, migration from 0.17, recovery | [Operations guide](_docs/operations.md) |
+| Look up every `pkg.toml` field | [`pkg.toml` reference](#pkgtoml-reference-format-2) below |
 | Look up every command and option | `gupkg --help` and `gupkg <command> --help`, or [Commands and options](#commands-and-options) below |
 | Understand or change the code | [Development guide](_docs/development_guide.md) |
 
@@ -118,112 +119,70 @@ and [Getting started](_docs/getting_started.md) installs a first program.
 
 ## What gupkg manages
 
-`gupkg` manages self-contained Windows applications that live on disk rather
-than in a central package store. A package author puts an application's files,
-its version number, and a small `pkg.toml` definition in one directory. From
-that definition, `gupkg` selects the active version and makes the application
-available to Windows: it can create Start Menu shortcuts, set environment
-variables, add directories to PATH, and generate command-line wrappers. It can
-also fetch application files when they are not already present and stage new
-versions when updates are available.
+`gupkg` manages self-contained Windows applications that live on disk rather than in a central package store. A package
+author puts an application's files, its version number (the folder name) and a small `pkg.toml` in one directory. From that
+definition, `gupkg` makes the application available to Windows: Start Menu shortcuts, environment variables, `PATH`
+entries and command-line shims. It can fetch the application's files when they are not present, and it finds, downloads
+and prepares new versions when you ask it to.
 
-The model is deliberately repair-friendly. Re-running an install re-applies
-the declared Windows integration without re-downloading an application whose
-files are already present.
+The model is repair-friendly: running `install` again re-applies the declared Windows integration without downloading an
+application whose files are already there, and `check` finds what drifted.
 
 ## At a glance
 
-- Works on Windows; the release ZIP carries its own Python.
-- Treats the directory layout as the authority for package identity.
-- Uses a canonical, strict `pkg.toml` format.
-- Supports ZIP, Git, and package-local-script application sources.
-- Checks and stages updates before activating a new immutable version.
-- Supports GitHub Releases and trusted package-local Python update hooks.
+- Windows only. The release ZIP carries its own Python; nothing else needs to be installed.
+- Three **install modes** per package: `system` (all users, `C:\opt`), `user` (`%USERPROFILE%\opt`) and `portable`
+  (settings kept inside the package folder). `default_mode = "auto"` picks `system` in an elevated shell and `user`
+  otherwise.
+- **Format 2 `pkg.toml`.** One `[source]` per version, a separate `[track]` table in a tracker folder, built-in services
+  instead of scripts (version discovery, unpacking, checksum discovery, post-unpack steps), and `snake_case` everywhere.
+- **Checking and installing are separate.** `check-updates` runs a package's tracker and writes (and by default prepares) a
+  new pinned version; `update` activates it. Nothing is ever activated by a check.
+- **Checksums.** A declared SHA-256 is always verified, and a mismatch is always fatal. A download with no declared hash is
+  refused unless the call carries `--skip-checksum` (https only, never for vendor installers).
+- **One command line, three programs.** `gupkg` (no screens, no `--all`), `gupkg-tui` (one package) and `gupkg-manager`
+  (every package, batches, schedules); the last two only ever call `gupkg`.
+- Everything gupkg owns lives in the roots: settings, logs, state, the registry cache and the root forwarder are in
+  `<root>\.gupkg\`; nothing is written to `AppData` or `ProgramData`, and the Windows registry is only ever written to.
 
-Git is needed only by packages that declare a Git origin or Git updates; gupkg itself, including
-the package registry, downloads plain ZIP files with Python's standard library. Network access is
-required only when a configured origin or update source is contacted.
+## On-disk layout
 
-## Architecture and organization
-
-Each application has a **package root**. It contains one or more immutable
-**version directories** and a `current` junction that points to the active
-one. The version directory is the unit that `gupkg` installs and updates.
+Each root (one per install mode) holds package folders. A package folder holds immutable **version directories** and a
+`current` junction that points to the active one:
 
 ```text
-<PackageName>/
-  current/                         # NTFS junction to the active version
-  1.2.3/
-    App/                            # application payload
-    Icons/                          # optional icon assets
-    Shortcuts/                      # optional package-owned assets
-    pkg.local/                      # trusted update hook modules
-    pkg.toml
+<root>\                                # C:\opt, %USERPROFILE%\opt or the portable root
+  .gupkg\                              # root data: settings.toml, state.toml, logs\, registry\, gupkg.cmd (root forwarder)
+  <name>\                              # the package folder: its name is the package's identity
+    current\                           # NTFS junction to the active version
+    _check_updates\                    # optional tracker (never installed): pkg.toml with [track], pkg.local\, support files
+    1.2.3\                             # a pinned version directory
+      pkg.toml
+      App\                             # the payload: the files that run (empty or absent until populated)
+      pkg.local\                       # optional trusted hook modules and populate scripts
+      install.cmd, gupkg-tui.cmd       # package launchers (double-click installs / opens this version)
+      gupkg\                           # optional: a bundled gupkg (bundled mode)
+    1.2.4\                             # pinned, not populated yet: status "available"
+    data\                              # portable mode only: persistent state
+    .gupkg\                            # package.toml (install record), receipts\, logs\, locks\, work\, state\
 ```
 
-`App` is the application payload: the files that actually run. For example,
-`App` might contain `rg.exe`, a portable editor's executable and libraries, or
-a Git checkout. `gupkg` never invents a particular application layout inside
-`App`; it either starts with the files already there or populates them from the
-configured origin. Shortcuts, PATH entries, environment values, and wrappers
-normally point at files or directories beneath `App`.
+A **version directory** is any child of the package folder that is not reserved and contains a `pkg.toml`; the folder name
+is the version (any valid folder name: `1.2.3`, `2024-05`, `nightly`; text after the first `.local.` is a local revision).
+Versions order by dotted segments, numbers numerically and text alphabetically, and a version without a local revision
+sorts before the same version with one. Reserved names are `current`, `_check_updates`, `data` and anything starting with
+`.` or `_` (0.17's `_bootstrap` is just such a reserved name now). The package name is the folder name; a version's number
+is never repeated inside `pkg.toml`. Population is atomic: `App` is built in `.gupkg\work` and renamed into place, and
+`current` is switched only after a successful population. Old versions stay until `gupkg cleanup` is run.
 
-`pkg.toml` sits beside `App` and describes the package version. It declares
-how to obtain the payload when necessary and how to expose it to Windows. The
-configuration uses package variables so that it does not need hard-coded
-machine-specific paths: `$App`, `$VersionRoot`, `$Icons`, and
-`$Shortcuts` resolve to matching directories in the installed version, while
-`${version}` resolves to the version in the directory name. For example,
+`App` is the payload, and gupkg never invents a layout in it. Shortcuts, `PATH` entries, environment values and shims
+normally point at files beneath `App`. How `App` is filled is the version's `[source]` (see below): **downloaded**
+(recoverable at any time), **script-populated**, or **shipped** (already in the folder; gupkg never drops or replaces it,
+and `uninstall --purge` is the only thing that deletes it). Every install records the SHA-256 of every file of `App` in the
+receipt, and `gupkg check` reports modified, missing and extra files.
 
-```toml
-[[shortcut]]
-name = "Ripgrep"
-targetPath = "$App\\rg.exe"
-
-[[environment]]
-Name = "RIPGREP_HOME"
-Value = "$App"
-
-[[bin]]
-name = "rg"
-target = "$App\\rg.exe"
-```
-
-This creates a shortcut to the executable, stores the full `App` path in an
-environment variable, and creates a command wrapper that launches the same
-executable. When a package needs a sibling directory, it should write that path
-explicitly beneath `$VersionRoot`. The exact expansion rules are documented in
-[Variables and expansion](#variables-and-expansion).
-
-`Icons` and `Shortcuts` are optional package-owned asset directories. `Icons`
-is a natural place for shortcut icons; `Shortcuts` is available to package
-scripts or configuration that needs package-local shortcut assets. `pkg.local`
-is reserved for trusted Python update-check and unpack hooks. `.gupkg`, created
-at the package root by update operations, holds manager state, locks, receipts,
-and disposable work files rather than application files.
-
-A version directory is named by its version string, which may be any text that
-is a valid folder name (`1.2.3`, `2024-05`, `nightly`). Text after the first
-`.local.` is the package-local revision, itself any string: `1.2.3.local.000002`
-has upstream version `1.2.3` and local revision `000002`. Versions are ordered by
-dotted segments, numbers numerically and text alphabetically, and a version
-without a local revision sorts before the same version with one. A folder counts
-as a version when it contains `pkg.toml`; `current`, `_bootstrap`, and names
-starting with `.` are reserved. `_bootstrap` is a package's update template;
-promoting it creates the first real version directory. The version is the folder
-name only and is never repeated in `pkg.toml`.
-The package name is the package-root directory name. A name ending in
-`-portable` is portable-only by convention.
-
-You may give `gupkg` a version directory, a package root, or its `current`
-junction. A package root without `current` is accepted only when it contains
-exactly one version directory. Update checks and downloads accept any version
-directory, so a historical definition can provide the update configuration.
-Activation refuses a downloaded version when a newer installed version exists.
-
-Installing a newer version advances `current`. Installing an older version
-does not replace a newer active version unless `--allow-downgrade` is supplied. Old
-versions are retained.
+You may give `gupkg` a package name, a version directory, a package folder or its `current` junction. A package folder
+without `current` is accepted when it holds exactly one version.
 
 ## Commands and options
 
@@ -408,351 +367,233 @@ Details that scripts and maintainers may rely on:
   `latest.`, or looks like a run's own file is refused, and an existing hard link, link or directory under the name is never
   opened (a stale plain file is replaced).
 
-## `pkg.toml` reference
+## `pkg.toml` reference (format 2)
 
-`pkg.toml` is optional for a simple pre-populated package. If it is absent,
-`install` uses defaults and does not create a file. Use `config-fix` to create a
-starter configuration, synchronize directory-owned metadata, or explicitly
-convert legacy metadata. Existing files are backed up with a UTC timestamp
-before a change unless `--no-backup` or `--backup=false` is supplied. When a
-file exists, its schema is strict: unknown keys and legacy spellings are errors.
+Every `pkg.toml` starts with `format = 2`. The format is strict: an unknown key, a key from the 0.17 format, or a second
+`[source]` is an error that names the key. A version directory and a tracker use the same format; a tracker additionally
+has `[track]`. All keys are `snake_case`. `gupkg pkg check PATH` validates a version directory, a tracker or a whole
+package folder and reports every problem at once.
 
-The package name, version, and local revision come only from the directory
-names (`Ripgrep\14.1.0.local.1`); `pkg.toml` does not record them, and any copy in
-an old file is ignored. `only_portable` must agree with the `-portable`
-naming convention. `config-fix` removes stale name, version, and localVersion
-lines and synchronizes `only_portable`, preserving unrelated configuration and
-comments where possible. An install stops on a portable-flag mismatch.
+The version is the folder name and the package name is the package folder's name; neither appears inside the file.
+`pkg.toml` is optional only for nothing: a version directory without one is not a version.
 
 ```toml
-only_portable = false            # must agree with the -portable convention
-description = "Fast text search" # descriptive metadata only
-homepage = "https://example.com" # descriptive metadata only
+format = 2
+description = "Fast text search"                       # information only
+project_url = "https://github.com/BurntSushi/ripgrep"  # information only, never fetched
+modes = ["system", "user"]                             # system | user | portable (default: all three)
+requires_gupkg = ">=1.0"                               # minimum gupkg; an older one exits with code 6
+record_manifest = true                                 # false: no App fingerprint (very large trees only)
 
-[origin]
-url = "https://example.invalid/ripgrep.zip"
-checksum = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-extractSubdir = "ripgrep-14.1.0"
+[source]
+download_url = "https://github.com/BurntSushi/ripgrep/releases/download/14.1.0/ripgrep-14.1.0-x86_64-pc-windows-msvc.zip"
+sha256 = "<64 hex digits>"
+sha256_from = "github-digest"                          # provenance, informational
+strip = 1                                              # drop one wrapper folder
 
 [[shortcut]]
 name = "Ripgrep"
-targetPath = "$App\\rg.exe"
+target = "$App\\rg.exe"
 
-[[environment]]
-Name = "RIPGREP_HOME"
-Value = "$App"
+[[env]]
+name = "RIPGREP_HOME"
+value = "$App"
 
 [[path]]
 value = "$App"
 
-[[bin]]
+[[shim]]
 name = "rg"
 target = "$App\\rg.exe"
-arguments = ["--color=auto"]
 ```
 
-Top-level keys are exactly: `description`, `homepage`, `only_portable`, `origin`, `update`, `shortcut`, `environment`,
-`path`, and `bin`.
+Top-level keys are exactly: `format`, `description`, `project_url`, `modes`, `requires`, `requires_gupkg`,
+`record_manifest`, `source`, `track`, `prepare`, `portable`, `nonportable`, `shortcut`, `env`, `path`, `shim` and
+`root_forwarder` (only gupkg's own package may use the last). There is no `version`, `localVersion`, `name`, `homepage`,
+`only_portable`, `[origin]`, `[update]`, `[[bin]]`, `[[environment]]` or `ignore_checksum`.
 
-### Application origins
+Three URLs, three names. `project_url` is for people and is never fetched. `[source] download_url` is the artifact of
+*this* version. `[track] check_url` (and `repo`/`repo_url` for `github`, `gitlab` and `git`) is the page that is read to
+discover newer versions, and only `gupkg check-updates` reads it.
 
-`[origin]` is optional only when the version already contains a non-empty
-`App`. It supplies `App` when that directory is missing or empty,
-unless `--refresh-app` is used. An origin is one of the following.
+### `[source]`: how a version's `App` is filled
 
-**ZIP origin.** Omit `mode` and supply an HTTP(S) archive URL. `checksum`, when
-present, must be `sha256:` followed by 64 hexadecimal characters. `extractSubdir`
-selects a directory inside the archive; its contents become `App`.
+A version has exactly one `[source]`, and one of these kinds:
 
-```toml
-[origin]
-url = "https://example.invalid/tool-portable.zip"
-checksum = "sha256:<64-hex-digits>"
-extractSubdir = "tool-portable"
-```
+| Kind | `[source]` | Meaning |
+| --- | --- | --- |
+| Downloaded | `download_url` | The built-in download script downloads, verifies and unpacks the artifact and runs the `[[prepare]]` steps. `App` can be deleted and rebuilt at any time. |
+| Script-populated | `script = "pkg.local/populate.py"` | A custom script fills `App`: a Python hook, or a `.ps1`, `.cmd`, `.bat` or executable that gets the context as JSON on standard input. |
+| Shipped | `shipped = true` | `App` is already in the version directory. Nothing populates it and gupkg never drops it. With a `download_url` as well, the URL is used only to recover a missing `App`. |
 
-**Git origin.** Set `mode = "git"`, provide a safe Git URL, and optionally a
-full `refs/...` ref. The ref defaults to `refs/heads/main`. `gupkg` resolves the
-ref and checks out that exact commit into `App`.
+`shipped` defaults to `false` with a `download_url` or `script` and to `true` otherwise. A `download_url` and a `script`
+together are invalid. A version whose `App` is missing and cannot be recovered fails with `App is missing and no way to
+recover it.`
 
-```toml
-[origin]
-mode = "git"
-url = "git@github.com:owner/repository.git"
-ref = "refs/heads/main"
-```
+| Key | Meaning |
+| --- | --- |
+| `sha256`, `sha256_from` | The artifact's SHA-256 (64 hex digits) and where it came from (`github-digest`, `vendor-sums`, `registry`, `manual`). A mismatch is always fatal; a malformed value makes the version invalid. |
+| `kind` | `zip`, `7z`, `tar` (`.tar.xz`, `.tar.gz`, ...), `sfx`, `nsis`, `msi`, `exe`/`file` (copied as is) or `git`. Inferred from the file; a declared value must agree with it. There is no `inno` kind. |
+| `strip = N` or `"auto"` | Remove N levels of a single wrapper folder (`auto`: while the root holds exactly one folder). |
+| `subdir` | Keep only this subtree of the archive. |
+| `require = ["firefox.exe"]` | Files that must exist after unpacking. |
+| `verify_manifest = "path"` | A `<sha256>  <relative path>` manifest inside the artifact; every unpacked file must match it. |
+| `headers` | Request headers for the download (a table; `Host`, `Content-Length` and similar are refused). |
+| `[[source.nested]]` | Unpack an inner archive: `path`, `dest`, `replace`. |
+| `[[source.extract]]` | Glob-mapped partial extraction: `src`, `dest`. |
+| `[source.installer]` | Run a vendor installer into the stage (`run = ["/VERYSILENT", "/DIR=$Stage"]`). Needs a pinned `sha256`, is never skippable, and is labelled "runs vendor installer"; `[hooks] allow_vendor_installers = false` forbids it. |
+| `[source.git]` | For `kind = "git"`: `ref` and the pinned `commit`, which is the integrity anchor. |
+| `[source.checksum]` | Trackers only: how to find the hash of a discovered version (`sidecar`, `sums_file` + `entry`, `json` + `path`, `page_match`, `optional`). A pinned version carries none. |
 
-**Script origin.** Supply a package-local `.ps1`, `.cmd`, `.bat`, or `.exe`
-path. It must stay beneath the version directory. `gupkg` runs it with its
-directory as the working directory, sends a JSON document on standard input,
-and requires a successful exit status and a non-empty `App`. The JSON contains
-`config`, `identity`, and `PkgVars` (`PkgRoot`, `App`, `Icons`, and
-`Shortcuts`). Script origins clear `App` first only when `--refresh-app` is
-used.
+Unpacking is safe by construction: no path escapes `App`, no links, no device or stream names, limits on entries and
+sizes, and a failed unpack leaves no `App` and no scratch folder.
 
-```toml
-[origin]
-script = "scripts\\populate-app.ps1"
-```
+### `[[prepare]]`: steps after unpacking
 
-**Module origin.** Supply a package-local Python module beneath `pkg.local`.
-It must declare `PKG_MODULE_API = 1` and define `populate_app(context)`. The
-module receives the same `config`, `identity`, and `PkgVars` mappings as a
-script origin, plus `apiVersion = 1`.
+Run in order against the staged `App`; each row has exactly one of these keys, and every path is confined to `App`:
 
 ```toml
-[origin]
-module = "pkg.local/populate_app.py"
-```
-
-`url`, `script`, and `module` are mutually exclusive. Set `mode = "module"`
-only when declaring `module`; ZIP, script, and module modes are otherwise
-inferred. Git origins cannot use `checksum` or
-`extractSubdir`.
-
-Use repeated `[[origin.versions]]` tables to record historical sources. Every
-entry needs a unique `version`; it may initially contain only that version.
-If `[origin]` has no inline `url` or `script`, the entry matching the package's
-top-level `version` becomes the active source.
-
-```toml
-[origin]
-
-[[origin.versions]]
-version = "1.0.0"
-url = "https://example.invalid/tool-1.0.0.zip"
-checksum = "sha256:<64-hex-digits>"
+[[prepare]]
+remove = ["uninstall.exe", "$PLUGINSDIR"]                   # globs allowed; a missing path is ignored
+[[prepare]]
+rename = { from = "setup_*.exe", to = "tool.exe" }          # exactly one match; never overwrites
+[[prepare]]
+copy = { from = "shim.exe", to = ["node.exe", "npm.exe"] }
+[[prepare]]
+write = { path = "portable.ini", content = "..." }
+[[prepare]]
+module = "pkg.local/fix.py"                                 # escape hatch (hook API 2)
 ```
 
 ### Integration tables
 
-Each `[[shortcut]]` table accepts `name`, `targetPath`, `arguments`,
-`workingDirectory`, `iconLocation`, and `description`. Only `name` and
-`targetPath` are required. A `.lnk` suffix is added to `name` when absent.
+- **`[[shortcut]]`**: `name`, `target` (required), `arguments`, `working_dir`, `icon_location`, `description`. A `.lnk`
+  suffix is added to `name`.
+- **`[[env]]`**: `name`, `value` (exact case). Written as expandable registry strings. Reserved system variables (`Path`,
+  `SystemRoot`, ...) are refused.
+- **`[[path]]`**: one `value`; added to `PATH` only when not already present.
+- **`[[shim]]`**: `name` and `target`, with `type = "console"` (default) or `"gui"`, `arguments` (fixed, before the caller's),
+  `forward_args = true` (default), `elevate = false` and `working_dir`. The shim is `<name>.exe` with a
+  `<name>.config.toml` in the mode's `bin` folder and starts the target directly, without a shell. For shell behaviour
+  write a content shim instead, `content = "@echo off\r\n..."` with a name such as `tool.cmd`; `content` cannot be combined
+  with the other shim options. Names may not be device names, streams or end in a dot or space.
+- **`[portable]`** (needs `portable` in `modes`): `persist` (paths kept in `<package>\data` and linked into every version's
+  `App`), `markers` (files that switch the program to portable mode) and `args`/`env` that select portable mode for
+  shortcuts and shims. **`[nonportable]`** `remove = [...]` deletes paths from `App` when the package is installed in
+  another mode.
 
-Each `[[environment]]` table requires exact-case `Name` and `Value` keys.
-Values are written as expandable Windows registry strings. Each `[[path]]`
-table has one `value`; normalized entries are appended only when they are not
-already present (case-insensitive, ignoring a trailing slash).
+### Variables
 
-Each `[[bin]]` table normally declares a native executable shim with `name`
-and `target`:
+| Variable | Meaning |
+| --- | --- |
+| `$App` | The active version's `App`. |
+| `$VersionRoot` | The version directory. |
+| `$PackageRoot` | The package folder. |
+| `$Data` | `<package>\data` (portable mode only). |
+| `$Bin` | The mode's shim folder. |
+| `$Stage` | The staging folder (`[source.installer]` only). |
+| `${version}` | The version, with filters: `${version\|replace:.:-}`, `${version\|major}`. |
+| `${name}` | A named capture from `[track]`. |
+| `${ENV}` | A braced environment variable; it must resolve. |
+| `$$` | A literal dollar sign. |
 
-```toml
-[[bin]]
-name = "tool"
-target = "$App\\tool.exe"
-type = "console"            # default; use "gui" for desktop applications
-arguments = ["--safe"]      # fixed arguments precede caller arguments
-forward_args = true          # default
-elevate = false              # default
-working_dir = "$App"        # optional
-```
+In `content` shims an unbraced token such as `%NAME%` stays literal; elsewhere an unknown `$NAME` is an error.
 
-The installed command is `<name>.exe` (an explicit `.exe` suffix is also
-accepted) with a matching `<name>.config.toml`. The launcher invokes `target`
-directly, without a shell. Use `type = "gui"` when the command should not
-create or attach to a console.
+## Trackers and checking for updates
 
-When shell behavior or custom file content is necessary, `content` remains an
-explicit escape hatch. It cannot be combined with shim options:
-
-```toml
-[[bin]]
-name = "tool.cmd"
-content = "@echo off\r\ncall \"$App\\tool.cmd\" %*\r\n"
-```
-
-Shortcut and wrapper names are expanded before placement. A simple name goes
-under the scope's default root; nested relative paths are allowed. Absolute
-paths and `..` traversal are also allowed, but an output outside the default
-root produces a warning. This is intentional flexibility, so review such
-configuration carefully.
-
-### Variables and expansion
-
-`$App`, `$VersionRoot`, `$Icons`, and `$Shortcuts` expand to the corresponding
-directories in the selected version. `$VersionRoot` is the
-version directory itself. `${version}` expands to the upstream version. Braced
-environment references such as `${USERPROFILE}` expand from the process
-environment and must resolve. `$$` becomes a literal dollar sign.
-
-In normal configuration fields, an unbraced non-package token such as `$NAME`
-is an error. In `[[bin]].content`, such tokens remain literal so native batch,
-PowerShell, and shell variables work as expected.
-
-## Updates
-
-Updates follow **check → download → install**. `gupkg update --check-only` only
-discovers a candidate. `gupkg update --download-only` stages a complete new version under
-`<package-root>\.gupkg\work`, commits it as a new `<version>` directory,
-and records a receipt. `gupkg update` activates the most recently
-downloaded version through the regular install workflow.
-`gupkg update` performs those three steps as one explicit command.
-Update state, locks, receipts, and disposable work files all live in
-`<package-root>\.gupkg`; package repositories should ignore `/.gupkg/`.
-
-Updates are never started or activated automatically. A package administrator
-or a scheduler chooses when to run each explicit update command.
-
-Every update needs `[update.payload]` and normally `[update.check]`:
+A package that can discover newer versions has a `_check_updates` folder holding a tracker: a `pkg.toml` that is a template
+for new versions plus a `[track]` table. A tracker is never installed. `gupkg check-updates NAME` runs it:
 
 ```toml
-[update.check]
-mode = "github"
-assetName = "tool-${version}-windows-x86_64.zip"
-# tagPrefix = "release/" # remove a publisher-specific namespace before parsing
+format = 2
+description = "Pandoc, a universal document converter"
+project_url = "https://pandoc.org"
 
-[update.payload]
-mode = "zip"
-extractSubdir = "tool"
+[track]
+provider = "github"
+repo = "jgm/pandoc"
+asset_pattern = 'pandoc-(?P<version>[\d.]+)-windows-x86_64\.zip'
+
+[source]
+download_url = "${asset_url}"
+strip = "auto"
+# sha256 comes from GitHub's asset digest when GitHub publishes one
+
+[[path]]
+value = "$App"
+
+[[shim]]
+name = "pandoc"
+target = "$App\\pandoc.exe"
 ```
 
-#### Update checks
+1. **Check.** The `[track]` provider returns a version and captures (for example the asset URL and its digest).
+2. **Compare.** gupkg compares the version with `current` and the local versions; a hook never decides whether
+   something is current.
+3. **Write the version directory** `<package>\<version>\`: the support files are copied (never update-check code), `pkg.toml`
+   is rendered with every template expanded and `[track]` removed, `sha256` is filled only from a hash the tracker
+   *discovered* (`sha256_from` says how), and the version's own `install.cmd` and `gupkg-tui.cmd` launchers are written.
+4. **Populate it** (unless `--no-download`): download, verify, unpack and prepare, with the same checksum rules as `install`.
+   When the rules refuse the download (no hash and no `--skip-checksum`) the directory stays without `App` and the refusal is
+   reported.
+5. **Report and stop.** The package shows as `outdated`; `current`, shortcuts, shims and the environment are unchanged.
 
-`[update.check].mode` is one of:
+gupkg never computes a hash after a download and writes it into `pkg.toml`; the hash it observed goes into the receipt only
+(`gupkg pkg pin` copies it into `pkg.toml` on request, after showing where it came from). A later and separate `gupkg
+update NAME` activates the new version. From a normal shell, `check-updates` of a *system* package only reports; an
+administrator runs it from an elevated shell to write into the system root.
 
-- `github`: requires `[origin].url` to be an `https://github.com/owner/repository`
-  page URL and requires `assetName`. The built-in checker reads GitHub's latest
-  release, removes a conventional leading `v` from its tag, and requires
-  exactly one uploaded asset with that name. `${version}` in `assetName`
-  expands to the discovered release version. GitHub's SHA-256 asset digest is
-  used when available. Set `tagPrefix` when the publisher namespaces tags (for
-  example, `release/v1.2.3` with `tagPrefix = "release/"`).
-- `git`: checks `appPath` (default `App`) against `remote` (default `origin`)
-  and a full `ref` (default `refs/heads/main`). For a Git origin, `check` may
-  be omitted and defaults to that origin's ref; an explicit ref must match it.
-- `module`: imports a trusted `.py` module beneath `pkg.local` (default
-  `pkg.local/check_update.py`) and calls `check_update(context)`. `channel`
-  defaults to `stable`.
+**Providers** (`[track].provider`):
 
-Module checks must declare `PKG_MODULE_API = 1`. Their context has
-`apiVersion`, `current` identity fields (including `appReady`),
-package/version/App paths, persisted state, and `channel`. Return `None` only
-when the upstream version is current and its payload is healthy. When
-`appReady` is false, return the current candidate again so `update --download-only`
-can stage a repair. Candidate mappings contain non-empty `candidateId`,
-`version`, and `url`. Optional candidate fields are
-`sha256` (64 hex digits), `fileName`, `headers`, and `extractSubdir`. Candidate
-versions must be safe version-directory values and may not go backward.
+| Provider | Key fields |
+| --- | --- |
+| `github` | `repo`, `asset` or `asset_pattern` (regex with `(?P<version>...)`), `version_from = "tag"\|"asset"`, `tag_pattern`, `tag_prefix`, `release = "latest"\|"newest-matching"`, `prerelease` |
+| `gitlab` | `project`, `link_name` or `asset_pattern` |
+| `page` | `check_url`, `match` (regex with named groups), `select = "max"\|"first"\|"unique"`, `version`, `download`, `headers` |
+| `index` | `check_url`, ordered `[[track.level]]` (`match`, `select`, `key`, `next`, `probe`) |
+| `redirect` | `check_url`, `match`, `unwrap_query` |
+| `json` | `check_url`, `version` (JSONPath subset), `download`, `filter`, `records`, `match`, `checksum`, `captures` |
+| `last_modified` | `check_url`, `format = "%Y.%m.%d"` |
+| `rss` | `check_url`, `match` |
+| `git` | `repo_url`, `ref`; the version is `YYYYMMDD-HHMMSS-<short sha>` and the commit is the integrity anchor |
+| `chain` | ordered `[[track.fetch]]` steps whose captures feed the next URL |
+| `module` | `pkg.local/track.py` with `track(ctx) -> TrackResult` |
 
-`gupkg` never installs dependencies at run time, neither its own nor a hook's.
-Hooks run once and may import only the standard library, the modules the gupkg
-bundle ships, and modules in their own `pkg.local` folder. When a hook needs an
-unavailable import, the update fails with a message naming the module and
-nothing is installed or changed. Trusted package-local hooks are not sandboxed.
+All providers share one HTTP client (User-Agent, timeout, retries, TLS, the `GITHUB_TOKEN` header for GitHub only). Matches
+of a manifest's regular expression against fetched text run in a worker process under a deadline; a pattern that is too slow
+is an error, never "no version found".
 
-#### Update payloads
+## Checksums
 
-`[update.payload].mode` is one of:
+When a download has a `sha256`, it is verified and a mismatch always fails. When it has none, the call decides:
 
-- `zip`: downloads a verified ZIP payload and populates a new `App`. A direct
-  candidate `.exe` is instead copied intact into `App`; installers need a
-  module payload.
-- `module`: downloads the candidate artifact and calls trusted
-  `pkg.local/unpack_app.py` by default. It must declare `PKG_MODULE_API = 1`
-  and define `unpack_app(context)`. The context contains `candidate` and paths
-  for `artifact`, `stageRoot`, and `stageApp`; the hook must leave `stageApp`
-  non-empty.
-- `git`: clones the checked Git candidate into a new immutable version.
+- the **`gupkg` command line** refuses, unless the call carries `--skip-checksum`, which covers only this call, only missing
+  hashes and only `https://` addresses; the receipt records `skipped-cli` and `check` and `list --details` flag the install;
+- **`gupkg-manager`** follows `[manager] checksum_missing` (`ask`, `refuse`, `skip`), reads the plan, and calls the CLI with
+  `--skip-checksum=user-approved` or `=setting` for the packages it lets through;
+- a version with `[source.installer]` is never skippable; a git source is verified by its pinned commit.
 
-`git` requires a Git check. Downloaded candidates require a SHA-256 checksum
-unless `ignore_checksum = true` in the payload or
-`--no-checksum` is used.
+`gupkg pkg pin NAME@VERSION` copies the hash that a skipped install observed into `pkg.toml`, after showing the URL, the final
+URL, the size and the date. Installs with no download at all are labelled "origin not verified" unless a registry
+fingerprint matches (then "verified against registry"); a mismatch against the registry refuses the install.
 
-ZIP payloads may use `extractSubdir`, a candidate-provided `extractSubdir`, or
-explicit extraction mappings. `[[update.payload.extract]]` uses a ZIP-root
-shell-wildcard `src` and an `$App`-relative `dest`. A `src` ending in `/` copies
-the matched directory's contents; otherwise a matched directory is copied as a
-directory. `extract` cannot be combined with `extractSubdir`.
+## Hooks
 
-```toml
-[update.payload]
-mode = "zip"
+`pkg.local\` holds trusted package-local Python modules (`PKG_MODULE_API = 2`): `track(ctx)` in a tracker, and `populate`,
+`unpack` and `prepare` entry points elsewhere. A hook receives a typed context (`package`, `version`, `paths`, `http`,
+`options`, `captures`, `reporter`) and may import only the standard library, what the gupkg bundle ships, `gupkg.hooklib`
+and its own `pkg.local` folder; gupkg installs nothing for a hook. Version-directory scripts may use the network, because
+Python cannot sandbox trusted code; an elevated run refuses a version directory or `pkg.local` that is not admin-only
+before it imports anything.
 
-[[update.payload.extract]]
-src = "pandoc-*/"
-dest = ""
+## Moving from 0.17
 
-[[update.payload.rename]]
-src = "pandoc-${version}.exe"
-dest = "pandoc.exe"
-```
-
-`[[update.payload.rename]]` renames exact, safe paths inside staged `App`
-after extraction; it cannot overwrite an existing destination. `maxSizeMB` is
-accepted by the current schema for future policy use but is not currently
-enforced.
-
-#### Install steps
-
-The built-in update sequence is a release check followed by the configured
-payload step. Existing packages need no step declaration. To run package-local
-work after that payload has been unpacked, declare the ordered sequence
-explicitly. The first entry must be the built-in `payload` step; each later
-entry is a trusted Python module beneath `pkg.local`.
-
-```toml
-[[update.steps]]
-mode = "payload"
-
-[[update.steps]]
-mode = "module"
-module = "pkg.local/post_install.py"
-```
-
-Install-step modules declare `PKG_MODULE_API = 1` and define
-`install_step(context)`. They receive the candidate and `paths` for the staged
-`stageRoot`, `stageApp`, and downloaded `artifact` (or `None` for Git
-payloads). Steps run in declaration order before the new version is committed,
-so a failure leaves the installed version unchanged.
-
-```python
-PKG_MODULE_API = 1
-
-def install_step(context):
-    context["paths"]["stageApp"].joinpath("unwanted-file.txt").unlink(
-        missing_ok=True
-    )
-```
-
-Versions beginning with `bootstrap` are templates rather than active payloads.
-Installing one with a Git or module update configuration downloads and
-activates the first immutable version, leaving the template itself without an `App`.
-A Git bootstrap is a `_bootstrap` template with `payload.mode = "git"`.
-
-## Configuration, validation, and migration
-
-Use `config-check` before deploying a package definition. It validates canonical
-TOML, directory-derived metadata, historical-origin consistency, package-local
-origin scripts, and configured update modules without modifying the package.
-
-Use `config-fix` to create a starter `pkg.toml` or repair metadata while
-keeping runtime settings. It imports `_shortcuts` `.lnk` files by default and
-archives each imported source as `.lnk.imported`; pass
-`--import-shortcuts false` to skip that import. It does not populate `App` or
-install components.
-
-`config-fix` is the explicit migration path for older JSON-based layouts. It
-uses the existing converter, validates the complete replacement before writing,
-and creates a timestamped sibling backup unless backup is disabled. Use
-`--output PATH` only for this conversion mode.
-
-The standalone helpers remain available from `src`:
-
-```bat
-python gupkg\legacy_to_gupkg_toml.py --dir C:\Packages\Ripgrep\14.1.0.local.1
-python gupkg\shortcuts_to_gupkg_toml.py --dir C:\Packages\Ripgrep\14.1.0.local.1
-```
-
-The shortcut importer reads `.lnk` files from `_shortcuts`, converts
-package-owned paths back to package variables, and updates matching
-`[[shortcut]]` tables. After a successful write, it archives each imported
-source as `.lnk.imported`. Both helpers are migration tools, not the supported
-runtime package API.
+1.0 reads only format 2. A 0.17 package, a 0.17 manager configuration and a 0.17 installation are converted once by the
+separate `gupkg-migrate` tool (`gupkg migrate ...`); core contains no 0.17 code and no alias. See
+[Migrating from 0.17 and 0.18](_docs/operations.md#migrating-from-017-and-018).
 
 ## Development
 
-Implementation and test guidance is in [_docs/development_guide.md](_docs/development_guide.md).
-The runtime module overview and migration-helper details are in
+Implementation and test guidance is in [_docs/development_guide.md](_docs/development_guide.md); the design that 1.0
+implements is [_docs/rehaul_design.md](_docs/rehaul_design.md). The module overview is in
 [src/gupkg/README.md](src/gupkg/README.md).

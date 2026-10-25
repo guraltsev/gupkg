@@ -1,10 +1,10 @@
-> **Status (2026-10-22):** Still open, re-targeted. New packages are written in the registry 2 layout (`<name>/_check_updates/` plus pinned `<name>/<version>/`, format 2) once issue 031 lands. Read `pkg.bootstrap` below as `_check_updates`, and `pkgs\` as the `gupkg-registry` repository. Prefer the built-in services of issue 026 over `module` hooks.
+> **Status (2026-10-24):** Still open, re-targeted. New packages are written in the registry 2 layout (`<name>/_check_updates/` plus pinned `<name>/<version>/`, format 2), which issue 031 delivered. Read `pkg.bootstrap` below as `_check_updates` (0.17's `_bootstrap` is not a name 1.0 knows), and `pkgs\` as the `gupkg-registry` repository. A new package starts with `gupkg pkg new NAME --track github:OWNER/REPO` and is checked with `gupkg pkg check`; prefer the built-in services of issue 026 over `module` hooks.
 
 # Issue 014: Packages to create in `pkgs\` from `c:\opt`
 
 Date: 2026-10-15
 Priority: Medium
-Change type: New package templates (`pkgs\<name>\pkg.bootstrap\pkg.toml`)
+Change type: New package trackers (`<name>\_check_updates\pkg.toml` in the registry; was `pkgs\<name>\pkg.bootstrap\pkg.toml`)
 
 ## Objective
 

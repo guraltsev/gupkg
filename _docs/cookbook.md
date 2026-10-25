@@ -1,137 +1,192 @@
 # Cookbook
 
 Short recipes for common administration tasks. Each one is self-contained.
-Commands assume `gupkg` is on `PATH`; in scheduled tasks use its full path.
+Commands assume `gupkg` is on `PATH`; in scheduled tasks use the full path.
 
 ## Conventions used by every command
 
 - **Exit status:** `0` success, `2` you or the configuration need to change
-  something, `3` a change to the system failed, `4` internal error. Scripts can
-  rely on these alone.
-- **`--format toml`:** prints exactly one TOML document on stdout (progress text
-  is suppressed; on a console a download shows one progress line that updates
-  in place, and when redirected only its total-size and final lines) with `ok`, `changed`, `status`, `exit_code`, `warnings`, and
-  `errors`, plus per-package `[[target]]` tables for `manager` commands. Place
-  global options such as `--format` and `--scope` *before* the command.
-- **Safe to repeat:** `install`, `update`, and `manager update` can be rerun at
-  any time. Work already done is recognised and skipped.
+  something (including usage errors), `3` the operation failed, `4` internal error,
+  `5` declined or input needed, `6` the package needs a newer gupkg. Scripts can rely
+  on these alone.
+- **`--json`:** prints exactly one JSON document on standard output (human text goes
+  to standard error) with `api`, `command`, `ok`, `exit_code` and one entry per
+  target. `--plan` shows what a call would do without doing it.
+- **Options go after the command**, except `--version`, `--help`, `--settings PATH`
+  and `--sandbox DIR`.
+- **Safe to repeat:** `install`, `update`, `check-updates` and `check --fix` can be
+  rerun at any time; work already done is recognised and skipped.
+- **Targets** are names (`firefox`, `firefox@135.0`, `user:firefox`, `main/firefox`)
+  or paths. The command line has no `--all`; `gupkg-manager` is the program for
+  batches.
+
+## Install a program from the registry
+
+```bat
+gupkg registry sync                    :: once, then whenever you want a fresh catalogue
+gupkg search editor
+gupkg install vscode --mode user
+```
+
+The registry is the separate repository
+[`gupkg-registry`](https://github.com/guraltsev/gupkg-registry). `--offline` on
+`search` uses only the last synced catalogue.
 
 ## Install a program from GitHub Releases
 
-Create `C:\opt\<name>\_bootstrap\pkg.toml` describing the release asset, then
-run `gupkg install C:\opt\<name>`. The full walkthrough is in
-[Getting started](getting_started.md). The [`gupkg-registry`](https://github.com/guraltsev/gupkg-registry)
-repository has ready-made definitions: copy a folder, run `gupkg install`.
+Create `<root>\<name>\_check_updates\pkg.toml` with a tracker (see
+[Getting started](getting_started.md)), then `gupkg check-updates <name>` followed by
+`gupkg install <name>`. `gupkg pkg new <name> --track github:OWNER/REPO` writes the
+starter.
+
+## User, system and portable installs
+
+```bat
+gupkg install tool --mode user       :: %USERPROFILE%\opt, Start Menu and PATH of your account
+gupkg install tool --mode system     :: C:\opt, all users; asks once and relaunches elevated
+gupkg install tool --mode portable   :: settings and state in <package>\data; the folder can be carried
+gupkg install tool                   :: auto: elevated shell -> system, otherwise user
+```
+
+An elevated gupkg never acts on a user or portable root: use a normal shell for those.
+A portable root with `integrate = "none"` in its settings touches neither the registry
+nor the Start Menu; `gupkg shell --mode portable` prints the `PATH` line to use.
+
+## Install from a distribution folder or ZIP
+
+A folder made by `gupkg pkg export` (or any `<name>\<version>\` folder with `pkg.toml`
+and `install.cmd`) installs without gupkg being installed first, when it carries its own
+gupkg:
+
+```bat
+<name>\<version>\install.cmd           :: double-click, or run; user mode
+gupkg install C:\share\tool\1.0 --mode system   :: with an installed system gupkg, from an admin shell
+```
+
+The installed gupkg copies the folder into the mode's root (dropping the Mark of the
+Web) and installs from the copy; `--in-place` installs where it stands.
 
 ## See everything at a glance
 
 ```bat
-gupkg manager list                      :: every package, its versions, and its health
-gupkg manager list --filter unhealthy   :: only those with problems
-gupkg manager update --check-only       :: which packages have a newer release?
-gupkg manager doctor                    :: validate everything; exit 2 on any problem
+gupkg list                         :: every package, version and status
+gupkg list --outdated              :: a newer version is waiting
+gupkg list --broken --details      :: problems, with the App kind and checksum notes
+gupkg info firefox                 :: everything known about one package
+gupkg check                        :: health: drift, App fingerprint, registry fingerprint
 ```
 
-`list` and `doctor` read only the local disk and are instant. Asking upstream
-about new releases is what `manager update --check-only` does.
-
-`manager` commands need a [manager configuration](operations.md#manager-configuration)
-naming your user and system package folders. `gupkg manager init` creates one
-with sensible defaults, plus the folders it names.
+`list`, `info` and `check` read only the local disk and are instant. Asking upstream is
+`check-updates`.
 
 ## Update everything
 
 ```bat
-gupkg manager update --check-only   :: plan only: what would change?
-gupkg manager update                :: show the plan, ask, then update
-gupkg manager update --yes          :: no questions (for scripts)
+gupkg-manager check-updates --all      :: find and prepare new versions of every package
+gupkg-manager update --all             :: show the plan, ask once, then activate them
+gupkg-manager update --all --yes       :: no questions (for scripts)
 ```
 
-A failing package never stops the others; each package's outcome is reported
-and the exit status is the worst one. Re-running after fixing a failure picks
-up only what is left.
+A failing package never stops the others; each package's outcome is reported and the
+exit status is the worst one. Re-running after fixing a failure picks up what is left.
+For a handful of packages, name them: `gupkg check-updates a b c` then `gupkg update a b c`.
 
 ## Update unattended every night
 
-Task Scheduler running as SYSTEM, using the full path to the shim:
+Run both commands as a **normal user** in Task Scheduler (never with "highest
+privileges": the programs refuse an elevated shell):
 
 ```bat
-schtasks /Create /TN "gupkg nightly update" /SC DAILY /ST 03:00 /RU SYSTEM ^
-  /TR "C:\bin\gupkg.exe --scope system manager update --yes"
+schtasks /Create /TN "gupkg check" /SC DAILY /ST 03:00 ^
+  /TR "C:\bin\gupkg-manager.exe check-updates --all --json"
+schtasks /Create /TN "gupkg update" /SC WEEKLY /D SUN /ST 04:00 ^
+  /TR "C:\bin\gupkg-manager.exe update --all --yes --json"
 ```
 
-`--scope system` limits the run to the system package root, which an elevated
-account can always write. To keep a per-user root current, create a second task
-that runs as that user with `--scope user`. `gupkg` never updates anything on its
-own; only a task you create does.
+For **system** packages `check-updates` from a normal shell only reports; an
+administrator runs `gupkg check-updates <package>...` from an elevated shell (an elevated
+`gupkg-manager` is refused, so a scheduled elevated task calls `gupkg.cmd` of the system
+root with explicit package names) to write and prepare the new version in `C:\opt`. `update` of a system package asks for administrator rights once.
+gupkg never updates anything on its own; only a task you create does. A package whose
+download has no checksum is refused in a schedule (`ask` behaves as `refuse`); see
+[the checksum policy](operations.md#checksum-policy).
 
-## Download now, switch during a maintenance window
+## Prepare now, switch during a maintenance window
 
 ```bat
-gupkg manager update --download-only   :: stage new versions; nothing changes yet
-gupkg manager update --yes             :: later: activate the staged versions
+gupkg-manager check-updates --all     :: now: download and verify; nothing changes yet
+gupkg-manager update --all --yes      :: later: activate what is prepared
 ```
 
 ## Alert on problems from a script or CI job
 
 ```bat
-gupkg manager doctor || echo gupkg found problems
-```
-
-For details, parse the TOML (Python 3.11+ ships a parser):
-
-```bat
-gupkg --format toml manager update --check-only > updates.toml
-python -c "import tomllib; d=tomllib.load(open('updates.toml','rb')); [print(t['id'], t['installed_version'], '->', t.get('candidate_version')) for t in d.get('target', []) if t['status']=='available']"
-```
-
-## Adopt a program you already have
-
-1. Put the files where `gupkg` expects them:
-   `C:\opt\<name>\<version>\App\...` (for example `C:\opt\notepad2\4.2\App`).
-2. `gupkg config-fix C:\opt\<name>\<version>` writes a starter `pkg.toml`.
-   If the folder contains a `_shortcuts` folder of `.lnk` files, they are imported
-   into `[[shortcut]]` entries automatically.
-3. Edit `pkg.toml` to add PATH entries or wrappers, run
-   `gupkg config-check`, then `gupkg install`.
-
-`config-fix` also converts older JSON-based package folders; it always keeps a
-timestamped `pkg.toml.bak.*` copy of anything it replaces (`--no-backup` opts out).
-
-## Repair a machine
-
-```bat
-gupkg install C:\opt\<name>                 :: re-create shortcuts, PATH, wrappers
-gupkg install C:\opt\<name> --refresh-app   :: also re-download the program files
-gupkg manager self repair                   :: repair gupkg's own command shims
+gupkg check || echo gupkg found problems
+gupkg list --outdated --json > outdated.json
 ```
 
 ## Roll back an update
 
 ```bat
-gupkg install C:\opt\<name>\<older-version> --allow-downgrade
+gupkg switch <name> <older-version>
 ```
 
-Old versions are never deleted by `gupkg`, so you can free space by deleting old
-`v...` folders yourself (never the one `current` points to).
+`switch` activates another local version and repairs the integration for it. Old
+versions are kept until `gupkg cleanup`. The version you switch away from stays `available`.
 
-## Install from the official registry
+## Repair a machine
 
 ```bat
-gupkg manager init                     :: once: configuration and folders
-gupkg manager registry sync            :: fetch the catalogue (once; then cached)
-gupkg manager search editor
-gupkg --scope user manager install vscode
+gupkg install <name>                  :: re-create shortcuts, PATH, shims without downloading
+gupkg install <name> --refresh        :: also rebuild the program files
+gupkg check --fix                     :: repair what check reported
+gupkg self repair                     :: gupkg's own launch metadata
 ```
 
-`manager install` requires an explicit `--scope user` or `--scope system` because
-a brand-new package has no owner yet. Add `--offline` to any registry command to
-use only the cached catalogue.
+## Adopt a program you already have
 
-## Remove a package
+1. Put the files where gupkg expects them: `<root>\<name>\<version>\App\...`
+   (for example `%USERPROFILE%\opt\notepad2\4.2\App`).
+2. `gupkg pkg new <name>@<version>` writes a starter `pkg.toml` (a shipped `App`).
+3. Edit it to add shortcuts, `PATH` entries or shims, run `gupkg pkg check <folder>`,
+   then `gupkg install <name>`.
 
-There is no uninstall command yet. To remove one by hand: delete its Start Menu
-shortcuts, the environment variables and PATH entries its `pkg.toml` declared,
-the `<name>.exe` and `<name>.config.toml` wrappers in your `bin` folder, and
-finally the package folder (remove the `current` junction first with `rmdir`
-so only the link, not the program, is removed).
+A 0.17 installation is adopted with the migration tool instead; see
+[Migrating from 0.17 and 0.18](operations.md#migrating-from-017-and-018).
+
+## Pin a hash after a skipped install
+
+```bat
+gupkg install tool --skip-checksum     :: the download had no checksum; https only
+gupkg pkg pin tool                     :: shows URL, final URL, size and date, then writes the hash into pkg.toml
+```
+
+## Uninstall
+
+```bat
+gupkg uninstall <name>                 :: removes shortcuts, shims, PATH entries, environment values
+gupkg uninstall <name> --purge         :: also deletes the package folder and its data (asks first)
+gupkg cleanup <name> --keep 2          :: drop old Apps, receipts and logs; never runs on its own
+```
+
+`uninstall` removes exactly what the install record lists, including what a 0.17 install
+created once the migration tool has adopted it.
+
+## Free disk space
+
+```bat
+gupkg cleanup                          :: every root: non-current Apps, receipts, work folders, logs
+gupkg cleanup --bundled                :: also drop bundled gupkg copies in version directories (where a root forwarder exists)
+```
+
+Recoverable `App` folders are dropped; shipped ones and the active one never are.
+`[cleanup] auto = true` in the settings makes `gupkg-manager update --all` clean up
+afterwards.
+
+## Read the logs
+
+```bat
+gupkg logs <name>                      :: list the logs of a package
+gupkg logs <name> --path               :: print the newest text log
+gupkg logs <name> --open               :: open it
+```
