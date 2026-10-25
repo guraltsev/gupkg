@@ -44,6 +44,7 @@ row.
 
 | Version | Commit | Date | SHA-256 | Notes |
 |---|---|---|---|---|
+| 1.0.1 | `b505b7d59dc67a579b6678ec38f103fcf7ca6a4a` | 2026-10-24 | 442f465c6046ee4801f3dd4e5f3ec8e2448661043eefe431e8c26bcc6f84608d | gupkg 1.0.1 |
 | 1.0.0 | `e8587967075f10fcc7c157c0951e4693ac84dec2` | 2026-10-24 | 22e520905afe0666051e4917be722bcc8144ae14e687b8422be65c32411a2673 | gupkg 1.0: format 2 packages, unified CLI, gupkg-tui and gupkg-manager, bundled mode, new bootstrap |
 | 0.18.0 | `0a4a63ff0b287148cdedf05244f5d275f2b0c45b` | 2026-10-22 | 240d4ace40059a6ca65d85241459881f7692aa4029ff084408f16823f437d124 | Stage 0: self-contained release ZIP, native shortcuts and junctions, one bundled interpreter, no pip in the bundle |
 | 0.17.0 | `800780eb9575f0455e1eaf2c71a3a543f51559e7` | 2026-10-21 | - | Template folder renamed from pkg.bootstrap to _bootstrap |
