@@ -53,22 +53,58 @@ def _push_options(args: argparse.Namespace) -> dict[str, object]:
 def _print(outcome: Outcome) -> None:
     """Print one outcome line."""
     flag = ("  [REVIEW]" if outcome.review else "") + ("  [UNVERSIONED]" if outcome.unversioned else "")
-    print(f"{outcome.status:8} {outcome.package} {outcome.version or ''}: {outcome.message}{flag}".rstrip())
+    print(f"{outcome.status:8} {outcome.package} {outcome.version or ''}: {outcome.message}{flag}".rstrip(), flush=True)
+
+
+class _Progress:
+    """Print ``[n/total] name ...`` when a package starts and its outcome on the same line when it ends."""
+
+    def __init__(self) -> None:
+        self.open = False
+
+    def start(self, name: str, number: int, total: int) -> None:
+        """Announce the package being checked (the outcome line completes it)."""
+        if self.open:
+            print(flush=True)
+        print(f"[{number}/{total}] {name} ... ", end="", flush=True)
+        self.open = True
+
+    def outcome(self, outcome: Outcome) -> None:
+        """Print the outcome, finishing the open line."""
+        self.open = False
+        _print(outcome)
+
+    def finish(self) -> None:
+        """End a line left open by a package that had no tracker."""
+        if self.open:
+            print(flush=True)
+            self.open = False
 
 
 def _run_update(args: argparse.Namespace, system: System, environ: Mapping[str, str]) -> int:
     """Run the trackers; commit and push only with ``--auto-push``."""
     sandbox, temporary = _sandbox(args)
+    progress = _Progress()
     try:
-        report = update_registry(args.registry, system, sandbox=sandbox, names=args.packages or None, environ=environ)
+        report = update_registry(
+            args.registry,
+            system,
+            sandbox=sandbox,
+            names=args.packages or None,
+            environ=environ,
+            on_start=progress.start,
+            on_outcome=progress.outcome,
+        )
     except RegistryFileError as error:
+        progress.finish()
         print(f"error: {error}", file=sys.stderr)
         return 2
     finally:
         if temporary:
             shutil.rmtree(sandbox, ignore_errors=True)
-    for outcome in report.outcomes:
-        _print(outcome)
+    progress.finish()
+    counts = {status: sum(1 for o in report.outcomes if o.status == status) for status in ("added", "pinned", "current", "failed")}
+    print("summary: " + ", ".join(f"{count} {status}" for status, count in counts.items() if count) + f" of {len(report.outcomes)} packages", flush=True)
     if args.auto_push and report.written:
         try:
             commit_and_push(system, args.registry, report.outcomes, **_push_options(args))

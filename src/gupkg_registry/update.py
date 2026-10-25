@@ -38,7 +38,7 @@ import re
 import shutil
 import time
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -119,6 +119,8 @@ def update_registry(
     sandbox: Path,
     names: Sequence[str] | None = None,
     environ: Mapping[str, str] | None = None,
+    on_start: Callable[[str, int, int], None] | None = None,
+    on_outcome: Callable[[Outcome], None] | None = None,
 ) -> UpdateReport:
     """Run the trackers of *names* (default: every package) and write what is new.
 
@@ -134,6 +136,10 @@ def update_registry(
         Only these packages. An unknown name is a failed outcome, not an error.
     environ : mapping, optional
         The environment the tool passes explicitly; only ``GITHUB_TOKEN`` is used.
+    on_start : callable, optional
+        Called as ``on_start(name, number, total)`` before each package is checked (progress feedback).
+    on_outcome : callable, optional
+        Called with each package's ``Outcome`` as soon as it is known.
 
     Returns
     -------
@@ -153,17 +159,26 @@ def update_registry(
     _remove_stale_staging(available.values())
     wanted = list(dict.fromkeys(names)) if names else sorted(available)
     outcomes: list[Outcome] = []
-    for name in wanted:
+
+    def record(outcome: Outcome) -> None:
+        """Keep *outcome* and tell the caller at once."""
+        outcomes.append(outcome)
+        if on_outcome is not None:
+            on_outcome(outcome)
+
+    for number, name in enumerate(wanted, start=1):
+        if on_start is not None:
+            on_start(name, number, len(wanted))
         package = available.get(name)
         if package is None:
-            outcomes.append(Outcome(name, "failed", message="no such package in the registry"))
+            record(Outcome(name, "failed", message="no such package in the registry"))
             continue
         if not (package / TRACKER_DIR_NAME / MANIFEST_NAME).is_file():
             continue  # a package without a tracker has nothing to check
         try:
-            outcomes.append(_update_package(run, package))
+            record(_update_package(run, package))
         except Exception as error:  # noqa: BLE001 - the package is the unit of failure; the message names the cause
-            outcomes.append(Outcome(name, "failed", message=f"{type(error).__name__}: {error}"))
+            record(Outcome(name, "failed", message=f"{type(error).__name__}: {error}"))
     write_registry_file(root, run.settings)
     return UpdateReport(tuple(outcomes))
 

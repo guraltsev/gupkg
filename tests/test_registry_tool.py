@@ -634,3 +634,21 @@ def test_the_launchers_command_brings_a_registry_to_the_current_template_and_ref
     before = (root / "_registry.toml").read_bytes()
     assert main(["launchers", "--registry", str(root)]) == 0
     assert (root / "_registry.toml").read_bytes() == before
+
+
+def test_update_prints_a_progress_line_per_package_and_a_summary(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Each package gets ``[n/total] name ... <outcome>`` on one line as it finishes, and the run ends with a summary."""
+    root = registry_of(tmp_path, "hwinfo", "volta")
+    good = zip_bytes(tmp_path, "h.zip", HWINFO_ZIP)
+    system = machine(tmp_path, "page_hwinfo", "github_volta", artifacts={
+        "https://www.hwinfo.com/files/hwi_1002.zip": good,
+        "https://github.com/o/r/releases/download/v2.0.1/volta-2.0.1-windows.zip": b"this is not an archive",
+    })
+    patch_digest(system, "9ce45e2deeb806d62a504075f992a4c5de66873173c2e403a49a3de9126fa5d3", hashlib.sha256(b"this is not an archive").hexdigest())
+
+    status = run_cli(root, system, tmp_path, "update")
+
+    lines = capsys.readouterr().out.splitlines()
+    assert status == 1
+    assert lines[0].startswith("[1/2] hwinfo ... added") and lines[1].startswith("[2/2] volta ... failed")
+    assert "summary: 1 added, 1 failed of 2 packages" in lines
