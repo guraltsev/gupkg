@@ -44,6 +44,7 @@ row.
 
 | Version | Commit | Date | SHA-256 | Notes |
 |---|---|---|---|---|
+| 1.0.3 | `effcc9ac30d5292ab1019b545247e5fdd8813079` | 2026-10-25 | cff314eb0ce2b22f5c90154e74680e0ced2ea704cd20e9e519ebcd126ddebe46 | gupkg 1.0.3 |
 | 1.0.2 | `296243c4c2f04970361cbdf082241af0d33e7082` | 2026-10-25 | 184817d040847cf5054ec3ef5f76c74270494167f361112c12c92c479d3c029c | gupkg 1.0.2 |
 | 1.0.1 | `b505b7d59dc67a579b6678ec38f103fcf7ca6a4a` | 2026-10-24 | 442f465c6046ee4801f3dd4e5f3ec8e2448661043eefe431e8c26bcc6f84608d | gupkg 1.0.1 |
 | 1.0.0 | `e8587967075f10fcc7c157c0951e4693ac84dec2` | 2026-10-24 | 22e520905afe0666051e4917be722bcc8144ae14e687b8422be65c32411a2673 | gupkg 1.0: format 2 packages, unified CLI, gupkg-tui and gupkg-manager, bundled mode, new bootstrap |
