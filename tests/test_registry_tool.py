@@ -735,3 +735,25 @@ def test_the_lock_is_released_after_a_run(tmp_path: Path) -> None:
     run_update(root, system, tmp_path)
 
     assert not (root / ".registry-tool.lock").exists()
+
+
+def test_a_package_that_runs_a_vendor_installer_is_hashed_but_the_installer_is_never_run(tmp_path: Path) -> None:
+    """The tool downloads and hashes the installer for the pinned version; it does not unpack or run it, so `require` is not judged."""
+    tracker = (
+        'format = 2\ndescription = "d"\nmodes = ["system", "user"]\n[track]\nprovider = "page"\n'
+        'check_url = "https://example.org/dl"\nmatch = \'tool_(?P<version>\\d+\\.\\d+)_setup\\.exe\'\n'
+        '[source]\ndownload_url = "https://example.org/tool_${version}_setup.exe"\nkind = "exe"\nrequire = ["Compiler/tool.exe"]\n'
+        '[source.installer]\nrun = ["/silent", "/installto", "$Stage"]\n'
+    )
+    root = registry_of(tmp_path, extra={"inst/_check_updates/pkg.toml": tracker})
+    system = machine(tmp_path, artifacts={"https://example.org/tool_2.5_setup.exe": b"MZ not really an installer"})
+    system.urls["https://example.org/dl"] = FakeHttp("<a>tool_2.5_setup.exe</a>")
+
+    outcome = run_update(root, system, tmp_path, "inst").outcomes[0]
+
+    text = (root / "inst" / "2.5" / "pkg.toml").read_text(encoding="utf-8")
+    assert outcome.status == "added" and outcome.review
+    assert hashlib.sha256(b"MZ not really an installer").hexdigest() in text and "[source.installer]" in text
+    assert system.process_log == []
+    assert [problem for problem in validate_registry(root).problems if "inst/2.5" in problem] == []
+

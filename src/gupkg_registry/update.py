@@ -296,7 +296,8 @@ def _fetch_and_prove(run: _Run, name: str, version: str, manifest, expected: str
 
     With *expected* (a discovered checksum) the download is verified against it. Without one, the
     download is allowed over ``https://`` only and the observed hash is returned. For a git source
-    nothing is downloaded: the pinned commit is the anchor and ``None`` is returned.
+    nothing is downloaded: the pinned commit is the anchor and ``None`` is returned. A source that runs a vendor installer
+    (``[source.installer]``) is downloaded and hashed but not unpacked or run.
     """
     stage = run.sandbox / "stage" / f"{name}-{version}-{uuid.uuid4().hex[:8]}"
     stage.mkdir(parents=True)
@@ -317,6 +318,10 @@ def _fetch_and_prove(run: _Run, name: str, version: str, manifest, expected: str
             headers=source.headers or None,
         )
         reverify(fetched)
+        if source.installer is not None:
+            # A vendor installer is never run by the registry tool: that would execute downloaded code on the maintainer's
+            # machine. The download is verified and hashed; whether the installer produces `require` is proven by the first install.
+            return fetched.record.observed_sha256 if expected is None else expected
         populate_app(run.system, manifest, fetched.download.path, stage / "App", context=context, filename=fetched.download.filename)
         return fetched.record.observed_sha256 if expected is None else expected
     finally:
