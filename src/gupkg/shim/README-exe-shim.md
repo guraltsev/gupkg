@@ -205,10 +205,11 @@ Conan and CMake generate all build-system files, intermediate objects, static
 libraries, and test helpers in `.build/`. Final distribution artifacts are
 written directly to `.artifacts/`: `shim-console.exe`, `shim-gui.exe`, their
 `.static.exe` counterparts, the dynamic launchers' required runtime DLLs and
-license notices, the project's `LICENSE-exe-shim-MIT.txt` and
+license notices (in the `exe-shim-lib/` subdirectory), the project's `LICENSE-exe-shim-MIT.txt` and
 `LICENSE-exe-shim-UNLICENSE.txt`, `README-exe-shim.md`, and `make-shim.cmd`.
 The normal-named launchers are dynamic;
-keep their DLLs alongside them when distributing them.
+keep the `exe-shim-lib/` directory alongside them when distributing them; they
+load their DLLs from there, not from their own folder.
 
 ## Repository layout
 

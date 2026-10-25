@@ -197,7 +197,7 @@ def build_bundle(
         # relative configurations as package-owned support files, one for each
         # command whose ``.cmd`` launcher is in the package (the UI programs of
         # issue 030 add theirs).
-        shim = source / "shim" / "shim-console.exe"
+        shim = source / "shim" / "shim-console.static.exe"  # static: no exe-shim-lib folder is needed beside it
         commands = [name for name in ("gupkg", "gupkg-tui", "gupkg-manager", "gupkg-migrate") if (payload / f"{name}.cmd").is_file()]
         if shim.is_file():
             for command in commands:

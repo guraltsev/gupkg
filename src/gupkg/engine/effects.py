@@ -45,14 +45,17 @@ from ..model.state import Effect
 from ..system.port import Scope, ShortcutSpec, System
 from ..tomlio import dumps
 
-# The launcher binaries and the runtime files that sit beside a dynamically linked launcher.
+# The launcher binaries, the project licenses that sit beside them, and the folder of runtime files a dynamically linked launcher
+# loads its libraries from (``exe-shim-lib`` beside the launcher: the launchers do not look in their own folder, so a stray DLL
+# in ``bin`` is never picked up by mistake).
 _SHIM_DIR = Path(__file__).resolve().parents[1] / "shim"
-_DYNAMIC_COMPANIONS = (
+SHIM_LIB_NAME = "exe-shim-lib"
+_SHIM_LICENSES = ("LICENSE-exe-shim-MIT.txt", "LICENSE-exe-shim-UNLICENSE.txt")
+# What older gupkg versions copied loose into ``bin``; an identical copy there is removed when a launcher is written.
+_LEGACY_LOOSE_FILES = (
     "libgcc_s_seh-1.dll",
     "libstdc++-6.dll",
     "libwinpthread-1.dll",
-    "LICENSE-exe-shim-MIT.txt",
-    "LICENSE-exe-shim-UNLICENSE.txt",
     "LICENSE-GCC-3.0.txt",
     "LICENSE-GCC-RUNTIME-EXCEPTION-3.1.txt",
     "LICENSE-libwinpthread-MIT.txt",
@@ -630,6 +633,10 @@ def verify_each(system: System, effects: Sequence[Effect], *, elevated: bool) ->
                     drift = f"shim missing: {fields['path']}"
                 elif not _file_has(Path(str(fields["config"])), str(fields["config_sha256"])):
                     drift = f"shim configuration differs: {fields['config']}"
+                elif str(fields.get("linkage", "dynamic")) == "dynamic" and (
+                    missing := shim_runtime_missing(Path(str(fields["path"])).parent)
+                ):
+                    drift = f"shim runtime files missing in {Path(str(fields['path'])).parent / SHIM_LIB_NAME}: {', '.join(missing)}"
             elif effect.kind in ("file", "forwarder"):
                 if not _file_has(Path(str(fields["path"])), str(fields["sha256"])):
                     drift = f"{'root forwarder' if effect.kind == 'forwarder' else 'file'} missing or changed: {fields['path']}"
@@ -708,6 +715,33 @@ def _prune_empty(folder: Path, stop: Path | None) -> None:
         folder = folder.parent
 
 
+def shim_library_files() -> list[Path]:
+    """Return the files of the shim runtime folder (``exe-shim-lib``: the DLLs, their assembly manifest and the licenses)."""
+    folder = _SHIM_DIR / SHIM_LIB_NAME
+    return sorted(item for item in folder.iterdir() if item.is_file()) if folder.is_dir() else []
+
+
+def _remove_legacy_loose_files(bin_dir: Path) -> None:
+    """Delete the runtime files an older gupkg left loose in *bin_dir*, but only a file that is byte-for-byte ours.
+
+    A launcher now loads its libraries from ``exe-shim-lib`` alone, so a loose copy is dead weight that could be picked up by
+    another program in ``bin``; a file that differs is somebody else's and stays.
+    """
+    for name in _LEGACY_LOOSE_FILES:
+        loose, ours = bin_dir / name, _SHIM_DIR / SHIM_LIB_NAME / name
+        try:
+            if loose.is_file() and ours.is_file() and loose.read_bytes() == ours.read_bytes():
+                loose.unlink()
+        except OSError:
+            pass  # in use or not ours to delete: leave it
+
+
+def shim_runtime_missing(bin_dir: Path) -> list[str]:
+    """Return the names of the ``exe-shim-lib`` files missing from *bin_dir* (what a dynamic launcher cannot start without)."""
+    folder = bin_dir / SHIM_LIB_NAME
+    return [source.name for source in shim_library_files() if not (folder / source.name).is_file()]
+
+
 def _write_shim(fields: Mapping[str, Any], context: EffectContext) -> None:
     """Write a launcher, its config and, for a dynamic launcher, the runtime files that are not there yet."""
     path = _inside(Path(str(fields["path"])), context.bin_dir, "shim")
@@ -723,7 +757,14 @@ def _write_shim(fields: Mapping[str, Any], context: EffectContext) -> None:
 
     # Shared runtime files are never overwritten: another command may be using them.
     if linkage == "dynamic":
-        for name in _DYNAMIC_COMPANIONS:
+        for name in _SHIM_LICENSES:
             target = context.bin_dir / name
             if not target.exists():
                 write_bytes_atomic(target, (_SHIM_DIR / name).read_bytes())
+        library = context.bin_dir / SHIM_LIB_NAME
+        library.mkdir(exist_ok=True)
+        for source in shim_library_files():
+            target = library / source.name
+            if not target.exists():
+                write_bytes_atomic(target, source.read_bytes())
+        _remove_legacy_loose_files(context.bin_dir)

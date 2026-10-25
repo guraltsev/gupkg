@@ -265,3 +265,59 @@ def test_a_name_of_256_characters_cannot_become_an_effect(tmp_path: Path, kind: 
 
     with pytest.raises(EffectError, match="longer"):
         desired_effects(hostile, ctx)
+
+
+SHIM = '[[shim]]\nname = "t"\ntarget = "$App\\\\a.exe"\n'
+
+
+def test_a_dynamic_shim_gets_its_libraries_in_exe_shim_lib_and_none_loose_in_bin(tmp_path: Path, system: FakeSystem) -> None:
+    """The launcher loads its DLLs from the ``exe-shim-lib`` folder in ``bin`` only, so the DLLs, the assembly manifest and the licenses go there."""
+    ctx = context(tmp_path)
+    effect = next(item for item in desired_effects(manifest(SHIM), ctx)[0] if item.kind == "shim")
+
+    apply_effect(system, effect, ctx)
+
+    library = tmp_path / "bin" / "exe-shim-lib"
+    assert {item.name for item in library.iterdir()} >= {"libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll", "exe-shim-lib.manifest"}
+    assert not list((tmp_path / "bin").glob("*.dll"))
+    assert (tmp_path / "bin" / "LICENSE-exe-shim-MIT.txt").is_file()
+
+
+def test_a_static_shim_needs_no_library_folder(tmp_path: Path, system: FakeSystem) -> None:
+    """A static launcher links its runtime in: no ``exe-shim-lib`` folder is written for it."""
+    ctx = replace(context(tmp_path), linkage="static")
+    effect = next(item for item in desired_effects(manifest(SHIM), ctx)[0] if item.kind == "shim")
+
+    apply_effect(system, effect, ctx)
+
+    assert (tmp_path / "bin" / "t.exe").is_file() and not (tmp_path / "bin" / "exe-shim-lib").exists()
+
+
+def test_verify_reports_a_missing_library_and_apply_puts_it_back(tmp_path: Path, system: FakeSystem) -> None:
+    """A dynamic shim without its ``exe-shim-lib`` files is reported as drift, and applying the effect again restores them."""
+    ctx = context(tmp_path)
+    effect = next(item for item in desired_effects(manifest(SHIM), ctx)[0] if item.kind == "shim")
+    applied = apply_effect(system, effect, ctx)
+    (tmp_path / "bin" / "exe-shim-lib" / "libwinpthread-1.dll").unlink()
+
+    drift = [row[1] for row in verify_each(system, [applied], elevated=False) if row[1]]
+
+    assert drift and "libwinpthread-1.dll" in drift[0] and "exe-shim-lib" in drift[0]
+    apply_effect(system, effect, ctx)
+    assert [row for row in verify_each(system, [applied], elevated=False) if row[1] or row[2]] == []
+
+
+def test_loose_copies_from_an_older_gupkg_are_removed_only_when_they_are_ours(tmp_path: Path, system: FakeSystem) -> None:
+    """An identical loose DLL in ``bin`` is deleted; a DLL with other bytes (someone else's) stays."""
+    ctx = context(tmp_path)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True)
+    ours = (Path(__file__).resolve().parents[1] / "src" / "gupkg" / "shim" / "exe-shim-lib" / "libgcc_s_seh-1.dll").read_bytes()
+    (bin_dir / "libgcc_s_seh-1.dll").write_bytes(ours)
+    (bin_dir / "libwinpthread-1.dll").write_bytes(b"somebody else's library")
+    effect = next(item for item in desired_effects(manifest(SHIM), ctx)[0] if item.kind == "shim")
+
+    apply_effect(system, effect, ctx)
+
+    assert not (bin_dir / "libgcc_s_seh-1.dll").exists()
+    assert (bin_dir / "libwinpthread-1.dll").read_bytes() == b"somebody else's library"
