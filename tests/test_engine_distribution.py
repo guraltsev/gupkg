@@ -99,8 +99,8 @@ def test_the_real_registrys_published_fingerprint_is_accepted_and_one_changed_by
     assert not (world.user / "qbittorrent" / "5.2.3").exists()
 
 
-def test_a_bundled_install_verifies_a_registry_copy_before_it_adds_the_launchers(world: World) -> None:
-    """Carry-forward adds launchers that are part of the fingerprint, so the copy is verified first: a published fingerprint still matches."""
+def test_a_bundled_install_verifies_a_registry_copy_before_it_adds_the_bundled_gupkg(world: World) -> None:
+    """Carry-forward adds the bundled gupkg folder after the copy is verified: a published fingerprint still matches, and the registry's own launchers are kept."""
     world.publish("tool", "1.0.0", tables=SHIM)
     assert world.one("install", "tool").ok
     installed = world.user / "tool" / "1.0.0"
@@ -113,7 +113,8 @@ def test_a_bundled_install_verifies_a_registry_copy_before_it_adds_the_launchers
     result = world.one("update", "tool")
 
     assert result.ok and result.version == "1.1.0"
-    assert (world.user / "tool" / "1.1.0" / "install.cmd").is_file() and (world.user / "tool" / "1.1.0" / "gupkg" / "gupkg.cmd").is_file()
+    assert (world.user / "tool" / "1.1.0" / "gupkg" / "gupkg.cmd").is_file()
+    assert not (world.user / "tool" / "1.1.0" / "install.cmd").exists()
     assert read_receipt(world.user / "tool", "1.1.0").data["checksum"]["decision"] == "verified"
 
 
@@ -149,8 +150,8 @@ def test_launchers_carried_forward_into_a_local_version_do_not_make_it_look_edit
     assert not [warning for warning in result.warnings if "differs from registry" in warning]
 
 
-def test_a_real_edit_of_a_local_version_is_still_reported_and_names_the_carried_launchers(world: World) -> None:
-    """Any other difference (here pkg.local) keeps the label `origin not verified`; the message mentions launchers that may have been carried."""
+def test_a_real_edit_of_a_local_version_is_still_reported(world: World) -> None:
+    """Any other difference (here an extra file) keeps the label `origin not verified` and is reported as differing from the registry."""
     local = world.publish("tool", "1.0.0", tables=SHIM)
     published = world.base / "published" / "1.0.0"
     shutil.copytree(local, published)
@@ -161,7 +162,7 @@ def test_a_real_edit_of_a_local_version_is_still_reported_and_names_the_carried_
     result = world.one("install", "tool")
 
     assert result.ok and result.details["label"] == "origin-not-verified"
-    assert any("differs from registry" in warning and "install.cmd may have been carried forward" in warning for warning in result.warnings)
+    assert any("differs from registry" in warning for warning in result.warnings)
 
 
 def test_a_version_without_a_shipped_app_has_no_such_label(world: World) -> None:
@@ -297,7 +298,7 @@ def test_the_registrys_tracker_is_refreshed_when_it_changed_and_kept_when_the_lo
 
 @pytest.mark.parametrize("forwarder", [False, True], ids=["bundled-install", "root-with-a-forwarder"])
 def test_a_registry_version_copied_into_a_bundled_install_carries_the_packages_own_gupkg(world: World, forwarder: bool) -> None:
-    """Without a root forwarder the package's gupkg and launchers go into the version that is copied in; with one they do not (D32)."""
+    """Without a root forwarder the package's own gupkg goes into the version that is copied in; with one it does not (D32)."""
     world.publish("tool", "1.0.0", tables=SHIM)
     world.one("install", "tool")
     active = world.user / "tool" / "1.0.0"
@@ -313,7 +314,7 @@ def test_a_registry_version_copied_into_a_bundled_install_carries_the_packages_o
 
     new = world.user / "tool" / "1.2.0"
     assert result.ok and result.version == "1.2.0"
-    assert (new / "gupkg" / "gupkg.cmd").is_file() == (not forwarder) and (new / "install.cmd").is_file() == (not forwarder)
+    assert (new / "gupkg" / "gupkg.cmd").is_file() == (not forwarder) and not (new / "install.cmd").exists()
 
 
 def test_a_registry_with_only_a_tracker_copies_it_and_stops_with_a_hint(world: World) -> None:

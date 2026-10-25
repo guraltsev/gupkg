@@ -1,56 +1,65 @@
 <#
 .SYNOPSIS
-    Installs gupkg itself, then sets up manager mode, in one step.
+    Installs gupkg itself (or any distribution) from a release ZIP, by running its install.cmd.
 
 .DESCRIPTION
-    Downloads (or copies) the self-contained gupkg release ZIP, verifies its
-    SHA-256, checks every file against the release's MANIFEST.sha256, places it
-    at <Root>\gupkg\<version>, and runs "gupkg install" on it so the
-    'current' junction, the gupkg / gupkg-tui commands, and PATH are created.
-    It then runs "gupkg manager init" to write a default gupkg-config.toml (in the gupkg folder, admin-only for a system install) and
-    create the package folders. Every step is safe to repeat: an existing
-    version folder is reused, and install re-applies the Windows integration.
+    The bootstrap is thin: it has no install logic of its own. It downloads (or copies) a release ZIP, verifies its
+    SHA-256, unpacks it, and runs the install.cmd of the version directory it holds. That launcher starts the gupkg that
+    the ZIP carries, which installs the package like any other: it copies the bundled gupkg into App, checks it against
+    MANIFEST.sha256, creates the 'current' junction, the gupkg / gupkg-tui / gupkg-manager commands, the PATH entry and
+    the Start Menu entry, and writes the root data folder <root>\.gupkg with the forwarder that the package launchers of
+    that root use to find the installed gupkg.
 
-    Needs Windows PowerShell 5.1 or newer. No Python, Git, or pip is required in
-    advance: the release ZIP carries its own Python, the locked dependencies and
-    the native launchers. The only downloads are RELEASES.md and the ZIP.
+    User scope: the ZIP is unpacked to a staging folder and its install.cmd runs from there, not elevated; gupkg copies the
+    version directory into %USERPROFILE%\opt\gupkg\<version> and the staging folder can be deleted afterwards.
+
+    System scope: the script must be run by an administrator in an elevated PowerShell. It creates C:\opt owned by
+    Administrators and writable by nobody else (or refuses when an existing C:\opt is not like that), unpacks the ZIP
+    straight into it, and runs the install.cmd of C:\opt\gupkg\<version>. Run elevated, that launcher first checks that
+    everything it will run is admin-only, and refuses otherwise.
+
+    Needs Windows PowerShell 5.1 or newer. No Python, Git or pip is needed in advance: the release carries its own Python,
+    the locked dependencies and the native launchers. The only downloads are RELEASES.md and the ZIP. Re-running the
+    script is also how a 0.18 installation moves to 1.0.
+
+    Run with -Source <url or ZIP> and -Sha256, the same script installs any other program's distribution (a ZIP made
+    with 'gupkg pkg export') in user scope; that installs only that program, not gupkg.
+
+    A ZIP that was downloaded with a browser carries the Mark of the Web. Windows then asks before it runs the first
+    install.cmd ("Open File - Security Warning"): click Run, or right-click the ZIP, choose Properties and tick Unblock
+    before extracting it. What this script unpacks itself carries no mark, and gupkg's copy of a distribution into a root
+    drops the mark from every file it copies.
 
 .PARAMETER Scope
     auto (default): system when the shell is elevated, otherwise user.
-    user: per-user, no elevation. system: all users, needs an elevated
-    PowerShell; the gupkg package folder is then restricted so that only
-    Administrators and SYSTEM can modify it, as elevated gupkg runs require.
+    user: for the current user, run from a shell that is not elevated (gupkg never acts on a user root as administrator).
+    system: for all users, needs an elevated PowerShell.
 
 .PARAMETER Source
-    A release ZIP (https:// URL or local path) or an extracted release folder,
-    as produced by tools\build_standalone.py. By default the newest release
-    in RELEASES.md of the official repository is installed, checked against the
-    SHA-256 listed in the same row.
+    A release ZIP (https:// URL or local path), or in user scope an extracted folder that holds an install.cmd. By
+    default the newest release in RELEASES.md of the official repository is installed, checked against the SHA-256 listed in
+    the same row.
 
 .PARAMETER Sha256
-    Expected SHA-256 of the ZIP. Needed for any source but the default one (the
-    script warns when it is missing); the script stops if it does not match.
+    Expected SHA-256 of the ZIP. Needed for any source but the default one (the script warns when it is missing); the
+    script stops if it does not match.
 
 .PARAMETER Root
-    Package root to install under. Defaults to %USERPROFILE%\opt for user scope
-    and %SYSTEMDRIVE%\opt for system scope (the same defaults as manager init).
+    The system root (system scope only). Defaults to %SYSTEMDRIVE%\opt.
+
+.PARAMETER Stage
+    User scope: unpack into this folder instead of a temporary one. The folder is kept.
 
 .PARAMETER SkipInstall
-    Only place the files; do not create junction, commands, or PATH entries.
-
-.PARAMETER SkipManagerInit
-    Do not create a default manager configuration.
-
-.PARAMETER Force
-    Replace an existing <Root>\gupkg\<version> folder instead of reusing it.
+    Only verify and unpack; do not run install.cmd.
 
 .EXAMPLE
-    .\gupkg-bootstrap.ps1
-    Installs gupkg for the current user and sets up manager mode.
+    .\gupkg-bootstrap.cmd
+    Installs gupkg for the current user.
 
 .EXAMPLE
-    .\gupkg-bootstrap.ps1 -Scope system -Source C:\drop\gupkg-0.18.0-win-amd64.zip -Sha256 <digest>
-    Installs a vetted release bundle for all users (run from an elevated shell).
+    .\gupkg-bootstrap.cmd -Scope system -Source C:\drop\gupkg-1.0.0-win-amd64.zip -Sha256 <digest>
+    Installs a vetted release for all users (run from an elevated shell).
 #>
 [CmdletBinding()]
 param(
@@ -59,9 +68,8 @@ param(
     [string]$Source,
     [string]$Sha256,
     [string]$Root,
-    [switch]$SkipInstall,
-    [switch]$SkipManagerInit,
-    [switch]$Force
+    [string]$Stage,
+    [switch]$SkipInstall
 )
 
 $ErrorActionPreference = 'Stop'
@@ -88,8 +96,8 @@ function Get-LatestRelease {
 }
 
 function Expand-ZipSafely([string]$Archive, [string]$Destination) {
-    # Windows PowerShell 5.1's Expand-Archive does not guard '..' entries, so
-    # every entry is checked to stay below the destination before extracting.
+    # Windows PowerShell 5.1's Expand-Archive does not guard '..' entries, so every entry is checked to stay below the
+    # destination before extracting. Extracting this way writes no Mark of the Web on the files.
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $root = [IO.Path]::GetFullPath($Destination).TrimEnd('\') + '\'
     New-Item -ItemType Directory -Force -Path $Destination | Out-Null
@@ -105,57 +113,58 @@ function Expand-ZipSafely([string]$Archive, [string]$Destination) {
     } finally { $zip.Dispose() }
 }
 
-function Test-ReleaseManifest([string]$Folder, [switch]$InstalledCopy) {
-    # The release carries gupkg\MANIFEST.sha256: "<sha256>  <relative path>" for every
-    # other file of the version folder. Every file must match, and none may be
-    # missing or extra; a payload that fails is never installed.
-    $manifestPath = Join-Path $Folder 'gupkg\MANIFEST.sha256'
-    if (-not (Test-Path -LiteralPath $manifestPath)) { throw "The release has no gupkg\MANIFEST.sha256; reinstall from an official release ZIP." }
-    $expected = @{}
-    foreach ($line in [IO.File]::ReadAllLines($manifestPath)) {
-        $entry = [regex]::Match($line, '^([0-9a-f]{64})  (\S(?:.*\S)?)$')
-        if (-not $entry.Success) { throw "Malformed line in MANIFEST.sha256: $line" }
-        $relative = $entry.Groups[2].Value
-        if ($expected.ContainsKey($relative)) { throw "Duplicate path in MANIFEST.sha256: $relative" }
-        $parts = $relative -split '/'
-        if ($relative.StartsWith('/') -or $relative.Contains(':') -or $relative.Contains('\') -or ($parts -contains '..') -or ($parts -contains '')) {
-            throw "Unsafe path in MANIFEST.sha256: $relative"
-        }
-        $expected[$relative] = $entry.Groups[1].Value
+function Get-AdminOnlyProblem([string]$Path) {
+    # Returns why $Path can be changed by someone other than Administrators, SYSTEM or TrustedInstaller, or $null when it
+    # cannot. The owner must be one of them, and no other security identifier may hold a write-type right.
+    $trusted = @('S-1-5-32-544', 'S-1-5-18', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+    $item = Get-Item -LiteralPath $Path -Force
+    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { return 'it is a link' }
+    $acl = Get-Acl -LiteralPath $Path
+    $owner = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+    if ($trusted -notcontains $owner) { return "its owner is $owner, not Administrators" }
+    $FS = [Security.AccessControl.FileSystemRights]
+    $write = $FS::WriteData -bor $FS::AppendData -bor $FS::WriteExtendedAttributes -bor $FS::WriteAttributes -bor
+        $FS::DeleteSubdirectoriesAndFiles -bor $FS::Delete -bor $FS::ChangePermissions -bor $FS::TakeOwnership
+    foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+        if ($rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow) { continue }
+        if (($rule.FileSystemRights -band $write) -eq 0) { continue }
+        $sid = $rule.IdentityReference.Value
+        if ($trusted -contains $sid) { continue }
+        # An inherit-only CREATOR OWNER entry gives rights only to whoever creates a child, never to a user here.
+        if ($sid -eq 'S-1-3-0' -and ($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly)) { continue }
+        return "$sid can write to it"
     }
-    $base = (Get-Item -LiteralPath $Folder).FullName.TrimEnd('\')
-    $actual = @{}
-    foreach ($file in Get-ChildItem -LiteralPath $Folder -Recurse -File -Force) {
-        $relative = $file.FullName.Substring($base.Length + 1).Replace('\', '/')
-        if ($relative -eq 'gupkg/MANIFEST.sha256') { continue }
-        # An installed copy also holds installation state, which is not release content.
-        if ($InstalledCopy -and ($relative -match '^(App|Icons|Shortcuts)/' -or $relative -eq 'gupkg/gupkg-config.toml')) { continue }
-        $actual[$relative] = $file.FullName
-    }
-    $modified = @($expected.Keys | Where-Object { $actual.ContainsKey($_) -and (Get-FileHash -Algorithm SHA256 -LiteralPath $actual[$_]).Hash.ToLower() -ne $expected[$_] } | Sort-Object)
-    $missing = @($expected.Keys | Where-Object { -not $actual.ContainsKey($_) } | Sort-Object)
-    $extra = @($actual.Keys | Where-Object { -not $expected.ContainsKey($_) } | Sort-Object)
-    if ($modified.Count + $missing.Count + $extra.Count -gt 0) {
-        $first = @($modified | ForEach-Object { "modified: $_" }) + @($missing | ForEach-Object { "missing: $_" }) + @($extra | ForEach-Object { "extra: $_" })
-        throw "The release does not match its MANIFEST.sha256 ($($modified.Count) modified, $($missing.Count) missing, $($extra.Count) extra; first: $($first[0]))."
-    }
-    Step "Checked $($expected.Count) files against MANIFEST.sha256"
+    return $null
 }
 
-function Find-GupkgFolder([string]$Folder) {
-    # A gupkg folder holds pkg.toml and gupkg\cli.py; choose the shallowest.
-    $candidates = @(Get-Item -LiteralPath $Folder) + @(Get-ChildItem -LiteralPath $Folder -Recurse -Directory)
-    $found = $candidates |
-        Where-Object { (Test-Path (Join-Path $_.FullName 'pkg.toml')) -and (Test-Path (Join-Path $_.FullName 'gupkg\cli.py')) } |
-        Sort-Object { $_.FullName.Length } |
-        Select-Object -First 1
-    if (-not $found) { throw "No gupkg folder (pkg.toml plus gupkg\cli.py) was found in: $Source" }
-    return $found.FullName
+function New-SystemRoot([string]$Path) {
+    # Creates the system root with its owner and permissions in the same call, so nobody can write to it in between:
+    # owned by Administrators, full control for Administrators and SYSTEM, read and execute for Users.
+    $security = New-Object Security.AccessControl.DirectorySecurity
+    $security.SetSecurityDescriptorSddlForm('O:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)')
+    [void][IO.Directory]::CreateDirectory($Path, $security)
+    $problem = Get-AdminOnlyProblem $Path
+    if ($problem) { throw "Could not make $Path admin-only: $problem." }
 }
+
+function Find-VersionDirectory([string]$Folder) {
+    # A distribution holds <name>\<version>\ with pkg.toml and install.cmd; choose the shallowest, and refuse an ambiguous one.
+    $candidates = @(Get-ChildItem -LiteralPath $Folder -Recurse -Directory -Force) + @(Get-Item -LiteralPath $Folder)
+    $found = @($candidates |
+        Where-Object { (Test-Path (Join-Path $_.FullName 'pkg.toml')) -and (Test-Path (Join-Path $_.FullName 'install.cmd')) })
+    if ($found.Count -eq 0) { throw "No version directory (a folder with pkg.toml and install.cmd) was found in: $Source" }
+    $depth = ($found | ForEach-Object { $_.FullName.Length } | Measure-Object -Minimum).Minimum
+    $shallow = @($found | Where-Object { $_.FullName.Length -eq $depth })
+    if ($shallow.Count -ne 1) { throw "The distribution holds more than one version directory: $(($shallow | ForEach-Object { $_.FullName }) -join ', ')" }
+    return $shallow[0].FullName
+}
+
+# Dot-sourcing this file only defines the functions above (the tests do that); running it installs.
+if ($MyInvocation.InvocationName -eq '.') { return }
 
 $work = Join-Path ([IO.Path]::GetTempPath()) ("gupkg-bootstrap-" + [Guid]::NewGuid().ToString('N'))
 try {
-    # 1. Decide where gupkg goes, and refuse early when the scope cannot work.
+    # 1. Decide the scope, and refuse early when it cannot work.
     $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
     $isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     if ($Scope -eq 'auto') {
@@ -167,11 +176,12 @@ try {
     if ($Scope -eq 'system' -and -not $isAdmin) {
         throw "System scope needs an elevated PowerShell. Re-run as Administrator, or use -Scope user."
     }
-    if (-not $Root) {
-        $Root = if ($Scope -eq 'system') { Join-Path ($env:SystemDrive + '\') 'opt' } else { Join-Path $env:USERPROFILE 'opt' }
+    if ($Scope -eq 'user' -and $isAdmin) {
+        throw "User scope must run from a shell that is not elevated: gupkg never acts on a user's folders as administrator. Open a normal PowerShell, or use -Scope system."
     }
-    $scopeNote = if ($Scope -eq 'system') { 'all users' } else { 'current user only' }
-    Step "Install scope: $Scope ($scopeNote; $why); package root: $Root"
+    if (-not $Root) { $Root = Join-Path ($env:SystemDrive + '\') 'opt' }
+    $scopeNote = if ($Scope -eq 'system') { "all users; system root $Root" } else { 'current user only' }
+    Step "Install scope: $Scope ($scopeNote; $why)"
     New-Item -ItemType Directory -Force -Path $work | Out-Null
     if (-not $Source) {
         $latest = Get-LatestRelease
@@ -180,11 +190,13 @@ try {
     }
 
     # 2. Get the archive (or folder) and verify it before unpacking anything.
+    $archive = $null
     if (Test-Path -LiteralPath $Source -PathType Container) {
+        if ($Scope -eq 'system') { throw "System scope needs a release ZIP, not a folder: it is unpacked straight into the admin-only root." }
         Step "Using folder $Source"
         $tree = $Source
     } else {
-        $archive = Join-Path $work 'gupkg.zip'
+        $archive = Join-Path $work 'distribution.zip'
         if (Test-Path -LiteralPath $Source) {
             Step "Using archive $Source"
             Copy-Item -LiteralPath $Source -Destination $archive
@@ -201,91 +213,48 @@ try {
         } else {
             Write-Warning 'No -Sha256 given: the download is not verified.'
         }
-        $tree = Join-Path $work 'unpacked'
-        Expand-ZipSafely $archive $tree
     }
 
-    # 3. Place it at <Root>\gupkg\<version>, reusing an existing copy. The release
-    #    must carry its own Python and match its manifest exactly.
-    $payload = Find-GupkgFolder $tree
-    if (-not (Test-Path -LiteralPath (Join-Path $payload 'gupkg\python\python.exe'))) {
-        throw "This is not a self-contained gupkg release: gupkg\python\python.exe is missing. Use a release ZIP."
-    }
-    Test-ReleaseManifest $payload
-    # The runtime module is the one place the release number is declared.
-    $versionModule = Get-Content -LiteralPath (Join-Path $payload 'gupkg\_version.py') -Raw
-    if ($versionModule -notmatch '(?m)^__version__\s*=\s*"([^"]+)"') { throw "gupkg\_version.py in $payload declares no version." }
-    $version = $Matches[1]
-    $target = Join-Path (Join-Path $Root 'gupkg') $version
-    if ((Test-Path -LiteralPath $target) -and $Force) {
-        Step "Replacing $target"
-        Remove-Item -LiteralPath $target -Recurse -Force
-    }
-    if (Test-Path -LiteralPath $target) {
-        Test-ReleaseManifest $target -InstalledCopy
-        Step "Version $version is already at $target; reusing it"
+    # 3. Unpack. User scope: into a staging folder. System scope: straight into the admin-only system root, which is
+    #    created safely or refused first.
+    if ($archive -and $Scope -eq 'system') {
+        if (Test-Path -LiteralPath $Root) {
+            $problem = Get-AdminOnlyProblem $Root
+            if ($problem) { throw "$Root already exists and is not admin-only ($problem). Remove it or ask the administrator who made it; refusing to install into it." }
+            Step "Using the existing admin-only root $Root"
+        } else {
+            Step "Creating the admin-only root $Root"
+            New-SystemRoot $Root
+        }
+        Expand-ZipSafely $archive $Root
+        $tree = $Root
+        $versionDir = Find-VersionDirectory $Root
+    } elseif ($archive) {
+        $tree = if ($Stage) { $Stage } else { Join-Path $work 'unpacked' }
+        Expand-ZipSafely $archive $tree
+        $versionDir = Find-VersionDirectory $tree
     } else {
-        Step "Installing gupkg $version to $target"
-        New-Item -ItemType Directory -Force -Path (Split-Path $target) | Out-Null
-        Copy-Item -LiteralPath $payload -Destination $target -Recurse
+        $versionDir = Find-VersionDirectory $tree
     }
-    # A system-scope install is run elevated, and elevated runs execute only code
-    # that non-administrators cannot modify. Restrict the gupkg package folder
-    # (so every later version folder inherits it) to SYSTEM and Administrators
-    # with write access plus Users with read and execute access, make
-    # Administrators the owner, and stop if that cannot be done. Do not add /T to
-    # the inheritance/grant command: it strips the inherited entries from files
-    # and leaves them with no access list at all (even Administrators are denied).
-    # Children pick the new entries up through inheritance instead.
-    if ($Scope -eq 'system') {
-        $guarded = Split-Path $target
-        Step "Restricting $guarded to administrators (read-only for other users)"
-        & icacls.exe $guarded /setowner '*S-1-5-32-544' /T /C /Q | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "Could not set the owner of $guarded (icacls exit $LASTEXITCODE)." }
-        & icacls.exe $guarded /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX' /C /Q | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "Could not restrict $guarded (icacls exit $LASTEXITCODE)." }
-    }
-    $launcher = Join-Path $target 'gupkg.cmd'
-    if (-not (Test-Path -LiteralPath $launcher)) { throw "Missing launcher: $launcher" }
+    Step "Version directory: $versionDir"
     if ($SkipInstall) {
-        Step "Files are in place. Finish later with: `"$launcher`" --scope $Scope install `"$target`""
+        Step "Verified and unpacked. Finish later with: `"$versionDir\install.cmd`" --mode $Scope"
         return
     }
 
-    # The manager configuration lives in the gupkg folder of each version (never in
-    # a user-writable place). Carry the active version's file into a new version
-    # before the junction moves.
-    $newConfig = Join-Path $target 'gupkg\gupkg-config.toml'
-    $activeConfig = Join-Path (Join-Path (Split-Path $target) 'current') 'gupkg\gupkg-config.toml'
-    if (-not (Test-Path -LiteralPath $newConfig) -and (Test-Path -LiteralPath $activeConfig)) {
-        Step 'Keeping the manager configuration of the active version'
-        Copy-Item -LiteralPath $activeConfig -Destination $newConfig
-    }
-
-    # 4. Activate: current junction, gupkg / gupkg-tui commands, PATH.
-    Step 'Running gupkg install'
-    & $launcher --scope $Scope install $target
-    if ($LASTEXITCODE -ne 0) { throw "gupkg install failed (exit $LASTEXITCODE)." }
-
-    # 5. Create the default manager configuration, unless one already exists.
-    if (-not $SkipManagerInit) {
-        if (Test-Path -LiteralPath $newConfig) {
-            Step 'A manager configuration already exists; leaving it unchanged'
-        } else {
-            Step 'Setting up manager mode (configuration is stored in the gupkg folder)'
-            & $launcher manager init
-            # gupkg 1.0 has no "manager init": the command forwards to a gupkg-manager that is not part of this gupkg yet.
-            # Issue 033 replaces this bootstrap; until then a missing manager init is a warning, not a failure.
-            if ($LASTEXITCODE -ne 0) { Step "Warning: 'gupkg manager init' is not available in gupkg 1.0 (exit $LASTEXITCODE); skipping it." }
-        }
-    }
+    # 4. Run its install.cmd: it finds the gupkg that the distribution carries (a system root's forwarder, when there is one,
+    #    otherwise the bundled copy) and installs the package. The elevated launcher verifies everything it runs first.
+    Step 'Running install.cmd'
+    $env:GUPKG_NO_PAUSE = '1'
+    & cmd.exe /d /c "$versionDir\install.cmd" --mode $Scope
+    if ($LASTEXITCODE -ne 0) { throw "install.cmd failed (exit $LASTEXITCODE)." }
     Step 'Done. Open a NEW terminal, then try:  gupkg --help'
-    Step 'Next: gupkg manager registry sync'
+    if ($Scope -eq 'system') { Step "The root forwarder is $Root\.gupkg\gupkg.cmd; package launchers of this root now find the installed gupkg through it." }
 }
 catch {
     [Console]::Error.WriteLine("[gupkg] ERROR: $($_.Exception.Message)")
     exit 1
 }
 finally {
-    Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $work) { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
 }

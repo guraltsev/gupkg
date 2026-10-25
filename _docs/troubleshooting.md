@@ -65,6 +65,20 @@ gupkg manager self status       :: is gupkg's own installation healthy?
 | `Registry selectors cannot be paths` | Give the registry name, such as `vscode`, not a folder. |
 | A root is reported `incomplete` | A configured package folder is missing or unreadable, so bulk updates for that scope are skipped. Create or fix it and rerun. |
 
+## A security warning when running install.cmd, or SmartScreen and Smart App Control
+
+A distribution that you downloaded with a browser has the Mark of the Web on the ZIP. Extracting it with Explorer
+(or "Extract All") puts that mark on **every** extracted file; extracting with `tar -xf` or with the bootstrap script puts it
+on none, and `Unblock-File` on the ZIP before extracting (or ticking Unblock in the ZIP's Properties) clears it.
+
+| What you see | What it means and what to do |
+| --- | --- |
+| "Open File - Security Warning: The publisher could not be verified" when you double-click `install.cmd` | The first script of a freshly extracted download is held until you click **Run**. Nothing runs before that. Click Run once; what gupkg writes afterwards carries no mark (the copy into a root drops it, and so does `check-updates`), so later launchers do not ask. To avoid the question, unblock the ZIP before extracting it. |
+| Windows protects your PC (SmartScreen) or blocks an `.exe` of the bundled gupkg (Smart App Control) | The bundled `python.exe` and the shims are marked like everything else in the extracted folder. Unblock the ZIP **before** extracting it, or run `gupkg-bootstrap.cmd` (it unpacks without marks). On a machine with Smart App Control turned on, an unsigned program can still be refused; this has not been verified on such a machine (manual check 033-7 in tests/manual_smoke.md), so report what you see. |
+| `[gupkg] Refusing to run elevated: something this launcher would run can be changed by a standard user` | An elevated launcher (right-click, Run as administrator) found a folder it would use that a standard user can change. Install system-wide from the installed system gupkg instead, `gupkg install <folder> --mode system` in an administrator shell: it only reads and copies the folder and installs from the admin-only copy. |
+| `[gupkg] gupkg is not installed, and none is bundled with this package.` (exit 9009) | The root has no installed gupkg (no `.gupkg\gupkg.cmd`) and this folder carries no `gupkg\` copy. Run `gupkg-bootstrap.cmd` once. |
+| `The installed gupkg cannot handle this package; using the gupkg bundled with it.` | The installed gupkg is older than the package needs (exit code 6): the launcher finished the run with the bundled copy. Update gupkg with `gupkg self check-updates` and `gupkg self update`. |
+
 ## Cleaning up
 
 Safe to delete at any time when no `gupkg` is running:

@@ -86,6 +86,8 @@ class EffectContext:
         The environment used to expand ``${NAME}`` references.
     linkage : str
         ``dynamic`` or ``static`` launcher build.
+    root_data : Path or None
+        The root's data folder ``<root>\\.gupkg``, where the root forwarder is written; ``None`` when unknown.
     """
 
     package_path: Path
@@ -96,6 +98,7 @@ class EffectContext:
     data_dir: Path | None
     env: Mapping[str, str]
     linkage: str = "dynamic"
+    root_data: Path | None = None
 
 
 def effect_context(mode_context: ModeContext, package_path: Path, env: Mapping[str, str]) -> EffectContext:
@@ -120,7 +123,8 @@ def effect_context(mode_context: ModeContext, package_path: Path, env: Mapping[s
         scope = Scope.MACHINE if mode_context.env_target == ENV_MACHINE else Scope.USER
     data_dir = Path(package_path) / "data" if mode_context.mode == "portable" else None
     return EffectContext(
-        Path(package_path), mode_context.mode, mode_context.bin_dir, mode_context.start_menu, scope, data_dir, env
+        Path(package_path), mode_context.mode, mode_context.bin_dir, mode_context.start_menu, scope, data_dir, env,
+        root_data=mode_context.data_dir,
     )
 
 
@@ -212,6 +216,10 @@ def desired_effects(manifest: Manifest, context: EffectContext) -> tuple[tuple[E
         fields["config_sha256"] = hashlib.sha256(shim_config_text(fields).encode("utf-8")).hexdigest()
         effects.append(Effect("shim", fields))
 
+    # The root forwarder belongs to the gupkg package alone: it lets the package launchers of this root find the installed gupkg.
+    if manifest.root_forwarder is not None:
+        effects.extend(_forwarder_effects(manifest.root_forwarder.target, values, context))
+
     # Environment values and PATH entries need an environment target.
     wants_environment = bool(manifest.envs or manifest.paths or (portable.env if portable else None) or manifest.shims)
     if context.scope is None:
@@ -246,6 +254,64 @@ def desired_effects(manifest: Manifest, context: EffectContext) -> tuple[tuple[E
             raise EffectError(f"two declarations write the same {item.kind}: {key[1:]}")
         seen.setdefault(key, item)
     return tuple(seen.values()), tuple(notes)
+
+
+def _forwarder_effects(target: str, values: Mapping[str, str], context: EffectContext) -> list[Effect]:
+    """Return the two forwarder files (``gupkg.cmd`` and ``gupkg-manager.cmd``) of ``[root_forwarder]``.
+
+    Only a package called ``gupkg`` may declare it, and its target must lie inside the package folder, so a forwarder always
+    points to a gupkg in the root that it serves (design 21.3). The files call the target by a path relative to themselves,
+    which keeps them free of non-ASCII path text that ``cmd`` could not read.
+
+    Raises
+    ------
+    EffectError
+        If the package is not ``gupkg``, the root has no data folder, or the target leaves the package folder.
+    """
+    package = context.package_path
+    if package.name.casefold() != "gupkg":
+        raise EffectError("[root_forwarder] is valid only in the gupkg package")
+    if context.root_data is None:
+        raise EffectError("[root_forwarder] needs the root's data folder, which this context does not have")
+    folder = Path(_expand(target, values, context.env, "[root_forwarder] target"))
+    if not is_inside(folder, package) or canonical_path(folder) == canonical_path(package):
+        raise EffectError(f"[root_forwarder] target {folder} is not inside the package folder {package}")
+
+    # The forwarder sits in <root>\.gupkg, so the target is reached by climbing one level to the root.
+    relative = os.path.relpath(folder, context.root_data.parent)
+    effects = []
+    for name in ("gupkg.cmd", "gupkg-manager.cmd"):
+        content = (
+            "@echo off\r\n"
+            "rem Written by gupkg: the gupkg installed in this root. Package launchers call this file.\r\n"
+            f'call "%~dp0..\\{relative}\\{name}" %*\r\n'
+            "exit /b %ERRORLEVEL%\r\n"
+        )
+        path = context.root_data / name
+        effects.append(Effect("forwarder", {
+            "path": str(path), "content": content, "sha256": hashlib.sha256(content.encode("ascii")).hexdigest(),
+        }))
+    return effects
+
+
+def forwarder_target(data_dir: Path) -> Path | None:
+    """Return the installed gupkg's ``gupkg.cmd`` that the root forwarder in *data_dir* calls, or ``None``.
+
+    ``None`` means the root has no forwarder, or the forwarder does not call a ``gupkg.cmd`` that exists (the installed gupkg
+    is gone): then no installed gupkg can take over from the bundled copies of this root (design 21.8). Only the call line that
+    gupkg itself writes is understood; the path is read relative to *data_dir*.
+    """
+    forwarder = Path(data_dir) / "gupkg.cmd"
+    try:
+        text = forwarder.read_text(encoding="ascii")
+    except (OSError, UnicodeDecodeError):
+        return None
+    for line in text.splitlines():
+        match = re.fullmatch(r'call "%~dp0([^"%]+)" %\*', line.strip())
+        if match is not None:
+            target = Path(os.path.normpath(Path(data_dir) / match.group(1)))
+            return target if target.is_file() else None
+    return None
 
 
 def shim_config_text(fields: Mapping[str, Any]) -> str:
@@ -446,6 +512,10 @@ def apply_effect(system: System, effect: Effect, context: EffectContext, previou
         path = _inside(Path(str(fields["path"])), context.bin_dir, "wrapper")
         write_bytes_atomic(path, _wrapper_bytes(path, str(fields["content"])))
         return effect
+    if effect.kind == "forwarder":
+        path = _inside(Path(str(fields["path"])), context.root_data, "root forwarder")
+        write_bytes_atomic(path, str(fields["content"]).encode("ascii"))
+        return effect
     if effect.kind == "env":
         _require_free_name(str(fields["name"]))
         system.set_env(_scope(fields), str(fields["name"]), str(fields["value"]), True)
@@ -506,6 +576,13 @@ def remove_effect(system: System, effect: Effect, context: EffectContext) -> boo
                 removed = True
         _prune_empty(path.parent, context.bin_dir)
         return removed
+    if effect.kind == "forwarder":
+        path = _inside(Path(str(fields["path"])), context.root_data, "root forwarder")
+        if not path.is_file():
+            return False
+        os.chmod(path, 0o666)
+        path.unlink()
+        return True
     if effect.kind == "env":
         _require_free_name(str(fields["name"]))
         system.delete_env(_scope(fields), str(fields["name"]))
@@ -553,9 +630,9 @@ def verify_each(system: System, effects: Sequence[Effect], *, elevated: bool) ->
                     drift = f"shim missing: {fields['path']}"
                 elif not _file_has(Path(str(fields["config"])), str(fields["config_sha256"])):
                     drift = f"shim configuration differs: {fields['config']}"
-            elif effect.kind == "file":
+            elif effect.kind in ("file", "forwarder"):
                 if not _file_has(Path(str(fields["path"])), str(fields["sha256"])):
-                    drift = f"file missing or changed: {fields['path']}"
+                    drift = f"{'root forwarder' if effect.kind == 'forwarder' else 'file'} missing or changed: {fields['path']}"
             elif effect.kind in ("env", "path"):
                 scope = _scope(fields)
                 if elevated and scope is Scope.USER:

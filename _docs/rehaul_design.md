@@ -411,8 +411,8 @@ Rules that apply to every case:
    directory of the same name exists and its `pkg.toml` differs from the
    registry copy, the local one is kept and the package is reported as
    `diverged`. Local files are never overwritten. In a root with no root
-   forwarder, the package's own bundled gupkg is carried into the new
-   directory (section 21.4, D32).
+   forwarder, the package's own bundled `gupkg\` folder is carried into the new
+   directory (section 21.4, D32); the launchers are written fresh in every root (section 7.4).
 2. **The registry tracker is copied in too.** When a linked package has no
    local `_check_updates` and the registry provides one, the registry's
    tracker is copied to `_check_updates` on install, check-updates or
@@ -695,9 +695,15 @@ target = "$App\\firefox.exe"
    - fill `[source].sha256` **only** from a checksum the tracker
      *discovered* (GitHub digest, sums file, sidecar), with `sha256_from`
      set accordingly;
-   - in a root with no root forwarder (a bundled install), copy the
-     package's own bundled gupkg and the package launchers into the new
-     directory (section 21.4, D32).
+   - write the version's own launchers, `install.cmd` and `gupkg-tui.cmd`,
+     into the new directory **in every root**: whichever gupkg runs the
+     check generates them from the one template of gupkg core (section
+     21.3), so a double-click on the new version's `install.cmd` installs
+     exactly that version. The tracker's own `check-updates.cmd` is never
+     copied into a version;
+   - in a root with no root forwarder (a bundled install), also copy the
+     package's own bundled `gupkg\` folder into the new directory (section
+     21.4, D32).
 4. **Populate it, unless `--no-download`.** Run the version's populate
    script (section 4) into the new directory: download, verify (section 9),
    unpack and prepare. The checksum rules apply here exactly as in
@@ -1080,8 +1086,8 @@ implementation (`gupkg.services.fingerprint`) and one byte-exact contract, in se
 registry tool, install and `check` all call it. It ignores the top-level `App` and `gupkg` (so a
 shipped `App` is not part of it either) and refuses links. A match for a version that ships its `App` is therefore
 labelled **verified (App not covered)**: the receipt's `[origin]` has `app_covered = false`, the run warns and `check` shows a
-`verified-partly` note; the `App` is then compared only with the D41 install-time record. A local version that received
-launchers carried forward from an earlier one (`install.cmd`, `gupkg-tui.cmd`) is compared without them. A **distribution folder** is copied, then judged: no
+`verified-partly` note; the `App` is then compared only with the D41 install-time record. A local version that has
+launchers (`install.cmd`, `gupkg-tui.cmd`) that the registry's copy lacks is compared without them. A **distribution folder** is copied, then judged: no
 published fingerprint labels the install *origin not verified*, a match
 *verified against registry `<name>`*, a mismatch refuses it, names the files that differ and
 removes the copy this run created. The same comparison runs for a version copied from a registry
@@ -1328,7 +1334,7 @@ gupkg registry sync|status|list|add|remove
 gupkg pkg new <name>[@<version>] [--track github:owner/repo] [--dir D]   # authoring: a starter tracker and/or pinned version
 gupkg pkg check <path> [--install]                        # validate a package definition; --install runs a sandboxed install (section 16)
 gupkg pkg pin <target>                                    # receipt hash -> pkg.toml (explicit)
-gupkg pkg bundle <version-dir>                            # embed the running gupkg (section 21; the launchers are added by issue 033)
+gupkg pkg bundle <version-dir>                            # embed the running gupkg and write the version's launchers (section 21)
 gupkg pkg export <version-dir> -o X.zip                   # write a distribution ZIP; print its SHA-256
 gupkg settings show|path|init|set KEY VALUE
 gupkg self status|repair|check-updates|update             # check-updates/update = `gupkg check-updates gupkg` / `gupkg update gupkg` (section 20)
@@ -1644,6 +1650,7 @@ gupkg/
   viewdata.py   PackageView -> the plain data of list, info and --json (reads small files, prints nothing)
   settingsedit.py  create and edit one settings file (settings init/set, registry add/remove), validated by the schema first
   authoring.py  pkg new, pkg export, pkg bundle
+  launchers/    the one template of the package launchers (install.cmd, gupkg-tui.cmd, check-updates.cmd) and the code that writes them; used by check-updates, authoring, the registry tool and the migration tool
   report/results.py  the result, plan and error documents of --json, and the text of list, info and --plan
   selfmgmt/     self status/repair: MANIFEST.sha256 check, bundled-runtime enforcement (issues 016, 018); self check-updates/update are aliases (section 20)
     location.py   where the running gupkg lives (installed, bundled, source): $App, its version directory and root, its sibling launchers
@@ -1859,7 +1866,7 @@ only to an `App` that gupkg built, never to a shipped one. The `App` comparison 
 persisted paths.
 
 **Origin copies.** A registry pinned version is copied into the package root only when it is chosen
-(into a root with no forwarder it carries the package's own bundled gupkg and launchers from the
+(into a root with no forwarder it carries the package's own bundled `gupkg\` folder from the
 active version, like a `check-updates` directory),
 and its tracker when the package follows the registry and has none or an unedited older one (the hash
 and the revision recorded in the install record's `[link]` say whether the local copy was edited). A
@@ -2451,11 +2458,11 @@ its roots (section 9.7).
 | **Root** | A folder that holds packages, one subfolder each, with one install mode (section 3). Default roots: `C:\opt` (system), `%USERPROFILE%\opt` (user). |
 | **Root data directory** | `<root>\.gupkg\`: gupkg's own files for that root (settings, global logs, registry cache, state) and the **root forwarder**. gupkg owns no files outside its roots (section 9.7). |
 | **Root forwarder** | `<root>\.gupkg\gupkg.cmd` and `gupkg-manager.cmd`: two-line scripts that call the installed gupkg (`…\gupkg\current\App\gupkg.cmd` and its sibling). Package launchers find an installed gupkg through it, at a fixed position relative to themselves (section 21.3). |
-| **Bundled gupkg** | A complete gupkg runtime tree in `<version>\gupkg\`: launchers, the `python\` of issue 018, the `gupkg`, `gupkg_ui`, `gupkg_tui` and `gupkg_manager` Python packages, `VERSION` and `MANIFEST.sha256` (issue 016). It needs nothing installed. |
+| **Bundled gupkg** | A complete gupkg runtime tree in `<version>\gupkg\`: the commands `gupkg.cmd`, `gupkg-tui.cmd` and `gupkg-manager.cmd`, the `gupkg` Python package with the `python\` of issue 018 inside it, the `gupkg_ui`, `gupkg_tui`, `gupkg_manager` and `gupkg_migrate` packages beside it, `VERSION`, `RELEASE.txt` and `MANIFEST.sha256` (issue 016; its paths are relative to the version directory and name only the files of the tree). It needs nothing installed. |
 | **Installed gupkg** | The `current` version of the `gupkg` package in a root (`<root>\gupkg\current\App\`). Only installing the `gupkg` package creates one, and that install writes its root's forwarder. |
 | **Bundled install** | A package installed by a bundled gupkg, with no installed gupkg involved. It writes no forwarder. The package keeps its bundled copy, so it can later be updated, repaired and uninstalled the same way (section 21.4). |
 | **Distribution** | A ZIP of a package-root fragment (`<name>\<version>\…`, optionally with `<name>\_check_updates\`) whose version directory carries a bundled gupkg and the package launchers. |
-| **Package launchers** | `install.cmd` and `gupkg-tui.cmd` in a version directory. They find a gupkg to run (section 21.3). `gupkg-tui.cmd` keeps today's name and now starts the `gupkg-tui` program (section 15). |
+| **Package launchers** | `install.cmd` and `gupkg-tui.cmd` in a version directory, and `check-updates.cmd` in a `_check_updates` folder (which only checks and never installs). gupkg core generates all of them from one template, whichever gupkg runs the operation. They find a gupkg to run (section 21.3). `gupkg-tui.cmd` keeps today's name and now starts the `gupkg-tui` program (section 15). |
 
 ### 21.2 Layouts
 
@@ -2470,7 +2477,7 @@ C:\opt\                               a root (system mode, admin-only)
       pkg.toml                        [source] script = "pkg.local/populate.py"; no download_url
       pkg.local\populate.py           copies the bundled tree into App
       App\                            the installed gupkg runs from here
-        gupkg.cmd  gupkg-tui.cmd  gupkg-manager.cmd  python\  gupkg\  gupkg_ui\  gupkg_tui\  gupkg_manager\  MANIFEST.sha256  VERSION
+        gupkg.cmd  gupkg-tui.cmd  gupkg-manager.cmd  gupkg\ (the package, with python\)  gupkg_ui\  gupkg_tui\  gupkg_manager\  gupkg_migrate\  MANIFEST.sha256  VERSION  RELEASE.txt
       gupkg\                          bundled copy: kept, it is the populate script's input
       install.cmd  gupkg-tui.cmd
     _check_updates\pkg.toml  pkg.local\track.py
@@ -2505,8 +2512,9 @@ Rules:
 
 ### 21.3 Package launchers: which gupkg runs
 
-`install.cmd` and `gupkg-tui.cmd` are generated from one template, by
-`gupkg pkg bundle` and by the registry's launcher sync. They are plain `cmd`.
+`install.cmd`, `gupkg-tui.cmd` and the tracker's `check-updates.cmd` are generated from one template of gupkg core
+(`gupkg\launchers\package-launcher.cmd`) by `check-updates` (new version directories, every root), `gupkg pkg new`,
+`pkg bundle` and `pkg export`, the registry tool (`launchers`) and the migration tool. They are plain `cmd`.
 A launcher lives at `<root>\<name>\<version>\`, so its root is `%~dp0..\..`.
 
 **Which gupkg** (D16, D32):
@@ -2594,7 +2602,9 @@ Further rules:
   `requires_gupkg`. The launcher then prints a notice and re-runs the same
   command with the bundled gupkg, if there is one. When elevated, the
   bundled gupkg has been checked with everything else.
-- **The two launchers:**
+- **The launchers:**
+  - `check-updates.cmd` (in `_check_updates` only) runs `gupkg check-updates <name>`, the name being the folder's
+    parent, and nothing else.
   - `install.cmd` runs `gupkg install "%~dp0."` and pauses on failure.
     - `gupkg-tui.cmd` runs `gupkg tui "%~dp0."` through the gupkg it found,
     which starts `gupkg-tui` and opens the package view: check-updates,

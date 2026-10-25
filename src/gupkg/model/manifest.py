@@ -162,7 +162,7 @@ def is_reserved_env_name(name: str) -> bool:
 
 _TOP_KEYS = (
     "format", "description", "project_url", "modes", "requires", "requires_gupkg", "record_manifest",
-    "source", "track", "prepare", "portable", "nonportable", "shortcut", "env", "path", "shim",
+    "source", "track", "prepare", "portable", "nonportable", "shortcut", "env", "path", "shim", "root_forwarder",
 )
 _SOURCE_KEYS = (
     "download_url", "script", "shipped", "sha256", "sha256_from", "kind", "strip", "subdir",
@@ -499,6 +499,17 @@ class Shim:
 
 
 @dataclass(frozen=True)
+class RootForwarder:
+    """The root forwarder of the gupkg package (``[root_forwarder]``): where the installed gupkg lives.
+
+    ``target`` is the folder, written below ``$PackageRoot``, that holds ``gupkg.cmd`` and ``gupkg-manager.cmd``. Installing the
+    package writes ``<root>\\.gupkg\\gupkg.cmd`` and ``gupkg-manager.cmd`` that call them (design 21.1, 21.3).
+    """
+
+    target: str
+
+
+@dataclass(frozen=True)
 class Manifest:
     """A validated ``pkg.toml`` of format 2."""
 
@@ -518,6 +529,7 @@ class Manifest:
     envs: tuple[EnvVar, ...] = ()
     paths: tuple[str, ...] = ()
     shims: tuple[Shim, ...] = ()
+    root_forwarder: RootForwarder | None = None
 
     def supports(self, mode: str) -> bool:
         """Return whether the package declares *mode* in ``modes``."""
@@ -849,6 +861,7 @@ def parse_manifest_data(data: Mapping[str, Any], kind: ManifestKind = ManifestKi
     envs = _parse_envs(collector, data.get("env"), modes)
     paths = _parse_paths(collector, data.get("path"), modes)
     shims = _parse_shims(collector, data.get("shim"), modes)
+    root_forwarder = _parse_root_forwarder(collector, data.get("root_forwarder"))
 
     # Templates: nothing in a version directory, anything well-formed in a tracker.
     for key in ("description", "project_url", "prepare", "portable", "nonportable", "shortcut", "env", "path", "shim"):
@@ -886,6 +899,7 @@ def parse_manifest_data(data: Mapping[str, Any], kind: ManifestKind = ManifestKi
         envs=envs,
         paths=paths,
         shims=shims,
+        root_forwarder=root_forwarder,
     )
 
 
@@ -1301,6 +1315,24 @@ def _parse_nonportable(collector: _Collector, raw: Any) -> NonPortable | None:
     return NonPortable(remove)
 
 
+def _parse_root_forwarder(collector: _Collector, raw: Any) -> RootForwarder | None:
+    """Parse ``[root_forwarder]``: one ``target`` below ``$PackageRoot`` (only the gupkg package may declare it)."""
+    if raw is None:
+        return None
+    table = collector.table(raw, "root_forwarder")
+    if table is None:
+        return None
+    collector.keys(table, ("target",), "root_forwarder")
+    target = collector.string(table, "target", "root_forwarder", required=True)
+    if target is None:
+        return None
+    parts = re.split(r"[\\/]", target)
+    if parts[0] != "$PackageRoot" or len(parts) < 2 or "" in parts or ".." in parts or any("$" in part for part in parts[1:]):
+        collector.error("root_forwarder.target", "must be a folder below $PackageRoot, such as $PackageRoot\\current\\App")
+        return None
+    return RootForwarder(target)
+
+
 def _parse_shortcuts(collector: _Collector, raw: Any, modes: tuple[str, ...]) -> tuple[Shortcut, ...]:
     """Parse ``[[shortcut]]``."""
     rows = []
@@ -1499,6 +1531,8 @@ def manifest_to_data(manifest: Manifest) -> dict[str, Any]:
     data["env"] = [{"name": e.name, "value": e.value} for e in manifest.envs]
     data["path"] = [{"value": value} for value in manifest.paths]
     data["shim"] = [_shim_to_data(shim) for shim in manifest.shims]
+    if manifest.root_forwarder is not None:
+        data["root_forwarder"] = {"target": manifest.root_forwarder.target}
     return _drop_empty_keep_tables(data)
 
 

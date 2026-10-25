@@ -4,7 +4,8 @@ The tracker (``_check_updates``) is the only code that discovers new versions. T
 built-in providers, lets the catalog compare the result with the known versions, renders the pinned ``pkg.toml`` with
 ``render_pinned`` (strip every template and the ``[track]`` table, fill ``sha256`` only from a checksum the tracker
 discovered), writes ``<package>\\<version>\\`` atomically with the support files but without any update-check code and with
-the package's own bundled gupkg carried forward where no root forwarder exists (decision D32), and, unless
+the launchers of its own (``install.cmd`` and ``gupkg-tui.cmd``, in every root) and the package's own bundled gupkg carried
+forward where no root forwarder exists (decision D32), and, unless
 ``--no-download``, downloads, verifies and populates its ``App``. It then stops: ``current``, shortcuts, shims and the
 environment are unchanged. A system package checked from a normal shell is only reported (nothing under the system root
 is written); a version whose download the checksum rules refuse stays written without ``App`` (decision D46).
@@ -33,6 +34,7 @@ from typing import Any
 
 from ..catalog.catalog import Catalog, NotInstalled
 from ..catalog.local import DATA_DIR_NAME, is_reparse_point
+from ..launchers import LAUNCHERS, write_launchers
 from ..model.checksum import ChecksumError
 from ..model.manifest import (
     INSTALLER_LABEL,
@@ -295,11 +297,15 @@ def _write_version(
         _copy_support_files(tracker_dir, staged)
         (staged / MANIFEST_NAME).write_text(manifest_to_toml(pinned), encoding="utf-8")
 
-        # In a root with no forwarder (a bundled install) the package's own gupkg and launchers are carried forward.
+        # Every version directory carries its own launchers, in every root: this gupkg writes them from the one template, so a
+        # double-click on the new version's install.cmd installs exactly that version.
+        write_launchers(staged)
+
+        # In a root with no forwarder (a bundled install) the package's own gupkg is carried forward as well.
         if not (context.root / DATA_DIR_NAME / "gupkg.cmd").is_file():
             carry_forward(view, staged)
 
-        report = check_directory(staged)
+        report = check_directory(staged, package=package_path.name)
         if not report.ok:
             raise ManifestError([f"the new version directory is not valid: {problem}" for problem in report.errors])
         if os.path.lexists(destination):
@@ -311,9 +317,10 @@ def _write_version(
 
 
 def _copy_support_files(tracker_dir: Path, staged: Path) -> None:
-    """Copy the tracker's support files into *staged*, leaving out ``pkg.toml`` and every module that defines ``track``.
+    """Copy the tracker's support files into *staged*, leaving out ``pkg.toml``, the tracker's launcher and every module that defines ``track``.
 
-    A ``track`` hook is never copied into a version directory (design 9.3); links are refused.
+    A ``track`` hook is never copied into a version directory (design 9.3); links are refused. The version directory gets
+    launchers of its own from ``write_launchers``, never the tracker's ``check-updates.cmd``.
     """
     for current, folders, files in os.walk(tracker_dir):
         here = Path(current)
@@ -323,7 +330,7 @@ def _copy_support_files(tracker_dir: Path, staged: Path) -> None:
                 raise ManifestError([f"{here / name} is a link; links are not copied into a version directory"])
         for name in files:
             source = here / name
-            if relative == Path(".") and name == MANIFEST_NAME:
+            if relative == Path(".") and (name == MANIFEST_NAME or name in LAUNCHERS):
                 continue
             if is_reparse_point(source):
                 raise ManifestError([f"{source} is a link; links are not copied into a version directory"])

@@ -1,31 +1,40 @@
-description = "The standalone gupkg package manager runtime"
-homepage = "https://github.com/guraltsev/gupkg"
+format = 2
+description = "gupkg package manager"
+project_url = "https://github.com/guraltsev/gupkg"
+modes = ["system", "user"]
 
+# `gupkg check-updates gupkg` (also `gupkg self check-updates`) runs pkg.local/track.py, which reads the newest
+# release from RELEASES.md. The tracker is never copied into a version directory (decision D10).
+[track]
+provider = "module"
+module = "pkg.local/track.py"
 
-[update]
-
-[update.check]
-mode = "module"
-
-[update.payload]
-mode = "module"
+# gupkg has no download_url (decision D27): its distribution carries a bundled gupkg in <version>\gupkg\, and this
+# populate script copies that tree into App (fetching and verifying the release first when the tree is missing).
+[source]
+script = "pkg.local/populate.py"
+shipped = false
 
 [[shortcut]]
 name = "gupkg manager"
-targetPath = "%COMSPEC%"
-arguments = '/d /s /c ""$VersionRoot\gupkg\gupkg.cmd" manager tui || pause"'
-description = "Run gupkg in manager mode"
+target = "%COMSPEC%"
+arguments = '/d /s /c ""$App\gupkg-manager.cmd" || pause"'
+description = "Manage the packages installed with gupkg"
 
-[[bin]]
+[[shim]]
 name = "gupkg"
-target = "%COMSPEC%"
-arguments = ["/d", "/s", "/c", "$VersionRoot\\gupkg\\gupkg.cmd"]
-type = "console"
-forward_args = true
+target = "$App\\gupkg.cmd"
 
-[[bin]]
+[[shim]]
 name = "gupkg-tui"
-target = "%COMSPEC%"
-arguments = ["/d", "/s", "/c", "$VersionRoot\\gupkg\\gupkg-tui.cmd"]
-type = "console"
-forward_args = true
+target = "$App\\gupkg-tui.cmd"
+
+[[shim]]
+name = "gupkg-manager"
+target = "$App\\gupkg-manager.cmd"
+
+# Only the gupkg package may declare this: it writes <root>\.gupkg\gupkg.cmd and gupkg-manager.cmd, the root forwarder
+# that the package launchers of this root use to find the installed gupkg. It points through `current`, so a new
+# version needs no change of the forwarder.
+[root_forwarder]
+target = '$PackageRoot\current\App'

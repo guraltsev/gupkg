@@ -26,6 +26,7 @@ from pathlib import Path
 import pytest
 
 from gupkg.engine.receipts import read_receipt
+from gupkg.launchers import launcher_text
 from gupkg.selfmgmt.location import RunningGupkg
 from gupkg.system.port import Scope
 from gupkg.tomlio import dumps, read_toml
@@ -266,7 +267,8 @@ def test_pkg_new_writes_starters_that_pkg_check_accepts_and_never_overwrites(wor
     checked = world.cli("pkg", "check", str(base / "mine"), "--json")
 
     assert version.code == 0 and tracker.code == 0, (version.err, tracker.err)
-    assert version.document()["files"] == [str(base / "mine" / "1.0" / "pkg.toml")]
+    assert version.document()["files"] == [str(base / "mine" / "1.0" / name) for name in ("pkg.toml", "install.cmd", "gupkg-tui.cmd")]
+    assert (base / "mine" / "_check_updates" / "check-updates.cmd").is_file()
     assert checked.code == 0 and [item["ok"] for item in checked.document()["checks"]] == [True, True]
     assert world.cli("pkg", "new", "mine@1.0", "--dir", str(base)).code == 2
     assert world.cli("pkg", "new", "bad name!", "--dir", str(base)).code == 2
@@ -368,11 +370,30 @@ def test_pkg_export_writes_a_distribution_zip_and_prints_its_sha256(world: CliWo
     assert result.code == 0 and document["sha256"] == hashlib.sha256(output.read_bytes()).hexdigest()
     assert result.err.strip() == document["sha256"]
     with zipfile.ZipFile(output) as archive:
-        assert sorted(archive.namelist()) == ["mine/1.0/pkg.toml", "mine/_check_updates/pkg.toml"]
+        assert sorted(archive.namelist()) == [
+            "mine/1.0/gupkg-tui.cmd", "mine/1.0/install.cmd", "mine/1.0/pkg.toml",
+            "mine/_check_updates/check-updates.cmd", "mine/_check_updates/pkg.toml",
+        ]
+        assert archive.read("mine/1.0/install.cmd") == launcher_text("install").encode("ascii")
     second = tmp_path / "again.zip"
     assert world.cli("pkg", "export", str(base / "mine" / "1.0"), "-o", str(second)).code == 0
     assert second.read_bytes() == output.read_bytes()
     assert world.cli("pkg", "export", str(base / "mine" / "1.0"), "-o", str(output)).code == 2
+
+
+def test_pkg_export_adds_the_launchers_that_a_hand_made_folder_lacks(world: CliWorld, tmp_path: Path) -> None:
+    """A version folder with no launchers still exports with install.cmd and gupkg-tui.cmd, so every distribution carries them."""
+    folder = tmp_path / "hand" / "mine" / "1.0"
+    folder.mkdir(parents=True)
+    manifest = f"format = 2\n[source]\ndownload_url = 'https://example.org/a.zip'\nsha256 = '{'0' * 64}'\n"
+    (folder / "pkg.toml").write_text(manifest, encoding="utf-8")
+    output = tmp_path / "hand.zip"
+
+    assert world.cli("pkg", "export", str(folder), "-o", str(output)).code == 0
+
+    with zipfile.ZipFile(output) as archive:
+        assert sorted(archive.namelist()) == ["mine/1.0/gupkg-tui.cmd", "mine/1.0/install.cmd", "mine/1.0/pkg.toml"]
+    assert not (folder / "install.cmd").exists()
 
 
 def make_bundle(root: Path, *, tamper: bool = False) -> RunningGupkg:
@@ -404,6 +425,8 @@ def test_pkg_bundle_copies_the_verified_bundle_and_refuses_a_damaged_one(world: 
 
     assert good.code == 0, good.err
     assert (target / "gupkg" / "cli.py").is_file() and (target / "gupkg" / "python" / "python.exe").is_file()
+    assert (target / "install.cmd").read_bytes() == launcher_text("install").encode("ascii")
+    assert (target / "gupkg-tui.cmd").read_bytes() == launcher_text("tui").encode("ascii")
     assert world.cli("pkg", "bundle", str(target), location=make_bundle(tmp_path / "again")).code == 2
 
     other = base / "mine" / "2.0"

@@ -1,164 +1,186 @@
 """Cover the user-visible behaviour of ``gupkg-bootstrap.cmd`` / ``gupkg-bootstrap.ps1``.
 
-The wrapper, the real PowerShell script, a real release ZIP built by
-``tools/build_standalone.py`` (the ``release_bundle`` fixture), and the installed
-launcher are used. ``-SkipInstall`` is passed everywhere, so no test changes the
-registry, PATH, or Start Menu, and no network is used. The ``gupkg install`` /
-``manager init`` steps that follow placement are covered by the install and
-manager tests, and the default source (``RELEASES.md`` and the GitHub asset) by
-the manual smoke test, not here.
+Behavior covered: the thin bootstrap verifies the release ZIP against ``-Sha256`` before unpacking anything, unpacks it safely
+(an entry that climbs out of the destination stops it), finds the version directory with its ``install.cmd``, and with
+``-SkipInstall`` stops there; the unpacked release runs on its own Python; user scope refuses to run elevated and system scope
+refuses to run without elevation; a system root that is not admin-only (a ``C:\\opt`` that a standard user created) is
+recognised and refused, and one that is admin-only is accepted; a source that does not exist is reported plainly. A missing
+``gupkg-bootstrap.ps1`` next to the ``.cmd`` is downloaded after confirmation.
+
+Real: the wrapper, the real PowerShell script and a real release ZIP built by ``tools/build_standalone.py`` (the
+``release_bundle`` fixture). ``-SkipInstall`` is passed wherever the script would run ``install.cmd``, so no test changes the
+registry, ``PATH`` or Start Menu, and no network is used. Out of scope: the install itself (``install.cmd`` and gupkg, covered by
+the engine tests and manual smoke tests 033-2 to 033-6), the default source (``RELEASES.md`` and the GitHub asset) and creating
+``C:\\opt`` (needs an elevated shell: manual smoke test 033-3).
 """
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import subprocess
+import zipfile
 from pathlib import Path
 
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 BOOTSTRAP = REPO / "gupkg-bootstrap.cmd"
+SCRIPT = REPO / "gupkg-bootstrap.ps1"
+POWERSHELL = Path(os.environ.get("SystemRoot", "C:\\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
 
 pytestmark = pytest.mark.skipif(os.name != "nt", reason="the bootstrap script targets Windows PowerShell")
 
 
+def _elevated() -> bool:
+    """Return whether this test process holds an elevated administrator token (``fltmc`` needs one)."""
+    return subprocess.run([os.environ["SystemRoot"] + "\\System32\\fltmc.exe"], capture_output=True, check=False).returncode == 0
+
+
 def _run(tmp_path: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
-    """Run the bootstrap wrapper, always placing files only, under a temporary root."""
+    """Run the bootstrap wrapper in user scope, unpacking into ``tmp_path/stage`` and never running install.cmd."""
     return subprocess.run(
-        [str(BOOTSTRAP), "-Root", str(tmp_path / "opt"), "-SkipInstall", *arguments],
-        capture_output=True,
-        text=True,
-        timeout=300,
+        [str(BOOTSTRAP), "-Scope", "user", "-Stage", str(tmp_path / "stage"), "-SkipInstall", *arguments],
+        capture_output=True, text=True, timeout=300,
     )
 
 
-def test_verified_release_is_placed_as_a_working_versioned_folder_and_rerun_reuses_it(
-    tmp_path: Path, release_bundle
-) -> None:
-    """A verified release ZIP lands in <root>\\gupkg\\<version>, runs on its own Python, and a rerun is a no-op."""
+@pytest.mark.skipif(_elevated(), reason="user scope refuses an elevated shell")
+def test_verified_release_is_unpacked_with_its_install_cmd_and_runs_on_its_own_python(tmp_path: Path, release_bundle) -> None:
+    """A verified release ZIP is unpacked as gupkg/<version> with install.cmd and a bundled gupkg that runs; install.cmd is not run."""
     digest = release_bundle.sha256.upper()
 
-    first = _run(tmp_path, "-Source", str(release_bundle.zip), "-Sha256", digest)
-    placed = next((tmp_path / "opt" / "gupkg").glob("*"))
-    second = _run(tmp_path, "-Source", str(release_bundle.zip), "-Sha256", digest)
-    version = subprocess.run([str(placed / "gupkg" / "gupkg.cmd"), "--version"], capture_output=True, text=True)
+    result = _run(tmp_path, "-Source", str(release_bundle.zip), "-Sha256", digest)
 
-    assert first.returncode == 0, first.stderr
-    assert "SHA-256 verified" in first.stdout and "against MANIFEST.sha256" in first.stdout
-    assert "reusing it" in second.stdout and second.returncode == 0
-    assert placed.name == release_bundle.version
+    version_dir = tmp_path / "stage" / "gupkg" / release_bundle.version
+    assert result.returncode == 0, result.stderr
+    assert "SHA-256 verified" in result.stdout and f"Version directory: {version_dir}" in result.stdout
+    assert "install.cmd" in result.stdout and "--mode user" in result.stdout
+    assert (version_dir / "install.cmd").is_file() and (version_dir / "pkg.toml").is_file()
+    version = subprocess.run([str(version_dir / "gupkg" / "gupkg.cmd"), "--version"], capture_output=True, text=True)
     assert version.stdout.strip() == f"gupkg {release_bundle.version}"
 
 
-def test_reused_version_folder_is_checked_against_its_manifest(tmp_path: Path, release_bundle) -> None:
-    """A rerun refuses an existing version folder whose file was edited, but accepts installation state."""
-    digest = release_bundle.sha256.upper()
-    _run(tmp_path, "-Source", str(release_bundle.zip), "-Sha256", digest)
-    placed = next((tmp_path / "opt" / "gupkg").glob("*"))
-    (placed / "App").mkdir()
-    (placed / "App" / "state.txt").write_text("x", encoding="utf-8")
-    (placed / "gupkg" / "gupkg-config.toml").write_text("x", encoding="utf-8")
-    clean = _run(tmp_path, "-Source", str(release_bundle.zip), "-Sha256", digest)
-    (placed / "gupkg" / "cli.py").write_text("# edited\n", encoding="utf-8")
-
-    damaged = _run(tmp_path, "-Source", str(release_bundle.zip), "-Sha256", digest)
-
-    assert clean.returncode == 0 and "reusing it" in clean.stdout
-    assert damaged.returncode == 1 and "1 modified" in damaged.stderr
-
-
+@pytest.mark.skipif(_elevated(), reason="user scope refuses an elevated shell")
 def test_archive_entry_that_escapes_the_destination_is_rejected(tmp_path: Path, release_bundle) -> None:
     """A ZIP with a '..' entry stops the bootstrap before anything is written outside its work folder."""
     evil = tmp_path / "evil.zip"
-    digest = _derive(release_bundle.zip, evil, tmp_path)
+    with zipfile.ZipFile(release_bundle.zip) as original, zipfile.ZipFile(evil, "w") as copy:
+        for entry in original.infolist():
+            copy.writestr(entry.filename, original.read(entry))
+        copy.writestr("../../../../../../../../../../../../planted.txt", b"x")
+    digest = hashlib.sha256(evil.read_bytes()).hexdigest().upper()
 
     result = _run(tmp_path, "-Source", str(evil), "-Sha256", digest)
 
     assert result.returncode == 1
     assert "unsafe path" in result.stderr
-    assert not (tmp_path / "planted.txt").exists() and not (tmp_path / "opt").exists()
+    assert not (tmp_path / "planted.txt").exists()
 
 
-def _derive(source: Path, target: Path, tmp_path: Path) -> str:
-    """Copy a ZIP and add an entry whose name climbs out of the extraction folder; return its upper-case SHA-256."""
-    import hashlib
-    import zipfile
-
-    with zipfile.ZipFile(source) as original, zipfile.ZipFile(target, "w") as copy:
-        for entry in original.infolist():
-            copy.writestr(entry.filename, original.read(entry))
-        copy.writestr("../../../../../../../../../../../../planted.txt", b"x")
-    return hashlib.sha256(target.read_bytes()).hexdigest().upper()
-
-
-def test_checksum_mismatch_stops_before_anything_is_placed(tmp_path: Path, release_bundle) -> None:
-    """A wrong -Sha256 fails with a clear message and creates no install folder."""
+@pytest.mark.skipif(_elevated(), reason="user scope refuses an elevated shell")
+def test_checksum_mismatch_stops_before_anything_is_unpacked(tmp_path: Path, release_bundle) -> None:
+    """A wrong -Sha256 fails with a clear message and unpacks nothing."""
     result = _run(tmp_path, "-Source", str(release_bundle.zip), "-Sha256", "0" * 64)
 
     assert result.returncode == 1
     assert "SHA-256 mismatch" in result.stderr
-    assert not (tmp_path / "opt").exists()
+    assert not (tmp_path / "stage").exists()
 
 
-def test_missing_sha256_for_a_given_zip_warns_but_still_installs(tmp_path: Path, release_bundle) -> None:
-    """A -Source ZIP without -Sha256 prints the unverified-download warning and is still checked against its manifest."""
+@pytest.mark.skipif(_elevated(), reason="user scope refuses an elevated shell")
+def test_missing_sha256_for_a_given_zip_warns_but_still_unpacks(tmp_path: Path, release_bundle) -> None:
+    """A -Source ZIP without -Sha256 prints the unverified-download warning and is still unpacked (gupkg checks the tree itself)."""
     result = _run(tmp_path, "-Source", str(release_bundle.zip))
 
     assert result.returncode == 0, result.stderr
     assert "not verified" in result.stdout + result.stderr
-    assert "against MANIFEST.sha256" in result.stdout
+    assert (tmp_path / "stage" / "gupkg" / release_bundle.version / "install.cmd").is_file()
 
 
-@pytest.mark.parametrize(
-    ("variant", "message"),
-    [
-        pytest.param({"replace": ("gupkg/cli.py", b"# edited\n")}, "1 modified", id="modified-file"),
-        pytest.param({"drop": ("gupkg/tls.py",)}, "1 missing", id="missing-file"),
-        pytest.param({"add": {"gupkg/planted.py": b"x"}}, "1 extra", id="extra-file"),
-    ],
-)
-def test_release_that_differs_from_its_manifest_is_rejected_before_placement(
-    tmp_path: Path, release_bundle, derive_zip, variant: dict, message: str
-) -> None:
-    """A modified, missing or extra file makes the bootstrap stop with the count, and nothing is installed."""
-    damaged = tmp_path / "damaged.zip"
-    digest = derive_zip(release_bundle.zip, damaged, **variant).upper()
-
-    result = _run(tmp_path, "-Source", str(damaged), "-Sha256", digest)
-
-    assert result.returncode == 1
-    assert "does not match its MANIFEST.sha256" in result.stderr and message in result.stderr
-    assert not (tmp_path / "opt").exists()
-
-
-def test_payload_without_a_bundled_python_is_rejected(tmp_path: Path, release_bundle, derive_zip) -> None:
-    """A ZIP that lacks gupkg\\python\\python.exe is not a release and is refused with a pointer to the release ZIP."""
+@pytest.mark.skipif(_elevated(), reason="user scope refuses an elevated shell")
+def test_a_zip_without_an_install_launcher_is_not_a_distribution(tmp_path: Path, release_bundle, derive_zip) -> None:
+    """A ZIP whose version directory has no install.cmd is refused, naming what was missing."""
     stripped = tmp_path / "stripped.zip"
-    digest = derive_zip(release_bundle.zip, stripped, drop=("gupkg/python/python.exe",)).upper()
+    digest = derive_zip(release_bundle.zip, stripped, drop=("install.cmd",)).upper()
 
     result = _run(tmp_path, "-Source", str(stripped), "-Sha256", digest)
 
     assert result.returncode == 1
-    assert "not a self-contained gupkg release" in result.stderr
-    assert not (tmp_path / "opt").exists()
+    assert "No version directory" in result.stderr
+
+
+@pytest.mark.skipif(_elevated(), reason="user scope refuses an elevated shell")
+def test_a_folder_source_is_used_where_it_is_in_user_scope(tmp_path: Path, release_bundle) -> None:
+    """An extracted distribution folder is used in place: its version directory is found and nothing is copied or run."""
+    with zipfile.ZipFile(release_bundle.zip) as archive:
+        archive.extractall(tmp_path / "extracted")
+
+    result = _run(tmp_path, "-Source", str(tmp_path / "extracted"))
+
+    assert result.returncode == 0, result.stderr
+    assert f"Version directory: {tmp_path / 'extracted' / 'gupkg' / release_bundle.version}" in result.stdout
+    assert not (tmp_path / "stage").exists()
 
 
 def test_system_scope_requires_an_elevated_shell(tmp_path: Path, release_bundle) -> None:
     """System scope from a non-elevated shell explains how to proceed instead of failing midway."""
-    principal = subprocess.run(["net", "session"], capture_output=True, text=True)
-    if principal.returncode == 0:
+    if _elevated():
         pytest.skip("the test process is elevated")
 
-    result = _run(tmp_path, "-Scope", "system", "-Source", str(release_bundle.zip))
+    result = subprocess.run(
+        [str(BOOTSTRAP), "-Scope", "system", "-Root", str(tmp_path / "opt"), "-Source", str(release_bundle.zip)],
+        capture_output=True, text=True, timeout=300,
+    )
 
     assert result.returncode == 1
     assert "elevated PowerShell" in result.stderr
+    assert not (tmp_path / "opt").exists()
+
+
+def test_user_scope_refuses_an_elevated_shell(tmp_path: Path, release_bundle) -> None:
+    """User scope never runs as administrator: gupkg does not act on a user root elevated (D31)."""
+    if not _elevated():
+        pytest.skip("the test process is not elevated")
+
+    result = _run(tmp_path, "-Source", str(release_bundle.zip))
+
+    assert result.returncode == 1 and "not elevated" in result.stderr
+
+
+def _dot_source(tmp_path: Path, command: str) -> str:
+    """Define the functions of the script (dot-sourcing runs nothing) and return the output of *command*."""
+    result = subprocess.run(
+        [str(POWERSHELL), "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", f". '{SCRIPT}'; {command}"],
+        capture_output=True, text=True, timeout=120, cwd=str(tmp_path),
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip()
+
+
+def test_a_root_that_a_standard_user_created_is_not_admin_only(tmp_path: Path) -> None:
+    """A folder the current user owns (what a squatted C:\\opt is) is reported with a reason, so the system bootstrap refuses it."""
+    squatted = tmp_path / "opt"
+    squatted.mkdir()
+
+    problem = _dot_source(tmp_path, f"Get-AdminOnlyProblem '{squatted}'")
+
+    assert problem and ("owner" in problem or "can write" in problem)
+
+
+def test_an_admin_only_folder_is_accepted(tmp_path: Path) -> None:
+    """The Windows folder (owned by TrustedInstaller, writable by administrators only) has no problem."""
+    problem = _dot_source(tmp_path, f"$p = Get-AdminOnlyProblem '{os.environ['SystemRoot']}'; if ($p) {{ $p }} else {{ 'none' }}")
+
+    assert problem == "none"
 
 
 def test_missing_source_is_reported_plainly(tmp_path: Path) -> None:
     """A source that is neither a URL, a ZIP, nor a folder is rejected with a clear error."""
+    if _elevated():
+        pytest.skip("user scope refuses an elevated shell")
+
     result = _run(tmp_path, "-Source", str(tmp_path / "nope.zip"))
 
     assert result.returncode == 1

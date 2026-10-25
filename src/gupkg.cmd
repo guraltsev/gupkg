@@ -1,31 +1,15 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
+rem gupkg of this tree: the command that the root forwarder, the shims and the package launchers call.
+rem It starts only the gupkg beside this file (gupkg\gupkg.cmd). PATH, the registry, AppData, ProgramData and the
+rem current directory are never searched (design 21.3).
 
-rem Select the package-local native command before looking for an installed one.
-set "GUPKG_LOCAL=%~dp0gupkg\gupkg.exe"
-if not exist "%GUPKG_LOCAL%" goto :source_bootstrap
-if exist "%GUPKG_LOCAL%\NUL" goto :source_bootstrap
-set "GUPKG_LOCAL=" & "%GUPKG_LOCAL%" %*
+set "GUPKG_TARGET=%~dp0gupkg\gupkg.cmd"
+if not exist "%GUPKG_TARGET%" goto :missing
+if exist "%GUPKG_TARGET%\NUL" goto :missing
+call "%GUPKG_TARGET%" %*
 exit /b %ERRORLEVEL%
 
-:source_bootstrap
-rem A source checkout keeps the Python bootstrap beside this selector.
-set "GUPKG_SOURCE=%~dp0gupkg\gupkg.cmd"
-if not exist "%GUPKG_SOURCE%" goto :find_system
-if exist "%GUPKG_SOURCE%\NUL" goto :find_system
-call "%GUPKG_SOURCE%" %*
-exit /b %ERRORLEVEL%
-
-:find_system
-rem Search PATH entries explicitly, excluding an unrelated executable in cwd.
-set "GUPKG_SYSTEM="
-if not defined PATH goto :no_system
-for %%P in ("%PATH:;=" "%") do if not defined GUPKG_SYSTEM if not "%%~P"=="" if /I not "%%~fP\gupkg.exe"=="%CD%\gupkg.exe" if exist "%%~P\gupkg.exe" if not exist "%%~P\gupkg.exe\NUL" set "GUPKG_SYSTEM=%%~fP\gupkg.exe"
-:no_system
-if not defined GUPKG_SYSTEM (
-    >&2 echo [gupkg] No package-local or PATH gupkg.exe was found.
-    exit /b 9009
-)
-
-set "GUPKG_SYSTEM=" & "%GUPKG_SYSTEM%" %*
-exit /b %ERRORLEVEL%
+:missing
+>&2 echo [gupkg] This gupkg is incomplete: %GUPKG_TARGET% is missing.
+exit /b 9009

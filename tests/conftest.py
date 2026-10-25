@@ -130,14 +130,16 @@ def derive_zip():
 
     Entries whose names end with a ``drop`` suffix are left out, the entry ending
     with ``replace[0]`` gets the bytes ``replace[1]``, and every ``add`` item
-    (``{path below the version tree: bytes}``) is appended. The function returns
+    (``{path below the version directory: bytes}``) is appended. The function returns
     the copy's SHA-256 (lower case), so a test can present a damaged release
     together with a matching download digest.
     """
 
     def derive(source: Path, target: Path, *, drop=(), replace=None, add=None) -> str:
         with zipfile.ZipFile(source) as original, zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as copy:
-            top = original.namelist()[0].split("/")[0]
+            version_dir = next(
+                name.rsplit("/", 1)[0] for name in original.namelist() if re.fullmatch(r"gupkg/[^/]+/pkg\.toml", name)
+            )
             for entry in original.infolist():
                 if any(entry.filename.endswith(suffix) for suffix in drop):
                     continue
@@ -146,7 +148,7 @@ def derive_zip():
                     data = replace[1]
                 copy.writestr(entry.filename, data)
             for name, data in (add or {}).items():
-                copy.writestr(f"{top}/{name}", data)
+                copy.writestr(f"{version_dir}/{name}", data)
         return hashlib.sha256(target.read_bytes()).hexdigest()
 
     return derive

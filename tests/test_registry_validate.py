@@ -22,7 +22,7 @@ import pytest
 
 from gupkg.services.fingerprint import fingerprint_directory
 from gupkg.system.fake import FakeSystem
-from gupkg_migrate.launchers import launcher_text, write_launchers
+from gupkg.launchers import launcher_text, write_launchers
 from gupkg_registry.layout import read_registry_file, write_registry_file
 from gupkg_registry.validate import MAX_HOOK_FILES, _stray_problems, validate_registry
 from tests.http_fixtures import FIXTURES
@@ -130,6 +130,16 @@ def remove_launcher(root: Path) -> None:
 def launcher_in_tracker(root: Path) -> None:
     """Put a launcher into a tracker."""
     (root / "gh" / "_check_updates" / "install.cmd").write_bytes(launcher_text("install").encode("ascii"))
+
+
+def remove_tracker_launcher(root: Path) -> None:
+    """Delete the tracker's check-updates.cmd."""
+    (root / "gh" / "_check_updates" / "check-updates.cmd").unlink()
+
+
+def tamper_tracker_launcher(root: Path) -> None:
+    """Replace the tracker's check-updates.cmd by a hand-written one."""
+    (root / "gh" / "_check_updates" / "check-updates.cmd").write_bytes(b"@echo off\r\ncall gupkg install gh\r\n")
 
 
 def tracker_error(root: Path) -> None:
@@ -270,7 +280,9 @@ RULES: list[tuple[str, Callable[[Path], None], str]] = [
     ("fingerprint-of-nothing", stale_fingerprint, "fingerprint of 'hwinfo/0.0' names no version directory"),
     ("tampered-launcher", tamper_launcher, "hwinfo/10.02/install.cmd: differs from the launcher template"),
     ("missing-launcher", remove_launcher, "hwinfo/10.02/gupkg-tui.cmd: launcher is missing"),
-    ("launcher-in-tracker", launcher_in_tracker, "a tracker carries no launchers"),
+    ("launcher-in-tracker", launcher_in_tracker, "a tracker never installs, so it carries no install.cmd"),
+    ("missing-check-updates-launcher", remove_tracker_launcher, "gh/_check_updates/check-updates.cmd: launcher is missing"),
+    ("tampered-check-updates-launcher", tamper_tracker_launcher, "gh/_check_updates/check-updates.cmd: differs from the launcher template"),
     ("tracker-error", tracker_error, "gh/_check_updates:"),
     ("tracker-warning", tracker_warning_only, "gh/_check_updates: warning: pkg.local/scrape.py looks like the built-in service"),
     ("ignore-checksum", ignore_checksum, "gh/_check_updates:"),

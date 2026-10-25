@@ -194,6 +194,8 @@ def _report_package(plan: PackagePlan, *, check: bool, backup: bool = True) -> N
         print(f"  other version: {other.version}; recreate it with: {other.suggestion}")
     for launcher in plan.launchers:
         print(f"  launcher: {launcher}")
+    for launcher in plan.stale_launchers:
+        print(f"  remove launcher: {launcher} (a tracker carries only check-updates.cmd)")
     if check and plan.ok and not plan.already_converted:
         print(plan.diff(), end="" if plan.diff().endswith("\n") else "\n")
 

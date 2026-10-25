@@ -180,13 +180,16 @@ def _inside(path: Path, root: Path) -> bool:
     return os.path.normcase(real_path).startswith(os.path.normcase(real_root).rstrip("\\/") + os.sep)
 
 
-def check_directory(path: Path) -> CheckReport:
+def check_directory(path: Path, *, package: str | None = None) -> CheckReport:
     """Validate a version directory or a ``_check_updates`` directory.
 
     Parameters
     ----------
     path : Path
         The directory that holds ``pkg.toml``.
+    package : str, optional
+        The name of the package the directory belongs to, when it is checked somewhere else than its final place (a staging
+        folder); by default the name of the folder above *path*.
 
     Returns
     -------
@@ -214,6 +217,10 @@ def check_directory(path: Path) -> CheckReport:
         manifest = parse_manifest(text, kind)
     except ManifestError as exc:
         return CheckReport(path, kind, errors=(*errors, *exc.problems))
+
+    # The root forwarder is how the installed gupkg is found; no other package may write one.
+    if manifest.root_forwarder is not None and (package or path.resolve().parent.name).casefold() != "gupkg":
+        errors.append("[root_forwarder] is valid only in the gupkg package")
 
     # The files the manifest names must exist and must stay inside this directory.
     named = list(manifest.referenced_hooks())

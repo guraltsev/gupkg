@@ -18,7 +18,7 @@ def test_bundle_contains_the_migration_tool_without_bytecode(release_bundle) -> 
     """The ZIP has `gupkg_migrate` beside `gupkg`, and no `.pyc` or `__pycache__` anywhere in it."""
     with zipfile.ZipFile(release_bundle.zip) as archive:
         names = archive.namelist()
-    top = names[0].split("/")[0]
+    top = f"gupkg/{release_bundle.version}/gupkg"
 
     assert f"{top}/gupkg_migrate/cli.py" in names
     assert f"{top}/gupkg_migrate/__main__.py" in names
@@ -30,9 +30,9 @@ def test_manifest_lists_the_migration_tool_files(release_bundle) -> None:
     """`MANIFEST.sha256` has an entry for every file of `gupkg_migrate`, so edits to the tool are detected."""
     with zipfile.ZipFile(release_bundle.zip) as archive:
         names = archive.namelist()
-        top = names[0].split("/")[0]
+        top = f"gupkg/{release_bundle.version}"
         manifest = archive.read(f"{top}/gupkg/MANIFEST.sha256").decode("utf-8")
-        tool_files = [name for name in names if name.startswith(f"{top}/gupkg_migrate/") and not name.endswith("/")]
+        tool_files = [name for name in names if name.startswith(f"{top}/gupkg/gupkg_migrate/") and not name.endswith("/")]
 
     assert tool_files
     for name in tool_files:

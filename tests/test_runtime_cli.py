@@ -49,7 +49,7 @@ class RuntimeCommandTests(unittest.TestCase):
 
     def test_manifests_do_not_repeat_the_folder_identity(self) -> None:
         """The checked-in manifests declare no name, version, or localVersion."""
-        for manifest in (RUNTIME_DIRECTORY / "pkg.toml", RUNTIME_DIRECTORY / "gupkg" / "pkg.toml"):
+        for manifest in (RUNTIME_DIRECTORY / "pkg.toml",):
             declared = tomllib.loads(manifest.read_text(encoding="utf-8"))
             for key in ("name", "version", "localVersion"):
                 self.assertNotIn(key, declared, msg=str(manifest))

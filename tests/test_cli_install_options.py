@@ -59,10 +59,13 @@ def test_in_place_installs_from_the_folder_where_it_is_and_a_plain_install_copie
 def test_bundled_removes_the_bundled_gupkg_of_old_versions_and_a_plain_cleanup_keeps_it(world: CliWorld) -> None:
     """In a root with a forwarder, `cleanup --bundled` drops `<old version>\\gupkg`; `cleanup` alone leaves it."""
     (world.user / ".gupkg").mkdir(parents=True, exist_ok=True)
-    (world.user / ".gupkg" / "gupkg.cmd").write_text("@echo off\r\n", encoding="utf-8")
+    # A forwarder as gupkg writes it, calling an installed gupkg that exists.
+    (world.user / ".gupkg" / "gupkg.cmd").write_text('@echo off\r\ncall "%~dp0..\\gupkg\\current\\App\\gupkg.cmd" %*\r\n', encoding="utf-8")
+    (world.user / "gupkg" / "current" / "App").mkdir(parents=True)
+    (world.user / "gupkg" / "current" / "App" / "gupkg.cmd").write_text("@echo off\r\n", encoding="utf-8")
     world.publish("tool", "1.0.0", tables=SHIM)
     assert world.cli("install", "tool").code == 0
-    old = world.user / "tool" / "1.0.0"
+    old =world.user / "tool" / "1.0.0"
     (old / "gupkg").mkdir()
     (old / "gupkg" / "gupkg.cmd").write_text("@echo off\r\n", encoding="utf-8")
     world.publish("tool", "2.0.0", tables=SHIM)

@@ -272,8 +272,8 @@ def test_a_script_outside_pkg_local_is_moved_there(tmp_path: Path, capsys: pytes
     assert "move: tools/fetch.ps1 -> pkg.local/fetch.ps1" in capsys.readouterr().out
 
 
-def test_version_directories_get_the_1_0_launchers_and_the_old_tui_launcher_is_replaced(registry: Path) -> None:
-    """A converted version gets `install.cmd` and `gupkg-tui.cmd`; a tracker's old PATH-searching launcher is replaced."""
+def test_versions_get_install_and_tui_launchers_and_a_tracker_gets_only_check_updates(registry: Path) -> None:
+    """A converted version gets `install.cmd` and `gupkg-tui.cmd`; a tracker gets `check-updates.cmd` and loses the old PATH-searching `gupkg-tui.cmd`."""
     old = "@echo off\nfor %%P in (\"%PATH:;=\" \"%\") do echo %%P\ncall gupkg tui\n"
     (registry / "gh" / "_bootstrap" / "gupkg-tui.cmd").write_text(old, encoding="utf-8")
 
@@ -282,11 +282,14 @@ def test_version_directories_get_the_1_0_launchers_and_the_old_tui_launcher_is_r
     version = registry / "qbittorrent" / "5.2.3"
     for name in ("install.cmd", "gupkg-tui.cmd"):
         text = (version / name).read_text(encoding="ascii")
-        assert "..\\..\\.gupkg\\gupkg.cmd" in text and "gupkg\\gupkg.cmd" in text
-        assert "%PATH" not in text
+        assert "..\\..\\.gupkg\\gupkg.cmd" in text or "\\.gupkg\\gupkg.cmd" in text
+        assert "gupkg\\gupkg.cmd" in text and "%PATH" not in text
     assert "tui" in (version / "gupkg-tui.cmd").read_text(encoding="ascii")
-    tracker_launcher = (registry / "gh" / "_check_updates" / "gupkg-tui.cmd").read_text(encoding="ascii")
-    assert "%PATH" not in tracker_launcher and ".gupkg\\gupkg.cmd" in tracker_launcher
+    tracker = registry / "gh" / "_check_updates"
+    check_launcher = (tracker / "check-updates.cmd").read_text(encoding="ascii")
+    assert "check-updates" in check_launcher and "%PATH" not in check_launcher and "\\.gupkg\\gupkg.cmd" in check_launcher
+    assert not (tracker / "gupkg-tui.cmd").exists() and not (tracker / "install.cmd").exists()
+    assert (tracker / "gupkg-tui.cmd.bak").read_text(encoding="utf-8") == old
     assert not (registry / "firefox" / "_check_updates" / "install.cmd").exists()
 
 
@@ -435,15 +438,14 @@ def test_a_conflict_that_appears_after_planning_is_refused_before_any_change(tmp
 
 
 def test_a_failure_in_the_middle_of_applying_restores_the_original_directory(tmp_path: Path) -> None:
-    """When a late step fails (here a launcher path that is a folder), every earlier step is undone, including the rename."""
+    """When a late step fails (here the tracker launcher's path is a folder), every earlier step is undone, including the rename."""
     folder = write_package(tmp_path, "tool", "_bootstrap",
                            'description = "x"\n[update.check]\nmode = "module"\n[update.payload]\nmode = "module"\n'
                            '[origin]\nurl = "https://example.org/a.zip"\n',
                            {"pkg.local/check_update.py": "x = 1\n", "pkg.local/unpack_app.py": "x = 1\n", "gupkg-tui.cmd": "old\n"})
     plan = plan_package(folder)
-    assert plan.ok and plan.launchers == ["gupkg-tui.cmd"]
-    (folder / "gupkg-tui.cmd").unlink()
-    (folder / "gupkg-tui.cmd").mkdir()
+    assert plan.ok and plan.launchers == ["check-updates.cmd"] and plan.stale_launchers == ["gupkg-tui.cmd"]
+    (folder / "check-updates.cmd").mkdir()
     before = snapshot(tmp_path)
 
     with pytest.raises(OSError):
