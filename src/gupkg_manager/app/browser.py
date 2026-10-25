@@ -2,7 +2,7 @@
 
 The browser lists every package of every root (name, version, mode, status, registry). Up and Down move, Enter opens the package view, ``/`` filters by text,
 and the operations are keys: check for updates (``c``, all with ``C``), update (``u``, all outdated with ``U``), install or repair (``i``), uninstall
-(``x``), health check (``h``), logs (``l``), toggle the registry's packages that are not installed (``a``), reload (``r``). Opening a package, running an operation
+(``x``), health check (``h``), logs (``l``), toggle the registry's packages that are not installed (``a``), synchronise the registry (``s``), reload (``r``). Opening a package, running an operation
 and coming back never restarts the program: the browser stays below, so its filter and selection are kept, and it reloads the inventory after a run.
 
 Usage and API
@@ -47,7 +47,7 @@ class BrowserScreen(PackageActions, FrameScreen):
         Binding("slash", "filter", "Filter"), Binding("escape", "escape", "Back"), Binding("q", "quit", "Quit"), Binding("question_mark", "help", "Help"),
         Binding("c", "check_updates", "Check"), Binding("C", "check_all", "Check all"), Binding("u", "update", "Update"), Binding("U", "update_all", "Update all"),
         Binding("i", "install", "Install"), Binding("x", "uninstall", "Uninstall"), Binding("h", "health", "Health"), Binding("l", "logs", "Logs"),
-        Binding("a", "available", "Available"), Binding("r", "reload", "Reload"),
+        Binding("a", "available", "Available"), Binding("s", "sync_registry", "Sync registry"), Binding("r", "reload", "Reload"),
     ]
 
     def __init__(self) -> None:
@@ -223,6 +223,10 @@ class BrowserScreen(PackageActions, FrameScreen):
             self.notify(literal(error), severity="error", markup=False)
             return
         self.app.push_screen(LogScreen(info.log if info else None, Path(row.path) if row.path else None, row.name))
+
+    def action_sync_registry(self) -> None:
+        """Download the registries, so that ``a`` has packages to show."""
+        self.start_registry_sync()
 
     def action_available(self) -> None:
         """Show or hide the registry's packages that are not installed."""

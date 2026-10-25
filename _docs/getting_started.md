@@ -92,7 +92,8 @@ machine-specific path. A package can also declare Start Menu shortcuts
 [`pkg.toml` reference](../README.md#pkgtoml-reference-format-2). Many ready-made
 definitions live in the [`gupkg-registry`](https://github.com/guraltsev/gupkg-registry)
 repository, so you can often skip this step: `gupkg registry sync`, then
-`gupkg install pandoc` (see the [cookbook](cookbook.md)).
+`gupkg install pandoc` (see the [cookbook](cookbook.md)). In `gupkg-manager` the same two steps are keys: `s` synchronises the registries and `a` lists the registry's packages
+that are not installed yet.
 
 ## 3. Check the file
 

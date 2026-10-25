@@ -8,7 +8,7 @@ Usage and API
 -------------
 Mix ``PackageActions`` into a screen that has ``self.app`` as a ``UiApp`` and implements ``reload()`` (re-read what the screen shows after a run). Call
 ``start_check_updates(rows)``, ``start_update(rows)``, ``start_repair(rows)``, ``start_uninstall(rows, purge=...)``, ``start_check(rows, fix=...)`` and
-``start_switch(row, version)``; each one runs in a worker so the interface stays responsive.
+``start_switch(row, version)`` and ``start_registry_sync()``; each one runs in a worker so the interface stays responsive.
 
 Implementation Approach
 -----------------------
@@ -26,7 +26,7 @@ from ..flows import run_check_updates, run_operation, run_update
 from ..interaction import Interaction
 from ..plans import PackageRow
 from ..render import literal
-from ..session import BatchOutcome, BatchSession, Sink
+from ..session import BatchOutcome, BatchSession, Sink, Step
 from .modals import ConfirmScreen
 
 
@@ -114,6 +114,17 @@ class PackageActions:
             ])
 
         self._start(f"{'Purge' if purge else 'Uninstall'}: {_names(rows)}", job, before=before)
+
+    def start_registry_sync(self) -> None:
+        """Download the registries (``gupkg registry sync``): the packages they list can then be found and installed."""
+        env = self.app.env
+
+        async def job(session: BatchSession, sink: Sink, interaction: Interaction) -> BatchOutcome:
+            """Run ``registry sync`` for the default root; it names no package."""
+            logs = env.settings.root_of(env.settings.default_mode) / ".gupkg" / "logs"
+            return await session.run([Step("registry sync", ("registry", "sync"), (), logs, False)])
+
+        self._start("Synchronise the registry", job)
 
     def start_check(self, rows: Sequence[PackageRow], *, fix: bool = False) -> None:
         """Run the health check on *rows*; with *fix* it also repairs them (asked first)."""

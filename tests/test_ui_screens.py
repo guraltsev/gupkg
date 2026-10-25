@@ -404,6 +404,25 @@ def test_dialogs_answer_only_to_explicit_keys(tmp_path: Path, fake: FakeGupkg) -
     assert call["targets"] == ["user:alpha"] and "--yes" in call["options"] and "--no-input" in call["options"] and "--purge" not in call["options"]
 
 
+def test_the_s_key_synchronises_the_registry_with_one_cli_call_and_no_package(tmp_path: Path, fake: FakeGupkg) -> None:
+    """In the manager, ``s`` runs ``gupkg registry sync`` once with the machine options, names no package, and returns to the browser."""
+    doc = result("registry sync", [])
+    fake.respond("registry", doc=doc, events={"dir": str(tmp_path / "home" / "opt" / ".gupkg" / "logs"), "result": doc, "packages": []})
+
+    async def scenario(app, pilot) -> None:
+        """Press ``s`` in the browser, wait for the run to finish and leave the run view."""
+        await open_browser(app, pilot)
+        await pilot.press("s")
+        await wait_for(pilot, lambda: isinstance(app.screen, RunScreen) and app.screen.outcome is not None, "the run")
+        await pilot.press("escape")
+        await wait_for(pilot, lambda: has(app, "alpha") and not isinstance(app.screen, RunScreen), "the browser")
+
+    run_app(tmp_path, fake, scenario)
+
+    (call,) = [item for item in fake.calls() if item["key"] == "registry" and "sync" in item["argv"]]
+    assert call["targets"] == [] and "--no-input" in call["options"] and "--json" in call["options"] and "--events-file" in call["options"]
+
+
 def test_every_operation_is_one_cli_call_with_the_machine_options(tmp_path: Path, fake: FakeGupkg) -> None:
     """Check for updates, repair and the health check each arrive as one ``gupkg`` call for the qualified target; the program itself changes nothing."""
     for command, status in (("check-updates", "written"), ("install", "installed"), ("check", "healthy")):

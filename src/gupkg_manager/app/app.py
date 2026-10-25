@@ -27,7 +27,7 @@ from .browser import BrowserScreen
 
 HELP = [
     "Browser",
-    "  Up/Down move, Enter opens the package, / filters, a shows registry packages that are not installed, r reloads.",
+    "  Up/Down move, Enter opens the package, / filters, a shows registry packages that are not installed, s synchronises the registry (download it first), r reloads.",
     "  c checks the selected package for updates (writes and populates new versions, activates nothing); C checks every listed package.",
     "  u updates the selected package; U updates every outdated package (one plan, one confirmation, one administrator prompt for system packages).",
     "  i installs or repairs, x uninstalls, h runs the health check, l shows the log.",
