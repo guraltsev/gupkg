@@ -246,6 +246,11 @@ def desired_effects(manifest: Manifest, context: EffectContext) -> tuple[tuple[E
             effects.append(Effect("path", {"scope": scope, "entry": str(context.bin_dir), "added": False, "shared": True}))
         for value in manifest.paths:
             entry = _expand(value, values, context.env, f"PATH entry '{value}'").strip()
+            if scope == "system" and entry.startswith("%"):
+                # A folder named through an environment variable (``%LOCALAPPDATA%``) differs for every user, and a user could
+                # redirect it, so it never goes on the machine PATH. It is left out and said so; each user adds it to their own PATH.
+                notes.append(f"PATH entry {entry} follows an environment variable, so it is not added to the machine PATH; add it to your own PATH")
+                continue
             _require_path_entry(entry, context, scope, f"PATH entry '{value}'")
             effects.append(Effect("path", {"scope": scope, "entry": os.path.normpath(entry), "added": False}))
 

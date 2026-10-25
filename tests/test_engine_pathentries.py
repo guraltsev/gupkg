@@ -101,9 +101,13 @@ def test_the_machine_path_takes_only_trusted_places(tmp_path: Path) -> None:
     effects, _ = desired_effects(with_paths(inside, program_files, system_root, str(ctx.bin_dir / "x")), ctx)
 
     assert [effect.fields["entry"] for effect in effects if effect.kind == "path"] == [inside, program_files, system_root, str(ctx.bin_dir / "x")]
-    for hostile in ("C:\\Users\\Public\\bin", "C:\\Temp", str(tmp_path / "pf-other"), "%LOCALAPPDATA%\\bin", "%ProgramFiles%\\Tool", "$App\\..\\x"):
+    for hostile in ("C:\\Users\\Public\\bin", "C:\\Temp", str(tmp_path / "pf-other"), "$App\\..\\x"):
         with pytest.raises(EffectError):
             desired_effects(with_paths(hostile), ctx)
+    # A %VAR% entry differs per user and can be redirected: it is not added to the machine PATH, and the package says so in a note.
+    for variable in ("%LOCALAPPDATA%\\bin", "%ProgramFiles%\\Tool"):
+        skipped, notes = desired_effects(with_paths(variable), ctx)
+        assert [effect for effect in skipped if effect.kind == "path"] == [] and any("follows an environment variable" in note for note in notes)
 
 
 def test_the_user_path_takes_any_absolute_local_folder_and_a_leading_variable(tmp_path: Path) -> None:
