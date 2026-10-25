@@ -44,6 +44,7 @@ def dumps(data: dict[str, Any]) -> str:
 
 
 _TABLES_LOCK = threading.Lock()
+_COMPACT_ARRAY_WIDTH = 80
 
 
 def dumps_tables(data: dict[str, Any]) -> str:
@@ -51,7 +52,7 @@ def dumps_tables(data: dict[str, Any]) -> str:
 
     ``tomli_w`` writes a short table in a list as an inline table (``shim = [ { name = "x", ... }, ]``) and a long one as
     ``[[shim]]``, so one manifest mixes both. Package manifests are written by hand as ``[[shim]]``, so this writer makes
-    ``tomli_w`` treat no table as short enough to inline.
+    ``tomli_w`` treat no table as short enough to inline and a short list of plain values is written on one line (`modes = ["system", "user"]`).
 
     Parameters
     ----------
@@ -64,12 +65,24 @@ def dumps_tables(data: dict[str, Any]) -> str:
         TOML text; every list of tables is a sequence of ``[[name]]`` blocks.
     """
     with _TABLES_LOCK:
-        original = _tomli_w_writer.MAX_LINE_LENGTH
-        _tomli_w_writer.MAX_LINE_LENGTH = 0
+        original_table = _tomli_w_writer.is_suitable_inline_table
+        original_array = _tomli_w_writer.format_inline_array
+
+        def compact_array(array: Any, context: Any, nest_level: int) -> str:
+            """Write a short list of plain values on one line; anything else as ``tomli_w`` does."""
+            if array and not any(isinstance(item, (dict, list, tuple)) for item in array):
+                line = "[" + ", ".join(_tomli_w_writer.format_literal(item, context, nest_level=nest_level + 1) for item in array) + "]"
+                if len(line) <= _COMPACT_ARRAY_WIDTH:
+                    return line
+            return original_array(array, context, nest_level)
+
+        _tomli_w_writer.is_suitable_inline_table = lambda table, context: False
+        _tomli_w_writer.format_inline_array = compact_array
         try:
             return tomli_w.dumps(data)
         finally:
-            _tomli_w_writer.MAX_LINE_LENGTH = original
+            _tomli_w_writer.is_suitable_inline_table = original_table
+            _tomli_w_writer.format_inline_array = original_array
 
 
 def write_toml(path: Path, data: dict[str, Any]) -> None:
