@@ -56,6 +56,29 @@ def _print(outcome: Outcome) -> None:
     print(f"{outcome.status:8} {outcome.package} {outcome.version or ''}: {outcome.message}{flag}".rstrip(), flush=True)
 
 
+def _print_summary(outcomes: Sequence[Outcome]) -> None:
+    """Print the counts, then the packages by outcome: updated, to review, failed (with the reason) and current."""
+    counts = {status: sum(1 for o in outcomes if o.status == status) for status in ("added", "pinned", "current", "failed")}
+    print("summary: " + ", ".join(f"{count} {status}" for status, count in counts.items() if count) + f" of {len(outcomes)} packages", flush=True)
+    written = [o for o in outcomes if o.status in ("added", "pinned")]
+    if written:
+        print(f"updated ({len(written)}): " + ", ".join(f"{o.package} {o.version}" for o in written))
+    review = [o for o in written if o.review]
+    if review:
+        print(f"hash computed by the registry tool, review before pushing ({len(review)}): " + ", ".join(o.package for o in review))
+    unversioned = [o for o in written if o.unversioned]
+    if unversioned:
+        print(f"download address has no version in it ({len(unversioned)}): " + ", ".join(o.package for o in unversioned))
+    failed = [o for o in outcomes if o.status == "failed"]
+    if failed:
+        print(f"failed ({len(failed)}):")
+        for outcome in failed:
+            print(f"  {outcome.package}: {outcome.message}")
+    current = [o for o in outcomes if o.status == "current"]
+    if current:
+        print(f"already current ({len(current)}): " + ", ".join(o.package for o in current), flush=True)
+
+
 class _Progress:
     """Print ``[n/total] name ...`` when a package starts and its outcome on the same line when it ends."""
 
@@ -103,8 +126,7 @@ def _run_update(args: argparse.Namespace, system: System, environ: Mapping[str, 
         if temporary:
             shutil.rmtree(sandbox, ignore_errors=True)
     progress.finish()
-    counts = {status: sum(1 for o in report.outcomes if o.status == status) for status in ("added", "pinned", "current", "failed")}
-    print("summary: " + ", ".join(f"{count} {status}" for status, count in counts.items() if count) + f" of {len(report.outcomes)} packages", flush=True)
+    _print_summary(report.outcomes)
     if args.auto_push and report.written:
         try:
             commit_and_push(system, args.registry, report.outcomes, **_push_options(args))

@@ -164,7 +164,16 @@ _scripts\registry-tool.cmd validate              :: what CI runs: every tracker 
 
 Without `--auto-push` the tool writes the new directories and starts no `git` process; the maintainer reviews and pushes. A hash the
 tool computed itself (`sha256_from = "registry"`) is flagged `[REVIEW]`. A package is its unit of failure, and `--sandbox DIR`
-chooses where downloads are staged.
+chooses where downloads are staged (a folder that is kept also keeps its download cache, so a rerun does not download again).
+
+`update` prints `[n/total] name ... <outcome>` for each package as it finishes, so a long run shows what it is doing, and ends with a
+summary: the counts (`62 added, 17 failed of 79 packages`), then the packages updated with their versions, the ones whose hash the
+tool computed (to review before pushing), the ones whose download address has no version in it, the failed ones with the reason,
+and the ones that were already current.
+
+Only one run may use a registry checkout at a time: `update` and `pin` hold a lock file (`.registry-tool.lock`) that names the
+process, host, operation and start time. A second run stops with that message before it writes anything. A lock whose process has
+ended (a crash or a closed window), or one older than a day, is taken over by the next run, so nothing has to be deleted by hand.
 
 ## Scheduled updates
 

@@ -7,6 +7,8 @@ none.
 
 Usage and API
 -------------
+``with file_lock(system, path, operation, now, subject=...)`` is the same lock around any one file (the registry tool uses
+it on a registry checkout); ``PackageBusy`` names *subject* and the holder.
 ``with package_lock(system, package_path, operation, now, elevated=...)`` holds the lock for the block and releases it on
 every exit (a failure, a cancel, an exception). ``PackageBusy`` is raised when a live run holds it; its message names the
 holder (process, host, operation, start time). ``lock_holder(system, package_path, now)`` returns the live holder of
@@ -300,3 +302,60 @@ def package_lock(
         _release(path, me.token, drop_data=not data_existed)
         if not existed:
             prune_empty_package(package_path)
+
+
+@contextmanager
+def file_lock(
+    system: System, path: Path, operation: str, now: Callable[[], datetime], *, subject: str
+) -> Iterator[Holder]:
+    """Hold an exclusive lock file at *path* for the block, with the staleness rules of the package lock.
+
+    Parameters
+    ----------
+    system : System
+        Judges whether the holder of an existing lock is alive.
+    path : Path
+        The lock file (its folder must exist). It is created exclusively and removed on every exit.
+    operation : str
+        What the run does, written in the lock for the message of a second run.
+    now : callable
+        The clock (UTC).
+    subject : str
+        What is locked, for the message ("the registry C:\\reg").
+
+    Yields
+    ------
+    Holder
+        This run.
+
+    Raises
+    ------
+    PackageBusy
+        If a live run holds the lock. A lock of a process that has ended, one older than a day, or an unreadable old one is
+        taken over without asking.
+    """
+    path = Path(path)
+    me = Holder(system.process_id(), socket.gethostname(), operation, now().isoformat(timespec="seconds"), uuid.uuid4().hex)
+
+    def busy(holder: Holder | None) -> PackageBusy:
+        who = holder.describe() if holder is not None else "another run that is just starting"
+        return PackageBusy(
+            f"{subject} is in use by {who}. Wait for it to finish and run the command again.",
+            f"If that run is gone, the lock ({path}) is taken over by the next run once its process has ended.",
+        )
+
+    for _attempt in range(5):
+        if _create(path, render_lock(me)):
+            break
+        holder, mtime = _read(path)
+        if mtime is None:
+            continue  # released between the two calls: try to create it again
+        if not _is_stale(system, holder, mtime, now()):
+            raise busy(holder)
+        _reclaim(path, holder)
+    else:
+        raise busy(None)
+    try:
+        yield me
+    finally:
+        _remove_own_lock(path, me.token)

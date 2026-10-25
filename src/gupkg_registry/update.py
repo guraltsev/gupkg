@@ -38,13 +38,16 @@ import re
 import shutil
 import time
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from gupkg.model.checksum import SKIPPED_CLI
 from gupkg.model.manifest import ManifestKind, manifest_to_toml, parse_manifest, render_pinned
 from gupkg.model.version import MANIFEST_NAME, TRACKER_DIR_NAME
+from gupkg.engine.locks import PackageBusy, file_lock
 from gupkg.report.events import Warning, emit
 from gupkg.pkgcheck import check_directory, defines_track
 from gupkg.services.artifact import fetch_artifact, reverify
@@ -155,17 +158,27 @@ def update_registry(
     root, sandbox = Path(root), Path(sandbox)
     settings = read_registry_file(root)
     sandbox.mkdir(parents=True, exist_ok=True)
-    lock = root / LOCK_NAME
-    try:
-        lock.open("x").close()
-    except FileExistsError:
-        raise RegistryFileError(
-            f"another registry tool run is using {root} (lock file {LOCK_NAME}); wait for it, or delete the file if that run crashed"
-        ) from None
-    try:
+    with registry_lock(root, system, "update"):
         return _update_all(root, system, sandbox, names, environ, on_start, on_outcome, settings)
-    finally:
-        lock.unlink(missing_ok=True)
+
+
+@contextmanager
+def registry_lock(root: Path, system: System, operation: str) -> Iterator[None]:
+    """Hold the registry's lock file for the block: one tool run per checkout.
+
+    A lock whose process has ended (a crash, Ctrl+C that was not caught, a closed window) is taken over, so nothing has to be
+    deleted by hand; a live run is named in the message (process, host, operation, start time).
+
+    Raises
+    ------
+    RegistryFileError
+        If a live run holds the lock; nothing is written.
+    """
+    try:
+        with file_lock(system, Path(root) / LOCK_NAME, f"registry tool {operation}", lambda: datetime.now(timezone.utc), subject=f"The registry {root}"):
+            yield
+    except PackageBusy as busy:
+        raise RegistryFileError(f"{busy} {busy.hint}") from None
 
 
 def _update_all(root, system, sandbox, names, environ, on_start, on_outcome, settings) -> UpdateReport:
@@ -229,8 +242,22 @@ def pin_version(
 
     The artifact is downloaded over ``https://`` only, unpacked in the sandbox to prove the version
     installs, and the observed hash is written with ``sha256_from = "registry"``. The fingerprint
-    is recomputed (``pkg.toml`` changed) and the version leaves the ``unpinned`` list.
+    is recomputed (``pkg.toml`` changed) and the version leaves the ``unpinned`` list. It takes the
+    registry lock like ``update_registry``.
+
+    Raises
+    ------
+    RegistryFileError
+        If a live run holds the registry lock or ``_registry.toml`` is missing or malformed.
     """
+    with registry_lock(Path(root), system, "pin"):
+        return _pin_version(root, system, key, sandbox=sandbox, environ=environ)
+
+
+def _pin_version(
+    root: Path, system: System, key: str, *, sandbox: Path, environ: Mapping[str, str] | None = None
+) -> Outcome:
+    """Pin one version while the caller holds the lock (see ``pin_version``)."""
     root, sandbox = Path(root), Path(sandbox)
     settings = read_registry_file(root)
     name, _, version = key.partition("/")

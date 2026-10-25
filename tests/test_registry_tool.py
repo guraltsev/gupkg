@@ -23,6 +23,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import time
 from pathlib import Path
 
@@ -35,6 +36,7 @@ from gupkg.services.fingerprint import fingerprint_directory, verify_directory
 from gupkg.system.fake import FakeHttp, FakeSystem, ProcessCall
 from gupkg.system.port import ProcessResult
 from gupkg.launchers import launcher_text, write_launchers
+from gupkg.engine.locks import Holder, render_lock
 from gupkg_registry.cli import main
 from gupkg_registry.layout import RegistryFileError, read_registry_file, write_registry_file
 from gupkg_registry.publish import commit_message
@@ -666,15 +668,64 @@ def test_a_written_version_states_its_modes_even_when_they_are_the_default(tmp_p
     assert explicit.modes == manifest.modes
 
 
-def test_a_second_run_on_the_same_registry_is_refused_while_the_first_holds_the_lock(tmp_path: Path) -> None:
-    """A lock file in the registry stops two update runs from writing the same version directories."""
-    root, system = hwinfo_world(tmp_path, Git())
-    (root / ".registry-tool.lock").write_text("", encoding="utf-8")
+def _write_lock(root: Path, pid: int, *, operation: str = "registry tool update") -> Path:
+    """Write a registry lock file as another run on this machine would (the started time is now)."""
+    lock = root / ".registry-tool.lock"
+    holder = Holder(pid, socket.gethostname(), operation, "2026-10-25T01:02:03+00:00", "othertoken")
+    lock.write_text(render_lock(holder), encoding="utf-8")
+    return lock
 
-    with pytest.raises(RegistryFileError, match="another registry tool run"):
+
+def test_a_second_run_is_refused_while_a_live_run_holds_the_lock_and_the_message_names_it(tmp_path: Path) -> None:
+    """A live holder stops the run before anything is written, and the error names its process, operation and start time."""
+    root, system = hwinfo_world(tmp_path, Git())
+    system.live_pids.add(4242)
+    lock = _write_lock(root, 4242)
+
+    with pytest.raises(RegistryFileError) as error:
         run_update(root, system, tmp_path)
 
-    assert not (root / "hwinfo" / "1.0.0").exists()
+    assert "process 4242" in str(error.value) and "registry tool update" in str(error.value) and "2026-10-25T01:02:03" in str(error.value)
+    assert lock.is_file() and not (root / "hwinfo" / "1.0.0").exists()
+
+
+def test_a_lock_left_by_a_run_that_has_ended_is_taken_over(tmp_path: Path) -> None:
+    """A lock whose process is gone (a crash) is replaced and the run goes ahead, with nothing to delete by hand."""
+    root, system = hwinfo_world(tmp_path, Git())
+    _write_lock(root, 999999)
+
+    report = run_update(root, system, tmp_path)
+
+    assert [o.status for o in report.outcomes] == ["added"]
+    assert not (root / ".registry-tool.lock").exists()
+
+
+def test_pin_takes_the_same_lock_as_update(tmp_path: Path) -> None:
+    """``pin`` is refused while a live run holds the registry lock."""
+    root, system = hwinfo_world(tmp_path, Git())
+    system.live_pids.add(4242)
+    _write_lock(root, 4242, operation="registry tool update")
+
+    with pytest.raises(RegistryFileError, match="in use by process 4242"):
+        pin_version(root, system, "hwinfo/1.0.0", sandbox=tmp_path / "sb")
+
+
+def test_the_summary_lists_the_packages_by_outcome(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """After the progress lines the run prints who was updated, who needs review and who failed with the reason."""
+    root = registry_of(tmp_path, "hwinfo", "volta")
+    good = zip_bytes(tmp_path, "h.zip", HWINFO_ZIP)
+    system = machine(tmp_path, "page_hwinfo", "github_volta", artifacts={
+        "https://www.hwinfo.com/files/hwi_1002.zip": good,
+        "https://github.com/o/r/releases/download/v2.0.1/volta-2.0.1-windows.zip": b"this is not an archive",
+    })
+    patch_digest(system, "9ce45e2deeb806d62a504075f992a4c5de66873173c2e403a49a3de9126fa5d3", hashlib.sha256(b"this is not an archive").hexdigest())
+
+    run_cli(root, system, tmp_path, "update")
+
+    lines = capsys.readouterr().out.splitlines()
+    assert any(line.startswith("updated (1): hwinfo ") for line in lines)
+    assert any(line.startswith("hash computed by the registry tool, review before pushing (1): hwinfo") for line in lines)
+    assert "failed (1):" in lines and any(line.startswith("  volta: ") for line in lines)
 
 
 def test_the_lock_is_released_after_a_run(tmp_path: Path) -> None:
