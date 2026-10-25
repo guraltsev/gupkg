@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import tomli_w
+from gupkg.tomlio import dumps_tables
 
 from gupkg.core import write_text_atomic
 from gupkg.model.manifest import (
@@ -169,7 +169,7 @@ class _Unconvertible(Exception):
 
 def _dump(data: dict[str, Any]) -> str:
     """Return TOML text for *data* even when it is not valid format 2 (for the report)."""
-    return tomli_w.dumps(data)
+    return dumps_tables(data)
 
 
 def _without_hook_api_errors(errors: list[str], plan: PackagePlan) -> list[str]:

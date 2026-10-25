@@ -683,12 +683,12 @@ def test_render_pinned_has_a_sha256_only_when_the_result_carried_one() -> None:
     assert (with_hash.source.sha256, with_hash.source.sha256_from) == (SHA, "vendor-sums")
 
 
-def test_render_pinned_writes_shipped_explicitly() -> None:
-    """The rendered source states `shipped` explicitly (false for a download), as tooling always does."""
+def test_render_pinned_does_not_write_the_default_shipped_false() -> None:
+    """A downloaded version does not carry `shipped = false` (the default of a source that can populate App)."""
     pinned = render_pinned(parse_manifest(FIREFOX_TRACKER, ManifestKind.TRACKER), TrackResult("1.0"))
 
-    assert pinned.source.shipped_declared is False
-    assert "shipped = false" in manifest_to_toml(pinned)
+    assert pinned.source.shipped is False and pinned.source.shipped_declared is None
+    assert "shipped" not in manifest_to_toml(pinned)
 
 
 def test_render_pinned_expands_filters_and_captures() -> None:

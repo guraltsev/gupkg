@@ -2,7 +2,9 @@
 
 Usage and API
 -------------
-``dumps(data)`` returns the TOML text of plain data. ``write_toml(path, data)``
+``dumps(data)`` returns the TOML text of plain data; ``dumps_tables(data)`` does the same but writes every
+list of tables as ``[[name]]`` blocks (package manifests are written that way, as people write them).
+``write_toml(path, data)``
 replaces a file atomically with that text, and ``read_toml(path)`` parses a file
 with ``tomllib``.
 
@@ -15,10 +17,12 @@ are never hand-written. Files are replaced atomically beside the destination.
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import Any
 
 import tomli_w
+from tomli_w import _writer as _tomli_w_writer
 
 from .core import read_toml_file, write_text_atomic
 
@@ -37,6 +41,35 @@ def dumps(data: dict[str, Any]) -> str:
         TOML text; scalars come before tables, as TOML requires.
     """
     return tomli_w.dumps(data)
+
+
+_TABLES_LOCK = threading.Lock()
+
+
+def dumps_tables(data: dict[str, Any]) -> str:
+    """Return the TOML text of *data* with every list of tables written as ``[[name]]`` blocks.
+
+    ``tomli_w`` writes a short table in a list as an inline table (``shim = [ { name = "x", ... }, ]``) and a long one as
+    ``[[shim]]``, so one manifest mixes both. Package manifests are written by hand as ``[[shim]]``, so this writer makes
+    ``tomli_w`` treat no table as short enough to inline.
+
+    Parameters
+    ----------
+    data : dict
+        Plain TOML-ready data.
+
+    Returns
+    -------
+    str
+        TOML text; every list of tables is a sequence of ``[[name]]`` blocks.
+    """
+    with _TABLES_LOCK:
+        original = _tomli_w_writer.MAX_LINE_LENGTH
+        _tomli_w_writer.MAX_LINE_LENGTH = 0
+        try:
+            return tomli_w.dumps(data)
+        finally:
+            _tomli_w_writer.MAX_LINE_LENGTH = original
 
 
 def write_toml(path: Path, data: dict[str, Any]) -> None:

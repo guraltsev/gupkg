@@ -35,6 +35,8 @@ from typing import Any
 
 import tomli_w
 
+from ..tomlio import dumps_tables
+
 from .template import (
     INSTALLER_VARIABLES,
     PATH_VARIABLES,
@@ -1570,7 +1572,7 @@ def manifest_to_toml(manifest: Manifest, *, explicit_modes: bool = False) -> str
     str
         TOML text that ``parse_manifest`` reads back to an equal manifest.
     """
-    return tomli_w.dumps(manifest_to_data(manifest, explicit_modes=explicit_modes))
+    return dumps_tables(manifest_to_data(manifest, explicit_modes=explicit_modes))
 
 
 # ---------------------------------------------------------------------------
@@ -1593,7 +1595,7 @@ def render_pinned(tracker: Manifest, result: TrackResult) -> Manifest:
     """Write the pinned version manifest that a tracker's discovery produced.
 
     Every template is expanded with the discovered version and captures, ``[track]``
-    is removed, ``shipped`` is written explicitly, and ``sha256`` and ``sha256_from``
+    is removed, ``shipped`` is written only when it is true (false is the default for a source that can populate), and ``sha256`` and ``sha256_from``
     are set only from a checksum the tracker *discovered*. The result is validated as
     an ordinary version-directory manifest.
 
@@ -1629,7 +1631,8 @@ def render_pinned(tracker: Manifest, result: TrackResult) -> Manifest:
     data = _render_data(data, values)
 
     source = data.setdefault("source", {})
-    source["shipped"] = tracker.source.shipped
+    if tracker.source.shipped:  # false is the default of a source that can populate App: it is not written
+        source["shipped"] = True
     source.pop("checksum", None)  # tracker-only: a version carries the sha256 it was given (D10)
     checksum = result.checksum
     if checksum is not None:
