@@ -147,16 +147,50 @@ function New-SystemRoot([string]$Path) {
     if ($problem) { throw "Could not make $Path admin-only: $problem." }
 }
 
+function Get-VersionDirectories([string]$Folder, [int]$Depth, [int]$Limit) {
+    # Folders at or below $Folder (to $Limit levels) that hold pkg.toml and install.cmd, as @{ Path; Depth }. A link (a `current`
+    # junction, say) is never followed: it only repeats a folder that is found under its real name.
+    $found = @()
+    if ((Test-Path -LiteralPath (Join-Path $Folder 'pkg.toml')) -and (Test-Path -LiteralPath (Join-Path $Folder 'install.cmd'))) {
+        $found += @{ Path = $Folder; Depth = $Depth }
+    }
+    if ($Depth -lt $Limit) {
+        foreach ($child in @(Get-ChildItem -LiteralPath $Folder -Directory -Force)) {
+            if ($child.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
+            $found += @(Get-VersionDirectories $child.FullName ($Depth + 1) $Limit)
+        }
+    }
+    return $found
+}
+
 function Find-VersionDirectory([string]$Folder) {
-    # A distribution holds <name>\<version>\ with pkg.toml and install.cmd; choose the shallowest, and refuse an ambiguous one.
-    $candidates = @(Get-ChildItem -LiteralPath $Folder -Recurse -Directory -Force) + @(Get-Item -LiteralPath $Folder)
-    $found = @($candidates |
-        Where-Object { (Test-Path (Join-Path $_.FullName 'pkg.toml')) -and (Test-Path (Join-Path $_.FullName 'install.cmd')) })
-    if ($found.Count -eq 0) { throw "No version directory (a folder with pkg.toml and install.cmd) was found in: $Source" }
-    $depth = ($found | ForEach-Object { $_.FullName.Length } | Measure-Object -Minimum).Minimum
-    $shallow = @($found | Where-Object { $_.FullName.Length -eq $depth })
-    if ($shallow.Count -ne 1) { throw "The distribution holds more than one version directory: $(($shallow | ForEach-Object { $_.FullName }) -join ', ')" }
-    return $shallow[0].FullName
+    # A distribution holds <name>\<version>\ with pkg.toml and install.cmd; choose the shallowest (fewest folders below $Folder),
+    # and refuse an ambiguous one. A whole root with several packages in it is ambiguous: name one version folder.
+    $found = @(Get-VersionDirectories $Folder 0 4)
+    if ($found.Count -eq 0) { throw "No version directory (a folder with pkg.toml and install.cmd) was found in: $Folder" }
+    $depth = ($found | ForEach-Object { $_.Depth } | Measure-Object -Minimum).Minimum
+    $shallow = @($found | Where-Object { $_.Depth -eq $depth })
+    if ($shallow.Count -ne 1) {
+        throw "The distribution holds more than one version directory: $(($shallow | ForEach-Object { $_.Path }) -join ', '). Name one version folder (for example $($shallow[0].Path)) as -Source."
+    }
+    return $shallow[0].Path
+}
+
+function Find-VersionInArchive([string]$Archive) {
+    # The version directory of a release ZIP, from its entry names alone (nothing is unpacked): the one folder that holds both
+    # pkg.toml and install.cmd, shallowest first. Used for a system root, which may already hold other packages: searching the
+    # root after unpacking would find those too.
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [IO.Compression.ZipFile]::OpenRead($Archive)
+    try { $names = @($zip.Entries | ForEach-Object { $_.FullName.Replace('\', '/') }) } finally { $zip.Dispose() }
+    $folders = @($names | Where-Object { $_ -match '(^|/)install\.cmd$' } |
+        ForEach-Object { $_ -replace 'install\.cmd$', '' } |
+        Where-Object { $names -contains ($_ + 'pkg.toml') })
+    if ($folders.Count -eq 0) { throw "The archive holds no version directory (a folder with pkg.toml and install.cmd): $Archive" }
+    $depth = ($folders | ForEach-Object { ($_ -split '/').Count } | Measure-Object -Minimum).Minimum
+    $shallow = @($folders | Where-Object { ($_ -split '/').Count -eq $depth })
+    if ($shallow.Count -ne 1) { throw "The archive holds more than one version directory: $($shallow -join ', ')" }
+    return $shallow[0].TrimEnd('/').Replace('/', '\')
 }
 
 # Dot-sourcing this file only defines the functions above (the tests do that); running it installs.
@@ -226,9 +260,12 @@ try {
             Step "Creating the admin-only root $Root"
             New-SystemRoot $Root
         }
+        # The version directory is named by the archive, not searched for in the root: the root already holds other packages.
+        $relative = Find-VersionInArchive $archive
         Expand-ZipSafely $archive $Root
         $tree = $Root
-        $versionDir = Find-VersionDirectory $Root
+        $versionDir = if ($relative) { Join-Path $Root $relative } else { $Root }
+        if (-not (Test-Path -LiteralPath (Join-Path $versionDir 'install.cmd'))) { throw "The unpacked archive has no install.cmd in $versionDir." }
     } elseif ($archive) {
         $tree = if ($Stage) { $Stage } else { Join-Path $work 'unpacked' }
         Expand-ZipSafely $archive $tree

@@ -176,6 +176,62 @@ def test_an_admin_only_folder_is_accepted(tmp_path: Path) -> None:
     assert problem == "none"
 
 
+def _version_folder(folder: Path) -> Path:
+    """Create *folder* holding the two files that make it a version directory."""
+    folder.mkdir(parents=True)
+    (folder / "pkg.toml").write_text("format = 2\n", encoding="utf-8")
+    (folder / "install.cmd").write_text("@echo off\n", encoding="ascii")
+    return folder
+
+
+def test_the_version_directory_of_an_archive_is_named_by_the_archive_not_found_in_the_root(tmp_path: Path) -> None:
+    """A release ZIP names its own version directory from its entries, so packages already in a system root are never candidates."""
+    archive = tmp_path / "release.zip"
+    with zipfile.ZipFile(archive, "w") as zipped:
+        for name in ("gupkg/1.0.2/pkg.toml", "gupkg/1.0.2/install.cmd", "gupkg/1.0.2/gupkg/gupkg.cmd",
+                     "gupkg/_check_updates/pkg.toml", "gupkg/_check_updates/check-updates.cmd"):
+            zipped.writestr(name, "x")
+
+    found = _dot_source(tmp_path, f"Find-VersionInArchive '{archive}'")
+
+    assert found == "gupkg\\1.0.2"
+
+
+def test_a_folder_with_several_packages_is_ambiguous_and_the_message_names_one_to_pass(tmp_path: Path) -> None:
+    """Pointing -Source at a whole root (two packages at the same depth) stops with the folders found and a suggestion."""
+    _version_folder(tmp_path / "root" / "gupkg" / "1.0.2")
+    _version_folder(tmp_path / "root" / "Wox" / "2.4.8")
+
+    result = subprocess.run(
+        [str(POWERSHELL), "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command",
+         f". '{SCRIPT}'; try {{ Find-VersionDirectory '{tmp_path / 'root'}' }} catch {{ $_.Exception.Message }}"],
+        capture_output=True, text=True, timeout=120,
+    )
+
+    assert "more than one version directory" in result.stdout
+    assert str(tmp_path / "root" / "gupkg" / "1.0.2") in result.stdout and "as -Source" in result.stdout
+
+
+def test_a_junction_is_not_a_second_version_directory(tmp_path: Path) -> None:
+    """A `current` junction to a version folder repeats it under another name: only the real folder counts."""
+    real = _version_folder(tmp_path / "root" / "Wox" / "2.4.8")
+    subprocess.run(["cmd", "/c", "mklink", "/J", str(tmp_path / "root" / "Wox" / "cur"), str(real)], capture_output=True, check=True)
+
+    found = _dot_source(tmp_path, f"Find-VersionDirectory '{tmp_path / 'root'}'")
+
+    assert found == str(real)
+
+
+def test_depth_counts_folders_not_characters(tmp_path: Path) -> None:
+    """The shallowest version directory is the one with the fewest folders below the source, however long the names are."""
+    shallow = _version_folder(tmp_path / "root" / "a-very-long-folder-name-for-the-version")
+    _version_folder(tmp_path / "root" / "a" / "b")
+
+    found = _dot_source(tmp_path, f"Find-VersionDirectory '{tmp_path / 'root'}'")
+
+    assert found == str(shallow)
+
+
 def test_missing_source_is_reported_plainly(tmp_path: Path) -> None:
     """A source that is neither a URL, a ZIP, nor a folder is rejected with a clear error."""
     if _elevated():
