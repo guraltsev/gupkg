@@ -285,24 +285,40 @@ A failing package never invalidates the others in a batch, and a rerun revalidat
 
 ## Release and maintenance (development tree)
 
-Every routine job has a script in `scripts\`. They use the repository's `.venv` only and never search for another Python; without
-it they exit 9009 and print how to create it. None of them ships in the release ZIP.
+Every routine job has a script in `scripts\`. None of them ships in the release ZIP. They run on the repository's `.venv` only and
+never search for another Python; a missing `.venv` is created first by `setup.cmd`.
 
 | Script | What it does |
 |---|---|
+| `setup.cmd [python.exe] [--force]` | Create or repair `.venv`: it must have pip and the packages of `requirements-dev.txt`. Tries `uv venv --seed` first, then `python -m venv`. See "The development environment" below. |
 | `test.cmd [pytest args]` | Run the test suite. |
 | `run.cmd [gupkg args]` | Run `src\gupkg\gupkg.cmd` from the source tree. |
 | `bump.cmd [patch\|minor\|major\|<version>]` | Raise the patch number (the default), the minor or the major number, or set an exact version, in `_version.py`, and commit. |
 | `release.cmd ["notes"] [--no-push]` | Test, build the ZIP, tag, push the tag, upload the ZIP and its `.sha256` file to GitHub release `v<version>`, download the ZIP again and require the same SHA-256, add the `RELEASES.md` row (with that SHA-256), and push the branch. Without notes the row says `gupkg <version>`. `--no-push` keeps everything local and uploads nothing. |
-| `check-release.cmd [version]` | Download the published release from the address the bootstrap uses and check it against the `RELEASES.md` row: tags, pushed branch, the ZIP's and the `.sha256` asset's SHA-256, `RELEASE.txt`, and every file of `MANIFEST.sha256`. Prints PASS or FAIL per check; exit 1 on any FAIL. Changes nothing. |
+| `check-release.cmd [version]` | Download the published release from the address the bootstrap uses and check it against the `RELEASES.md` row. Prints PASS or FAIL per check; exit 1 on any FAIL. Changes nothing. |
 | `build-standalone.cmd [output.zip]` | Build the release ZIP in `dist\` and print its SHA-256. |
 | `fetch-runtime.cmd [--destination DIR] [--force]` | Fetch the pinned embeddable CPython, verify it, write `._pth` and install the locked dependencies. |
 
 Dependency maintenance runs the tools directly: `python tools\update_deps.py` and `python tools\check_deps.py`.
 
-`RELEASES.md` is the release registry: a table of version, full commit hash, date, SHA-256 and notes, newest first. The
-SHA-256 is that of `gupkg-<version>-win-amd64.zip`, attached to GitHub release `v<version>`. gupkg's own tracker
-(`pkg.local\track.py`) reads the table from `main`. To release, from a clean tree with the GitHub CLI signed in:
+### The development environment
+
+`setup.cmd` is the one command that makes the environment work, and every other script runs it for you when `.venv` is missing.
+
+- **No `.venv`, or a `.venv` without pip** (for example one made by `uv venv` without `--seed`): it is removed and created again. uv is
+  tried first with `uv venv --seed`, which includes pip; if uv is not installed or fails, `python -m venv` is used. Pass
+  `scripts\setup.cmd C:\path\python.exe` to choose the interpreter (any Python 3.11 or newer; without it uv picks one and the
+  fallback uses `python` from `PATH`).
+- **A good `.venv`**: `requirements-dev.txt` is installed again, which brings the packages to the pinned versions.
+- **`--force`** removes and recreates it even if it looks good. Close programs that use `.venv` first, or the removal fails.
+
+pip must be in `.venv` because the build installs the locked wheels into the release bundle with it (`--require-hashes`); the
+bundle itself never contains pip, and gupkg never installs anything at run time. The packages in `requirements-dev.txt` match
+`tools\gupkg-deps.lock`, so tests import the versions that the release ships.
+
+### The release workflow
+
+A release is three commands, run from a clean working tree on `main`, with the GitHub CLI signed in (`gh auth status`):
 
 ```bat
 scripts\bump.cmd
@@ -310,11 +326,60 @@ scripts\release.cmd "one-line notes"
 scripts\check-release.cmd
 ```
 
-`tools\release.py` refuses a dirty tree, a version already listed and a ZIP that was not built from `HEAD`; it tags, pushes the tag,
-creates the release with the ZIP and commits the new row after the upload, so the table never advertises an unpublished release.
+1. **`bump`** edits the single version line in `src\gupkg\_version.py` and commits it (`Bump version to <version>`). With no argument
+   the patch number goes up (1.0.0 to 1.0.1); `minor` and `major` raise those parts and reset the lower ones; an exact version such as
+   `1.2.3` is also accepted. Only plain dotted numbers are allowed. It builds nothing and pushes nothing.
+2. **`release`** does these steps in order and stops at the first failure:
+   1. runs the whole test suite;
+   2. refuses a dirty tree and a version that already has a row in `RELEASES.md`;
+   3. builds `dist\gupkg-<version>-win-amd64.zip` from `HEAD` (see `build-standalone.cmd`) and checks that its `RELEASE.txt` names
+      this version and this commit;
+   4. computes the ZIP's SHA-256 and writes `dist\gupkg-<version>-win-amd64.zip.sha256` (`<digest>  <file name>`);
+   5. tags the released commit `v<version>` and pushes the tag;
+   6. creates GitHub release `v<version>` with the ZIP and the `.sha256` file as assets;
+   7. downloads the ZIP from the release and requires the same SHA-256, so the published bytes are the ones you built;
+   8. only now adds the row to `RELEASES.md` (version, released commit, date, SHA-256, notes) and commits it, so the table never
+      advertises a release that was not published and verified;
+   9. pushes the branch (and with it the row) to the first Git remote.
+3. **`check-release`** is the independent confirmation. It does not trust anything `release` printed: it downloads the ZIP the way the
+   bootstrap does and reports one PASS or FAIL line for each of these:
+   - `RELEASES.md` has a row for the version, with a commit and a SHA-256;
+   - the local tag and the tag on the remote point at the released commit;
+   - the remote `main` contains your `HEAD`, so the row is pushed;
+   - the downloaded ZIP has the SHA-256 of the row;
+   - the `.sha256` asset names the same SHA-256;
+   - `RELEASE.txt` inside the ZIP names this version and this commit;
+   - every file listed in `MANIFEST.sha256` exists with that SHA-256, and the tree holds no file the manifest does not list.
 
-Before a release run `scripts\test.cmd`. The Windows-only checks (UAC, the Start Menu, the `PATH` broadcast, a real GitHub release)
-are the numbered entries of [`tests/manual_smoke.md`](../tests/manual_smoke.md).
+   Run it again at any time, for any version (`scripts\check-release.cmd 1.0.0`); it changes nothing.
+
+Which SHA-256 protects what:
+
+| Digest | Where it is | Computed | Checked by |
+|---|---|---|---|
+| ZIP SHA-256 | `RELEASES.md` row, the `.sha256` asset | at release time, from the built ZIP | `release` (after the upload), `check-release`, the bootstrap and gupkg's own tracker before anything is unpacked |
+| `MANIFEST.sha256` entries | inside the ZIP, `gupkg\MANIFEST.sha256` | by the build, for every file of the bundled tree | `check-release`, gupkg's install and `self` health checks |
+| Pinned runtime and wheel digests | `tools\fetch_runtime.py`, `tools\gupkg-deps.lock` | by the maintainer when updating dependencies | the build (`--require-hashes`) |
+| Commit hash | `RELEASES.md` row, the tag, `RELEASE.txt` | by Git | `check-release` compares all three |
+
+If a step fails:
+
+- **Tests or build fail:** nothing was tagged or published; fix the cause and run `release` again.
+- **`gh` fails after the tag was pushed (step 6):** the tag exists but no release and no row. If nobody has downloaded anything, undo with
+  `git tag -d v<version>` and `git push <remote> :refs/tags/v<version>`, fix `gh` (`gh auth login`), and run `release` again.
+- **The verification download (step 7) differs:** the release exists but no row was recorded. Remove it with
+  `gh release delete v<version> --cleanup-tag`, delete the local tag with `git tag -d v<version>`, and run `release` again.
+- **The final push (step 9) fails:** the release is already public and the row is committed locally; run `git push <remote> HEAD`, then
+  `check-release`.
+- **`release --no-push` rehearsal:** it builds, tags and commits the row locally and uploads nothing. Undo it with
+  `git tag -d v<version>` and `git reset --hard HEAD~1`.
+- Never delete or move a tag whose release people may have downloaded; publish a new version instead.
+
+`RELEASES.md` is the release registry: a table of version, full commit hash, date, SHA-256 and notes, newest first. gupkg's own tracker
+(`pkg.local\track.py`) reads the table from `main`, and the ZIP it names must be attached to GitHub release `v<version>`.
+
+Before a release `release` runs the tests itself. The Windows-only checks (UAC, the Start Menu, the `PATH` broadcast, a real GitHub
+release) are the numbered entries of [`tests/manual_smoke.md`](../tests/manual_smoke.md).
 
 ## The registry repository
 

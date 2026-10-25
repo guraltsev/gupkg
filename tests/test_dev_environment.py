@@ -1,12 +1,14 @@
 """Cover the development tree's single-interpreter rule.
 
-Behavior covered: ``scripts\\_python.cmd`` uses only the repository's ``.venv`` and
-exits 9009 with the creation command when it is missing, even if a Python is on
-``PATH``; ``requirements-dev.txt`` pins the runtime lock's packages; and no
-shipped or script file probes for a system Python or reads an override.
+Behavior covered: ``scripts\\_python.cmd`` uses only the repository's ``.venv``; when it
+is missing the helper first runs ``scripts\\setup.cmd`` and stops with its status if that
+fails, even if a Python is on ``PATH``; ``setup.cmd`` tries uv before ``python -m venv``;
+``requirements-dev.txt`` pins the runtime lock's packages; and no shipped or script file
+probes for a system Python or reads an override.
 
-Real: the Windows ``cmd`` helper script, run against a temporary copy of the
-repository layout, and the checked-in files. No network and no package manager.
+Real: the Windows ``cmd`` scripts, run against a temporary copy of the repository layout,
+and the checked-in files. Mocked: uv and the base Python (stand-in ``.cmd`` files that
+record their arguments). No network and no package manager.
 """
 
 from __future__ import annotations
@@ -32,6 +34,12 @@ def _scripts_copy(root: Path) -> Path:
     return root / "scripts" / "_python.cmd"
 
 
+def _stand_in(path: Path, log: Path, name: str, status: int) -> Path:
+    """Write a ``.cmd`` that appends ``<name> <arguments>`` to *log* and exits with *status*."""
+    path.write_text(f'@echo off\necho {name} %*>> "{log}"\nexit /b {status}\n', encoding="ascii")
+    return path
+
+
 def _call(helper: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     """Run the helper and print the PY it selected."""
     wrapper = helper.with_name("show_py.cmd")
@@ -51,9 +59,26 @@ def _pins(path: Path) -> dict[str, str]:
 
 
 @windows_only
-def test_python_helper_without_a_venv_exits_9009_even_with_python_on_path(tmp_path: Path) -> None:
-    """With no .venv the helper exits 9009 and names the creation command, though python and the committed runtime exist."""
+def test_python_helper_without_a_venv_runs_setup_first_and_then_selects_the_new_python(tmp_path: Path) -> None:
+    """With no .venv the helper runs setup.cmd (here a stand-in that creates the python.exe) and selects it."""
     helper = _scripts_copy(tmp_path)
+    venv_python = tmp_path / ".venv" / "Scripts" / "python.exe"
+    (helper.parent / "setup.cmd").write_text(
+        f'@echo off\nmkdir "{venv_python.parent}"\ntype nul > "{venv_python}"\nexit /b 0\n', encoding="ascii"
+    )
+
+    result = _call(helper, os.environ.copy())
+
+    assert result.returncode == 0, result.stderr
+    assert "creating it with scripts\\setup.cmd" in result.stdout
+    assert f'PY="{venv_python}"' in result.stdout
+
+
+@windows_only
+def test_python_helper_stops_with_the_status_of_a_failing_setup_even_with_python_on_path(tmp_path: Path) -> None:
+    """If setup.cmd fails the helper exits with that status and selects nothing, though a Python is on PATH."""
+    helper = _scripts_copy(tmp_path)
+    (helper.parent / "setup.cmd").write_text("@echo off\nexit /b 7\n", encoding="ascii")
     runtime = tmp_path / "src" / "gupkg" / "python"
     runtime.mkdir(parents=True)
     shutil.copy2(sys.executable, runtime / "python.exe")
@@ -62,9 +87,31 @@ def test_python_helper_without_a_venv_exits_9009_even_with_python_on_path(tmp_pa
 
     result = _call(helper, env)
 
-    assert result.returncode == 9009
+    assert result.returncode == 7
     assert "PY=" not in result.stdout
-    assert "-m venv .venv" in result.stderr and "requirements-dev.txt" in result.stderr
+
+
+@windows_only
+def test_setup_tries_uv_with_seed_first_and_falls_back_to_python_m_venv(tmp_path: Path) -> None:
+    """With no .venv, setup runs ``uv venv --seed`` and, when uv fails, ``<python> -m venv``; both failing is an error."""
+    helper = _scripts_copy(tmp_path)
+    shutil.copy2(ROOT / "scripts" / "setup.cmd", helper.parent / "setup.cmd")
+    (tmp_path / "requirements-dev.txt").write_text("", encoding="utf-8")
+    log = tmp_path / "calls.log"
+    tools = tmp_path / "tools-on-path"
+    tools.mkdir()
+    _stand_in(tools / "uv.cmd", log, "uv", 1)
+    base = _stand_in(tmp_path / "base.cmd", log, "base", 1)
+    env = os.environ.copy()
+    env["PATH"] = f"{tools};{env['PATH']}"
+
+    result = subprocess.run([str(helper.parent / "setup.cmd"), str(base)], env=env, capture_output=True, text=True, check=False)
+
+    calls = log.read_text(encoding="utf-8").splitlines()
+    assert result.returncode != 0
+    assert calls[0].startswith("uv venv --seed --python ")
+    assert calls[1].startswith("base -m venv ")
+    assert "Could not create the environment" in result.stderr
 
 
 @windows_only

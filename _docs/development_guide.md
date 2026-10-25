@@ -108,15 +108,12 @@ installation it relies on admin-only folder permissions.
 ## Development environment
 
 The dev tree uses one explicit interpreter and never probes for another.
-Create `.venv` once, with any Python 3.11+ you choose:
+`scripts\setup.cmd` creates `.venv` (it tries `uv venv --seed`, then `python -m venv`, so pip is always present)
+and installs `requirements-dev.txt`; run it once, or let any other script run it when `.venv` is missing.
+`scripts\setup.cmd C:\path\python.exe` picks the interpreter (3.11 or newer) and `--force` recreates the environment.
+The release steps (`bump`, `release`, `check-release`) are in the Operations guide.
 
-```
-<python> -m venv .venv
-.venv\Scripts\pip install -r requirements-dev.txt
-```
-
-Every script in `scripts\` uses `.venv\Scripts\python.exe` only; without it they
-exit 9009 and print this command. `requirements-dev.txt` holds pytest and the
+Every script in `scripts\` uses `.venv\Scripts\python.exe` only. `requirements-dev.txt` holds pytest and the
 same runtime package versions as `tools/gupkg-deps.lock`. Run the tests with
 `scripts\test.cmd`. To try gupkg by hand, run `scripts\run.cmd <arguments>`: it
 starts `src\gupkg\gupkg.cmd`, so gupkg runs on its bundled Python like it does

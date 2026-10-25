@@ -1,5 +1,6 @@
-# Development environment for the scripts in scripts\. Create .venv with `python -m venv`
-# (it includes pip, which the build scripts and tools\update_deps.py use; the bundle has no pip):
+# Development environment for the scripts in scripts\. Run scripts\setup.cmd: it creates .venv (uv first, with
+# `uv venv --seed`, then `python -m venv`, so that pip is included; the build scripts and tools\update_deps.py
+# use it, and the bundle has no pip) and installs this file. By hand:
 #   <python> -m venv .venv && .venv\Scripts\pip install -r requirements-dev.txt
 # The runtime packages below match tools\gupkg-deps.lock (tests/test_dev_environment.py checks it),
 # so tests import the versions the release bundle ships.
