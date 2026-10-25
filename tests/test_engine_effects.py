@@ -321,16 +321,3 @@ def test_loose_copies_from_an_older_gupkg_are_removed_only_when_they_are_ours(tm
 
     assert not (bin_dir / "libgcc_s_seh-1.dll").exists()
     assert (bin_dir / "libwinpthread-1.dll").read_bytes() == b"somebody else's library"
-
-
-def test_a_path_entry_that_follows_an_environment_variable_is_left_out_of_the_machine_path_but_kept_for_a_user(tmp_path: Path) -> None:
-    """``%LOCALAPPDATA%\\Volta\\bin`` differs for every user and can be redirected: the machine PATH skips it with a note, a user PATH keeps it."""
-    text = '[[path]]\nvalue = "%LOCALAPPDATA%\\\\Volta\\\\bin"\n'
-
-    machine_effects, machine_notes = desired_effects(manifest(text), context(tmp_path, mode="system", scope=Scope.MACHINE))
-    user_effects, user_notes = desired_effects(manifest(text), context(tmp_path))
-
-    assert [effect.kind for effect in machine_effects] == []
-    assert any("follows an environment variable" in note and "%LOCALAPPDATA%" in note for note in machine_notes)
-    assert [effect.fields["entry"] for effect in user_effects] == ["%LOCALAPPDATA%\\Volta\\bin"] and user_notes == ()
-

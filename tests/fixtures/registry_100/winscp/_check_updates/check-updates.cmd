@@ -83,7 +83,7 @@ call "%GUPKG_BUNDLED%" check-updates "%GUPKG_NAME%"%GUPKG_EXTRA%
 set "GUPKG_EXIT=%ERRORLEVEL%"
 
 :finish
-if not "%GUPKG_EXIT%"=="0" if not defined GUPKG_NO_PAUSE pause
+if not defined GUPKG_NO_PAUSE pause
 exit /b %GUPKG_EXIT%
 
 :no_gupkg

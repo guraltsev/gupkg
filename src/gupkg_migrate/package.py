@@ -239,7 +239,24 @@ def _convert(old: dict[str, Any], plan: PackagePlan, directory: Path, package_na
         _convert_version(new, origin, update, plan, directory, package_name)
 
     _convert_components(new, old, notes)
+    _restrict_modes_for_environment_paths(new, notes)
     return new
+
+
+def _restrict_modes_for_environment_paths(new: dict[str, Any], notes: list[str]) -> None:
+    """Drop ``system`` from the modes of a package with a PATH entry that follows an environment variable.
+
+    Such an entry (``%LOCALAPPDATA%`` plus a folder) differs for every user and can be redirected, so the machine PATH never takes it and format 2
+    rejects the file while it lists ``system``. The 0.17 package could be installed anywhere; the converted one is for a user, and the
+    note says so, so the owner can decide whether the entry or the machine-wide install matters more.
+    """
+    entries = [row.get("value") for row in new.get("path", []) if isinstance(row, dict)]
+    if not any(isinstance(value, str) and value.startswith("%") for value in entries):
+        return
+    modes = list(new.get("modes") or ["system", "user"])
+    if "system" in modes:
+        new["modes"] = [mode for mode in modes if mode != "system"]
+        notes.append("a PATH entry follows an environment variable, which the machine PATH never takes: modes no longer lists system")
 
 
 def _modes(old: dict[str, Any], package_name: str, notes: list[str]) -> list[str] | None:

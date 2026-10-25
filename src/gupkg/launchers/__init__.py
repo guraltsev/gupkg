@@ -70,7 +70,14 @@ def launcher_text(command: str) -> str:
     if command == "check-updates":
         prelude = 'for %%I in ("%GUPKG_PACKAGE_DIR%") do set "GUPKG_NAME=%%~nxI"'
         line = 'check-updates "%GUPKG_NAME%"'
-    text = template.replace("@@TITLE@@", _TITLES[command]).replace("@@PRELUDE@@", prelude).replace("@@COMMAND@@", f'{line}%GUPKG_EXTRA%')
+    # install.cmd and check-updates.cmd are started by double-clicking, so they always wait for a key (success or failure) and the
+    # window stays readable; gupkg-tui.cmd is a program that was just closed, so it waits only after a failure. GUPKG_NO_PAUSE
+    # (set by scripts such as the bootstrap) turns the pause off.
+    finish = (
+        'if not defined GUPKG_NO_PAUSE pause' if command in ("install", "check-updates")
+        else 'if not "%GUPKG_EXIT%"=="0" if not defined GUPKG_NO_PAUSE pause'
+    )
+    text = template.replace("@@FINISH@@", finish).replace("@@TITLE@@", _TITLES[command]).replace("@@PRELUDE@@", prelude).replace("@@COMMAND@@", f'{line}%GUPKG_EXTRA%')
     return text.replace("\r\n", "\n").replace("\n", "\r\n")
 
 

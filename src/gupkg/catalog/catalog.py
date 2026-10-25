@@ -877,6 +877,7 @@ class Catalog:
         version: str | None = None
         via_current = False
         is_tracker = False
+        named = False
         if candidate.name.casefold() == "current":
             package_root = candidate.parent
             via_current = True
@@ -886,6 +887,7 @@ class Catalog:
                 is_tracker = True
             elif is_version_name(candidate.name):
                 version = candidate.name
+                named = True  # the path names this version: install activates it, not the one that is current
             else:
                 raise NotFound(f"{candidate} is not a version directory: its name is reserved or not a safe folder name")
         elif candidate.is_dir():
@@ -910,7 +912,7 @@ class Catalog:
             else:
                 valid = view.local.valid_versions
                 version = valid[-1].name if valid else None
-        return Resolved(view, version, via_current, is_tracker)
+        return Resolved(view, version, via_current, is_tracker, named_version=named)
 
     def _require_system_path(self, package_root: Path, mode: str | None) -> None:
         """Refuse, in an elevated run, a path that is not in the system root or a trusted ad-hoc root (D31).

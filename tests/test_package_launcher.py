@@ -46,7 +46,7 @@ def build_tree(root: Path, *, forwarder: bool, bundled: bool) -> Path:
 
 def run(
     launcher: Path, *args: str, forwarder_exit: int = 0, bundled_exit: int = 0, path: str = "", cwd: Path | None = None,
-    inherit: bool = False,
+    inherit: bool = False, pause: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     """Run a launcher with cmd.exe and return its output and exit code.
 
@@ -58,9 +58,12 @@ def run(
     }
     if inherit:
         environment = {**os.environ, **environment, "PATH": os.environ["PATH"]}
+    if pause:
+        environment.pop("GUPKG_NO_PAUSE")
     return subprocess.run(
         [os.environ["ComSpec"], "/d", "/c", str(launcher), *args],
         capture_output=True, text=True, env=environment, check=False, cwd=str(cwd or launcher.parent),
+        input="\r\n" if pause else None,
     )
 
 
@@ -69,7 +72,8 @@ def test_both_launchers_come_from_one_template_with_different_commands() -> None
     install, tui = launcher_text("install"), launcher_text("tui")
 
     assert set(LAUNCHERS) == {"install.cmd", "gupkg-tui.cmd", "check-updates.cmd"}
-    assert install.replace(" install ", " tui ").splitlines()[3:] == tui.splitlines()[3:]
+    differing = ("if not defined GUPKG_NO_PAUSE pause", 'if not "%GUPKG_EXIT%"=="0" if not defined GUPKG_NO_PAUSE pause')
+    assert install.replace(" install ", " tui ").replace(*differing, 1).splitlines()[3:] == tui.splitlines()[3:]
     assert "\r\n" in install
 
 
@@ -83,6 +87,25 @@ def test_forwarder_runs_first_with_the_command_and_this_folder(tmp_path: Path) -
     assert result.stdout.startswith("FORWARDER install ")
     assert f'"{version}\\."' in result.stdout and "--refresh" in result.stdout
     assert "BUNDLED" not in result.stdout
+
+
+def test_install_and_check_updates_launchers_always_wait_for_a_key_and_the_tui_launcher_only_after_a_failure(tmp_path: Path) -> None:
+    """Double-clicking install.cmd or check-updates.cmd keeps the window open on success and failure; gupkg-tui.cmd waits only after a failure."""
+    version = build_tree(tmp_path, forwarder=True, bundled=False)
+    tracker = tmp_path / "tool" / "_check_updates"
+    tracker.mkdir()
+    write_launchers(tracker, ("check-updates.cmd",))
+
+    for launcher, waits_on_success in ((version / "install.cmd", True), (tracker / "check-updates.cmd", True), (version / "gupkg-tui.cmd", False)):
+        assert ("Press any key" in run(launcher, pause=True).stdout) is waits_on_success, launcher.name
+        assert "Press any key" in run(launcher, forwarder_exit=3, pause=True).stdout, launcher.name
+
+
+def test_no_pause_variable_turns_the_pause_off_even_for_install(tmp_path: Path) -> None:
+    """Scripts (the bootstrap) set GUPKG_NO_PAUSE so install.cmd returns at once."""
+    version = build_tree(tmp_path, forwarder=True, bundled=False)
+
+    assert "Press any key" not in run(version / "install.cmd").stdout
 
 
 def test_tui_launcher_runs_the_tui_command(tmp_path: Path) -> None:

@@ -471,7 +471,9 @@ module = "pkg.local/fix.py"                                 # escape hatch (hook
   suffix is added to `name`.
 - **`[[env]]`**: `name`, `value` (exact case). Written as expandable registry strings. Reserved system variables (`Path`,
   `SystemRoot`, ...) are refused.
-- **`[[path]]`**: one `value`; added to `PATH` only when not already present.
+- **`[[path]]`**: one `value`; added to `PATH` only when not already present. An entry that starts with an environment variable (`%LOCALAPPDATA%\Voltain`) is valid only in a package whose `modes`
+  does not list `system`: it differs for every user and a user could redirect it, so the machine `PATH` never takes one, and
+  `gupkg pkg check` rejects the file. Prefer a `[[shim]]` to a `PATH` entry.
 - **`[[shim]]`**: `name` and `target`, with `type = "console"` (default) or `"gui"`, `arguments` (fixed, before the caller's),
   `forward_args = true` (default), `elevate = false` and `working_dir`. The shim is `<name>.exe` with a
   `<name>.config.toml` in the mode's `bin` folder and starts the target directly, without a shell. For shell behaviour

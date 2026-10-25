@@ -1389,6 +1389,15 @@ def _parse_paths(collector: _Collector, raw: Any, modes: tuple[str, ...]) -> tup
             if (problem := path_entry_shape_problem(value, template=True)) is not None:
                 collector.error(f"{where}.value", f"{value!r} {problem}")
                 continue
+            if value.startswith("%") and "system" in modes:
+                # The machine PATH never follows an environment variable (a user can override it), so a package that can be
+                # installed in system mode must not declare such an entry; the engine refuses it too, but the file fails inspection first.
+                collector.error(
+                    f"{where}.value",
+                    f"{value!r} follows an environment variable, which a user can override: not allowed on the machine PATH; "
+                    "a package that declares it must not list 'system' in modes",
+                )
+                continue
             values.append(value)
     return tuple(values)
 

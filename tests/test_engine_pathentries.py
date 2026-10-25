@@ -57,12 +57,29 @@ def test_the_manifest_validator_refuses_a_path_entry_that_is_not_one_absolute_fo
         parse_manifest(text)
 
 
-@pytest.mark.parametrize("value", ["$App\\bin", "$App", "C:\\Tools\\bin", "${ProgramFiles}\\Tool", "%LOCALAPPDATA%\\Volta\\bin", "D:/Tools/x"])
+@pytest.mark.parametrize("value", ["$App\\bin", "$App", "C:\\Tools\\bin", "${ProgramFiles}\\Tool", "D:/Tools/x"])
 def test_the_manifest_validator_accepts_ordinary_entries(value: str) -> None:
-    """Variables, drive paths with either separator and a leading %VAR% are valid declarations."""
+    """Variables and drive paths with either separator are valid declarations, in a package that supports system mode too."""
     toml_value = '"' + value.replace("\\", "\\\\") + '"'
 
     assert parse_manifest(HEAD + f"[[path]]\nvalue = {toml_value}\n").paths == (value,)
+
+
+@pytest.mark.parametrize("modes", ['["system", "user"]', '["system"]', '["system", "user", "portable"]'])
+def test_an_entry_that_follows_an_environment_variable_fails_inspection_when_system_mode_is_supported(modes: str) -> None:
+    """`%LOCALAPPDATA%\\Volta\\bin` can never go on the machine PATH, so a package that lists 'system' and declares it is invalid."""
+    text = f'format = 2\nmodes = {modes}\n[source]\ndownload_url = "https://x.test/a.zip"\n[[path]]\nvalue = "%LOCALAPPDATA%\\\\Volta\\\\bin"\n'
+
+    with pytest.raises(ManifestError, match=r"path\[0\].value.*environment variable.*machine PATH"):
+        parse_manifest(text)
+
+
+@pytest.mark.parametrize("modes", ['["user"]', '["user", "portable"]'])
+def test_a_package_without_system_mode_may_declare_an_entry_that_follows_an_environment_variable(modes: str) -> None:
+    """A user PATH is the user's own, so `%LOCALAPPDATA%\\Volta\\bin` is a valid entry when system mode is not supported."""
+    text = f'format = 2\nmodes = {modes}\n[source]\ndownload_url = "https://x.test/a.zip"\n[[path]]\nvalue = "%LOCALAPPDATA%\\\\Volta\\\\bin"\n'
+
+    assert parse_manifest(text).paths == ("%LOCALAPPDATA%\\Volta\\bin",)
 
 
 def context(tmp_path: Path, *, mode: str = "user", env: dict[str, str] | None = None) -> EffectContext:
@@ -101,13 +118,9 @@ def test_the_machine_path_takes_only_trusted_places(tmp_path: Path) -> None:
     effects, _ = desired_effects(with_paths(inside, program_files, system_root, str(ctx.bin_dir / "x")), ctx)
 
     assert [effect.fields["entry"] for effect in effects if effect.kind == "path"] == [inside, program_files, system_root, str(ctx.bin_dir / "x")]
-    for hostile in ("C:\\Users\\Public\\bin", "C:\\Temp", str(tmp_path / "pf-other"), "$App\\..\\x"):
+    for hostile in ("C:\\Users\\Public\\bin", "C:\\Temp", str(tmp_path / "pf-other"), "%LOCALAPPDATA%\\bin", "%ProgramFiles%\\Tool", "$App\\..\\x"):
         with pytest.raises(EffectError):
             desired_effects(with_paths(hostile), ctx)
-    # A %VAR% entry differs per user and can be redirected: it is not added to the machine PATH, and the package says so in a note.
-    for variable in ("%LOCALAPPDATA%\\bin", "%ProgramFiles%\\Tool"):
-        skipped, notes = desired_effects(with_paths(variable), ctx)
-        assert [effect for effect in skipped if effect.kind == "path"] == [] and any("follows an environment variable" in note for note in notes)
 
 
 def test_the_user_path_takes_any_absolute_local_folder_and_a_leading_variable(tmp_path: Path) -> None:

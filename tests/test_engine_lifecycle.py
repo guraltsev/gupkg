@@ -585,3 +585,18 @@ def test_update_of_a_package_that_is_not_installed_is_refused(world: World) -> N
 
     assert not result.ok and result.error["code"] == "not-installed" and "install" in result.error["message"]
     assert not (world.user / "tool" / "current").exists()
+
+
+@pytest.mark.parametrize("spelling", ["", "\\", "\\."])
+def test_install_with_the_path_of_a_local_version_directory_activates_that_version(world: World, spelling: str) -> None:
+    """`install <root>\\tool\\20261017-local` (with or without a trailing separator or dot) activates that version; it does not repair the active one."""
+    world.publish("tool", "2026.3.7")
+    world.publish("tool", "20261017-local")
+    world.one("install", "tool@2026.3.7")
+    folder = world.user / "tool" / "20261017-local"
+
+    result = world.one("install", str(folder) + spelling)
+
+    assert result.ok and result.version == "20261017-local" and result.status == "installed"
+    assert current_version(world.user / "tool") == "20261017-local"
+
