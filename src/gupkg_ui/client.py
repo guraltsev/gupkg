@@ -488,11 +488,13 @@ async def _follow(
             if events.run_end is not None and finished_at is None:
                 finished_at = now
             if stop is not None and stop.requested and now - stop.requested_at > FORCE_STOP_SECONDS:
-                flags.forced = True
-                await kill_tree(process)
+                if not flags.forced:
+                    flags.forced = True
+                    await kill_tree(process)
             elif finished_at is not None and now - finished_at > EXIT_GRACE_SECONDS:
-                flags.hung = True
-                await kill_tree(process)
+                if not flags.hung:
+                    flags.hung = True
+                    await kill_tree(process)
             elif on_idle is not None and now - last_output >= next_idle:
                 on_idle(now - last_output)
                 next_idle += QUIET_SECONDS

@@ -1,8 +1,8 @@
 # gupkg 1.0 rehaul: target design
 
 Date: 2026-10-22
-Status: proposed, revised after the owner review of 2026-10-22 (decisions
-D21–D46). Tracking issue: `_issues/issue020-rehaul-epic.md`.
+Status: **implemented** in gupkg 1.0 (issues 016–033; decisions D1–D46).
+Tracking issue: `_issues/_closed/issue020-rehaul-epic.md`.
 Supersedes: the manager-mode and `_bootstrap` parts of issues 012 and 013.
 
 Issues 016–019 were filed separately on the same day. They cover how gupkg
@@ -17,11 +17,37 @@ Their decisions stand. They form **stage 0** of the rehaul and land before
 issue 021. Section 20 describes how they fit this design and what this
 design adds on top of them.
 
-This document is the single description of where gupkg is going. The open
-issues 020–033 implement it in order. Where this document and older issues or
-user documentation disagree, this document wins. The user documentation
-(`README.md`, `_docs/*.md`) describes the *current* behaviour until each issue
-lands and updates it.
+This document is the single description of the design that gupkg 1.0
+implements. Issues 020–033 (now in `_issues/_closed/`) implemented it in
+order. Where this document and older issues disagree, this document wins.
+The user documentation (`README.md`, `_docs/*.md`) describes the behaviour of
+1.0; this document gives the reasons.
+
+**Deviations from the text below, found while implementing.** Where a
+section's wording and the code differ, the code and the decision table win.
+
+- **Check for updates and elevation (issue 030, D22).** `gupkg-manager
+  check-updates --all` is one non-elevated call; a system package is only
+  reported from a normal shell, and an administrator checks it from an
+  elevated shell. The issue text that sent it "through the single elevated
+  call" was wrong and was corrected.
+- **The elevated relaunch waits (issue 029).** The elevated parent waits for
+  the child and returns its exit code (clamped to 0–6, raw value in
+  `child_raw_exit_code`); the events file is the progress channel. The
+  design's "exits when the child starts" wording is superseded.
+- **Where launchers sit (issue 033).** A version directory holds `install.cmd`
+  and `gupkg-tui.cmd` in every root, and a tracker folder holds
+  `check-updates.cmd` and never `install.cmd`; `MANIFEST.sha256` is verified
+  for the bundled tree (`gupkg/` entries) only. The 1.x guard: gupkg's tracker
+  refuses a release of a major version above the running gupkg's and names the
+  bootstrap.
+- **Registry (issue 031).** `_registry.toml` also carries `unpinned` and
+  `unversioned` lists, and the registry tool refuses `--auto-push` of a hash
+  it computed itself without `--allow-computed`.
+- **Hook API.** Hooks declare `PKG_MODULE_API = 2` and receive a typed
+  context (section 8.6), not the 0.17 dictionaries.
+- **Not verified on real hardware:** Smart App Control (spike S2), and the
+  manual checks listed in `tests/manual_smoke.md`.
 
 Contents
 

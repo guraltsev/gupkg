@@ -72,7 +72,7 @@ RESERVED_ENV_NAMES = frozenset(
 )
 
 
-_DEVICE_NAME = re.compile(r"^(con|prn|aux|nul|conin\$|conout\$|com[0-9¹²³]|lpt[0-9¹²³])(\..*)?$", re.IGNORECASE)
+_DEVICE_NAME = re.compile(r"^(con|prn|aux|nul|conin\$|conout\$|com[0-9¹²³]|lpt[0-9¹²³])[ ]*(\..*)?$", re.IGNORECASE)
 
 
 # The longest file or folder name Windows accepts, and the longest environment variable name a package may use.

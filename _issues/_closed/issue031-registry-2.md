@@ -1,5 +1,7 @@
 # Issue 031: Registry 2 — pinned versions, trackers, registry tool, package migration
 
+> **Status (2026-10-24):** Implemented. Merged in e457d7c. Manual checks still owed: tests/manual_smoke.md, Registry 2 items 1 to 14 (first population with network, pin qbittorrent/5.2.3, --auto-push on a scratch remote, strict-default install of every package, re-record the HTTP fixtures, GIMP installer, SSH git URLs, CI, msys2 tar.xz, GitHub digests, the shutter-encoder page, the device-name probe). The registry repository branch is merged separately.
+
 Date: 2026-10-22
 Priority: High
 Epic: 020. Design: `_docs/rehaul_design.md` §17, §8. Repository: `guraltsev/gupkg-registry`

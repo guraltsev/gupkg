@@ -11,146 +11,179 @@ appear in Windows in a small file called `pkg.toml`:
 
 ```text
 C:\opt\pandoc\                 <- the package (the folder name is its name)
-  3.6.1\                       <- one folder per installed version
+  _check_updates\              <- a tracker: how to find new versions (never installed)
+  3.6.1\                       <- one folder per version
     pkg.toml                   <- what to put in Start Menu / PATH / etc.
     App\                       <- the program's files
-  3.7.0\                       <- a newer version, installed side by side
+  3.7.0\                       <- a newer version, side by side
   current  ->  3.7.0           <- a junction to the active version
 ```
 
 Because versions sit side by side, an update never overwrites what is working,
-and rolling back is one command. Because the folder name is the package name
-and version, there is nothing to keep in sync by hand.
+and rolling back is one command. Checking for a new version and switching to it
+are two separate commands, so nothing changes until you say so.
 
 ## 0. Install gupkg
 
-Put `gupkg-bootstrap.ps1` and `gupkg-bootstrap.cmd` in a folder and run
-`gupkg-bootstrap.cmd`. It installs gupkg for the current user, creates the
-`gupkg` command, and writes a default manager configuration (see
-[Installing gupkg](../README.md#installing-gupkg) for system-wide installs and
-mirrors). Then open a **new** terminal so the command is on `PATH`.
+Download `gupkg-bootstrap.cmd` from the repository and run it:
+
+```bat
+gupkg-bootstrap.cmd                  :: all users if the shell is elevated, otherwise just you
+gupkg-bootstrap.cmd -Scope user      :: just you, even from an elevated shell
+gupkg-bootstrap.cmd -Scope system    :: all users (elevated shell required)
+```
+
+It downloads the newest release ZIP, checks it against the SHA-256 in `RELEASES.md`
+and installs gupkg like any other package. Then open a **new** terminal so the
+`gupkg` command is on `PATH`. The details (mirrors, a ZIP from your own share, the
+Windows security prompt that a downloaded ZIP can trigger) are in
+[Installing gupkg](../README.md#installing-gupkg).
 
 ## 1. Check that it works
 
 ```bat
 gupkg --version
 gupkg --help
+gupkg list
 ```
 
-`gupkg --help` lists the commands with copy-paste examples, and
-`gupkg <command> --help` documents every option of one command.
+`gupkg --help` lists the commands and `gupkg <command> --help` documents every
+option of one command. `gupkg list` is empty on a new machine.
 
 ## 2. Describe the program
 
-Create a folder for the package and one folder inside it named
-`_bootstrap`. The name `_bootstrap` marks a *template*: `gupkg` will fetch the
-newest release for you and create the real versioned folder.
+Create the package folder and a `_check_updates` folder inside it with a tracker:
 
 ```bat
-mkdir C:\opt\pandoc\_bootstrap
-notepad C:\opt\pandoc\_bootstrap\pkg.toml
+mkdir %USERPROFILE%\opt\pandoc\_check_updates
+notepad %USERPROFILE%\opt\pandoc\_check_updates\pkg.toml
 ```
 
 Paste this into `pkg.toml`:
 
 ```toml
-# Where releases come from: the project's GitHub page.
-[origin]
-url = "https://github.com/jgm/pandoc"
+format = 2
+description = "Pandoc, a universal document converter"
+project_url = "https://pandoc.org"
 
-# Which file in each release to download. ${version} is the release version.
-[update.check]
-mode = "github"
-assetName = "pandoc-${version}-windows-x86_64.zip"
+# How to find new versions: the project's GitHub releases.
+[track]
+provider = "github"
+repo = "jgm/pandoc"
+asset_pattern = 'pandoc-(?P<version>[\d.]+)-windows-x86_64\.zip'
 
-[update.payload]
-mode = "zip"
-
-# The ZIP contains one folder named pandoc-<version>; copy its contents.
-[[update.payload.extract]]
-src = "pandoc-*/"
-dest = ""
+# How to build the App of each version it finds.
+[source]
+download_url = "${asset_url}"
+strip = "auto"
 
 # Put the program on PATH and create a `pandoc` command.
 [[path]]
 value = "$App"
 
-[[bin]]
+[[shim]]
 name = "pandoc"
 target = "$App\\pandoc.exe"
 ```
 
 `$App` always means "this version's `App` folder"; you never type a
-machine-specific path. Other things a `pkg.toml` can declare are Start Menu
-shortcuts (`[[shortcut]]`) and environment variables (`[[environment]]`); see the
-[`pkg.toml` reference](../README.md#pkgtoml-reference). Many ready-made files
-live in the [`gupkg-registry`](https://github.com/guraltsev/gupkg-registry) repository, so you can often start by
-copying one.
+machine-specific path. A package can also declare Start Menu shortcuts
+(`[[shortcut]]`) and environment variables (`[[env]]`); see the
+[`pkg.toml` reference](../README.md#pkgtoml-reference-format-2). Many ready-made
+definitions live in the [`gupkg-registry`](https://github.com/guraltsev/gupkg-registry)
+repository, so you can often skip this step: `gupkg registry sync`, then
+`gupkg install pandoc` (see the [cookbook](cookbook.md)).
 
 ## 3. Check the file
 
 ```bat
-gupkg config-check C:\opt\pandoc
+gupkg pkg check %USERPROFILE%\opt\pandoc
 ```
 
-This validates everything without changing anything and reports *all*
-problems at once, so a single run tells you what to fix.
+This validates everything without changing anything and reports *all* problems at
+once. Add `--install` to also install into a throw-away root on a pretend machine.
+Not sure what to write? `gupkg pkg new NAME --track github:OWNER/REPO` writes a
+documented starter.
 
-Not sure what to write? `gupkg config-fix <folder>` creates a documented
-starter `pkg.toml` full of commented examples.
-
-## 4. Install
+## 4. Find the newest version and install it
 
 ```bat
-gupkg install C:\opt\pandoc
+gupkg check-updates pandoc       :: writes <root>\pandoc\<version>\, downloads and unpacks it; activates nothing
+gupkg install pandoc             :: activates it: junction, shim, PATH
 ```
 
-`gupkg` finds the newest release, verifies its SHA-256 checksum when GitHub
-publishes one, unpacks it into `C:\opt\pandoc\<version>\App`, points `current`
-at it, then creates the command and PATH entry. Open a **new** terminal (Windows
-only hands new environment values to new processes) and run:
+`check-updates` runs the tracker, writes the new version directory with the
+download's SHA-256 (GitHub publishes one) and prepares its `App`. `install` then
+points `current` at it and creates the shim and `PATH` entry. Open a **new**
+terminal (Windows hands new environment values only to new processes) and run:
 
 ```bat
 pandoc --version
 ```
 
-Without `--scope`, `gupkg` installs for the current user, or for all users when
-your shell is elevated and the package allows it. Add `--scope user` or
-`--scope system` to be explicit. System scope needs an Administrator shell.
+**Which mode?** Without `--mode`, an elevated shell installs for all users (`system`,
+in `C:\opt`) and any other shell installs for you (`user`, in `%USERPROFILE%\opt`).
+Add `--mode user`, `--mode system` or `--mode portable` to be explicit. A call that needs
+administrator rights asks once and relaunches itself elevated, and only when your gupkg
+itself lives in an admin-only folder (the all-users install does).
 
-`install` is safe to repeat. If a shortcut was deleted or PATH was reset,
-running it again puts everything back without re-downloading the program.
+`install` is safe to repeat: if a shortcut was deleted or `PATH` was reset, running it
+again puts everything back without downloading the program. `gupkg install --plan pandoc`
+shows what a call would do, and `gupkg check pandoc` reports what drifted.
+
+**A download with no checksum.** If a version declares no SHA-256 and the tracker
+could not discover one, gupkg refuses it. When you trust the source and it is an
+`https://` address, add `--skip-checksum` to that one call. The receipt records
+that nothing verified the download, and `gupkg pkg pin pandoc` can copy the observed
+hash into `pkg.toml` afterwards.
 
 ## 5. Update
 
 ```bat
-gupkg update C:\opt\pandoc --check-only   # is there a newer release?
-gupkg update C:\opt\pandoc                # get it and switch over
+gupkg check-updates pandoc       :: is there a newer release? prepare it
+gupkg list --outdated            :: which packages have one waiting?
+gupkg update pandoc              :: activate the newest prepared version
 ```
 
-The new version is downloaded and verified into a fresh folder before anything
-changes, so a failed download leaves the working version untouched. The old
-version stays on disk.
+The new version is downloaded, verified and unpacked into a fresh folder before
+anything changes, so a failed download leaves the working version untouched. The old
+version stays on disk. `update` never contacts the network for a package that has
+nothing newer prepared: it says "up to date". To prepare now and switch later (a
+maintenance window), run the two commands at different times.
 
-To prepare now and switch later (for example in a maintenance window):
-
-```bat
-gupkg update C:\opt\pandoc --download-only
-gupkg update C:\opt\pandoc                # later: activates the staged version
-```
+For every package at once use the manager program:
+`gupkg-manager check-updates --all` and `gupkg-manager update --all --yes`.
 
 ## 6. Roll back
 
-Old versions are kept, so going back is just installing one:
+Old versions are kept, so going back is one command:
 
 ```bat
-gupkg install C:\opt\pandoc\3.6.1 --allow-downgrade
+gupkg switch pandoc 3.6.1
 ```
+
+## 7. Uninstall
+
+```bat
+gupkg uninstall pandoc           :: removes shortcuts, shims, PATH entry and environment values
+gupkg uninstall pandoc --purge   :: also deletes the package folder and its data (asks first)
+```
+
+`uninstall` keeps the version folders, so a later `install` brings the program
+back. `gupkg cleanup` removes old `App` folders, receipts and logs, and never
+runs on its own.
+
+## Logs
+
+Every run that acts on a package writes a text log and a `.jsonl` log into that
+package's `.gupkg\logs\` folder, and a short run log into the root's
+`.gupkg\logs\`. `gupkg logs pandoc` lists them, `--path` prints the newest and
+`--open` opens it.
 
 ## Where next
 
-- Many packages at once: [Managing many packages](operations.md#manager-configuration)
-  and the [cookbook](cookbook.md).
+- Many packages at once, schedules, settings, registries, and moving from 0.17:
+  [Operations guide](operations.md) and the [cookbook](cookbook.md).
 - Something went wrong: [Troubleshooting](troubleshooting.md), which lists each
   error message with its fix.
-- Every `pkg.toml` field: the [reference in the README](../README.md#pkgtoml-reference).
+- Every `pkg.toml` field: the [reference in the README](../README.md#pkgtoml-reference-format-2).

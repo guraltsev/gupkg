@@ -246,7 +246,8 @@ try {
     #    otherwise the bundled copy) and installs the package. The elevated launcher verifies everything it runs first.
     Step 'Running install.cmd'
     $env:GUPKG_NO_PAUSE = '1'
-    & cmd.exe /d /c "$versionDir\install.cmd" --mode $Scope
+    # Called directly: wrapping it in `cmd /c "<path>"` breaks when the path has an ampersand (cmd strips the quotes).
+    & "$versionDir\install.cmd" --mode $Scope
     if ($LASTEXITCODE -ne 0) { throw "install.cmd failed (exit $LASTEXITCODE)." }
     Step 'Done. Open a NEW terminal, then try:  gupkg --help'
     if ($Scope -eq 'system') { Step "The root forwarder is $Root\.gupkg\gupkg.cmd; package launchers of this root now find the installed gupkg through it." }

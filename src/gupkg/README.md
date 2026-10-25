@@ -1,7 +1,7 @@
 # Runtime modules
 
 For operator-facing installation and recovery procedures, see
-[the operations guide](../../docs/operations.md). This file describes the
+[the operations guide](../../_docs/operations.md). This file describes the
 implementation-facing modules.
 
 The Python modules in this directory are the supported implementation domains

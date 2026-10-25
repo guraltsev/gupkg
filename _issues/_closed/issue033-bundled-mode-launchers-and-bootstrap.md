@@ -1,5 +1,7 @@
 # Issue 033: Bundled mode, package launchers, and bootstrap
 
+> **Status (2026-10-24):** Implemented. Merged in d48404a. Manual checks still owed: tests/manual_smoke.md, 033-1 to 033-9 (elevated launcher refusals, a bundled install leaves no gupkg behind, bootstrap user and system, a squatted C:\opt, an installed gupkg takes over, self-update across two releases, Mark of the Web and Smart App Control (not verifiable on the owner's machine), system install of a distribution, the registry after the launcher change).
+
 Date: 2026-10-22
 Priority: High
 Epic: 020. Design: `_docs/rehaul_design.md` §21, §9.6 (threat model T1), §9.7 (files only in roots); decisions D14–D20, D26, D27, D29, D30, D32–D34, D40, D43

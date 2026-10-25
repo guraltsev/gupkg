@@ -53,7 +53,11 @@ class InstallerDouble:
         self.calls.append(call)
         if self.timeout:
             raise TimeoutError("too slow")
-        stage = Path(next(part for part in call.argv if part.startswith("/DIR="))[len("/DIR="):])
+        stage_text = next((part[len("/DIR="):] for part in call.argv if part.startswith("/DIR=")), "")
+        stage = Path(stage_text)
+        if not stage_text or not stage.is_absolute():
+            # Never write relative to the process's current directory: a missing or relative stage is a test failure.
+            raise AssertionError(f"the installer was not given an absolute /DIR= stage: {call.argv!r}")
         if self.returncode:
             return ProcessResult(self.returncode, "", "setup failed")
         for relative, content in self.files.items():

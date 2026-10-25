@@ -1,5 +1,7 @@
 # Issue 032: Migration path, documentation, issue hygiene, 1.0 release
 
+> **Status (2026-10-24):** Implemented. Merged with the 1.0 release branch (the merge commit is recorded in `.agents/jobs/08-rehaul-progress.md`). Manual checks still owed: tests/manual_smoke.md, 032-1 (a real 0.17 tree migrated), 032-2 (the documentation followed literally), 032-3 (self check-updates and self update from 1.0.0 to 1.0.1), 032-4 (the 1.0 release itself).
+
 Date: 2026-10-22
 Priority: High (closes epic 020)
 Epic: 020. Design: `_docs/rehaul_design.md` §18
@@ -83,19 +85,19 @@ forward. The documentation also has existing drift from the code:
 
 ## Acceptance criteria
 
-- [ ] On a copy of a real 0.17 `C:\opt` tree and a schema 2 config, re-running
+- [ ] (manual 032-1) On a copy of a real 0.17 `C:\opt` tree and a schema 2 config, re-running
       the 1.0 bootstrap and then the migration tool (issue 023), then the
       first `gupkg list`, gives the same installed set and versions. A
       following `gupkg uninstall X` removes X's 0.17-created shortcuts and
       wrappers.
-- [ ] On the same copy before migration, 1.0 `gupkg` offers no 0.17
+- [ ] (test_cli_grammar, test_manifest_format2; manual 032-1) On the same copy before migration, 1.0 `gupkg` offers no 0.17
       spelling: `gupkg config-check` is an unknown command, and a format 1
       `pkg.toml` is reported as invalid with no format 1 hint.
-- [ ] No documentation link points to a missing file: a link checker runs
+- [x] (tests/test_documentation.py) No documentation link points to a missing file: a link checker runs
       over `README.md` and `_docs/`.
-- [ ] `gupkg --help` and the README command reference list the same
+- [x] (tests/test_documentation.py) `gupkg --help` and the README command reference list the same
       commands.
-- [ ] `gupkg self check-updates` followed by `gupkg self update` moves an
+- [ ] (test_self_release_update.py; manual 032-3) `gupkg self check-updates` followed by `gupkg self update` moves an
       installed 1.0.0 to a 1.0.1 test release. The new version is verified
       against `RELEASES.md` and `MANIFEST.sha256`. gupkg's own package has
       no `download_url`: its `_check_updates` finds 1.0.1 through its custom
