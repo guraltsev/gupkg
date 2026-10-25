@@ -30,6 +30,7 @@ import hashlib
 import re
 import subprocess
 import sys
+import tempfile
 import zipfile
 from datetime import date
 from pathlib import Path
@@ -74,11 +75,14 @@ def main(argv: list[str] | None = None, *, root: Path = ROOT) -> int:
     if not args.no_publish:
         remote = args.remote or _git(root, "remote").splitlines()[0]
         _git(root, "push", remote, f"refs/tags/v{version}")
+        sidecar = archive.with_name(archive.name + ".sha256")
+        sidecar.write_bytes(f"{digest}  {archive.name}\n".encode("ascii"))
         subprocess.run(
-            [args.gh, "release", "create", f"v{version}", str(archive), "--title", f"gupkg {version}", "--notes", notes],
+            [args.gh, "release", "create", f"v{version}", str(archive), str(sidecar), "--title", f"gupkg {version}", "--notes", notes],
             cwd=root,
             check=True,
         )
+        _verify_published(args.gh, root, f"v{version}", archive.name, digest)
 
     # Record the release, naming the released commit and the published bytes.
     row = f"| {version} | `{commit}` | {date.today().isoformat()} | {digest} | {notes} |"
@@ -87,6 +91,22 @@ def main(argv: list[str] | None = None, *, root: Path = ROOT) -> int:
     _git(root, "commit", "-m", f"Release {version}")
     print(f"Released {version} at {commit}.\nsha256 {digest}\nPublish the row with:  git push origin main")
     return 0
+
+
+def _verify_published(gh: str, root: Path, tag: str, name: str, digest: str) -> None:
+    """Download the release asset *name* of *tag* and require its SHA-256 to equal *digest*.
+
+    Raises
+    ------
+    SystemExit
+        If the published bytes differ from the local ZIP; the release row is then not recorded.
+    """
+    with tempfile.TemporaryDirectory() as folder:
+        subprocess.run([gh, "release", "download", tag, "--pattern", name, "--dir", folder], cwd=root, check=True)
+        fetched = hashlib.sha256((Path(folder) / name).read_bytes()).hexdigest()
+    if fetched != digest:
+        raise SystemExit(f"The published {name} has SHA-256 {fetched}, not {digest}; the row was not recorded.")
+    print(f"Verified the published {name}: sha256 {digest}")
 
 
 def check_release_zip(archive: Path, version: str, commit: str) -> None:
@@ -98,17 +118,28 @@ def check_release_zip(archive: Path, version: str, commit: str) -> None:
         If ``gupkg/RELEASE.txt`` is missing or names another version or commit.
     """
     with zipfile.ZipFile(archive) as zipped:
-        notes = [name for name in zipped.namelist() if re.fullmatch(r"(?:[^/]+/){1,2}gupkg/RELEASE\.txt", name)]
-        if len(notes) != 1:
-            raise SystemExit(f"{archive.name} has no gupkg/RELEASE.txt; it is not a gupkg release ZIP")
-        recorded = zipped.read(notes[0]).decode("utf-8")
+        check_release_zip_object(zipped, archive.name, version, commit)
+
+
+def check_release_zip_object(zipped: zipfile.ZipFile, name: str, version: str, commit: str) -> None:
+    """Refuse the open ZIP *zipped* (called *name*) unless ``RELEASE.txt`` names *version* and *commit*.
+
+    Raises
+    ------
+    SystemExit
+        If ``gupkg/RELEASE.txt`` is missing or names another version or commit.
+    """
+    notes = [entry for entry in zipped.namelist() if re.fullmatch(r"(?:[^/]+/){1,2}gupkg/RELEASE\.txt", entry)]
+    if len(notes) != 1:
+        raise SystemExit(f"{name} has no gupkg/RELEASE.txt; it is not a gupkg release ZIP")
+    recorded = zipped.read(notes[0]).decode("utf-8")
     recorded_version = re.search(r"(?m)^gupkg (\S+)$", recorded)
     recorded_commit = re.search(r"(?m)^commit ([0-9a-f]{40})$", recorded)
     if recorded_version is None or recorded_version.group(1) != version:
-        raise SystemExit(f"{archive.name} is for gupkg {recorded_version and recorded_version.group(1)}, not {version}")
+        raise SystemExit(f"{name} is for gupkg {recorded_version and recorded_version.group(1)}, not {version}")
     if recorded_commit is None or recorded_commit.group(1) != commit:
         raise SystemExit(
-            f"{archive.name} was built from commit {recorded_commit and recorded_commit.group(1)}, "
+            f"{name} was built from commit {recorded_commit and recorded_commit.group(1)}, "
             f"not HEAD {commit}; rebuild it."
         )
 

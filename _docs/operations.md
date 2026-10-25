@@ -292,8 +292,9 @@ it they exit 9009 and print how to create it. None of them ships in the release 
 |---|---|
 | `test.cmd [pytest args]` | Run the test suite. |
 | `run.cmd [gupkg args]` | Run `src\gupkg\gupkg.cmd` from the source tree. |
-| `bump.cmd <version>` | Set the version in `_version.py` and the `pkg.toml` files and commit. |
-| `release.cmd "notes" [--no-push]` | Test, build the ZIP, tag, upload it to GitHub release `v<version>`, add the `RELEASES.md` row (with the ZIP's SHA-256), and push the branch. `--no-push` keeps everything local and uploads nothing. |
+| `bump.cmd [patch\|minor\|major\|<version>]` | Raise the patch number (the default), the minor or the major number, or set an exact version, in `_version.py`, and commit. |
+| `release.cmd ["notes"] [--no-push]` | Test, build the ZIP, tag, push the tag, upload the ZIP and its `.sha256` file to GitHub release `v<version>`, download the ZIP again and require the same SHA-256, add the `RELEASES.md` row (with that SHA-256), and push the branch. Without notes the row says `gupkg <version>`. `--no-push` keeps everything local and uploads nothing. |
+| `check-release.cmd [version]` | Download the published release from the address the bootstrap uses and check it against the `RELEASES.md` row: tags, pushed branch, the ZIP's and the `.sha256` asset's SHA-256, `RELEASE.txt`, and every file of `MANIFEST.sha256`. Prints PASS or FAIL per check; exit 1 on any FAIL. Changes nothing. |
 | `build-standalone.cmd [output.zip]` | Build the release ZIP in `dist\` and print its SHA-256. |
 | `fetch-runtime.cmd [--destination DIR] [--force]` | Fetch the pinned embeddable CPython, verify it, write `._pth` and install the locked dependencies. |
 
@@ -304,8 +305,9 @@ SHA-256 is that of `gupkg-<version>-win-amd64.zip`, attached to GitHub release `
 (`pkg.local\track.py`) reads the table from `main`. To release, from a clean tree with the GitHub CLI signed in:
 
 ```bat
-scripts\bump.cmd 1.0.0
+scripts\bump.cmd
 scripts\release.cmd "one-line notes"
+scripts\check-release.cmd
 ```
 
 `tools\release.py` refuses a dirty tree, a version already listed and a ZIP that was not built from `HEAD`; it tags, pushes the tag,

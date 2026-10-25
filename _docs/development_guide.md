@@ -79,7 +79,9 @@ integrity data:
 | `tools/update_deps.py` | Resolves newer releases, shows the plan, rewrites the lock and refreshes the committed runtime's `site-packages` the same way the build installs them (`--repair` reinstalls the lock; `--python` names the interpreter whose pip does it). |
 | `tools/check_deps.py` | Compares the lock with PyPI (exit 1 when pins are stale). |
 | `tools/build_standalone.py` (`scripts\build-standalone.cmd`) | Verifies the inputs, assembles the version tree, fails if pip, setuptools or ensurepip is in it, writes `gupkg/RELEASE.txt` and `gupkg/MANIFEST.sha256`, runs the build probe on the staged tree, zips it and prints the ZIP's SHA-256. |
-| `tools/release.py` (`scripts\release.cmd`) | Builds, tags, uploads the ZIP to GitHub release `v<version>` and records the digest in `RELEASES.md`. |
+| `tools/release.py` (`scripts\release.cmd`) | Builds, tags, uploads the ZIP and its `.sha256` file to GitHub release `v<version>`, checks the uploaded bytes, and records the digest in `RELEASES.md`. |
+| `tools/check_release.py` (`scripts\check-release.cmd`) | Downloads the published release and checks it against its `RELEASES.md` row (tags, SHA-256s, `RELEASE.txt`, `MANIFEST.sha256`). |
+| `tools/bump_version.py` (`scripts\bump.cmd`) | Raises or sets the version in `_version.py`. |
 
 **Where pip lives.** The bundled runtime (`src/gupkg/python` and every release)
 has no pip, setuptools or ensurepip, and `tools/gupkg-deps.lock` does not list

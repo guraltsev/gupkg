@@ -79,15 +79,40 @@ def test_publishing_pushes_the_tag_and_uploads_the_zip_before_recording_the_row(
     archive = _release_zip(tmp_path / "gupkg-0.1.0-win-amd64.zip", version="0.1.0", commit=head)
     log = tmp_path / "gh.log"
     gh = tmp_path / "gh.cmd"
-    gh.write_text(f'@echo off\necho %*> "{log}"\n', encoding="ascii")
+    # Stand-in gh: record every call; "release download" hands back the uploaded ZIP.
+    gh.write_text(
+        f'@echo off\necho %*>> "{log}"\nif "%2"=="download" copy /y "{archive}" "%~7\\%~5" >nul\n',
+        encoding="ascii",
+    )
 
     status = release.main(["notes here", "--zip", str(archive), "--gh", str(gh)], root=repository)
 
     assert status == 0
     assert subprocess.run(["git", "--git-dir", str(remote), "rev-parse", "v0.1.0^{commit}"], capture_output=True, text=True).stdout.strip() == head
-    arguments = log.read_text(encoding="utf-8")
-    assert arguments.startswith("release create v0.1.0 ") and str(archive) in arguments
+    calls = log.read_text(encoding="utf-8").splitlines()
+    sidecar = archive.with_name(archive.name + ".sha256")
+    assert calls[0].startswith("release create v0.1.0 ") and str(archive) in calls[0] and str(sidecar) in calls[0]
+    assert sidecar.read_text(encoding="ascii") == f"{hashlib.sha256(archive.read_bytes()).hexdigest()}  {archive.name}\n"
+    assert calls[1].startswith("release download v0.1.0 --pattern ")
     assert hashlib.sha256(archive.read_bytes()).hexdigest() in (repository / "RELEASES.md").read_text(encoding="utf-8")
+
+
+def test_a_published_asset_that_differs_from_the_local_zip_stops_the_release(repository: Path, tmp_path: Path) -> None:
+    """If the downloaded asset has another SHA-256, the release stops and no row is recorded."""
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "--bare", "-q", str(remote)], check=True)
+    _git(repository, "remote", "add", "origin", str(remote))
+    head = _git(repository, "rev-parse", "HEAD")
+    archive = _release_zip(tmp_path / "gupkg-0.1.0-win-amd64.zip", version="0.1.0", commit=head)
+    other = tmp_path / "other.bin"
+    other.write_bytes(b"not the release")
+    gh = tmp_path / "gh.cmd"
+    gh.write_text(f'@echo off\nif "%2"=="download" copy /y "{other}" "%~7\\%~5" >nul\n', encoding="ascii")
+
+    with pytest.raises(SystemExit, match="the row was not recorded"):
+        release.main(["notes", "--zip", str(archive), "--gh", str(gh)], root=repository)
+
+    assert "| 0.1.0 |" not in (repository / "RELEASES.md").read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize(

@@ -46,3 +46,35 @@ def test_bump_rejects_a_version_that_is_not_dotted_numbers(tmp_path: Path) -> No
 
     assert _load().main(["1.0-rc1", "--root", str(tmp_path)]) == 2
     assert '"0.1.0"' in (tmp_path / "src" / "gupkg" / "_version.py").read_text(encoding="utf-8")
+
+
+def test_bump_without_a_version_raises_the_patch_number(tmp_path: Path) -> None:
+    """With no version argument, 0.1.0 becomes 0.1.1."""
+    _tree(tmp_path)
+
+    assert _load().main(["--root", str(tmp_path)]) == 0
+
+    assert '__version__ = "0.1.1"' in (tmp_path / "src" / "gupkg" / "_version.py").read_text(encoding="utf-8")
+
+
+def test_bump_minor_and_major_reset_the_lower_parts(tmp_path: Path) -> None:
+    """``minor`` turns 0.1.0 into 0.2.0 and ``major`` then turns that into 1.0.0."""
+    _tree(tmp_path)
+    version_file = tmp_path / "src" / "gupkg" / "_version.py"
+
+    assert _load().main(["minor", "--root", str(tmp_path)]) == 0
+    assert '__version__ = "0.2.0"' in version_file.read_text(encoding="utf-8")
+    assert _load().main(["major", "--root", str(tmp_path)]) == 0
+    assert '__version__ = "1.0.0"' in version_file.read_text(encoding="utf-8")
+
+
+def test_bump_print_shows_the_version_and_changes_nothing(tmp_path: Path, capsys) -> None:
+    """``--print`` writes the current version and leaves the file as it was."""
+    _tree(tmp_path)
+    version_file = tmp_path / "src" / "gupkg" / "_version.py"
+    before = version_file.read_text(encoding="utf-8")
+
+    assert _load().main(["--print", "--root", str(tmp_path)]) == 0
+
+    assert capsys.readouterr().out.strip() == "0.1.0"
+    assert version_file.read_text(encoding="utf-8") == before
