@@ -41,8 +41,8 @@ def main(argv: Sequence[str] | None = None, *, system: System | None = None, env
 def _sandbox(args: argparse.Namespace) -> tuple[Path, bool]:
     """Return the sandbox folder and whether this run created it (and so removes it)."""
     if args.sandbox is not None:
-        return args.sandbox, False
-    return Path(tempfile.mkdtemp(prefix="gupkg-registry-")), True
+        return args.sandbox.resolve(), False
+    return Path(tempfile.mkdtemp(prefix="gupkg-registry-")).resolve(), True
 
 
 def _push_options(args: argparse.Namespace) -> dict[str, object]:

@@ -1485,13 +1485,15 @@ def _prepare_to_data(step: PrepareStep) -> dict[str, Any]:
     return {"module": step.module}
 
 
-def manifest_to_data(manifest: Manifest) -> dict[str, Any]:
+def manifest_to_data(manifest: Manifest, *, explicit_modes: bool = False) -> dict[str, Any]:
     """Return *manifest* as plain TOML-ready data in the documented key order.
 
     Parameters
     ----------
     manifest : Manifest
         A validated manifest.
+    explicit_modes : bool, optional
+        Write ``modes`` even when it equals the default (a registry states the modes of every package).
 
     Returns
     -------
@@ -1499,7 +1501,7 @@ def manifest_to_data(manifest: Manifest) -> dict[str, Any]:
         Data that ``parse_manifest_data`` accepts and ``tomli_w`` can write.
     """
     data: dict[str, Any] = {"format": FORMAT, "description": manifest.description, "project_url": manifest.project_url}
-    data["modes"] = list(manifest.modes) if manifest.modes != DEFAULT_MODES else None
+    data["modes"] = list(manifest.modes) if explicit_modes or manifest.modes != DEFAULT_MODES else None
     data["requires"] = list(manifest.requires)
     data["requires_gupkg"] = manifest.requires_gupkg
     data["record_manifest"] = None if manifest.record_manifest else False
@@ -1553,20 +1555,22 @@ def _drop_empty_keep_tables(data: dict[str, Any]) -> dict[str, Any]:
             and not (value == {} and key != "source")}
 
 
-def manifest_to_toml(manifest: Manifest) -> str:
+def manifest_to_toml(manifest: Manifest, *, explicit_modes: bool = False) -> str:
     """Return the TOML text of *manifest* (written with ``tomli_w``).
 
     Parameters
     ----------
     manifest : Manifest
         A validated manifest.
+    explicit_modes : bool, optional
+        Write ``modes`` even when it equals the default.
 
     Returns
     -------
     str
         TOML text that ``parse_manifest`` reads back to an equal manifest.
     """
-    return tomli_w.dumps(manifest_to_data(manifest))
+    return tomli_w.dumps(manifest_to_data(manifest, explicit_modes=explicit_modes))
 
 
 # ---------------------------------------------------------------------------

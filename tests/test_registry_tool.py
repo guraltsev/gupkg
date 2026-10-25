@@ -21,13 +21,14 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import time
 from pathlib import Path
 
 import pytest
 
-from gupkg.model.manifest import ManifestKind, parse_manifest
+from gupkg.model.manifest import ManifestKind, manifest_to_toml, parse_manifest
 from gupkg.pkgcheck import check_directory
 from gupkg.report.events import Warning, use_reporter
 from gupkg.services.fingerprint import fingerprint_directory, verify_directory
@@ -35,7 +36,7 @@ from gupkg.system.fake import FakeHttp, FakeSystem, ProcessCall
 from gupkg.system.port import ProcessResult
 from gupkg.launchers import launcher_text, write_launchers
 from gupkg_registry.cli import main
-from gupkg_registry.layout import read_registry_file, write_registry_file
+from gupkg_registry.layout import RegistryFileError, read_registry_file, write_registry_file
 from gupkg_registry.publish import commit_message
 from gupkg_registry.update import Outcome, pin_version, update_registry
 from gupkg_registry.validate import validate_registry
@@ -652,3 +653,34 @@ def test_update_prints_a_progress_line_per_package_and_a_summary(tmp_path: Path,
     assert status == 1
     assert lines[0].startswith("[1/2] hwinfo ... added") and lines[1].startswith("[2/2] volta ... failed")
     assert "summary: 1 added, 1 failed of 2 packages" in lines
+
+
+def test_a_written_version_states_its_modes_even_when_they_are_the_default(tmp_path: Path) -> None:
+    """The registry requires every package to state ``modes``, so the pinned manifest is written with them explicitly."""
+    text = 'format = 2\ndescription = "d"\n[source]\ndownload_url = "https://example.com/a.zip"\n'
+    manifest = parse_manifest(text, ManifestKind.VERSION)
+
+    assert "modes" not in manifest_to_toml(manifest)
+    explicit = parse_manifest(manifest_to_toml(manifest, explicit_modes=True), ManifestKind.VERSION)
+    assert "\nmodes = [" in manifest_to_toml(manifest, explicit_modes=True)
+    assert explicit.modes == manifest.modes
+
+
+def test_a_second_run_on_the_same_registry_is_refused_while_the_first_holds_the_lock(tmp_path: Path) -> None:
+    """A lock file in the registry stops two update runs from writing the same version directories."""
+    root, system = hwinfo_world(tmp_path, Git())
+    (root / ".registry-tool.lock").write_text("", encoding="utf-8")
+
+    with pytest.raises(RegistryFileError, match="another registry tool run"):
+        run_update(root, system, tmp_path)
+
+    assert not (root / "hwinfo" / "1.0.0").exists()
+
+
+def test_the_lock_is_released_after_a_run(tmp_path: Path) -> None:
+    """After a run, normal or failed, the lock file is gone so the next run can start."""
+    root, system = hwinfo_world(tmp_path, Git())
+
+    run_update(root, system, tmp_path)
+
+    assert not (root / ".registry-tool.lock").exists()

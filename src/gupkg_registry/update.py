@@ -57,9 +57,10 @@ from gupkg.services.track import TrackEnvironment, run_tracker
 from gupkg.system.port import System
 from gupkg.launchers import write_launchers
 
-from .layout import LAUNCHER_NAMES, TRACKER_LAUNCHER_NAME, package_dirs, read_registry_file, write_registry_file, write_text_bytes
+from .layout import LAUNCHER_NAMES, TRACKER_LAUNCHER_NAME, RegistryFileError, package_dirs, read_registry_file, write_registry_file, write_text_bytes
 
 REGISTRY_SHA256_FROM = "registry"
+LOCK_NAME = ".registry-tool.lock"
 
 
 @dataclass(frozen=True)
@@ -154,6 +155,21 @@ def update_registry(
     root, sandbox = Path(root), Path(sandbox)
     settings = read_registry_file(root)
     sandbox.mkdir(parents=True, exist_ok=True)
+    lock = root / LOCK_NAME
+    try:
+        lock.open("x").close()
+    except FileExistsError:
+        raise RegistryFileError(
+            f"another registry tool run is using {root} (lock file {LOCK_NAME}); wait for it, or delete the file if that run crashed"
+        ) from None
+    try:
+        return _update_all(root, system, sandbox, names, environ, on_start, on_outcome, settings)
+    finally:
+        lock.unlink(missing_ok=True)
+
+
+def _update_all(root, system, sandbox, names, environ, on_start, on_outcome, settings) -> UpdateReport:
+    """Run the trackers of *names* while the caller holds the lock (see ``update_registry``)."""
     run = _Run(root, system, sandbox, _client(system, sandbox, environ), settings)
     available = {p.name: p for p in package_dirs(root)}
     _remove_stale_staging(available.values())
@@ -236,7 +252,7 @@ def pin_version(
         pinned = dataclasses.replace(
             manifest, source=dataclasses.replace(manifest.source, sha256=digest, sha256_from=REGISTRY_SHA256_FROM)
         )
-        write_text_bytes(directory / MANIFEST_NAME, manifest_to_toml(pinned))
+        write_text_bytes(directory / MANIFEST_NAME, manifest_to_toml(pinned, explicit_modes=True))
         after = check_directory(directory)
         if not after.ok or after.warnings:
             raise ValueError("; ".join((*after.errors, *after.warnings)))
@@ -314,7 +330,7 @@ def _update_package(run: _Run, package: Path) -> Outcome:
     staging = package / f".new-{uuid.uuid4().hex[:8]}"
     try:
         staging.mkdir()
-        write_text_bytes(staging / MANIFEST_NAME, manifest_to_toml(pinned))
+        write_text_bytes(staging / MANIFEST_NAME, manifest_to_toml(pinned, explicit_modes=True))
         _copy_support_files(tracker, staging)
         write_launchers(staging, LAUNCHER_NAMES)
         # The directory is checked under its final name: the check reads the version from it.
