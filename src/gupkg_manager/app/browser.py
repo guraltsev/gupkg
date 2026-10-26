@@ -63,9 +63,10 @@ class BrowserScreen(PackageActions, FrameScreen):
 
     def key_hints(self) -> str:
         """Return the keys of the browser."""
+        shown = "a hide" if self.available else "a avail"
         if getattr(self.app, "registry_unsynced", False):
-            return "s DOWNLOAD THE REGISTRY  a list available  c check  u update  ? help  q quit"
-        return "↑↓ Enter open  / filter  c check  u update  U all  s sync  ? help  q quit"
+            return f"s DOWNLOAD THE REGISTRY  {shown}  c check  u update  ? help  q quit"
+        return f"Enter open  / find  {shown}  c check  u update  U all  s sync  ? help  q quit"
 
     def status_text(self) -> str:
         """Return the program's counts and registry state."""

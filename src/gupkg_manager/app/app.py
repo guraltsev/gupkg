@@ -109,7 +109,10 @@ class ManagerApp(UiApp):
         """Return the counts, the registry state and any inventory error."""
         outdated = sum(row.status == "outdated" for row in self.rows)
         broken = sum(row.status == "broken" for row in self.rows)
-        parts = [f"{len(self.rows)} packages", f"{outdated} outdated", f"{broken} broken"]
+        available = sum(row.status == "available" for row in self.rows)
+        parts = [f"{len(self.rows) - available} packages", f"{outdated} outdated", f"{broken} broken"]
+        if available:
+            parts.append(f"{available} available in the registry (i installs)")
         if self.inventory_error:
             parts.insert(0, f"ERROR: {literal(self.inventory_error, limit=120)}")
         parts.append(self.registry)

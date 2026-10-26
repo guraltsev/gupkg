@@ -215,6 +215,34 @@ def test_the_browser_lists_the_packages_and_the_status_line_counts_them(tmp_path
     run_app(tmp_path, fake, scenario)
 
 
+def test_the_a_key_lists_the_registry_packages_that_are_not_installed_and_a_second_press_hides_them(tmp_path: Path, fake: FakeGupkg) -> None:
+    """``a`` adds the registry's packages that are not installed to the table (the real CLI gives them ``mode: null``), says so in the status line, and ``a`` again hides them."""
+    available = head("list", packages=[
+        {"name": name, "mode": None, "status": "available", "version": None, "newest_known": "1.0.0", "path": None, "following": f"main/{name}", "problems": [], "warnings": []}
+        for name in ("copyq", "graphviz")
+    ], warnings=[])
+    # The calls after ``a`` are ``list`` and ``list --available``; the last scheduled answer repeats for the rest.
+    fake.respond("list", doc=fixture_json("list.json", tmp_path))
+    fake.respond("list", doc=available)
+    seen: dict[str, object] = {}
+
+    async def scenario(app, pilot) -> None:
+        """Press ``a`` and read the table, the hint line and the status line; press it again."""
+        await open_browser(app, pilot)
+        await pilot.press("a")
+        await wait_for(pilot, lambda: has(app, "copyq") and has(app, "graphviz"), "the available packages")
+        seen["shown"] = (screen_text(app)[0], screen_text(app)[-1], [row for row in screen_text(app) if "copyq" in row])
+        await pilot.press("a")
+        await wait_for(pilot, lambda: not has(app, "copyq"), "the available packages to be hidden")
+
+    run_app(tmp_path, fake, scenario)
+
+    hint, status, rows = seen["shown"]
+    assert "a hide" in hint
+    assert "2 available in the registry" in status and "2 packages" in status
+    assert rows and "available" in rows[0]
+
+
 def test_filter_selection_and_the_application_survive_opening_a_package_and_a_run(tmp_path: Path, fake: FakeGupkg) -> None:
     """Filter to ``beta``, open it, run an update and go back: the same application is still on the browser with the filter text and the selection, and the list was re-read."""
     update_run(fake, tmp_path, ("beta",))
@@ -419,7 +447,7 @@ def test_a_registry_that_was_never_downloaded_is_announced_in_the_hint_line_and_
 
     run_app(tmp_path, fake, scenario)
 
-    assert seen["hint"].strip().startswith("s DOWNLOAD THE REGISTRY") and "a list available" in seen["hint"]
+    assert seen["hint"].strip().startswith("s DOWNLOAD THE REGISTRY") and "a avail" in seen["hint"]
     assert "registry main: NOT DOWNLOADED, press s" in seen["status"]
 
 
