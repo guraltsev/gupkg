@@ -109,17 +109,20 @@ class WindowsLinks:
             raise RuntimeError(f"Junction target does not exist or is not a directory: {target}")
 
         # An existing junction is replaced; a real directory or file never is.
+        replacing = False
         if os.path.lexists(str(link)):
             if self.is_link(link):
-                os.rmdir(str(link))
+                replacing = True
             else:
                 raise RuntimeError(f"{link} already exists and is not a junction; refusing to overwrite.")
 
         # Create the junction; callers see one RuntimeError for any failure.
         try:
             if os.name == "nt":
-                _make_junction(link, target)
+                _make_junction(link, target, replace=replacing)
             else:
+                if replacing:
+                    os.rmdir(str(link))
                 os.symlink(str(target), str(link), target_is_directory=True)
         except OSError as exc:
             raise RuntimeError(f"Cannot create junction {link} -> {target}: {exc}") from exc
@@ -1347,15 +1350,19 @@ def _content_length(response: Any) -> int | None:
     return value if value >= 0 else None
 
 
-def _make_junction(source: Path, target: Path) -> None:
+def _make_junction(source: Path, target: Path, *, replace: bool = False) -> None:
     r"""Create *source* as an NTFS junction to *target* without a child process.
 
     Parameters
     ----------
     source : Path
-        Path that must not exist yet.
+        Path that must not exist yet, or an existing junction when *replace* is set.
     target : Path
         Existing directory the junction references.
+    replace : bool, optional
+        Remove the existing junction *source* first. The removal happens only after everything that could import a module
+        is done: gupkg can be running from the very junction it replaces (``current``), and once that is gone the
+        standard library behind it cannot be read, so any later first-time import (a codec, a ctypes helper) fails.
 
     Raises
     ------
@@ -1419,9 +1426,15 @@ def _make_junction(source: Path, target: Path) -> None:
     data = header + path_buffer
     buffer = struct.pack("<IHH", io_reparse_tag_mount_point, len(data), 0) + data
 
+    # Touch what the steps below use for the first time (the error formatting, the path text), then drop the old junction.
+    ctypes.byref(wintypes.DWORD(0))
+    source_text = str(source)
+    if replace:
+        os.rmdir(source_text)
+
     # Create the empty directory that will carry the reparse point. Every
     # failure from here on removes it again, so no half-made junction is left.
-    if not kernel32.CreateDirectoryW(str(source), None):
+    if not kernel32.CreateDirectoryW(source_text, None):
         raise ctypes.WinError(ctypes.get_last_error())
 
     # Open the new directory itself (not what it would point to) and attach it.
