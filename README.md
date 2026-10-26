@@ -413,7 +413,7 @@ target = "$App\\rg.exe"
 ```
 
 Top-level keys are exactly: `format`, `description`, `project_url`, `modes`, `requires`, `requires_gupkg`,
-`record_manifest`, `source`, `track`, `prepare`, `portable`, `nonportable`, `shortcut`, `env`, `path`, `shim` and
+`record_manifest`, `source`, `track`, `prepare`, `portable`, `user`, `system`, `shortcut`, `env`, `path`, `shim` and
 `root_forwarder` (only gupkg's own package may use the last). There is no `version`, `localVersion`, `name`, `homepage`,
 `only_portable`, `[origin]`, `[update]`, `[[bin]]`, `[[environment]]` or `ignore_checksum`.
 
@@ -486,8 +486,13 @@ module = "pkg.local/fix.py"                                 # escape hatch (hook
   with the other shim options. Names may not be device names, streams or end in a dot or space.
 - **`[portable]`** (needs `portable` in `modes`): `persist` (paths kept in `<package>\data` and linked into every version's
   `App`), `markers` (files that switch the program to portable mode) and `args`/`env` that select portable mode for
-  shortcuts and shims. **`[nonportable]`** `remove = [...]` deletes paths from `App` when the package is installed in
-  another mode.
+  shortcuts and shims. **`[user]`**, **`[system]`** (each needs its mode in `modes`) and `[portable]` take a `prepare` list of install-time steps for that
+  mode, run in order after the steps every mode runs (`[[prepare]]`): `["remove", "a", "b*"]` deletes paths,
+  `["create", "path"]` (or `["create", "path", "content"]`) writes a file, `["rename", "from", "to"]`, `["copy", "from", "to"...]`
+  and `["run", "pkg.local/fix.py"]` (a bundled script, for anything else). A step only changes the `App` that is being built.
+  The receipt records the mode the `App` was prepared for; installing that version in another mode asks, then rebuilds the `App`
+  from its verified download (an `App` that cannot be rebuilt is refused and left alone). `[nonportable]` no longer exists: use
+  `[user]` and `[system]`.
 
 ### Variables
 

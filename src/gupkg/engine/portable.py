@@ -5,8 +5,8 @@ files the package declares in ``[portable] persist`` live in ``<package>\\data``
 version's ``App``: a persisted folder becomes a junction to ``data\\<item>``; a persisted file is copied in
 when a version is activated and copied back when it is switched away from. The first population into
 portable mode migrates the vendor's default configuration into ``data``. Markers the application needs in
-order to enter portable mode are created in a freshly populated ``App``, and the files that
-``[nonportable] remove`` names are removed from an ``App`` that is not installed portable.
+order to enter portable mode are created in a freshly populated ``App``, and the ``prepare`` steps of
+``[portable]``, ``[user]`` and ``[system]`` run on an ``App`` that is being built for that mode.
 
 Usage and API
 -------------
@@ -25,7 +25,8 @@ holds a link where it expects a file.
 
 from __future__ import annotations
 
-import glob
+import hashlib
+import json
 import os
 import shutil
 import uuid
@@ -34,7 +35,9 @@ from pathlib import Path
 
 from ..catalog.local import canonical_path, is_inside, is_reparse_point
 from ..core import write_bytes_atomic
-from ..model.manifest import Manifest
+from ..model.manifest import Manifest, mode_steps, step_to_list
+from ..services.hooks import HookContext
+from ..services.prepare import run_prepare
 from ..services.safepath import remove_tree
 from ..system.port import System
 
@@ -160,14 +163,14 @@ def hand_over(system: System, app: Path, data_dir: Path, persist: Sequence[str])
     return handled
 
 
-def apply_mode_adjustments(app: Path, manifest: Manifest, portable: bool) -> list[str]:
-    """Create the portable markers, or remove the non-portable files, in the staged *app*; return what was done.
+def apply_mode_adjustments(app: Path, manifest: Manifest, mode: str, context: HookContext | None = None) -> list[str]:
+    """Prepare the staged *app* for *mode*: the portable markers, then the steps of ``[<mode>] prepare``; return what was done.
 
-    In portable mode every ``[portable] markers`` file is created (an existing one is kept). In any other mode
-    every path that ``[nonportable] remove`` names (a glob) is removed; a link is removed itself, never its target.
+    ``[portable] markers`` are created in portable mode only (an existing file is kept). Then the ``prepare`` steps of the mode run
+    in order (``remove``, ``create``, ``rename``, ``copy``, ``run``), confined to *app*; a ``run`` step needs *context*.
     """
     done: list[str] = []
-    if portable:
+    if mode == "portable":
         for marker in manifest.portable.markers if manifest.portable else ():
             path = _confined(app, marker.path)
             if os.path.lexists(path):
@@ -175,16 +178,26 @@ def apply_mode_adjustments(app: Path, manifest: Manifest, portable: bool) -> lis
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(marker.content or "", encoding="utf-8", newline="")
             done.append(f"marker {marker.path}")
-        return done
-    for pattern in manifest.nonportable.remove if manifest.nonportable else ():
-        _confined(app, pattern.replace("*", "x").replace("?", "x").replace("[", "x"))
-        for match in sorted(glob.glob(pattern, root_dir=str(app))):
-            path = Path(app) / match
-            if not is_inside(path, app) or canonical_path(path) == canonical_path(app):
-                continue
-            remove_tree(path)
-            done.append(f"removed {path.relative_to(app).as_posix()}")
+    steps = mode_steps(manifest, mode)
+    if steps:
+        run_prepare(steps, app, context)
+        done.extend(f"{mode} step: {' '.join(step_to_list(step))}" for step in steps)
     return done
+
+
+def mode_signature(manifest: Manifest, mode: str) -> str | None:
+    """Return a fingerprint of what preparing an App for *mode* does, or ``None`` when no mode prepares anything differently.
+
+    A package whose instructions are the same in every mode (none at all) has no signature: its App is fit for any mode. Otherwise the
+    signature names the mode and the markers and steps that apply to it, so an App prepared for one mode is recognised as wrong for
+    another.
+    """
+    modes = ("system", "user", "portable")
+    if not any(mode_steps(manifest, name) for name in modes) and not (manifest.portable and manifest.portable.markers):
+        return None
+    markers = [(item.path, item.content) for item in manifest.portable.markers] if mode == "portable" and manifest.portable else []
+    canonical = json.dumps({"mode": mode, "markers": markers, "steps": [step_to_list(step) for step in mode_steps(manifest, mode)]}, sort_keys=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def scratch_name(prefix: str) -> str:

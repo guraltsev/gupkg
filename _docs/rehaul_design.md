@@ -570,11 +570,20 @@ markers = ["tixati_portable_mode.txt", { path = "doLocalConf.xml", content = "" 
 args = ["--portable"]
 env = { VSCODE_PORTABLE = "$Data" }
 
-[nonportable]
-# What to remove from App when the package is NOT installed portable
-# (today's keypirinha / mogan / systeminformer hooks).
-remove = ["portable", ".portable", "*/SystemInformer.exe.settings.xml"]
+# Install-time steps per mode (owner decision after 1.0; [nonportable] is gone). Each is a list of
+# [verb, argument...] steps run in order on the App being built: remove, create, rename, copy, run.
+# What to remove when the package is NOT installed portable (keypirinha / mogan / systeminformer):
+[user]
+prepare = [["remove", "portable", ".portable", "*/SystemInformer.exe.settings.xml"]]
+
+[system]
+prepare = [["remove", "portable", ".portable", "*/SystemInformer.exe.settings.xml"]]
+# [portable] takes the same `prepare` list beside persist, markers, args and env.
 ```
+
+The receipt records which mode an App was prepared for (`[app] prepared_for`: the mode and a signature of its steps). Installing a
+populated version in another mode asks and rebuilds the App from its verified download; an App that cannot be rebuilt is refused and
+left alone, so steps never run on top of an App prepared for another mode.
 
 **Rules:**
 
@@ -1658,7 +1667,7 @@ gupkg/
     executor.py     runs phases, emits events, writes receipts/install record, rollback
     appbuild.py     the built-in download script and the custom populate runner (atomic App)
     effects.py      declarations -> effects; apply, remove, verify (shortcuts, shims, env, PATH)
-    portable.py     portable data hand-over, markers, [nonportable] removal
+    portable.py     portable data hand-over, markers, the per-mode prepare steps and the App guard signature
     locks.py        the per-package lock (.gupkg\locks\package.lock)
     installer.py    vendor installers ([source.installer]): the guarded run into the stage
     fingerprint.py  the D41 App fingerprint (the version-directory fingerprint is services/fingerprint.py, section 17)
@@ -1757,7 +1766,7 @@ it through `System`.
 | **Fetch** | Download to `.gupkg\work` (shared cache by URL+SHA-256 under the mode's cache dir); resume; progress events. |
 | **Verify** | Checksum rule (section 9). |
 | **Unpack** | `[source]` services into staged `App`. |
-| **Prepare** | `[[prepare]]`, mode adjustments (`[portable]` markers / `[nonportable]` remove), `require` check; atomic rename into the version directory. |
+| **Prepare** | `[[prepare]]`, mode adjustments (`[portable]` markers, then the `prepare` steps of `[portable]` / `[user]` / `[system]`), `require` check; atomic rename into the version directory. |
 | **Activate** | Portable data hand-over; switch `current`. |
 | **Integrate** | Diff desired effects (shortcuts, env, PATH, shims) against the install record: create/update new ones, **remove stale ones**; broadcast environment change once. |
 | **Finish** | Write receipt + install record; summary. |
@@ -1888,7 +1897,7 @@ that is a drive, the root itself or a folder that holds it.
 **Portable.** `data\` holds what `[portable] persist` names. The first population moves the vendor's
 defaults there; every activation copies the outgoing `App`'s persisted state back into `data\` and
 then links it into the incoming `App` (a folder becomes a junction, a file is copied in), and saved
-state wins over what a new `App` ships. Markers are created and `[nonportable] remove` globs are applied
+state wins over what a new `App` ships. Markers are created and the mode's `prepare` steps are run
 only to an `App` that gupkg built, never to a shipped one. The `App` comparison of `check` skips the
 persisted paths.
 

@@ -48,7 +48,7 @@ from ..services.values import file_name_from_url
 from .context import MAX_RECORDED_FILES, Engine, require_trusted_tools, require_work_folder
 from .fingerprint import aggregate_digest, app_files
 from .installer import InstallerError, run_installer
-from .portable import apply_mode_adjustments, scratch_name
+from .portable import apply_mode_adjustments, mode_signature, scratch_name
 
 
 class AppBuildError(RuntimeError):
@@ -169,7 +169,8 @@ def populate_version(
             if source.shipped:
                 emit(Warning(f"The App of {name} {version} is shipped; portable markers and non-portable removals are not applied."))
             else:
-                for line in apply_mode_adjustments(staged, manifest, context.mode == "portable"):
+                mode_hook = HookContext(name, version, engine.system, client, paths)
+                for line in apply_mode_adjustments(staged, manifest, context.mode, mode_hook):
                     emit(Step(line, "info"))
 
             # Record the SHA-256 of every file (decision D41), unless the package or the settings opt out.
@@ -177,6 +178,10 @@ def populate_version(
             emit(Step("The finished App is moved into place", "ok"))
             _move_into_place(staged, target, work_root, replace, engine.replace)
         sections["app"] = app_section(files, engine.max_recorded_files)
+        signature = mode_signature(manifest, context.mode)
+        if signature is not None and not source.shipped:
+            # Which mode the App was prepared for: an install in another mode must not run more steps on top of it (design: App guard).
+            sections["app"]["prepared_for"] = {"mode": context.mode, "signature": signature}
         sections["inputs"] = _inputs(version_dir) if kind == "script" else []
         return Populated(sections, checksum)
     finally:

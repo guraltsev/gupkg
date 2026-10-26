@@ -20,8 +20,15 @@ persist = ["portable"]
 # The release ships a "portable" folder that puts Keypirinha in portable mode; outside
 # portable mode it is removed so the profile stays outside the versioned App
 # (the 0.17 unpack hook did this unconditionally).
-[nonportable]
-remove = ["portable"]
+[user]
+prepare = [
+    ["remove", "portable"],
+]
+
+[system]
+prepare = [
+    ["remove", "portable"],
+]
 
 [[shortcut]]
 name = "Keypirinha"

@@ -56,7 +56,7 @@ def pidgin(system: FakeSystem, work: Path) -> Built:
 
 
 def keypirinha(system: FakeSystem, work: Path) -> Built:
-    """A 7z with one wrapper folder and a `portable` marker folder: unpacking keeps it, `[nonportable] remove` (engine, issue 028) drops it outside portable mode."""
+    """A 7z with one wrapper folder and a `portable` marker folder: unpacking keeps it, `[user] prepare` remove (engine, issue 028) drops it outside portable mode."""
     archive = make_7z(system, work / "k.7z", {
         "keypirinha-2.26-x64-portable/keypirinha.exe": "k", "keypirinha-2.26-x64-portable/bin/x.dll": "d",
         "keypirinha-2.26-x64-portable/portable/.portable": "marker",

@@ -22,6 +22,7 @@ from gupkg.model.manifest import (
     ManifestKind,
     TrackResult,
     manifest_to_toml,
+    step_to_list,
     parse_manifest,
     render_pinned,
 )
@@ -142,7 +143,7 @@ def test_manifest_written_back_to_toml_parses_to_the_same_manifest() -> None:
 
 
 def test_every_section_of_a_full_manifest_round_trips() -> None:
-    """Prepare steps, portable and nonportable tables, shims with content and nested archives survive a write and read."""
+    """Prepare steps, the portable, user and system tables, shims with content and nested archives survive a write and read."""
     text = """\
 format = 2
 description = "Everything"
@@ -186,9 +187,13 @@ persist = ["Data"]
 markers = ["portable.txt", { path = "a.xml", content = "" }]
 args = ["--portable"]
 env = { HOME = "$Data" }
+prepare = [["create", "portable.txt"]]
 
-[nonportable]
-remove = ["portable"]
+[user]
+prepare = [["remove", "portable", "*/legacy.cfg"], ["create", "mark.txt", "x"]]
+
+[system]
+prepare = [["rename", "a", "b"], ["copy", "c", "d", "e"], ["run", "pkg.local/fix.py"]]
 
 [[shim]]
 name = "tool"
@@ -796,3 +801,50 @@ def test_shim_and_shortcut_names_are_capped_at_255(table: str) -> None:
 
     with pytest.raises(ManifestError, match=f"{table}\\[0\\].name"):
         parse_manifest(head + f'[[{table}]]\nname = "{"a" * 256}"\n{target}')
+
+
+HEAD = 'format = 2\n[source]\ndownload_url = "https://x.test/a.zip"\n'
+
+
+def test_the_old_nonportable_table_is_refused_and_names_its_replacement() -> None:
+    """`[nonportable]` is gone: the error says to use the `prepare` steps of [user] and [system]."""
+    with pytest.raises(ManifestError, match=r"nonportable.*\[user\] and \[system\]"):
+        parse_manifest(HEAD + '[nonportable]\nremove = ["x"]\n')
+
+
+@pytest.mark.parametrize("table", ["user", "system"])
+def test_a_mode_table_needs_its_mode_in_modes(table: str) -> None:
+    """`[user]` in a package that does not list `user` (and `[system]` likewise) is an error, as `[portable]` is without `portable`."""
+    other = "portable" if table == "user" else "user"
+    with pytest.raises(ManifestError, match=f"{table}.*needs '{table}' in modes"):
+        parse_manifest(f'format = 2\nmodes = ["{other}"]\n[source]\ndownload_url = "https://x.test/a.zip"\n[{table}]\nprepare = [["create", "a"]]\n')
+
+
+@pytest.mark.parametrize(
+    ("step", "message"),
+    [
+        pytest.param('["explode", "a"]', "unknown step 'explode'", id="unknown-verb"),
+        pytest.param('["remove"]', '"remove" needs at least one path', id="remove-without-path"),
+        pytest.param('["create", "a", "b", "c"]', '"create" takes a path', id="create-with-three"),
+        pytest.param('["rename", "a"]', '"rename" takes', id="rename-with-one"),
+        pytest.param('["copy", "a"]', '"copy" takes', id="copy-with-one"),
+        pytest.param('["run", "a.py", "b.py"]', '"run" takes the one bundled script', id="run-with-two"),
+        pytest.param('["remove", "../escape"]', "user.prepare", id="path-leaves-app"),
+        pytest.param('"remove a"', "must be an array of strings", id="not-an-array"),
+    ],
+)
+def test_a_wrong_step_is_an_error_that_names_the_step(step: str, message: str) -> None:
+    """Each step is a verb and its arguments; a wrong verb, count or path is reported with the place of the step."""
+    with pytest.raises(ManifestError, match=message):
+        parse_manifest(HEAD + f"[user]\nprepare = [{step}]\n")
+
+
+def test_mode_steps_round_trip_in_the_documented_shapes() -> None:
+    """`create` writes the content only when there is one, and every verb comes back as it went in."""
+    text = HEAD + '[user]\nprepare = [["create", "a"], ["create", "b", "x"], ["remove", "c", "d"], ["run", "pkg.local/f.py"]]\n'
+
+    manifest = parse_manifest(text)
+
+    assert [step_to_list(step) for step in manifest.user.prepare] == [["create", "a"], ["create", "b", "x"], ["remove", "c", "d"], ["run", "pkg.local/f.py"]]
+    assert parse_manifest(manifest_to_toml(manifest)).user == manifest.user
+

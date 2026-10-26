@@ -21,8 +21,15 @@ persist = ["amd64/SystemInformer.exe.settings.xml"]
 markers = [{ path = "amd64/SystemInformer.exe.settings.xml", content = "" }]
 
 # Release payloads must not carry machine-specific settings (replaces remove_settings.py).
-[nonportable]
-remove = ["*/SystemInformer.exe.settings.xml"]
+[user]
+prepare = [
+    ["remove", "*/SystemInformer.exe.settings.xml"],
+]
+
+[system]
+prepare = [
+    ["remove", "*/SystemInformer.exe.settings.xml"],
+]
 
 [[shortcut]]
 name = "Tools\\System Informer"
