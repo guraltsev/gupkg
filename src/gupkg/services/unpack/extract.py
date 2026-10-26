@@ -416,7 +416,12 @@ def _extract_with_seven_zip(tool: SevenZip, archive: Path, destination: Path, bu
     if kind == "nsis" and listing.type.lower() != "nsis":
         raise UnpackError(f"{archive.name} is not an NSIS installer (7-Zip reads it as {listing.type})")
     if kind == "sfx" and listing.type == "PE":
-        raise UnpackError(f"{archive.name} is an executable with no archive inside")
+        # 7-Zip reads some self-extractors (Git for Windows' PortableGit among them) as the executable they are; the archive appended
+        # to the stub is found when the type is named. It is only listed and unpacked, never run.
+        forced = "7z"
+        listing = tool.listing(archive, forced)
+        if listing.type != "7z":
+            raise UnpackError(f"{archive.name} is an executable with no archive inside")
     _judge(listing, budget)
     _unpack_watched(tool, archive, destination, budget, forced)
 

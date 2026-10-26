@@ -191,6 +191,49 @@ def test_an_nsis_installer_that_7zip_reads_as_something_else_is_refused(tmp_path
     assert list(stage.iterdir()) == []
 
 
+def test_a_self_extractor_that_7zip_reads_as_an_executable_is_listed_again_as_a_7z_archive(tmp_path: Path, stage: Path) -> None:
+    """When 7-Zip says `PE` for a `sfx` file, the archive appended to the stub is read with `-t7z` (PortableGit), never by running the file."""
+    calls: list[tuple[str, ...]] = []
+
+    def seven_zip(call: ProcessCall) -> ProcessResult:
+        """Say PE until the type is forced, then list one file; unpack it on request."""
+        calls.append(call.argv)
+        if "l" in call.argv:
+            kind = "7z" if "-t7z" in call.argv else "PE"
+            return ProcessResult(0, f"Path = x\nType = {kind}\n\n----------\nPath = git.exe\nSize = 3\n")
+        folder = Path(next(part for part in call.argv if part.startswith("-o"))[2:])
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "git.exe").write_text("exe", encoding="utf-8")
+        return ProcessResult(0)
+
+    system = FakeSystem(tmp_path / "machine", processes={"7z": seven_zip}, real_7zip=False)
+    installer = tmp_path / "PortableGit.7z.exe"
+    installer.write_bytes(b"MZ" + b"\0" * 100)
+
+    report = unpack_artifact(system, installer, stage / "App", UnpackPlan(kind="sfx"))
+
+    assert report.kind == "sfx" and tree(stage / "App") == {"git.exe": "exe"}
+    assert [("-t7z" in argv) for argv in calls if "l" in argv] == [False, True]
+    assert all("-t7z" in argv for argv in calls if "x" in argv)
+
+
+def test_an_sfx_file_with_no_archive_in_it_is_still_refused(tmp_path: Path, stage: Path) -> None:
+    """If 7-Zip reads the file as an executable even when `-t7z` is forced, nothing is extracted."""
+
+    def seven_zip(call: ProcessCall) -> ProcessResult:
+        """Always say PE."""
+        return ProcessResult(0, "Path = x\nType = PE\n\n----------\nPath = .rsrc\nSize = 3\n")
+
+    system = FakeSystem(tmp_path / "machine", processes={"7z": seven_zip}, real_7zip=False)
+    installer = tmp_path / "Setup.exe"
+    installer.write_bytes(b"MZ" + b"\0" * 100)
+
+    with pytest.raises(UnpackError, match="executable with no archive inside"):
+        unpack_artifact(system, installer, stage / "App", UnpackPlan(kind="sfx"))
+
+    assert list(stage.iterdir()) == []
+
+
 def test_a_manifest_that_asks_for_an_inno_kind_fails_validation() -> None:
     """There is no `inno` kind in 1.0 (decision D39): the manifest parser lists the kinds that exist."""
     with pytest.raises(ManifestError, match="kind.*must be one of zip, 7z, tar, sfx, nsis, msi, exe, file, git"):
