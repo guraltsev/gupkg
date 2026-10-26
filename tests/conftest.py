@@ -196,6 +196,8 @@ def neutral_console_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         "PYTHONIOENCODING", "PYTHONUTF8", "JUPYTER_COLUMNS", "TTY_COMPATIBLE", "TTY_INTERACTIVE",
     ):
         monkeypatch.delenv(name, raising=False)
+    # The scripts a person starts wait for a key at the end; a test never waits.
+    monkeypatch.setenv("GUPKG_NO_PAUSE", "1")
 
 
 @pytest.fixture(autouse=True)
