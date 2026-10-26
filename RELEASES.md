@@ -44,6 +44,7 @@ row.
 
 | Version | Commit | Date | SHA-256 | Notes |
 |---|---|---|---|---|
+| 1.0.7 | `c72a82f1dea839d0e6ab38f6dd564adb6d331aae` | 2026-10-25 | ccb410a83da145bb3184a4d6704ed31206bdb9827312aca6c247e1f7781db901 | gupkg 1.0.7 |
 | 1.0.5 | `111aaff7cc6bea47ac1095567ec6d6e09053dd4a` | 2026-10-25 | 33f69fd433935bce5d96b9d91a8298db9bf3ce9bb2991a319fbbf31b5c4b0acd | gupkg 1.0.5 |
 | 1.0.4 | `e0397429c0c5f775b9e3ee032d5c04c6eed73b1a` | 2026-10-25 | e6860fe8c705b136e6343a4d192552bfe2d4ac6a030e8c19ae561b25982f3ccb | gupkg 1.0.4 |
 | 1.0.3 | `effcc9ac30d5292ab1019b545247e5fdd8813079` | 2026-10-25 | cff314eb0ce2b22f5c90154e74680e0ced2ea704cd20e9e519ebcd126ddebe46 | gupkg 1.0.3 |
