@@ -368,9 +368,9 @@ def test_an_install_leaves_package_logs_a_linking_run_log_and_nothing_in_appdata
     assert tail == [f"Run log: {run_log}", f"Log of Example: {package_log}"]
     assert not appdata.exists() and not programdata.exists()
 
-    # The receipt of the installed version names this run's package log.
+    # The receipt describes the App only: it does not name the log of the run.
     receipt_file = next((root / "Example").glob("*/App.info"))
-    assert tomllib.loads(receipt_file.read_text(encoding="utf-8"))["run"]["log"] == str(package_log)
+    assert "run" not in tomllib.loads(receipt_file.read_text(encoding="utf-8"))
 
 
 def test_redirected_install_output_is_plain_with_phase_headers_and_a_final_summary(tmp_path: Path) -> None:

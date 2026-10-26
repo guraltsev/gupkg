@@ -75,9 +75,8 @@ def test_the_receipt_stores_the_log_path_of_the_package(world: World) -> None:
         batch = lifecycle.install(world.engine, ["one"])
         run.finish(batch.summary(), batch.exit_code)
 
-    logged = read_receipt(world.user / "one", "1.0.0").data["run"]["log"]
+    logged = batch.results[0].log
     assert logged and Path(logged).is_file() and Path(logged).parent == world.user / "one" / ".gupkg" / "logs"
-    assert batch.results[0].log == logged
 
 
 def test_cancel_while_package_one_runs_finishes_it_and_skips_the_rest(world: World) -> None:

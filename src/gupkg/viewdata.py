@@ -25,6 +25,7 @@ from .engine.health import install_notes
 from .engine.receipts import list_receipts
 from .engine.stateio import read_track_state
 from .model.manifest import INSTALLER_LABEL
+from .report.logfile import list_run_logs
 from .model.state import PackageView, known_candidates
 
 
@@ -84,8 +85,8 @@ def package_data(view: PackageView, *, details: bool = False) -> dict[str, Any]:
     checksum = receipt.get("checksum") if receipt is not None else None
     data["checksum"] = dict(checksum) if isinstance(checksum, dict) else None
     data["self_reported"] = any(item.kind == "self-reported" for item in notes)
-    run = receipt.get("run") if receipt is not None else None
-    data["log"] = run.get("log") or None if isinstance(run, dict) else None
+    logs = list_run_logs(view.path) if view.path is not None else []
+    data["log"] = str(logs[0]) if logs else None
     data["receipts"] = list_receipts(view.path) if view.path is not None else []
     data["last_check"] = read_track_state(view.path) if view.path is not None else None
     return data

@@ -227,7 +227,7 @@ Non-goals:
 | **Registry** | A read-only catalogue of package definitions (pinned versions and optional trackers), downloaded into a cache. Several registries may be configured; the official one is named `main`. |
 | **Link** | Which registry entry a local package follows. By default it is the entry with the same name (D2); `gupkg link` points it elsewhere or opts out. Recorded in `<package>\.gupkg\package.toml`. |
 | **Install record** | `<package>\.gupkg\package.toml`: mode, link, and the integration effects last applied (used by uninstall and stale-effect cleanup). |
-| **Receipt** | `<package>\<version>\App.info` (owner decision after 1.0; before that `<package>\.gupkg\receipts\<version>.toml`, which is still read): what one install of one version did (source URL, observed SHA-256, checksum decision, log file, timestamps). |
+| **Receipt** | `<package>\<version>\App.info` (owner decision after 1.0; before that `<package>\.gupkg\receipts\<version>.toml`, which is still read): how the `App` of one version was built (source URL, observed SHA-256, checksum decision, file fingerprint, `[built]` time and gupkg version); nothing about the runs, whose logs are in `.gupkg\logs`. |
 | **Data directory** | `<package>\data\`: version-independent application state for portable mode (section 6.3). |
 | **Service** | A built-in, declarative operation named in `pkg.toml` (fetch, extract, flatten, rename, discover versions, find checksums). |
 | **Hook** | Trusted package-local code under `pkg.local\`, used only when no service fits: Python modules, and populate scripts, which may also be `.ps1`, `.cmd`/`.bat` or executables (section 4). |
@@ -1870,7 +1870,7 @@ copied) leaves nothing of its copy behind. If the junction cannot be switched, t
 put back. `App` is staged in `.gupkg\work` and renamed into place; with `--refresh` the old `App`
 is moved aside first and restored if the new one cannot be put in place. The receipt
 (`<version>\App.info`: `[source]`, `[checksum]`, `[origin]`, `[app]`, `[inputs]`,
-`[run]` with the log path) and then the install record are written last; a download-only update
+`[built]`: the App only, no run data) and then the install record are written last; a download-only update
 (`update` preparing a version) writes the receipt only.
 
 **Repair.** `install` of an installed package, `repair` and `check --fix` rebuild a missing `App`

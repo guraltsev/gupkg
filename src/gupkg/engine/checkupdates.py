@@ -208,16 +208,11 @@ def check_updates_one(
         sections: dict[str, Any] = {} if populated is None else dict(populated.sections)
         if populated is not None and populated.checksum is not None:
             sections["checksum"] = populated.checksum.to_data()
-        if notes:
-            sections["track"] = {"notes": list(notes)}
-        sections["run"] = {
-            "operation": "check-updates", "mode": context.mode, "activated": False, "finished": engine.now().isoformat(),
-            "gupkg": engine.version, "log": engine.log_path(package_path) or "",
-        }
-        # The record lives in the version directory beside App. A version without an App (--no-download, or a refused download) gets
-        # one only when there is a fact to keep (a note such as a waived checksum), so a plain prepared version directory holds
-        # just its manifest and support files.
-        receipt = update_receipt(package_path, result.version, sections) if populated is not None or notes else None
+        if populated is not None:
+            sections["built"] = {"time": engine.now().isoformat(), "gupkg": engine.version}
+        # The record lives in the version directory beside App and describes the App only: a version without an App
+        # (--no-download, or a refused download) gets none, so it holds just its manifest and support files.
+        receipt = update_receipt(package_path, result.version, sections) if populated is not None else None
         write_track_state(package_path, {
             "checked": engine.now().isoformat(), "found": result.version, "outcome": "new-version",
             "populated": populated is not None, **({"refused": error["code"]} if error else {}),

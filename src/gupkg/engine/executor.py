@@ -156,7 +156,6 @@ def execute_install(engine: Engine, run: ExecutionInput) -> PackageResult:
     plan, context, manifest = run.plan, run.context, run.chosen.manifest
     package_path, version = plan.package_path, plan.version
     version_dir = package_path / version
-    started = engine.now()
 
     # Resolve: show what was decided, then copy in whatever the choice needs.
     with phase("Resolve"):
@@ -193,7 +192,7 @@ def execute_install(engine: Engine, run: ExecutionInput) -> PackageResult:
         if not run.request.download_only:
             record = InstallRecord(context.mode, _link_after(run), tuple(applied))
             write_install_record(package_path, record)
-        receipt = _write_receipt(engine, run, populated, origin, started, activated)
+        receipt = _write_receipt(engine, run, populated, origin)
         if run.adhoc:
             register_adhoc(run.settings, engine.env, package_path, context.mode)
         if failures:
@@ -606,7 +605,7 @@ def _link_after(run: ExecutionInput) -> Link | None:
 
 
 def _write_receipt(
-    engine: Engine, run: ExecutionInput, populated: Populated | None, origin: _Origin, started: Any, activated: bool
+    engine: Engine, run: ExecutionInput, populated: Populated | None, origin: _Origin
 ) -> Path:
     """Write the receipt of this version: what it came from, the checksum facts, the ``App`` fingerprint and the log."""
     plan = run.plan
@@ -631,11 +630,9 @@ def _write_receipt(
             **({"copied_from": origin.copied_from} if origin.copied_from else {}),
             **({"source_marked": origin.source_marked} if origin.source_marked is not None else {}),
         }
-    sections["run"] = {
-        "operation": plan.operation, "mode": plan.mode, "previous": plan.previous or "", "activated": activated,
-        "started": started.isoformat(), "finished": engine.now().isoformat(), "gupkg": engine.version,
-        "log": engine.log_path(plan.package_path) or "",
-    }
+    # When the App was built, and by which gupkg. Only facts about the App: what a run did lives in the run's log.
+    if populated is not None or "built" not in (read_receipt(plan.package_path, plan.version or "").data or {}):
+        sections["built"] = {"time": engine.now().isoformat(), "gupkg": engine.version}
     return update_receipt(plan.package_path, plan.version or "", sections)
 
 

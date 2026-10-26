@@ -284,8 +284,7 @@ never installs a dependency.
 When a call fails, preserve the evidence before changing anything:
 
 1. `gupkg check` and `gupkg registry status`; keep `gupkg list --details --json`.
-2. `gupkg logs NAME --path` and read the newest log; the receipt (`<name>\<version>\App.info`, in the version directory beside `App`) stores the log of the
-   run that wrote it.
+2. `gupkg logs NAME --path` and read the newest log; the receipt (`<name>\<version>\App.info`) describes the App only and holds no log.
 3. For a registry problem retry `gupkg registry sync`; a failed sync keeps the previous validated cache, and `--offline` uses it.
 4. For a package problem fix `pkg.toml`, run `gupkg pkg check <path>`, then `gupkg install NAME`.
 5. For gupkg itself run `gupkg self status`, then re-run the bootstrap if files differ.

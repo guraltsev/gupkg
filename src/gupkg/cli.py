@@ -1066,13 +1066,13 @@ def _pkg_pin(run: _Run) -> int:
         return EXIT_OK
 
     # Show the facts the user is about to rely on, and say plainly that the hash is only what one unverified download produced.
-    saved = (receipt.data or {}).get("run", {})
+    built = (receipt.data or {}).get("built", {})
     facts = [
         f"package {view.name} {version}",
         f"url:       {record.url or '-'}",
         f"final url: {record.final_url or '-'}",
         f"size:      {record.size if record.size is not None else '-'} bytes",
-        f"date:      {saved.get('finished', '-') if isinstance(saved, dict) else '-'}",
+        f"date:      {built.get('time', '-') if isinstance(built, dict) else '-'}",
         f"sha256:    {record.observed_sha256}",
         "This hash comes from a download that was NOT verified. Pinning it makes later installs fail if the file changes, "
         "but it proves nothing about the file you got the first time.",

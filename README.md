@@ -351,7 +351,7 @@ and error is printed once.
 Every run that acts on a package leaves, in that package's `<root>\<name>\.gupkg\logs\`, a
 `<UTC yyyymmddThhmmssZ>-<command>.log` (plain text, flushed per line) and a `.jsonl` file with the same events. The run as a
 whole leaves a log in `<root>\.gupkg\logs\` that holds only global information and the paths of the package logs it links to.
-The closing summary names every log, each receipt stores the log of the run that wrote it, and `gupkg logs <target>` lists,
+The closing summary names every log, the receipt (`App.info`) describes only the App, not the runs, and `gupkg logs <target>` lists,
 prints (`--path`) or opens (`--open`) them. A run that involves no package, started by a bundled gupkg, logs in its own
 package's `.gupkg\logs\`; one started by an installed gupkg logs in its root's `.gupkg\logs\`. `latest.log` in each log
 folder is a copy of the newest text log. `[logs] keep_runs` and `keep_days` of the settings (default 50 runs, 90 days) are

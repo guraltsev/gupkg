@@ -104,7 +104,7 @@ def test_install_creates_the_whole_machine_state(world: World) -> None:
     record = read_install_record(package).record
     assert record.mode == "user" and sorted(effect.kind for effect in record.effects) == ["env", "path", "path", "shim", "shortcut"]
     receipt = read_receipt(package, "1.0.0").data
-    assert receipt["checksum"]["decision"] == "verified" and receipt["run"]["operation"] == "install"
+    assert receipt["checksum"]["decision"] == "verified" and "run" not in receipt and receipt["built"]["gupkg"]
     assert receipt["app"]["count"] == 1 and receipt["app"]["files"] == {"app.exe": hashlib.sha256(b"tool 1.0.0\n").hexdigest()}
 
 
@@ -153,7 +153,7 @@ def test_update_activates_a_prepared_version_without_downloading(world: World) -
 
     assert result.ok and result.status == "updated" and (result.version, result.previous) == ("1.1.0", "1.0.0")
     assert world.fake.fetch_log == [] and current_version(world.user / "tool") == "1.1.0"
-    assert read_receipt(world.user / "tool", "1.1.0").data["run"]["activated"] is True
+    assert "run" not in read_receipt(world.user / "tool", "1.1.0").data
 
 
 def test_check_updates_without_download_then_update_populates_and_activates(world: World) -> None:
@@ -392,7 +392,7 @@ def test_a_download_only_update_prepares_the_version_and_changes_no_integration(
 
     assert result.ok and result.status == "prepared" and current_version(package) == "1.0.0"
     assert (package / "1.1.0" / "App" / "app.exe").is_file() and (package / ".gupkg" / "package.toml").read_text() == record
-    assert dict(world.fake.shortcuts()) == shortcuts and read_receipt(package, "1.1.0").data["run"]["activated"] is False
+    assert dict(world.fake.shortcuts()) == shortcuts
     assert world.one("update", "tool").status == "updated"
 
 

@@ -282,7 +282,7 @@ def test_a_waived_optional_checksum_source_is_shown_returned_and_recorded(tmp_pa
     assert result.ok and result.version == "1.1.0" and "sha256" not in text and "[source.checksum]" not in text
     assert len(result.warnings) == 1 and "optional checksum source" in result.warnings[0] and result.details["notes"] == list(result.warnings)
     assert any("optional checksum source" in line for line in seen)
-    assert read_receipt(world.user / "tool", "1.1.0").data["track"]["notes"] == list(result.warnings)
+    assert not (world.user / "tool" / "1.1.0" / "App.info").exists()
 
 
 @pytest.mark.parametrize("version", ["con", "NUL.txt", "1.0 ", "..", "a%b"])

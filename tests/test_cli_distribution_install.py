@@ -47,6 +47,6 @@ def test_installing_a_distribution_folder_writes_nothing_into_the_source(tmp_pat
     destination = root / "demo"
     [package_log] = (destination / ".gupkg" / "logs").glob("*-install.log")
     receipt_file = next(destination.glob("*/App.info"))
-    assert tomllib.loads(receipt_file.read_text(encoding="utf-8"))["run"]["log"] == str(package_log)
+    assert "run" not in tomllib.loads(receipt_file.read_text(encoding="utf-8"))
     listed = world.cli("logs", "demo", "--path", "--mode", mode)
     assert listed.code == 0 and str(destination / ".gupkg" / "logs") in listed.out

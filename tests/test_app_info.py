@@ -36,7 +36,7 @@ def test_an_install_writes_app_info_in_the_version_directory_and_nothing_in_the_
 
     info = tomllib.loads((package / "1.0.0" / "App.info").read_text(encoding="utf-8"))
 
-    assert info["schema"] == 1 and info["source"]["kind"] == "download" and info["run"]["operation"] == "install"
+    assert info["schema"] == 1 and info["source"]["kind"] == "download" and "run" not in info and info["built"]["gupkg"]
     assert not (package / ".gupkg" / "receipts").exists() and list_receipts(package) == ["1.0.0"]
 
 
