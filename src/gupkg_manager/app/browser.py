@@ -57,12 +57,15 @@ class BrowserScreen(PackageActions, FrameScreen):
         self.available = False
         self.error: str | None = None
         self.loaded = False
+        self.hinted = False
 
     # -- frame ---------------------------------------------------------------------
 
     def key_hints(self) -> str:
         """Return the keys of the browser."""
-        return "↑↓ Enter open  / filter  c check  u update  U all  x remove  ? help  q quit"
+        if getattr(self.app, "registry_unsynced", False):
+            return "s DOWNLOAD THE REGISTRY  a list available  c check  u update  ? help  q quit"
+        return "↑↓ Enter open  / filter  c check  u update  U all  s sync  ? help  q quit"
 
     def status_text(self) -> str:
         """Return the program's counts and registry state."""
@@ -97,6 +100,12 @@ class BrowserScreen(PackageActions, FrameScreen):
         await self.app.read_registry()
         self.app.set_inventory(self.rows, self.error)
         self._fill()
+        if self.app.registry_unsynced and not self.hinted:
+            self.hinted = True
+            self.notify(
+                "The registry is not downloaded yet. Press s to download it, then a to list its packages and i to install one.",
+                title="Registry", timeout=15, markup=False,
+            )
 
     def _visible(self) -> list[PackageRow]:
         """Return the rows that match the filter text (name, mode, status or registry entry, any case)."""

@@ -38,6 +38,9 @@ def build_tree(root: Path, *, forwarder: bool, bundled: bool) -> Path:
     if forwarder:
         (root / ".gupkg").mkdir()
         (root / ".gupkg" / "gupkg.cmd").write_text(FAKE.format(label="FORWARDER", variable="FORWARDER_EXIT"), encoding="ascii")
+        # The gupkg the forwarder names: without it the forwarder is broken and is not used.
+        (root / "gupkg" / "current" / "App").mkdir(parents=True)
+        (root / "gupkg" / "current" / "App" / "gupkg.cmd").write_text("@echo off\r\n", encoding="ascii")
     if bundled:
         (version / "gupkg").mkdir()
         (version / "gupkg" / "gupkg.cmd").write_text(FAKE.format(label="BUNDLED", variable="BUNDLED_EXIT"), encoding="ascii")
@@ -106,6 +109,73 @@ def test_no_pause_variable_turns_the_pause_off_even_for_install(tmp_path: Path) 
     version = build_tree(tmp_path, forwarder=True, bundled=False)
 
     assert "Press any key" not in run(version / "install.cmd").stdout
+
+
+def make_root_gupkg(root: Path, version: str, *, label: str, current: bool = False) -> Path:
+    """Create `<root>/gupkg/<version>` with a bundled gupkg that echoes *label* (and `<root>/gupkg/current/App` when asked)."""
+    folder = root / "gupkg" / version
+    (folder / "gupkg").mkdir(parents=True)
+    (folder / "pkg.toml").write_text("format = 2\n", encoding="utf-8")
+    (folder / "gupkg" / "gupkg.cmd").write_text(FAKE.format(label=label, variable="BUNDLED_EXIT"), encoding="ascii")
+    if current:
+        (root / "gupkg" / "current" / "App").mkdir(parents=True)
+        (root / "gupkg" / "current" / "App" / "gupkg.cmd").write_text("@echo off\r\n", encoding="ascii")
+    return folder
+
+
+def test_a_forwarder_whose_gupkg_is_gone_is_not_used_and_the_bundled_gupkg_runs(tmp_path: Path) -> None:
+    """A root forwarder is broken when <root>\\gupkg\\current\\App\\gupkg.cmd is missing: the launcher says so and uses the bundled copy."""
+    version = build_tree(tmp_path, forwarder=False, bundled=True)
+    (tmp_path / ".gupkg").mkdir()
+    (tmp_path / ".gupkg" / "gupkg.cmd").write_text(FAKE.format(label="FORWARDER", variable="FORWARDER_EXIT"), encoding="ascii")
+
+    result = run(version / "install.cmd")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.startswith("BUNDLED install ") and "FORWARDER" not in result.stdout
+    assert "The installed gupkg is broken" in result.stderr
+
+
+def test_a_broken_installed_gupkg_is_repaired_from_the_newest_gupkg_folder_of_the_root_and_the_command_runs(tmp_path: Path) -> None:
+    """With no bundled copy, the newest <root>\\gupkg\\<version> that carries a gupkg repairs the installed one (install of that folder) and runs the command."""
+    version = build_tree(tmp_path, forwarder=False, bundled=False)
+    (tmp_path / ".gupkg").mkdir()
+    (tmp_path / ".gupkg" / "gupkg.cmd").write_text(FAKE.format(label="FORWARDER", variable="FORWARDER_EXIT"), encoding="ascii")
+    old = make_root_gupkg(tmp_path, "1.0.2", label="OLD")
+    os.utime(old, (1_000_000_000, 1_000_000_000))
+    newest = make_root_gupkg(tmp_path, "1.0.5", label="NEWEST")
+
+    result = run(version / "install.cmd", "--yes")
+
+    lines = result.stdout.splitlines()
+    assert result.returncode == 0, result.stderr
+    assert lines[0].startswith('NEWEST "install" ') and f'"{newest}\\."' in lines[0]
+    assert lines[1].startswith("NEWEST install ") and "--yes" in lines[1] and f'"{version}\\."' in lines[1]
+    assert "OLD" not in result.stdout and "Repairing it from" in result.stderr
+
+
+def test_an_elevated_launcher_does_not_repair_from_a_gupkg_folder_a_standard_user_can_change(tmp_path: Path) -> None:
+    """In a user-writable tree an elevated launcher with a broken installed gupkg refuses the root's gupkg folder: nothing of it runs."""
+    version = build_tree(tmp_path, forwarder=False, bundled=False)
+    (tmp_path / ".gupkg").mkdir()
+    (tmp_path / ".gupkg" / "gupkg.cmd").write_text(FAKE.format(label="FORWARDER", variable="FORWARDER_EXIT"), encoding="ascii")
+    make_root_gupkg(tmp_path, "1.0.5", label="NEWEST")
+    as_elevated(version)
+
+    result = run(version / "install.cmd", inherit=True)
+
+    assert "NEWEST" not in result.stdout and "cannot be trusted in an elevated run" in result.stderr
+    assert result.returncode == 9009
+
+
+def test_a_working_installed_gupkg_is_never_replaced_by_a_root_gupkg_folder(tmp_path: Path) -> None:
+    """When the forwarder works, the gupkg folders of the root play no part."""
+    version = build_tree(tmp_path, forwarder=True, bundled=False)
+    make_root_gupkg(tmp_path, "1.0.5", label="NEWEST")
+
+    result = run(version / "install.cmd")
+
+    assert result.stdout.startswith("FORWARDER install ") and "NEWEST" not in result.stdout and "broken" not in result.stderr
 
 
 def test_tui_launcher_runs_the_tui_command(tmp_path: Path) -> None:
@@ -213,6 +283,8 @@ def test_check_updates_launcher_checks_the_package_named_by_its_folder_and_insta
     write_launchers(tracker, ("check-updates.cmd",))
     (tmp_path / ".gupkg").mkdir()
     (tmp_path / ".gupkg" / "gupkg.cmd").write_text(FAKE.format(label="FORWARDER", variable="FORWARDER_EXIT"), encoding="ascii")
+    (tmp_path / "gupkg" / "current" / "App").mkdir(parents=True)
+    (tmp_path / "gupkg" / "current" / "App" / "gupkg.cmd").write_text("@echo off\r\n", encoding="ascii")
 
     result = run(tracker / "check-updates.cmd")
 
@@ -263,6 +335,9 @@ def marker_tree(root: Path, *, forwarder: bool) -> tuple[Path, Path]:
     target = root / ".gupkg" if forwarder else version / "gupkg"
     target.mkdir(parents=True)
     (target / "gupkg.cmd").write_text(MARKER.format(marker=marker), encoding="ascii")
+    if forwarder:
+        (root / "gupkg" / "current" / "App").mkdir(parents=True)
+        (root / "gupkg" / "current" / "App" / "gupkg.cmd").write_text("@echo off\r\n", encoding="ascii")
     return version, marker
 
 

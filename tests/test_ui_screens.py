@@ -404,6 +404,42 @@ def test_dialogs_answer_only_to_explicit_keys(tmp_path: Path, fake: FakeGupkg) -
     assert call["targets"] == ["user:alpha"] and "--yes" in call["options"] and "--no-input" in call["options"] and "--purge" not in call["options"]
 
 
+def test_a_registry_that_was_never_downloaded_is_announced_in_the_hint_line_and_the_status_line(tmp_path: Path, fake: FakeGupkg) -> None:
+    """With no registry downloaded, the key-hint line leads with `s DOWNLOAD THE REGISTRY` and the status line says it; `s` is always in the hints."""
+    fake.scenario["registry"] = []  # the fixture's preset answer is replaced
+    fake.respond("registry", doc=head("registry status", registries=[{"name": "main", "source": "https://example.org/registry.git"}]))
+    seen: dict[str, str] = {}
+
+    async def scenario(app, pilot) -> None:
+        """Read the two frame lines once the browser has loaded."""
+        await open_browser(app, pilot)
+        await wait_for(pilot, lambda: "NOT DOWNLOADED" in screen_text(app)[-1], "the registry state")
+        rows = screen_text(app)
+        seen["hint"], seen["status"] = rows[0], rows[-1]
+
+    run_app(tmp_path, fake, scenario)
+
+    assert seen["hint"].strip().startswith("s DOWNLOAD THE REGISTRY") and "a list available" in seen["hint"]
+    assert "registry main: NOT DOWNLOADED, press s" in seen["status"]
+
+
+def test_a_downloaded_registry_leaves_a_plain_hint_line_that_still_names_s(tmp_path: Path, fake: FakeGupkg) -> None:
+    """With a registry downloaded the normal hints show, and they include `s sync`."""
+    fake.scenario["registry"] = []  # the fixture's preset answer is replaced
+    fake.respond("registry", doc=head("registry status", registries=[{"name": "main", "source": "x", "revision": "abcdef1234", "synchronized_at": "2026-10-25T00:00:00+00:00"}]))
+    seen: dict[str, str] = {}
+
+    async def scenario(app, pilot) -> None:
+        """Read the hint line after the registry state is in the status line."""
+        await open_browser(app, pilot)
+        await wait_for(pilot, lambda: "registry main @ abcdef1" in screen_text(app)[-1], "the registry state")
+        seen["hint"] = screen_text(app)[0]
+
+    run_app(tmp_path, fake, scenario)
+
+    assert "s sync" in seen["hint"] and "DOWNLOAD" not in seen["hint"]
+
+
 def test_the_s_key_synchronises_the_registry_with_one_cli_call_and_no_package(tmp_path: Path, fake: FakeGupkg) -> None:
     """In the manager, ``s`` runs ``gupkg registry sync`` once with the machine options, names no package, and returns to the browser."""
     doc = result("registry sync", [])

@@ -66,6 +66,7 @@ class ManagerApp(UiApp):
         self.rows: list[PackageRow] = []
         self.inventory_error: str | None = None
         self.registry: str = ""
+        self.registry_unsynced = False
 
     def on_mount(self) -> None:
         """Open the browser."""
@@ -88,13 +89,21 @@ class ManagerApp(UiApp):
             self.registry = ""
             return
         parts = []
+        unsynced = False
         for item in document.get("registries", ()):
             if isinstance(item, dict) and isinstance(item.get("name"), str):
                 revision = item.get("revision") if isinstance(item.get("revision"), str) else None
                 name = literal(item["name"], limit=30)
                 synced = item.get("synchronized_at") if isinstance(item.get("synchronized_at"), str) else None
-                parts.append(f"registry {name} @ {literal(revision[:7], limit=12)} (synced {age(synced)})" if revision else f"registry {name}: not synced")
+                unsynced = unsynced or not revision
+                parts.append(
+                    f"registry {name} @ {literal(revision[:7], limit=12)} (synced {age(synced)})" if revision
+                    else f"registry {name}: NOT DOWNLOADED, press s"
+                )
+        if not parts:
+            parts.append("no registry configured (gupkg registry add NAME SOURCE)")
         self.registry = " · ".join(parts)
+        self.registry_unsynced = unsynced
 
     def status_parts(self) -> list[str]:
         """Return the counts, the registry state and any inventory error."""
