@@ -448,8 +448,9 @@ Rules that apply to every case:
 3. **Tracker output is a normal version directory.** Its `pkg.toml` is fully
    pinned (section 7.4). After creation it is indistinguishable from a
    registry pinned version, and the tracker plays no further part in it.
-4. **Downgrades are explicit.** `gupkg switch <name> <version>` replaces
-   `--allow-downgrade`.
+4. **Downgrades are explicit.** `gupkg switch <name> <version>` is the way back. `install` and `update` of a version older than the
+   active one ask first (owner decision, after 1.0); `--yes` or `--allow-downgrade` answers. Other version directories that are broken
+   or not supported also ask, and `--yes` or `--allow-other-broken-versions` answers (`--no-input` makes either question exit code 5).
 5. **Each scope is a separate package.** `system:firefox` and `user:firefox`
    are independent. `list` warns about the pair because their shims shadow
    each other on PATH. A bare name that exists in several roots is ambiguous
@@ -1409,7 +1410,7 @@ Readings that the issue 029 implementation settled:
 | `gupkg --scope user manager update --yes` | `gupkg manager update --all --mode user --yes`, which forwards to `gupkg-manager` |
 | `gupkg update PATH --check-only` | `gupkg check-updates PATH --no-download`. This also writes the new version directory, but installs nothing. |
 | `gupkg update PATH` (check + download + install) | `gupkg check-updates PATH` (finds, downloads and prepares), then `gupkg update PATH` (activates): two separate operations. |
-| `gupkg install PATH --allow-downgrade` | `gupkg switch PATH 1.2.3` |
+| `gupkg install PATH --allow-downgrade` | unchanged (it asks first without the option); `gupkg switch PATH 1.2.3` is the explicit way back |
 | `--no-checksum` | `--skip-checksum` (missing hashes only, `https://` URLs only) |
 | `gupkg config-check` / `config-fix` | `gupkg pkg check` / `gupkg migrate` (section 18) |
 | `gupkg manager list/doctor/search/registry` | `gupkg list/check/search/registry` |

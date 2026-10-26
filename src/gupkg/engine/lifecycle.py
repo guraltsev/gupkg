@@ -545,6 +545,8 @@ def _prepare_install(
 
     # A package for a newer gupkg is refused with exit code 6, before any effect is planned (design 21.3).
     require_gupkg_version(manifest.requires_gupkg, engine.version, f"{view.name} {candidate.version}")
+    if execute:
+        _ask_about_other_versions(engine, request, view, candidate.version, context.mode)
 
     # Effects the version declares for this mode, and what a repair found missing on the machine.
     desired, notes = desired_effects(manifest, effect_context(context, package_path, engine.effect_env))
@@ -633,6 +635,37 @@ def _choose(engine: Engine | None, target: _Target, view: PackageView, execute: 
     return candidate, None
 
 
+def _ask_about_other_versions(engine: Engine, request: Request, view: PackageView, version: str, mode: str) -> None:
+    """Ask before ``install`` or ``update`` goes on when the choice has a catch: an older version, or other versions that are unusable.
+
+    Two questions, each answered by ``--yes`` or by its own option: installing *version* when it is older than the active one
+    (``--allow-downgrade``), and installing it while other version directories of the package are broken or not supported by this mode
+    or this gupkg (``--allow-other-broken-versions``). ``switch`` (the explicit way back) and a repair of the active version ask nothing.
+    """
+    if request.operation not in ("install", "update"):
+        return
+    active = view.installed.version if view.installed is not None else None
+    if active is not None and compare_versions(version, active) < 0:
+        _confirm(
+            engine, f"{view.name} {version} is older than the active version {active}. Install it anyway?",
+            allowed=engine.allow_downgrade, flag="--allow-downgrade",
+        )
+    unusable = []
+    for state in view.local.versions if view.local is not None else ():
+        if state.name.casefold() == version.casefold():
+            continue
+        problems = [problem for problem in state.problems if problem != APP_MISSING_ERROR]
+        if problems:
+            unusable.append(f"{state.name} ({problems[0]})")
+        elif state.manifest is not None and not state.manifest.supports(mode):
+            unusable.append(f"{state.name} (does not support {mode} mode)")
+    if unusable:
+        _confirm(
+            engine, f"{view.name} has other version directories that are broken or not supported: {'; '.join(unusable)}. Install {version} anyway?",
+            allowed=engine.allow_other_broken_versions, flag="--allow-other-broken-versions",
+        )
+
+
 def _warn_about_newer_invalid_versions(view: PackageView, chosen: Candidate) -> None:
     """Say so when a bare install fell back to *chosen* because a newer version directory is not valid."""
     if view.installed is not None or view.local is None:
@@ -713,18 +746,20 @@ def _uninstall(engine: Engine, target: _Target) -> PackageResult:
     return execute_uninstall(engine, run)
 
 
-def _confirm(engine: Engine, question: str) -> None:
-    """Ask a consequential question (design 10.1, decision D25): ``--yes`` answers it, ``--no-input`` or no way to ask is exit 5.
+def _confirm(engine: Engine, question: str, *, allowed: bool = False, flag: str | None = None) -> None:
+    """Ask a consequential question (design 10.1, decision D25): ``--yes`` (or the question's own *flag*, when it is *allowed*) answers it,
+    ``--no-input`` or no way to ask is exit 5.
 
     Raises
     ------
     InputNeeded
         If the question was declined or cannot be asked; nothing was changed.
     """
-    if engine.yes:
+    if engine.yes or allowed:
         return
     if engine.no_input or engine.confirm is None:
-        raise InputNeeded(f"{question} Pass --yes to confirm. Nothing was changed.")
+        how = f"--yes or {flag}" if flag else "--yes"
+        raise InputNeeded(f"{question} Pass {how} to confirm. Nothing was changed.")
     emit(Prompt(question))
     if not engine.confirm(question):
         raise InputNeeded("Declined. Nothing was changed.")

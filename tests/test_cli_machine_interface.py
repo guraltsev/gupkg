@@ -171,7 +171,12 @@ def test_a_bare_install_that_falls_back_to_an_older_version_names_the_invalid_ne
     start = text.index('sha256 = "') + len('sha256 = "')
     newer.joinpath("pkg.toml").write_text(text[:start] + "zz" + text[start + 2:], encoding="utf-8")
 
-    result = world.cli("install", "fresh", "--json")
+    refused = world.cli("install", "fresh", "--json")
+
+    shown = refused.out + refused.err
+    assert refused.code == 5 and "other version directories that are broken or not supported: 2.0.0" in shown and "Install 1.0.0 anyway?" in shown
+
+    result = world.cli("install", "fresh", "--allow-other-broken-versions", "--json")
 
     assert result.code == 0, result.err
     assert result.document()["results"][0]["version"] == "1.0.0"

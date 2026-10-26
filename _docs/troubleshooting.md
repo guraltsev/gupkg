@@ -63,6 +63,8 @@ gupkg self status               :: is gupkg's own installation healthy?
 | `No portable root is configured and none was given ...` (exit 5) | Set `[roots].portable` in `settings.toml`, or give `--mode portable` a folder shaped `<name>\<version>\pkg.toml`. |
 | `The roots differ between the system settings and the settings of a normal run` | A user layer changes a root. Make the system layer alone name the roots. |
 | `... is outside every root and is not a version directory` | A folder you named is not a version folder (no `pkg.toml`). Name the version folder. |
+| `<name> <version> is older than the active version <active>. Install it anyway?` (exit 5 with `--no-input`) | Answer yes, or pass `--allow-downgrade` (or `--yes`). `gupkg switch <name> <version>` goes back without asking. |
+| `<name> has other version directories that are broken or not supported: ...` (exit 5 with `--no-input`) | Fix or delete those folders, or pass `--allow-other-broken-versions` (or `--yes`) to install anyway. |
 | `--in-place with system mode needs an admin-only folder` | Copy the distribution into a root (the default) or place it in an admin-only folder. |
 | `Refusing to run elevated: ... is not admin-only` | gupkg's own folders can be changed by standard users, so an elevated run refuses. Run the `icacls` command in the message from an elevated prompt, or install gupkg under an admin-only folder. |
 | `The bundled Python is missing: ...` or an `ImportError` in gupkg itself | The install is damaged. `gupkg self status` shows which files differ from `MANIFEST.sha256`; install the release ZIP again with `gupkg-bootstrap.cmd`. gupkg never repairs or downloads its runtime. |

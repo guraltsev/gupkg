@@ -194,8 +194,8 @@ no `--all` and no interactive screen: `gupkg-manager` is the program for batches
 
 ```text
 gupkg check-updates <target>... [--no-download] [--mode M] [--skip-checksum]   run trackers; write and prepare new versions; activate nothing
-gupkg install  <target>... [--mode M] [--skip-checksum] [--refresh] [--in-place] [--yes]
-gupkg update   <target>... [--mode M] [--skip-checksum] [--yes]   activate the newest KNOWN version; never runs a tracker
+gupkg install  <target>... [--mode M] [--skip-checksum] [--refresh] [--in-place] [--yes] [--allow-downgrade] [--allow-other-broken-versions]
+gupkg update   <target>... [--mode M] [--skip-checksum] [--yes] [--allow-downgrade] [--allow-other-broken-versions]   activate the newest KNOWN version; never runs a tracker
 gupkg switch   <target> <version>                       activate another local version (rollback)
 gupkg uninstall <target>... [--purge] [--yes]           remove the integration; --purge also deletes the package folder and its data
 gupkg check    [<target>...] [--fix]                    health: drift, App fingerprint, registry fingerprint, unverified installs
@@ -246,6 +246,11 @@ with exit code 5 (the child's own `stop_file` is in its events file).
 distribution) is copied into the mode's root first, unless `--in-place`. With `integrate = "none"` in
 `[integration.portable]`, a portable install touches neither the registry nor the Start Menu, and `gupkg shell` prints the
 line that puts `<root>\bin` on `PATH`.
+
+`install` and `update` ask before two things, and `--yes` answers both: installing a version **older than the active one**
+(`--allow-downgrade` answers only that), and installing while **other version directories of the package are broken or not
+supported** by the mode or this gupkg (`--allow-other-broken-versions` answers only that). With `--no-input`, or with nobody to ask,
+either question is exit code 5 and nothing is changed. `switch` (the explicit way back) and a repair of the active version ask nothing.
 
 ### The machine interface
 

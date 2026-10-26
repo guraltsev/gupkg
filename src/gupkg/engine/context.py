@@ -65,6 +65,9 @@ class Engine:
         Asks a yes-or-no question and returns the answer; ``None`` when nobody can be asked.
     yes, no_input : bool
         ``--yes`` answers every question with yes; ``--no-input`` turns every question into exit code 5.
+    allow_downgrade, allow_other_broken_versions : bool
+        ``--allow-downgrade`` answers the question "install a version older than the active one?" and
+        ``--allow-other-broken-versions`` the question "other version directories are broken or unsupported: go on?" with yes.
     cancel : callable
         Returns true once the user asked to stop; checked between packages.
     log_path : callable
@@ -102,6 +105,8 @@ class Engine:
     confirm: Callable[[str], bool] | None = None
     yes: bool = False
     no_input: bool = False
+    allow_downgrade: bool = False
+    allow_other_broken_versions: bool = False
     cancel: Callable[[], bool] = lambda: False
     log_path: Callable[[Path], str | None] = lambda path: None
     relaunched: bool = False

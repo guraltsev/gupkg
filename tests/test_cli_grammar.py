@@ -122,7 +122,7 @@ def test_only_engine_commands_can_be_started_as_a_relaunch(world: CliWorld, argv
 
 
 @pytest.mark.parametrize(
-    "option", ["--no-checksum", "--allow-downgrade", "--refresh-app", "--shim-linkage", "--format", "--pause", "--download-only"]
+    "option", ["--no-checksum", "--refresh-app", "--shim-linkage", "--format", "--pause", "--download-only"]
 )
 def test_the_other_removed_options_are_plain_unrecognized_arguments(world: CliWorld, option: str) -> None:
     """Core keeps no legacy-specific code (D33): only --all, --check, --check-only and --scope are named; the rest is argparse's own error."""

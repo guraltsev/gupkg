@@ -257,6 +257,15 @@ def _usage_error(tokens: Sequence[str], message: str) -> int:
     return EXIT_USER
 
 
+def _version_questions(parser: argparse.ArgumentParser) -> None:
+    """Add the two options that answer the questions of ``install`` and ``update`` about the package's other versions."""
+    parser.add_argument("--allow-downgrade", action="store_true", help="install a version older than the active one without asking")
+    parser.add_argument(
+        "--allow-other-broken-versions", action="store_true",
+        help="go on without asking when other version directories of the package are broken or not supported",
+    )
+
+
 def _ask(question: str) -> bool:
     """Ask a yes-or-no question on the terminal (the question itself was already shown as a prompt event); no answer is no."""
     sys.stderr.write("[y/N] ")
@@ -559,6 +568,8 @@ def _engine(
 
     return Engine(
         system=run.system, env=run.env, load=run.loader, confirm=_ask, yes=bool(args.yes), no_input=bool(args.no_input),
+        allow_downgrade=bool(getattr(args, "allow_downgrade", False)),
+        allow_other_broken_versions=bool(getattr(args, "allow_other_broken_versions", False)),
         cancel=stop_marker(stop_path) if stop_path is not None else (lambda: False), log_path=log_path,
         relaunched=bool(getattr(args, "relaunched", False)),
         argv=_child_argv(run, command, targets, batch_confirmed=batch_confirmed, stop_path=stop_path, events_name=events_name),
@@ -607,7 +618,8 @@ def _child_argv(
     for flag, option in (
         ("no_download", "--no-download"), ("refresh", "--refresh"), ("in_place", "--in-place"), ("purge", "--purge"),
         ("bundled", "--bundled"), ("fix", "--fix"), ("unlink", "--unlink"), ("plan", "--plan"), ("yes", "--yes"),
-        ("no_input", "--no-input"),
+        ("no_input", "--no-input"), ("allow_downgrade", "--allow-downgrade"),
+        ("allow_other_broken_versions", "--allow-other-broken-versions"),
     ):
         if getattr(args, flag, False):
             argv.append(option)
@@ -1357,11 +1369,13 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_argument("targets", nargs="+", metavar="TARGET")
     sub.add_argument("--refresh", action="store_true", help="rebuild an App that can be rebuilt")
     sub.add_argument("--in-place", action="store_true", help="install a distribution folder where it is (an ad-hoc root)")
+    _version_questions(sub)
     _options(sub, mutating=True, plan=True, skip=True, events=True, relaunch=True)
 
     sub = add("update", "Activate the newest known version of each installed package; never runs a tracker.",
               "gupkg update firefox")
     sub.add_argument("targets", nargs="+", metavar="TARGET")
+    _version_questions(sub)
     _options(sub, mutating=True, plan=True, skip=True, events=True, relaunch=True)
 
     sub = add("switch", "Activate another local version of an installed package (the way back).",
