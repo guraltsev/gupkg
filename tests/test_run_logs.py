@@ -369,7 +369,7 @@ def test_an_install_leaves_package_logs_a_linking_run_log_and_nothing_in_appdata
     assert not appdata.exists() and not programdata.exists()
 
     # The receipt of the installed version names this run's package log.
-    [receipt_file] = (root / "Example" / ".gupkg" / "receipts").glob("*.toml")
+    receipt_file = next((root / "Example").glob("*/App.info"))
     assert tomllib.loads(receipt_file.read_text(encoding="utf-8"))["run"]["log"] == str(package_log)
 
 

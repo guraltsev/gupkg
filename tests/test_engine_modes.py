@@ -145,7 +145,7 @@ def test_each_mode_runs_only_its_own_prepare_steps(world: World) -> None:
 
 def receipt_path(world: World) -> Path:
     """Return the receipt of version 1.0.0 of the user package ``tool``."""
-    return world.user / "tool" / ".gupkg" / "receipts" / "1.0.0.toml"
+    return world.user / "tool" / "1.0.0" / "App.info"
 
 
 def pretend_prepared_for_portable(world: World) -> None:

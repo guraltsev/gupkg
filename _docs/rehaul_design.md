@@ -227,7 +227,7 @@ Non-goals:
 | **Registry** | A read-only catalogue of package definitions (pinned versions and optional trackers), downloaded into a cache. Several registries may be configured; the official one is named `main`. |
 | **Link** | Which registry entry a local package follows. By default it is the entry with the same name (D2); `gupkg link` points it elsewhere or opts out. Recorded in `<package>\.gupkg\package.toml`. |
 | **Install record** | `<package>\.gupkg\package.toml`: mode, link, and the integration effects last applied (used by uninstall and stale-effect cleanup). |
-| **Receipt** | `<package>\.gupkg\receipts\<version>.toml`: what one install of one version did (source URL, observed SHA-256, checksum decision, log file, timestamps). |
+| **Receipt** | `<package>\<version>\App.info` (owner decision after 1.0; before that `<package>\.gupkg\receipts\<version>.toml`, which is still read): what one install of one version did (source URL, observed SHA-256, checksum decision, log file, timestamps). |
 | **Data directory** | `<package>\data\`: version-independent application state for portable mode (section 6.3). |
 | **Service** | A built-in, declarative operation named in `pkg.toml` (fetch, extract, flatten, rename, discover versions, find checksums). |
 | **Hook** | Trusted package-local code under `pkg.local\`, used only when no service fits: Python modules, and populate scripts, which may also be `.ps1`, `.cmd`/`.bat` or executables (section 4). |
@@ -245,13 +245,13 @@ Non-goals:
     1.2.3\                               # pinned version
       pkg.toml                           #   [source] download_url + sha256
       App\                               #   payload; absent/empty until populated
+      App.info                           #   the receipt: how the App was built, and for which mode
       icons\ ...
     1.2.4\                               # pinned, not yet populated ("available")
       pkg.toml
     data\                                # portable-mode persistent state (section 6.3)
     .gupkg\
       package.toml                       # install record: mode, link, applied effects
-      receipts\<version>.toml
             state\track.toml                   # last tracker check result
       logs\                              # this package's run logs (section 14.3)
       locks\
@@ -1869,7 +1869,7 @@ A distribution folder that is refused (a fingerprint mismatch, a source that cha
 copied) leaves nothing of its copy behind. If the junction cannot be switched, the previous one is
 put back. `App` is staged in `.gupkg\work` and renamed into place; with `--refresh` the old `App`
 is moved aside first and restored if the new one cannot be put in place. The receipt
-(`.gupkg\receipts\<version>.toml`: `[source]`, `[checksum]`, `[origin]`, `[app]`, `[inputs]`,
+(`<version>\App.info`: `[source]`, `[checksum]`, `[origin]`, `[app]`, `[inputs]`,
 `[run]` with the log path) and then the install record are written last; a download-only update
 (`update` preparing a version) writes the receipt only.
 

@@ -54,7 +54,7 @@ from .safepath import UnsafePath, check_member_name, is_reparse_point
 
 FINGERPRINT_ALGORITHM = 1
 HEADER = f"gupkg-fingerprint-{FINGERPRINT_ALGORITHM}\n"
-EXCLUDED_TOP_LEVEL = frozenset({"app", "gupkg"})
+EXCLUDED_TOP_LEVEL = frozenset({"app", "app.info", "gupkg"})
 _CHUNK = 1024 * 1024
 MAX_FILES = 10_000
 MAX_DIRECTORIES = 2_000

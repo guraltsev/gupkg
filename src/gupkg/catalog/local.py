@@ -414,7 +414,7 @@ def _link_problems(directory: Path, names: tuple[str, ...]) -> list[str]:
 
 def _scan_version(directory: Path) -> VersionState:
     """Validate one version directory; a link inside it is a problem and is never read."""
-    problems = _link_problems(directory, (MANIFEST_NAME, "App", "pkg.local"))
+    problems = _link_problems(directory, (MANIFEST_NAME, "App", "App.info", "pkg.local"))
     manifest = None
     if not problems:
         try:

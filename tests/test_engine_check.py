@@ -178,7 +178,7 @@ def test_an_app_with_too_many_files_to_list_is_still_checked_by_its_digest(tmp_p
     members = {f"lib/file{index:05d}.dat": f"{index}\n" for index in range(6)}
     world.publish("big", "1.0.0", members=members)
     assert world.one("install", "big").ok
-    receipt = world.user / "big" / ".gupkg" / "receipts" / "1.0.0.toml"
+    receipt = world.user / "big" / "1.0.0" / "App.info"
 
     section = read_receipt(world.user / "big", "1.0.0").data["app"]
     assert section["files_omitted"] is True and "files" not in section and section["count"] == 6

@@ -164,7 +164,7 @@ Each root (one per install mode) holds package folders. A package folder holds i
       gupkg\                           # optional: a bundled gupkg (bundled mode)
     1.2.4\                             # pinned, not populated yet: status "available"
     data\                              # portable mode only: persistent state
-    .gupkg\                            # package.toml (install record), receipts\, logs\, locks\, work\, state\
+    .gupkg\                            # package.toml (install record), logs\, locks\, work\, state\   (each <version>\App.info records how its App was built)
 ```
 
 A **version directory** is any child of the package folder that is not reserved and contains a `pkg.toml`; the folder name

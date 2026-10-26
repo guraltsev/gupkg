@@ -128,12 +128,12 @@ def test_receipt_sections_are_merged_and_whole_sections_replaced(tmp_path: Path)
 
 
 def test_a_receipt_is_never_written_through_a_link(tmp_path: Path, system: FakeSystem) -> None:
-    """A `.gupkg` folder that is a junction elsewhere is refused for writing and reading."""
+    """A version folder that is a junction elsewhere is refused for writing and reading."""
     package = tmp_path / "tool"
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     package.mkdir()
-    system.create_junction(package / ".gupkg", elsewhere)
+    system.create_junction(package / "1.0.0", elsewhere)
 
     with pytest.raises(ValueError, match="link"):
         update_receipt(package, "1.0.0", {"source": {}})
@@ -226,7 +226,7 @@ def test_a_write_that_fails_at_the_replace_leaves_the_old_file_intact_and_no_tem
     """Writes are atomic: while another handle holds the old file the replace fails (Windows refuses it), the old bytes stay and no temp file is left."""
     package = tmp_path / "tool"
     writers = {
-        "receipt": (package / ".gupkg" / "receipts" / "1.0.0.toml", lambda: update_receipt(package, "1.0.0", {"source": {"kind": "download"}, "new": 1})),
+        "receipt": (package / "1.0.0" / "App.info", lambda: update_receipt(package, "1.0.0", {"source": {"kind": "download"}, "new": 1})),
         "install-record": (package / ".gupkg" / "package.toml", lambda: write_install_record(package, InstallRecord("user", None, ()))),
         "toml": (package / "x.toml", lambda: write_toml(package / "x.toml", {"a": 2})),
         "track-state": (package / ".gupkg" / "state" / "track.toml", lambda: write_track_state(package, {"found": "9.9"})),

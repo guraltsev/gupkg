@@ -315,7 +315,7 @@ def _inputs(version_dir: Path) -> list[str]:
     """
     names: list[str] = []
     for entry in sorted(os.scandir(version_dir), key=lambda item: item.name):
-        if entry.name.casefold() in ("app", ".gupkg"):
+        if entry.name.casefold() in ("app", "app.info", ".gupkg"):
             continue
         names.append(entry.name)
         if entry.name == "pkg.local" and entry.is_dir(follow_symlinks=False):

@@ -94,7 +94,7 @@ def test_an_install_of_a_url_with_a_secret_leaves_no_secret_in_receipt_events_or
     with use_reporter(Collect()):
         result = world.one("install", "tool")
 
-    receipt = (world.user / "tool" / ".gupkg" / "receipts" / "1.0.0.toml").read_text(encoding="utf-8")
+    receipt = (world.user / "tool" / "1.0.0" / "App.info").read_text(encoding="utf-8")
     assert result.ok and "TOPSECRET" not in receipt and "TOPSECRET" not in repr(plan) and "TOPSECRET" not in repr(events)
     assert "***" in receipt and "***" in repr(plan)
 

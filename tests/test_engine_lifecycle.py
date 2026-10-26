@@ -261,6 +261,9 @@ def test_cleanup_removes_receipts_of_versions_that_are_gone_and_leftover_work_fo
     world.one("update", "tool")
     package = world.user / "tool"
     shutil.rmtree(package / "1.0.0")
+    old_receipts = package / ".gupkg" / "receipts"  # where gupkg 1.0.0 to 1.0.x kept them: a leftover of a version that is gone
+    old_receipts.mkdir(parents=True)
+    (old_receipts / "1.0.0.toml").write_text("schema = 1\n", encoding="utf-8")
     leftover = package / ".gupkg" / "work" / "populate-crashed"
     leftover.mkdir(parents=True)
     (leftover / "half.bin").write_text("x", encoding="utf-8")
@@ -270,7 +273,7 @@ def test_cleanup_removes_receipts_of_versions_that_are_gone_and_leftover_work_fo
     result = world.one("cleanup", "tool")
 
     assert result.ok and result.details["receipts"] == ["1.0.0"] and result.details["work"] == ["populate-crashed"]
-    assert not (package / ".gupkg" / "receipts" / "1.0.0.toml").exists() and (package / ".gupkg" / "receipts" / "1.1.0.toml").is_file()
+    assert not (old_receipts / "1.0.0.toml").exists() and (package / "1.1.0" / "App.info").is_file()
     assert not leftover.exists()
 
 

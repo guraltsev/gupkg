@@ -214,14 +214,17 @@ def check_updates_one(
             "operation": "check-updates", "mode": context.mode, "activated": False, "finished": engine.now().isoformat(),
             "gupkg": engine.version, "log": engine.log_path(package_path) or "",
         }
-        receipt = update_receipt(package_path, result.version, sections)
+        # The record lives in the version directory beside App. A version without an App (--no-download, or a refused download) gets
+        # one only when there is a fact to keep (a note such as a waived checksum), so a plain prepared version directory holds
+        # just its manifest and support files.
+        receipt = update_receipt(package_path, result.version, sections) if populated is not None or notes else None
         write_track_state(package_path, {
             "checked": engine.now().isoformat(), "found": result.version, "outcome": "new-version",
             "populated": populated is not None, **({"refused": error["code"]} if error else {}),
         })
     return PackageResult(
         view.name, "check-updates", error is None, "new-version", result.version, None, context.mode, exit_code, error,
-        str(receipt), engine.log_path(package_path), notes, details,
+        str(receipt) if receipt is not None else None, engine.log_path(package_path), notes, details,
     )
 
 
