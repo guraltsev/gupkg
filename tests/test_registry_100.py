@@ -171,8 +171,7 @@ INTENTIONAL = {
     ("hwinfo", "shortcut"): "0.17 had no shortcut, so the package could not be started from the Start menu",
     ("qbittorrent", "shortcut"): "the forward slash in the target is fixed (issue 031)",
     ("testdisk", "description"): "shorter text",
-    ("volta", "path"): "the machine PATH cannot name %LOCALAPPDATA%\\Volta\\bin, so the entry is gone; each user runs `volta setup` (see the tracker)",
-    ("volta", "shim"): "node, npm, npx, pnpm and yarn are shimmed too, in place of the per-user PATH entry",
+    ("volta", "path"): "the machine PATH cannot name %LOCALAPPDATA%\\Volta\\bin, so that entry is gone and only `$App` (where volta keeps its node, npm, ... shims) is on the PATH; each user runs `volta setup` (see the tracker)",
 }
 COMPARED = ("shortcut", "shim", "env", "path", "requires", "description", "project_url")
 

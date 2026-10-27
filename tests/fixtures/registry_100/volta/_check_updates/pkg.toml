@@ -18,29 +18,14 @@ require = ["volta.exe", "volta-shim.exe"]
 [[prepare]]
 copy = { from = "volta-shim.exe", to = ["node.exe", "npm.exe", "npx.exe", "pnpm.exe", "yarn.exe"] }
 
-# Volta keeps each user's tool shims (every tool installed with `volta install`, such as tsc) in %LOCALAPPDATA%\Volta\bin. That
-# folder differs for every user, so the machine PATH cannot name it and no PATH entry is declared here. The commands below work for
-# every user as they are; to have the tools you install with Volta on your PATH, run `volta setup` once as that user.
+# volta-shim.exe copies named node.exe, npm.exe, ... sit in App, and on Windows Volta looks for its shims in the folder it is installed
+# in, so App itself is on the PATH. Do not shim node, npm, npx, pnpm or yarn into another folder on the PATH: a copy finds the real tool
+# by searching the PATH, finds that shim, and starts itself again without end. Volta keeps each user's tool shims for tools
+# installed with `volta install` (such as tsc) in %LOCALAPPDATA%\Volta\bin. That folder differs for every user, so the machine PATH
+# cannot name it and no entry is declared here; each user runs `volta setup` once to add it, then `volta install node`.
+[[path]]
+value = "$App"
+
 [[shim]]
 name = "volta"
 target = "$App\\volta.exe"
-
-[[shim]]
-name = "node"
-target = "$App\\node.exe"
-
-[[shim]]
-name = "npm"
-target = "$App\\npm.exe"
-
-[[shim]]
-name = "npx"
-target = "$App\\npx.exe"
-
-[[shim]]
-name = "pnpm"
-target = "$App\\pnpm.exe"
-
-[[shim]]
-name = "yarn"
-target = "$App\\yarn.exe"
