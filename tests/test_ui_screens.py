@@ -221,9 +221,11 @@ def test_the_a_key_lists_the_registry_packages_that_are_not_installed_and_a_seco
         {"name": name, "mode": None, "status": "available", "version": None, "newest_known": "1.0.0", "path": None, "following": f"main/{name}", "problems": [], "warnings": []}
         for name in ("copyq", "graphviz")
     ], warnings=[])
-    # The calls after ``a`` are ``list`` and ``list --available``; the last scheduled answer repeats for the rest.
+    # The double answers ``list`` and ``list --available`` alike, in order, and the last answer repeats. The fixture answered the opening
+    # ``list``; the first ``a`` makes ``list`` and ``list --available``, and the second ``a`` makes ``list`` again, which must show no available rows.
     fake.respond("list", doc=fixture_json("list.json", tmp_path))
     fake.respond("list", doc=available)
+    fake.respond("list", doc=fixture_json("list.json", tmp_path))
     seen: dict[str, object] = {}
 
     async def scenario(app, pilot) -> None:
