@@ -1,19 +1,20 @@
-"""Prepare a UI program to run: the root options, the sibling CLI, the settings and whether this gupkg may ask for administrator rights.
+"""Prepare a UI program to run: the root options, the sibling CLI, the run's scope and its settings.
 
-Both programs (``gupkg-tui`` and ``gupkg-manager``) start the same way. They are standard-user programs that call the elevated CLI,
-so a process that already holds the administrator token refuses to start. The root options ``--settings PATH`` and ``--sandbox DIR`` are
-the CLI's own (a settings file as the highest layer, a pretend machine kept in a folder); the programs read the settings with them and relay
-them to every call, which is how tests and trial runs act on temporary roots.
+Both programs (``gupkg-tui`` and ``gupkg-manager``) start the same way. A run has one scope, the mode of its token: an elevated process manages
+the system root and any other process the user's, and every call the program makes to the CLI runs in that scope. The root options
+``--settings PATH`` and ``--sandbox DIR`` are the CLI's own (a settings file as the highest layer, a pretend machine kept in a folder); the programs
+read the settings with them and relay them to every call, which is how tests and trial runs act on temporary roots.
 
 Usage and API
 -------------
 ``add_root_options(parser)`` adds the two options to a program's parser; ``build_environment(args)`` returns the ``UiEnvironment`` (client,
-settings, elevation ability) or raises ``StartupError`` with the message to print and the exit code.
+settings, scope) or raises ``StartupError`` with the message to print and the exit code.
 
 Implementation Approach
 -----------------------
 The machine boundary is the one the CLI uses, so a sandboxed program judges elevation and admin-only folders from the sandbox's state, never
-from the real machine. The client always runs the launcher of the program's own gupkg tree.
+from the real machine. The scope is built once, by ``gupkg.scope.build_scope`` inside ``load_ui_settings``, exactly as the CLI of the same gupkg
+builds it. The client always runs the launcher of the program's own gupkg tree.
 """
 
 from __future__ import annotations
@@ -24,16 +25,15 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from gupkg.model.scope import ModeRefused, Scope
 from gupkg.model.settings import SettingsError
 from gupkg.selfmgmt.location import RunningGupkg, locate_running_gupkg
 from gupkg.system.fake import FakeSystem
-from gupkg.scope import process_mode
-from gupkg.system.port import Mode, System
+from gupkg.system.port import System
 from gupkg.system.windows import WindowsSystem
 
 from .client import Client, ClientError, sibling_launcher
 from .settings import UiSettings, load_ui_settings
-from .steps import can_elevate
 
 
 class StartupError(Exception):
@@ -53,9 +53,7 @@ class UiEnvironment:
     client : Client
         Runs the calls of the sibling ``gupkg``.
     settings : UiSettings
-        The effective settings (``[manager]``, ``[cleanup]``, roots).
-    can_elevate : bool
-        Whether this gupkg is the system gupkg and may ask for administrator rights (one prompt per batch).
+        The effective settings (``[manager]``, ``[cleanup]``) of the run's scope.
     location, system : object
         Where this gupkg lives and the machine boundary used for reading.
     env : mapping
@@ -64,10 +62,19 @@ class UiEnvironment:
 
     client: Client
     settings: UiSettings
-    can_elevate: bool
     location: RunningGupkg
     system: System
     env: Mapping[str, str]
+
+    @property
+    def scope(self) -> Scope:
+        """Return the run's scope: its mode (the mode of the process token) and its root."""
+        return self.settings.scope
+
+    @property
+    def scope_label(self) -> str:
+        """Return ``system · <root>`` or ``user · <root>``: what the title and the status line say about the run."""
+        return f"{self.scope.mode} · {self.scope.root}"
 
 
 def add_root_options(parser: argparse.ArgumentParser) -> None:
@@ -105,7 +112,7 @@ def build_environment(
     Raises
     ------
     StartupError
-        If the process is elevated, the sibling ``gupkg`` is missing, or the settings cannot be read.
+        If the sibling ``gupkg`` is missing, the settings cannot be read, or an elevated run's gupkg tree is not admin-only.
     """
     where = location or locate_running_gupkg()
     environment = dict(os.environ if env is None else env)
@@ -115,10 +122,6 @@ def build_environment(
         sandbox.mkdir(parents=True, exist_ok=True)
         machine = FakeSystem.sandbox(sandbox, machine)
 
-    # The programs call the elevated CLI themselves and ask for administrator rights once; running them elevated is refused.
-    if process_mode(machine) is Mode.SYSTEM:
-        raise StartupError("this program is not started from an elevated shell: it calls gupkg and asks for administrator rights itself. Run it from a normal shell.")
-
     # The command is always the launcher of this gupkg tree; the root options travel to every call.
     try:
         program = tuple(command) if command is not None else (str(sibling_launcher(where)),)
@@ -127,6 +130,8 @@ def build_environment(
     options = (*(("--settings", str(settings_path)) if settings_path is not None else ()), *(("--sandbox", str(sandbox)) if sandbox is not None else ()))
     try:
         settings = load_ui_settings(settings_path=settings_path, env=environment, location=where, system=machine)
+    except ModeRefused as error:
+        raise StartupError(str(error)) from error
     except (SettingsError, OSError, ValueError) as error:
         raise StartupError(f"cannot read the settings: {error}") from error
-    return UiEnvironment(Client(program, options, environment), settings, can_elevate(where, machine), where, machine, environment)
+    return UiEnvironment(Client(program, options, environment), settings, where, machine, environment)

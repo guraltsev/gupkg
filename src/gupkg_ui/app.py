@@ -2,7 +2,7 @@
 
 ``gupkg-manager`` and ``gupkg-tui`` are each a single ``UiApp``. Opening a package, running an operation and going back push and pop screens
 of this one application (the screen below keeps its filter, selection and scroll position); nothing restarts. The app keeps what the status line shows
-(the program's own counts, the state of the run, the path of the log) and refreshes the line on every screen when it changes. A terminal that is too narrow
+(the run's mode, the program's own counts, the root, the state of the run, the path of the log) and refreshes the line on every screen when it changes. A terminal that is too narrow
 or short loses only the tail of a clipped line, never an action.
 
 Usage and API
@@ -37,7 +37,7 @@ class UiApp(App[int]):
     Parameters
     ----------
     env : UiEnvironment
-        The client, settings and elevation ability of the program.
+        The client, the settings and the scope of the program; the title and the status line say which scope it manages.
     """
 
     CSS = FRAME_CSS
@@ -47,6 +47,7 @@ class UiApp(App[int]):
     def __init__(self, env: UiEnvironment) -> None:
         super().__init__()
         self.env = env
+        self.sub_title = env.scope_label
         self.last_outcome: BatchOutcome | None = None
         self.log_path: str | None = None
 
@@ -57,8 +58,12 @@ class UiApp(App[int]):
         return []
 
     def status_line(self) -> str:
-        """Return the status line: the program's counts and registry, then where the latest log is."""
-        parts = [*self.status_parts()]
+        """Return the status line: the run's mode (``system`` or ``user``), the program's counts and registry, the root, then where the latest log is.
+
+        The mode comes first and the root after the counts, so a narrow terminal loses the tail of the root and never the counts or the registry state;
+        the window title (``sub_title``) carries both as ``system · <root>`` or ``user · <root>``.
+        """
+        parts = [str(self.env.scope.mode), *self.status_parts(), f"root {literal(self.env.scope.root, limit=200)}"]
         if self.last_outcome is not None and self.last_outcome.logs():
             parts.append(f"log: {literal(self.last_outcome.logs()[-1], limit=300)}")
         return " · ".join(part for part in parts if part)

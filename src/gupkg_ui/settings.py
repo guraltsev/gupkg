@@ -1,4 +1,4 @@
-"""Read the settings the UI programs act on: the ``[manager]`` policy and display options, ``[cleanup] auto`` and the roots.
+"""Read the settings the UI programs act on: the ``[manager]`` policy and display options, ``[cleanup] auto`` and the root.
 
 The CLI ignores the ``[manager]`` table (design section 11), so the UI programs read the effective settings themselves, through the
 same layered loader the CLI uses (``--settings`` included). Reading is all they do with settings; changing one is
@@ -6,8 +6,8 @@ same layered loader the CLI uses (``--settings`` included). Reading is all they 
 
 Usage and API
 -------------
-``load_ui_settings(...)`` returns a ``UiSettings``: ``checksum_policy()`` is the effective ``ask``, ``refuse`` or ``skip`` of the run's
-scope, ``keep_screen`` and ``cleanup_auto`` are the booleans, and ``root`` is the root of the run's scope.
+``load_ui_settings(...)`` returns a ``UiSettings``: ``checksum_policy`` is the effective ``ask``, ``refuse`` or ``skip`` of the run's
+scope, ``keep_screen`` and ``cleanup_auto`` are the booleans, ``scope`` is the run's ``Scope`` and ``root`` is its root.
 
 Implementation Approach
 -----------------------
@@ -24,9 +24,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from gupkg.model.manager_policy import POLICY_KEY, manager_checksum_policy
+from gupkg.model.manager_policy import manager_checksum_policy
 from gupkg.model.scope import Scope
-from gupkg.model.settings import LAYER_CLI, LAYER_ROOT, Settings, SettingsError
+from gupkg.model.settings import Settings, SettingsError
 from gupkg.scope import build_scope
 from gupkg.selfmgmt.location import RunningGupkg, locate_running_gupkg
 from gupkg.system.port import System
@@ -43,24 +43,18 @@ class UiSettings:
         The merged settings with the layer of every value.
     env : mapping
         The environment used to expand ``%NAME%`` in the roots.
-    scope : Scope, optional
+    scope : Scope
         The scope of the run; its root is ``root``.
     """
 
     settings: Settings
     env: Mapping[str, str]
-    scope: Scope | None = None
+    scope: Scope
 
-    def checksum_policy(self, mode: str | None = None) -> str:
-        """Return ``ask``, ``refuse`` or ``skip``: ``[manager] checksum_missing`` as the run's own layers set it.
-
-        A system target is run by an elevated child (design 9.6), which never honours a value from the user's root file or from
-        ``--settings``: for it such a ``skip`` is a ``refuse``.
-        """
-        policy = manager_checksum_policy(self.settings)
-        if mode == "system" and policy == "skip" and self.settings.source_of(POLICY_KEY) in (LAYER_ROOT, LAYER_CLI):  # Removed in issue 035 T09.
-            return "refuse"
-        return policy
+    @property
+    def checksum_policy(self) -> str:
+        """Return ``ask``, ``refuse`` or ``skip``: ``[manager] checksum_missing`` as the layers of the run itself set it."""
+        return manager_checksum_policy(self.settings)
 
     @property
     def colour(self) -> bool:
@@ -80,7 +74,7 @@ class UiSettings:
     @property
     def root(self) -> Path:
         """Return the root of the run's scope."""
-        return Path(self.scope.root) if self.scope is not None else Path(self.settings["roots.user"])
+        return Path(self.scope.root)
 
 
 def load_ui_settings(
@@ -107,6 +101,8 @@ def load_ui_settings(
     ------
     SettingsError
         If a settings layer is unreadable or invalid.
+    gupkg.model.scope.ModeRefused
+        If the process is elevated and this gupkg's tree is not admin-only.
     """
     where = location or locate_running_gupkg()
     machine = system or WindowsSystem()
