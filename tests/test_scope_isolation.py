@@ -1,4 +1,4 @@
-﻿"""Cover issue 035 acceptance item 1: a run never considers the other root, even when that root is poisoned.
+"""Cover issue 035 acceptance item 1: a run never considers the other root, even when that root is poisoned.
 
 Behavior covered: with the other mode's root holding a ``settings.toml`` that is not TOML, a ``state.toml`` of junk, a package whose
 populate script would write a marker file and a registry cache of another revision, the commands ``list``, ``check``, ``install``,
@@ -17,6 +17,7 @@ import asyncio
 import builtins
 import io
 import os
+import traceback
 from pathlib import Path
 
 import pytest
@@ -35,9 +36,13 @@ from tests.ui_support import FakeGupkg
 class Touches:
     """Record every path a test opens, lists or inspects below one folder, while it is active."""
 
-    def __init__(self, folder: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def __init__(self, folder: Path, monkeypatch: pytest.MonkeyPatch, *, program_root: Path | None = None) -> None:
         self.folder = str(folder).lower()
+        # A user run judges the root its own gupkg program is installed in (is it admin-only?) to pick its root (issue 035 Q11): that
+        # folder itself, and nothing below it, may be looked at. Its existence and access list are not data of the system mode.
+        self.program_root = os.path.normcase(os.path.normpath(program_root)) if program_root is not None else None
         self.paths: list[str] = []
+        self.active = True
         real_open, real_scandir, real_listdir = builtins.open, os.scandir, os.listdir
 
         def note(path: object) -> None:
@@ -48,26 +53,30 @@ class Touches:
                 return
             if isinstance(text, bytes):
                 text = os.fsdecode(text)
-            if str(text).lower().startswith(self.folder):
-                self.paths.append(str(text))
+            if self.program_root is not None and os.path.normcase(os.path.normpath(text)) == self.program_root:
+                return
+            if self.active and str(text).lower().startswith(self.folder):
+                where = [f"{Path(f.filename).name}:{f.lineno}" for f in traceback.extract_stack()[-8:-2]]
+                self.paths.append(f"{text} <- {where}")
 
-        def watched_open(file, *args, **kwargs):
-            note(file)
-            return real_open(file, *args, **kwargs)
+        def watch(owner: object, name: str) -> None:
+            """Replace ``owner.name`` by a function that notes its first argument and calls the original."""
+            original = getattr(owner, name)
 
-        def watched_scandir(path="."):
-            note(path)
-            return real_scandir(path)
+            def watched(first, *args, **kwargs):
+                note(first)
+                return original(first, *args, **kwargs)
 
-        def watched_listdir(path="."):
-            note(path)
-            return real_listdir(path)
+            monkeypatch.setattr(owner, name, watched)
 
-        monkeypatch.setattr(builtins, "open", watched_open)
-        monkeypatch.setattr(io, "open", watched_open)
-        monkeypatch.setattr(os, "scandir", watched_scandir)
-        monkeypatch.setattr(os, "listdir", watched_listdir)
-
+        for owner, name in (
+            (builtins, "open"), (io, "open"), (os, "scandir"), (os, "listdir"), (os, "stat"), (os, "lstat"),
+            (os.path, "exists"), (os.path, "isdir"), (os.path, "isfile"), (os.path, "islink"),
+        ):
+            watch(owner, name)
+        for name in ("exists", "is_dir", "is_file", "stat", "lstat", "iterdir", "read_text", "read_bytes"):
+            # A method of Path: the first argument is the path itself.
+            watch(Path, name)
 
 def poison(world: CliWorld, mode: str) -> tuple[Path, Path]:
     """Poison the root of *mode*; return the root and the marker that a hook of it would write."""
@@ -97,7 +106,7 @@ def test_a_run_never_considers_the_poisoned_root_of_the_other_mode(tmp_path: Pat
     world.fake.add_url(SOURCE, registry_zip(version_files("gamma", "1.0")))
     other_root, marker = poison(world, other)
     other_before = tree_snapshot(other_root)
-    touches = Touches(other_root, monkeypatch)
+    touches = Touches(other_root, monkeypatch, program_root=world.location.root)
     outputs: list[str] = []
 
     def run(*argv: str) -> None:
@@ -137,7 +146,34 @@ def test_a_run_never_considers_the_poisoned_root_of_the_other_mode(tmp_path: Pat
 
     text = "\n".join(outputs + shown).lower()
     assert str(other_root).lower() not in text and "poison" not in text and "marker" not in text
+    touches.active = False
     assert touches.paths == [], touches.paths
     assert not marker.exists()
     assert tree_snapshot(other_root) == other_before
     assert not [call for call in world.fake.process_log if str(other_root) in " ".join(map(str, call))]
+
+
+def test_the_recorder_sees_the_poison_when_the_poisoned_root_is_the_runs_own(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Control: a run on ``--root <poisoned root>`` fails on the invalid TOML, and the recorder logs the open of that file."""
+    world = CliWorld(tmp_path)
+    root, _ = poison(world, "user")
+    touches = Touches(root, monkeypatch)
+
+    result = world.cli("--root", str(root), "list")
+
+    touches.active = False
+    assert result.code == 2 and "not valid TOML" in result.err, result.err
+    assert any("settings.toml" in path for path in touches.paths), touches.paths
+
+
+def test_a_mere_exists_of_the_other_root_is_recorded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Control: ``Path.exists`` and ``os.stat`` of the watched folder are noted (the recorder hooks more than ``open``)."""
+    world = CliWorld(tmp_path)
+    root, _ = poison(world, "user")
+    touches = Touches(root, monkeypatch)
+
+    root.exists()
+    os.stat(root)
+
+    touches.active = False
+    assert len(touches.paths) >= 2, touches.paths
