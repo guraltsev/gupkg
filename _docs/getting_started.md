@@ -124,7 +124,7 @@ pandoc --version
 
 **Which mode?** A run has one mode, the mode of the shell you start it from: an elevated shell installs
 for all users (`system`, in `C:\opt`) and any other shell installs for you (`user`, in
-`%USERPROFILE%\opt`). There is no option to choose, and gupkg never relaunches itself elevated. To
+`%USERPROFILE%\opt`). There is no option to choose, and gupkg never starts an elevated copy of itself. To
 install for all users, open an administrator shell and run the same command there; a package that
 allows only the other mode is refused with a message that says how to run it.
 

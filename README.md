@@ -201,7 +201,7 @@ package (exit code 6) makes the launcher try the next one.
 One grammar serves people, scripts and the UI programs. Options go **after** the command; the only options
 before it are `--version`, `--help`, `--settings PATH`, `--root DIR` and `--sandbox DIR`. A target is a package name
 (`firefox`, `firefox@135.0`, `main/firefox`) or a path (anything with a `\` or `/`, or starting with
-`.`). A target never names a mode (`user:firefox` is refused): the mode is that of the process. Several targets in one call run one after another and the run continues past a failure. The command line has
+`.`). A target never names a mode (a `user:` or `system:` prefix is refused): the mode is that of the process. Several targets in one call run one after another and the run continues past a failure. The command line has
 no `--all` and no interactive screen: `gupkg-manager` is the program for batches and interactive use.
 
 ```text
@@ -233,8 +233,8 @@ the followed registry, and prepares its `App` first if it has none. `install` an
 
 Every command takes `--json`. Every mutating command takes `--yes`. The mode comes from the process and from nothing
 else: an elevated process is in `system` mode and works on the system root, any other process is in `user` mode and works on
-the user's root. gupkg never relaunches itself elevated and has no mode option, no `default_mode` setting and no `user:` or
-`system:` prefix on a target. A call that needs the other mode is refused with the exact command to run (a system-only package
+the user's root. gupkg never starts an elevated copy of itself and has no mode option, no setting that selects a mode and no mode
+prefix on a target. A call that needs the other mode is refused with the exact command to run (a system-only package
 from a normal shell: use the Start Menu entry "gupkg manager (administrator)" or an administrator shell). Scheduled callers pass
 a unique `--events-file NAME` and treat a missing `run_end` line as a failure; a call with several targets needs `--yes` under
 `--no-input` (the question "run this on N packages?" is exit code 5 otherwise). Redirected output is UTF-8 and the `--json`
@@ -256,7 +256,7 @@ is refused as "not inside this scope's root".
 
 `gupkg install firefox` and `gupkg install %USERPROFILE%\opt\firefox` put the same shortcuts, shims and `PATH` entries in place. A
 version directory outside the root (an unzipped distribution) is copied into the root first, and the install runs from the copy;
-there is no `--in-place` and there are no ad-hoc roots. To keep a folder where it is, make it the root of its own user scope:
+nothing is installed in place, and no other folder becomes a root on the fly. To keep a folder where it is, make it the root of its own user scope:
 `gupkg install <folder> --root <folder above the package name>`. Any other path outside the root is refused. With
 `integrate = "none"` in the root's `[integration]` table, an install touches neither the registry nor the Start Menu, its shims go
 to `<root>\bin`, and `gupkg shell` prints the line that puts `<root>\bin` on `PATH`; that is how a portable root on a stick works
@@ -434,7 +434,7 @@ target = "$App\\rg.exe"
 
 Top-level keys are exactly: `format`, `description`, `project_url`, `modes`, `requires`, `requires_gupkg`,
 `record_manifest`, `source`, `track`, `prepare`, `portable`, `shortcut`, `env`, `path` and `shim`. There is no `version`, `localVersion`, `name`, `homepage`,
-`only_portable`, `[origin]`, `[update]`, `[[bin]]`, `[[environment]]`, `ignore_checksum`, `root_forwarder`, `[user]` or `[system]` step table,
+`only_portable`, `[origin]`, `[update]`, `[[bin]]`, `[[environment]]`, `ignore_checksum`, a root-level launcher table, `[user]` or `[system]` step table,
 and no `$Data` variable.
 
 Three URLs, three names. `project_url` is for people and is never fetched. `[source] download_url` is the artifact of

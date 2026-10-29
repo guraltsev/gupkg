@@ -15,7 +15,7 @@ lists every error message.
 | `gupkg-manager` | The browser over every package, and the batch commands for schedules (`check-updates --all`, `update --all`, `check`). A separate program that only calls `gupkg`. | `gupkg-manager` or `gupkg manager ...` |
 
 All four live in one gupkg tree, and the UI programs call the `gupkg.cmd` of **their own tree**, never one found on
-`PATH`. `gupkg tui` and `gupkg manager` are permanent forwarders to them.
+`PATH`. `gupkg tui` and `gupkg manager` are pass-through commands that start them. Each program runs in one scope, the mode of its own process (an administrator shell manages the system root, any other shell the user's root).
 
 ## Installing gupkg
 
@@ -25,7 +25,7 @@ unpacks it and runs the `install.cmd` of the version directory it holds. It writ
 
 ```bat
 gupkg-bootstrap.cmd                      :: auto: system scope if elevated, otherwise user
-gupkg-bootstrap.cmd -Scope user          :: force per-user, even when elevated
+gupkg-bootstrap.cmd -Scope user          :: per-user (refused from an elevated shell)
 gupkg-bootstrap.cmd -Scope system        :: force all users, elevated shell required
 gupkg-bootstrap.cmd -Source \\server\share\gupkg-1.0.0-win-amd64.zip -Sha256 <digest>
 gupkg-bootstrap.cmd -SkipInstall         :: only verify and unpack
@@ -38,8 +38,8 @@ refuse a payload without `gupkg\python\python.exe`; check every file against `gu
 `<root>\gupkg\<version>` (system scope: straight into an admin-only `C:\opt`, which the script creates, or refuses when an
 existing `C:\opt` is not admin-only); and run that version's `install.cmd`, which starts the bundled gupkg and installs
 the `gupkg` package like any other. That creates the `current` junction, the `gupkg`, `gupkg-tui` and `gupkg-manager`
-shims, their `PATH` entry, the Start Menu entry, and the root data folder `<root>\.gupkg\` with the **root forwarder**
-`<root>\.gupkg\gupkg.cmd` that the package launchers of that root use to find the installed gupkg. Every step is
+shims, their `PATH` entry, the Start Menu entry (in system mode also "gupkg manager (administrator)", whose link asks Windows for administrator rights), and the root data folder `<root>\.gupkg\` with the one-line file
+`<root>\.gupkg\gupkg-location` (the folder that holds `gupkg.cmd`) that the package launchers of that root use to find the installed gupkg. Every step is
 repeatable. The only downloads are `RELEASES.md` and the ZIP, and nothing needs to be installed first.
 
 There is one distribution: the release ZIP `gupkg-<version>-win-amd64.zip`, holding the version directory with the
@@ -50,35 +50,35 @@ runs; see [the troubleshooting entry](troubleshooting.md#a-security-warning-when
 
 ## Settings
 
-There is one format, `settings.toml`, in layers. From lowest to highest priority:
+There is one format, `settings.toml` (`schema = 4`), in layers. A run has one scope (one mode, one root) and reads only its own
+layers, lowest priority first:
 
-1. built-in defaults (roots `C:\opt`, `%USERPROFILE%\opt`, `%USERPROFILE%\opt-portable`);
+1. built-in defaults of the mode (system: `C:\opt`, `C:\bin`; user: `%USERPROFILE%\opt`, `%USERPROFILE%\bin`);
 2. `$App\settings.toml` of the running gupkg (shipped with a release; optional);
-3. the **system layer** `C:\opt\.gupkg\settings.toml` (the data folder of the system root; it may change `[roots]`);
-4. the **user layer** `<user root>\.gupkg\settings.toml` (ignored in elevated and system-mode runs; a portable run uses the
-   portable root's own file instead);
-5. `--settings PATH` (ignored in elevated runs unless `PATH` is inside the admin-only system root).
+3. `<root>\.gupkg\settings.toml`, the data folder of the run's root;
+4. `--settings PATH`, **user mode only** (a system-mode run refuses the option).
 
-A bundled gupkg reads the same files when they exist. Commands: `gupkg settings show` (every effective value and the layer
-it came from), `settings path` (the file of each layer), `settings init` and `settings set KEY VALUE` (write the user layer;
-`--mode system` writes the system layer from an administrator shell; the schema checks a value before it is written).
+There is no system layer for a user run and no user layer for a system run, and no machine-wide policy: each mode has its own
+settings, registry cache, state and logs and never reads the other's. `[roots]` (keys `system` and `user`) is read only from
+layers 2 and 4, never from a root's own file, because a root cannot name itself. A bundled gupkg reads the same files when they
+exist. The root of the run comes from `--root DIR` first (in system mode it must be admin-only), then from a fixed chain per mode
+(system: the root of the installed system gupkg, `[roots].system` of `$App\settings.toml`, `C:\opt`; user: `[roots].user` of
+`--settings`, the root this gupkg is installed in when it is not admin-only, `[roots].user` of `$App\settings.toml`,
+`%USERPROFILE%\opt`); the Resolve phase prints the root and what named it. Commands: `gupkg settings show` (every effective value and the layer
+it came from), `settings path` (the file of each layer), `settings init` and `settings set KEY VALUE` (write layer 3, the run's
+root; the schema checks a value before it is written). A file with `schema = 3` is refused with a message that says what to change.
 
 ```toml
-schema = 3
-default_mode = "auto"         # auto (elevated -> system, otherwise user) | system | user
+schema = 4
 
-[roots]
+[roots]                       # read only from $App\settings.toml and --settings
 system = 'C:\opt'
 user = '%USERPROFILE%\opt'
 
-[integration.system]
-bin = 'C:\bin'
-start_menu = '%ProgramData%\Microsoft\Windows\Start Menu\opt'
-[integration.user]
-bin = '%USERPROFILE%\bin'
-start_menu = '%APPDATA%\Microsoft\Windows\Start Menu\opt'
+[integration]
+bin = '%USERPROFILE%\bin'     # default C:\bin in system mode
+start_menu = '%APPDATA%\Microsoft\Windows\Start Menu\opt'   # default is the %ProgramData% one in system mode
 integrate = "full"            # full | none (none: shims in <root>\bin, no Start Menu, no environment)
-
 [manager]                     # read only by gupkg-manager
 checksum_missing = "ask"      # ask | refuse | skip
 keep_screen = true            # print the last run's summary after a UI program closes
@@ -104,32 +104,43 @@ allow_vendor_installers = true
 record_manifest = true        # false: no package records the SHA-256 of every App file
 ```
 
-Machine state that is not configuration (the ad-hoc roots, the last registry sync) lives in `state.toml` beside the
+Machine state that is not configuration (the last registry sync) lives in `state.toml` beside the
 settings. gupkg owns no file outside its roots: no `AppData`, no `ProgramData`, and the Windows registry is only ever
 written to (an environment value, `PATH`), never read to learn anything.
 
-## Install modes, elevation and the root forwarder
+## Scopes, modes and elevation
 
-`system` installs into `C:\opt` (admin-only), `user` into `%USERPROFILE%\opt`, `portable` into the portable root with its
-state in `<package>\data`. `default_mode = "auto"` means an elevated shell installs `system` and any other shell `user`; it
-never means `portable`. A call that needs administrator rights relaunches gupkg **once** elevated, after one question
-(`--yes` answers it, `--no-input` turns it into exit code 5), and only when this gupkg lives in an admin-only folder: a
-user-writable or bundled gupkg never elevates and says that system installs need the system gupkg.
+A run belongs to one scope: a mode and one root. The mode is that of the process token and nothing else. An elevated process is
+in `system` mode and works on `C:\opt` (admin-only), any other process is in `user` mode and works on `%USERPROFILE%\opt`. There
+is no mode option, no setting that selects a mode, no mode prefix on a target and no "auto". gupkg contains no code that
+starts an elevated copy of itself: to manage system packages, start gupkg or `gupkg-manager` from an administrator shell, or from
+the Start Menu entry "gupkg manager (administrator)" that installing the gupkg package in system mode creates (its link carries the
+"run as administrator" flag, so Windows shows the UAC prompt). On a machine where every process is elevated (UAC off, a CI runner)
+there is only system mode.
 
-The elevated side runs only what a standard user cannot change: the bundled `python\python.exe` in isolated mode, the
-version folder, the runtime and every folder on the import path must be writable by Administrators and SYSTEM only, and
-the elevated launchers of a package check everything they will run, recursively, before they start. An elevated gupkg
-never acts on a user or portable root (use a normal shell), and ignores the user's proxy, environment and settings layers.
-A portable root is never machine-wide and never lies inside the system root.
+A package says which modes it may be installed in (`modes`). It is checked in the planner, before any download or file change,
+for `install`, `update`, `switch`, repair and `check-updates` with download; `uninstall`, `check` and `cleanup` are never refused
+by it. The refusal names only what the run can know ("only for a single user; run gupkg without administrator rights", or "only
+system-wide; run gupkg as administrator", with how). A **portable** package (`modes = ["portable"]`, with a `[portable]` table, state
+in `<package>\data`) installs in user mode only, and is a package of its own (`<name>-portable`); nothing in the system root keeps
+state a standard user can write.
 
+The elevated side runs only what a standard user cannot change: the bundled `python\python.exe` in isolated mode, the version
+folder, the runtime and every folder on the import path must be writable by Administrators and SYSTEM only, and the elevated
+launchers of a package check everything they will run, recursively, before they start (see "Package launchers"
+in the [README](../README.md#on-disk-layout)). An elevated gupkg started from any other tree refuses (exit 2). A user-mode run
+never reads anything under the system root except the gupkg program it runs: "code may be shared, data never".
+
+A root kept elsewhere is its own scope: `gupkg --root D:\tools\opt ...` (a user root; a system root must be admin-only). A root on a
+stick with `integrate = "none"` in its own `.gupkg\settings.toml` touches neither the registry nor the Start Menu, and is how a
+portable setup is carried. The user's manager does not list another root's packages.
 ## Checksum policy
 
 A declared SHA-256 is always verified; a mismatch always fails. A download with none is refused by the command line unless
 the call carries `--skip-checksum` (https only, this call only); `gupkg-manager` decides with `[manager] checksum_missing`:
 `ask` (a question per package at a terminal; `refuse` in a schedule), `refuse`, or `skip` (relayed as
 `--skip-checksum=setting`). A malformed declared hash and a plain `http://` address are never skippable, and a version with
-a vendor installer needs a pinned hash. For a system target, a value from the user settings layer or from `--settings` is not
-trusted. `check` and `list --details` flag installs that were not verified.
+a vendor installer needs a pinned hash. In a system-mode run `--settings` is refused, so only the system root's own settings count. `check` and `list --details` flag installs that were not verified.
 
 ## Registries
 
@@ -139,7 +150,7 @@ trusted. `check` and `list --details` flag installs that were not verified.
 a Git URL (cloned shallow over HTTPS, no hooks, only when `git.exe` lives in an admin-only folder), the repository's archive
 URL, or a ZIP on a share. Registry data is untrusted metadata: manifests are validated, never executed, and one invalid package
 is reported and skipped. `registry status` and `registry list` read only the cache, `search` takes `--offline`, and
-`name`, `registry/name` or `user:name` selects an entry (the first registry that has a name wins, otherwise use the prefix).
+`name` or `registry/name` selects an entry (the first registry that has a name wins, otherwise use the prefix `registry/`).
 A local package follows the registry entry of the same name automatically; `gupkg link NAME [registry/name]` follows another
 entry and `--unlink` follows none.
 
@@ -182,14 +193,12 @@ gupkg-manager update --all --yes --json    :: activate what is prepared
 gupkg-manager check --json                 :: health: drift, fingerprints
 ```
 
-Run them as a **normal user**: the manager programs refuse an elevated shell, and a Task Scheduler task with "Run with highest
-privileges" is refused (exit 2). From a normal shell, `check-updates` of a *system* package only reports (design 9.3, D22); an
-administrator writes and prepares the new version with `gupkg check-updates NAME...` from an elevated shell, which is how a
-scheduled system update runs. `update` of a system package asks for administrator rights once for the whole batch. Pass a unique
+Run them as the account whose packages they manage. From a normal shell they act on the user's root. A Task Scheduler task with "Run
+with highest privileges" acts on the system root, which needs the gupkg installed in `C:\opt`; the manager never asks for
+administrator rights and a user-mode run never reaches the system root. Pass a unique
 `--events-file NAME` when you want a log of the run and treat a missing `run_end` line as a failure; a call with several targets
-needs `--yes` under `--no-input` (otherwise exit 5). `[cleanup] auto = true` ends an update with `gupkg cleanup` for each root
-it updated.
-
+needs `--yes` under `--no-input` (otherwise exit 5). `[cleanup] auto = true` ends an update with `gupkg cleanup` for the root it
+updated.
 ## The health check
 
 `gupkg check [TARGET...]` reports a package that drifted from its install record (a missing shortcut, shim or `PATH` entry), an
@@ -204,8 +213,7 @@ Every run that acts on a package writes `<UTC>-<command>.log` and a `.jsonl` fil
 into `<root>\.gupkg\logs\` (a run with no package, started by a bundled gupkg, logs into its own package's `.gupkg\logs\`).
 `latest.log` in each folder copies the newest text log. `[logs] keep_runs` and `keep_days` (50 runs, 90 days) are applied when a
 run starts, and `gupkg cleanup` prunes old logs. `gupkg logs NAME` lists them, `--path` prints one, `--open` opens it. A failure to
-write a log is one warning and never fails the operation. Elevated relaunches write their events into the system root's logs; a
-caller reads them there.
+write a log is one warning and never fails the operation.
 
 ## Sandbox runs
 
@@ -213,8 +221,8 @@ caller reads them there.
 `PATH`, shortcuts and elevation are recorded in `DIR` (`system.json` and `.lnk.json` records) instead of the registry and the
 Start Menu, while files and downloads are real. Use it to rehearse an install, an update or an uninstall on a real machine
 without touching it, and for the smoke tests in [`tests/manual_smoke.md`](../tests/manual_smoke.md). `gupkg pkg check PATH
---install` uses the same machinery with a throw-away root. A sandbox whose `system.json` says `"elevated": true` makes the CLI
-ignore `--settings`.
+--install` uses the same machinery with a throw-away root. A sandbox whose `system.json` says `"elevated": true` makes the run a system-mode run, which refuses
+`--settings`.
 
 ## Self-health and recovery
 

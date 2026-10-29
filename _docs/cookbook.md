@@ -67,7 +67,7 @@ gupkg install C:\share\tool\1.0        :: with an installed gupkg: system mode f
 ```
 
 The installed gupkg copies the folder into the run's root (dropping the Mark of the
-Web) and installs from the copy. There is no `--in-place`: to install where the folder stands,
+Web) and installs from the copy. Nothing is installed in place: to install where the folder stands,
 make it a root of its own, `gupkg install <folder> --root <folder above the package name>`.
 
 ## See everything at a glance
