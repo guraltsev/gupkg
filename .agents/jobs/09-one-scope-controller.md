@@ -49,7 +49,7 @@ You do the tasks **one at a time, in the order of the table below**. Never run t
 | Task | File | Depends on | Repository |
 | --- | --- | --- | --- |
 | T00 | `09-tasks/T00-design-note.md` | — | gupkg |
-| T01 | `09-tasks/T01-remove-migration-code.md` | T00 + owner OK | gupkg |
+| T01 | `09-tasks/T01-remove-migration-code.md` | T00 | gupkg |
 | T02 | `09-tasks/T02-portable-package-kind.md` | T01 | gupkg |
 | T03 | `09-tasks/T03-registry-conversion.md` | T02 | **gupkg-registry** |
 | T04 | `09-tasks/T04-settings-schema-4-and-roots.md` | T02 | gupkg |
@@ -111,9 +111,10 @@ A task is **ready** when every task it depends on is `merged`. Even when two tas
 
 ## Special cases
 
-- **T00 ends with an owner stop.** Merge T00 (it changes only documentation). Then write under "Owner questions": "Confirm
-  D47–D55 as written in `_docs/rehaul_design.md` §6 and §19". Stop the session until the owner answers. Do not start
-  T01 before then.
+- **T00 has no owner stop.** The owner confirmed D47–D55 on 2026-10-28 (issue 035 §6.1, answers Q10–Q15). Add to the
+  reviewer's checks: every row D47–D55 in `_docs/rehaul_design.md` §19 says what issue 035 §6.1 says, including the
+  amendments, and the design adds no rule the issue does not state. If so, merge T00 and go on to T01. If the note had
+  to differ anywhere, or the worker stopped with a design question, stop and ask the owner.
 - **T02 and T03 belong together.** After T02 is merged into gupkg `main`, run T03 at once. T03 changes a different
   repository; follow "The registry repository (T03)" below instead of the normal cycle where they differ.
 - **T13 and the registry.** T13 syncs registries in its test roots. Until the owner has pushed the converted registry,

@@ -185,8 +185,13 @@ Each rule below replaces a section of `rehaul_design.md`. The design note of pha
   | --- | --- | --- |
   | 1 | `--root DIR`, which must be admin-only (else exit code 2) | `--root DIR` |
   | 2 | the root of the installed system gupkg that runs (today's `installed_system_root`) | `[roots].user` of `--settings PATH` |
-  | 3 | `[roots].system` of `$App\settings.toml` | `[roots].user` of `$App\settings.toml` |
-  | 4 | built-in `C:\opt` | built-in `%USERPROFILE%\opt` |
+  | 3 | `[roots].system` of `$App\settings.toml` | the root the running gupkg is installed in, when that root is **not** admin-only |
+  | 4 | built-in `C:\opt` | `[roots].user` of `$App\settings.toml` |
+  | 5 | — | built-in `%USERPROFILE%\opt` |
+
+  - **User row 3** (owner's answer Q11): a gupkg installed in `E:\opt` or `D:\tools\opt` manages that root when started
+    from there, without `--root`. A standard user who runs the system gupkg's program does not get `C:\opt` from this
+    row, because that root is admin-only, so no system data is read.
 
   - **One fallback of the current design is dropped.** The system root's `settings.toml` no longer moves the user root,
     because reading it from a user run is exactly the cross-mode read that requirement 2 forbids.
@@ -251,6 +256,9 @@ Each rule below replaces a section of `rehaul_design.md`. The design note of pha
   system mode adds a Start Menu shortcut "gupkg manager (administrator)" whose link carries the "run as administrator"
   flag. Windows asks for UAC, and gupkg contains no elevation code. This needs a `run_as_admin = true` field in
   `[[shortcut]]` (small, and it lives in `system/shell_link`).
+- **No way into system mode from a user-mode run** (owner's answer Q12). The manager has no key for it. When a user-mode
+  run refuses a system-only package, the message names the Start Menu shortcut "gupkg manager (administrator)" and the
+  exact command to run in an administrator shell (§4.6).
 - **What stays, because it is threat model T1 and not mode-mixing:**
   - the launcher ACL check (design §21.3);
   - `enforce_bundled_runtime`;
@@ -295,6 +303,13 @@ Each rule below replaces a section of `rehaul_design.md`. The design note of pha
     version (`install`, `update`, `switch`, repair, `check-updates` with download).
   - The refusal says only what the run can know: "this package installs only for a single user; run gupkg without
     administrator rights", or "…only system-wide; run gupkg as administrator". It never looks at the other mode.
+    The system-only refusal adds how (Q12): `Use the Start Menu entry "gupkg manager (administrator)", or run in an
+    administrator shell: gupkg <command> <name>`.
+  - `uninstall`, `check` and `cleanup` are never refused by the mode list, so a package whose definition narrowed its
+    modes can always be removed.
+  - **Listing** (owner's answer Q14): `list --available` and the manager's `a` key also list packages the run's mode
+    cannot install, marked `system only` or `user only` (a portable package is `user only`), with the refusal text as
+    the reason.
   - The planner checks the version being activated, so a new version that narrows its modes is refused on a scope
     where it no longer applies. The installed version keeps working, and the package is reported `outdated`, with the
     refusal as the reason it cannot update.
@@ -352,6 +367,9 @@ Each rule below replaces a section of `rehaul_design.md`. The design note of pha
 - **The install record keeps its schema.** Its `mode` key is written as the mode. A record whose mode differs from the run's
   is a `broken` reason ("this package was moved between scopes"). It is no longer a mode decision. A record that
   says `portable` is reported the same way and repaired by reinstalling (no reader of old values).
+- **A package folder without an install record** (made by an older gupkg, such as the 0.17-layout folders in §2) is
+  listed as `broken` with the reason `no install record (made by an older gupkg); reinstall with: gupkg install <name>
+  --force`. gupkg changes nothing in it on its own, and has no reader of old layouts (owner's answer Q13, D54).
 - **Receipts** are read only from `App.info`. A version that has only an old `.gupkg\receipts\<v>.toml` shows "no receipt"
   until it is reinstalled or repaired (§3.3).
 
@@ -370,7 +388,7 @@ This is the owner's answer to Q4. It amends D16 (which allowed no `PATH`) and D3
 the bundled one). A launcher lives at `<root>\<name>\<version>\`, so its root is `%~dp0..\..`.
 
 1. **The bundled gupkg,** `%~dp0gupkg\gupkg.cmd`, when the version directory carries one.
-2. **The gupkg named by the root's setting.** `<root>\.gupkg\gupkg-location` (name proposed) is a one-line text file
+2. **The gupkg named by the root's setting.** `<root>\.gupkg\gupkg-location` is a one-line text file
    holding the folder that contains `gupkg.cmd`. A relative path is resolved against the root. The launcher reads it with
    `set /p`, and nothing in it is executed. It is data, not a script calling a script.
    - Installing the `gupkg` package into a root writes this file, pointing at `$PackageRoot\current\App`. That replaces
@@ -436,23 +454,23 @@ reinstalls or deletes anything in `C:\opt` or `C:\Users\guraltsev\opt`, and no t
 
 ## 6. Decisions
 
-### 6.1 Decisions (D47–D55 are proposed; the owner confirms them in phase 0. The answers to Q1–Q6 are recorded in §6.2)
+### 6.1 Decisions (D47–D55 confirmed by the owner on 2026-10-28, with the amendments of §6.2 Q10–Q15)
 
 | # | Decision | Replaces |
 | --- | --- | --- |
-| D47 | A run belongs to one scope (mode, root), fixed at process start. The mode comes from the token alone. | D4, design §6.2, §5.3 rule 5 |
-| D48 | The root of a run comes from the per-mode fallback chain of §4.1: `--root`, then (system) the installed system gupkg's root or (user) `--settings`, then `$App\settings.toml`, then the built-in default. A root's own settings never name a root. An elevated run needs an admin-only root and an admin-only gupkg tree. | design §11 layers 3–5 as sources of roots |
-| D49 | gupkg never elevates itself. The system mode is reached by starting gupkg elevated, helped by a run-as-administrator shortcut. | design §9.6 rule 1 (relaunch part), §10.4 "The elevated child", D24 (relayed part), D31 (now structural) |
-| D50 | Each mode has its own settings, registry cache, state and logs, and never reads the other's. | design §6.1 last row, §9.4, §11 |
+| D47 | A run belongs to one scope (mode, root), fixed at process start. The mode comes from the token alone. A machine where every process is elevated has only system mode (Q10). | D4, design §6.2, §5.3 rule 5 |
+| D48 | The root of a run comes from the per-mode fallback chain of §4.1: `--root`, then (system) the installed system gupkg's root or (user) `--settings`, then `$App\settings.toml`, then the built-in default. A root's own settings never name a root. An elevated run needs an admin-only root and an admin-only gupkg tree. In user mode, the root the running gupkg is installed in comes third, when it is not admin-only (Q11). | design §11 layers 3–5 as sources of roots |
+| D49 | gupkg never elevates itself. The system mode is reached by starting gupkg elevated, helped by a run-as-administrator shortcut. No manager key leads to system mode; a refusal names the shortcut and the elevated command (Q12). | design §9.6 rule 1 (relaunch part), §10.4 "The elevated child", D24 (relayed part), D31 (now structural) |
+| D50 | Each mode has its own settings, registry cache, state and logs, and never reads the other's. There is no machine-wide policy for user runs (Q15). | design §6.1 last row, §9.4, §11 |
 | D51 | Portable is a package kind (`[portable]` present), installed in user mode only. A definition is never both. | D7 (kept for persist), D42, design §6.3 "where a portable package goes" |
 | D52 | Launchers try the bundled gupkg, then the one named in `<root>\.gupkg\gupkg-location` (data, not a script), then `PATH`. When elevated, only `PATH` entries whose folder is admin-only are used (no registry read), and everything selected must pass the admin-only check. No root forwarder. | D16, D32, D20 (forwarder part), design §21.3 |
 | D53 | One manager scope per run. Elevated is allowed. Reads happen in-process through a shared typed reader. Operations go through the CLI. | D44 (amended), design §13.2 step 4, §15 "Scheduled runs" |
-| D54 | No migration code in the repository, core or not. | D33, D45 (`migrate` forwarder), design §18 |
-| D55 | A package declares the modes it may be installed in: system only (drivers, services, machine-wide state), user only, or both (the default). A portable package is user only. The planner refuses a version on a mode it does not allow, before any work, and the message never names the other mode's locations. | the mode part of `modes` in design §6.2 |
+| D54 | No migration code in the repository, core or not. A package folder without an install record is `broken`, with "reinstall" as the fix (Q13). | D33, D45 (`migrate` forwarder), design §18 |
+| D55 | A package declares the modes it may be installed in: system only (drivers, services, machine-wide state), user only, or both (the default). A portable package is user only. The planner refuses a version on a mode it does not allow, before any work, and the message never names the other mode's locations. `list --available` and `a` show packages the mode cannot install, marked, with the reason (Q14). `uninstall`, `check` and `cleanup` are never refused by it. | the mode part of `modes` in design §6.2 |
 
-### 6.2 Owner's answers (2026-10-26)
+### 6.2 Owner's answers (2026-10-26 and 2026-10-28)
 
-All questions are answered. Nothing is left open for phase 0 except confirming D47–D55 in the design note.
+All questions are answered, and D47–D55 are confirmed (Q10–Q15). Nothing is left open for phase 0.
 
 | # | Question | Answer |
 | --- | --- | --- |
@@ -467,6 +485,12 @@ All questions are answered. Nothing is left open for phase 0 except confirming D
 | Q6 | Unused portable features (`args`, `env`, `[portable].prepare`, `$Data`) | **Remove them.** |
 | Q8 | Names (2026-10-28) | The run's object is **`Scope`** (`mode`, `root`, …); the system/user field is **`mode`**, and the `pkg.toml` key stays `modes`. Today's `system.port.Scope` enum becomes `Mode` (§4.1). "Installation" and "side" are not used for this. |
 | Q9 | How a `[[shortcut]]` says which modes it applies to (2026-10-28) | **A `modes` list**, same form as the package's, defaulting to the package's modes and a subset of them. See job 09, T08. |
+| Q10 | D47: machines where every process is elevated (UAC off, CI) (2026-10-28) | **Accept:** they get system mode only, and the message says so. No `--user` override. |
+| Q11 | D48: should user mode use the root of the gupkg that runs? (2026-10-28) | **Yes,** as row 3 of the user chain, when that root is not admin-only (§4.1). |
+| Q12 | D49: a way into system mode from a user-mode run (2026-10-28) | **No manager key.** The CLI refusal names the shortcut and the elevated command (§4.4, §4.6). |
+| Q13 | D54: old folders without an install record (2026-10-28) | **Listed as `broken`, fixed by reinstalling** (§4.7). No bulk script. |
+| Q14 | D55: packages the run's mode cannot install, in `list --available` and `a` (2026-10-28) | **Shown, marked `system only` / `user only`, with the reason** (§4.6). |
+| Q15 | D50 machine policy; D51–D53 (2026-10-28) | **No machine-wide policy** for user runs. **D51, D52, D53 confirmed as written**, with the file name `gupkg-location`. |
 
 ## 7. Expected size
 

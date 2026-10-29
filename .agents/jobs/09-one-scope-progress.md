@@ -17,7 +17,7 @@ Not recorded yet. Before T00, the controller records:
 | Task | Title | Depends on | Status | Branch | Merge commit | Tests | Manual checks pending |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | T00 | Design note | — | ready | | | | |
-| T01 | Remove migration code | T00 + owner OK | waiting | | | | |
+| T01 | Remove migration code | T00 | waiting | | | | |
 | T02 | Portable is a package kind; mode restriction | T01 | waiting | | | | |
 | T03 | Registry conversion (gupkg-registry) | T02 | waiting | | | | |
 | T04 | Settings schema 4 and root fallback chain | T02 | waiting | | | | |

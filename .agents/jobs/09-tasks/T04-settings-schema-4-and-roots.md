@@ -20,8 +20,10 @@ beside the new functions, but they must not use the new schema incorrectly.
 **Root of the user mode**: the first that applies:
 1. `--root DIR`;
 2. `[roots].user` in the `--settings` file;
-3. `[roots].user` in `$App\settings.toml`;
-4. built-in `%USERPROFILE%\opt`.
+3. the root the running gupkg is installed in, when that root is **not** admin-only (issue 035 §4.1, Q11). A gupkg
+   started from the source tree or a bundled copy has no such root, and the row does not apply;
+4. `[roots].user` in `$App\settings.toml`;
+5. built-in `%USERPROFILE%\opt`.
 
 **Settings layers of a run**, lowest priority first:
 1. built-in defaults;
@@ -56,7 +58,9 @@ code that converts it.
 1. In `model/settings.py`, add the schema 4 table and defaults. A function `default_layer(mode)` returns the mode's
    defaults.
 2. In `settingsload.py`, add:
-   - `resolve_root(mode, *, root_option, installed_system_root, app_layer, cli_layer, env, system) -> RootChoice`.
+   - `resolve_root(mode, *, root_option, installed_root, app_layer, cli_layer, env, system) -> RootChoice`.
+     `installed_root` is the root the running gupkg is installed in, or `None`. System mode uses it only when it is
+     admin-only, user mode only when it is not.
      `RootChoice` holds `path` and `source`, for example `"built-in default"`, `"--root"` or `"$App\\settings.toml"`;
    - `load_mode_settings(mode, root, *, app_dir, settings_path, system, env, read_text) -> LoadedSettings`.
 
@@ -71,10 +75,12 @@ code that converts it.
 
 ## New tests (each must fail on `main`, then pass)
 
-- [ ] **The fallback chain, one test per row and mode** (8 tests). Each test sets the row and every row below it, and
+- [ ] **The fallback chain, one test per row and mode** (9 tests: 4 system, 5 user). Each test sets the row and every row below it, and
       checks that the row wins and that `source` names it.
 - [ ] `[roots]` in `<root>\.gupkg\settings.toml` is a `SettingsError` naming the file.
 - [ ] `--settings` in system mode is a `SettingsError`.
+- [ ] User mode with an admin-only `installed_root` (the system gupkg run by a standard user) skips row 3 and gets
+      the next row.
 - [ ] A `schema = 3` file is a `SettingsError` with the message above.
 - [ ] `--root` in system mode, pointing at a folder `FakeSystem` reports as user-writable: `SettingsError`.
 - [ ] A user run never reads the system root's `settings.toml`. Pass a `read_text` that records every path it is asked

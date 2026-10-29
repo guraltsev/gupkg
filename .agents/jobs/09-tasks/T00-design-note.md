@@ -2,8 +2,9 @@
 
 ## Goal
 
-Make `_docs/rehaul_design.md` describe the new model of issue 035 **before** any code changes. The owner then confirms
-the new decisions D47–D55. This task changes **no** Python, `.cmd` or test file.
+Make `_docs/rehaul_design.md` describe the new model of issue 035 **before** any code changes. The owner confirmed
+D47–D55 on 2026-10-28 (issue 035 §6.1, with the amendments of §6.2 Q10–Q15). Write them as recorded there, not as
+your own summary. This task changes **no** Python, `.cmd` or test file.
 
 ## Read
 
@@ -63,7 +64,8 @@ Only these two files:
 - [ ] `git diff --stat main` lists only the two docs files (and your log file).
 - [ ] `Select-String -Path _docs\rehaul_design.md -Pattern 'default_mode','--relaunched','gupkg migrate','--no-system-gupkg','adhoc'`
       finds matches only in superseded decision rows, or none at all.
-- [ ] §19 has rows D47 to D55.
+- [ ] §19 has rows D47 to D55, and each says what issue 035 §6.1 says, including the amendments. List any
+      difference in your log as a blocking question.
 - [ ] Every rule of issue 035 §4 appears in the design. List in your log each §4.x with the design section that now
       holds it.
 

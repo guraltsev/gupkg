@@ -57,10 +57,12 @@ After this task:
    - the support check refuses a portable package in system mode with:
      `This is a portable package: it installs only for a single user. Run gupkg without administrator rights.`
    - the mode check (D55): a package whose `modes` lacks the chosen mode is refused **before any work** with:
-     - `This package installs only system-wide. Run gupkg as administrator.`, or
+     - `This package installs only system-wide. Run gupkg as administrator: use the Start Menu entry "gupkg manager
+       (administrator)", or run in an administrator shell: gupkg <command> <name>` (Q12), or
      - `This package installs only for a single user. Run gupkg without administrator rights.`
 
-     These go through the existing `check_supported`. Keep its call sites.
+     These go through the existing `check_supported`. Keep its call sites. `uninstall`, `check` and `cleanup` are
+     never refused by it; add a test that uninstalls a package whose `modes` exclude the run's mode.
 4. **Settings:**
    - remove `LAYER_PORTABLE`, `[roots].portable` and `[integration.portable]` from `model/settings.py`, `settingsload.py`
      (the `portable_root` parameter) and `_check_roots`;

@@ -53,6 +53,10 @@ Also remove `resolve_package_path` callers' need for `elevated`.
 - [ ] A user root whose registry cache was never synced has no registry entries. It does **not** see the system root's
       cache.
 - [ ] A record with `mode = "system"` inside a user scope is `broken`, with the message above.
+- [ ] A package folder with a `current` entry but no install record is `broken` with the reason `no install record
+      (made by an older gupkg); reinstall with: gupkg install <name> --force`, and nothing in it changes (issue 035 §4.7).
+- [ ] `list --available` in user mode lists a `["system"]` registry package marked `system only`, with the refusal
+      text as the reason; in system mode a `["user"]` or portable one is marked `user only` (§4.6, Q14).
 - [ ] `list --json` has `mode` and `root` at document level, and no `mode` per row.
 
 ## Done when

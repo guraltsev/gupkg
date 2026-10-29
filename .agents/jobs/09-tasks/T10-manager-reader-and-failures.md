@@ -39,6 +39,8 @@ Issue 035: §4.5 "From issue 034"; issue 034 "Related defects" (UI parsing dupli
 ## New tests (each must fail on `main`, then pass)
 
 - [ ] `read_list` reads every recorded document without error, including `available` rows.
+- [ ] An available row marked `system only` or `user only` shows the mark and the reason on screen (issue 035 §4.6,
+      Q14). Paste the rendered screen.
 - [ ] A row with a field of the wrong type gives a `DocumentError` that names the field.
 - [ ] The browser with `a` shows the available rows from the recorded `list --available` document. Paste the rendered
       screen.
