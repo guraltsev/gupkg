@@ -160,7 +160,7 @@ def test_the_registrys_tracker_is_copied_in_and_run(tmp_path: Path) -> None:
 
 
 def test_a_bundled_install_carries_its_own_gupkg_into_the_new_version(tmp_path: Path) -> None:
-    """In a root with no forwarder the package's bundled gupkg is copied into the new directory, next to launchers written fresh (decision D32)."""
+    """In a root with no gupkg-location the package's bundled gupkg is copied into the new directory, next to launchers written fresh (decision D32)."""
     world = World(tmp_path)
     installed(world)
     version = world.user / "tool" / "1.0.0"
@@ -176,12 +176,12 @@ def test_a_bundled_install_carries_its_own_gupkg_into_the_new_version(tmp_path: 
     assert (new / "install.cmd").read_bytes() == launcher_text("install").encode("ascii")
 
 
-def test_every_new_version_directory_gets_the_launchers_also_in_a_root_with_a_forwarder(tmp_path: Path) -> None:
-    """With an installed gupkg in the root (a forwarder) the new version still carries its own install.cmd and gupkg-tui.cmd, and no bundled gupkg."""
+def test_every_new_version_directory_gets_the_launchers_also_in_a_root_with_a_gupkg_location(tmp_path: Path) -> None:
+    """With an installed gupkg in the root (a gupkg-location) the new version still carries its own install.cmd and gupkg-tui.cmd, and no bundled gupkg."""
     world = World(tmp_path)
     installed(world)
     (world.user / ".gupkg").mkdir(exist_ok=True)
-    (world.user / ".gupkg" / "gupkg.cmd").write_text("@echo off\n", encoding="utf-8")
+    (world.user / ".gupkg" / "gupkg-location").write_text("gupkg\\current\\App\n", encoding="utf-8")
     world.announce("tool", "1.1.0")
 
     result = world.one("check-updates", "tool", no_download=True)

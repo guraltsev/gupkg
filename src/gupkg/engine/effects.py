@@ -47,6 +47,8 @@ from ..tomlio import dumps
 # The launcher binaries, the project licenses that sit beside them, and the folder of runtime files a dynamically linked launcher
 # loads its libraries from (``exe-shim-lib`` beside the launcher: the launchers do not look in their own folder, so a stray DLL
 # in ``bin`` is never picked up by mistake).
+# The root's setting that package launchers read to find the installed gupkg (a one-line data file in ``<root>\.gupkg``).
+LOCATION_FILE = "gupkg-location"
 _SHIM_DIR = Path(__file__).resolve().parents[1] / "shim"
 SHIM_LIB_NAME = "exe-shim-lib"
 _SHIM_LICENSES = ("LICENSE-exe-shim-MIT.txt", "LICENSE-exe-shim-UNLICENSE.txt")
@@ -78,7 +80,7 @@ class EffectContext:
     linkage : str
         ``dynamic`` or ``static`` launcher build.
     root_data : Path or None
-        The root's data folder ``<root>\\.gupkg``, where the root forwarder is written; ``None`` when unknown.
+        The root's data folder ``<root>\\.gupkg``, where ``gupkg-location`` is written; ``None`` when unknown.
     """
 
     package_path: Path
@@ -201,9 +203,10 @@ def desired_effects(manifest: Manifest, context: EffectContext) -> tuple[tuple[E
         fields["config_sha256"] = hashlib.sha256(shim_config_text(fields).encode("utf-8")).hexdigest()
         effects.append(Effect("shim", fields))
 
-    # The root forwarder belongs to the gupkg package alone: it lets the package launchers of this root find the installed gupkg.
-    if manifest.root_forwarder is not None:
-        effects.extend(_forwarder_effects(manifest.root_forwarder.target, values, context))
+    # Only installing the gupkg package writes the root's gupkg-location: it lets the package launchers of this root find the
+    # installed gupkg (design 21.3, decision D52).
+    if package.name.casefold() == "gupkg" and context.root_data is not None:
+        effects.append(_location_effect(context.root_data, package))
 
     # Environment values and PATH entries need an environment target.
     wants_environment = bool(manifest.envs or manifest.paths or manifest.shims)
@@ -236,63 +239,42 @@ def desired_effects(manifest: Manifest, context: EffectContext) -> tuple[tuple[E
     return tuple(seen.values()), tuple(notes)
 
 
-def _forwarder_effects(target: str, values: Mapping[str, str], context: EffectContext) -> list[Effect]:
-    """Return the two forwarder files (``gupkg.cmd`` and ``gupkg-manager.cmd``) of ``[root_forwarder]``.
+def _location_effect(root_data: Path, package: Path) -> Effect:
+    """Return the ``location_file`` effect of the gupkg package: ``<root>\\.gupkg\\gupkg-location`` naming ``gupkg\\current\\App``.
 
-    Only a package called ``gupkg`` may declare it, and its target must lie inside the package folder, so a forwarder always
-    points to a gupkg in the root that it serves (design 21.3). The files call the target by a path relative to themselves,
-    which keeps them free of non-ASCII path text that ``cmd`` could not read.
-
-    Raises
-    ------
-    EffectError
-        If the package is not ``gupkg``, the root has no data folder, or the target leaves the package folder.
+    The value is relative to the root, so the file stays right when the root is moved, and it goes through ``current``, so a new
+    version needs no change. Launchers read the first line as data and never execute it (design 21.3).
     """
-    package = context.package_path
-    if package.name.casefold() != "gupkg":
-        raise EffectError("[root_forwarder] is valid only in the gupkg package")
-    if context.root_data is None:
-        raise EffectError("[root_forwarder] needs the root's data folder, which this context does not have")
-    folder = Path(_expand(target, values, context.env, "[root_forwarder] target"))
-    if not is_inside(folder, package) or canonical_path(folder) == canonical_path(package):
-        raise EffectError(f"[root_forwarder] target {folder} is not inside the package folder {package}")
-
-    # The forwarder sits in <root>\.gupkg, so the target is reached by climbing one level to the root.
-    relative = os.path.relpath(folder, context.root_data.parent)
-    effects = []
-    for name in ("gupkg.cmd", "gupkg-manager.cmd"):
-        content = (
-            "@echo off\r\n"
-            "rem Written by gupkg: the gupkg installed in this root. Package launchers call this file.\r\n"
-            f'call "%~dp0..\\{relative}\\{name}" %*\r\n'
-            "exit /b %ERRORLEVEL%\r\n"
-        )
-        path = context.root_data / name
-        effects.append(Effect("forwarder", {
-            "path": str(path), "content": content, "sha256": hashlib.sha256(content.encode("ascii")).hexdigest(),
-        }))
-    return effects
+    value = os.path.relpath(package / "current" / "App", root_data.parent)
+    return Effect("location_file", {"path": str(root_data / LOCATION_FILE), "content": value})
 
 
-def forwarder_target(data_dir: Path) -> Path | None:
-    """Return the installed gupkg's ``gupkg.cmd`` that the root forwarder in *data_dir* calls, or ``None``.
-
-    ``None`` means the root has no forwarder, or the forwarder does not call a ``gupkg.cmd`` that exists (the installed gupkg
-    is gone): then no installed gupkg can take over from the bundled copies of this root (design 21.8). Only the call line that
-    gupkg itself writes is understood; the path is read relative to *data_dir*.
-    """
-    forwarder = Path(data_dir) / "gupkg.cmd"
+def _location_first_line(path: Path) -> str | None:
+    """Return the first line of *path* without its line ending, or ``None`` when it cannot be read."""
     try:
-        text = forwarder.read_text(encoding="ascii")
+        text = path.read_text(encoding="ascii")
     except (OSError, UnicodeDecodeError):
         return None
-    for line in text.splitlines():
-        match = re.fullmatch(r'call "%~dp0([^"%]+)" %\*', line.strip())
-        if match is not None:
-            target = Path(os.path.normpath(Path(data_dir) / match.group(1)))
-            return target if target.is_file() else None
-    return None
+    lines = text.splitlines()
+    return lines[0].strip() if lines else ""
 
+
+def launchers_find_gupkg(root: Path, path_value: str | None) -> bool:
+    """Return whether a package launcher of *root* would find a gupkg at step 2 or step 3 of its order (design 21.3, 21.8).
+
+    Step 2 is the folder named by the first line of ``<root>\\.gupkg\\gupkg-location`` (relative to *root*) when it holds a
+    ``gupkg.cmd``. Step 3 is a ``gupkg.cmd`` or ``gupkg.exe`` in a folder of *path_value* (a ``PATH`` string). The bundled copy
+    (step 1) is deliberately not asked: ``cleanup --bundled`` removes it.
+    """
+    line = _location_first_line(Path(root) / ".gupkg" / LOCATION_FILE)
+    if line and "&" not in line and "|" not in line:
+        folder = Path(os.path.normpath(Path(root) / line.replace('"', "")))
+        if (folder / "gupkg.cmd").is_file():
+            return True
+    for entry in (path_value or "").split(os.pathsep):
+        if entry.strip() and any((Path(entry.strip().strip('"')) / name).is_file() for name in ("gupkg.cmd", "gupkg.exe")):
+            return True
+    return False
 
 def shim_config_text(fields: Mapping[str, Any]) -> str:
     """Return the ``.config.toml`` text of a shim effect."""
@@ -490,9 +472,9 @@ def apply_effect(system: System, effect: Effect, context: EffectContext, previou
         path = _inside(Path(str(fields["path"])), context.bin_dir, "wrapper")
         write_bytes_atomic(path, _wrapper_bytes(path, str(fields["content"])))
         return effect
-    if effect.kind == "forwarder":
-        path = _inside(Path(str(fields["path"])), context.root_data, "root forwarder")
-        write_bytes_atomic(path, str(fields["content"]).encode("ascii"))
+    if effect.kind == "location_file":
+        path = _inside(Path(str(fields["path"])), context.root_data, "gupkg-location")
+        write_bytes_atomic(path, (str(fields["content"]) + "\r\n").encode("ascii"))
         return effect
     if effect.kind == "env":
         _require_free_name(str(fields["name"]))
@@ -554,9 +536,10 @@ def remove_effect(system: System, effect: Effect, context: EffectContext) -> boo
                 removed = True
         _prune_empty(path.parent, context.bin_dir)
         return removed
-    if effect.kind == "forwarder":
-        path = _inside(Path(str(fields["path"])), context.root_data, "root forwarder")
-        if not path.is_file():
+    if effect.kind == "location_file":
+        # Only a file that still holds the value gupkg wrote is removed: a person's edit is theirs.
+        path = _inside(Path(str(fields["path"])), context.root_data, "gupkg-location")
+        if not path.is_file() or _location_first_line(path) != str(fields["content"]):
             return False
         os.chmod(path, 0o666)
         path.unlink()
@@ -613,9 +596,12 @@ def verify_each(system: System, effects: Sequence[Effect], *, mode: Mode) -> lis
                     missing := shim_runtime_missing(Path(str(fields["path"])).parent)
                 ):
                     drift = f"shim runtime files missing in {Path(str(fields['path'])).parent / SHIM_LIB_NAME}: {', '.join(missing)}"
-            elif effect.kind in ("file", "forwarder"):
+            elif effect.kind == "file":
                 if not _file_has(Path(str(fields["path"])), str(fields["sha256"])):
-                    drift = f"{'root forwarder' if effect.kind == 'forwarder' else 'file'} missing or changed: {fields['path']}"
+                    drift = f"file missing or changed: {fields['path']}"
+            elif effect.kind == "location_file":
+                if _location_first_line(Path(str(fields["path"]))) != str(fields["content"]):
+                    drift = f"gupkg-location missing or changed: {fields['path']}"
             elif effect.kind in ("env", "path"):
                 scope = _scope(fields)
                 if mode is Mode.SYSTEM and scope is Mode.USER:

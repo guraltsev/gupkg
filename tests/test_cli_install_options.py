@@ -1,7 +1,7 @@
 """Cover the install and cleanup options that the command line hands to the engine: ``--refresh``, ``--bundled``.
 
 Behavior covered: ``install --refresh`` rebuilds an ``App`` that exists (a file changed by hand comes back) while a plain install
-leaves it; ``cleanup --bundled`` removes the bundled gupkg of old versions in a root with a forwarder and a plain cleanup
+leaves it; ``cleanup --bundled`` removes the bundled gupkg of old versions in a root with a gupkg-location and a plain cleanup
 keeps it; ``--skip-checksum`` never waives a hash that does not match (exit code 3, no ``App``).
 
 Real: the argument parser, the engine and real folders. Mocked: ``FakeSystem`` and the served artifacts.
@@ -42,10 +42,10 @@ def test_refresh_rebuilds_an_app_that_can_be_rebuilt_and_a_plain_install_does_no
 
 
 def test_bundled_removes_the_bundled_gupkg_of_old_versions_and_a_plain_cleanup_keeps_it(world: CliWorld) -> None:
-    """In a root with a forwarder, `cleanup --bundled` drops `<old version>\\gupkg`; `cleanup` alone leaves it."""
+    """In a root with a gupkg-location, `cleanup --bundled` drops `<old version>\\gupkg`; `cleanup` alone leaves it."""
     (world.user / ".gupkg").mkdir(parents=True, exist_ok=True)
-    # A forwarder as gupkg writes it, calling an installed gupkg that exists.
-    (world.user / ".gupkg" / "gupkg.cmd").write_text('@echo off\r\ncall "%~dp0..\\gupkg\\current\\App\\gupkg.cmd" %*\r\n', encoding="utf-8")
+    # A gupkg-location as gupkg writes it, naming an installed gupkg that exists.
+    (world.user / ".gupkg" / "gupkg-location").write_text("gupkg\\current\\App\r\n", encoding="utf-8")
     (world.user / "gupkg" / "current" / "App").mkdir(parents=True)
     (world.user / "gupkg" / "current" / "App" / "gupkg.cmd").write_text("@echo off\r\n", encoding="utf-8")
     world.publish("tool", "1.0.0", tables=SHIM)

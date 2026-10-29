@@ -46,7 +46,7 @@ from ..report.events import Step, Warning, emit, phase, release_package_log
 from ..services.safepath import remove_tree
 from .appbuild import Populated, app_section, populate_version
 from .context import Engine, require_work_folder
-from .effects import EffectError, apply_effect, changes_environment, effect_context, remove_effect
+from .effects import LOCATION_FILE, EffectError, apply_effect, changes_environment, effect_context, remove_effect
 from ..launchers import VERSION_LAUNCHERS
 from ..services.fingerprint import FingerprintError, differing_files, file_digests, verify_directory
 from .fingerprint import app_files
@@ -275,9 +275,9 @@ def _copy_in(engine: Engine, run: ExecutionInput) -> _Origin:
         _require_same_manifest(run, version_dir, created=created)
         _verify_distribution(run, version_dir, origin, created=created)
 
-        # A bundled install (no root forwarder) keeps its own gupkg: it is carried in after the copy was verified, because
-        # the launchers it adds are part of the fingerprint.
-        if created and not (context.root / DATA_DIR_NAME / "gupkg.cmd").is_file():
+        # A bundled install (no gupkg-location in the root) keeps its own gupkg: it is carried in after the copy was verified,
+        # because the launchers it adds are part of the fingerprint.
+        if created and not (context.root / DATA_DIR_NAME / LOCATION_FILE).is_file():
             carry_forward(run.view, version_dir)
     return origin
 
@@ -401,7 +401,7 @@ def copy_registry_version(engine: Engine, context: Scope, package_path: Path, so
 def carry_forward(view: PackageView, target: Path) -> None:
     """Copy the package's own bundled ``gupkg`` folder from its active (else newest) version into *target*.
 
-    A root with no forwarder has no installed gupkg to manage the package, so every new version directory of a
+    A root with no gupkg-location has no installed gupkg to manage the package, so every new version directory of a
     bundled install carries the package's own copy (design 5.3 rule 1, 21.4, decision D32), whichever gupkg runs the
     operation. The launchers are not copied: every gupkg writes them from the template. A folder that *target* already
     has is left alone.
@@ -729,7 +729,7 @@ def execute_uninstall(engine: Engine, run: ExecutionInput) -> PackageResult:
 # ---------------------------------------------------------------------------
 
 
-def execute_cleanup(engine: Engine, package_path: Path, plan: CleanupPlan, forwarder_root: Path | None) -> PackageResult:
+def execute_cleanup(engine: Engine, package_path: Path, plan: CleanupPlan, gupkg_found: bool) -> PackageResult:
     """Remove what a ``CleanupPlan`` names: ``App`` folders, receipts, work entries and (with ``--bundled``) bundled copies.
 
     Parameters
@@ -740,8 +740,9 @@ def execute_cleanup(engine: Engine, package_path: Path, plan: CleanupPlan, forwa
         The package root.
     plan : CleanupPlan
         What to remove.
-    forwarder_root : Path, optional
-        The root whose forwarder lets bundled copies go; ``None`` keeps every bundled copy (design 21.8).
+    gupkg_found : bool
+        Whether a launcher of this root would find a gupkg through ``gupkg-location`` or ``PATH`` (steps 2 and 3 of the
+        launcher order); ``False`` keeps every bundled copy (design 21.8).
 
     Returns
     -------
@@ -767,12 +768,12 @@ def execute_cleanup(engine: Engine, package_path: Path, plan: CleanupPlan, forwa
             removed["work"].append(name)
     if plan.drop_bundled and plan.package.casefold() == "gupkg":
         emit(Step("kept the bundled gupkg of gupkg itself: it is the populate script's input", "info"))
-    elif plan.drop_bundled and forwarder_root is None:
+    elif plan.drop_bundled and not gupkg_found:
         emit(Warning(
-            "kept the bundled gupkg copies: this root has no root forwarder to an installed gupkg that could take over "
-            "(install gupkg into this root first)"
+            "kept the bundled gupkg copies: no launcher of this root would find another gupkg (no usable gupkg-location in "
+            "the root's data folder, and no gupkg on PATH); install gupkg into this root first"
         ))
-    if forwarder_root is not None and plan.package.casefold() != "gupkg":
+    if gupkg_found and plan.package.casefold() != "gupkg":
         for version in plan.drop_bundled:
             bundled = package_path / version / "gupkg"
             if is_inside(bundled, package_path):
@@ -782,5 +783,5 @@ def execute_cleanup(engine: Engine, package_path: Path, plan: CleanupPlan, forwa
     return PackageResult(
         plan.package, "cleanup", True, "cleaned", None, None, None, 0, None, None, engine.log_path(package_path), (),
         {**removed, "kept": [{"version": version, "why": why} for version, why in plan.kept_apps],
-         **({"bundled_kept": "no root forwarder to an installed gupkg"} if plan.drop_bundled and forwarder_root is None else {})},
+         **({"bundled_kept": "no launcher of this root would find another gupkg (gupkg-location or PATH)"} if plan.drop_bundled and not gupkg_found else {})},
     )

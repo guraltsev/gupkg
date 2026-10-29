@@ -1144,7 +1144,7 @@ def _build_parser() -> argparse.ArgumentParser:
               "gupkg cleanup --keep 1")
     sub.add_argument("targets", nargs="*", metavar="TARGET", help="packages to clean (default: every package of the roots)")
     sub.add_argument("--keep", type=int, default=1, metavar="N", help="older Apps to keep (default: 1)")
-    sub.add_argument("--bundled", action="store_true", help="also drop bundled gupkg copies where a root forwarder exists")
+    sub.add_argument("--bundled", action="store_true", help="also drop bundled gupkg copies where a launcher would find another gupkg (gupkg-location or PATH)")
     _options(sub, mutating=True, plan=True, events=True)
 
     sub = add("link", "Follow another registry entry (registry/name), the entry of the same name, or none (--unlink).",

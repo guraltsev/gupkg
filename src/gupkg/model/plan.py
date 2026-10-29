@@ -90,7 +90,7 @@ class Request:
     keep : int
         ``cleanup --keep N``: how many non-current ``App`` folders stay (default one previous).
     bundled : bool
-        ``cleanup --bundled``: drop bundled gupkg copies where a root forwarder exists.
+        ``cleanup --bundled``: drop bundled gupkg copies where a launcher would find a gupkg through gupkg-location or PATH.
     no_download : bool
         ``check-updates --no-download``: write the version directory only.
     skip : str, optional

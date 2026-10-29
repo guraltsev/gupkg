@@ -71,7 +71,7 @@ from .checkupdates import check_updates_one, plan_check
 from .context import Engine
 from .effects import desired_effects, effect_context, verify_each
 from .errors import failure
-from .effects import forwarder_target
+from .effects import launchers_find_gupkg
 from .executor import (
     ExecutionInput,
     execute_cleanup,
@@ -720,8 +720,8 @@ def _cleanup(engine: Engine, target: _Target) -> PackageResult:
     context = target.resolved.scope
     view = _view(target)
     cleanup_plan = _cleanup_plan(engine, target, view)
-    forwarder = context.root if forwarder_target(context.root / DATA_DIR_NAME) is not None else None
-    return execute_cleanup(engine, view.path, cleanup_plan, forwarder)
+    path_value = next((value for name, value in engine.env.items() if name.upper() == "PATH"), None)
+    return execute_cleanup(engine, view.path, cleanup_plan, launchers_find_gupkg(context.root, path_value))
 
 
 def _old_entries(engine: Engine, folder: Path) -> list[str]:

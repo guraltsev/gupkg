@@ -282,25 +282,25 @@ def test_the_registrys_tracker_is_refreshed_when_it_changed_and_kept_when_the_lo
     assert local.read_text(encoding="utf-8").endswith("# my edit\n")
 
 
-@pytest.mark.parametrize("forwarder", [False, True], ids=["bundled-install", "root-with-a-forwarder"])
-def test_a_registry_version_copied_into_a_bundled_install_carries_the_packages_own_gupkg(world: World, forwarder: bool) -> None:
-    """Without a root forwarder the package's own gupkg goes into the version that is copied in; with one it does not (D32)."""
+@pytest.mark.parametrize("location", [False, True], ids=["bundled-install", "root-with-a-gupkg-location"])
+def test_a_registry_version_copied_into_a_bundled_install_carries_the_packages_own_gupkg(world: World, location: bool) -> None:
+    """Without a gupkg-location in the root the package's own gupkg goes into the version that is copied in; with one it does not (D32)."""
     world.publish("tool", "1.0.0", tables=SHIM)
     world.one("install", "tool")
     active = world.user / "tool" / "1.0.0"
     (active / "gupkg").mkdir()
     (active / "gupkg" / "gupkg.cmd").write_text("@echo off\n", encoding="utf-8")
     (active / "install.cmd").write_text("@echo off\n", encoding="utf-8")
-    if forwarder:
+    if location:
         (world.user / ".gupkg").mkdir(exist_ok=True)
-        (world.user / ".gupkg" / "gupkg.cmd").write_text("@echo off\n", encoding="utf-8")
+        (world.user / ".gupkg" / "gupkg-location").write_text("gupkg\\current\\App\n", encoding="utf-8")
     world.registry({"tool": {"versions": {"1.0.0": {"app.exe": "x"}, "1.2.0": {"app.exe": "new"}}, "tables": SHIM}})
 
     result = world.one("update", "tool")
 
     new = world.user / "tool" / "1.2.0"
     assert result.ok and result.version == "1.2.0"
-    assert (new / "gupkg" / "gupkg.cmd").is_file() == (not forwarder) and not (new / "install.cmd").exists()
+    assert (new / "gupkg" / "gupkg.cmd").is_file() == (not location) and not (new / "install.cmd").exists()
 
 
 def test_a_registry_with_only_a_tracker_copies_it_and_stops_with_a_hint(world: World) -> None:
