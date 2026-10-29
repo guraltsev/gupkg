@@ -26,6 +26,7 @@ import pytest
 
 from gupkg.engine.context import stop_marker
 from gupkg.engine.locks import Holder, PackageBusy, lock_holder, lock_path, package_lock, render_lock
+from gupkg.selfmgmt.elevation import UntrustedLocationError
 from tests.engine_support import World, pin_no_ambient_elevation  # noqa: F401
 
 ENV_ONLY = '[[env]]\nname = "TOOL_HOME"\nvalue = "$App"\n'
@@ -184,7 +185,7 @@ def test_the_lock_is_released_after_a_failure_an_exception_and_a_cancel(world: W
     assert not refused.ok and not lock_path(world.user / "other").exists()
 
     with pytest.raises(RuntimeError):
-        with package_lock(world.fake, package, "install", world.engine.now):
+        with package_lock(world.fake, package, "install", world.engine.now, scope=world.engine.scope):
             assert lock_path(package).is_file()
             raise RuntimeError("boom")
     assert not lock_path(package).exists()
@@ -213,12 +214,12 @@ def test_a_package_folder_made_for_the_lock_is_removed_when_nothing_came_to_live
     fresh = world.user / "fresh"
 
     with pytest.raises(RuntimeError):
-        with package_lock(world.fake, fresh, "install", world.engine.now):
+        with package_lock(world.fake, fresh, "install", world.engine.now, scope=world.engine.scope):
             assert lock_path(fresh).is_file()
             raise RuntimeError("the install failed before it wrote anything")
     assert not fresh.exists()
 
-    with package_lock(world.fake, fresh, "install", world.engine.now):
+    with package_lock(world.fake, fresh, "install", world.engine.now, scope=world.engine.scope):
         (fresh / "1.0.0").mkdir()
     assert (fresh / "1.0.0").is_dir() and not lock_path(fresh).parent.exists()
 
@@ -251,7 +252,7 @@ def test_package_lock_refuses_a_live_holder_directly(world: World) -> None:
     hold(world, package)
 
     with pytest.raises(PackageBusy, match=str(OTHER_PID)):
-        with package_lock(world.fake, package, "install", world.engine.now):
+        with package_lock(world.fake, package, "install", world.engine.now, scope=world.engine.scope):
             pytest.fail("the lock was taken")
 
 
@@ -261,12 +262,12 @@ def test_an_elevated_run_refuses_a_locks_folder_that_is_not_admin_only(tmp_path:
     world.publish("tool", "1.0.0", mode="system", tables=ENV_ONLY)
     world.fake.untrusted_dirs = {Path(os.path.abspath(world.system_root / "tool" / ".gupkg" / "locks"))}
 
-    with pytest.raises(PackageBusy, match="admin-only"):
-        with package_lock(world.fake, world.system_root / "tool", "install", world.engine.now, elevated=True):
+    with pytest.raises(UntrustedLocationError, match="admin-only"):
+        with package_lock(world.fake, world.system_root / "tool", "install", world.engine.now, scope=world.engine.scope):
             pytest.fail("the lock was taken")
     result = world.one("install", "tool")
 
-    assert not result.ok and result.error["code"] == "package-busy"
+    assert not result.ok and result.error["code"] == "untrusted-location"
 
 
 def test_an_elevated_install_locks_inside_the_system_package_and_never_writes_the_users_root(tmp_path: Path) -> None:
@@ -303,7 +304,7 @@ def test_racing_runs_never_hold_the_lock_together(world: World, repeat: int) -> 
 
     def run() -> None:
         try:
-            with package_lock(world.fake, package, "install", world.engine.now):
+            with package_lock(world.fake, package, "install", world.engine.now, scope=world.engine.scope):
                 with guard:
                     inside[0] += 1
                     most[0] = max(most[0], inside[0])

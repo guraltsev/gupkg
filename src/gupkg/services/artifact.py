@@ -43,7 +43,7 @@ from ..model.checksum import (
     verify_observed,
 )
 from ..report.events import Step, Warning, emit
-from ..system.port import System
+from ..system.port import Mode, System
 from .http import Download, DownloadMismatch, HttpClient, file_digest
 from .unpack.gitsource import CommitMismatch, checkout_commit
 
@@ -146,7 +146,7 @@ def reverify(fetched: FetchedArtifact) -> None:
 
 
 def fetch_git(
-    system: System, url: str, ref: str | None, commit: str | None, destination: Path, work: Path, *, skip: str | None = None
+    system: System, mode: Mode, url: str, ref: str | None, commit: str | None, destination: Path, work: Path, *, skip: str | None = None
 ) -> ChecksumRecord:
     """Check out a git source under the policy and return its receipt record.
 
@@ -167,7 +167,7 @@ def fetch_git(
     if verification.skipped:
         _warn_skipped(url, verification.decision, url)
     try:
-        resolved = checkout_commit(system, url, ref, verification.expected, destination, work)
+        resolved = checkout_commit(system, mode, url, ref, verification.expected, destination, work)
     except CommitMismatch as error:
         raise ChecksumMismatch(str(error), url, expected=error.expected, observed=error.observed) from error
     return git_record(verification, resolved, url=url)

@@ -93,7 +93,7 @@ if events is not None and name is not None:
         handle.write(json.dumps(record) + "\n")
         handle.flush()
 
-    put(glob, {"event": "run_start", "command": command, "argv": [command], "mode": "auto", "elevated": bool(events.get("elevated")), "version": "test", "api": 1, "stop_file": stop_file})
+    put(glob, {"event": "run_start", "command": command, "argv": [command], "mode": "auto", "elevated": bool(events.get("elevated")), "version": "test", "api": 2, "stop_file": stop_file})
     stopped = False
     for position, package in enumerate(events.get("packages", [])):
         if stopped:
@@ -105,7 +105,7 @@ if events is not None and name is not None:
         view = {"name": package["name"], "path": package["path"], "root": str(Path(package["path"]).parent), "sole": False}
         put(glob, {"event": "package_start", "view": view})
         with open(events_file, "w", encoding="utf-8", newline="\n") as own:
-            put(own, {"event": "run_start", "command": command, "argv": [command], "mode": "auto", "elevated": False, "version": "test", "api": 1})
+            put(own, {"event": "run_start", "command": command, "argv": [command], "mode": "auto", "elevated": False, "version": "test", "api": 2})
             put(own, {"event": "package_start", "view": view})
             for record in package.get("records", []):
                 put(own, record)
@@ -190,7 +190,7 @@ def fixture_json(name: str, root: Path) -> Any:
 
 def head(command: str, *, ok: bool = True, code: int = 0, **fields: Any) -> dict[str, Any]:
     """Return the common head of a result document of this interface version."""
-    return {"api": 1, "command": command, "ok": ok, "exit_code": code, **fields}
+    return {"api": 2, "command": command, "ok": ok, "exit_code": code, **fields}
 
 
 def entry(package: str, operation: str = "update", *, ok: bool = True, status: str = "updated", version: str | None = "2.0.0", previous: str | None = "1.0.0",
@@ -205,18 +205,17 @@ def entry(package: str, operation: str = "update", *, ok: bool = True, status: s
     return data
 
 
-def result(command: str, entries: list[dict[str, Any]], *, relaunched: bool = False, **fields: Any) -> dict[str, Any]:
+def result(command: str, entries: list[dict[str, Any]], **fields: Any) -> dict[str, Any]:
     """Return a lifecycle result document for *entries*; its ``ok`` and exit code follow the entries."""
     failed = [item["exit_code"] or 3 for item in entries if not item["ok"]]
-    return head(command, ok=not failed, code=max(failed, default=0), relaunched=relaunched, results=entries, warnings=[], **fields)
+    return head(command, ok=not failed, code=max(failed, default=0), results=entries, warnings=[], **fields)
 
 
 def plan_entry(target: str, package: str, *, mode: str = "user", version: str = "2.0.0", previous: str = "1.0.0", sha256: str | None = None,
                url: str = "https://example.org/x.zip", skippable: bool = True, elevation: bool | None = None) -> dict[str, Any]:
     """Return one ready entry of a ``--plan --json`` document; *sha256* ``present``/``missing`` adds the checksum plan of a download."""
     plan: dict[str, Any] = {
-        "operation": "update", "package": package, "path": f"C:\\opt\\{package}", "mode": mode, "requires_elevation": mode == "system" if elevation is None else elevation,
-        "version": version, "previous": previous, "effects": [], "phases": [], "notes": [], "sha256": sha256, "url": url if sha256 else None,
+        "operation": "update", "package": package, "path": f"C:\\opt\\{package}", "mode": mode, "version": version, "previous": previous, "effects": [], "phases": [], "notes": [], "sha256": sha256, "url": url if sha256 else None,
     }
     if sha256 is not None:
         plan["populate"] = {"kind": "download", "needed": True, "reason": "download", "recoverable": True, "url": url,
@@ -330,7 +329,7 @@ class RealWorld:
     """Temporary roots and a settings file, and the real launchers run against them with ``--settings`` and ``--sandbox``.
 
     ``--sandbox`` fakes only the machine (registry, shortcuts, elevation); ``--settings`` puts every root inside the test's folder, so nothing outside it is read
-    or written, and no elevated relaunch or prompt can happen: the sandbox's own state decides elevation.
+    or written, and no prompt can happen: the sandbox's own state decides elevation.
     """
 
     def __init__(self, base: Path, *, settings: str = "") -> None:
@@ -393,7 +392,7 @@ base = Path(os.environ["STUB_DIR"])
 mode = (base / "mode.txt").read_text().strip()
 args = sys.argv[1:]
 name = args[args.index("--events-file") + 1] if "--events-file" in args else None
-doc = {"api": 1, "command": "update", "ok": True, "exit_code": 0, "relaunched": False, "results": [], "warnings": []}
+doc = {"api": 2, "command": "update", "ok": True, "exit_code": 0, "results": [], "warnings": []}
 
 
 def put(handle, record):
@@ -407,7 +406,7 @@ if name:
     logs = Path(os.environ["STUB_LOGS"])
     logs.mkdir(parents=True, exist_ok=True)
     events = open(logs / name, "w", encoding="utf-8", newline="\n")
-    put(events, {"event": "run_start", "command": "update", "argv": [], "mode": "auto", "elevated": False, "version": "t", "api": 1, "stop_file": str(stop)})
+    put(events, {"event": "run_start", "command": "update", "argv": [], "mode": "auto", "elevated": False, "version": "t", "api": 2, "stop_file": str(stop)})
 (base / "child.pid").write_text(str(os.getpid()))
 
 if mode in ("hang", "ignore-stop"):

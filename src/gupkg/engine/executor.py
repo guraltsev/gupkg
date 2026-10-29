@@ -50,7 +50,7 @@ from .effects import EffectError, apply_effect, changes_environment, effect_cont
 from ..launchers import VERSION_LAUNCHERS
 from ..services.fingerprint import FingerprintError, differing_files, file_digests, verify_directory
 from .fingerprint import app_files
-from .planner import Chosen, CleanupPlan, PlanError
+from .planner import Chosen, CleanupPlan
 from .portable import hand_back, hand_over, scratch_name
 from .receipts import read_receipt, update_receipt
 
@@ -652,21 +652,10 @@ def execute_uninstall(engine: Engine, run: ExecutionInput) -> PackageResult:
     -------
     PackageResult
         ``uninstalled`` or ``purged``; a failed result with the code ``integrate-failed`` when an effect could not be removed.
-
-    Raises
-    ------
-    PlanError
-        If ``--purge`` names a folder that is a drive, the root, or holds the root.
     """
     plan, context = run.plan, run.context
     package_path = plan.package_path
 
-    # --purge deletes a whole folder: it must be a package root of its own, never a drive, the root or a folder holding it.
-    if run.request.purge and (
-        package_path.parent == package_path or canonical_path(package_path) == canonical_path(context.root)
-        or is_inside(context.root, package_path)
-    ):
-        raise PlanError(f"Refusing to purge {package_path}: it is not a package folder inside its root ({context.root}).")
     effect_ctx = effect_context(context, package_path, engine.effect_env)
     remaining: list[Effect] = []
     failures: list[str] = []

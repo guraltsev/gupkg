@@ -66,13 +66,6 @@ EXIT_FAILED = 3
 EXIT_INTERNAL = 4
 
 
-def clamp_child_exit_code(code: object) -> int:
-    """Return *code* when it is one of gupkg's exit codes (0 to 6), else ``EXIT_INTERNAL``.
-
-    The one place an elevated child's raw process exit code (a crash code such as ``0xC000012D``, ``259``, ``-1``) enters a
-    result; the raw value is kept in ``BatchResult.child_raw_exit_code`` for diagnosis.
-    """
-    return code if type(code) is int and 0 <= code <= 6 else EXIT_INTERNAL
 EXIT_INPUT = 5
 EXIT_NEWER_GUPKG = 6
 
@@ -297,8 +290,6 @@ class InstallPlan:
         The integration diff against the install record.
     phases : tuple of Phase
         The phases in order, each with readable steps.
-    requires_elevation : bool
-        Whether the mode needs an administrator token.
     notes : tuple of str
         Facts the plan reports (origin label, diverged versions).
     purge : bool
@@ -316,7 +307,6 @@ class InstallPlan:
     copy_in: CopyIn | None = None
     effects: tuple[PlannedEffect, ...] = ()
     phases: tuple[Phase, ...] = ()
-    requires_elevation: bool = False
     notes: tuple[str, ...] = ()
     purge: bool = False
     extra: Mapping[str, Any] = field(default_factory=dict)
@@ -329,15 +319,13 @@ class InstallPlan:
     def to_data(self) -> dict[str, Any]:
         """Return the JSON-ready plan document of ``--plan --json`` (design 10.4).
 
-        Per target: the chosen version, the mode, whether elevation is required,
-        ``sha256: present | missing``, the source URL, and the effects to add or remove.
+        Per target: the chosen version, the mode, ``sha256: present | missing``, the source URL, and the effects to add or remove.
         """
         data: dict[str, Any] = {
             "operation": self.operation,
             "package": self.package,
             "path": str(self.package_path),
             "mode": self.mode,
-            "requires_elevation": self.requires_elevation,
             "version": self.version,
             "previous": self.previous,
             "effects": [item.to_data() for item in self.effects if item.action != "keep"],
@@ -442,38 +430,26 @@ class PackageResult:
 
 @dataclass(frozen=True)
 class BatchResult:
-    """The outcome of a call with several targets.
-
-    ``relaunched`` is true when the call started one elevated child for its system targets and
-    ran nothing itself; the call waited for that child and ``child_exit_code`` is how it ended, which is the call's exit code
-    unless a target left out of the child failed with a higher one.
-    """
+    """The outcome of a call with several targets: one ``PackageResult`` per target."""
 
     results: tuple[PackageResult, ...] = ()
-    relaunched: bool = False
-    child_exit_code: int | None = None
-    child_raw_exit_code: int | None = None
 
     @property
     def ok(self) -> bool:
-        """Return whether every target succeeded (a skipped one counts as not done) and the elevated child, if any, ended well."""
-        return all(item.ok and item.status != "skipped" for item in self.results) and not (
-            self.relaunched and self.child_exit_code not in (None, 0)
-        )
+        """Return whether every target succeeded (a skipped one counts as not done)."""
+        return all(item.ok and item.status != "skipped" for item in self.results)
 
     @property
     def exit_code(self) -> int:
         """Return the call's exit code: zero when all succeeded, else the highest code of a failure."""
         failed = [item.exit_code or EXIT_FAILED for item in self.results if not item.ok]
-        if self.relaunched and self.child_exit_code is not None:
-            return max([self.child_exit_code, *failed])
         if failed:
             return max(failed)
         return EXIT_INPUT if any(item.status == "skipped" for item in self.results) else EXIT_OK
 
     def to_data(self) -> dict[str, Any]:
         """Return the ``--json`` result document of the call."""
-        return {"ok": self.ok, "exit_code": self.exit_code, "relaunched": self.relaunched,
+        return {"ok": self.ok, "exit_code": self.exit_code,
                 "results": [item.to_data() for item in self.results]}
 
     def summary(self) -> str:

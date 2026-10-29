@@ -9,7 +9,7 @@ Usage and API
 -------------
 ``with file_lock(system, path, operation, now, subject=...)`` is the same lock around any one file (the registry tool uses
 it on a registry checkout); ``PackageBusy`` names *subject* and the holder.
-``with package_lock(system, package_path, operation, now, elevated=...)`` holds the lock for the block and releases it on
+``with package_lock(system, package_path, operation, now, scope=...)`` holds the lock for the block and releases it on
 every exit (a failure, a cancel, an exception). ``PackageBusy`` is raised when a live run holds it; its message names the
 holder (process, host, operation, start time). ``lock_holder(system, package_path, now)`` returns the live holder of
 a package or ``None`` without taking anything (``cleanup`` uses it to leave an in-flight work folder alone).
@@ -43,6 +43,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from ..catalog.local import DATA_DIR_NAME, is_reparse_point
+from ..model.scope import Scope
 from ..system.port import System
 from .executor import prune_empty_package
 
@@ -151,8 +152,8 @@ def lock_holder(system: System, package_path: Path, now: datetime) -> Holder | N
     return holder or Holder(0, "unknown", "unknown", "just now", "")
 
 
-def _check_folder(system: System, package_path: Path, elevated: bool) -> Path:
-    """Create the locks folder and judge it: never a link, and admin-only in an elevated run."""
+def _check_folder(scope: Scope, package_path: Path) -> Path:
+    """Create the locks folder and judge it: never a link, and admin-only in system mode."""
     folder = locks_dir(package_path)
     data = folder.parent
     for entry in (Path(package_path), data):
@@ -161,10 +162,7 @@ def _check_folder(system: System, package_path: Path, elevated: bool) -> Path:
     folder.mkdir(parents=True, exist_ok=True)
     if is_reparse_point(folder):
         raise PackageBusy(f"{folder} is a link; refusing to keep a lock there")
-    if elevated:
-        reason = system.directory_untrusted_reason(folder)
-        if reason is not None:
-            raise PackageBusy(f"An elevated run keeps its lock only in an admin-only folder, and {folder} is not: {reason}")
+    scope.require_trusted(folder, "the locks folder")
     return folder
 
 
@@ -246,22 +244,22 @@ def _release(path: Path, token: str, *, drop_data: bool) -> None:
 
 @contextmanager
 def package_lock(
-    system: System, package_path: Path, operation: str, now: Callable[[], datetime], *, elevated: bool = False
+    system: System, package_path: Path, operation: str, now: Callable[[], datetime], *, scope: Scope
 ) -> Iterator[Holder]:
     """Hold the lock of *package_path* for the block.
 
     Parameters
     ----------
     system : System
-        Judges whether the holder of an existing lock is alive and whether an elevated run's folder is admin-only.
+        Judges whether the holder of an existing lock is alive.
     package_path : Path
         The package root (created when it does not exist yet, and removed again when the run leaves it empty).
     operation : str
         What the run does, written in the lock for the message of a second run.
     now : callable
         The clock (UTC).
-    elevated : bool
-        Whether this run is elevated (the locks folder must then be admin-only).
+    scope : Scope
+        The run's scope (in system mode the locks folder must be admin-only).
 
     Yields
     ------
@@ -271,7 +269,9 @@ def package_lock(
     Raises
     ------
     PackageBusy
-        If a live run holds the package, or the locks folder cannot be trusted.
+        If a live run holds the package.
+    gupkg.selfmgmt.elevation.UntrustedLocationError
+        If the run is in system mode and the locks folder can be changed by standard users.
     """
     package_path = Path(package_path)
     existed = package_path.is_dir()
@@ -279,7 +279,7 @@ def package_lock(
     path = lock_path(package_path)
     me = Holder(system.process_id(), socket.gethostname(), operation, now().isoformat(timespec="seconds"), uuid.uuid4().hex)
     try:
-        _check_folder(system, package_path, elevated)
+        _check_folder(scope, package_path)
         for _attempt in range(5):
             if _create(path, render_lock(me)):
                 break

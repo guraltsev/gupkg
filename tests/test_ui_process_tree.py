@@ -152,7 +152,7 @@ def test_a_success_without_run_end_is_not_believed_but_a_failure_document_is_kep
     failing = result("check", [entry("p", "check", ok=False, status="failed", code=3, error={"code": "x", "message": "broken"})])
     fake.respond("check", doc=failing)
     failed = asyncio.run(fake.client().call(("check", "--", "user:p"), events_dir=tmp_path / "logs"))
-    fake.respond("list", doc={"api": 1, "command": "list", "ok": True, "exit_code": 0, "packages": []})
+    fake.respond("list", doc={"api": 2, "command": "list", "ok": True, "exit_code": 0, "packages": []})
     listing = asyncio.run(fake.client().query(("list",)))
 
     assert not claimed.ok and "no events file was written" in claimed.problems[0] and "exit code 0" in claimed.problems[0]

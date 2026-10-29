@@ -22,9 +22,10 @@ from pathlib import Path
 
 import pytest
 
-from gupkg.catalog.catalog import NeedsRepair, NotFound, UntrustedLocation
+from gupkg.catalog.catalog import NeedsRepair, NotFound
 from gupkg.catalog.local import canonical_path, is_inside, read_current, scan_package
 from gupkg.model.state import InstallRecord, Link
+from gupkg.selfmgmt.elevation import UntrustedLocationError
 from gupkg.system.fake import FakeSystem
 from gupkg.system.windows import WindowsSystem
 from tests.catalog_support import (
@@ -277,7 +278,7 @@ def test_elevated_run_refuses_a_path_in_an_untrusted_folder(tmp_path: Path) -> N
     catalog, roots = make_catalog(system, tmp_path, mode="system")
     write_version(roots["system"] / "downloads" / "foo", "1.0")
 
-    with pytest.raises(UntrustedLocation, match="elevated"):
+    with pytest.raises(UntrustedLocationError, match="elevated"):
         catalog.resolve(str(roots["system"] / "downloads" / "foo"))
 
 

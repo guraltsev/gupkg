@@ -18,10 +18,8 @@ version directory still written; ``details`` says what was written and populated
 
 Implementation Approach
 -----------------------
-Whether the root is written is decided first from the mode and the elevation of the run: system packages need an
-elevated run, user packages a normal one (the resolution of the mode already refused the other
-combinations, decision D31). A report-only run builds its HTTP client without a download cache and its scratch folder
-in the system's temporary folder, so it creates nothing below the root. The new version directory is validated like any
+The run writes the package's root: it has one scope and its own token (decision D49), so there is no report-only
+run. The new version directory is validated like any
 other version directory before it is moved into place, and an existing directory is never overwritten.
 """
 
@@ -54,7 +52,6 @@ from ..model.state import PackageView
 from ..model.version import MANIFEST_NAME, TRACKER_DIR_NAME
 from ..pkgcheck import check_directory, defines_track
 from ..report.events import Step, Warning, emit, phase
-from ..services.http import HttpClient, github_environment
 from ..services.safepath import remove_tree
 from ..services.track import TrackEnvironment, run_tracker
 from .appbuild import populate_version
@@ -66,15 +63,6 @@ from .portable import scratch_name
 from .receipts import update_receipt
 from .stateio import write_track_state
 
-
-
-def writes_root(engine: Engine, context: Scope) -> bool:
-    """Return whether this run writes the package's root: always, since a run has one scope and its own token.
-
-    A system scope exists only in an elevated run, so there is no longer a normal shell that only reports a system package
-    (decision D22 is gone). The flag still feeds ``details["written"]`` of the result document and the plan; issue 035 T07 removes it.
-    """
-    return engine.elevated if context.mode == "system" else True
 
 
 def plan_check(engine: Engine, request, resolved: ResolvedTarget, catalog: Catalog):
@@ -90,10 +78,7 @@ def plan_check(engine: Engine, request, resolved: ResolvedTarget, catalog: Catal
         name = view.name if view is not None else request.selector
         raise NotInstalled(f"'{name}' is not a local package, so there is nothing to check; use `gupkg install {name}`")
     sync = catalog.check_updates_plan(view).tracker
-    writes = writes_root(engine, resolved.scope)
-    return plan_check_updates(
-        request, view, resolved.scope, tracker_action=sync.action, writes=writes, download=writes and not request.no_download
-    )
+    return plan_check_updates(request, view, resolved.scope, tracker_action=sync.action, download=not request.no_download)
 
 
 def check_updates_one(
@@ -136,23 +121,19 @@ def check_updates_one(
         return PackageResult(view.name, "check-updates", True, "no-new-version", view.installed.version if view.installed else None,
                              None, context.mode, details={"reason": "nothing to check: the package has no tracker"})
 
-    # Who writes: always the run itself (see ``writes_root``).
-    writes = writes_root(engine, context)
-    download = writes and not request.no_download
+    download = not request.no_download
     package_path = view.local.path
-    planned = plan_check_updates(request, view, context, tracker_action=plan.tracker.action, writes=writes, download=download)
+    planned = plan_check_updates(request, view, context, tracker_action=plan.tracker.action, download=download)
     for item in planned.phases[0].steps:
         emit(Step(item.text, item.kind))
-    if not writes:
-        emit(Step("This is a normal shell and the package is a system package: the result is only reported, nothing is written.", "info"))
 
     # Track: the tracker is the package's own, or the registry's when the package follows it and has none yet.
     with phase("Resolve"):
-        if writes and plan.tracker.action in ("copy", "refresh"):
+        if plan.tracker.action in ("copy", "refresh"):
             sync_registry_tracker(engine, view, package_path, plan.tracker)
-    tracker_manifest, tracker_dir = _tracker(view, plan.tracker, package_path, writes)
+    tracker_manifest, tracker_dir = _tracker(view, plan.tracker, package_path)
     require_gupkg_version(tracker_manifest.requires_gupkg, engine.version, f"the tracker of {view.name}")
-    result = _run_tracker(engine, context, tracker_manifest, tracker_dir, view.name, package_path, writes)
+    result = _run_tracker(engine, context, tracker_manifest, tracker_dir, view.name, package_path)
 
     # What the tracker waived (an optional checksum source that held nothing) is shown, returned and kept in the receipt.
     notes = tuple(result.notes)
@@ -161,14 +142,10 @@ def check_updates_one(
     comparison = catalog.compare(view, result)
     if not comparison.newer:
         emit(Step(f"{view.name}: {comparison.reason}", "info"))
-        if writes:
-            write_track_state(package_path, {"checked": engine.now().isoformat(), "found": result.version, "outcome": "no-new-version"})
+        write_track_state(package_path, {"checked": engine.now().isoformat(), "found": result.version, "outcome": "no-new-version"})
         return PackageResult(view.name, "check-updates", True, "no-new-version", result.version, None, context.mode,
                              warnings=notes, details={"found": result.version, "reason": comparison.reason, "notes": list(notes)})
     emit(Step(f"{view.name}: new version {result.version} (newest known: {comparison.newest_known or 'none'})", "add"))
-    if not writes:
-        return PackageResult(view.name, "check-updates", True, "new-version", result.version, None, context.mode,
-                             warnings=notes, details={"written": False, "populated": False, "reason": "report only", "notes": list(notes)})
 
     # Write: render the pinned pkg.toml, strip update-check code, validate, move into place atomically.
     pinned = render_pinned(tracker_manifest, result)
@@ -176,7 +153,7 @@ def check_updates_one(
         version_dir = _write_version(engine, context, view, package_path, tracker_dir, pinned, result.version)
         emit(Step(f"wrote {version_dir}", "add"))
     details: dict[str, Any] = {
-        "found": result.version, "written": True, "populated": False, "path": str(version_dir), "notes": list(notes),
+        "found": result.version, "populated": False, "path": str(version_dir), "notes": list(notes),
     }
 
     # Fetch, Verify, Unpack, Prepare: populate unless --no-download; a refused checksum leaves the directory without App (D46).
@@ -228,14 +205,14 @@ def check_updates_one(
 # ---------------------------------------------------------------------------
 
 
-def _tracker(view: PackageView, sync, package_path: Path, writes: bool) -> tuple[Manifest, Path]:
+def _tracker(view: PackageView, sync, package_path: Path) -> tuple[Manifest, Path]:
     """Return the manifest and folder of the tracker to run: the local one, or the registry's when none was copied in."""
     local = view.local.tracker if view.local is not None else None
     fresh = sync.action in ("copy", "refresh") and sync.registry_tracker is not None
 
-    # The registry's tracker, either already copied into the package or (report only) run from the registry cache.
+    # The registry's tracker, already copied into the package.
     if fresh:
-        folder = package_path / TRACKER_DIR_NAME if writes else sync.registry_tracker.path
+        folder = package_path / TRACKER_DIR_NAME
         text = (folder / MANIFEST_NAME).read_text(encoding="utf-8-sig")
         return parse_manifest(text, ManifestKind.TRACKER), folder
     if local is None:
@@ -246,25 +223,18 @@ def _tracker(view: PackageView, sync, package_path: Path, writes: bool) -> tuple
 
 
 def _run_tracker(
-    engine: Engine, context: Scope, manifest: Manifest, directory: Path, name: str, package_path: Path, writes: bool
+    engine: Engine, context: Scope, manifest: Manifest, directory: Path, name: str, package_path: Path
 ):
-    """Run the tracker's provider; a report-only run keeps its cache and scratch folder out of the root."""
+    """Run the tracker's provider with the root's download cache and a scratch folder in the package's work folder."""
     # An elevated run starts the regex worker with its own interpreter: judge both before anything is launched.
     require_trusted_tools(engine, *tracker_tools())
-    if writes:
-        client = engine.http_client(context, manifest.source.headers)
-        work = require_work_folder(engine, package_path / DATA_DIR_NAME / "work") / scratch_name("track")
-        work.mkdir()
-        try:
-            return run_tracker(manifest, TrackEnvironment(engine.system, client, work, directory, name))
-        finally:
-            remove_tree(work)
-    client = HttpClient(
-        engine.system, headers=dict(manifest.source.headers), env=github_environment(engine.system, engine.env),
-        sleep=engine.sleep, **({} if engine.retries is None else {"retries": engine.retries}),
-    )
-    with engine.system.scratch_directory("gupkg-track-") as scratch:
-        return run_tracker(manifest, TrackEnvironment(engine.system, client, Path(scratch), directory, name))
+    client = engine.http_client(context, manifest.source.headers)
+    work = require_work_folder(engine, package_path / DATA_DIR_NAME / "work") / scratch_name("track")
+    work.mkdir()
+    try:
+        return run_tracker(manifest, TrackEnvironment(engine.system, context, client, work, directory, name))
+    finally:
+        remove_tree(work)
 
 
 # ---------------------------------------------------------------------------

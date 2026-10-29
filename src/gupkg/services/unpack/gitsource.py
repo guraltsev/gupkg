@@ -8,7 +8,7 @@ branch can never change what a pinned version installs.
 
 Usage and API
 -------------
-``checkout_commit(system, url, ref, commit, destination, work)`` fills the new folder
+``checkout_commit(system, mode, url, ref, commit, destination, work)`` fills the new folder
 *destination* and returns the 40-digit commit id.
 
 Implementation Approach
@@ -27,7 +27,7 @@ import shutil
 from pathlib import Path
 
 from ...report.events import subprocess_lines
-from ...system.port import ProcessFailed, System, run_checked
+from ...system.port import Mode, ProcessFailed, System, run_checked
 from ..gitenv import GitUnavailable, git_command, git_environment
 from ..safepath import remove_tree
 from .extract import UnpackError
@@ -45,13 +45,15 @@ class CommitMismatch(UnpackError):
         self.observed = observed
 
 
-def checkout_commit(system: System, url: str, ref: str | None, commit: str | None, destination: Path, work: Path) -> str:
+def checkout_commit(system: System, mode: Mode, url: str, ref: str | None, commit: str | None, destination: Path, work: Path) -> str:
     """Check out *commit* (or the commit *ref* resolves to) into the new folder *destination*.
 
     Parameters
     ----------
     system : System
         The boundary that runs ``git``.
+    mode : Mode
+        The run's mode; system mode runs only a trusted ``git``.
     url : str
         The repository address.
     ref : str, optional
@@ -75,7 +77,7 @@ def checkout_commit(system: System, url: str, ref: str | None, commit: str | Non
     """
     if url.startswith("-"):
         raise UnpackError("A repository address cannot start with '-'")
-    environment = git_environment(system, Path(work))
+    environment = git_environment(system, mode, Path(work))
     checkout = Path(work) / "git-checkout"
     remove_tree(checkout)
     checkout.mkdir(parents=True)
@@ -83,7 +85,7 @@ def checkout_commit(system: System, url: str, ref: str | None, commit: str | Non
     def git(*arguments: str, cwd: Path | None = None) -> str:
         """Run one Git command and return its stripped output."""
         try:
-            command = git_command(*arguments, system=system)
+            command = git_command(*arguments, system=system, mode=mode)
             return run_checked(system, command, cwd=cwd, env=environment, on_line=subprocess_lines(command), timeout=1800)
         except (ProcessFailed, OSError, TimeoutError, GitUnavailable) as error:
             raise UnpackError(f"git {arguments[0]} failed: {error}") from error

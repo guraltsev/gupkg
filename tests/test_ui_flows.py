@@ -35,12 +35,12 @@ def logs_of(base: Path, mode: str) -> str:
     return str(base / "roots" / mode / ".gupkg" / "logs")
 
 
-def schedule_run(fake: FakeGupkg, base: Path, mode: str, names: list[str], *, doc_entries=None, relaunched=False, **extra) -> None:
+def schedule_run(fake: FakeGupkg, base: Path, mode: str, names: list[str], *, doc_entries=None, **extra) -> None:
     """Schedule the next ``update`` call of the double: it succeeds for *names* in the root of *mode*."""
     entries = doc_entries if doc_entries is not None else [entry(name, mode=mode) for name in names]
     child = result("update", entries)
-    parent = result("update", [], relaunched=True) if relaunched else child
-    events = {"dir": logs_of(base, mode), "elevated": relaunched, "result": child, "packages": [{"name": name, "path": str(base / "roots" / mode / name), "records": []} for name in names], **extra}
+    parent = child
+    events = {"dir": logs_of(base, mode), "elevated": mode == "system", "result": child, "packages": [{"name": name, "path": str(base / "roots" / mode / name), "records": []} for name in names], **extra}
     fake.respond("update", doc=parent, events=events)
 
 
@@ -75,7 +75,7 @@ def test_two_user_and_two_system_targets_make_two_calls_one_plan_and_one_confirm
         plan_entry("a", "a"), plan_entry("b", "b"), plan_entry("c", "c", mode="system"), plan_entry("d", "d", mode="system"),
     ]))
     schedule_run(fake, tmp_path, "user", ["a", "b"])
-    schedule_run(fake, tmp_path, "system", ["c", "d"], relaunched=True)
+    schedule_run(fake, tmp_path, "system", ["c", "d"])
     questions: list[str] = []
     interaction = Interaction(confirm=lambda lines, question: questions.append(question) or True, interactive=True)
 
@@ -304,7 +304,7 @@ def test_the_cleanup_after_an_update_is_one_call_for_the_one_scope(fake: FakeGup
     rows = rows_for(tmp_path, ("a", "user"), ("c", "system"))
     fake.respond("update:plan", doc=plan_doc([plan_entry("a", "a"), plan_entry("c", "c", mode="system")]))
     schedule_run(fake, tmp_path, "user", ["a"])
-    schedule_run(fake, tmp_path, "system", ["c"], relaunched=True)
+    schedule_run(fake, tmp_path, "system", ["c"])
     fake.respond("cleanup", doc=result("cleanup", []))
 
     run_flow(update(env, rows, Interaction()), env)

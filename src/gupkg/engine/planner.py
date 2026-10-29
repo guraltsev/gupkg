@@ -221,7 +221,7 @@ def plan_install(
     phases = _install_phases(request, view, context, chosen, populate, copy_in, effects, activating, previous, notes)
     return InstallPlan(
         request.operation, view.name, Path(path), context.root, context.mode, version, previous, populate, copy_in,
-        effects, phases, context.requires_elevation, tuple(notes), False,
+        effects, phases, tuple(notes), False,
         {"download_only": True} if request.download_only else {},
     )
 
@@ -447,7 +447,7 @@ def plan_uninstall(request: Request, view: PackageView, context: Scope) -> Insta
     )
     return InstallPlan(
         "uninstall", view.name, view.path, context.root, context.mode, previous, previous, None, None, effects, phases,
-        context.requires_elevation, (), request.purge, extra,
+        (), request.purge, extra,
     )
 
 
@@ -512,7 +512,7 @@ def plan_cleanup(request: Request, view: PackageView, facts: CleanupFacts) -> Cl
 
 
 def plan_check_updates(
-    request: Request, view: PackageView, context: Scope, *, tracker_action: str, writes: bool, download: bool
+    request: Request, view: PackageView, context: Scope, *, tracker_action: str, download: bool
 ) -> InstallPlan:
     """Plan ``check-updates`` (design 13.1, second table): run the tracker, write the version, populate it, stop.
 
@@ -526,10 +526,8 @@ def plan_check_updates(
         The scope of the run.
     tracker_action : str
         What happens to the tracker first: ``none``, ``copy``, ``refresh`` or ``keep`` (``Catalog.tracker_sync``).
-    writes : bool
-        Whether the root is written at all: false for a system package checked from a normal shell, which only reports.
     download : bool
-        Whether the new version is populated (no ``--no-download``, and the root is written).
+        Whether the new version is populated (no ``--no-download``).
 
     Returns
     -------
@@ -538,26 +536,24 @@ def plan_check_updates(
     """
     steps: dict[str, list[PlanStep]] = {name: [] for name in CHECK_UPDATES_PHASES}
     steps["Resolve"] = [PlanStep(f"{view.name}: check for updates"), PlanStep(context.describe())]
-    if tracker_action in ("copy", "refresh") and writes:
+    if tracker_action in ("copy", "refresh"):
         steps["Resolve"].append(PlanStep(f"{tracker_action} the registry's tracker into the package root"))
     steps["Track"] = [PlanStep("run the tracker's [track] provider; compare with the known versions")]
-    steps["Write"] = [PlanStep("render the pinned pkg.toml and write the version directory" if writes else "report only: the root is not written")]
+    steps["Write"] = [PlanStep("render the pinned pkg.toml and write the version directory")]
     if download:
         steps["Fetch"] = [PlanStep("download the new version")]
         steps["Verify"] = [PlanStep("checksum rules of design 9.1")]
         steps["Unpack"] = [PlanStep("unpack into a staged App")]
         steps["Prepare"] = [PlanStep("prepare and rename into place; nothing is activated")]
-    steps["Finish"] = [PlanStep("record the result in .gupkg\\state\\track.toml" if writes else "report the new version")]
+    steps["Finish"] = [PlanStep("record the result in .gupkg\\state\\track.toml")]
     off = {"Fetch", "Verify", "Unpack", "Prepare"} if not download else set()
-    if not writes:
-        off.add("Write")
     phases = tuple(
-        Phase(name, tuple(steps[name]), name in off, ("--no-download or a root that is not writable" if name in off else ""))
+        Phase(name, tuple(steps[name]), name in off, ("--no-download" if name in off else ""))
         for name in CHECK_UPDATES_PHASES
     )
     path = view.path or context.package_dir(view.name)
     return InstallPlan(
         "check-updates", view.name, Path(path), context.root, context.mode, None,
-        view.installed.version if view.installed else None, None, None, (), phases, context.requires_elevation and writes,
-        (), False, {"writes": writes, "download": download},
+        view.installed.version if view.installed else None, None, None, (), phases,
+        (), False, {"download": download},
     )

@@ -30,6 +30,7 @@ from gupkg.tomlio import dumps
 from tests.catalog_support import version_text
 from tests.cli_support import CliWorld
 from tests.mode_support import pin_no_ambient_elevation  # noqa: F401
+from tests.scope_support import scope_of
 
 SOURCE = "https://github.com/example/gupkg-registry.git"
 REVISION = "a" * 40
@@ -98,18 +99,18 @@ def test_trusted_git_clones_publishes_packages_only_and_skips_an_unchanged_revis
     system = FakeSystem(tmp_path / "machine", processes={"git": _git_double(calls=calls)})
     cache = registry_cache_dir(tmp_path / "root", "main")
 
-    first = sync_registry(cache, system, name="main", source=SOURCE)
+    first = sync_registry(cache, scope_of(system), name="main", source=SOURCE)
     clones_after_first = sum("clone" in call.argv for call in calls)
-    second = sync_registry(cache, system, name="main", source=SOURCE)
+    second = sync_registry(cache, scope_of(system), name="main", source=SOURCE)
 
     assert first.ok and first.status == "synced", first.error
     assert second.ok and second.status == "current"
     assert clones_after_first == 1 and sum("clone" in call.argv for call in calls) == 1
-    state = cache_state(cache, system)
+    state = cache_state(cache, scope_of(system))
     assert state.revision == REVISION and state.tree_dir == cache / "trees" / REVISION
     published = {path.name for path in (state.tree_dir / "pkgs").iterdir()}
     assert "tool" in published and ".git" not in published and "_registry.toml" not in published
-    assert sorted(load_registry("main", cache, system).entries) == ["tool"]
+    assert sorted(load_registry("main", cache, scope_of(system)).entries) == ["tool"]
 
 
 def test_clone_only_allows_https_and_ignores_user_git_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -119,7 +120,7 @@ def test_clone_only_allows_https_and_ignores_user_git_settings(tmp_path: Path, m
     calls: list[ProcessCall] = []
     system = FakeSystem(tmp_path / "machine", processes={"git": _git_double(calls=calls)})
 
-    assert sync_registry(registry_cache_dir(tmp_path / "root", "main"), system, name="main", source=SOURCE).ok
+    assert sync_registry(registry_cache_dir(tmp_path / "root", "main"), scope_of(system), name="main", source=SOURCE).ok
 
     clone = next(call for call in calls if "clone" in call.argv)
     command = " ".join(clone.argv)
@@ -140,11 +141,11 @@ def test_without_trusted_git_a_github_repository_is_downloaded_as_its_archive(tm
     system = FakeSystem(tmp_path / "machine", urls={"https://github.com/example/gupkg-registry/archive/HEAD.zip": buffer.getvalue()})
     cache = registry_cache_dir(tmp_path / "root", "main")
 
-    result = sync_registry(cache, system, name="main", source=SOURCE)
+    result = sync_registry(cache, scope_of(system), name="main", source=SOURCE)
 
     assert result.ok, result.error
     assert system.fetch_log == ["https://github.com/example/gupkg-registry/archive/HEAD.zip"]
-    assert cache_state(cache, system).revision == REVISION
+    assert cache_state(cache, scope_of(system)).revision == REVISION
 
 
 def test_git_only_source_without_git_fails_and_keeps_the_previous_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -152,7 +153,7 @@ def test_git_only_source_without_git_fails_and_keeps_the_previous_tree(tmp_path:
     monkeypatch.setenv("PATH", str(tmp_path / "no-git-here"))
     system = FakeSystem(tmp_path / "machine")
 
-    result = sync_registry(registry_cache_dir(tmp_path / "root", "main"), system, name="main", source="https://git.example/team/registry.git")
+    result = sync_registry(registry_cache_dir(tmp_path / "root", "main"), scope_of(system), name="main", source="https://git.example/team/registry.git")
 
     assert not result.ok and "github.com" in (result.error or "")
 
@@ -163,25 +164,25 @@ def test_elevated_run_refuses_a_user_writable_registry_cache(tmp_path: Path) -> 
     cache = tmp_path / "cache"
 
     with pytest.raises(ConfigValidationError, match="Refusing the registry cache"):
-        cache_state(cache, system)
-    result = sync_registry(cache, system, name="main", source="https://example.org/main.zip")
+        cache_state(cache, scope_of(system))
+    result = sync_registry(cache, scope_of(system), name="main", source="https://example.org/main.zip")
 
     assert not result.ok and "Refusing the registry cache" in (result.error or "")
-    assert load_registry("main", cache, system).problems
+    assert load_registry("main", cache, scope_of(system)).problems
 
 
 def test_elevated_run_accepts_a_registry_cache_in_an_admin_only_folder(tmp_path: Path) -> None:
     """Under elevation, a cache whose folder only administrators can modify is read normally."""
     system = FakeSystem(tmp_path / "machine", elevated=True)
 
-    assert cache_state(tmp_path / "cache", system).revision is None
+    assert cache_state(tmp_path / "cache", scope_of(system)).revision is None
 
 
 def test_ordinary_run_reads_any_registry_cache_location(tmp_path: Path) -> None:
     """Without elevation the cache location is unrestricted and an empty cache is simply empty."""
     system = FakeSystem(tmp_path / "machine", elevated=False, untrusted_dirs={tmp_path})
 
-    assert cache_state(tmp_path / "cache", system).revision is None
+    assert cache_state(tmp_path / "cache", scope_of(system)).revision is None
 
 
 def test_the_registry_status_command_reports_the_refusal_as_an_error(tmp_path: Path) -> None:
@@ -261,14 +262,14 @@ def test_a_hostile_archive_is_refused_writes_nothing_outside_and_keeps_the_previ
     """Escaping, absolute, drive, link and repeated names fail the sync; no file appears outside the cache and the old tree stays."""
     system = FakeSystem(tmp_path / "machine", urls={"https://registry.example/good.zip": _archive(_good_entries(), "b" * 40)})
     cache = tmp_path / "cache"
-    assert sync_registry(cache, system, name="main", source="https://registry.example/good.zip").ok
+    assert sync_registry(cache, scope_of(system), name="main", source="https://registry.example/good.zip").ok
     system.add_url(ARCHIVE_URL, _archive([*_good_entries(), *entries]))
 
-    result = sync_registry(cache, system, name="main", source=ARCHIVE_URL)
+    result = sync_registry(cache, scope_of(system), name="main", source=ARCHIVE_URL)
 
     assert not result.ok and "previous validated tree remains active" in (result.error or "")
     assert not list(tmp_path.rglob("escape.txt"))
-    assert cache_state(cache, system).revision == "b" * 40
+    assert cache_state(cache, scope_of(system)).revision == "b" * 40
 
 
 def test_a_hostile_archive_on_a_first_sync_publishes_no_tree(tmp_path: Path) -> None:
@@ -276,9 +277,9 @@ def test_a_hostile_archive_on_a_first_sync_publishes_no_tree(tmp_path: Path) -> 
     system = FakeSystem(tmp_path / "machine", urls={ARCHIVE_URL: _archive([("wrap/../../escape.txt", "x")])})
     cache = tmp_path / "cache"
 
-    result = sync_registry(cache, system, name="main", source=ARCHIVE_URL)
+    result = sync_registry(cache, scope_of(system), name="main", source=ARCHIVE_URL)
 
-    assert not result.ok and cache_state(cache, system).tree_dir is None and not list(tmp_path.rglob("escape.txt"))
+    assert not result.ok and cache_state(cache, scope_of(system)).tree_dir is None and not list(tmp_path.rglob("escape.txt"))
 
 
 def test_an_archive_with_too_much_content_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -286,7 +287,7 @@ def test_an_archive_with_too_much_content_is_refused(tmp_path: Path, monkeypatch
     monkeypatch.setattr(registrysource, "MAX_ARCHIVE_BYTES", 100)
     system = FakeSystem(tmp_path / "one", urls={ARCHIVE_URL: _archive([*_good_entries(), ("wrap/blob.bin", "x" * 5000)])})
 
-    result = sync_registry(tmp_path / "cache", system, name="main", source=ARCHIVE_URL)
+    result = sync_registry(tmp_path / "cache", scope_of(system), name="main", source=ARCHIVE_URL)
 
     assert not result.ok and "bytes of content" in (result.error or "")
 
@@ -296,7 +297,7 @@ def test_an_archive_with_too_many_entries_is_refused(tmp_path: Path, monkeypatch
     monkeypatch.setattr(registrysource, "MAX_ARCHIVE_ENTRIES", 2)
     system = FakeSystem(tmp_path / "two", urls={ARCHIVE_URL: _archive([("wrap/a", "1"), ("wrap/b", "2"), ("wrap/c", "3")])})
 
-    result = sync_registry(tmp_path / "cache", system, name="main", source=ARCHIVE_URL)
+    result = sync_registry(tmp_path / "cache", scope_of(system), name="main", source=ARCHIVE_URL)
 
     assert not result.ok and "entries" in (result.error or "")
 
@@ -305,7 +306,7 @@ def test_a_valid_archive_still_extracts(tmp_path: Path) -> None:
     """The checks refuse hostile names only: the plain archive of the other tests publishes its package."""
     system = FakeSystem(tmp_path / "machine", urls={ARCHIVE_URL: _archive(_good_entries())})
 
-    result = sync_registry(tmp_path / "cache", system, name="main", source=ARCHIVE_URL)
+    result = sync_registry(tmp_path / "cache", scope_of(system), name="main", source=ARCHIVE_URL)
 
     assert result.ok, result.error
 
@@ -316,6 +317,6 @@ def test_a_registry_source_that_is_not_an_http_or_file_url_is_refused(tmp_path: 
     monkeypatch.setenv("PATH", str(tmp_path / "no-git-here"))
     system = FakeSystem(tmp_path / "machine")
 
-    result = sync_registry(tmp_path / "cache", system, name="main", source=source)
+    result = sync_registry(tmp_path / "cache", scope_of(system), name="main", source=source)
 
     assert not result.ok and system.fetch_log == []

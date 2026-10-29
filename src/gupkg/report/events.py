@@ -44,7 +44,7 @@ from typing import Any, Callable, Iterator, Protocol, Sequence
 from ..redact import redact_text
 
 # Version of the event JSON contract, reported by ``RunStart``.
-API_VERSION = 1
+API_VERSION = 2
 
 
 # ---------------------------------------------------------------------------
@@ -178,8 +178,8 @@ class PackageEnd:
 class RunEnd:
     """Close the run with the summary text people read last, the exit code and the result document.
 
-    ``result`` is the document that ``--json`` prints (``"api": 1``): an events file therefore ends with the same result
-    a caller reads from standard output, which is how a caller follows an elevated child it cannot share pipes with.
+    ``result`` is the document that ``--json`` prints (``"api": 2``): an events file therefore ends with the same result
+    a caller reads from standard output, so a caller can follow a run without reading its pipes.
     """
 
     summary: str

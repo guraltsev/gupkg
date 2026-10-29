@@ -3,7 +3,7 @@
 ``gupkg-manager check-updates --all``, ``update --all`` and ``check`` (and the text printed after a UI program closes) write to a normal console.
 This module provides the ``Sink`` that prints a batch's lines (in colour on a terminal, as plain text when output is redirected or ``NO_COLOR``
 is set), the yes-or-no prompts for a plan and for a missing checksum, and the combined ``--json`` document of a batch, which has the shape of
-the CLI's own result document (``"api": 1``) so a schedule reads both the same way.
+the CLI's own result document (``"api": 2``) so a schedule reads both the same way.
 
 Usage and API
 -------------
@@ -135,7 +135,7 @@ def outcome_document(command: str, outcome: BatchOutcome) -> dict[str, Any]:
     """
     document: dict[str, Any] = {
         "api": API_VERSION, "command": command, "ok": outcome.ok, "exit_code": outcome.exit_code,
-        "relaunched": any(call.relaunched for call in outcome.calls), "cancelled": outcome.cancelled,
+        "cancelled": outcome.cancelled,
         "results": list(outcome.entries),
         "calls": [{"argv": list(call.argv), "exit_code": call.exit_code, "problems": list(call.problems)} for call in outcome.calls],
     }

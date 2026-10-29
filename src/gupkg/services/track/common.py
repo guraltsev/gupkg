@@ -35,6 +35,7 @@ from typing import Any
 from ...model.manifest import DiscoveredChecksum, TrackResult
 from ...model.patterns import PatternError
 from ...model.version import compare_versions
+from ...model.scope import Scope
 from ...system.port import System
 from ..http import HttpClient
 from ..regexrun import RegexRunner
@@ -51,6 +52,8 @@ class TrackEnvironment:
     ----------
     system : System
         The side-effect boundary (``git`` runs through it).
+    scope : Scope
+        The run's scope: in system mode only a trusted ``git`` and trusted hooks run.
     http : HttpClient
         The shared HTTP client.
     work_dir : Path or None
@@ -67,6 +70,7 @@ class TrackEnvironment:
     """
 
     system: System
+    scope: Scope
     http: HttpClient
     work_dir: Path | None = None
     directory: Path | None = None

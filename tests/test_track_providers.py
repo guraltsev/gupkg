@@ -26,6 +26,7 @@ from gupkg.services.http import HttpClient
 from gupkg.services.track import TrackEnvironment, TrackError, run_tracker
 from gupkg.system.fake import FakeHttp, FakeSystem
 from tests.http_fixtures import HTTP_CASES, REGISTRY2, environment, serve, tracker_manifest
+from tests.scope_support import scope_of
 
 
 def discover(system: FakeSystem, tmp_path: Path, package: str):
@@ -129,7 +130,7 @@ def test_the_github_provider_sends_the_token_only_to_github_over_https(system: F
     """GITHUB_TOKEN reaches api.github.com; a client without it sends no Authorization header at all."""
     serve(system, "github_volta")
     manifest = tracker_manifest("volta")
-    with_token = TrackEnvironment(system, HttpClient(system, env={"GITHUB_TOKEN": "t0ken"}, sleep=lambda seconds: None))
+    with_token = TrackEnvironment(system, scope_of(system), HttpClient(system, env={"GITHUB_TOKEN": "t0ken"}, sleep=lambda seconds: None))
     env = with_token
 
     run_tracker(manifest, env)

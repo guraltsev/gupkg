@@ -11,7 +11,7 @@ Usage and API
 -------------
 Build ``FakeSystem(root, elevated=False, urls={...}, processes={...})`` in a
 test and inspect ``registry_log``, ``env_values(...)``, ``shortcuts()``,
-``broadcasts`` and ``relaunches`` afterwards. ``FakeSystem.sandbox(directory,
+and ``broadcasts`` afterwards. ``FakeSystem.sandbox(directory,
 delegate)`` is what ``--sandbox DIR`` uses: it keeps its registry state in
 ``DIR/system.json`` across runs and sends network and process calls that have
 no fixture to the real ``delegate``. Child processes reach the real system only
@@ -47,7 +47,6 @@ from typing import Any, Callable, Iterator, Mapping, Sequence
 from ..extractors import find_7z
 from .port import (
     DownloadResponse,
-    ElevatedRun,
     EnvValue,
     HttpResponse,
     ProcessAborted,
@@ -58,11 +57,7 @@ from .port import (
     ScopeFolders,
     ShortcutSpec,
     System,
-    MAX_RELAUNCH_PARAMETERS,
-    elevated_command,
-    unsafe_relaunch_argument,
 )
-from ..selfmgmt.elevation import bundled_runtime_paths
 from .windows import WindowsLinks, WindowsSystem
 
 
@@ -170,18 +165,6 @@ class FakeSystem(WindowsLinks):
         Whether a 7-Zip executable that exists may run for real.
     state_file : Path, optional
         JSON file that persists the registry, its log and the counters.
-    relaunch_result : bool
-        Whether ``relaunch_elevated`` reports that the child started (False: the elevation prompt was declined).
-    relaunch_exit_code : int, optional
-        The exit code of the pretend child; ``None`` means the wait ended without one.
-    on_relaunch : callable, optional
-        Called with the child's command line when a child "starts" (a test writes the child's events file there).
-    relaunch_error : str, optional
-        Pretend waiting for the started child failed with this message.
-    relaunch_interrupt : bool
-        Pretend the user pressed Ctrl-C while waiting: ``on_interrupt`` is called and the wait is abandoned.
-    package_dir : Path
-        The package folder the pretend elevated command is built from (``relaunch_commands``).
     pid : int
         What ``process_id`` reports.
     live_pids : set of int
@@ -199,19 +182,11 @@ class FakeSystem(WindowsLinks):
     delegate: System | None = None
     real_7zip: bool = True
     state_file: Path | None = None
-    relaunch_result: bool = True
-    relaunch_exit_code: int | None = 0
-    relaunch_interrupt: bool = False
-    relaunch_error: str | None = None
-    on_relaunch: Callable[[list[str]], None] | None = None
-    package_dir: Path = Path("C:/Program Files/gupkg/1.0.0/gupkg")
     pid: int = field(default_factory=os.getpid)
     live_pids: set[int] = field(default_factory=set)
     failures: dict[str, BaseException] = field(default_factory=dict)
     registry_log: list[RegistryAccess] = field(default_factory=list)
     broadcasts: int = 0
-    relaunches: list[list[str]] = field(default_factory=list)
-    relaunch_commands: list[tuple[str, str, str]] = field(default_factory=list)
     fetch_log: list[str] = field(default_factory=list)
     request_log: list[RecordedRequest] = field(default_factory=list)
     process_log: list[list[str]] = field(default_factory=list)
@@ -371,40 +346,6 @@ class FakeSystem(WindowsLinks):
         if pid == self.pid or pid in self.live_pids:
             return True
         return self.delegate.process_is_running(pid) if self.delegate is not None else False
-
-    def relaunch_elevated(
-        self, argv: Sequence[str], *, on_interrupt: Callable[[], None] | None = None, grace: float = 30.0,
-    ) -> ElevatedRun:
-        """Record the request and report the configured outcome; nothing is started.
-
-        Like the real one, it refuses a value that could mean something to a shell (nothing is recorded), and records the
-        program, parameters and folder the real call would pass to ``ShellExecuteEx`` in ``relaunch_commands``.
-        """
-        self._maybe_fail("relaunch_elevated")
-        if any(unsafe_relaunch_argument(part) for part in argv):
-            return ElevatedRun(False)
-        _, parameters, _ = elevated_command(self.package_dir, argv)
-        if len(parameters) > MAX_RELAUNCH_PARAMETERS:
-            return ElevatedRun(False, refused=f"the command line is {len(parameters)} characters long; more than {MAX_RELAUNCH_PARAMETERS} cannot be started")
-        for path in bundled_runtime_paths(self.package_dir):
-            reason = self.directory_untrusted_reason(path) if path.exists() else None
-            if reason is not None:
-                return ElevatedRun(False, refused=f"{path}: {reason}")
-        self.relaunches.append([str(part) for part in argv])
-        program, parameters, directory = elevated_command(self.package_dir, argv)
-        self.relaunch_commands.append((str(program), parameters, str(directory)))
-        self._save()
-        if not self.relaunch_result:
-            return ElevatedRun(False)
-        if self.on_relaunch is not None:
-            self.on_relaunch([str(part) for part in argv])
-        if self.relaunch_error is not None:
-            return ElevatedRun(True, error=self.relaunch_error)
-        if self.relaunch_interrupt:
-            if on_interrupt is not None:
-                on_interrupt()
-            return ElevatedRun(True, None, True)
-        return ElevatedRun(True, self.relaunch_exit_code)
 
     def directory_is_admin_only(self, path: Path) -> bool:
         """Report whether *path* lies outside every directory listed as untrusted."""
@@ -714,7 +655,6 @@ class FakeSystem(WindowsLinks):
             },
             "registry_log": [asdict(item) for item in self.registry_log],
             "broadcasts": self.broadcasts,
-            "relaunches": self.relaunches,
         }
         Path(self.state_file).write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
 
@@ -728,4 +668,3 @@ class FakeSystem(WindowsLinks):
             }
         self.registry_log = [RegistryAccess(**item) for item in state.get("registry_log", [])]
         self.broadcasts = int(state.get("broadcasts", 0))
-        self.relaunches = [list(item) for item in state.get("relaunches", [])]

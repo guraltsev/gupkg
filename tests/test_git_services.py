@@ -21,6 +21,9 @@ from gupkg.services.unpack import UnpackError, UnpackPlan, unpack_git
 from gupkg.system.fake import FakeSystem, ProcessCall
 from gupkg.system.port import ProcessResult
 from tests.http_fixtures import environment
+from gupkg.scope import process_mode
+from tests.scope_support import scope_of
+from gupkg.system.port import Mode
 
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
 OTHER = "f" * 40
@@ -161,7 +164,7 @@ def test_a_pinned_commit_is_checked_out_without_history_and_prepared(tmp_path: P
     stage = tmp_path / "stage"
     stage.mkdir()
 
-    report = populate_git(system, pinned_git_manifest(COMMIT), stage / "App")
+    report = populate_git(scope_of(system), pinned_git_manifest(COMMIT), stage / "App")
 
     assert report.commit == COMMIT and report.kind == "git"
     assert sorted(path.relative_to(stage / "App").as_posix() for path in (stage / "App").rglob("*") if path.is_file()) == ["src/main.py"]
@@ -175,7 +178,7 @@ def test_a_server_that_serves_another_commit_than_the_pinned_one_fails_and_leave
     stage.mkdir()
 
     with pytest.raises(UnpackError, match="not the pinned"):
-        unpack_git(system, URL, None, COMMIT, stage / "App", UnpackPlan())
+        unpack_git(system, process_mode(system), URL, None, COMMIT, stage / "App", UnpackPlan())
 
     assert list(stage.iterdir()) == []
 
@@ -187,7 +190,7 @@ def test_an_unpinned_ref_resolves_to_one_commit_that_is_then_fetched(tmp_path: P
     stage = tmp_path / "stage"
     stage.mkdir()
 
-    report = unpack_git(system, URL, "refs/heads/main", None, stage / "App", UnpackPlan())
+    report = unpack_git(system, process_mode(system), URL, "refs/heads/main", None, stage / "App", UnpackPlan())
 
     assert report.commit == COMMIT and git.words()[0] == "ls-remote"
 
@@ -202,7 +205,7 @@ def test_a_failing_prepare_step_after_checkout_removes_the_app(tmp_path: Path) -
     stage.mkdir()
 
     with pytest.raises(PrepareError):
-        populate_git(system, manifest, stage / "App")
+        populate_git(scope_of(system), manifest, stage / "App")
 
     assert list(stage.iterdir()) == []
 
@@ -213,4 +216,4 @@ def test_an_address_starting_with_a_dash_is_refused_by_the_checkout(tmp_path: Pa
     stage.mkdir()
 
     with pytest.raises(UnpackError, match="cannot start with"):
-        unpack_git(machine(tmp_path, FakeGit()), "--evil", None, COMMIT, stage / "App", UnpackPlan())
+        unpack_git(machine(tmp_path, FakeGit()), Mode.USER, "--evil", None, COMMIT, stage / "App", UnpackPlan())

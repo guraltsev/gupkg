@@ -81,7 +81,7 @@ def test_a_process_that_is_not_elevated_gets_a_user_scope(tmp_path: Path) -> Non
     scope = machine.scope()
 
     folders = machine.fake.scope_folders(Mode.USER)
-    assert scope.mode is Mode.USER and scope.requires_elevation is False
+    assert scope.mode is Mode.USER
     assert scope.root == machine.user_root and scope.root_source == SOURCE_APP
     assert scope.bin_dir == folders.bin_dir and scope.start_menu == folders.shortcut_root and scope.env_target == "HKCU"
     assert scope.integrate == "full" and scope.settings["roots.user"] == str(machine.user_root)
@@ -95,7 +95,7 @@ def test_an_elevated_process_gets_a_system_scope_on_the_root_of_the_installed_gu
     scope = machine.scope()
 
     folders = machine.fake.scope_folders(Mode.SYSTEM)
-    assert scope.mode is Mode.SYSTEM and scope.requires_elevation is True
+    assert scope.mode is Mode.SYSTEM
     assert scope.root == machine.system_root and scope.root_source == SOURCE_INSTALLED_SYSTEM
     assert scope.bin_dir == folders.bin_dir and scope.start_menu == folders.shortcut_root and scope.env_target == "HKLM"
 

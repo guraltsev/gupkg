@@ -1,9 +1,8 @@
 {
-  "api": 1,
+  "api": 2,
   "command": "update",
   "ok": true,
   "exit_code": 0,
-  "relaunched": false,
   "results": [
     {
       "package": "alpha",
@@ -14,8 +13,8 @@
       "previous": "1.0.0",
       "mode": "user",
       "exit_code": 0,
-      "receipt": "@ROOT@\\home\\opt\\alpha\\.gupkg\\receipts\\2.0.0.toml",
-      "log": "@ROOT@\\home\\opt\\alpha\\.gupkg\\logs\\20261024T194510Z-update.log",
+      "receipt": "@ROOT@\\home\\opt\\alpha\\2.0.0\\App.info",
+      "log": "@ROOT@\\home\\opt\\alpha\\.gupkg\\logs\\20261029T142430Z-update.log",
       "warnings": [],
       "details": {
         "origin": "local",
@@ -31,8 +30,8 @@
       "previous": "1.0.0",
       "mode": "user",
       "exit_code": 0,
-      "receipt": "@ROOT@\\home\\opt\\beta\\.gupkg\\receipts\\2.0.0.toml",
-      "log": "@ROOT@\\home\\opt\\beta\\.gupkg\\logs\\20261024T194510Z-update.log",
+      "receipt": "@ROOT@\\home\\opt\\beta\\2.0.0\\App.info",
+      "log": "@ROOT@\\home\\opt\\beta\\.gupkg\\logs\\20261029T142430Z-update.log",
       "warnings": [],
       "details": {
         "origin": "local",

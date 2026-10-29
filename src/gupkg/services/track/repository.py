@@ -48,12 +48,12 @@ def track_git(spec: GitSpec, env: TrackEnvironment) -> TrackResult:
     """
     if env.work_dir is None:
         raise TrackError("The git provider needs a scratch folder")
-    environment = git_environment(env.system, env.work_dir)
+    environment = git_environment(env.system, env.scope.mode, env.work_dir)
 
     def git(*arguments: str, cwd: Path | None = None) -> str:
         """Run one Git command and return its stripped output."""
         try:
-            command = git_command(*arguments, system=env.system)
+            command = git_command(*arguments, system=env.system, mode=env.scope.mode)
             return run_checked(env.system, command, cwd=cwd, env=environment, on_line=subprocess_lines(command), timeout=120)
         except (ProcessFailed, OSError, TimeoutError, GitUnavailable) as error:
             raise TrackError(f"git {arguments[0]} failed: {error}") from error
@@ -97,13 +97,13 @@ def track_module(spec: ModuleSpec, env: TrackEnvironment) -> TrackResult:
     if env.directory is None:
         raise TrackError("The module provider needs the tracker directory")
     context = HookContext(
-        package=env.package, version=None, system=env.system, http=env.http,
+        package=env.package, version=None, system=env.system, scope=env.scope, http=env.http,
         paths=HookPaths(package_root=Path(env.directory).parent, version_root=Path(env.directory),
                         work=Path(env.work_dir) if env.work_dir else None),
         options=dict(env.extra),
     )
     try:
-        module = load_hook(Path(env.directory), spec.module, env.system)
+        module = load_hook(Path(env.directory), spec.module, env.scope)
         result = call_track(module, context)
     except TrackError:
         raise

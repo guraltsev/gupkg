@@ -796,7 +796,7 @@ def test_the_cli_keeps_warnings_and_errors_on_standard_error_and_json_mode_moves
     world.fake.failures["broadcast_environment_change"] = OSError("broadcast refused")
     world.publish("Second", "1.0.0", tables=ENV)
     machine = world.cli("install", "Second", "--json")
-    assert machine.code == 0 and json.loads(machine.out)["api"] == 1 and "==>" not in machine.out
+    assert machine.code == 0 and json.loads(machine.out)["api"] == 2 and "==>" not in machine.out
     assert "==> Done" in machine.err and "WARNING: " in machine.err
 
 

@@ -67,7 +67,7 @@ class CliWorld(World):
     elevated : bool
         Whether the fake machine reports an elevated process.
     installed : bool
-        Whether the stand-in gupkg is installed in the system root (a system gupkg that may relaunch itself elevated).
+        Whether the stand-in gupkg is installed in the system root (the system gupkg).
     """
 
     def __init__(self, base: Path, *, elevated: bool = False, installed: bool = True, **options: Any) -> None:

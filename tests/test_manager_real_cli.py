@@ -62,7 +62,7 @@ def test_json_is_one_document_with_the_cli_head(world: RealWorld) -> None:
     done = world.run("gupkg-manager", "update", "--all", "--yes", "--json")
 
     document = json.loads(done.stdout)
-    assert (document["api"], document["command"], document["ok"], document["exit_code"]) == (1, "update", True, 0)
+    assert (document["api"], document["command"], document["ok"], document["exit_code"]) == (2, "update", True, 0)
     assert [item["package"] for item in document["results"]] == ["alpha"] and document["results"][0]["status"] == "updated"
     assert "━━ Done" in done.stderr and document["calls"][0]["exit_code"] == 0
 

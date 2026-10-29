@@ -200,7 +200,7 @@ def run_installer(
     ))
     try:
         result = engine.system.run(
-            command, cwd=folder, env=safe_process_environment({"TEMP": str(temp), "TMP": str(temp)}, system=engine.system),
+            command, cwd=folder, env=safe_process_environment({"TEMP": str(temp), "TMP": str(temp)}, system=engine.system, mode=engine.scope.mode),
             on_line=subprocess_lines(command), timeout=engine.installer_timeout,
         )
     except TimeoutError as error:

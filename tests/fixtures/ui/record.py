@@ -1,7 +1,8 @@
 """Record the real documents and events files that the UI program tests replay (run by hand: ``python tests/fixtures/ui/record.py``).
 
-It builds a small world in a temporary folder (two user packages with a newer version each, shipped Apps so nothing needs the network), runs the real
-``gupkg`` launcher with ``--settings`` and ``--sandbox`` and saves what it printed: the ``list``, ``info`` and ``update --plan`` documents, the result
+It builds a small world in a temporary folder (two user packages with a newer version each, shipped Apps so nothing needs the network), installs the older
+version of each with the real ``gupkg`` launcher (so every package has an install record that names its ``mode``), runs the launcher with ``--root``,
+``--settings`` and ``--sandbox`` (a user-mode run on a pretend machine; nothing of the real machine changes) and saves what it printed: the ``list``, ``info`` and ``update --plan`` documents, the result
 document of an ``update`` and the global and package events files of that run. The temporary folder is replaced by ``@ROOT@`` so the fixtures are
 portable; the tests put their own folder back.
 """
@@ -30,20 +31,14 @@ def main() -> None:
                 (folder / "App").mkdir(parents=True)
                 (folder / "pkg.toml").write_text(f'format = 2\ndescription = "{name}"\n[source]\nshipped = true\n', encoding="utf-8")
                 (folder / "App" / "app.exe").write_text("x", encoding="utf-8")
-        (work / "sys" / "opt").mkdir(parents=True)
         (work / "temp").mkdir()
         settings = work / "settings.toml"
         settings.write_text(
-            f"schema = 4\n[roots]\nsystem = '{work}\\sys\\opt'\nuser = '{work}\\home\\opt'\n"
-            f"[integration]\nbin = '{work}\\home\\bin'\nstart_menu = '{work}\\home\\sm'\n",
+            f"schema = 4\n[integration]\nbin = '{work}\\home\\bin'\nstart_menu = '{work}\\home\\sm'\n",
             encoding="utf-8",
         )
-        (work / "sys" / "opt" / ".gupkg").mkdir(parents=True)
-        (work / "sys" / "opt" / ".gupkg" / "settings.toml").write_text(
-            f"schema = 4\n[integration]\nbin = '{work}\\sys\\bin'\nstart_menu = '{work}\\sys\\sm'\n", encoding="utf-8"
-        )
         env = {**os.environ, "USERPROFILE": str(work / "home"), "APPDATA": str(work / "appdata"), "TEMP": str(work / "temp")}
-        root = ["--settings", str(settings), "--sandbox", str(work / "sb")]
+        root = ["--root", str(work / "home" / "opt"), "--settings", str(settings), "--sandbox", str(work / "sb")]
 
         def run(*args: str) -> str:
             """Run the real CLI and return standard output (the call must succeed or fail with a document)."""
@@ -60,8 +55,8 @@ def main() -> None:
         run("install", "alpha@1.0.0", "beta@1.0.0", "--yes", "--no-input")
         keep("list.json", run("list", "--json"))
         keep("info_alpha.json", run("info", "alpha", "--json"))
-        keep("plan_update.json", run("update", "--plan", "--json", "--", "user:alpha", "user:beta"))
-        keep("update_result.json", run("update", "--yes", "--json", "--events-file", "rec.jsonl", "--", "user:alpha", "user:beta"))
+        keep("plan_update.json", run("update", "--plan", "--json", "--", "alpha", "beta"))
+        keep("update_result.json", run("update", "--yes", "--json", "--events-file", "rec.jsonl", "--", "alpha", "beta"))
         logs = work / "home" / "opt" / ".gupkg" / "logs"
         keep("events_global.jsonl", (logs / "rec.jsonl").read_text(encoding="utf-8"))
         for name in ("alpha", "beta"):

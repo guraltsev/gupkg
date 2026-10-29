@@ -1,7 +1,7 @@
-"""Pin the public, versioned machine interface of the command line (``"api": 1``): documents, events file, exit codes.
+"""Pin the public, versioned machine interface of the command line (``"api": 2``): documents, events file, exit codes.
 
 Behaviour covered: the result document of a lifecycle call (its keys and the keys of each target's entry); the plan document
-of ``--plan --json`` for every command that accepts ``--plan`` (version, mode, elevation, ``sha256: present | missing |
+of ``--plan --json`` for every command that accepts ``--plan`` (version, mode, ``sha256: present | missing |
 invalid``, URL, effects) and that a plan changes nothing on disk except the run's log files; the error document of a usage
 error; the events file (JSON lines, flushed per event, ending with ``run_end`` that carries the result document and
 announcing the run's stop marker in ``run_start``); a stop marker created during a run stops it after the package that is
@@ -10,7 +10,7 @@ the exit codes 0, 2, 3, 4, 5 and 6; human output goes to standard error under ``
 
 Real: the argument parser, the engine, the run session and its log files, real folders. Mocked: ``FakeSystem`` and the
 environment mapping built by the test.
-Out of scope: the content of each event (``test_event_contract.py``) and the elevated relaunch (``test_cli_elevation.py``).
+Out of scope: the content of each event (``test_event_contract.py``) and the modes of a package (``test_engine_modes.py``).
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from tests.cli_support import CliWorld
 from tests.engine_support import ScriptDouble
 from tests.mode_support import pin_no_ambient_elevation, tree_snapshot  # noqa: F401
 
-RESULT_KEYS = {"api", "command", "ok", "exit_code", "relaunched", "results", "warnings"}
+RESULT_KEYS = {"api", "command", "ok", "exit_code", "results", "warnings"}
 ENTRY_KEYS = {"package", "operation", "ok", "status", "version", "previous", "mode", "exit_code", "receipt", "log", "warnings"}
 # A successful entry also carries ``details``, a failed one ``error``; plans add keys that belong to their operation only.
 SUCCESS_ENTRY_KEYS = ENTRY_KEYS | {"details"}
@@ -39,11 +39,11 @@ def assert_error_shape(error: dict) -> None:
     assert set(error) in (ERROR_KEYS, ERROR_KEYS | {"hint"}) and error["code"] and error["message"]
     assert "hint" not in error or (isinstance(error["hint"], str) and error["hint"])
 PLAN_EXTRA: dict[str, set[str]] = {
-    "check-updates": {"download", "writes"}, "install": {"populate"}, "update": {"populate"}, "switch": {"populate"},
+    "check-updates": {"download"}, "install": {"populate"}, "update": {"populate"}, "switch": {"populate"},
     "uninstall": set(), "cleanup": {"cleanup"},
 }
 PLAN_KEYS = {
-    "operation", "package", "path", "mode", "requires_elevation", "version", "previous", "effects", "phases", "notes", "sha256", "url",
+    "operation", "package", "path", "mode", "version", "previous", "effects", "phases", "notes", "sha256", "url",
 }
 
 
@@ -62,8 +62,8 @@ def test_the_result_document_has_the_pinned_keys(world: CliWorld) -> None:
     result = world.cli("update", "tool", "--json")
 
     document = result.document()
-    assert set(document) == RESULT_KEYS and document["api"] == 1 and document["command"] == "update"
-    assert document["ok"] is True and document["exit_code"] == 0 and document["relaunched"] is False
+    assert set(document) == RESULT_KEYS and document["api"] == 2 and document["command"] == "update"
+    assert document["ok"] is True and document["exit_code"] == 0
     (entry,) = document["results"]
     assert set(entry) == SUCCESS_ENTRY_KEYS and entry["package"] == "tool" and entry["status"] == "updated"
     assert (entry["version"], entry["previous"], entry["mode"]) == ("2.0.0", "1.0.0", "user")
@@ -92,7 +92,7 @@ def test_human_output_goes_to_standard_error_when_json_is_asked(world: CliWorld)
 def test_every_command_that_accepts_plan_prints_a_plan_document_and_changes_nothing(
     world: CliWorld, argv: tuple[str, ...], operation: str
 ) -> None:
-    """--plan --json names the target's version, mode, elevation need, checksum status and URL, and writes only the log files."""
+    """--plan --json names the target's version, mode, checksum status and URL, and writes only the log files."""
     world.tracker("tool")
     world.announce("tool", "2.0.0")
     roots = [world.user, world.system_root]
@@ -107,7 +107,7 @@ def test_every_command_that_accepts_plan_prints_a_plan_document_and_changes_noth
     entry = document["plans"][0]
     assert entry["target"] == "tool" and entry["ok"] is True
     assert set(entry) == {"target", "ok", "exit_code", "plan"} and set(entry["plan"]) == PLAN_KEYS | PLAN_EXTRA.get(operation, set()) and entry["plan"]["operation"] == operation
-    assert entry["plan"]["mode"] == "user" and entry["plan"]["requires_elevation"] is False
+    assert entry["plan"]["mode"] == "user"
     after = [tree_snapshot(root) for root in roots]
     for old, new in zip(before, after):
         changed = {name for name in set(old) | set(new) if old.get(name) != new.get(name)}
@@ -216,7 +216,7 @@ def test_a_usage_error_is_exit_2_with_an_error_document_when_json_is_asked(world
 
     document = result.document()
     assert result.code == 2 and "unrecognized arguments" in result.err
-    assert (document["api"], document["ok"], document["exit_code"]) == (1, False, 2)
+    assert (document["api"], document["ok"], document["exit_code"]) == (2, False, 2)
     assert document["errors"][0]["code"] == "usage"
 
 
@@ -226,7 +226,7 @@ def test_the_events_file_is_json_lines_that_end_with_the_result_document(world: 
 
     lines = (world.user / ".gupkg" / "logs" / "run.jsonl").read_text(encoding="utf-8").splitlines()
     records = [json.loads(line) for line in lines]
-    assert records[0]["event"] == "run_start" and records[0]["api"] == 1 and records[0]["stop_file"]
+    assert records[0]["event"] == "run_start" and records[0]["api"] == 2 and records[0]["stop_file"]
     assert Path(records[0]["stop_file"]).parent == world.temp and not Path(records[0]["stop_file"]).exists()
     assert records[-1]["event"] == "run_end" and records[-1]["result"] == result.document()
     package_lines = (world.user / "tool" / ".gupkg" / "logs" / "run.jsonl").read_text(encoding="utf-8").splitlines()
@@ -363,3 +363,28 @@ def test_exit_codes_2_3_and_5_are_distinguished(world: CliWorld) -> None:
     assert world.cli("install", "unknown-package").code == 2
     assert world.cli("install", "broken").code == 3
     assert world.cli("uninstall", "tool", "--purge", "--no-input").code == 5
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [("install", "tool"), ("update", "tool"), ("uninstall", "tool"), ("check", "tool"), ("check-updates", "tool")],
+    ids=lambda argv: argv[0],
+)
+def test_every_result_document_says_api_2_and_has_no_relaunch_key(world: CliWorld, argv: tuple[str, ...]) -> None:
+    """The documents of API 2 carry ``"api": 2`` and none of the keys that only the elevated relaunch needed."""
+    world.tracker("tool")
+    world.announce("tool", "2.0.0")
+
+    document = world.cli(*argv, "--json").document()
+
+    assert document["api"] == 2
+    assert not {"relaunched", "child_exit_code", "child_raw_exit_code"} & set(document)
+    assert "child-no-result" not in json.dumps(document)
+
+
+def test_a_plan_document_has_no_relaunch_key_either(world: CliWorld) -> None:
+    """``--plan --json`` is an API 2 document too, and a plan has no ``requires_elevation``."""
+    document = world.cli("update", "tool", "--plan", "--json").document()
+
+    assert document["api"] == 2 and "relaunched" not in document
+    assert "requires_elevation" not in document["plans"][0]["plan"]

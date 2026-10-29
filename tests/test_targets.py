@@ -7,8 +7,8 @@ scope's mode before any work (a portable package is user only); an elevated run 
 folder users can modify, and never reads the user root or the user settings; a ``system:`` or ``user:`` prefix is refused.
 
 Real: ``resolve_target``, the catalog, settings layering and install records on real folders and junctions below pytest's
-temporary folder. Fake: ``FakeSystem`` for elevation and the admin-only check. Out of scope: the relaunch
-(``test_mode_elevation.py``), the copy itself (``test_distribution_copy.py``) and what the engine does after resolving.
+temporary folder. Fake: ``FakeSystem`` for elevation and the admin-only check. Out of scope: the copy itself
+(``test_distribution_copy.py``) and what the engine does after resolving.
 """
 
 from __future__ import annotations
@@ -57,7 +57,6 @@ def test_a_name_resolves_in_the_scope_of_the_token_with_no_flag(tmp_path: Path, 
 
     assert result.scope.mode is mode
     assert result.scope.root == (machine.system_root if elevated else machine.user_root)
-    assert result.scope.requires_elevation is elevated
 
 
 @pytest.mark.parametrize("elevated", [False, True])
@@ -165,33 +164,25 @@ def test_an_administrator_shell_may_name_a_folder_outside_the_root_to_copy_in(tm
 # ---------------------------------------------------------------------------
 
 
-def test_the_elevated_child_accepts_a_package_name_and_a_path_inside_the_system_root(tmp_path: Path) -> None:
-    """The relaunched elevated gupkg resolves names and paths inside the admin-only system root."""
+def test_an_elevated_run_accepts_a_package_name_and_a_path_inside_the_system_root(tmp_path: Path) -> None:
+    """An elevated gupkg resolves names and paths inside the admin-only system root."""
     machine = Machine(tmp_path, elevated=True)
     package = machine.package(machine.system_root, "tool", record="system", installed=True)
 
-    by_name = resolve(machine, "tool", relaunched=True)
-    by_path = resolve(machine, str(package / "1.0.0"), relaunched=True)
+    by_name = resolve(machine, "tool")
+    by_path = resolve(machine, str(package / "1.0.0"))
 
     assert by_name.scope.mode is by_path.scope.mode is Mode.SYSTEM
     assert by_path.scope.root == machine.system_root
 
 
-def test_the_elevated_child_refuses_a_folder_outside_the_root(tmp_path: Path) -> None:
-    """A path that is neither a name nor inside the system root is refused by the relaunched elevated gupkg (T1)."""
-    machine = Machine(tmp_path, elevated=True)
-
-    with pytest.raises(ModeRefused, match="only package names and paths inside the system root"):
-        resolve(machine, str(machine.distribution()), relaunched=True)
-
-
-def test_the_elevated_child_refuses_a_user_writable_package_folder_in_the_system_root(tmp_path: Path) -> None:
+def test_an_elevated_run_refuses_a_user_writable_package_folder_in_the_system_root(tmp_path: Path) -> None:
     """A package folder inside the system root that users can modify is refused in an elevated run."""
     machine = Machine(tmp_path, elevated=True, untrusted={tmp_path / "sys" / "opt" / "tool"})
     package = machine.package(machine.system_root, "tool")
 
     with pytest.raises(ModeRefused, match="Refusing"):
-        resolve(machine, str(package), relaunched=True)
+        resolve(machine, str(package))
 
 
 def test_an_elevated_process_refuses_a_package_whose_install_record_says_user(tmp_path: Path) -> None:

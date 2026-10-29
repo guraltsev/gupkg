@@ -30,7 +30,6 @@ from ..catalog.catalog import (
     NoVersionKnown,
     NotFound,
     NotInstalled,
-    UntrustedLocation,
 )
 from ..core import ConfigValidationError
 from ..model.checksum import ChecksumError
@@ -65,7 +64,6 @@ _TABLE: tuple[tuple[type[BaseException], str, int | None], ...] = (
     (NoValidVersion, "no-valid-version", EXIT_USER),
     (NotInstalled, "not-installed", EXIT_USER),
     (NeedsRepair, "needs-repair", EXIT_USER),
-    (UntrustedLocation, "untrusted-location", EXIT_USER),
     (NotFound, "not-found", EXIT_USER),
     (CatalogError, "catalog", EXIT_USER),
     (UntrustedLocationError, "untrusted-location", EXIT_USER),

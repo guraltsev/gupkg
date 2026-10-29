@@ -32,8 +32,9 @@ from pathlib import Path, PurePosixPath
 
 from ..core import ConfigValidationError
 from ..report.events import subprocess_lines
+from ..model.scope import Scope
 from ..selfmgmt.elevation import UntrustedLocationError
-from ..system.port import System, is_elevated_run, require_admin_only, trusted_path_entries
+from ..system.port import System, trusted_path_entries
 from . import gitenv
 
 # A registry archive that GitHub serves records its commit in the ZIP comment; other archives are named by digest.
@@ -71,15 +72,15 @@ def trusted_git(system: System) -> str | None:
     return None
 
 
-def git_environment(system: System) -> dict[str, str]:
+def git_environment(scope: Scope) -> dict[str, str]:
     """Return a child environment that ignores user Git settings and never prompts."""
-    return gitenv.git_environment(system)
+    return gitenv.git_environment(scope.system, scope.mode)
 
 
-def git_remote_revision(system: System, git: str, source: str) -> str | None:
+def git_remote_revision(scope: Scope, git: str, source: str) -> str | None:
     """Return the remote ``HEAD`` commit of *source* without cloning, or ``None`` on failure."""
     command = [git, "-c", "protocol.allow=never", "-c", "protocol.https.allow=always", "ls-remote", source, "HEAD"]
-    result = system.run(command, env=git_environment(system), timeout=60, on_line=subprocess_lines([git]))
+    result = scope.system.run(command, env=git_environment(scope), timeout=60, on_line=subprocess_lines([git]))
     match = re.match(r"([0-9a-f]{40})\s", result.stdout) if result.returncode == 0 else None
     return match.group(1) if match else None
 
@@ -183,27 +184,24 @@ def extract_archive(archive_path: Path, destination: Path) -> Path:
     return root
 
 
-def require_trusted_cache(cache_root: Path, system: System) -> None:
-    """Refuse a registry cache that an elevated run cannot trust.
+def require_trusted_cache(cache_root: Path, scope: Scope) -> None:
+    """Refuse a registry cache that a system-mode run cannot trust.
 
     The cache supplies package templates, download addresses and hashes that an elevated install would act on,
-    so under elevation its folder (or, before it exists, the nearest existing parent) must be writable by
+    so in system mode its folder (or, before it exists, the nearest existing parent) must be writable by
     administrators only.
 
     Raises
     ------
     ConfigValidationError
-        If the run is elevated and the location is not admin-only.
+        If the run is in system mode and the location is not admin-only.
     """
-    if not is_elevated_run(system):
-        return
-
     # A cache that does not exist yet will be created inside its nearest parent.
     probe = Path(cache_root).absolute()
     while not probe.exists() and probe.parent != probe:
         probe = probe.parent
     try:
-        require_admin_only(system, probe)
+        scope.require_trusted(probe, "the registry cache")
     except UntrustedLocationError as exc:
         raise ConfigValidationError(
             f"Refusing the registry cache {cache_root} for an elevated run: {exc} "

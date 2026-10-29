@@ -171,8 +171,7 @@ def elevated_mode() -> bool:
 def bundled_runtime_paths(package_directory: Path) -> list[Path]:
     """Return the folders and files an elevated gupkg trusts before any of its own code runs, in the bundled layout.
 
-    This is the one list that both sides use: the elevated process checks it at start (``enforce_bundled_runtime``) and the
-    parent checks it before it asks for elevation (``System.relaunch_elevated``). It holds the package folder and its parent,
+    ``enforce_bundled_runtime`` checks it at start of an elevated process. It holds the package folder and its parent,
     the bundled runtime folder, its ``Lib\\site-packages``, ``python.exe``, the ``python*._pth`` search-path file, the
     ``python*.dll`` libraries and ``bootstrap.py``. Entries that do not exist are listed too (the caller skips them).
     """
