@@ -568,6 +568,7 @@ def test_the_typed_readers_accept_what_the_engine_makes(world: World) -> None:
     assert len(planned.items) == len(plans)
     assert all(item.plan is not None or item.result is not None for item in planned.items)
 
+
 def test_requests_refuse_an_unknown_operation_and_a_negative_keep() -> None:
     """The request is validated when it is built, so a front end cannot send nonsense to the engine."""
     with pytest.raises(ValueError, match="unknown operation"):

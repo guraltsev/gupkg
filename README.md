@@ -144,7 +144,7 @@ application whose files are already there, and `check` finds what drifted.
   refused unless the call carries `--skip-checksum` (https only, never for vendor installers).
 - **One command line, three programs.** `gupkg` (no screens, no `--all`), `gupkg-tui` (one package) and `gupkg-manager`
   (every package, batches, schedules); the last two only ever call `gupkg`.
-- Everything gupkg owns lives in the roots: settings, logs, state, the registry cache and `gupkg-location` are in
+- Everything gupkg owns lives in the root: settings, logs, state, the registry cache and `gupkg-location` are in
   `<root>\.gupkg\`; nothing is written to `AppData` or `ProgramData`, and the Windows registry is only ever written to.
 
 ## On-disk layout
@@ -263,8 +263,7 @@ to `<root>\bin`, and `gupkg shell` prints the line that puts `<root>\bin` on `PA
 (`--root E:\opt`).
 
 A package says which modes it allows with `modes`. A package that does not allow the run's mode is refused before any work, and
-the message names only what this run can know ("only for a single user; run gupkg without administrator rights" or "only
-system-wide; run gupkg as administrator"). `uninstall`, `check` and `cleanup` are never refused this way. `list --available`
+the message says "This package installs only for a single user. Run gupkg without administrator rights." or "This package installs only system-wide. Run gupkg as administrator: use the Start Menu entry "gupkg manager (administrator)", or run in an administrator shell: gupkg <command> <name>" and names nothing of the other mode. `uninstall`, `check` and `cleanup` are never refused this way. `list --available`
 also shows packages the mode cannot install, marked `system only` or `user only`. A package folder whose install record names the
 other mode is `broken` ("moved between scopes") and is repaired by reinstalling it.
 
@@ -295,8 +294,8 @@ unmet `requires_gupkg`: a package launcher then runs its bundled gupkg).
 0.17 spellings are not aliases: `config-check`, `config-fix`, `doctor`, `repair-deps` and `update-deps` are unknown
 commands, and every other 0.17 option is an unrecognized argument. `gupkg tui` and `gupkg manager` are pass-through commands: they
 start `gupkg-tui` and `gupkg-manager` of the same gupkg and return their exit code. The programs run in the scope of their own process
-(an administrator shell manages the system root), and they take no root option of their own: `gupkg --root DIR tui` is refused, so use
-`--settings PATH` (with `[roots].user`) or start them from the gupkg that is installed in the root.
+(an administrator shell manages the system root), and they take no root option of their own: `gupkg --root DIR tui` (and `--settings` or `--sandbox` before `tui`/`manager`) is refused. Start
+`gupkg-manager --settings PATH` (or `gupkg-tui --settings PATH`) directly, with a file that has `[roots].user`, or start them from the gupkg that is installed in the root.
 
 ### The UI programs: `gupkg-tui` and `gupkg-manager`
 

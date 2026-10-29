@@ -10,7 +10,7 @@ rules are in [python_rules.md](python_rules.md), [docstring_schema.md](docstring
 ```text
 src/gupkg/            core (the `gupkg` command)
   model/       pure data, no I/O: versions, pkg.toml format 2, settings (schema 4), the run's scope and mode check, package state, plans, checksum policy
-  catalog/     discovery and joins over the roots and registry caches; the only place package state is derived
+  catalog/     discovery and joins over the run's root and its registry caches; the only place package state is derived
   services/    built-in declarative operations: HTTP client, track providers, unpack, [[prepare]], checksum, fingerprints, hooks
   system/      THE side-effect boundary: port.py (the System protocol), windows.py (real), fake.py (tests and --sandbox)
   engine/      planner (pure), executor, appbuild (atomic App), effects, portable data, locks, check-updates, health, lifecycle

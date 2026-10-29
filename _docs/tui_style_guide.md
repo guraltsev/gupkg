@@ -52,7 +52,7 @@ between a line that says which keys work and a line that says what is going on.
   doing: counts (outdated, broken), the registry revision and how long ago it
   was synchronised, the state of a run (`Running`, `Finished`, `Failed (exit
   code N)`), and the path of the latest log. The most important parts come
-  first, because a narrow terminal clips the tail with an ellipsis.
+  first, because a narrow terminal clips the tail with an ellipsis: at 80 columns the status line shows the scope first and clips the rest.
 - **Both lines are plain text on a quiet background.** They are not buttons,
   menus, banners or a title: no product name, no logo.
 - **Dialogs carry the frame too.** A prompt is a full-screen dialog with its own

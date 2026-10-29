@@ -551,6 +551,7 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
    it, the status line gives the CLI's reason. Why manual: needs a real terminal title and a real UAC prompt.
 
 ## The manager reads in-process and shows what it cannot read (issue 035, task T10)
+
 1. **`035-T10-1` A read that fails is visible.** In a normal terminal start `gupkg-manager`. Make the registry cache unreadable (rename `<root>\.gupkg\registry\main\state.toml` to a folder, or lock it), press `r`: the status line shows `ERROR: registry unreadable: ...` (or `package list unreadable`) and a red notification gives the full text; the list stays usable. Restore the file and press `r`: the error goes away. Why manual: needs a real root and a real file lock.
 
 ## Launchers: bundled, then gupkg-location, then PATH (issue 035, task T11)

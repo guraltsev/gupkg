@@ -37,7 +37,7 @@ gupkg self status               :: is gupkg's own installation healthy?
 
 | Message | Code | What it means and what to do |
 | --- | --- | --- |
-| `package 'x' was not found in the root or any registry` / `Path does not exist: ...` | `not-found` | Check the name or path. A name searches the roots and the synced registries (`gupkg registry sync`). |
+| `package 'x' was not found in the root or any registry` / `Path does not exist: ...` | `not-found` | Check the name or path. A name searches the root and the synced registries (`gupkg registry sync`). |
 | `... is not a version directory: its name is reserved or not a safe folder name` | `not-found` | The folder is `current`, starts with `.` or `_`, or has an unsafe name. Give the version folder. |
 | `'x' is not installed; use gupkg install x` | `not-installed` | `switch`, `uninstall` and `update` only act on installed packages; `update` never installs. |
 | `'x' is not a local package, so there is nothing to check; use gupkg install x` | `not-installed` | `check-updates` needs a package folder with a tracker. |
@@ -111,7 +111,7 @@ never starts an elevated copy of itself, so none of these messages can be answer
 | `... changed while it was being copied; nothing was installed` | The source changed during the copy; run again. |
 | `[gupkg] gupkg is not installed, and none is bundled with this package.` (exit 9009) | The folder carries no `gupkg\`, the root has no usable `.gupkg\gupkg-location` (the launcher prints `Skipped ...` and why) and no `gupkg.cmd` or `gupkg.exe` is on `PATH`. Run `gupkg-bootstrap.cmd` once. |
 | `[gupkg] Cannot tell whether this run is elevated, so it is refused.` | The launcher could not read the integrity level (`whoami`); run it from a normal or an elevated shell with `%SystemRoot%\System32` intact. |
-| `[gupkg] Refusing to run elevated: something this launcher would run can be changed by a standard user ...` | An elevated launcher found a folder a standard user can change. Install from the installed system gupkg instead: `gupkg install <folder>` in an administrator shell. An elevated launcher also skips a `PATH` entry or `gupkg-location` folder that a standard user can change (`Skipped PATH entry ...`). |
+| `[gupkg] Refusing to run elevated: something this launcher would run can be changed by a standard user ...` | An elevated launcher found a folder a standard user can change. Install from the installed system gupkg instead: `gupkg install <folder>` in an administrator shell. An elevated launcher skips a `PATH` entry that a standard user can change and names it (`Skipped PATH entry ...`); but when the bundled gupkg or the gupkg named by `gupkg-location` cannot be trusted, it refuses to run (exit 1) and does not go on to `PATH`. |
 | `[gupkg] The gupkg ... cannot handle this package; trying the next one.` | Exit code 6 from the gupkg the launcher tried first: it went on to the next one (bundled copy, `gupkg-location`, `PATH`). Update gupkg (`self check-updates`, `self update`). |
 | `gupkg-bootstrap`: `No version directory ... was found` / `refusing an existing C:\opt that is not admin-only` | The ZIP or folder is not a gupkg distribution, or `C:\opt` was created by someone else. Fix its permissions or use the right ZIP. |
 | A package launcher misbehaves with `%`, `^` or `"` in an argument | The launchers forward arguments through `cmd.exe`, which expands `%` and treats `^` and quotes specially. Run `gupkg ...` directly for such arguments, and avoid these characters in launcher arguments. |
@@ -131,7 +131,7 @@ never starts an elevated copy of itself, so none of these messages can be answer
 | Message | What it means and what to do |
 | --- | --- |
 | The manager shows no system packages, or the title says `user` | `gupkg-manager` manages the scope of its own process. Start it from an administrator shell, or from the Start Menu entry "gupkg manager (administrator)", for the system root; a normal shell shows the user root. There is no key that switches. |
-| `gupkg: error: --settings, --root and --sandbox are not passed on to gupkg-manager` | `gupkg --root DIR manager` is refused. The programs take no root option: start them from the gupkg installed in that root, or give `gupkg-manager --settings PATH` a file with `[roots].user`. |
+| `gupkg: error: --settings, --root and --sandbox are not passed on to gupkg-manager` | `gupkg --root DIR manager` is refused. The programs take no root option: start them from the gupkg installed in that root, or give `gupkg-manager --settings PATH` (or `gupkg-tui --settings PATH`) a file with `[roots].user`. |
 | `update --all` exits 5 with nothing changed | There is no terminal and no `--yes`, or `--json` was given. Add `--yes`. |
 | A package is refused with `checksum-missing` in a schedule | `ask` behaves as `refuse` without a terminal. Pin a hash, or set `[manager] checksum_missing = "skip"` knowingly. |
 | A run ends without `run_end` | The call died without a result; read the log of the run (`gupkg logs <name> --path`, or `<root>\.gupkg\logs`). |

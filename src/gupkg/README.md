@@ -14,7 +14,7 @@ is `model` <- `catalog`, `services` <- `engine` <- `cli`, and nothing below
   `manager`. It turns a parsed command into
   `engine.lifecycle` calls inside one `RunSession` and renders the typed result.
   `viewdata.py` builds the typed documents of `list`, `info` and `registry status`
-  (the dataclasses of `report/documents.py`, which is also the one reader of every `--json` document; the manager reads in-process through it),
+  (the dataclasses of `report/documents.py`; the UI programs read `list`, `info` and `registry status` in-process as those same typed objects, read the `--plan` document with `read_plan`, and still parse result documents with their own handling: `read_results` has no UI consumer yet),
   `settingsedit.py` writes one settings file, `authoring.py` is `pkg new`, `pkg
   export` and `pkg bundle`, and `report/results.py` builds the result, plan and
   error documents (the public machine contract, `"api": 2`) and the text of
@@ -23,7 +23,7 @@ is `model` <- `catalog`, `services` <- `engine` <- `cli`, and nothing below
 - `model/`: pure data, no I/O: version ordering, `pkg.toml` format 2, settings
   schema and layering (schema 4), the run's scope and the mode check (`scope.py`), package state (`state.py`),
   the checksum policy and the plan and result types (`plan.py`).
-- `catalog/`: discovery and joins over the roots and the registry caches; the
+- `catalog/`: discovery and joins over the run's root and its registry caches; the
   only place package state is derived (`catalog.py`), the install record
   (`record.py`) and the registry cache (`registry.py`).
 - `report/`: what a run reports. `events.py` defines the frozen event

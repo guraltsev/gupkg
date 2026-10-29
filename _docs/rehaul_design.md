@@ -39,7 +39,7 @@ section's wording and the code differ, the code and the decision table win.
   of itself, so the issue 029 text about waiting for such a copy, clamping its exit code and the
   `child_raw_exit_code` field no longer applies.
 - **Where launchers sit (issue 033).** A version directory holds `install.cmd`
-  and `gupkg-tui.cmd` in every root, and a tracker folder holds
+  and `gupkg-tui.cmd` in the run's root, and a tracker folder holds
   `check-updates.cmd` and never `install.cmd`; `MANIFEST.sha256` is verified
   for the bundled tree (`gupkg/` entries) only. The 1.x guard: gupkg's tracker
   refuses a release of a major version above the running gupkg's and names the
@@ -55,7 +55,8 @@ section's wording and the code differ, the code and the decision table win.
   `write`, not `create`; the broken-package reason for a folder without an install record says `reinstall with: gupkg
   install <name>` (issue 035 4.7 quoted `--force`, which `install` does not have); the manager and `gupkg-tui` take
   `--settings` and `--sandbox` but no `--root`; the scope is shown at the left of the status line, not in a title bar; the
-  plan documents carry no `requires_elevation` and every document is `"api": 2`.- **Not verified on real hardware:** Smart App Control (spike S2), and the
+  plan documents carry no `requires_elevation` and every document is `"api": 2`.
+- **Not verified on real hardware:** Smart App Control (spike S2), and the
   manual checks listed in `tests/manual_smoke.md`.
 
 Contents
@@ -463,7 +464,7 @@ Rules that apply to every case:
    registry copy, the local one is kept and the package is reported as
    `diverged`. Local files are never overwritten. In a root with no
    `gupkg-location` file, the package's own bundled `gupkg\` folder is carried into the new
-   directory (section 21.4, D32); the launchers are written fresh in every root (section 7.4).
+   directory (section 21.4, D32); the launchers are written fresh in the run's root (section 7.4).
 2. **The registry tracker is copied in too.** When a linked package has no
    local `_check_updates` and the registry provides one, the registry's
    tracker is copied to `_check_updates` on install, check-updates or
@@ -743,7 +744,7 @@ target = "$App\\firefox.exe"
      *discovered* (GitHub digest, sums file, sidecar), with `sha256_from`
      set accordingly;
    - write the version's own launchers, `install.cmd` and `gupkg-tui.cmd`,
-     into the new directory **in every root**: whichever gupkg runs the
+     into the new directory **in the run's root**: whichever gupkg runs the
      check generates them from the one template of gupkg core (section
      21.3), so a double-click on the new version's `install.cmd` installs
      exactly that version. The tracker's own `check-updates.cmd` is never
@@ -2456,7 +2457,7 @@ Rules:
 ### 21.3 Package launchers: which gupkg runs
 
 `install.cmd`, `gupkg-tui.cmd` and the tracker's `check-updates.cmd` are generated from one template of gupkg core
-(`gupkg\launchers\package-launcher.cmd`) by `check-updates` (new version directories, every root), `gupkg pkg new`,
+(`gupkg\launchers\package-launcher.cmd`) by `check-updates` (new version directories of the run's root), `gupkg pkg new`,
 `pkg bundle` and `pkg export`, and the registry tool (`launchers`). They are plain `cmd`.
 A launcher lives at `<root>\<name>\<version>\`, so its root is `%~dp0..\..`.
 
