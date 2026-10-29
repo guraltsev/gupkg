@@ -315,6 +315,8 @@ class RunLog:
         Validated plain file name that also receives the JSON events in every log directory.
     keep_runs, keep_days : int
         Retention (settings ``[logs]``): runs kept per directory and the age limit in days.
+    scope : str, optional
+        The text ``<mode> root <path> (<source>)`` of the run's scope, written into every log header.
     clock : callable, optional
         Returns the current UTC time; tests inject a fixed one.
     """
@@ -327,9 +329,11 @@ class RunLog:
         events_name: str | None = None,
         keep_runs: int = 50,
         keep_days: int = 90,
+        scope: str = "",
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._command = command
+        self._scope = scope
         self._warn = warn
         self._events_name = validate_log_file_name(events_name) if events_name is not None else None
         self._keep_runs, self._keep_days = keep_runs, keep_days
@@ -384,6 +388,8 @@ class RunLog:
             sink.write_line(f"# command: {start.command}")
             sink.write_line(f"# argv: {' '.join(start.argv)}")
             sink.write_line(f"# mode: {start.mode}")
+            if self._scope:
+                sink.write_line(f"# scope: {self._scope}")
             sink.write_line(f"# elevated: {'yes' if start.elevated else 'no'}")
             sink.write_line(f"# settings layers: {', '.join(start.settings_layers) or '(none)'}")
             sink.write_line(f"# started: {self._started.astimezone(timezone.utc).isoformat()}")

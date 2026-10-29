@@ -64,10 +64,10 @@ class PackageRow:
 
     @property
     def target(self) -> str:
-        """The target the CLI understands: ``user:alpha`` (a bare name may be ambiguous between roots) unless the person named a folder."""
+        """The target the CLI understands: the package name (a run has one root, so a name is never ambiguous) unless the person named a folder."""
         if self.target_text is not None:
             return self.target_text
-        return f"{self.mode}:{self.name}" if self.mode else self.name
+        return self.name
 
 
 @dataclass(frozen=True)

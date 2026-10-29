@@ -14,7 +14,7 @@ targets that could not be run. ``can_elevate(location, system)`` says whether th
 
 Implementation Approach
 -----------------------
-Targets are qualified (``system:name``), so the CLI never has to guess a mode. Targets that need a different ``--skip-checksum`` argument
+Targets are package names: a run has one scope, so the CLI never has to guess a mode. Targets that need a different ``--skip-checksum`` argument
 are never put in one call (the flag is per call), but the manager's policy gives every target of a mode the same one, so a batch still
 makes one call per group. The events folder of a call is the ``.gupkg\\logs`` of its first target's root.
 """
@@ -86,7 +86,7 @@ def can_elevate(location: RunningGupkg, system: System) -> bool:
 
 def events_dir_for(subject: Subject, settings: UiSettings) -> Path:
     """Return the ``.gupkg\\logs`` folder where a call on *subject* writes its events file: its root's, known from its folder or the settings."""
-    root = subject.package_dir.parent if subject.package_dir is not None else settings.root_of(subject.mode or settings.default_mode)  # Removed in issue 035 T05.
+    root = subject.package_dir.parent if subject.package_dir is not None else settings.root
     return root / ".gupkg" / "logs"
 
 

@@ -215,7 +215,7 @@ def test_a_usage_error_is_exit_2_with_an_error_document_when_json_is_asked(world
     result = world.cli("install", "tool", "--mode", "nowhere", "--json")
 
     document = result.document()
-    assert result.code == 2 and "invalid choice" in result.err
+    assert result.code == 2 and "unrecognized arguments" in result.err
     assert (document["api"], document["ok"], document["exit_code"]) == (1, False, 2)
     assert document["errors"][0]["code"] == "usage"
 

@@ -30,7 +30,9 @@ import pytest
 from gupkg import distcopy
 from gupkg.catalog.local import tree_hash
 from gupkg.distcopy import COPIED, DIVERGED, IDENTICAL, DistributionRefused, copy_distribution
-from gupkg.model.mode import ModeChoice, ModeRefused
+from gupkg.model.scope import ModeRefused, make_scope
+from gupkg.model.settings import default_layer, merge_layers
+from gupkg.system.port import Mode
 from gupkg.system.fake import FakeSystem
 from tests.catalog_support import version_text
 from tests.mode_support import pin_no_ambient_elevation, tree_snapshot  # noqa: F401
@@ -309,6 +311,12 @@ def test_a_folder_swapped_for_a_junction_just_before_a_file_is_opened_is_never_c
     assert swapped and not root.exists()
 
 
+def _scope(mode: Mode, root: Path):
+    """Return a scope of *mode* on *root* built from the built-in settings."""
+    env = {"USERPROFILE": "C:\\Users\\pat", "APPDATA": "C:\\Users\\pat\\AppData\\Roaming", "ProgramData": "C:\\ProgramData"}
+    return make_scope(mode, root, "test", merge_layers([default_layer(mode)]), env)
+
+
 def test_the_packages_modes_are_checked_on_the_staged_copy_before_anything_reaches_the_root(tmp_path: Path) -> None:
     """A package that does not list the required mode is refused with the mode message, and the root stays empty."""
     source = tmp_path / "downloads" / "tool" / "1.0.0"
@@ -318,10 +326,10 @@ def test_the_packages_modes_are_checked_on_the_staged_copy_before_anything_reach
     root = tmp_path / "opt"
 
     with pytest.raises(ModeRefused, match="installs only for a single user"):
-        copy_distribution(source, root, required=ModeChoice("system", "--mode"))
+        copy_distribution(source, root, required=_scope(Mode.SYSTEM, root))
     assert not root.exists()
 
-    assert copy_distribution(source, root, required=ModeChoice("user", "--mode")).status == COPIED
+    assert copy_distribution(source, root, required=_scope(Mode.USER, root)).status == COPIED
 
 
 # ---------------------------------------------------------------------------

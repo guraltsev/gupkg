@@ -33,7 +33,7 @@ from gupkg.engine.portable import PortableError, hand_back, hand_over
 from gupkg.engine.receipts import MAX_RECEIPT_BYTES, list_receipts, read_receipt, receipt_checksum, update_receipt
 from gupkg.engine.stateio import read_track_state, register_adhoc, unregister_adhoc, write_track_state
 from gupkg.model.checksum import ChecksumMismatch, ChecksumMissing
-from gupkg.model.mode import InputNeeded, ModeRefused
+from gupkg.model.scope import InputNeeded, ModeRefused
 from gupkg.model.state import InstallRecord
 from gupkg.model.settings import Layer, default_layer, merge_layers
 from gupkg.system.fake import FakeSystem

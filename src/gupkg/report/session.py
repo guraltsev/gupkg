@@ -59,6 +59,8 @@ class RunSession:
         Names of the settings layers in effect, recorded in the header.
     stop_file : str, optional
         The run's stop marker, announced in ``RunStart`` (decision D37).
+    scope : str, optional
+        The text ``<mode> root <path> (<source>)`` of the run's scope, recorded in the log headers.
     log : bool, default=True
         Set false to keep a run out of the log files (used where no log may be written).
     clock : callable, optional
@@ -80,6 +82,7 @@ class RunSession:
         fallback_base: Path | None = None,
         settings_layers: Sequence[str] = (),
         stop_file: str | None = None,
+        scope: str = "",
         log: bool = True,
         clock=None,
     ) -> None:
@@ -96,7 +99,7 @@ class RunSession:
         if log:
             self.log = RunLog(
                 command, lambda text: self._hub.handle(Warning(text)),
-                events_name=events_name, keep_runs=keep_runs, keep_days=keep_days, clock=clock,
+                events_name=events_name, keep_runs=keep_runs, keep_days=keep_days, scope=scope, clock=clock,
             )
             all_reporters.append(self.log)
         self._hub = MultiReporter(all_reporters)

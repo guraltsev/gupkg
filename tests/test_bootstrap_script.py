@@ -56,7 +56,7 @@ def test_verified_release_is_unpacked_with_its_install_cmd_and_runs_on_its_own_p
     version_dir = tmp_path / "stage" / "gupkg" / release_bundle.version
     assert result.returncode == 0, result.stderr
     assert "SHA-256 verified" in result.stdout and f"Version directory: {version_dir}" in result.stdout
-    assert "install.cmd" in result.stdout and "--mode user" in result.stdout
+    assert "install.cmd" in result.stdout and "--mode" not in result.stdout
     assert (version_dir / "install.cmd").is_file() and (version_dir / "pkg.toml").is_file()
     version = subprocess.run([str(version_dir / "gupkg" / "gupkg.cmd"), "--version"], capture_output=True, text=True)
     assert version.stdout.strip() == f"gupkg {release_bundle.version}"

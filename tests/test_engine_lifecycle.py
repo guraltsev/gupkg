@@ -276,7 +276,7 @@ def test_cleanup_removes_leftover_work_folders_and_keeps_the_receipt_of_a_versio
 
 def test_cleanup_root_prunes_logs_beyond_retention_and_registry_trees_that_are_not_active(world: World) -> None:
     """The root's logs and every package's keep `[logs] keep_runs` runs; only the active registry revision stays."""
-    world.machine.write_app_settings(tables="[logs]\nkeep_runs = 2\nkeep_days = 3650\n")
+    world.write_app_settings(tables="[logs]\nkeep_runs = 2\nkeep_days = 3650\n")
     world.publish("tool", "1.0.0", tables=ENV_ONLY)
     world.one("install", "tool")
     context = world.mode_context()
@@ -288,7 +288,7 @@ def test_cleanup_root_prunes_logs_beyond_retention_and_registry_trees_that_are_n
     cache = world.registry({"tool": {"versions": {"1.0.0": {"app.exe": "x"}}}})
     (cache / "trees" / ("b" * 40)).mkdir()
     (cache / "trees" / ("b" * 40) / "leftover.txt").write_text("old", encoding="utf-8")
-    settings = world.engine.load().settings
+    settings = world.scope.settings
 
     done = lifecycle.cleanup_root(world.engine, context, settings)
 
@@ -417,18 +417,6 @@ def test_install_with_a_version_activates_that_version_of_an_installed_package(w
     result = world.one("install", "tool@1.1.0")
 
     assert result.ok and result.version == "1.1.0" and result.previous == "1.0.0" and current_version(world.user / "tool") == "1.1.0"
-
-
-def test_a_name_in_two_roots_is_ambiguous_until_qualified(tmp_path: Path) -> None:
-    """A bare name that exists in the system and the user root is refused for a mutating command and says how to qualify it."""
-    world = World(tmp_path)
-    world.publish("tool", "1.0.0", mode="user", tables=ENV_ONLY)
-    world.publish("tool", "1.0.0", mode="system", tables=ENV_ONLY)
-
-    result = world.one("install", "tool")
-
-    assert not result.ok and result.error["code"] == "ambiguous" and "user:tool" in result.error["message"]
-    assert world.one("install", "user:tool").ok
 
 
 def test_a_failed_effect_is_reported_and_recorded_truthfully_and_a_repeat_converges(world: World) -> None:

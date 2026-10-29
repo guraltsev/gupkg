@@ -177,12 +177,12 @@ def test_uninstall_removes_exactly_what_was_added_and_leaves_unrelated_entries(t
     world.publish("tool", "1.0.0", mode="system", tables='[[path]]\nvalue = "$App"\n[[path]]\nvalue = "$App\\\\bin"\n')
     world.fake.set_path(Mode.SYSTEM, ["C:\\Windows", "C:\\Tools"])
 
-    assert world.one("install", "system:tool").ok
+    assert world.one("install", "tool").ok
     entries = world.fake.get_path(Mode.SYSTEM)
     package = str(world.system_root / "tool" / "current" / "App")
     assert entries[:2] == ["C:\\Windows", "C:\\Tools"] and package in entries and package + "\\bin" in entries
 
-    assert world.one("uninstall", "system:tool").ok
+    assert world.one("uninstall", "tool").ok
     assert world.fake.get_path(Mode.SYSTEM) == ["C:\\Windows", "C:\\Tools"]
 
 
@@ -193,7 +193,7 @@ def test_a_package_with_a_hostile_path_is_not_installed(tmp_path: Path) -> None:
     world.fake.set_path(Mode.SYSTEM, ["C:\\Windows"])
     world.fake.fetch_log.clear()
 
-    result = world.one("install", "system:tool")
+    result = world.one("install", "tool")
 
     assert not result.ok and world.fake.get_path(Mode.SYSTEM) == ["C:\\Windows"] and world.fake.fetch_log == []
 

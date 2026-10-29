@@ -14,7 +14,7 @@ the Web, which the engine records in the receipt (D40). A failed or refused copy
 Usage and API
 -------------
 Call ``copy_distribution(source, root, required=...)``; it returns a ``CopyResult`` (destination, status,
-whether the source was marked). ``required`` is the ``ModeChoice`` the install will use: the staged
+whether the source was marked). ``required`` is the ``Scope`` the install will use: the staged
 ``pkg.toml``'s ``modes`` are checked before anything is moved into place. ``DistributionRefused`` (exit
 code 2) reports a source that must not be copied.
 
@@ -39,7 +39,7 @@ from pathlib import Path
 
 from .catalog.local import DATA_DIR_NAME, canonical_path, is_inside, is_reparse_point
 from .model.manifest import ManifestError, parse_manifest
-from .model.mode import ModeChoice, ModeRefused, check_supported
+from .model.scope import ModeRefused, Scope, check_supported
 from .model.version import MANIFEST_NAME, is_version_name
 
 MARK_STREAM = "Zone.Identifier"
@@ -93,7 +93,7 @@ class CopyResult:
 
 
 def copy_distribution(
-    source: Path, root: Path, *, required: ModeChoice | None = None, limits: CopyLimits = CopyLimits()
+    source: Path, root: Path, *, required: Scope | None = None, limits: CopyLimits = CopyLimits()
 ) -> CopyResult:
     """Copy the version directory *source* to ``<root>\\<name>\\<version>``, never overwriting.
 
@@ -103,7 +103,7 @@ def copy_distribution(
         A folder shaped ``<name>\\<version>`` that holds ``pkg.toml``; the parent folder's name is the package name.
     root : Path
         The root of the mode that installs it.
-    required : ModeChoice, optional
+    required : Scope, optional
         The mode the install will use. The staged ``pkg.toml`` must list it in ``modes``; otherwise the copy is
         refused (``ModeRefused``) before anything is moved into the root.
     limits : CopyLimits
@@ -170,7 +170,7 @@ def copy_distribution(
                 modes = parse_manifest((staged / MANIFEST_NAME).read_text(encoding="utf-8-sig")).modes
             except (OSError, UnicodeDecodeError, ManifestError, ValueError) as exc:
                 raise DistributionRefused(f"{source / MANIFEST_NAME} is not a valid pkg.toml: {exc}") from exc
-            check_supported(required, modes)
+            check_supported(required, modes, command="install", name=name)
 
         # An existing copy is never overwritten: report whether it already holds this content.
         destination = root / name / version

@@ -1,6 +1,6 @@
 """Cover the selector grammar of design 10.1 as the catalog resolves it.
 
-Behavior covered: ``name``, ``name@version``, ``mode:name``, ``registry/name`` and paths (a version
+Behavior covered: ``name``, ``name@version``, ``registry/name`` and paths (a version
 directory, a package root, ``current``, ``_check_updates``) select the right package and version; a bare
 name that exists in several roots is ambiguous for a mutating command and names the qualified selectors,
 but resolves for a reading command; a package in a grouping folder (``gupkg-dir.toml``) is selected by its
@@ -24,26 +24,23 @@ from tests.catalog_support import activate, build_registry, make_catalog, write_
 
 
 @pytest.mark.parametrize(
-    ("text", "kind", "name", "mode", "version", "registry"),
+    ("text", "kind", "name", "version", "registry"),
     [
-        pytest.param("firefox", "name", "firefox", None, None, None, id="name"),
-        pytest.param("firefox@1.2", "name", "firefox", None, "1.2", None),
-        pytest.param("user:firefox", "name", "firefox", "user", None, None, id="mode"),
-        pytest.param("system:firefox@2.0", "name", "firefox", "system", "2.0", None, id="mode-and-version"),
-        pytest.param("main/firefox", "registry", "firefox", None, None, "main", id="registry-entry"),
-        pytest.param("MAIN/firefox@1.0", "registry", "firefox", None, "1.0", "MAIN", id="registry-entry-with-version"),
-        pytest.param("tools/firefox", "name", "tools/firefox", None, None, None, id="grouped-name"),
-        pytest.param(".\\firefox", "path", None, None, None, None, id="relative-path"),
-        pytest.param("C:\\opt\\firefox", "path", None, None, None, None, id="absolute-path"),
-        pytest.param("..\\x", "path", None, None, None, None, id="parent-path"),
-        pytest.param("user:C:\\opt\\firefox", "path", None, "user", None, None, id="mode-with-path"),
+        pytest.param("firefox", "name", "firefox", None, None, id="name"),
+        pytest.param("firefox@1.2", "name", "firefox", "1.2", None),
+        pytest.param("main/firefox", "registry", "firefox", None, "main", id="registry-entry"),
+        pytest.param("MAIN/firefox@1.0", "registry", "firefox", "1.0", "MAIN", id="registry-entry-with-version"),
+        pytest.param("tools/firefox", "name", "tools/firefox", None, None, id="grouped-name"),
+        pytest.param(".\\firefox", "path", None, None, None, id="relative-path"),
+        pytest.param("C:\\opt\\firefox", "path", None, None, None, id="absolute-path"),
+        pytest.param("..\\x", "path", None, None, None, id="parent-path"),
     ],
 )
-def test_selector_grammar(text: str, kind: str, name, mode, version, registry) -> None:
-    """Each selector form parses to its kind, name, mode, version and registry."""
+def test_selector_grammar(text: str, kind: str, name, version, registry) -> None:
+    """Each selector form parses to its kind, name, version and registry."""
     parsed = parse_selector(text, ["main", "team"])
 
-    assert (parsed.kind, parsed.name, parsed.mode, parsed.version, parsed.registry) == (kind, name, mode, version, registry)
+    assert (parsed.kind, parsed.name, parsed.version, parsed.registry) == (kind, name, version, registry)
 
 
 @pytest.mark.parametrize("text", ["", "   ", "foo@", "@1.0"])
@@ -66,8 +63,6 @@ def test_bare_name_in_two_roots_is_ambiguous_only_for_mutating_commands(system, 
     assert raised.value.matches == ("system:foo", "user:foo")
     assert "system:foo, user:foo" in str(raised.value)
     assert catalog.resolve("foo").view.mode == "system"
-    assert catalog.resolve("user:foo", for_mutation=True).view.mode == "user"
-    assert catalog.resolve("system:foo@1.0", for_mutation=True).version == "1.0"
 
 
 def test_name_and_version_selector_names_the_version(system, tmp_path: Path) -> None:
@@ -94,10 +89,8 @@ def test_registry_only_name_resolves_to_an_available_view_in_the_requested_root(
     catalog = make_catalog(system, tmp_path)[0]
 
     plain = catalog.resolve("foo").view
-    qualified = catalog.resolve("user:foo").view
 
     assert plain.status == "available" and plain.root is None
-    assert qualified.status == "available" and qualified.root.mode == "user" and qualified.root.path == roots["user"]
 
 
 def test_registry_name_selector_follows_that_entry_for_an_existing_local_package(system, tmp_path: Path) -> None:
@@ -165,7 +158,6 @@ def test_path_outside_every_root_is_an_ad_hoc_root_with_the_recorded_mode(system
     assert catalog.resolve(str(plain)).view.mode is None
     assert catalog.resolve(str(recorded)).view.mode == "system"
     assert catalog.resolve(str(plain)).view.root.adhoc
-    assert catalog.resolve(f"system:{plain}").view.mode == "system"
 
 
 def test_package_in_a_grouping_folder_is_selected_by_its_folder_path(system, tmp_path: Path) -> None:
@@ -177,7 +169,7 @@ def test_package_in_a_grouping_folder_is_selected_by_its_folder_path(system, tmp
     catalog = make_catalog(system, tmp_path)[0]
 
     listed = [view.name for view in catalog.list().views]
-    by_name = catalog.resolve("user:group/tool").view
+    by_name = catalog.resolve("group/tool").view
     by_path = catalog.resolve(str(roots["user"] / "group" / "tool")).view
 
     assert listed == ["group/tool"]

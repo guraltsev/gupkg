@@ -45,18 +45,19 @@ import subprocess
 import unicodedata
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Callable, Mapping, Protocol, Sequence
 
 from ..selfmgmt.elevation import UntrustedLocationError, untrusted_message
 
 
-class Mode(Enum):
+class Mode(StrEnum):
     """Install mode of a gupkg run: where its environment, ``PATH`` and shortcuts go.
 
     ``USER`` targets per-user configuration locations. ``SYSTEM`` targets machine-wide
-    configuration locations and therefore requires Administrator privileges.
+    configuration locations and therefore requires Administrator privileges. The members are
+    strings (``"user"``, ``"system"``), so a mode compares equal to its name and prints as it.
     """
 
     USER = "user"

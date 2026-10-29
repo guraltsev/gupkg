@@ -89,23 +89,25 @@ def test_list_shows_the_newest_known_version_of_an_outdated_package(world: CliWo
     assert world.fake.fetch_log == [] and world.fake.request_log == []
 
 
-def test_list_names_qualify_a_name_that_exists_in_two_modes(world: CliWorld) -> None:
-    """For scripts, a name that exists in both roots is printed as mode:name so that it names one package."""
+def test_list_names_shows_only_the_packages_of_the_scope(world: CliWorld) -> None:
+    """A run has one root: a package of the other root is not listed, so a name is never ambiguous and never qualified."""
     world.publish("tool", "1.0.0", mode="system")
+    world.publish("sys-only", "1.0.0", mode="system")
 
     names = world.cli("list", "--names").out.split()
 
-    assert sorted(names) == ["system:tool", "user:tool"]
+    assert names == ["tool"]
 
 
-def test_list_mode_filter_and_json_document(world: CliWorld) -> None:
-    """--mode limits the packages to one root, and --json carries the same rows with the pinned keys."""
+def test_list_json_document_has_the_packages_of_the_scope_with_the_pinned_keys(world: CliWorld) -> None:
+    """--json carries the rows of the run's root only, with the pinned keys."""
     world.publish("sys-tool", "1.0.0", mode="system")
+    world.publish("user-tool", "1.0.0")
 
-    result = world.cli("list", "--mode", "system", "--json")
+    result = world.cli("list", "--json")
 
     document = result.document()
-    assert [row["name"] for row in document["packages"]] == ["sys-tool"] and document["command"] == "list"
+    assert [row["name"] for row in document["packages"]] == ["tool", "user-tool"] and document["command"] == "list"
     assert {"name", "mode", "status", "version", "newest_known", "path", "following", "problems", "warnings"} <= set(document["packages"][0])
 
 
@@ -218,7 +220,7 @@ def test_logs_without_a_target_lists_the_roots_logs_and_a_package_without_logs_i
 def test_shell_prints_the_path_line_of_an_integrate_none_root(tmp_path: Path) -> None:
     """With ``[integration] integrate = "none"`` the root's bin folder is not on PATH, so `gupkg shell` prints the line that adds it."""
     world = CliWorld(tmp_path)
-    world.machine.write_app_settings(tables='[integration]\nintegrate = "none"\n')
+    world.write_app_settings(tables='[integration]\nintegrate = "none"\n')
 
     result = world.cli("shell")
 

@@ -190,23 +190,11 @@ def test_an_app_with_too_many_files_to_list_is_still_checked_by_its_digest(tmp_p
     assert not result.ok and "app-modified" in kinds(result) and "too many files" in result.details["problems"][0]["message"]
 
 
-def test_shadowing_between_the_system_and_the_user_root_is_reported(tmp_path: Path) -> None:
-    """The same package in both roots is a warning of the check: their shims shadow each other on PATH."""
-    world = World(tmp_path)
-    world.publish("tool", "1.0.0", mode="user", tables=FULL)
-    world.publish("tool", "1.0.0", mode="system", tables=FULL)
-    assert world.one("install", "user:tool").ok
-
-    result = world.one("check", "user:tool")
-
-    assert [note["kind"] for note in result.details["notes"] if note["kind"] == "shadowing"] == ["shadowing"]
-
-
 def test_an_elevated_check_does_not_read_the_users_environment(tmp_path: Path) -> None:
     """An elevated run verifies system-scope effects only and never asks the user's environment."""
     world = World(tmp_path, elevated=True)
     world.publish("tool", "1.0.0", mode="system", tables=FULL)
-    assert world.one("install", "system:tool").ok
+    assert world.one("install", "tool").ok
     world.fake.registry_log.clear()
 
     result = world.one("check", "tool")

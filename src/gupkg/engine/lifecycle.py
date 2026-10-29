@@ -16,7 +16,7 @@ to a whole root: logs beyond the retention and registry trees that are not the a
 
 Implementation Approach
 -----------------------
-A target is resolved by ``gupkg.modes.resolve_mode`` (which applies the order of design 6.2 and the admission rules of
+A target is resolved inside the scope of the run by ``gupkg.targets.resolve_target`` (which applies the admission rules of
 an elevated run), the catalog decides which version is chosen (never running a tracker, decision D11), the planner turns
 the choice into data, and the executor runs it. Every exception of one target becomes that target's failed result, so a
 batch never stops half way because of one package; only an elevation that is refused or declined stops the whole call,
@@ -48,7 +48,6 @@ from ..model.manifest import (
     parse_manifest,
     require_gupkg_version,
 )
-from ..model.mode import InputNeeded, ModeContext, ModeRefused, check_supported
 from ..model.plan import (
     EXIT_INPUT,
     EXIT_INTERNAL,
@@ -63,12 +62,13 @@ from ..model.plan import (
     Request,
     effect_key,
 )
+from ..model.scope import InputNeeded, ModeRefused, Scope, check_supported
 from ..model.settings import Settings
 from ..model.state import InstallRecord, Link, PackageView, Root
 from ..model.version import MANIFEST_NAME, compare_versions
-from ..modes import ModeRequest, ResolvedMode, resolve_mode
 from ..relaunch import ensure_elevation
 from ..system.port import ProcessFailed
+from ..targets import ResolvedTarget, TargetRequest, resolve_target
 from ..report.events import Diagnostic, Error, Prompt, Step, Warning, emit, package_scope
 from ..report.logfile import prune_logs
 from ..services.safepath import remove_tree
@@ -100,63 +100,62 @@ WORK_MIN_AGE = timedelta(hours=24)
 
 
 def check_updates(
-    engine: Engine, selectors: Sequence[str], *, mode: str | None = None, no_download: bool = False, skip: str | None = None
+    engine: Engine, selectors: Sequence[str], *, no_download: bool = False, skip: str | None = None
 ) -> BatchResult:
     """Run the trackers of the named packages and write (and by default populate) their new versions; activate nothing."""
-    return run_batch(engine, [Request("check-updates", item, mode=mode, no_download=no_download, skip=skip) for item in selectors])
+    return run_batch(engine, [Request("check-updates", item, no_download=no_download, skip=skip) for item in selectors])
 
 
 def install(
-    engine: Engine, selectors: Sequence[str], *, mode: str | None = None, refresh: bool = False, in_place: bool = False,
-    skip: str | None = None,
+    engine: Engine, selectors: Sequence[str], *, refresh: bool = False, in_place: bool = False, skip: str | None = None,
 ) -> BatchResult:
     """Install the named packages (a package that is installed is repaired); a tracker is never run."""
     return run_batch(engine, [
-        Request("install", item, mode=mode, refresh=refresh, in_place=in_place, skip=skip) for item in selectors
+        Request("install", item, refresh=refresh, in_place=in_place, skip=skip) for item in selectors
     ])
 
 
 def update(
-    engine: Engine, selectors: Sequence[str], *, mode: str | None = None, skip: str | None = None, download_only: bool = False
+    engine: Engine, selectors: Sequence[str], *, skip: str | None = None, download_only: bool = False
 ) -> BatchResult:
     """Activate the newest known version of each installed package; ``download_only`` prepares it and stops."""
-    return run_batch(engine, [Request("update", item, mode=mode, skip=skip, download_only=download_only) for item in selectors])
+    return run_batch(engine, [Request("update", item, skip=skip, download_only=download_only) for item in selectors])
 
 
-def switch(engine: Engine, selector: str, version: str, *, mode: str | None = None) -> BatchResult:
+def switch(engine: Engine, selector: str, version: str) -> BatchResult:
     """Activate another known version of an installed package (the explicit way back)."""
-    return run_batch(engine, [Request("switch", selector, mode=mode, version=version)])
+    return run_batch(engine, [Request("switch", selector, version=version)])
 
 
-def uninstall(engine: Engine, selectors: Sequence[str], *, purge: bool = False, mode: str | None = None) -> BatchResult:
+def uninstall(engine: Engine, selectors: Sequence[str], *, purge: bool = False) -> BatchResult:
     """Remove the integration of the named packages; ``purge`` also deletes the package root and its data."""
-    return run_batch(engine, [Request("uninstall", item, mode=mode, purge=purge) for item in selectors])
+    return run_batch(engine, [Request("uninstall", item, purge=purge) for item in selectors])
 
 
 def cleanup(
-    engine: Engine, selectors: Sequence[str], *, keep: int = 1, bundled: bool = False, mode: str | None = None, sweep: bool = False
+    engine: Engine, selectors: Sequence[str], *, keep: int = 1, bundled: bool = False, sweep: bool = False
 ) -> BatchResult:
     """Remove old ``App`` folders, receipts and work folders of the named packages (never run automatically, D43).
 
     A named package that another run holds fails with ``package-busy``; with *sweep* (a pass over every package of a root,
     not a list the user wrote) it is left alone and reported as ``locked``.
     """
-    return run_batch(engine, [Request("cleanup", item, mode=mode, keep=keep, bundled=bundled, sweep=sweep) for item in selectors])
+    return run_batch(engine, [Request("cleanup", item, keep=keep, bundled=bundled, sweep=sweep) for item in selectors])
 
 
-def check(engine: Engine, selectors: Sequence[str], *, fix: bool = False, mode: str | None = None) -> BatchResult:
+def check(engine: Engine, selectors: Sequence[str], *, fix: bool = False) -> BatchResult:
     """Report the health of the named packages; ``fix`` re-applies integration and rebuilds a missing ``App``."""
-    return run_batch(engine, [Request("check", item, mode=mode, fix=fix) for item in selectors])
+    return run_batch(engine, [Request("check", item, fix=fix) for item in selectors])
 
 
-def link(engine: Engine, selector: str, entry: str | None = None, *, unlink: bool = False, mode: str | None = None) -> BatchResult:
+def link(engine: Engine, selector: str, entry: str | None = None, *, unlink: bool = False) -> BatchResult:
     """Make a package follow the registry entry *entry* (``registry/name``), its own name's entry again, or none (*unlink*)."""
-    return run_batch(engine, [Request("link", selector, mode=mode, link_to=entry, unlink=unlink)])
+    return run_batch(engine, [Request("link", selector, link_to=entry, unlink=unlink)])
 
 
-def repair(engine: Engine, selectors: Sequence[str], *, mode: str | None = None, skip: str | None = None) -> BatchResult:
+def repair(engine: Engine, selectors: Sequence[str], *, skip: str | None = None) -> BatchResult:
     """Re-apply the integration and rebuild a missing ``App`` of installed packages."""
-    return run_batch(engine, [Request("repair", item, mode=mode, skip=skip) for item in selectors])
+    return run_batch(engine, [Request("repair", item, skip=skip) for item in selectors])
 
 
 # ---------------------------------------------------------------------------
@@ -167,7 +166,7 @@ def repair(engine: Engine, selectors: Sequence[str], *, mode: str | None = None,
 class _Target:
     """One resolved target of a call: its request, the resolved mode and the catalog of its settings."""
 
-    def __init__(self, request: Request, resolved: ResolvedMode, catalog: Catalog) -> None:
+    def __init__(self, request: Request, resolved: ResolvedTarget, catalog: Catalog) -> None:
         self.request, self.resolved, self.catalog = request, resolved, catalog
 
 
@@ -203,8 +202,8 @@ def run_batch(engine: Engine, requests: Sequence[Request]) -> BatchResult:
 
     # Elevation is decided once for the whole call; a read-only operation never relaunches.
     try:
-        contexts = [replace(item.resolved.context, requires_elevation=_needs_token(item)) for item in targets]
-        if any(context.requires_elevation for context in contexts) and not engine.elevated and (
+        contexts = [item.resolved.scope for item in targets if _needs_token(item)]
+        if contexts and not engine.elevated and (
             engine.gupkg_dir is None or engine.gupkg_root is None
         ):
             raise ModeRefused("This call needs administrator rights, and this run does not know where its own gupkg is, so it will not relaunch itself.")
@@ -223,7 +222,7 @@ def run_batch(engine: Engine, requests: Sequence[Request]) -> BatchResult:
         # target that does not need the token is reported here as not run, never dropped silently.
         left_out = tuple(
             item if isinstance(item, PackageResult) else PackageResult(
-                item.request.selector, item.request.operation, False, "not-run", mode=item.resolved.context.mode, exit_code=EXIT_USER,
+                item.request.selector, item.request.operation, False, "not-run", mode=item.resolved.scope.mode, exit_code=EXIT_USER,
                 error={
                     "code": "mixed-modes",
                     "message": f"{item.request.selector} was not run: this call needs an elevated gupkg for its system targets.",
@@ -269,11 +268,11 @@ def plan(engine: Engine, requests: Sequence[Request]) -> list[InstallPlan | Pack
 def _resolve(engine: Engine, request: Request) -> _Target | PackageResult:
     """Resolve one request to its mode, root and catalog, or to the failure that stops this target only."""
     try:
-        resolved = resolve_mode(
-            ModeRequest(request.selector, request.mode, request.in_place, engine.relaunched, engine.no_input),
-            system=engine.system, env=engine.env, load=engine.load,
+        resolved = resolve_target(
+            TargetRequest(request.selector, request.operation, request.in_place, engine.relaunched, engine.no_input),
+            scope=engine.scope, system=engine.system, env=engine.env,
         )
-        catalog = Catalog.from_settings(resolved.settings, engine.system, engine.env, elevated=engine.elevated)
+        catalog = Catalog.from_scope(resolved.scope, engine.system, engine.env)
         target = _Target(request, resolved, catalog)
         _require_supported_mode(target)
         return target
@@ -287,7 +286,7 @@ def _resolve(engine: Engine, request: Request) -> _Target | PackageResult:
 def _require_supported_mode(target: _Target) -> None:
     """Refuse a mode the chosen version does not support, before elevation and before any work (design 6.2).
 
-    ``resolve_mode`` can judge a path or a named version; for a bare name the version is chosen here. A request
+    ``resolve_target`` can judge a path or a named version; for a bare name the version is chosen here. A request
     that cannot choose a version yet (nothing installed, nothing newer) is left to the operation itself.
     """
     request, resolved = target.request, target.resolved
@@ -305,7 +304,7 @@ def _require_supported_mode(target: _Target) -> None:
     except (CatalogError, PlanError, _UpToDate, OSError, ValueError):
         return
     if manifest is not None:
-        check_supported(resolved.choice, manifest.modes)
+        check_supported(resolved.scope, manifest.modes, command=request.operation, name=view.name)
 
 
 def _needs_token(target: _Target) -> bool:
@@ -318,13 +317,13 @@ def _needs_token(target: _Target) -> bool:
     if operation == "check-updates":
         return False
     if operation == "check":
-        return target.request.fix and target.resolved.context.requires_elevation
-    return target.resolved.context.requires_elevation
+        return target.request.fix and target.resolved.scope.requires_elevation
+    return target.resolved.scope.requires_elevation
 
 
 def _run_one(engine: Engine, target: _Target, sole: bool) -> PackageResult:
     """Run one resolved target inside its package scope and turn anything it raises into its failed result."""
-    request, context = target.request, target.resolved.context
+    request, context = target.request, target.resolved.scope
     view = target.resolved.resolved.view if target.resolved.resolved is not None else None
     if view is not None:
         name = view.name
@@ -368,7 +367,7 @@ def _run_one(engine: Engine, target: _Target, sole: bool) -> PackageResult:
     return result
 
 
-def _held(engine: Engine, request: Request, context: ModeContext, name: str, path: Path):
+def _held(engine: Engine, request: Request, context: Scope, name: str, path: Path):
     """Return the lock one operation holds on one package: every operation that changes it, never a read-only check."""
     changes = request.operation != "check" or request.fix
     if not changes or not _safe_name(name) or path == context.root:
@@ -399,7 +398,7 @@ def _dispatch(engine: Engine, target: _Target) -> PackageResult:
 
 def _plan_one(engine: Engine, target: _Target) -> InstallPlan:
     """Plan one resolved target for ``--plan`` (nothing is changed)."""
-    request, context = target.request, target.resolved.context
+    request, context = target.request, target.resolved.scope
     if request.operation in ("install", "update", "switch", "repair"):
         return _prepare_install(engine, target, execute=False).plan
     if request.operation == "check-updates":
@@ -413,7 +412,7 @@ def _plan_one(engine: Engine, target: _Target) -> InstallPlan:
     return InstallPlan(
         request.operation, view.name, view.path or context.package_dir(view.name), context.root, context.mode, None,
         view.installed.version if view.installed else None, None, None, (),
-        (Phase("Resolve", (PlanStep(f"{request.operation} {view.name} (mode {context.mode})"),)),), context.requires_elevation,
+        (Phase("Resolve", (PlanStep(f"{request.operation} {view.name}"), PlanStep(context.describe()))),), context.requires_elevation,
         (), False, extra,
     )
 
@@ -444,7 +443,7 @@ def _install_like(engine: Engine, target: _Target) -> PackageResult:
         raise
 
 
-def _drop_copy(catalog: Catalog, name: str, context: ModeContext, copied: CopyResult) -> None:
+def _drop_copy(catalog: Catalog, name: str, context: Scope, copied: CopyResult) -> None:
     """Remove a distribution copy that this call made, unless the package turned out to be installed already."""
     if copied.status == COPIED and _describe_destination(catalog, name, context).installed is None:
         remove_tree(copied.destination)
@@ -465,7 +464,7 @@ def _prepare_install(
         If ``update`` found nothing newer than ``current``.
     """
     request, resolved = target.request, target.resolved
-    context, catalog = resolved.context, target.catalog
+    context, catalog = resolved.scope, target.catalog
     selection = resolved.resolved
     registry = _Registry()
     precopied: CopyResult | None = None
@@ -495,7 +494,7 @@ def _prepare_install(
             # An elevated run reads the folder only while it copies it, so it plans from the admin-only copy.
             if not execute:
                 raise PlanError("an elevated run reads a distribution folder only while it copies it into the root")
-            precopied = copy_distribution(distribution, context.root, required=resolved.choice)
+            precopied = copy_distribution(distribution, context.root, required=resolved.scope)
             if undo is not None:
                 undo.append(lambda copied=precopied: _drop_copy(catalog, name, context, copied))
             if precopied.status == DIVERGED:
@@ -581,7 +580,7 @@ class _Registry:
         self.name, self.fingerprint, self.path = name, fingerprint, path
 
 
-def _describe_destination(catalog: Catalog, name: str, context: ModeContext) -> PackageView:
+def _describe_destination(catalog: Catalog, name: str, context: Scope) -> PackageView:
     """Return the view of package *name* in the mode's root, or an empty view when it is not installed there yet."""
     root = Root(context.root, context.mode)
     try:
@@ -611,7 +610,7 @@ def _choose(engine: Engine | None, target: _Target, view: PackageView, execute: 
         else:
             newest = catalog.update_candidate(view)
             if newest is None:
-                raise _UpToDate(view, target.resolved.context.mode)
+                raise _UpToDate(view, target.resolved.scope.mode)
             candidate = newest
     elif request.operation == "repair":
         if view.installed is None:
@@ -628,7 +627,7 @@ def _choose(engine: Engine | None, target: _Target, view: PackageView, execute: 
             if execute and view.registry is not None and view.registry.tracker is not None and view.local is None:
                 sync = catalog.tracker_sync(view)
                 if sync.action == "copy":
-                    sync_registry_tracker(engine, view, target.resolved.context.package_dir(view.name), sync)
+                    sync_registry_tracker(engine, view, target.resolved.scope.package_dir(view.name), sync)
             raise
     if candidate.source == "registry":
         return candidate, CopyIn("registry", candidate.path, candidate.registry, candidate.fingerprint)
@@ -692,7 +691,7 @@ def _pick_named(catalog: Catalog, view: PackageView, version: str) -> Candidate:
 
 def _link(engine: Engine, target: _Target) -> PackageResult:
     """Record in the install record which registry entry the package follows (decision D2); nothing else changes."""
-    request, context = target.request, target.resolved.context
+    request, context = target.request, target.resolved.scope
     view = _view(target)
 
     # The entry to follow must exist in a configured registry; no entry means the same-name entry again.
@@ -729,7 +728,7 @@ def _uninstall(engine: Engine, target: _Target) -> PackageResult:
     """Plan and run ``uninstall`` for one target; ``--purge`` is confirmed first (nothing is deleted without it)."""
     request, resolved = target.request, target.resolved
     view = _view(target)
-    context = resolved.context
+    context = resolved.scope
     uninstall_plan = plan_uninstall(request, view, context)
     if request.purge:
         purge = uninstall_plan.extra["purge"]
@@ -772,7 +771,7 @@ def _confirm(engine: Engine, question: str, *, allowed: bool = False, flag: str 
 
 def _cleanup(engine: Engine, target: _Target) -> PackageResult:
     """Plan and run ``cleanup`` for one package (never automatically, decision D43)."""
-    context = target.resolved.context
+    context = target.resolved.scope
     view = _view(target)
     cleanup_plan = _cleanup_plan(engine, target, view)
     forwarder = context.root if forwarder_target(context.root / DATA_DIR_NAME) is not None else None
@@ -822,7 +821,7 @@ def _inputs_present(package_path: Path, state) -> bool:
     )
 
 
-def cleanup_root(engine: Engine, context: ModeContext, settings: Settings) -> dict[str, list[str]]:
+def cleanup_root(engine: Engine, context: Scope, settings: Settings) -> dict[str, list[str]]:
     """Prune what belongs to a whole root: logs beyond ``[logs]`` retention and registry trees that are not the active one.
 
     Returns
@@ -866,7 +865,7 @@ def cleanup_root(engine: Engine, context: ModeContext, settings: Settings) -> di
 def _check(engine: Engine, target: _Target) -> PackageResult:
     """Diagnose one package; with ``--fix`` run the repair plan for what can be repaired, then diagnose again."""
     request, resolved = target.request, target.resolved
-    context, settings = resolved.context, resolved.settings
+    context, settings = resolved.scope, resolved.settings
     selection = resolved.resolved
     if selection is None:
         raise NotFound(f"{request.selector} was not found")
@@ -888,7 +887,7 @@ def _check(engine: Engine, target: _Target) -> PackageResult:
 def _repair(engine: Engine, target: _Target, diagnosis: Diagnosis) -> PackageResult:
     """Run the install repair plan for ``check --fix``, applying again the effects that the diagnosis found missing."""
     view = target.resolved.resolved.view
-    context = target.resolved.context
+    context = target.resolved.scope
     state = view.local.version(view.installed.version)
     if state is None or state.manifest is None:
         raise PlanError(f"{view.name} {view.installed.version} is not a valid version directory, so it cannot be repaired")
@@ -913,7 +912,7 @@ def _listing_warnings(target: _Target) -> list[str]:
         return []
 
 
-def _check_result(view: PackageView, context: ModeContext, diagnosis: Diagnosis, fixed: Sequence[str]) -> PackageResult:
+def _check_result(view: PackageView, context: Scope, diagnosis: Diagnosis, fixed: Sequence[str]) -> PackageResult:
     """Build the result of ``check``: healthy or not, with every problem and note."""
     healthy = diagnosis.healthy
     details = {

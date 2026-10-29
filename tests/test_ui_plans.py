@@ -50,11 +50,11 @@ def planned(*entries: dict) -> list[PlannedTarget]:
 )
 def test_a_missing_https_checksum_follows_the_policy_table(policy, interactive, answer, runs, argument, asked) -> None:
     """Design 9.1: ``ask`` asks once and a yes relays ``user-approved``; ``skip`` relays ``setting``; ``refuse`` and a nobody-to-ask ``ask`` do not run the target."""
-    items = planned(plan_entry("user:p", "p", sha256="missing"))
+    items = planned(plan_entry("p", "p", sha256="missing"))
 
     decisions, questions = decide(items, policy, interactive=interactive, answer=answer)
 
-    decision = decisions["user:p"]
+    decision = decisions["p"]
     assert decision.run is runs
     assert (decision.arguments == (argument,)) if argument else decision.arguments == ()
     assert bool(questions) is asked and len(questions) <= 1
@@ -66,41 +66,41 @@ def test_a_missing_https_checksum_follows_the_policy_table(policy, interactive, 
 @pytest.mark.parametrize("interactive", [True, False], ids=["interactive", "schedule"])
 def test_a_plain_http_download_without_a_hash_is_never_skippable(policy, interactive) -> None:
     """An ``http://`` artifact with no hash is refused under every policy, never asked about and never relayed a skip flag."""
-    items = planned(plan_entry("user:p", "p", sha256="missing", url="http://example.org/x.zip"))
+    items = planned(plan_entry("p", "p", sha256="missing", url="http://example.org/x.zip"))
 
     decisions, questions = decide(items, policy, interactive=interactive)
 
-    assert not decisions["user:p"].run and decisions["user:p"].arguments == () and questions == []
-    assert "not https" in decisions["user:p"].message
+    assert not decisions["p"].run and decisions["p"].arguments == () and questions == []
+    assert "not https" in decisions["p"].message
 
 
 @pytest.mark.parametrize("policy", ["ask", "refuse", "skip"])
 @pytest.mark.parametrize("interactive", [True, False], ids=["interactive", "schedule"])
 def test_a_malformed_declared_hash_is_never_asked_or_skipped(policy, interactive) -> None:
     """The plan's ``invalid-checksum`` failure becomes an invalid checksum plan: it is refused under every policy, with no question and no skip flag."""
-    items = planned(plan_failure("user:p", "invalid-checksum", "sha256 is malformed", package="p"))
+    items = planned(plan_failure("p", "invalid-checksum", "sha256 is malformed", package="p"))
 
     decisions, questions = decide(items, policy, interactive=interactive)
 
-    assert not decisions["user:p"].run and decisions["user:p"].arguments == () and questions == []
-    assert "malformed" in decisions["user:p"].message
+    assert not decisions["p"].run and decisions["p"].arguments == () and questions == []
+    assert "malformed" in decisions["p"].message
 
 
 def test_a_present_checksum_and_a_download_free_plan_run_without_a_question() -> None:
     """A verified download and a plan that downloads nothing need no decision; an up-to-date target gets none at all."""
     items = planned(
-        plan_entry("user:a", "a", sha256="present"), plan_entry("user:b", "b"),
-        {"target": "user:c", "ok": True, "exit_code": 0, "result": entry("c", status="up-to-date")},
+        plan_entry("a", "a", sha256="present"), plan_entry("b", "b"),
+        {"target": "c", "ok": True, "exit_code": 0, "result": entry("c", status="up-to-date")},
     )
 
     decisions, questions = decide(items, "ask", interactive=True)
 
-    assert decisions["user:a"].run and decisions["user:b"].run and "user:c" not in decisions and questions == []
+    assert decisions["a"].run and decisions["b"].run and "c" not in decisions and questions == []
 
 
 def test_each_package_is_asked_once_and_an_answer_does_not_leak_to_the_next() -> None:
     """Two packages without a hash are two questions; a yes for one and a no for the other are applied to the right package."""
-    items = planned(plan_entry("user:a", "a", sha256="missing"), plan_entry("user:b", "b", sha256="missing"))
+    items = planned(plan_entry("a", "a", sha256="missing"), plan_entry("b", "b", sha256="missing"))
     answers = iter([True, False])
     asked: list[str] = []
 
@@ -111,8 +111,8 @@ def test_each_package_is_asked_once_and_an_answer_does_not_leak_to_the_next() ->
 
     decisions = asyncio.run(decide_targets(items, lambda _item: "ask", interactive=True, ask=ask))
 
-    assert asked == ["user:a", "user:b"] and decisions["user:a"].run and not decisions["user:b"].run
-    assert decisions["user:b"].status == "cancelled"
+    assert asked == ["a", "b"] and decisions["a"].run and not decisions["b"].run
+    assert decisions["b"].status == "cancelled"
 
 
 @pytest.mark.parametrize(
@@ -125,10 +125,10 @@ def test_each_package_is_asked_once_and_an_answer_does_not_leak_to_the_next() ->
 )
 def test_a_plan_entry_that_cannot_be_understood_is_a_failed_target(bad) -> None:
     """An unreadable checksum marker never means 'present': the target is failed and never decided to run."""
-    good = plan_entry("user:p", "p", sha256="missing")
+    good = plan_entry("p", "p", sha256="missing")
     good["plan"]["populate"]["checksum"] = bad
 
-    (item,) = read_plan(plan_doc([good]), ["user:p"])
+    (item,) = read_plan(plan_doc([good]), ["p"])
 
     assert item.state == "failed" and item.code == "unreadable-plan"
     assert asyncio.run(decide_targets([item], lambda _x: "skip", interactive=False, ask=None)) == {}
@@ -136,14 +136,14 @@ def test_a_plan_entry_that_cannot_be_understood_is_a_failed_target(bad) -> None:
 
 def test_a_target_the_plan_does_not_answer_for_has_failed() -> None:
     """A document without an entry for a target must not be read as 'nothing to do': the target is failed with exit code 4."""
-    (item,) = read_plan(plan_doc([]), ["user:ghost"])
+    (item,) = read_plan(plan_doc([]), ["ghost"])
 
     assert item.state == "failed" and item.exit_code == 4 and item.code == "no-plan"
 
 
 def test_other_plan_failures_keep_their_code_and_message() -> None:
     """A failed plan (not installed, say) is shown with the CLI's code and words and is never run."""
-    (item,) = read_plan(plan_doc([plan_failure("user:p", "not-installed", "'p' is not installed", exit_code=2)]), ["user:p"])
+    (item,) = read_plan(plan_doc([plan_failure("p", "not-installed", "'p' is not installed", exit_code=2)]), ["p"])
 
     assert (item.state, item.code, item.message, item.exit_code) == ("failed", "not-installed", "'p' is not installed", 2)
 
@@ -155,5 +155,5 @@ def test_the_package_list_reader_drops_rows_it_cannot_act_on() -> None:
 
     (row,) = read_packages(document)
 
-    assert (row.target, row.status, row.newest_known) == ("user:alpha", "outdated", "2.0")
+    assert (row.target, row.status, row.newest_known) == ("alpha", "outdated", "2.0")
     assert read_packages(head("list")) == []

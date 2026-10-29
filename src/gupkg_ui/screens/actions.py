@@ -121,7 +121,7 @@ class PackageActions:
 
         async def job(session: BatchSession, sink: Sink, interaction: Interaction) -> BatchOutcome:
             """Run ``registry sync`` for the default root; it names no package."""
-            logs = env.settings.root_of(env.settings.default_mode) / ".gupkg" / "logs"  # Removed in issue 035 T05.
+            logs = env.settings.root / ".gupkg" / "logs"
             return await session.run([Step("registry sync", ("registry", "sync"), (), logs, False)])
 
         self._start("Synchronise the registry", job)

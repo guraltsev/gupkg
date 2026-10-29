@@ -37,7 +37,7 @@ from ..core import ConfigValidationError
 from ..model.checksum import ChecksumError
 from ..redact import redact_text
 from ..model.manifest import ManifestError, NeedsNewerGupkg
-from ..model.mode import InputNeeded, ModeRefused
+from ..model.scope import InputNeeded, ModeRefused
 from ..model.plan import EXIT_FAILED, EXIT_INTERNAL, EXIT_USER, PackageResult
 from ..model.settings import SettingsError
 from ..selfmgmt.elevation import UntrustedLocationError

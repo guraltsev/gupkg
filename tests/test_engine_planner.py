@@ -87,11 +87,15 @@ def test_the_plan_document_marks_the_checksum_and_names_the_url(world: World) ->
     assert missing["sha256"] == "missing" and missing["populate"]["checksum"]["skippable"] is True
 
 
-def test_a_plan_for_a_system_package_requires_elevation(world: World) -> None:
-    """The plan of a system-mode target says that elevation is required."""
-    world.publish("tool", "1.0.0", mode="system", tables=ENV)
+def test_a_plan_of_an_elevated_run_requires_elevation_and_names_the_system_root(tmp_path: Path) -> None:
+    """The plan of a system-mode run says that elevation is required, and its Resolve phase names mode, root and source."""
+    elevated = World(tmp_path, elevated=True)
+    elevated.publish("tool", "1.0.0", mode="system", tables=ENV)
 
-    assert planned(world, "install", "system:tool").requires_elevation is True
+    plan = planned(elevated, "install", "tool")
+
+    assert plan.requires_elevation is True
+    assert any(step.text.startswith(f"system root {elevated.system_root} (") for step in plan.phases[0].steps)
 
 
 def test_installing_an_installed_populated_package_skips_fetch_and_activate(world: World) -> None:
@@ -193,9 +197,7 @@ def test_the_cleanup_plan_is_made_from_the_facts_it_is_given_and_never_looks_at_
     """Which versions hold a bundled gupkg is data (CleanupFacts.bundled): the planner names exactly those, whatever the disk says."""
     world.publish("tool", "1.0.0", tables=ENV)
     world.one("install", "tool")
-    view = Catalog.from_settings(
-        world.engine.load().settings, world.fake, world.machine.env, elevated=False
-    ).describe("tool", Root(world.user, "user"))
+    view = Catalog.from_scope(world.scope, world.fake, world.machine.env).describe("tool", Root(world.user, "user"))
 
     named = plan_cleanup(Request("cleanup", "tool", bundled=True), view, CleanupFacts(bundled=("1.0.0",)))
     none = plan_cleanup(Request("cleanup", "tool", bundled=True), view, CleanupFacts())

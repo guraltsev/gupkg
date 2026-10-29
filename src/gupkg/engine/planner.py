@@ -32,7 +32,6 @@ from pathlib import Path
 
 from ..model.checksum import ChecksumPlan, plan_checksum
 from ..model.manifest import APP_MISSING_ERROR, INSTALLER_LABEL, Manifest, Source, invalid_checksum_problem
-from ..model.mode import ModeContext
 from ..model.plan import (
     CHECK_UPDATES_PHASES,
     INSTALL_PHASES,
@@ -46,6 +45,7 @@ from ..model.plan import (
     effect_key,
     normalize_entry,
 )
+from ..model.scope import Scope, check_supported
 from ..model.state import Candidate, Effect, PackageView, VersionState
 from ..model.version import compare_versions
 
@@ -138,7 +138,7 @@ class CleanupPlan:
 def plan_install(
     request: Request,
     view: PackageView,
-    context: ModeContext,
+    context: Scope,
     chosen: Chosen,
     desired: Sequence[Effect],
     *,
@@ -157,8 +157,8 @@ def plan_install(
         The request (``refresh`` rebuilds a recoverable ``App``).
     view : PackageView
         The package as it is now (an ``available`` view for a registry-only package).
-    context : ModeContext
-        The resolved install mode.
+    context : Scope
+        The scope of the run.
     chosen : Chosen
         The version to activate and its manifest.
     desired : sequence of Effect
@@ -186,11 +186,12 @@ def plan_install(
     PlanError
         If ``App`` is missing and cannot be rebuilt (``App is missing and no way to recover it.``), or the
         manifest does not support the mode.
+    ModeRefused
+        If the manifest's ``modes`` lack the scope's mode (the refusal of ``check_supported``).
     """
     manifest = chosen.manifest
     version = chosen.candidate.version
-    if not manifest.supports(context.mode):
-        raise PlanError(f"{view.name} {version} does not support {context.mode} mode (it supports {', '.join(manifest.modes)}).")
+    check_supported(context, manifest.modes, command=request.operation, name=view.name)
     path = package_path or view.path or context.package_dir(view.name)
     previous = view.installed.version if view.installed is not None else None
     record_effects = view.record.effects if view.record is not None else ()
@@ -343,7 +344,7 @@ def _effect_line(item: PlannedEffect) -> PlanStep:
 def _install_phases(
     request: Request,
     view: PackageView,
-    context: ModeContext,
+    context: Scope,
     chosen: Chosen,
     populate: PopulatePlan,
     copy_in: CopyIn | None,
@@ -358,7 +359,7 @@ def _install_phases(
         chosen.candidate.source, chosen.candidate.source
     )
     move = f"{view.name}  {previous}  ->  {version}" if previous and previous != version else f"{view.name}  {version}"
-    resolve = [PlanStep(f"{move} ({where})"), PlanStep(f"mode: {context.mode} ({context.reason})")]
+    resolve = [PlanStep(f"{move} ({where})"), PlanStep(context.describe())]
     if copy_in is not None:
         origin = "a distribution folder" if copy_in.origin == "distribution" else f"registry {copy_in.registry}"
         resolve.append(PlanStep(f"copy {copy_in.source} into the package root (from {origin})"))
@@ -408,7 +409,7 @@ def _install_phases(
 # ---------------------------------------------------------------------------
 
 
-def plan_uninstall(request: Request, view: PackageView, context: ModeContext) -> InstallPlan:
+def plan_uninstall(request: Request, view: PackageView, context: Scope) -> InstallPlan:
     """Plan ``uninstall``: remove every recorded effect, then ``current``; ``--purge`` also deletes the package root.
 
     The version directories (and their ``App`` folders, shipped ones above all) stay, so the package becomes
@@ -434,7 +435,8 @@ def plan_uninstall(request: Request, view: PackageView, context: ModeContext) ->
     if request.purge:
         extra = {"purge": {"package_root": str(view.path), "data": str(view.path / "data"), "unrecoverable_apps": unrecoverable}}
     steps = [
-        PlanStep(f"{view.name}: uninstall (mode {context.mode})"),
+        PlanStep(f"{view.name}: uninstall"),
+        PlanStep(context.describe()),
         *([PlanStep("--purge: delete the whole package root including data\\", "remove")] if request.purge else []),
     ]
     phases = (
@@ -510,7 +512,7 @@ def plan_cleanup(request: Request, view: PackageView, facts: CleanupFacts) -> Cl
 
 
 def plan_check_updates(
-    request: Request, view: PackageView, context: ModeContext, *, tracker_action: str, writes: bool, download: bool
+    request: Request, view: PackageView, context: Scope, *, tracker_action: str, writes: bool, download: bool
 ) -> InstallPlan:
     """Plan ``check-updates`` (design 13.1, second table): run the tracker, write the version, populate it, stop.
 
@@ -520,8 +522,8 @@ def plan_check_updates(
         The request.
     view : PackageView
         The package (it must be local).
-    context : ModeContext
-        The resolved install mode.
+    context : Scope
+        The scope of the run.
     tracker_action : str
         What happens to the tracker first: ``none``, ``copy``, ``refresh`` or ``keep`` (``Catalog.tracker_sync``).
     writes : bool
@@ -535,7 +537,7 @@ def plan_check_updates(
         The plan, with the phases of the check-updates table. It never activates and never integrates.
     """
     steps: dict[str, list[PlanStep]] = {name: [] for name in CHECK_UPDATES_PHASES}
-    steps["Resolve"] = [PlanStep(f"{view.name}: check for updates (mode {context.mode})")]
+    steps["Resolve"] = [PlanStep(f"{view.name}: check for updates"), PlanStep(context.describe())]
     if tracker_action in ("copy", "refresh") and writes:
         steps["Resolve"].append(PlanStep(f"{tracker_action} the registry's tracker into the package root"))
     steps["Track"] = [PlanStep("run the tracker's [track] provider; compare with the known versions")]

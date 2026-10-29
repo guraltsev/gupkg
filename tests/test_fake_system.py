@@ -216,7 +216,7 @@ def test_sandbox_install_leaves_the_real_machine_alone_and_records_what_it_would
     version = package_with_every_effect(machine)
     sandbox = tmp_path / "sandbox"
 
-    code = sandboxed(machine, sandbox, "install", str(version), "--mode", "user")
+    code = sandboxed(machine, sandbox, "install", str(version))
 
     captured = capsys.readouterr()
     state = json.loads((sandbox / "system.json").read_text(encoding="utf-8"))
@@ -231,10 +231,10 @@ def test_sandbox_install_leaves_the_real_machine_alone_and_records_what_it_would
     assert (sandbox / "bin" / "user" / "tool.exe").is_file()
 
 
-def test_sandbox_system_mode_install_follows_the_elevated_flag_in_system_json(
+def test_sandbox_install_follows_the_elevated_flag_in_system_json(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A system-mode sandbox install is refused until ``system.json`` says elevated, then records machine-scope state.
+    """A sandbox install is a user-mode run until ``system.json`` says elevated, then a system-mode run that records machine-scope state.
 
     Elevation in the sandbox is the flag in ``system.json``, never the real token.
     """
@@ -243,17 +243,16 @@ def test_sandbox_system_mode_install_follows_the_elevated_flag_in_system_json(
     sandbox = tmp_path / "sandbox"
     sandbox.mkdir()
 
-    refused = sandboxed(machine, sandbox, "install", str(version), "--mode", "system", "--yes")
-    assert refused == 2
-    assert "administrator" in (lambda c: c.out + c.err)(capsys.readouterr()).lower()
-    assert not (machine.system_root / "tool").exists()
+    normal = sandboxed(machine, sandbox, "install", str(version), "--yes")
+    assert normal == 0, capsys.readouterr()
+    assert not (machine.system_root / "tool").exists() and (machine.user_root / "tool" / "current").exists()
 
     (sandbox / "system.json").write_text('{"elevated": true}\n', encoding="utf-8")
-    code = sandboxed(machine, sandbox, "install", str(version), "--mode", "system", "--yes")
+    code = sandboxed(machine, sandbox, "install", str(version), "--yes")
 
     state = json.loads((sandbox / "system.json").read_text(encoding="utf-8"))
     assert code == 0, capsys.readouterr()
-    assert "TOOL_HOME" in state["env"]["system"] and state["env"]["user"] == {}
+    assert "TOOL_HOME" in state["env"]["system"] and (machine.system_root / "tool" / "current").exists()
     assert (sandbox / "bin" / "system" / "tool.exe").is_file()
 
 

@@ -352,12 +352,12 @@ def test_an_install_leaves_package_logs_a_linking_run_log_and_nothing_in_appdata
     [run_log] = _run_files(root, ".log")
     assert package_log.name.endswith("-install.log") and run_log.name.endswith("-install-Example.log")
     package_text = package_log.read_text(encoding="utf-8")
-    assert "==> Resolve" in package_text and "mode: user" in package_text and "==> Integrate" in package_text
+    assert "==> Resolve" in package_text and f"  {world.scope.describe()}" in package_text and "==> Integrate" in package_text
 
     # The run log holds global facts and a link, and none of the package's output.
     run_text = run_log.read_text(encoding="utf-8")
     assert f"Package Example: {package_log}" in run_text
-    assert "mode: user" not in run_text and "==> Resolve" not in run_text
+    assert f"# scope: {world.scope.describe()}" in run_text and "==> Resolve" not in run_text and run_text.count("user root") == 1
     run_records = [json.loads(line) for line in _run_files(root, ".jsonl")[0].read_text(encoding="utf-8").splitlines()]
     assert not {"phase_start", "step"} & {r["event"] for r in run_records}
     [link] = [r for r in run_records if r["event"] == "log_link"]

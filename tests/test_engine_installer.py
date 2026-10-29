@@ -200,7 +200,7 @@ def test_an_installer_that_leaves_a_link_in_the_app_is_refused(world: World) -> 
 
 def test_with_the_setting_false_nothing_is_downloaded_or_run(world: World) -> None:
     """hooks.allow_vendor_installers = false: the plan refuses before a byte is requested and the installer never starts."""
-    world.machine.write_app_settings(tables="[hooks]\nallow_vendor_installers = false\n")
+    world.write_app_settings(tables="[hooks]\nallow_vendor_installers = false\n")
     double = publish_installer(world)
     world.fake.fetch_log.clear()
 
@@ -214,7 +214,7 @@ def test_an_installed_version_is_not_touched_when_the_setting_is_false(world: Wo
     """An App that already exists needs no installer, so a repair works with the setting false."""
     publish_installer(world)
     assert world.one("install", "gimp").ok
-    world.machine.write_app_settings(tables="[hooks]\nallow_vendor_installers = false\n")
+    world.write_app_settings(tables="[hooks]\nallow_vendor_installers = false\n")
 
     assert world.one("install", "gimp").ok
 
@@ -244,7 +244,7 @@ def test_check_updates_runs_the_installer_into_the_new_version_when_allowed(worl
 def test_check_updates_with_the_setting_false_writes_the_version_without_its_app(world: World) -> None:
     """check-updates never runs the installer when it is forbidden; it warns and leaves the version unpopulated."""
     double = tracked(world)
-    world.machine.write_app_settings(tables="[hooks]\nallow_vendor_installers = false\n")
+    world.write_app_settings(tables="[hooks]\nallow_vendor_installers = false\n")
     texts: list[str] = []
 
     class Collect:
@@ -446,7 +446,7 @@ def test_an_unpinned_installer_is_refused_before_any_download_even_with_skip_che
     double = publish_installer(world, pinned=False, mode=mode)
     world.fake.fetch_log.clear()
 
-    result = world.one("install", f"{mode}:gimp", skip=parse_skip_flag(""))
+    result = world.one("install", "gimp", skip=parse_skip_flag(""))
 
     assert not result.ok and result.exit_code == 2 and "gupkg pkg pin" in result.error["message"]
     assert double.calls == [] and world.fake.fetch_log == [] and world.fake.process_log == []

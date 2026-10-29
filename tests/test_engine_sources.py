@@ -258,7 +258,7 @@ def test_check_reports_a_modified_app_file_unless_the_fingerprint_is_switched_of
     """A changed file of a shipped App is reported; `record_manifest = false` (package) or the global switch silences it (D41)."""
     top = "record_manifest = false\n" if opt_out == "package" else ""
     if opt_out == "global":
-        world.machine.write_app_settings(tables="[install]\nrecord_manifest = false\n")
+        world.write_app_settings(tables="[install]\nrecord_manifest = false\n")
     world.publish_shipped("tool", "1.0.0", tables=SHIM, top=top)
     world.one("install", "tool")
     (world.user / "tool" / "1.0.0" / "App" / "app.exe").write_text("modified", encoding="utf-8")

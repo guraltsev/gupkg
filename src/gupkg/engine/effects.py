@@ -38,7 +38,7 @@ from typing import Any
 from ..catalog.local import canonical_path, is_inside, is_reparse_point
 from ..core import write_bytes_atomic
 from ..model.manifest import Manifest, env_name_problem, name_part_problem, path_entry_shape_problem
-from ..model.mode import ENV_MACHINE, ModeContext
+from ..model.scope import ENV_MACHINE, Scope
 from ..model.plan import effect_key, normalize_entry
 from ..model.state import Effect
 from ..system.port import Mode, ShortcutSpec, System
@@ -91,12 +91,12 @@ class EffectContext:
     root_data: Path | None = None
 
 
-def effect_context(mode_context: ModeContext, package_path: Path, env: Mapping[str, str]) -> EffectContext:
+def effect_context(mode_context: Scope, package_path: Path, env: Mapping[str, str]) -> EffectContext:
     """Build the effect context of a package from its resolved install mode.
 
     Parameters
     ----------
-    mode_context : ModeContext
+    mode_context : Scope
         The resolved mode (root, ``bin``, Start Menu and environment target).
     package_path : Path
         The package root.

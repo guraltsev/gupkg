@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 from gupkg.model.settings import SettingsError, default_layer, merge_layers
-from gupkg.settingsload import load_mode_settings, load_settings, resolve_root, settings_file
+from gupkg.settingsload import load_mode_settings, resolve_root, settings_file
 from gupkg.system.fake import FakeSystem
 from gupkg.system.windows import WindowsSystem
 
@@ -464,25 +464,6 @@ def test_invalid_toml_names_the_file(world: World) -> None:
 
     with pytest.raises(SettingsError, match="not valid TOML"):
         world.load()
-
-
-# ---------------------------------------------------------------------------
-# The adapter that the callers of the old design use until T05
-# ---------------------------------------------------------------------------
-
-
-def test_the_adapter_loads_the_system_mode_for_an_elevated_run_and_the_user_mode_otherwise(world: World) -> None:
-    """``load_settings`` picks the mode from ``elevated`` / ``system_mode`` and reads only that mode's root."""
-    world.app_file(f"[roots]\nsystem = '{world.system}'\nuser = '{world.user}'\n")
-    world.system_file('schema = 4\n[logs]\nkeep_runs = 7\n')
-    world.user_file('schema = 4\n[logs]\nkeep_runs = 9\n')
-
-    def adapter(**flags):
-        return load_settings(system=world.fake(), env=world.env, app_dir=world.app, read_text=world.read_text, **flags)
-
-    assert adapter(elevated=False, system_mode=False).settings["logs.keep_runs"] == 9
-    assert adapter(elevated=True, system_mode=False).settings["logs.keep_runs"] == 7
-    assert adapter(elevated=False, system_mode=True).settings["integration.bin"] == "C:\\bin"
 
 
 @pytest.mark.windows_integration

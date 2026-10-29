@@ -334,7 +334,7 @@ def test_an_administrator_installs_a_distribution_system_wide_from_an_admin_only
     world = World(tmp_path, elevated=True)
     folder = distribution(world)
 
-    result = world.one("install", str(folder), mode="system")
+    result = world.one("install", str(folder))
 
     package = world.system_root / "tool"
     assert result.ok and result.mode == "system" and (package / "1.0.0" / "pkg.local" / "populate.cmd").is_file()
@@ -350,7 +350,7 @@ def test_a_distribution_copied_by_an_elevated_run_is_taken_back_when_the_install
     manifest = folder / "pkg.toml"
     manifest.write_text(manifest.read_text(encoding="utf-8") + '\n[[shortcut]]\nname = "..\\\\..\\\\evil"\ntarget = "$App\\\\a.exe"\n', encoding="utf-8")
 
-    result = world.one("install", str(folder), mode="system")
+    result = world.one("install", str(folder))
 
     assert not result.ok and "outside" in result.error["message"]
     assert not (world.system_root / "tool").exists()
@@ -362,7 +362,7 @@ def test_the_relaunched_elevated_child_refuses_a_folder_outside_the_system_root(
     folder = distribution(world)
     world.engine.relaunched = True
 
-    result = world.one("install", str(folder), mode="system")
+    result = world.one("install", str(folder))
 
     assert not result.ok and result.exit_code == 2 and "system root" in result.error["message"]
     assert not (world.system_root / "tool").exists()

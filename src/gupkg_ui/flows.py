@@ -243,26 +243,24 @@ async def run_operation(
 
 
 def cleanup_follow_up(env: UiEnvironment, subjects: Sequence[Subject]) -> Callable[[BatchOutcome], Awaitable[FollowUp | None]]:
-    """Return the follow-up that ends an update with a cleanup of each root that had a package updated (never after a cancel).
+    """Return the follow-up that ends an update with a cleanup of the run's root when a package was updated (never after a cancel).
 
-    The cleanup of the system root is one more elevated call, so a batch that updated system packages with ``[cleanup] auto = true`` shows a
-    second administrator prompt; it is made only when something there was updated.
+    A run has one scope, so the cleanup is one call, made only when something was updated.
     """
     made: list[bool] = []
 
     async def follow(outcome: BatchOutcome) -> FollowUp | None:
-        """Return the cleanup steps once, for the modes in which at least one package was updated."""
+        """Return the cleanup step once, when at least one package was updated."""
         if made:
             return None
         made.append(True)
         modes = {entry.get("mode") for entry in outcome.entries if entry.get("ok") is True and entry.get("status") == "updated"}
-        steps: list[Step] = []
-        for mode in ("user", "system"):
-            if mode not in modes or (mode == "system" and not env.can_elevate):
-                continue
-            anchor = next(item for item in subjects if item.mode == mode)
-            steps.append(Step(
-                f"cleanup of the {mode} root", targets_after_options("cleanup", ["--yes", "--mode", mode], []), (), events_dir_for(anchor, env.settings), mode == "system",
-            ))
-        return FollowUp(tuple(steps)) if steps else None
+        present = [mode for mode in ("user", "system") if mode in modes and (mode == "user" or env.can_elevate)]
+        if not present:
+            return None
+        anchor = next(item for item in subjects if item.mode == present[0])
+        step = Step(
+            "cleanup of the root", targets_after_options("cleanup", ["--yes"], []), (), events_dir_for(anchor, env.settings), present[0] == "system",
+        )
+        return FollowUp((step,))
     return follow

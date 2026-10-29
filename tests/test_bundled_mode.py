@@ -47,7 +47,7 @@ def world(tmp_path: Path) -> World:
 def install_gupkg(world: World, mode: str = "user") -> Path:
     """Install a `gupkg` package that declares the root forwarder, and return its root data folder."""
     world.publish("gupkg", "1.0.0", mode=mode, tables=GUPKG_TABLES)
-    result = world.one("install", f"{mode}:gupkg" if mode == "system" else "gupkg")
+    result = world.one("install", "gupkg")
     assert result.ok, result.error
     return world.root(mode) / ".gupkg"
 
@@ -303,7 +303,7 @@ def test_a_system_install_of_a_distribution_runs_nothing_from_the_source_folder(
     world.publish_script("tool", "1.0.0", script="populate.cmd", tables=SHIM, root=world.base / "downloads")
     source = world.base / "downloads" / "tool" / "1.0.0"
 
-    result = world.one("install", str(source), mode="system")
+    result = world.one("install", str(source))
 
     assert result.ok, result.error
     commands = [part for call in (*world.fake.process_log, *world.fake.foreground_log) for part in call]

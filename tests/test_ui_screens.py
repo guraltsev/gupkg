@@ -75,7 +75,7 @@ def fake(tmp_path: Path) -> FakeGupkg:
 
 def update_run(fake: FakeGupkg, tmp_path: Path, names=("alpha", "beta"), *, records=None, delay: float = 0.0, **extra) -> None:
     """Schedule a plan and a successful ``update`` of *names* in the user root, with *records* as each package's own events (the call waits *delay* seconds first)."""
-    fake.respond("update:plan", doc=plan_doc([plan_entry(f"user:{name}", name) for name in names]))
+    fake.respond("update:plan", doc=plan_doc([plan_entry(f"{name}", name) for name in names]))
     doc = result("update", [entry(name) for name in names])
     packages = [{"name": name, "path": str(tmp_path / "home" / "opt" / name), "records": records or [{"event": "phase_start", "phase": "Resolve"}, {"event": "phase_end", "phase": "Resolve", "status": "ok", "elapsed": 0.1}]} for name in names]
     fake.respond("update", doc=doc, sleep=delay, events={"dir": str(tmp_path / "home" / "opt" / ".gupkg" / "logs"), "result": doc, "packages": packages, **extra})
@@ -87,7 +87,7 @@ def info_of(name: str, tmp_path: Path) -> dict:
     return json.loads(text)
 
 
-def run_app(tmp_path: Path, fake: FakeGupkg, scenario: Callable, *, size=(80, 24), program: str = "manager", target: str = "user:alpha", toasts: bool = False, **settings) -> None:
+def run_app(tmp_path: Path, fake: FakeGupkg, scenario: Callable, *, size=(80, 24), program: str = "manager", target: str = "alpha", toasts: bool = False, **settings) -> None:
     """Start the manager (or ``gupkg-tui``) in a headless terminal of *size* and run the async *scenario* ``(app, pilot)`` against it."""
     env = make_env(tmp_path, fake, settings=settings.get("settings", ""))
     app = ManagerApp(env) if program == "manager" else TuiApp(env, target)
@@ -155,7 +155,7 @@ def test_every_screen_of_the_manager_has_a_hint_line_and_a_status_line(tmp_path:
 @pytest.mark.parametrize("size", SIZES)
 def test_the_checksum_question_and_the_cancel_question_have_the_frame(tmp_path: Path, fake: FakeGupkg, size) -> None:
     """The two questions that stop a run keep the hint and status lines as well."""
-    fake.respond("update:plan", doc=plan_doc([plan_entry("user:alpha", "alpha", sha256="missing")]))
+    fake.respond("update:plan", doc=plan_doc([plan_entry("alpha", "alpha", sha256="missing")]))
     doc = result("update", [entry("alpha")])
     fake.respond("update", doc=doc, events={"dir": str(tmp_path / "home" / "opt" / ".gupkg" / "logs"), "stop_after": 0, "result": doc, "packages": [{"name": "alpha", "path": str(tmp_path / "home" / "opt" / "alpha"), "records": []}]})
 
@@ -196,7 +196,7 @@ def test_the_package_program_has_the_frame_and_escape_leaves_it(tmp_path: Path, 
     run_app(tmp_path, fake, scenario, size=size, program="tui")
 
     assert codes == [0]
-    assert fake.calls()[0]["key"] == "info" and fake.calls()[0]["targets"] == ["user:alpha"]
+    assert fake.calls()[0]["key"] == "info" and fake.calls()[0]["targets"] == ["alpha"]
 
 
 # -- the browser --------------------------------------------------------------------
@@ -273,7 +273,7 @@ def test_filter_selection_and_the_application_survive_opening_a_package_and_a_ru
         await wait_for(pilot, lambda: has(app, "beta") and has(app, "installed"), "the browser to be back and reloaded")
         assert id(app) == identity[0] and not has(app, "alpha")
         assert has(app, "bet")
-        assert app.screen.selected_target() == "user:beta"
+        assert app.screen.selected_target() == "beta"
 
     run_app(tmp_path, fake, scenario)
 
@@ -380,7 +380,7 @@ def test_escape_during_a_run_asks_and_a_no_keeps_it_running(tmp_path: Path, fake
 
 def test_a_yes_to_the_cancel_question_asks_the_call_to_stop_after_the_current_package(tmp_path: Path, fake: FakeGupkg) -> None:
     """The stop marker the run announced is created, the double sees it after package one, and the second package is reported skipped."""
-    fake.respond("update:plan", doc=plan_doc([plan_entry("user:alpha", "alpha"), plan_entry("user:beta", "beta")]))
+    fake.respond("update:plan", doc=plan_doc([plan_entry("alpha", "alpha"), plan_entry("beta", "beta")]))
     doc = result("update", [entry("alpha"), entry("beta", status="skipped", version=None, previous=None, code=5)])
     fake.respond("update", doc=doc, events={
         "dir": str(tmp_path / "home" / "opt" / ".gupkg" / "logs"), "stop_after": 0, "result": doc,
@@ -431,7 +431,7 @@ def test_dialogs_answer_only_to_explicit_keys(tmp_path: Path, fake: FakeGupkg) -
     run_app(tmp_path, fake, scenario)
 
     (call,) = [item for item in fake.calls() if item["key"] == "uninstall"]
-    assert call["targets"] == ["user:alpha"] and "--yes" in call["options"] and "--no-input" in call["options"] and "--purge" not in call["options"]
+    assert call["targets"] == ["alpha"] and "--yes" in call["options"] and "--no-input" in call["options"] and "--purge" not in call["options"]
 
 
 def test_a_registry_that_was_never_downloaded_is_announced_in_the_hint_line_and_the_status_line(tmp_path: Path, fake: FakeGupkg) -> None:
@@ -511,7 +511,7 @@ def test_every_operation_is_one_cli_call_with_the_machine_options(tmp_path: Path
 
     operations = [call for call in fake.calls() if call["key"] in ("check-updates", "install", "check")]
     assert [call["key"] for call in operations] == ["check-updates", "install", "check"]
-    assert all(call["targets"] == ["user:alpha"] for call in operations)
+    assert all(call["targets"] == ["alpha"] for call in operations)
 
 
 def test_the_package_program_runs_check_update_repair_uninstall_and_health_as_cli_calls(tmp_path: Path, fake: FakeGupkg) -> None:
@@ -540,7 +540,7 @@ def test_the_package_program_runs_check_update_repair_uninstall_and_health_as_cl
 
     operations = [call for call in fake.calls() if call["key"] in ("check-updates", "install", "uninstall", "check", "update")]
     assert [call["key"] for call in operations] == ["check-updates", "install", "uninstall", "check", "update"]
-    assert all(call["targets"] == ["user:alpha"] and "--no-input" in call["options"] for call in operations)
+    assert all(call["targets"] == ["alpha"] and "--no-input" in call["options"] for call in operations)
     # ``check-updates`` activates nothing, so the program answers its own multi-package question; the health check changes nothing and needs none.
     assert [call["key"] for call in operations if "--yes" in call["options"]] == ["check-updates", "install", "uninstall", "update"]
 
@@ -550,7 +550,7 @@ def test_cli_error_text_with_markup_is_shown_literally_everywhere(tmp_path: Path
     fake.respond("info", doc=head("info", packages=[], api=1))
     fake.scenario["info"].pop(0)
     fake.scenario["info"].insert(0, {"doc": {"api": "[red]x", "command": "info", "ok": True, "exit_code": 0}})
-    fake.respond("update:plan", doc=plan_doc([plan_entry("user:alpha", "alpha")]))
+    fake.respond("update:plan", doc=plan_doc([plan_entry("alpha", "alpha")]))
     failing = result("update", [entry("alpha", ok=False, status="failed", code=3, error={"code": "x", "message": "[red]boom[/red] [bold]x"})])
     fake.respond("update", doc=failing, events={"dir": str(tmp_path / "home" / "opt" / ".gupkg" / "logs"), "result": failing, "packages": [{"name": "alpha", "path": str(tmp_path / "home" / "opt" / "alpha"), "records": [{"event": "error", "text": "[red]x"}]}]})
 
@@ -642,7 +642,7 @@ def test_ctrl_c_quits_when_nothing_is_running(tmp_path: Path, fake: FakeGupkg, w
 
 def test_ctrl_c_on_the_checksum_question_before_any_call_quits(tmp_path: Path, fake: FakeGupkg) -> None:
     """The per-package checksum question of an update comes before the first update call, so nothing runs and Ctrl-C may quit."""
-    fake.respond("update:plan", doc=plan_doc([plan_entry("user:alpha", "alpha", sha256="missing")]))
+    fake.respond("update:plan", doc=plan_doc([plan_entry("alpha", "alpha", sha256="missing")]))
 
     async def scenario(app, pilot) -> None:
         """Confirm the plan, then press Ctrl-C on the checksum question."""
