@@ -1,4 +1,4 @@
-# Issue 035: One installation per run. Separate system and user sides, portable packages as their own kind, no migration code
+# Issue 035: One scope per run. Separate system and user modes, portable packages as their own kind, no migration code
 
 Date: 2026-10-26
 Priority: High
@@ -26,9 +26,9 @@ Issue 034 asked the same thing for system and user and stopped at open questions
 
 | Issue 034 question | Answer |
 | --- | --- |
-| Is portable a third side, a variant of user mode, or removed? | **None of these.** Portable is a kind of package, not a mode or a side. A portable package installs on the user side like any other package (§4.6). |
-| Does a normal user's manager show the system packages read-only? | **No.** The owner's wording rules it out: the user side is "completely unaware" of the system side (§4.1). |
-| What stays of `--mode` and `default_mode`? | **Nothing.** The side is fixed when the process starts, from its token (§4.1). `--mode`, `default_mode`, the `system:`/`user:`/`portable:` selector prefixes and the relaunch all go. |
+| Is portable a third mode, a variant of user mode, or removed? | **None of these.** Portable is a kind of package, not a mode or a mode. A portable package installs in user mode like any other package (§4.6). |
+| Does a normal user's manager show the system packages read-only? | **No.** The owner's wording rules it out: the user mode is "completely unaware" of the system mode (§4.1). |
+| What stays of `--mode` and `default_mode`? | **Nothing.** The mode is fixed when the process starts, from its token (§4.1). `--mode`, `default_mode`, the `system:`/`user:`/`portable:` selector prefixes and the relaunch all go. |
 | Root forwarder: removed, or turned into a setting? | **Replaced by a setting.** A one-line data file in `<root>\.gupkg\`, not a script. A launcher tries the bundled copy, then that setting, then `PATH` (§4.9; owner's answer, 2026-10-26). |
 
 ## 2. State at the time of writing (2026-10-26)
@@ -59,7 +59,7 @@ What is committed, what is installed, and what is on the owner's machine. Everyt
   - `[user]`/`[system]` steps appear in 6 packages. In 5 of them (keepassxc, keypirinha, mogan, notepadplusplus,
     systeminformer) the two tables are identical: they remove the portable switch of the vendor archive. copyq has only
     `[user] prepare = [["create", "unins000.exe"]]` and no `[system]` table. That is the one step in the registry that
-    really differs by side.
+    really differs by mode.
   - `PORTABLE-UNVERIFIED.md`: no portable declaration was ever tested against the real application.
 
 ## 3. Where the code mixes what must be separate
@@ -88,12 +88,12 @@ about 50 files (`cli.py` alone has 84 elevation references, `modes.py` 45, `cata
    - `_require_system_path` refuses paths again ([:917-932](../src/gupkg/catalog/catalog.py#L917-L932)).
    - `AmbiguousSelector` exists only because one name can live in several roots
      ([:81-88](../src/gupkg/catalog/catalog.py#L81-L88)).
-4. **The registry cache falls back across sides.** A user-mode package joins the *system* root's registry cache when the
+4. **The registry cache falls back across modes.** A user-mode package joins the *system* root's registry cache when the
    user's own was never synced ([catalog.py:792-815](../src/gupkg/catalog/catalog.py#L792-L815): `"user": ("user", "system")`).
-5. **Shadowing warnings compare the two sides on purpose:**
+5. **Shadowing warnings compare the two modes on purpose:**
    - [catalog.py:438-448](../src/gupkg/catalog/catalog.py#L438-L448);
    - [modes.py:462-484](../src/gupkg/modes.py#L462-L484).
-6. **The settings of one run come from both sides.**
+6. **The settings of one run come from both modes.**
    - A user run reads the system root's `settings.toml` as a layer
      ([settingsload.py:206-226](../src/gupkg/settingsload.py#L206-L226)).
    - The system layer may move the roots, so the user layer's location is known only after the system layer has been read.
@@ -108,18 +108,18 @@ about 50 files (`cli.py` alone has 84 elevation references, `modes.py` 45, `cata
      report on it.
    - `ShellExecuteEx`/`runas` is in `system/windows.py`, and its double is in `system/fake.py` (31 references).
    - The unsafe-character rules of design §10.4 exist mostly to protect that command line.
-8. **The manager is a user program that acts on the system side through that child.**
+8. **The manager is a user program that acts in system mode through that child.**
    - `gupkg_ui/steps.py` (163 lines) groups targets into one normal call and one elevated call.
    - `can_elevate` and `NEEDS_SYSTEM_GUPKG` decide what a manager may ask for.
    - `UiSettings.checksum_policy(mode)` judges system targets "as an elevated run would"
      ([gupkg_ui/settings.py:50-57](../src/gupkg_ui/settings.py#L50-L57)).
    - `build_environment` refuses an elevated shell ([startup.py:117-119](../src/gupkg_ui/startup.py#L117-L119)), and so do
      the `tui`/`manager` forwarders ([cli.py:1186-1192](../src/gupkg/cli.py#L1186-L1192)).
-9. **Commands that write a root layer branch on the side.**
+9. **Commands that write a root layer branch on the mode.**
    - `registry sync|add|remove` refuses the system root from a normal shell ([cli.py:820-822](../src/gupkg/cli.py#L820-L822)).
    - `settings init|set` does the same ([:937](../src/gupkg/cli.py#L937)).
    - `_context` rebuilds a mode context for a command that has no package ([:791-812](../src/gupkg/cli.py#L791-L812)).
-10. **Root forwarders bridge the sides by design.** A user root's forwarder may point to the system gupkg (design §21.3).
+10. **Root forwarders bridge the modes by design.** A user root's forwarder may point to the system gupkg (design §21.3).
 11. **Ad-hoc roots** (`--in-place`, portable in-place, `[[adhoc]]` in `state.toml`, `engine/stateio.py`, `Root.adhoc`,
     `Root.single`) add roots that a run did not configure, and each of them needs its own trust decision.
 
@@ -165,18 +165,23 @@ about 50 files (`cli.py` alone has 84 elevation references, `modes.py` 45, `cata
 
 Each rule below replaces a section of `rehaul_design.md`. The design note of phase 0 turns them into text there.
 
-### 4.1 A run belongs to exactly one installation
+### 4.1 A run belongs to exactly one scope
 
-- **Installation** = *(side, root)*. The side is `system` or `user`. The root is one folder. `Installation` is one frozen
+- **Scope** = *(mode, root)*. The mode is `system` or `user`. The root is one folder. `Scope` is one frozen
   object, built **once, at process start**, before any settings file or package is read. Every subsystem receives it.
   Nothing builds another one.
-- **The side comes from the process token, and from nothing else.** An elevated process is the system side. Any other
-  process is the user side of the user who runs it. There is no `--mode`, no `default_mode`, no selector prefix, no relaunch
+- **The mode comes from the process token, and from nothing else.** An elevated process runs in system mode. Any other
+  process runs in user mode, for the user who runs it. There is no `--mode`, no `default_mode`, no selector prefix, no relaunch
   and no "auto".
+- **Names in the code.** `Scope` is the run's object; `mode` is its `system`/`user` field. Today's
+  `system.port.Scope` enum (`AUTO`, `USER`, `MACHINE`) already is that distinction under the old name, so it becomes
+  `Mode` (`SYSTEM = "system"`, `USER = "user"`; `AUTO` goes). Its values do not change, so effect records, which
+  store `scope = "system"|"user"`, stay as they are on disk. `ScopeFolders` keeps its name. `Mode` also
+  replaces the string constants `MODE_SYSTEM` and `MODE_USER`. The `pkg.toml` key `modes` keeps its name (Q5).
 - **The root of the run is found by a fixed chain of fallbacks** (owner's answer to Q1: `--root` exists, and the fallbacks
-  of the current design stay). Each side reads only its own key, and the first source that gives a value wins:
+  of the current design stay). Each mode reads only its own key, and the first source that gives a value wins:
 
-  | Order | System side (elevated) | User side |
+  | Order | System mode (elevated) | User mode |
   | --- | --- | --- |
   | 1 | `--root DIR`, which must be admin-only (else exit code 2) | `--root DIR` |
   | 2 | the root of the installed system gupkg that runs (today's `installed_system_root`) | `[roots].user` of `--settings PATH` |
@@ -184,19 +189,19 @@ Each rule below replaces a section of `rehaul_design.md`. The design note of pha
   | 4 | built-in `C:\opt` | built-in `%USERPROFILE%\opt` |
 
   - **One fallback of the current design is dropped.** The system root's `settings.toml` no longer moves the user root,
-    because reading it from a user run is exactly the cross-side read that requirement 2 forbids.
+    because reading it from a user run is exactly the cross-mode read that requirement 2 forbids.
   - **`[roots]` is never read from a root's own `.gupkg\settings.toml`.** A root cannot name itself, so such a key there is
     a settings error.
   - The chosen root and where it came from (`user root C:\Users\x\opt (built-in default)`) are printed in the Resolve phase
     and logged, as the mode reason is today.
 - **An elevated process runs only an admin-only gupkg tree** (`enforce_bundled_runtime`, unchanged). A user-installed,
   bundled-in-Downloads or source gupkg started elevated refuses to start, with exit code 2.
-- **The user side never reads anything under the system root** except the gupkg program it runs and the shipped
+- **The user mode never reads anything under the system root** except the gupkg program it runs and the shipped
   `$App\settings.toml` that belongs to that program.
-  - **Code may be shared, data never.** A standard user may run the system gupkg's program on the user side. It is trusted
+  - **Code may be shared, data never.** A standard user may run the system gupkg's program in user mode. It is trusted
     code. That run reads and writes only the user root.
-- **Nothing names the other side.** `Installation` has no field that could hold the other side's root, settings or cache. A
-  side-qualified selector or a path into the other side's root is "not in this installation" (exit code 2). That error is a
+- **Nothing names the other mode.** `Scope` has no field that could hold the other mode's root, settings or cache. A
+  mode-qualified selector or a path into the other mode's root is "not in this scope" (exit code 2). That error is a
   plain containment check on one root, not a list of refusals.
 
 ### 4.2 Settings: one root layer per run (schema 4)
@@ -205,15 +210,15 @@ Each rule below replaces a section of `rehaul_design.md`. The design note of pha
   1. built-in defaults;
   2. `$App\settings.toml`;
   3. `<root>\.gupkg\settings.toml`;
-  4. `--settings PATH` (user side only; the system side refuses the option).
+  4. `--settings PATH` (user mode only; the system mode refuses the option).
 - **`[roots]` stays,** with only the keys `system` and `user`, for the fallback chain of §4.1. It is read from the app
   layer and from `--settings`, never from a root layer.
 - **Removed:** `default_mode`, `[roots].portable`, `LAYER_SYSTEM`, `LAYER_USER`, `LAYER_PORTABLE`, `_check_roots`, and the
   "read the system layer first to find the user layer" order.
 - **`[integration]` becomes one table:** `bin`, `start_menu`, and `integrate = "full" | "none"`. Its defaults depend on the
-  side. `integrate = "none"` is a property of an installation: shims go to `<root>\bin`, nothing else is written, and
+  mode. `integrate = "none"` is a property of a scope: shims go to `<root>\bin`, nothing else is written, and
   `gupkg shell` prints the `PATH` line. It replaces `[integration.portable]`.
-- **`settings init|set` and `registry add|remove`** write layer 3 of the run's root. They no longer branch on the side or
+- **`settings init|set` and `registry add|remove`** write layer 3 of the run's root. They no longer branch on the mode or
   refuse anything.
 - **`[manager] checksum_missing`** is read from the run's own layers. `manager_checksum_policy(elevated=...)` and the "judge
   as the child would" logic go.
@@ -222,15 +227,15 @@ Each rule below replaces a section of `rehaul_design.md`. The design note of pha
 
 ### 4.3 Catalog: one root
 
-- **`Catalog(installation)`** scans one root and joins one registry cache, `<root>\.gupkg\registry`.
+- **`Catalog(scope)`** scans one root and joins one registry cache, `<root>\.gupkg\registry`.
 - **Removed:**
   - `Root.mode`, `Root.adhoc`, `Root.single`, `_trusted_roots`, `_root_for_mode`, `_require_system_path` and `_root_of`'s
     ad-hoc branch;
   - `AmbiguousSelector`: a name is unique inside one root;
-  - the registry fallback across sides, and the shadowing warnings.
+  - the registry fallback across modes, and the shadowing warnings.
 - **Selectors:** `name`, `name@version`, `registry/name`, or a path. A path must lie inside the run's root, or be a
   distribution folder outside it that is copied in (design §21.4, unchanged).
-- **`PackageView.mode` goes.** The side belongs to the run. `list --json` puts `side` and `root` once, at document level.
+- **`PackageView.mode` goes.** The mode belongs to the run. `list --json` puts `mode` and `root` once, at document level.
 - **`state.toml`** keeps only the last registry sync. `[[adhoc]]`, `register_adhoc` and `unregister_adhoc` go.
 
 ### 4.4 No elevation inside gupkg
@@ -242,16 +247,16 @@ Each rule below replaces a section of `rehaul_design.md`. The design note of pha
   - the "confirm the elevation" question;
   - `child-no-result`, `child_raw_exit_code` and the `relaunched` key of the JSON documents.
 - **The machine-interface version becomes `"api": 2`.**
-- **To act on the system side**, run gupkg or the manager elevated. To keep this one click, the gupkg package installed on
-  the system side adds a Start Menu shortcut "gupkg manager (administrator)" whose link carries the "run as administrator"
+- **To act in system mode**, run gupkg or the manager elevated. To keep this one click, the gupkg package installed in
+  system mode adds a Start Menu shortcut "gupkg manager (administrator)" whose link carries the "run as administrator"
   flag. Windows asks for UAC, and gupkg contains no elevation code. This needs a `run_as_admin = true` field in
   `[[shortcut]]` (small, and it lives in `system/shell_link`).
-- **What stays, because it is threat model T1 and not side-mixing:**
+- **What stays, because it is threat model T1 and not mode-mixing:**
   - the launcher ACL check (design §21.3);
   - `enforce_bundled_runtime`;
   - the admin-only checks on code and caches *inside* the system root: hooks, locks, the work folder, the HTTP cache and
     trusted `git`. These guard against broken inheritance inside the root (D30, spike S1).
-  - The engine reaches them through one call, `installation.require_trusted(path)`, which does nothing on the user side.
+  - The engine reaches them through one call, `scope.require_trusted(path)`, which does nothing in user mode.
     The scattered `if elevated:` / `is_elevated_run(system)` branches go.
 - **What stays for its own reasons:** `--events-file`, so the UI can follow a run, and cancelling through the stop marker
   (D37). Their justification ("an elevated child cannot share pipes") is removed from the docs.
@@ -266,7 +271,7 @@ Each rule below replaces a section of `rehaul_design.md`. The design note of pha
   - `can_elevate`, `NEEDS_SYSTEM_GUPKG`, the two-group logic and the labels of `steps.py`. One operation is one CLI call;
   - `UiSettings.root_of(mode)`, `default_mode` and `checksum_policy(mode)`;
   - the Mode column of the browser.
-- **Scheduled runs:** "Run with highest privileges" now means "manage the system side". It is no longer refused. D22's
+- **Scheduled runs:** "Run with highest privileges" now means "manage in system mode". It is no longer refused. D22's
   "a normal shell only reports system packages" goes.
 - **From issue 034, required in the same pass:**
   - one typed reader serves both the CLI's JSON and the UI, and replaces the re-parsing in `gupkg_ui/plans.py`;
@@ -279,27 +284,27 @@ Each rule below replaces a section of `rehaul_design.md`. The design note of pha
 - **A package is portable exactly when its `pkg.toml` has a `[portable]` table.** Portable means its state lives in
   `<package>\data` and is handed over between versions (persist and markers, `engine/portable.py` `hand_over`/`hand_back`).
   A package without the table is non-portable, and nothing about it changes with portability.
-- **A package declares which sides it may be installed on** (D55). This is a kept and required capability, independent of
+- **A package declares which modes it may be installed in** (D55). This is a kept and required capability, independent of
   portability:
   - a system-level driver, a service or anything that writes machine-wide state is **system only**;
   - a tool that only makes sense per profile (or a portable package, below) is **user only**;
   - most packages allow both.
-  The registry declares no single-side package today. The feature still stays.
-- **Enforcement of the side list:**
+  The registry declares no single-mode package today. The feature still stays.
+- **Enforcement of the mode list:**
   - It is checked in the planner, before any download or file change, for every operation that installs or activates a
     version (`install`, `update`, `switch`, repair, `check-updates` with download).
   - The refusal says only what the run can know: "this package installs only for a single user; run gupkg without
-    administrator rights", or "…only system-wide; run gupkg as administrator". It never looks at the other side.
-  - The planner checks the version being activated, so a new version that narrows its sides is refused on an installation
+    administrator rights", or "…only system-wide; run gupkg as administrator". It never looks at the other mode.
+  - The planner checks the version being activated, so a new version that narrows its modes is refused on a scope
     where it no longer applies. The installed version keeps working, and the package is reported `outdated`, with the
     refusal as the reason it cannot update.
 - **How it is written** (owner's answer to Q5): the `modes` key stays, so the 130 non-portable definitions need no edit.
   Its meaning becomes:
-  - `["system", "user"]` (the default), `["system"]` or `["user"]`: the sides the package may be installed on;
+  - `["system", "user"]` (the default), `["system"]` or `["user"]`: the modes the package may be installed in;
   - `["portable"]`: the package is portable, and that implies user only;
-  - a list that mixes `portable` with a side is **invalid** ("a package is portable or not: publish two packages").
-- **A portable package installs only on the user side.** The side rule above enforces it, with no separate check.
-  Shared writable state next to code that an elevated gupkg runs is the reason design §6.3 gave already. On the user side
+  - a list that mixes `portable` with a mode is **invalid** ("a package is portable or not: publish two packages").
+- **A portable package installs only in user mode.** The mode rule above enforces it, with no separate check.
+  Shared writable state next to code that an elevated gupkg runs is the reason design §6.3 gave already. In user mode
   it installs into the user root like any other package, with normal user integration.
 - **Removed:**
   - `[user]` and `[system]` step tables: their steps move into the package's plain `[[prepare]]`. copyq's user-only
@@ -328,14 +333,14 @@ Each rule below replaces a section of `rehaul_design.md`. The design note of pha
     root is writable: without it, a non-portable user install would silently go portable and lose its settings at every
     update, because `config` would live inside a version's `App`.
   - **`copyq`, non-portable,** `modes = ["system", "user"]`, with
-    `[[prepare]] ["create", "unins000.exe"]` and no `[portable]` table. On the user side the empty `unins000.exe` keeps
-    CopyQ on `%APPDATA%\copyq`. On the system side it changes nothing, because the `App` folder is admin-only and CopyQ
-    already uses `%APPDATA%`. It also makes that behaviour independent of the folder's ACL, so it runs on both sides
-    without a side-specific step.
+    `[[prepare]] ["create", "unins000.exe"]` and no `[portable]` table. In user mode the empty `unins000.exe` keeps
+    CopyQ on `%APPDATA%\copyq`. In system mode it changes nothing, because the `App` folder is admin-only and CopyQ
+    already uses `%APPDATA%`. It also makes that behaviour independent of the folder's ACL, so it runs in both modes
+    without a mode-specific step.
   - **`copyq-portable`,** `modes = ["portable"]`, with no `unins000.exe` step and `[portable] persist = ["config"]`.
     `config` holds the settings, the items and the state, and survives updates in `<package>\data`. `logs` is not
     persisted: it starts empty in each new version (only diagnostics are lost).
-  - **Check in the acceptance run** (§9 item 6, user side, test root):
+  - **Check in the acceptance run** (§9 item 6, user mode, test root):
     - `copyq` writes `%APPDATA%\copyq` and nothing in `App`;
     - `copyq-portable` writes `App\config`, which resolves to `data\config`, and nothing in `%APPDATA%\copyq`;
     - after an update, the portable settings and items are still there.
@@ -344,8 +349,8 @@ Each rule below replaces a section of `rehaul_design.md`. The design note of pha
 
 ### 4.7 Install record and receipts
 
-- **The install record keeps its schema.** Its `mode` key is written as the side. A record whose side differs from the run's
-  is a `broken` reason ("this package was moved between installations"). It is no longer a mode decision. A record that
+- **The install record keeps its schema.** Its `mode` key is written as the mode. A record whose mode differs from the run's
+  is a `broken` reason ("this package was moved between scopes"). It is no longer a mode decision. A record that
   says `portable` is reported the same way and repaired by reinstalling (no reader of old values).
 - **Receipts** are read only from `App.info`. A version that has only an old `.gupkg\receipts\<v>.toml` shows "no receipt"
   until it is reinstalled or repaired (§3.3).
@@ -353,11 +358,11 @@ Each rule below replaces a section of `rehaul_design.md`. The design note of pha
 ### 4.8 Distribution folders and `--in-place`
 
 - **Unchanged:** a distribution folder outside the run's root is copied into it (design §21.4, D17 with "the mode's root"
-  read as "the run's root"). The system side copies only from an administrator shell, as today.
+  read as "the run's root"). The system mode copies only from an administrator shell, as today.
 - **`--in-place` and ad-hoc roots go** (owner's answer to Q1). A folder that should stay where it is becomes the root of
-  its own user installation (`gupkg install <folder> --root <folder above name>`). Its launchers already treat
+  its own user scope (`gupkg install <folder> --root <folder above name>`). Its launchers already treat
   `%~dp0..\..` as the root, so a bundled install in place needs no new mechanism. The user root's manager does not list
-  such a folder: it is another installation.
+  such a folder: it is another scope.
 
 ### 4.9 Launchers: bundled, then the root's setting, then `PATH`
 
@@ -371,7 +376,7 @@ the bundled one). A launcher lives at `<root>\<name>\<version>\`, so its root is
    - Installing the `gupkg` package into a root writes this file, pointing at `$PackageRoot\current\App`. That replaces
      `[root_forwarder]`. Uninstalling gupkg removes the file, but only if it still holds that value.
    - A person may edit it, for example to let a user root use the system gupkg's program.
-     - *Code may be shared, data never* (§4.1): the program it names still runs as a user-side run on that root.
+     - *Code may be shared, data never* (§4.1): the program it names still runs as a user-mode run on that root.
    - A missing file, an empty file, or a named folder without `gupkg.cmd` means "no setting". The launcher goes on to
      step 3 and prints which file it skipped.
 3. **`gupkg` on `PATH`.**
@@ -416,16 +421,16 @@ reinstalls or deletes anything in `C:\opt` or `C:\Users\guraltsev\opt`, and no t
 | --- | --- |
 | Install a system package from a normal shell with one UAC prompt | Kept as a way of starting: the "gupkg manager (administrator)" shortcut, or an admin shell. The CLI no longer relaunches. |
 | One manager screen with system and user packages | Two runs: an elevated manager and a normal manager. |
-| `system:firefox` and `user:firefox` from one shell | One per side, from that side's shell. |
+| `system:firefox` and `user:firefox` from one shell | One per mode, from that mode's shell. |
 | A package installable both portable and non-portable | Two packages (`x` and `x-portable`). |
-| A package restricted to system only (a driver, a service) or user only | Kept (D55). It is checked by the planner against the run's side. |
-| Portable root with `integrate = "none"` (USB stick) | A user installation rooted on the stick (`--root E:\opt`) with `[integration] integrate = "none"` in its own settings. |
-| `--in-place` / ad-hoc roots listed by the user's manager | The folder is its own installation (`--root`). The user root's manager does not list it. |
+| A package restricted to system only (a driver, a service) or user only | Kept (D55). It is checked by the planner against the run's mode. |
+| Portable root with `integrate = "none"` (USB stick) | A user scope rooted on the stick (`--root E:\opt`) with `[integration] integrate = "none"` in its own settings. |
+| `--in-place` / ad-hoc roots listed by the user's manager | The folder is its own scope (`--root`). The user root's manager does not list it. |
 | Configurable roots (`[roots]`, the installed system gupkg's root) | Kept as the fallback chain of §4.1, minus the system layer moving the user root. |
 | Launchers reach an installed gupkg through the root forwarder | Bundled first, then the root's `gupkg-location` setting, then `PATH` (machine `PATH` only, and admin-only, when elevated) (§4.9). |
-| Per-mode `[user]`/`[system]` steps | Plain `[[prepare]]`. The two tables are identical in 5 of the 6 registry packages that use them. copyq's user-only `unins000.exe` step runs on both sides in the non-portable `copyq`, where it is harmless on the system side; `copyq-portable` omits it (§4.6). |
+| Per-mode `[user]`/`[system]` steps | Plain `[[prepare]]`. The two tables are identical in 5 of the 6 registry packages that use them. copyq's user-only `unins000.exe` step runs in both modes in the non-portable `copyq`, where it is harmless in system mode; `copyq-portable` omits it (§4.6). |
 | `[portable] args`/`env`, `$Data`, `[portable].prepare` | Removed. Unused (owner's answer to Q6). |
-| User root that falls back to the system registry cache | Each side syncs its own registry. The status line says when it has never been synced. |
+| User root that falls back to the system registry cache | Each mode syncs its own registry. The status line says when it has never been synced. |
 | Shadowing warnings | Removed. Windows merges `PATH`. That is not gupkg's business (issue 034). |
 | `gupkg migrate`, adoption of 0.17 installs, old receipt path, 0.17 option hints | Removed. |
 
@@ -435,15 +440,15 @@ reinstalls or deletes anything in `C:\opt` or `C:\Users\guraltsev\opt`, and no t
 
 | # | Decision | Replaces |
 | --- | --- | --- |
-| D47 | A run belongs to one installation (side, root), fixed at process start. The side comes from the token alone. | D4, design §6.2, §5.3 rule 5 |
-| D48 | The root of a run comes from the per-side fallback chain of §4.1: `--root`, then (system) the installed system gupkg's root or (user) `--settings`, then `$App\settings.toml`, then the built-in default. A root's own settings never name a root. An elevated run needs an admin-only root and an admin-only gupkg tree. | design §11 layers 3–5 as sources of roots |
-| D49 | gupkg never elevates itself. The system side is reached by starting gupkg elevated, helped by a run-as-administrator shortcut. | design §9.6 rule 1 (relaunch part), §10.4 "The elevated child", D24 (relayed part), D31 (now structural) |
-| D50 | Each side has its own settings, registry cache, state and logs, and never reads the other's. | design §6.1 last row, §9.4, §11 |
-| D51 | Portable is a package kind (`[portable]` present), installed on the user side only. A definition is never both. | D7 (kept for persist), D42, design §6.3 "where a portable package goes" |
+| D47 | A run belongs to one scope (mode, root), fixed at process start. The mode comes from the token alone. | D4, design §6.2, §5.3 rule 5 |
+| D48 | The root of a run comes from the per-mode fallback chain of §4.1: `--root`, then (system) the installed system gupkg's root or (user) `--settings`, then `$App\settings.toml`, then the built-in default. A root's own settings never name a root. An elevated run needs an admin-only root and an admin-only gupkg tree. | design §11 layers 3–5 as sources of roots |
+| D49 | gupkg never elevates itself. The system mode is reached by starting gupkg elevated, helped by a run-as-administrator shortcut. | design §9.6 rule 1 (relaunch part), §10.4 "The elevated child", D24 (relayed part), D31 (now structural) |
+| D50 | Each mode has its own settings, registry cache, state and logs, and never reads the other's. | design §6.1 last row, §9.4, §11 |
+| D51 | Portable is a package kind (`[portable]` present), installed in user mode only. A definition is never both. | D7 (kept for persist), D42, design §6.3 "where a portable package goes" |
 | D52 | Launchers try the bundled gupkg, then the one named in `<root>\.gupkg\gupkg-location` (data, not a script), then `PATH`. When elevated, only `PATH` entries whose folder is admin-only are used (no registry read), and everything selected must pass the admin-only check. No root forwarder. | D16, D32, D20 (forwarder part), design §21.3 |
 | D53 | One manager scope per run. Elevated is allowed. Reads happen in-process through a shared typed reader. Operations go through the CLI. | D44 (amended), design §13.2 step 4, §15 "Scheduled runs" |
 | D54 | No migration code in the repository, core or not. | D33, D45 (`migrate` forwarder), design §18 |
-| D55 | A package declares the sides it may be installed on: system only (drivers, services, machine-wide state), user only, or both (the default). A portable package is user only. The planner refuses a version on a side it does not allow, before any work, and the message never names the other side's locations. | the side part of `modes` in design §6.2 |
+| D55 | A package declares the modes it may be installed in: system only (drivers, services, machine-wide state), user only, or both (the default). A portable package is user only. The planner refuses a version on a mode it does not allow, before any work, and the message never names the other mode's locations. | the mode part of `modes` in design §6.2 |
 
 ### 6.2 Owner's answers (2026-10-26)
 
@@ -458,8 +463,10 @@ All questions are answered. Nothing is left open for phase 0 except confirming D
 | Q2b | copyq's user-only step | **Investigate, then make a portable and a non-portable copyq.** See §4.6, "copyq". |
 | Q4 | How launchers find gupkg | **Bundled, then the root's config string in `<root>\.gupkg`, then `PATH`.** When elevated, only what is not user-writable. See §4.9. |
 | Q7 | How an elevated launcher limits `PATH` | **(b):** scan the process `PATH` and use only admin-only folders. No registry read; D18 stays whole. |
-| Q5 | Spelling of the side restriction and portability | **(a): keep `modes`** with the meaning of §4.6. No edit to non-portable definitions. |
+| Q5 | Spelling of the mode restriction and portability | **(a): keep `modes`** with the meaning of §4.6. No edit to non-portable definitions. |
 | Q6 | Unused portable features (`args`, `env`, `[portable].prepare`, `$Data`) | **Remove them.** |
+| Q8 | Names (2026-10-28) | The run's object is **`Scope`** (`mode`, `root`, …); the system/user field is **`mode`**, and the `pkg.toml` key stays `modes`. Today's `system.port.Scope` enum becomes `Mode` (§4.1). "Installation" and "side" are not used for this. |
+| Q9 | How a `[[shortcut]]` says which modes it applies to (2026-10-28) | **A `modes` list**, same form as the package's, defaulting to the package's modes and a subset of them. See job 09, T08. |
 
 ## 7. Expected size
 
@@ -467,7 +474,7 @@ These are estimates, to be measured after each phase. The point is the direction
 
 | Area | Now (lines) | Expected |
 | --- | --- | --- |
-| `modes.py` + `model/mode.py` | 892 | ~250: one `Installation` builder and the distribution copy |
+| `modes.py` + `model/mode.py` | 892 | ~250: one `Scope` builder and the distribution copy |
 | `relaunch.py` + relaunch in `system/*` + `cli.py` child code | ~600 | 0 |
 | `catalog/catalog.py` | 1,012 | ~750 |
 | `settingsload.py` + `model/settings.py` | 606 | ~400 |
@@ -484,18 +491,18 @@ Each phase leaves `main` green (`scripts/test.cmd`) and is a commit of its own, 
 
 0. **Decisions and design note.**
    - The owner confirms D47–D55. All questions are answered (§6.2).
-   - Write the new §6 ("Installations and package kinds") in `rehaul_design.md`, update §§9.4, 9.6, 10.4, 11, 12, 13.2, 15,
+   - Write the new §6 ("Scopes and package kinds") in `rehaul_design.md`, update §§9.4, 9.6, 10.4, 11, 12, 13.2, 15,
      19 and 21, delete §18, and mark D4, D16, D20, D22, D24, D31, D32, D33, D42, D44 and D45 as superseded by D47–D54.
    - Update `_docs/elevated-runtime-design.md`.
 1. **Remove migration code** (§4.10). It is mechanical and independent, so it goes first and shrinks every later diff.
    It touches no installed package.
-2. **`Installation` and settings schema 4** (§4.1, §4.2). `Installation` replaces `ModeContext`, `select_mode`,
-   `resolve_mode`'s mode logic and `settings_loader`'s mode arguments. Every caller takes the run's installation.
+2. **`Scope` and settings schema 4** (§4.1, §4.2). `Scope` replaces `ModeContext`, `select_mode`,
+   `resolve_mode`'s mode logic and `settings_loader`'s mode arguments. Every caller takes the run's scope.
 3. **Catalog over one root** (§4.3), and the end of ad-hoc roots.
 4. **Remove the relaunch** (§4.4). `"api": 2`.
 5. **Manager: one scope, in-process reads, shared reader, visible failures** (§4.5, the issue 034 defects).
 6. **Portable as a package kind** (§4.6, §4.7): manifest, engine, receipts. The conversion of all registry packages
-   (Q2) lands in step with this phase, because a registry `pkg.toml` that mixes `portable` with a side becomes invalid.
+   (Q2) lands in step with this phase, because a registry `pkg.toml` that mixes `portable` with a mode becomes invalid.
    - The conversion is a script in the registry repository's `_tools`, not gupkg code.
    - Its output passes `gupkg_registry validate` and `_tests`.
    - Each new `<name>-portable` package gets its own `_check_updates` and fingerprints.
@@ -516,34 +523,34 @@ Run each item for real, elevated and normal, and report the output (AGENTS rules
 - or `--sandbox`;
 - or a disposable VM for the bootstrap and the machine-`PATH` items.
 
-1. **The system side does not consider user-writable locations.**
+1. **The system mode does not consider user-writable locations.**
    - Prepare a user root with a settings file that is not valid TOML, a poisoned `state.toml`, a package with a hook that
      writes a marker file, and a registry cache with a different revision.
    - An elevated `list`, `check`, `install`, `update`, `cleanup`, `registry sync` and manager run succeed, never mention
      any of them, and the marker is never written.
    - The same with the roles swapped: a normal run never reads `C:\opt\.gupkg\*`.
 2. **Structure.**
-   - `Installation` has no field for another root.
-   - `grep -rn "is_elevated_run\|elevated" src/gupkg` finds only startup and `Installation`.
+   - `Scope` has no field for another root.
+   - `grep -rn "is_elevated_run\|elevated" src/gupkg` finds only startup and `Scope`.
    - `grep -rn "portable" src/gupkg` finds only the package kind and `engine/portable.py`.
    - `grep -rni "migrat\|legacy\|0\.17" src` finds nothing that is code.
-3. **A fresh install of gupkg, system and user**, by bootstrap. On the system side, the shortcut "gupkg manager
+3. **A fresh install of gupkg, system and user**, by bootstrap. In system mode, the shortcut "gupkg manager
    (administrator)" opens the system manager after UAC.
-4. **gupkg updates itself** on each side, with a failure part-way that leaves a working `current` and says what state the
+4. **gupkg updates itself** in each mode, with a failure part-way that leaves a working `current` and says what state the
    package is in.
-5. **First manager run with an empty registry** on each side: sync, `a`, install one package. Each result shows on screen.
-   The title shows the side and the root.
-6. **Update, check, repair and uninstall** on each side. A portable package installs, updates (persisted files survive)
-   and uninstalls on the user side. The system side refuses it before any work, and the message says why.
-7. **Side restrictions (D55).**
-   - A `["system"]` test package installs elevated and is refused on the user side.
-   - A `["user"]` package installs on the user side and is refused elevated.
+5. **First manager run with an empty registry** in each mode: sync, `a`, install one package. Each result shows on screen.
+   The title shows the mode and the root.
+6. **Update, check, repair and uninstall** in each mode. A portable package installs, updates (persisted files survive)
+   and uninstalls in user mode. The system mode refuses it before any work, and the message says why.
+7. **Mode restrictions (D55).**
+   - A `["system"]` test package installs elevated and is refused in user mode.
+   - A `["user"]` package installs in user mode and is refused elevated.
    - Each refusal comes before any download or file change. A test checks that the package root and the bin folder are
      unchanged.
-   - A new version that narrows its sides leaves the installed version working, and `update` reports why it does not
+   - A new version that narrows its modes leaves the installed version working, and `update` reports why it does not
      apply.
 8. **Root and launcher lookup.**
-   - **The root fallback chain:** each row of the §4.1 table wins over the rows below it, on each side, and the Resolve
+   - **The root fallback chain:** each row of the §4.1 table wins over the rows below it, in each mode, and the Resolve
      line names the source.
    - **A `[roots]` key in a root's own `settings.toml`** is an error.
    - **The launcher order:** bundled, then `gupkg-location`, then `PATH`. A missing, empty or wrong `gupkg-location`

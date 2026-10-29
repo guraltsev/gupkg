@@ -4,20 +4,20 @@ Issue 035: §4.1 (the fallback table), §4.2, D48, D50. Owner answer Q1.
 
 ## Goal
 
-Settings are split by side, and the root of each side is found by a fixed chain of fallbacks. In this task you build
+Settings are split by mode, and the root of each mode is found by a fixed chain of fallbacks. In this task you build
 and test the pieces as functions. **T05 wires them into the CLI.** After this task the old code paths may still exist
 beside the new functions, but they must not use the new schema incorrectly.
 
 ## The rules to implement
 
-**Root of the system side**: the first that applies:
+**Root of the system mode**: the first that applies:
 1. `--root DIR` (it must be admin-only, else `SettingsError` with the reason);
 2. the root of the installed system gupkg that runs (today's `installed_system_root`; see `settings_loader` callers in
    `cli.py` and `gupkg_ui/settings.py`);
 3. `[roots].system` in `$App\settings.toml`;
 4. built-in `C:\opt`.
 
-**Root of the user side**: the first that applies:
+**Root of the user mode**: the first that applies:
 1. `--root DIR`;
 2. `[roots].user` in the `--settings` file;
 3. `[roots].user` in `$App\settings.toml`;
@@ -27,9 +27,9 @@ beside the new functions, but they must not use the new schema incorrectly.
 1. built-in defaults;
 2. `$App\settings.toml`;
 3. `<root>\.gupkg\settings.toml`;
-4. `--settings PATH`, on the user side only. The system side raises `SettingsError` when it is given.
+4. `--settings PATH`, in user mode only. The system mode raises `SettingsError` when it is given.
 
-On the system side, every file layer must be in an admin-only folder. Keep the existing check.
+In system mode, every file layer must be in an admin-only folder. Keep the existing check.
 
 **`[roots]` may appear only in layers 2 and 4.** In a root's own `settings.toml` it is a `SettingsError`:
 `[roots] cannot be set in a root's own settings.toml (<path>); set it in $App\settings.toml or with --root`.
@@ -41,7 +41,7 @@ schema = 4
 [roots]                 # only in $App\settings.toml or --settings
 system = 'C:\opt'
 user = '%USERPROFILE%\opt'
-[integration]           # one table; its defaults depend on the side
+[integration]           # one table; its defaults depend on the mode
 bin = '...'             # default: system C:\bin, user %USERPROFILE%\bin (or the machine's own default folders)
 start_menu = '...'
 integrate = "full"      # full | none
@@ -53,12 +53,12 @@ code that converts it.
 
 ## Steps
 
-1. In `model/settings.py`, add the schema 4 table and defaults. A function `default_layer(side)` returns the side's
+1. In `model/settings.py`, add the schema 4 table and defaults. A function `default_layer(mode)` returns the mode's
    defaults.
 2. In `settingsload.py`, add:
-   - `resolve_root(side, *, root_option, installed_system_root, app_layer, cli_layer, env, system) -> RootChoice`.
+   - `resolve_root(mode, *, root_option, installed_system_root, app_layer, cli_layer, env, system) -> RootChoice`.
      `RootChoice` holds `path` and `source`, for example `"built-in default"`, `"--root"` or `"$App\\settings.toml"`;
-   - `load_side_settings(side, root, *, app_dir, settings_path, system, env, read_text) -> LoadedSettings`.
+   - `load_mode_settings(mode, root, *, app_dir, settings_path, system, env, read_text) -> LoadedSettings`.
 
    Both are pure apart from reading the files through `read_text` and asking `system.directory_untrusted_reason`.
 3. Remove `LAYER_SYSTEM` and `LAYER_USER`, and use one `LAYER_ROOT`. Update `manager_policy.py`: no `elevated`
@@ -71,12 +71,12 @@ code that converts it.
 
 ## New tests (each must fail on `main`, then pass)
 
-- [ ] **The fallback chain, one test per row and side** (8 tests). Each test sets the row and every row below it, and
+- [ ] **The fallback chain, one test per row and mode** (8 tests). Each test sets the row and every row below it, and
       checks that the row wins and that `source` names it.
 - [ ] `[roots]` in `<root>\.gupkg\settings.toml` is a `SettingsError` naming the file.
-- [ ] `--settings` on the system side is a `SettingsError`.
+- [ ] `--settings` in system mode is a `SettingsError`.
 - [ ] A `schema = 3` file is a `SettingsError` with the message above.
-- [ ] `--root` on the system side, pointing at a folder `FakeSystem` reports as user-writable: `SettingsError`.
+- [ ] `--root` in system mode, pointing at a folder `FakeSystem` reports as user-writable: `SettingsError`.
 - [ ] A user run never reads the system root's `settings.toml`. Pass a `read_text` that records every path it is asked
       for, and assert that no recorded path is under the system root.
 

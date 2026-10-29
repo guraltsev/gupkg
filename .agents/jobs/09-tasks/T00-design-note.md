@@ -20,21 +20,21 @@ Only these two files:
 
 ## Steps
 
-1. **Rewrite §6** as "Installations and package kinds", from issue 035 §4.1, §4.2 and §4.6:
-   - a run belongs to one installation (side, root); the side comes from the process token;
+1. **Rewrite §6** as "Scopes and package kinds", from issue 035 §4.1, §4.2 and §4.6:
+   - a run belongs to one scope (mode, root); the mode comes from the process token;
    - the root fallback chain, as a table, copied from issue 035 §4.1;
    - settings layers (issue 035 §4.2);
    - the package kinds (portable or not, `modes` with the meaning of issue 035 §4.6);
-   - the side restriction (D55);
+   - the mode restriction (D55);
    - copyq as the worked example (issue 035 §4.6).
-2. **Update §3 (Vocabulary):** add "Installation", "Side" and "Portable package". Remove "Root forwarder" and "ad-hoc
+2. **Update §3 (Vocabulary):** add "Scope", "Mode" and "Portable package". Remove "Root forwarder" and "ad-hoc
    root". Change "Root" (one root per run).
 3. **Update §4:** the `gupkg-location` file in `<root>\.gupkg\` (issue 035 §4.9). Remove the `data\` wording "for
    portable mode" and write "for portable packages".
-4. **§5.3:** replace rule 5 ("Each scope is a separate package") with "A name is unique within one installation". Remove
+4. **§5.3:** replace rule 5 ("Each scope is a separate package") with "A name is unique within one scope". Remove
    the `mode:name` selectors and the shadowing text.
 5. **§5.4:** remove ad-hoc roots. A path is inside the run's root, or a distribution folder that is copied in.
-6. **§9.4, §9.6:** an elevated run is the system side. Remove the relaunch from rule 1. Rule 2 becomes: the system side
+6. **§9.4, §9.6:** an elevated run is in system mode. Remove the relaunch from rule 1. Rule 2 becomes: the system mode
    names no user location (structural). Keep rules 3–5.
 7. **§10.1–10.4:**
    - remove `--mode`, `mode:` selectors, `--in-place`, `--relaunched`, `--batch-confirmed`, `--stop-file`, "The elevated
@@ -43,9 +43,9 @@ Only these two files:
    - the API becomes `"api": 2`;
    - remove the `migrate` forwarder and the 0.17 rows of the §10.3 table.
 8. **§11:** settings schema 4 (issue 035 §4.2). `[roots]` keeps `system` and `user` only. One `[integration]` table.
-   Layers: defaults, app, root, `--settings` (user side only).
+   Layers: defaults, app, root, `--settings` (user mode only).
 9. **§12:** remove `relaunch.py`, `gupkg_migrate`, `modes.py` mode selection, and `gupkg_ui/steps.py` grouping. Add the
-   installation module.
+   scope module.
 10. **§13.2, §15:** one manager scope per run. An elevated manager is allowed. No grouping by mode.
 11. **§18 (Migration):** delete the section's content and leave one line: "Removed by issue 035 (D54): the repository
     contains no migration code."

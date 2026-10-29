@@ -4,7 +4,7 @@ Issue 035: §3.1 items 3–5 and 11, §4.3, §4.8, D50.
 
 ## Goal
 
-`Catalog(installation)` scans exactly one root and joins exactly one registry cache. Ad-hoc roots and `--in-place` are
+`Catalog(scope)` scans exactly one root and joins exactly one registry cache. Ad-hoc roots and `--in-place` are
 gone.
 
 ## Remove
@@ -33,27 +33,27 @@ Also remove `resolve_package_path` callers' need for `elevated`.
 
 ## Add or change
 
-1. **`Catalog(installation, system)`.** `describe`, `list` and `resolve` work on `installation.root`.
-2. **A path selector** must lie inside `installation.root`. A path outside it is either:
+1. **`Catalog(scope, system)`.** `describe`, `list` and `resolve` work on `scope.root`.
+2. **A path selector** must lie inside `scope.root`. A path outside it is either:
    - a distribution folder: copied in, as today (design §21.4); or
-   - `NotFound` with this message: `<path> is not inside this installation's root (<root>)`.
-3. **A record whose `mode` is not `installation.side`** is a broken reason:
-   `the install record says <mode>; this package was moved between installations — reinstall it`.
-   New records write `mode = <side>`.
-4. **`list --json`:** remove `mode` from each row. Add `side` and `root` once, at document level. Update
+   - `NotFound` with this message: `<path> is not inside this scope's root (<root>)`.
+3. **A record whose `mode` is not `scope.mode`** is a broken reason:
+   `the install record says <mode>; this package was moved between scopes — reinstall it`.
+   New records write `mode = <mode>`.
+4. **`list --json`:** remove `mode` from each row. Add `mode` and `root` once, at document level. Update
    `report/results.py`, `viewdata.py` and the contract test that pins the document. Do **not** bump the API version
    here: T07 does it once for all document changes. Record the change in your log for T07.
-5. **Effect verification** (`_verify`): the scope is the installation's. The `self.elevated and scope is Scope.USER`
+5. **Effect verification** (`_verify`): the `Mode` of an `env`/`PATH` effect is the run's `scope.mode`. The `self.elevated and scope is Mode.USER`
    special cases go.
 
 ## New tests (each must fail on `main`, then pass)
 
 - [ ] Packages in two roots: a catalog of root A never lists, describes or resolves the package of root B, by name or
-      by path. A path into root B gives the "not inside this installation's root" error.
+      by path. A path into root B gives the "not inside this scope's root" error.
 - [ ] A user root whose registry cache was never synced has no registry entries. It does **not** see the system root's
       cache.
-- [ ] A record with `mode = "system"` inside a user installation is `broken`, with the message above.
-- [ ] `list --json` has `side` and `root` at document level, and no `mode` per row.
+- [ ] A record with `mode = "system"` inside a user scope is `broken`, with the message above.
+- [ ] `list --json` has `mode` and `root` at document level, and no `mode` per row.
 
 ## Done when
 

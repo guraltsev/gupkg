@@ -1,9 +1,9 @@
-# Job 09: Controller for issue 035 (one installation per run)
+# Job 09: Controller for issue 035 (one scope per run)
 
 Status: Open, not started.
 
 Design authority, in this order:
-1. `_issues/issue035-one-installation-per-run.md`. Its §6.2 holds the owner's answers, and they are binding.
+1. `_issues/issue035-one-scope-per-run.md`. Its §6.2 holds the owner's answers, and they are binding.
 2. `_docs/rehaul_design.md`, after task T00 has updated it.
 3. `AGENTS.md`. Its working rules are mandatory.
 
@@ -22,10 +22,10 @@ You do the tasks **one at a time, in the order of the table below**. Never run t
 
 | File | Who edits it | What it is |
 | --- | --- | --- |
-| `09-one-installation-controller.md` | nobody | these instructions |
-| `09-one-installation-worker-brief.md` | nobody | the brief every worker receives, verbatim |
+| `09-one-scope-controller.md` | nobody | these instructions |
+| `09-one-scope-worker-brief.md` | nobody | the brief every worker receives, verbatim |
 | `09-tasks/Txx-*.md` | nobody | one task file per task |
-| `09-one-installation-progress.md` | **you only** | status of every task, test counts, owner questions, log |
+| `09-one-scope-progress.md` | **you only** | status of every task, test counts, owner questions, log |
 | `09-logs/Txx.md` | the worker of that task | the worker's plan and notes |
 
 ## Before the first task
@@ -33,7 +33,7 @@ You do the tasks **one at a time, in the order of the table below**. Never run t
 1. Read `AGENTS.md`, issue 035, this file, the worker brief and the progress file.
 2. Run the full suite on `main`:
    ```
-   $env:GUPKG_NO_PAUSE='1'; .\scripts\test.cmd -q
+   $env:GUPKG_NO_PAUSE='1'; .\scripts\test.cmd
    ```
    Write the counts (passed, failed, skipped) under "Baseline" in the progress file. If anything fails, stop and report
    it to the owner. Do not start T00.
@@ -53,7 +53,7 @@ You do the tasks **one at a time, in the order of the table below**. Never run t
 | T02 | `09-tasks/T02-portable-package-kind.md` | T01 | gupkg |
 | T03 | `09-tasks/T03-registry-conversion.md` | T02 | **gupkg-registry** |
 | T04 | `09-tasks/T04-settings-schema-4-and-roots.md` | T02 | gupkg |
-| T05 | `09-tasks/T05-installation-and-side.md` | T04 | gupkg |
+| T05 | `09-tasks/T05-scope-and-mode.md` | T04 | gupkg |
 | T06 | `09-tasks/T06-catalog-one-root.md` | T05 | gupkg |
 | T07 | `09-tasks/T07-remove-relaunch.md` | T06 | gupkg |
 | T08 | `09-tasks/T08-run-as-admin-shortcut.md` | T07 | gupkg |
@@ -67,8 +67,9 @@ A task is **ready** when every task it depends on is `merged`. Even when two tas
 
 ## The cycle for one task
 
-1. **Dispatch.** Start one worker with the `Agent` tool (general-purpose, `isolation: "worktree"`). Give it, in this order:
-   - the full text of `09-one-installation-worker-brief.md`;
+1. **Dispatch.** Start one worker with the `Agent` tool (general-purpose, `isolation: "worktree"`; T03 differs, see
+   "The registry repository (T03)"). Give it, in this order:
+   - the full text of `09-one-scope-worker-brief.md`;
    - the full text of the task file;
    - the branch name `i035/Txx` (for T03: `i035/T03` in the `gupkg-registry` repository);
    - the list of tasks already merged, with their merge commits;
@@ -113,13 +114,81 @@ A task is **ready** when every task it depends on is `merged`. Even when two tas
 - **T00 ends with an owner stop.** Merge T00 (it changes only documentation). Then write under "Owner questions": "Confirm
   D47–D55 as written in `_docs/rehaul_design.md` §6 and §19". Stop the session until the owner answers. Do not start
   T01 before then.
-- **T02 and T03 belong together.**
-  - After T02 is merged into gupkg `main`, run T03 at once.
-  - T03 works in the `gupkg-registry` folder (a separate Git repository inside this workspace). Its branch is merged into
-    the registry's `main`. **Never push either repository.**
-  - Record in the progress file that the owner must push the registry after T03.
+- **T02 and T03 belong together.** After T02 is merged into gupkg `main`, run T03 at once. T03 changes a different
+  repository; follow "The registry repository (T03)" below instead of the normal cycle where they differ.
+- **T13 and the registry.** T13 syncs registries in its test roots. Until the owner has pushed the converted registry,
+  the registry on GitHub is the old one, and gupkg from T02 on rejects it. Tell the T13 worker to use the local
+  `gupkg-registry` clone as the registry source of its test roots. If gupkg cannot use a local folder as a registry
+  source, stop and ask the owner (push first, or another source).
 - **T13 needs the owner.** It writes manual checks for the owner. Close the job only after the owner has run them, or has
   said to close without them.
+
+## The registry repository (T03)
+
+**What it is.** `gupkg-registry` in this workspace (`C:\Users\guraltsev\Documents\devel\gupkg\gupkg-registry`) is a
+separate Git repository. gupkg's `.gitignore` excludes it, so it is not part of gupkg's history and **a gupkg worktree
+does not contain it**. Its remote `github` (`github.com/guraltsev/gupkg-registry`) is what every installed gupkg syncs
+from by default, so whatever is pushed there reaches every user. Its `main` can hold owner commits that are not on
+GitHub yet. You never push, fetch or pull it, and you never touch its other branches or worktrees.
+
+**Preflight.** Before you dispatch T03, run these and paste the output into the progress file under T03:
+```
+git -C gupkg-registry branch --show-current
+git -C gupkg-registry status --short
+git -C gupkg-registry log --oneline -1
+git -C gupkg-registry log --oneline github/main..main
+```
+- The branch must be `main`, and `status --short` must print nothing. Otherwise stop and ask the owner to commit or
+  stash their changes. Never commit, stash, discard or check out anything over them yourself.
+- The last command lists owner commits that are not pushed yet. They will go to GitHub together with T03, so record
+  them in the progress file for the owner.
+- gupkg `main` must have T02 merged, because the worker validates the registry with that source tree.
+
+**Dispatch.** Start the worker **without** `isolation: "worktree"`, in the main workspace, because it needs the real
+`gupkg-registry` folder and gupkg `main` with T02. Besides the usual brief and task, tell it:
+- to create `i035/T03` from the registry's `main` (`git -C gupkg-registry checkout -b i035/T03 main`) and to commit only
+  there;
+- not to change any file of the gupkg repository except its log `.agents/jobs/09-logs/T03.md`, and not to commit in
+  the gupkg repository;
+- not to switch the gupkg checkout away from `main`.
+While the worker runs, you do not touch either repository.
+
+**Review.** The reviewer gets the five checks of the normal cycle, adapted, plus a sixth:
+1. the "Done when" commands of T03, run by the reviewer itself;
+2. if the branch adds tests under `_tests`, at least two fail on the registry's `main` and pass on the branch;
+3. the registry's tests and gupkg's validator pass on the branch, and
+   `git -C gupkg-registry diff --check main...i035/T03` is clean;
+4. scope: `git -C gupkg-registry diff --stat main...i035/T03` touches only package folders, `_registry.toml`,
+   `PORTABLE-UNVERIFIED.md`, launchers and `_tools/convert_035.py`. In gupkg, `git status --short` shows only the log;
+5. no `download_url`, `sha256` or tracker setting changed: `git -C gupkg-registry diff main...i035/T03` filtered for
+   those keys shows only lines of the new `-portable` copies;
+6. **compatibility with the gupkg users run today.** Users on gupkg 1.0.8 will sync the converted registry once it is
+   pushed. Check out the tag in a temporary worktree outside the workspace (`git worktree add <temp>\gupkg-v1.0.8
+   v1.0.8`), validate the branch's registry with that tree's validator, paste the summary, and then remove the worktree
+   (`git worktree remove`). A failure here does not block the merge. Record it under "Owner questions" as "pushing the
+   converted registry breaks gupkg 1.0.8 for: <packages>", because it decides when the owner may push.
+
+**Merge.** In the registry:
+```
+git -C gupkg-registry checkout main
+git -C gupkg-registry merge --no-ff i035/T03 -m "Issue 035 T03: convert every package to the 035 rules"
+```
+The message ends with the attribution trailer. Then run the registry's tests and gupkg's validator on the registry's
+`main` again. If either fails, undo only this merge (`git -C gupkg-registry reset --hard ORIG_HEAD`), record why, and go
+back to the fix loop.
+
+**Record.** In the progress file, write the merge commit as `registry <hash>`, the validator summary, and the result of
+check 6. Add under "Owner actions pending":
+- push `gupkg-registry` `main` to `github`. It carries T03 and the unpushed owner commits listed in the preflight;
+- push it **before** releasing any gupkg built from this job, since that gupkg rejects the old registry. Whether the push
+  may come earlier depends on check 6;
+- after the push, run `gupkg registry sync` in each mode.
+
+Then commit, in the gupkg repository, the progress file and `.agents/jobs/09-logs/T03.md`.
+
+**Clean up.** `git -C gupkg-registry branch -d i035/T03`. Nothing else in the registry.
+
+**No other task touches the registry.** If a later task would need to change it, stop and ask the owner.
 
 ## Stops
 

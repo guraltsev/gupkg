@@ -1,10 +1,10 @@
 # T08: A "run as administrator" shortcut for the system manager
 
-Issue 035: §4.4 ("To act on the system side"), D49.
+Issue 035: §4.4 ("To act in system mode"), D49.
 
 ## Goal
 
-A `[[shortcut]]` can carry `run_as_admin = true`. gupkg's own package uses it to give the system installation a Start
+A `[[shortcut]]` can carry `run_as_admin = true`. gupkg's own package uses it to give the system scope a Start
 Menu entry "gupkg manager (administrator)". Windows shows the UAC prompt; gupkg contains no elevation code.
 
 ## Steps
@@ -26,17 +26,19 @@ Menu entry "gupkg manager (administrator)". Windows shows the UAC prompt; gupkg 
    arguments = '/d /s /c ""$App\gupkg-manager.cmd" || pause"'
    description = "Manage the packages installed for all users"
    run_as_admin = true
-   side = "system"    # see step 7
+   modes = ["system"]    # see step 7
    ```
-7. **A shortcut that applies on one side only.** If `[[shortcut]]` has no way to say "system only", add an optional
-   `side = "system" | "user"` key to `[[shortcut]]` (default: both), with validation and a test. Use it above, and
-   write the key name you chose into your log.
+7. **A shortcut that applies in one mode only** (owner's decision, 2026-10-28). Add an optional `modes` list to
+   `[[shortcut]]`, the same key and form as the package's own `modes`. It defaults to the package's modes. A value that
+   is not in the package's `modes` (or is `"portable"`) makes the definition invalid. In a run whose mode is not in the
+   list, the shortcut is not created, and an existing one from an earlier version is removed like any dropped shortcut.
 
 ## New tests (each must fail on `main`, then pass)
 
 - [ ] A manifest with `run_as_admin = "yes"` is invalid.
+- [ ] A `[[shortcut]]` with `modes = ["system"]` in a package whose `modes = ["user"]` is invalid.
 - [ ] Installing a package with `run_as_admin = true` on `FakeSystem` records a shortcut with the flag.
-- [ ] gupkg's own `pkg.toml`, installed on the system side, creates both shortcuts. On the user side it creates only
+- [ ] gupkg's own `pkg.toml`, installed in system mode, creates both shortcuts. In user mode it creates only
       "gupkg manager".
 - [ ] A `windows_integration` test writes a real `.lnk` with the flag into `tmp_path`, reads it back and checks the flag.
 

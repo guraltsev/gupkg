@@ -23,7 +23,7 @@ Issue 035: §4.5 "From issue 034"; issue 034 "Related defects" (UI parsing dupli
 3. **Make `viewdata.py`/`results.py` build the documents from the same dataclasses**, so writer and reader cannot drift.
 4. **Replace the parsing in `gupkg_ui/plans.py`** with the reader. Delete `plans.py`'s own field handling.
 5. **Reads in-process:** `gupkg_manager/batch.py` `load_inventory` and the registry status read call the core functions
-   directly with the run's installation.
+   directly with the run's scope.
 6. **Visible failures:**
    - a `DocumentError`, a `ClientError` or a core exception during a read shows a one-line message in the status line;
    - the run log shows the full text;

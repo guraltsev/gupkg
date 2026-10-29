@@ -8,11 +8,11 @@ Every document and every help text describes the code as it is after T01–T11. 
 
 ## Steps
 
-1. **User docs.** Update for the new model: one installation per run, `--root`, no `--mode`, portable packages, the
+1. **User docs.** Update for the new model: one scope per run, `--root`, no `--mode`, portable packages, the
    elevated manager, the launcher order, settings schema 4. The files:
    - `README.md` and `src/gupkg/README.md`;
    - `_docs/getting_started.md`, `_docs/cookbook.md`, `_docs/operations.md`, `_docs/troubleshooting.md`;
-   - `_docs/README.md`, `_docs/development_guide.md`, `_docs/tui_style_guide.md` (the title shows side and root).
+   - `_docs/README.md`, `_docs/development_guide.md`, `_docs/tui_style_guide.md` (the title shows mode and root).
 2. **Design.** Compare `_docs/rehaul_design.md` (T00's version) with the code. Fix every place where the merged code
    chose differently, and name each one in your log (for example the shortcut key name chosen in T08, or the effect
    kind chosen in T11).
@@ -21,7 +21,7 @@ Every document and every help text describes the code as it is after T01–T11. 
 4. **TUI key hints.** Render the manager and the package view (Textual pilot). Compare the hint line with the real key
    bindings and with the `?` help screen. Paste the screens into your log.
 5. **Issue files:**
-   - add to the top of `_issues/issue035-one-installation-per-run.md`:
+   - add to the top of `_issues/issue035-one-scope-per-run.md`:
      `> **Status (<date>):** Implemented by job 09, tasks T00–T12. Acceptance: T13.`;
    - add a status line to issue 034 saying it is superseded by issue 035, and mark which of its items were done where.
 6. **Final greps.** Each must print nothing outside `_docs/rehaul_design.md`'s superseded decision rows and the closed

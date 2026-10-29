@@ -1,4 +1,4 @@
-# T02: Portable is a package kind; packages declare their sides
+# T02: Portable is a package kind; packages declare their modes
 
 Issue 035: §3.2, §4.6, §4.7, D51, D55. Owner answers Q5 (keep `modes`) and Q6 (remove unused portable features).
 
@@ -7,7 +7,7 @@ Issue 035: §3.2, §4.6, §4.7, D51, D55. Owner answers Q5 (keep `modes`) and Q6
 After this task:
 
 - **`modes` has one of three meanings:**
-  - `["system", "user"]` (the default), `["system"]` or `["user"]`: the sides the package may be installed on;
+  - `["system", "user"]` (the default), `["system"]` or `["user"]`: the modes the package may be installed in;
   - `["portable"]`: the package is portable, and user only;
   - any list that mixes `portable` with `system` or `user` is invalid.
 - **A portable package installs into the user root,** like any user package. There is no portable root and no
@@ -56,7 +56,7 @@ After this task:
      the `ask_portable_root` field;
    - the support check refuses a portable package in system mode with:
      `This is a portable package: it installs only for a single user. Run gupkg without administrator rights.`
-   - the side check (D55): a package whose `modes` lacks the chosen mode is refused **before any work** with:
+   - the mode check (D55): a package whose `modes` lacks the chosen mode is refused **before any work** with:
      - `This package installs only system-wide. Run gupkg as administrator.`, or
      - `This package installs only for a single user. Run gupkg without administrator rights.`
 

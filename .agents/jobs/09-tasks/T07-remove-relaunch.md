@@ -4,8 +4,8 @@ Issue 035: §3.1 item 7, §4.4, D49.
 
 ## Goal
 
-gupkg contains no code that starts an elevated process. A run is the side of its own token. The T1 checks inside the
-system side stay, routed through one method.
+gupkg contains no code that starts an elevated process. A run is the mode of its own token. The T1 checks inside the
+system mode stay, routed through one method.
 
 ## Remove
 
@@ -29,22 +29,22 @@ system side stay, routed through one method.
   `refuse_unsafe`). Remove it from the CLI's own parsing.
 - **Tests:** `tests/test_cli_relaunch.py`, `tests/test_cli_elevation.py` and `tests/test_mode_elevation.py`. Move any
   case that checks something still true (for example "an elevated run refuses a user-writable gupkg tree") into the
-  tests of `installation.py` before deleting.
+  tests of `scope.py` before deleting.
 
 ## Change
 
-1. **One trust method.** Add `Installation.require_trusted(path, what)`:
-   - on the user side it does nothing;
-   - on the system side it raises `UntrustedLocationError` when `system.directory_untrusted_reason(path)` gives a
+1. **One trust method.** Add `Scope.require_trusted(path, what)`:
+   - in user mode it does nothing;
+   - in system mode it raises `UntrustedLocationError` when `system.directory_untrusted_reason(path)` gives a
      reason.
 
    Replace the `if elevated:` / `is_elevated_run(system)` checks with it in: `engine/context.py`
    (`require_work_folder`, the cache, the tool check), `engine/locks.py`, `services/hooks.py` (`require_trusted_code`),
-   `services/gitenv.py`, `services/registrysource.py`. Where a function only has `system`, pass the installation
+   `services/gitenv.py`, `services/registrysource.py`. Where a function only has `system`, pass the scope
    instead.
-2. **The machine-only environment** for `${NAME}` (D19) is chosen by `installation.side == "system"`.
-3. **`is_elevated_run`** is called in exactly one place: `build_installation`. `selfmgmt/elevation.py`'s
-   `enforce_bundled_runtime` at start-up keeps its own check (it runs before the installation exists). Write that
+2. **The machine-only environment** for `${NAME}` (D19) is chosen by `scope.mode is Mode.SYSTEM`.
+3. **`is_elevated_run`** is called in exactly one place: `build_scope`. `selfmgmt/elevation.py`'s
+   `enforce_bundled_runtime` at start-up keeps its own check (it runs before the scope exists). Write that
    exception in your log.
 
 ## New tests (each must fail on `main`, then pass)
@@ -52,13 +52,13 @@ system side stay, routed through one method.
 - [ ] A non-elevated `install` of a package whose `modes = ["system"]` exits 2 with the T02 message. No process is
       started: `FakeSystem` records no launch.
 - [ ] Every result document has `"api": 2` and no `relaunched` key.
-- [ ] On the system side, a hook folder that `FakeSystem` marks user-writable is refused through `require_trusted`. On
-      the user side the same folder runs.
+- [ ] In system mode, a hook folder that `FakeSystem` marks user-writable is refused through `require_trusted`. On
+      the user mode the same folder runs.
 
 ## Done when
 
 - [ ] `git grep -n -i "relaunch\|runas\|ShellExecute\|batch-confirmed\|stop-file\|mixed-modes\|child-no-result\|child_raw"`
       prints nothing in `src`.
-- [ ] `git grep -n "is_elevated_run\|is_elevated()" -- src` matches only `installation.py`, `selfmgmt/elevation.py`, the
+- [ ] `git grep -n "is_elevated_run\|is_elevated()" -- src` matches only `scope.py`, `selfmgmt/elevation.py`, the
       `System` implementations, and `bootstrap.py`. List each match in your log.
 - [ ] The full suite passes.

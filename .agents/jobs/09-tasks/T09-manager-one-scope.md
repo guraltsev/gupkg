@@ -5,8 +5,8 @@ change.
 
 ## Goal
 
-An elevated manager manages the system installation, and a normal one the user's. The UI shows which. Nothing in
-`gupkg_ui`, `gupkg_tui` or `gupkg_manager` reasons about two sides.
+An elevated manager manages the system scope, and a normal one the user's. The UI shows which. Nothing in
+`gupkg_ui`, `gupkg_tui` or `gupkg_manager` reasons about two modes.
 
 ## Remove
 
@@ -18,7 +18,7 @@ An elevated manager manages the system installation, and a normal one the user's
 - **`gupkg_ui/settings.py`:**
   - `checksum_policy(mode)` becomes a property `checksum_policy`;
   - remove `root_of(mode)` and `default_mode`;
-  - `load_ui_settings` uses T05's `build_installation`.
+  - `load_ui_settings` uses T05's `build_scope`.
 - **`UiEnvironment.can_elevate`** and every use of it.
 - **`Subject.mode`, `PackageRow.mode`,** and the Mode column of the browser (`gupkg_manager/app/browser.py`).
 - **`gupkg_manager/cli.py`:** `--mode` of `update --all`, if still present. Also `batch.py`'s `pick(..., mode=)`.
@@ -26,15 +26,15 @@ An elevated manager manages the system installation, and a normal one the user's
 
 ## Add
 
-1. **`UiEnvironment.installation`:** the run's `Installation`.
+1. **`UiEnvironment.scope`:** the run's `Scope`.
 2. **The title bar** of `gupkg-manager` and `gupkg-tui` shows `system · <root>` or `user · <root>`.
-3. **The status line** counts only this installation's packages and shows this installation's registry state.
+3. **The status line** counts only this scope's packages and shows this scope's registry state.
 
 ## New tests (each must fail on `main`, then pass)
 
-- [ ] `build_environment` with an elevated `FakeSystem` and an admin-only gupkg location succeeds, and its installation
-      side is `system`.
-- [ ] The rendered browser (Textual pilot, `export_text`) shows the title with side and root, has no Mode column, and
+- [ ] `build_environment` with an elevated `FakeSystem` and an admin-only gupkg location succeeds, and its scope
+      mode is `system`.
+- [ ] The rendered browser (Textual pilot, `export_text`) shows the title with mode and root, has no Mode column, and
       its status line matches the fake CLI's `list --json`.
 - [ ] An update of three packages makes **one** CLI call, with all three targets (use the recording test double in
       `tests/ui_support.py`).

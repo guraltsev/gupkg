@@ -10,7 +10,7 @@ covered, do not guess: stop and ask (see "When to stop").
 
 1. `AGENTS.md`. The "Working rules" are mandatory.
 2. Your task file, completely.
-3. `_issues/issue035-one-installation-per-run.md`: the sections your task names.
+3. `_issues/issue035-one-scope-per-run.md`: the sections your task names.
 4. `_docs/python_rules.md`, `_docs/tests.md`, `_docs/docstring_schema.md`. For UI work also `_docs/tui_style_guide.md`.
 5. Every source file your task names, completely, before you edit it.
 6. If you continue earlier work: `.agents/jobs/09-logs/Txx.md` and `git log main..HEAD`.
@@ -20,10 +20,11 @@ covered, do not guess: stop and ask (see "When to stop").
 1. Check out your branch. If it does not exist, create it from `main`: `git checkout -b i035/Txx main`.
 2. Run the full suite and write the result down as your baseline:
    ```
-   $env:GUPKG_NO_PAUSE='1'; .\scripts\test.cmd -q
+   $env:GUPKG_NO_PAUSE='1'; .\scripts\test.cmd
    ```
    `GUPKG_NO_PAUSE=1` is required. Without it, the script waits for a key and never returns.
-   To run one file: `.\scripts\test.cmd tests\test_x.py -q`.
+   To run one file: `.\scripts\test.cmd tests\test_x.py`. (`test.cmd` already passes `-q`; a
+   second `-q` hides the pass/fail counts.)
 3. Write your plan to `.agents/jobs/09-logs/Txx.md`:
    - the files you will change;
    - each item of the task's "Done when" list, and how you will show it;
@@ -62,7 +63,7 @@ covered, do not guess: stop and ask (see "When to stop").
   Tests use `FakeSystem`, temporary folders (`tmp_path`) or `--sandbox`. Never run the installed `gupkg` to install,
   update or uninstall anything.
 - Never merge, push, tag, release, or bump the version.
-- Never edit `.agents/jobs/09-one-installation-progress.md`, the controller file, this brief or the task files.
+- Never edit `.agents/jobs/09-one-scope-progress.md`, the controller file, this brief or the task files.
 - Never use the network in tests.
 
 ## 5. When to stop
@@ -81,7 +82,7 @@ Do not try a third guess.
 All of these must be true:
 
 1. Every item of the task's "Done when" list holds. You ran every command it lists, and the output is in your log.
-2. The full suite passes: `$env:GUPKG_NO_PAUSE='1'; .\scripts\test.cmd -q`.
+2. The full suite passes: `$env:GUPKG_NO_PAUSE='1'; .\scripts\test.cmd`.
 3. `git diff --check main...HEAD` prints nothing.
 4. Your commits are small and focused. Each message ends with the repository's attribution trailer.
 5. For a UI change, you pasted the rendered screen (Textual pilot / `export_text`) into your log, including the top hint
