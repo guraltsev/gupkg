@@ -193,9 +193,9 @@ def test_query_returns_the_document_even_for_a_nonzero_exit(fake: FakeGupkg) -> 
 
 def test_root_options_travel_before_the_command(fake: FakeGupkg) -> None:
     """``--settings`` and ``--sandbox`` are relayed to every call, first on the command line."""
-    fake.respond("list", doc=head("list", packages=[]))
+    fake.respond("registry", doc=head("registry list", registries=[]))
 
-    asyncio.run(fake.client("--settings", "S.toml", "--sandbox", "SB").query(["list"]))
+    asyncio.run(fake.client("--settings", "S.toml", "--sandbox", "SB").query(["registry", "list"]))
 
     assert fake.calls()[0]["argv"][:4] == ["--settings", "S.toml", "--sandbox", "SB"]
 
