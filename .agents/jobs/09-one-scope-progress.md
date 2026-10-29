@@ -19,7 +19,7 @@ Not recorded yet. Before T00, the controller records:
 | T00 | Design note | — | merged | i035/T00 | 7c62967 | 3915 passed, 0 failed, 11 skipped | none |
 | T01 | Remove migration code | T00 | merged | i035/T01 | 91faed3 | 3765 passed, 0 failed, 11 skipped | none |
 | T02 | Portable is a package kind; mode restriction | T01 | merged | i035/T02 | 30030c3 | 3720 passed, 0 failed, 11 skipped | 035-T02-1, 035-T02-2 (tests/manual_smoke.md) |
-| T03 | Registry conversion (gupkg-registry) | T02 | in progress | i035/T03 (registry) | | | |
+| T03 | Registry conversion (gupkg-registry) | T02 | in review | i035/T03 (registry) | | | |
 | T04 | Settings schema 4 and root fallback chain | T02 | waiting | | | | |
 | T05 | Scope object; mode from the token | T04 | waiting | | | | |
 | T06 | Catalog over one root | T05 | waiting | | | | |
@@ -78,3 +78,4 @@ Owner commit not pushed yet (goes to GitHub together with T03): `9fba5c5 volta: 
 - 2026-10-29: T02 dispatched on i035/T02.
 - 2026-10-29: T02 worker reported (10 commits, 3720 passed per worker; last test edit not re-run in full); review round 1 started.
 - 2026-10-29: T02 reviewed (0 blocking, 4 minor), merged as 30030c3; suite 3720 passed, 11 skipped. T03 preflight clean; T03 dispatched in the main workspace.
+- 2026-10-29: T03 worker reported (registry 6279294 + f9f3441); review round 1 started.
