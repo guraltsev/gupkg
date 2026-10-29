@@ -26,7 +26,7 @@ Not recorded yet. Before T00, the controller records:
 | T07 | Remove the elevated relaunch | T06 | merged | i035/T07 | 0f266d0 | 3518 passed, 0 failed, 11 skipped (net 119 cases fewer than T06 before follow-ups: relaunch tests; log lists them) | 035-T07-1, 035-T07-2 (tests/manual_smoke.md) |
 | T08 | Run-as-administrator shortcut | T07 | merged | i035/T08 | 8bb0283 | 3524 passed, 0 failed, 11 skipped | 035-T08-1 (tests/manual_smoke.md; needs T09 for the title) |
 | T09 | Manager: one scope per run | T07 | merged | i035/T09 | 954a06c | 3534 passed, 0 failed, 11 skipped | 035-T09-1 (tests/manual_smoke.md) |
-| T10 | Manager: shared reader, visible failures | T09 | in progress | i035/T10 | | | |
+| T10 | Manager: shared reader, visible failures | T09 | in review | i035/T10 | | | |
 | T11 | Launchers: bundled, gupkg-location, PATH | T07 | ready | | | | |
 | T12 | Docs and consistency sweep | T01â€“T11 | waiting | | | | |
 | T13 | Acceptance | T12 | waiting | | | | |
@@ -116,3 +116,4 @@ Owner commit not pushed yet (goes to GitHub together with T03): `9fba5c5 volta: 
 - 2026-10-29: T09 worker reported (branch i035/T09 in worktree .claude\worktrees\i035-T09; 3528 passed/11 skipped); review started.
 - 2026-10-29: T09 round 1 (1 blocking: scope not visible at 80x24; fixed in 991b132) and round 2 clean; merged as 954a06c. Owner added T14 (name conflicts between packages); task file written; order T10, T11, T14, T12, T13.
 - 2026-10-29: T09 post-merge suite 3534 passed, 11 skipped. T10 dispatched.
+- 2026-10-29: T10 worker reported (6f6f8e9..a58e302; 3558 passed/11 skipped); review started.
