@@ -17,8 +17,8 @@ Not recorded yet. Before T00, the controller records:
 | Task | Title | Depends on | Status | Branch | Merge commit | Tests | Manual checks pending |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | T00 | Design note | — | merged | i035/T00 | 7c62967 | 3915 passed, 0 failed, 11 skipped | none |
-| T01 | Remove migration code | T00 | in review | i035/T01 | | | |
-| T02 | Portable is a package kind; mode restriction | T01 | waiting | | | | |
+| T01 | Remove migration code | T00 | merged | i035/T01 | 91faed3 | 3765 passed, 0 failed, 11 skipped | none |
+| T02 | Portable is a package kind; mode restriction | T01 | ready | | | | |
 | T03 | Registry conversion (gupkg-registry) | T02 | waiting | | | | |
 | T04 | Settings schema 4 and root fallback chain | T02 | waiting | | | | |
 | T05 | Scope object; mode from the token | T04 | waiting | | | | |
@@ -50,6 +50,8 @@ Not recorded yet. Before T00, the controller records:
   5. Leftover stale text in the design (worker's list of 9 plus design line ~1130, D19 row "relaunching itself", §7.3, §7.5,
      §9.1, §9.3, §13.1, §13.4, §17, §20, §21.5). Sweep in T12.
 
+- Non-blocking, from T01: `engine/executor.py` ~795 `drop_receipts` still unlinks `.gupkgeceipts\<v>.toml`; dead after T01 (cleanup text still says "receipts"). Out of T01's scope; T12 sweep or later.
+
 ## Log
 
 - 2026-10-26: job prepared from issue 035; not started.
@@ -59,3 +61,4 @@ Not recorded yet. Before T00, the controller records:
 - 2026-10-29: T00 reviewed (0 blocking, 8 minor), merged as 7c62967; suite 3915 passed, 11 skipped. T01 ready.
 - 2026-10-29: T01 dispatched on i035/T01.
 - 2026-10-29: T01 worker reported (6c83a4f, 3765 passed/11 skipped); review round 1 started.
+- 2026-10-29: T01 round 1 (6 comment defects) fixed in 656ae44; merged as 91faed3; suite 3765 passed, 11 skipped (150 fewer tests: deleted migration/legacy tests). T02 ready.
