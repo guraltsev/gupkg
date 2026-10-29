@@ -174,8 +174,7 @@ class ConsoleReporter:
         the destination and whether the output is a terminal.
     problems_to_stderr : bool, default=False
         Print warnings and errors on standard error (or *problems_stream*) and
-        everything else on *stream*; the 0.17 command line behaves this way
-        until the machine interface of issue 029.
+        everything else on *stream*.
     problems_stream, problems_console : optional
         Destination (plain text) and prepared Rich console (terminal) for the
         problems when *problems_to_stderr* is set; the current ``sys.stderr``

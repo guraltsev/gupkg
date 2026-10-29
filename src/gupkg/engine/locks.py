@@ -1,6 +1,6 @@
 """Keep two gupkg runs from changing one package at the same time (design section 4, ``.gupkg\\locks``).
 
-0.17 had an update lock; without one a second ``install`` or a ``cleanup`` could delete the work folder of a run in
+Without a lock, a second ``install`` or ``cleanup`` could delete the work folder of a run in
 progress. A run that changes a package (install, update, switch, repair, uninstall, cleanup, ``check-updates`` and
 ``check --fix``) takes ``<package>\\.gupkg\\locks\\package.lock`` first; ``check``, ``list`` and ``info`` read only and take
 none.

@@ -1216,6 +1216,7 @@ _HANDLERS: dict[str, Callable[[_Run], int]] = {
     "registry": _cmd_registry, "settings": _cmd_settings, "pkg": _cmd_pkg, "self": _cmd_self,
 }
 
+
 class _Parser(argparse.ArgumentParser):
     """An argument parser that raises ``UsageError`` instead of exiting, and refuses abbreviated options."""
 
