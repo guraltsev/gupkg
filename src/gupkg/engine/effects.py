@@ -576,12 +576,11 @@ def remove_effect(system: System, effect: Effect, context: EffectContext) -> boo
     raise EffectError(f"unknown effect kind {effect.kind!r}")
 
 
-def verify_each(system: System, effects: Sequence[Effect], *, elevated: bool) -> list[tuple[Effect, str | None, str | None]]:
+def verify_each(system: System, effects: Sequence[Effect]) -> list[tuple[Effect, str | None, str | None]]:
     """Compare each recorded effect with the machine; return ``(effect, drift, unverified)`` per effect.
 
     ``drift`` says what is missing or differs (a deleted shim, a changed shortcut, an environment value or
-    ``PATH`` entry that is gone); ``unverified`` says why an effect could not be judged. An elevated run does not
-    read the user's environment, so a user-scope effect is unverified instead. Exactly one of the two is set, or neither
+    ``PATH`` entry that is gone); ``unverified`` says why an effect could not be judged. Exactly one of the two is set, or neither
     when the effect is in place.
     """
     found: list[tuple[Effect, str | None, str | None]] = []
@@ -613,9 +612,7 @@ def verify_each(system: System, effects: Sequence[Effect], *, elevated: bool) ->
                     drift = f"{'root forwarder' if effect.kind == 'forwarder' else 'file'} missing or changed: {fields['path']}"
             elif effect.kind in ("env", "path"):
                 scope = _scope(fields)
-                if elevated and scope is Mode.USER:
-                    unverified = f"{effect.kind} in the user environment (not read in an elevated run)"
-                elif effect.kind == "env":
+                if effect.kind == "env":
                     stored_value = system.get_env(scope, str(fields["name"]))
                     if stored_value is None or stored_value.value != str(fields["value"]):
                         drift = f"environment variable {fields['name']} differs or is missing"
@@ -629,9 +626,9 @@ def verify_each(system: System, effects: Sequence[Effect], *, elevated: bool) ->
     return found
 
 
-def verify_effects(system: System, effects: Sequence[Effect], *, elevated: bool) -> tuple[list[str], list[str]]:
+def verify_effects(system: System, effects: Sequence[Effect]) -> tuple[list[str], list[str]]:
     """Compare recorded effects with the machine; return ``(drift, unverified)`` as lists of messages."""
-    rows = verify_each(system, effects, elevated=elevated)
+    rows = verify_each(system, effects)
     return [drift for _, drift, _ in rows if drift], [text for _, _, text in rows if text]
 
 

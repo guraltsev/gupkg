@@ -81,20 +81,20 @@ def test_the_plan_document_marks_the_checksum_and_names_the_url(world: World) ->
     missing = planned(world, "install", "other").to_data()
 
     assert present["sha256"] == "present" and present["url"].endswith("tool-1.0.0.zip") and present["mode"] == "user"
-    assert present["requires_elevation"] is False and present["effects"] == [
+    assert "requires_elevation" not in present and present["effects"] == [
         {"action": "add", "kind": "env", "scope": "user", "name": "TOOL_HOME",
          "value": str(world.user / "tool" / "current" / "App")}]
     assert missing["sha256"] == "missing" and missing["populate"]["checksum"]["skippable"] is True
 
 
-def test_a_plan_of_an_elevated_run_requires_elevation_and_names_the_system_root(tmp_path: Path) -> None:
-    """The plan of a system-mode run says that elevation is required, and its Resolve phase names mode, root and source."""
+def test_a_plan_of_an_elevated_run_names_the_system_root(tmp_path: Path) -> None:
+    """The plan of a system-mode run is in system mode, and its Resolve phase names mode, root and source."""
     elevated = World(tmp_path, elevated=True)
     elevated.publish("tool", "1.0.0", mode="system", tables=ENV)
 
     plan = planned(elevated, "install", "tool")
 
-    assert plan.requires_elevation is True
+    assert plan.mode == "system"
     assert any(step.text.startswith(f"system root {elevated.system_root} (") for step in plan.phases[0].steps)
 
 
@@ -245,11 +245,3 @@ def test_diff_effects_keeps_the_recorded_added_fact_of_a_path_entry() -> None:
     [item] = diff_effects(recorded, desired)
 
     assert item.action == "keep" and item.effect.fields["added"] is True
-
-
-@pytest.mark.parametrize("code", [True, False, 2.0, "3", None])
-def test_an_exit_code_that_is_not_an_integer_never_passes_through_as_one(code: object) -> None:
-    """A bool, float, text or missing child exit code is exit code 4, not 0 to 6 (`True == 1` would pass as a usage error)."""
-    from gupkg.model.plan import EXIT_INTERNAL, clamp_child_exit_code
-
-    assert clamp_child_exit_code(code) == EXIT_INTERNAL  # type: ignore[arg-type]

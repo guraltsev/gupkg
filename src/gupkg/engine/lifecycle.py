@@ -1,9 +1,9 @@
 """The public entry points of the engine: check-updates, install, update, switch, uninstall, cleanup, check and repair.
 
 Each entry point takes explicit targets, resolves every target once (install mode, root, package, registry entry),
-checks elevation once for the whole call, runs the targets one after another, continues past a failure and returns
+runs the targets one after another, continues past a failure and returns
 typed results. Nothing here prints or asks: a front end renders the results and the events, supplies a ``confirm``
-callable for the questions the design allows (``uninstall --purge``, the elevation relaunch), and may stop the run
+callable for the questions the design allows (``uninstall --purge``), and may stop the run
 between packages (decision D37: the package that is running finishes cleanly, the rest are reported as skipped).
 ``plan`` resolves and plans without changing anything and returns the data of ``--plan --json``.
 
@@ -19,8 +19,7 @@ Implementation Approach
 A target is resolved inside the scope of the run by ``gupkg.targets.resolve_target`` (which applies the admission rules of
 an elevated run), the catalog decides which version is chosen (never running a tracker, decision D11), the planner turns
 the choice into data, and the executor runs it. Every exception of one target becomes that target's failed result, so a
-batch never stops half way because of one package; only an elevation that is refused or declined stops the whole call,
-before anything changes.
+batch never stops half way because of one package.
 """
 
 from __future__ import annotations
@@ -51,23 +50,19 @@ from ..model.manifest import (
 from ..model.plan import (
     EXIT_INPUT,
     EXIT_INTERNAL,
-    EXIT_USER,
     BatchResult,
     CopyIn,
     InstallPlan,
     PackageResult,
-    clamp_child_exit_code,
     Phase,
     PlanStep,
     Request,
     effect_key,
 )
-from ..model.scope import InputNeeded, ModeRefused, Scope, check_supported
+from ..model.scope import InputNeeded, Scope, check_supported
 from ..model.settings import Settings
 from ..model.state import InstallRecord, Link, PackageView, Root
 from ..model.version import MANIFEST_NAME, compare_versions
-from ..relaunch import ensure_elevation
-from ..system.port import ProcessFailed
 from ..targets import ResolvedTarget, TargetRequest, resolve_target
 from ..report.events import Diagnostic, Error, Prompt, Step, Warning, emit, package_scope
 from ..report.logfile import prune_logs
@@ -181,7 +176,7 @@ class _UpToDate(Exception):
 def run_batch(engine: Engine, requests: Sequence[Request]) -> BatchResult:
     """Run the requests one after another and return one result per request.
 
-    The targets are resolved once and elevation is checked once for the whole call. The run continues past a failure.
+    The targets are resolved once. The run continues past a failure.
     When ``engine.cancel()`` becomes true the package that is running finishes, and every later one is reported as
     ``skipped`` and left unchanged.
 
@@ -195,43 +190,9 @@ def run_batch(engine: Engine, requests: Sequence[Request]) -> BatchResult:
     Returns
     -------
     BatchResult
-        One ``PackageResult`` per request, in order; ``relaunched`` when an elevated child was started instead.
+        One ``PackageResult`` per request, in order.
     """
     resolved: list[_Target | PackageResult] = [_resolve(engine, request) for request in requests]
-    targets = [item for item in resolved if isinstance(item, _Target)]
-
-    # Elevation is decided once for the whole call; a read-only operation never relaunches.
-    try:
-        contexts = [item.resolved.scope for item in targets if _needs_token(item)]
-        if contexts and not engine.elevated and (
-            engine.gupkg_dir is None or engine.gupkg_root is None
-        ):
-            raise ModeRefused("This call needs administrator rights, and this run does not know where its own gupkg is, so it will not relaunch itself.")
-        outcome = ensure_elevation(
-            contexts, system=engine.system, argv=engine.argv, version_dir=engine.gupkg_dir or Path(),
-            root=engine.gupkg_root or Path(), yes=engine.yes, no_input=engine.no_input, confirm=engine.confirm,
-            elevated=engine.elevated, on_interrupt=engine.request_stop, note=engine.relaunch_note,
-        )
-    except (InputNeeded, ModeRefused, ProcessFailed) as error:
-        return BatchResult(tuple(
-            item if isinstance(item, PackageResult) else failure(item.request.selector, item.request.operation, error)
-            for item in resolved
-        ))
-    if outcome.relaunched:
-        # The elevated child gets the whole command line and takes only the system targets (it refuses the others), so a
-        # target that does not need the token is reported here as not run, never dropped silently.
-        left_out = tuple(
-            item if isinstance(item, PackageResult) else PackageResult(
-                item.request.selector, item.request.operation, False, "not-run", mode=item.resolved.scope.mode, exit_code=EXIT_USER,
-                error={
-                    "code": "mixed-modes",
-                    "message": f"{item.request.selector} was not run: this call needs an elevated gupkg for its system targets.",
-                    "hint": "Run the user targets in a separate call.",
-                },
-            )
-            for item in resolved if isinstance(item, PackageResult) or not _needs_token(item)
-        )
-        return BatchResult(left_out, relaunched=True, child_exit_code=None if outcome.exit_code is None else clamp_child_exit_code(outcome.exit_code), child_raw_exit_code=outcome.exit_code)
 
     # One package after another; a stop request is honoured between packages (decision D37).
     results: list[PackageResult] = []
@@ -269,7 +230,7 @@ def _resolve(engine: Engine, request: Request) -> _Target | PackageResult:
     """Resolve one request to its mode, root and catalog, or to the failure that stops this target only."""
     try:
         resolved = resolve_target(
-            TargetRequest(request.selector, request.operation, engine.relaunched, engine.no_input),
+            TargetRequest(request.selector, request.operation, engine.no_input),
             scope=engine.scope, system=engine.system, env=engine.env,
         )
         catalog = Catalog(resolved.scope, engine.system)
@@ -305,20 +266,6 @@ def _require_supported_mode(target: _Target) -> None:
         return
     if manifest is not None:
         check_supported(resolved.scope, manifest.modes, command=request.operation, name=view.name)
-
-
-def _needs_token(target: _Target) -> bool:
-    """Return whether the target needs the elevated token: a system target of an operation that changes the machine.
-
-    ``check-updates`` never relaunches (an administrator runs it from an admin shell, a normal shell only reports), and
-    ``check`` changes something only with ``--fix``.
-    """
-    operation = target.request.operation
-    if operation == "check-updates":
-        return False
-    if operation == "check":
-        return target.request.fix and target.resolved.scope.requires_elevation
-    return target.resolved.scope.requires_elevation
 
 
 def _run_one(engine: Engine, target: _Target, sole: bool) -> PackageResult:
@@ -372,7 +319,7 @@ def _held(engine: Engine, request: Request, context: Scope, name: str, path: Pat
     changes = request.operation != "check" or request.fix
     if not changes or not _safe_name(name) or path == context.root:
         return nullcontext()
-    return package_lock(engine.system, path, request.operation, engine.now, elevated=engine.elevated)
+    return package_lock(engine.system, path, request.operation, engine.now, scope=context)
 
 
 def _safe_name(name: str) -> bool:
@@ -412,7 +359,7 @@ def _plan_one(engine: Engine, target: _Target) -> InstallPlan:
     return InstallPlan(
         request.operation, view.name, view.path or context.package_dir(view.name), context.root, context.mode, None,
         view.installed.version if view.installed else None, None, None, (),
-        (Phase("Resolve", (PlanStep(f"{request.operation} {view.name}"), PlanStep(context.describe()))),), context.requires_elevation,
+        (Phase("Resolve", (PlanStep(f"{request.operation} {view.name}"), PlanStep(context.describe()))),),
         (), False, extra,
     )
 
@@ -556,7 +503,7 @@ def _prepare_install(
         and view.installed.version.casefold() == candidate.version.casefold()
     )
     if repairing and execute:
-        rows = verify_each(engine.system, view.record.effects, elevated=engine.elevated)
+        rows = verify_each(engine.system, view.record.effects)
         drifted = frozenset(effect_key(effect) for effect, drift, _ in rows if drift)
     url_from = "pkg.toml"
     if copy_in is not None:
@@ -848,7 +795,7 @@ def cleanup_root(engine: Engine, context: Scope, settings: Settings) -> dict[str
         trees = cache / "trees"
         if not trees.is_dir():
             continue
-        active = cache_state(cache, engine.system).revision
+        active = cache_state(cache, engine.scope).revision
         for tree in trees.iterdir():
             if tree.name != active:
                 remove_tree(tree)
@@ -870,7 +817,7 @@ def _check(engine: Engine, target: _Target) -> PackageResult:
         raise NotFound(f"{request.selector} was not found")
     view = selection.view
     record_manifest = bool(settings["install.record_manifest"])
-    diagnosis = diagnose(engine.system, view, elevated=engine.elevated, record_manifest=record_manifest)
+    diagnosis = diagnose(engine.system, view, record_manifest=record_manifest)
     fixed: list[str] = []
     if request.fix and diagnosis.installed and diagnosis.fixable:
         fixed = [item.message for item in diagnosis.problems if item.fixable]
@@ -878,7 +825,7 @@ def _check(engine: Engine, target: _Target) -> PackageResult:
         if not outcome.ok:
             return outcome
         view = target.catalog.describe(view.name)
-        diagnosis = diagnose(engine.system, view, elevated=engine.elevated, record_manifest=record_manifest)
+        diagnosis = diagnose(engine.system, view, record_manifest=record_manifest)
     return _check_result(view, context, diagnosis, fixed)
 
 

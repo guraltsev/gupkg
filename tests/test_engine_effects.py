@@ -118,13 +118,13 @@ def test_every_kind_is_applied_verified_and_removed(tmp_path: Path, system: Fake
 
     assert (tmp_path / "bin" / "t.exe").is_file() and (tmp_path / "bin" / "t.config.toml").is_file()
     assert (tmp_path / "bin" / "run.cmd").read_bytes() == b"@echo off\r\necho %~dp0\r\n"
-    assert [item for item in verify_each(system, applied, elevated=False) if item[1] or item[2]] == []
+    assert [item for item in verify_each(system, applied) if item[1] or item[2]] == []
     assert next(item for item in applied if item.kind == "path").fields["added"] is True
     removed = {(effect.kind, bool(effect.fields.get("shared"))): remove_effect(system, effect, ctx) for effect in applied}
     assert all(done for (kind, shared), done in removed.items() if not shared) and removed[("path", True)] is False
     assert not (tmp_path / "bin" / "t.exe").exists() and not (tmp_path / "menu" / "Group").exists()
     assert system.get_path(Mode.USER) == [str(tmp_path / "bin")] and "A" not in system.env_values(Mode.USER)
-    assert [item[0].kind for item in verify_each(system, applied, elevated=False) if item[1]] == ["shortcut", "shim", "file", "env", "path"]
+    assert [item[0].kind for item in verify_each(system, applied) if item[1]] == ["shortcut", "shim", "file", "env", "path"]
 
 
 def test_a_path_entry_that_was_already_there_is_never_removed(tmp_path: Path, system: FakeSystem) -> None:
@@ -182,18 +182,14 @@ def test_apply_refuses_a_recorded_effect_that_leaves_its_folder(tmp_path: Path, 
 
 
 def test_verification_reads_the_machine_environment_only_for_what_gupkg_wrote(tmp_path: Path, system: FakeSystem) -> None:
-    """Verifying an installed package reads the values and the PATH of its record and nothing else; an elevated run skips the user's."""
+    """Verifying an installed package reads the values and the PATH of its record and nothing else."""
     ctx = context(tmp_path)
     effects, _ = desired_effects(manifest('[[env]]\nname = "A"\nvalue = "1"\n[[path]]\nvalue = "$App"\n'), ctx)
     applied = [apply_effect(system, effect, ctx) for effect in effects]
     system.registry_log.clear()
 
-    verify_each(system, applied, elevated=False)
+    verify_each(system, applied)
     assert {(item.scope, item.name) for item in system.registry_log if item.operation == "read"} == {("user", "A"), ("user", "Path")}
-    system.registry_log.clear()
-    rows = verify_each(system, applied, elevated=True)
-
-    assert system.registry_log == [] and all(unverified and not drift for _, drift, unverified in rows)
 
 
 @pytest.mark.parametrize("name", ["Path", "PATH", "TEMP", "ComSpec"])
@@ -279,8 +275,8 @@ def test_verify_reports_a_missing_library_and_apply_puts_it_back(tmp_path: Path,
     applied = apply_effect(system, effect, ctx)
     (tmp_path / "bin" / "exe-shim-lib" / "libwinpthread-1.dll").unlink()
 
-    drift = [row[1] for row in verify_each(system, [applied], elevated=False) if row[1]]
+    drift = [row[1] for row in verify_each(system, [applied]) if row[1]]
 
     assert drift and "libwinpthread-1.dll" in drift[0] and "exe-shim-lib" in drift[0]
     apply_effect(system, effect, ctx)
-    assert [row for row in verify_each(system, [applied], elevated=False) if row[1] or row[2]] == []
+    assert [row for row in verify_each(system, [applied]) if row[1] or row[2]] == []

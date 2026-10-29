@@ -9,7 +9,7 @@ reports; it never repairs. ``gupkg.engine.lifecycle.check`` repairs with ``--fix
 
 Usage and API
 -------------
-Call ``diagnose(system, view, elevated=..., record_manifest=...)``; the ``Diagnosis`` lists problems (what
+Call ``diagnose(system, view, record_manifest=...)``; the ``Diagnosis`` lists problems (what
 makes the package unhealthy), notes (what is only worth knowing) and the keys of drifted effects, which the repair plan
 applies again.
 
@@ -83,7 +83,7 @@ class Diagnosis:
 
 
 def diagnose(
-    system: System, view: PackageView, *, elevated: bool, record_manifest: bool
+    system: System, view: PackageView, *, record_manifest: bool
 ) -> Diagnosis:
     """Diagnose one package.
 
@@ -93,8 +93,6 @@ def diagnose(
         The machine boundary, used only to read what the install record says gupkg wrote.
     view : PackageView
         The package, built without verifying effects.
-    elevated : bool
-        Whether the run is elevated (the user's environment is then not read).
     record_manifest : bool
         The global ``install.record_manifest`` setting; when off, ``App`` files are not compared.
 
@@ -128,7 +126,7 @@ def diagnose(
 
     # Every effect of the install record must still be on the machine.
     drifted: set[tuple[str, ...]] = set()
-    for effect, drift, unverified in verify_each(system, view.installed.effects, elevated=elevated):
+    for effect, drift, unverified in verify_each(system, view.installed.effects):
         if drift:
             drifted.add(effect_key(effect))
             problems.append(Problem("drift", drift, True))

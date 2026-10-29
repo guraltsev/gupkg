@@ -5,7 +5,7 @@ failure; cancelling while package 1 runs finishes package 1 cleanly and reports 
 marker given to an elevated batch does the same; the receipt stores the package's log path; the registry rule (design
 9.5): install, update and uninstall read nothing from the Windows registry except ``PATH``.
 
-Real: the engine, the run session and log files, real folders. Mocked: ``FakeSystem`` (elevation flag, relaunch record, process
+Real: the engine, the run session and log files, real folders. Mocked: ``FakeSystem`` (elevation flag, process
 doubles that play populate scripts).
 Out of scope: the command-line spelling of cancel (issue 029).
 """

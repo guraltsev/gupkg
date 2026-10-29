@@ -30,10 +30,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from .catalog.catalog import Catalog, Resolved, UntrustedLocation, manifest_modes, parse_selector
+from .catalog.catalog import Catalog, Resolved, manifest_modes, parse_selector
 from .catalog.local import DATA_DIR_NAME, canonical_path, is_inside, strip_extended_prefix
 from .model.scope import ModeRefused, Scope, check_supported
 from .model.version import MANIFEST_NAME
+from .selfmgmt.elevation import UntrustedLocationError
 from .system.port import Mode, System
 
 
@@ -47,16 +48,12 @@ class TargetRequest:
         ``name``, ``name@version``, ``registry/name`` or a path.
     operation : str, optional
         The command word (``install``, ``update`` ...), put into the refusal of a package that needs another mode.
-    relaunched : bool
-        This process is the elevated child that a non-elevated gupkg started; it accepts only package
-        names and paths inside the system root (design 9.6 rule 2).
     no_input : bool
         ``--no-input``: a question is not asked.
     """
 
     selector: str
     operation: str | None = None
-    relaunched: bool = False
     no_input: bool = False
 
 
@@ -118,19 +115,12 @@ def resolve_target(request: TargetRequest, *, scope: Scope, system: System, env:
         outside = not _inside_scope(target_folder, scope)
 
     resolved: Resolved | None = None
-    if outside and elevated:
-        # A folder outside the root is data from a place users can modify: it is neither read nor trusted here.
-        # A direct administrator shell may copy it into the system root (design 21.4).
-        if request.relaunched:
-            raise ModeRefused(
-                f"Refusing {target_folder}: the elevated gupkg accepts only package names and paths inside the "
-                "system root from a non-elevated one (design 9.6). Install it from an administrator shell with "
-                "the installed system gupkg, or name a package."
-            )
-    else:
+    # A folder outside the root in an elevated run is data from a place users can modify: it is neither read nor trusted
+    # here. A direct administrator shell may copy it into the system root (design 21.4).
+    if not (outside and elevated):
         try:
             resolved = catalog.resolve_distribution(target_folder) if outside else catalog.resolve(request.selector)
-        except UntrustedLocation as exc:
+        except UntrustedLocationError as exc:
             raise ModeRefused(f"{exc}. An elevated gupkg only acts on package names and paths inside the system root.") from exc
         view = resolved.view
         if elevated and view.record is not None and view.record.mode not in (None, Mode.SYSTEM):
@@ -138,13 +128,14 @@ def resolve_target(request: TargetRequest, *, scope: Scope, system: System, env:
                 f"Refusing {view.record.mode} mode in an elevated shell: an elevated gupkg never acts on a {view.record.mode} root "
                 "(a standard user could use it to gain administrator rights). Run it from a normal (non-elevated) shell."
             )
-        if elevated and view.local is not None and view.record is not None:
-            reason = system.directory_untrusted_reason(view.local.path / DATA_DIR_NAME)
-            if reason is not None:
+        if view.local is not None and view.record is not None:
+            try:
+                scope.require_trusted(view.local.path / DATA_DIR_NAME, "the install record of this package")
+            except UntrustedLocationError as exc:
                 raise ModeRefused(
                     "Refusing the install record of this package: it lies in a folder that standard users can "
-                    f"modify, and an elevated gupkg does not trust it ({reason}). Run it from a normal (non-elevated) shell."
-                )
+                    f"modify, and an elevated gupkg does not trust it ({exc}). Run it from a normal (non-elevated) shell."
+                ) from exc
 
     # The package's own ``modes`` list, from the version that would be installed.
     supported = _supported_modes(resolved, target_folder if outside else None, elevated)

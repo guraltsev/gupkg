@@ -342,18 +342,6 @@ def test_a_distribution_copied_by_an_elevated_run_is_taken_back_when_the_install
     assert not (world.system_root / "tool").exists()
 
 
-def test_the_relaunched_elevated_child_refuses_a_folder_outside_the_system_root(tmp_path: Path) -> None:
-    """The elevated child accepts only names and paths in the system root: a folder in Downloads is refused, nothing is copied."""
-    world = World(tmp_path, elevated=True)
-    folder = distribution(world)
-    world.engine.relaunched = True
-
-    result = world.one("install", str(folder))
-
-    assert not result.ok and result.exit_code == 2 and "system root" in result.error["message"]
-    assert not (world.system_root / "tool").exists()
-
-
 def test_a_source_that_changes_between_the_plan_and_the_copy_is_refused_and_the_copy_removed(world: World) -> None:
     """The plan was made from the source folder; the copy is what gets installed, so a different pkg.toml in the copy stops the install."""
     folder = distribution(world)
