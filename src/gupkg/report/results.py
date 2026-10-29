@@ -1,6 +1,6 @@
 """Build the result documents of ``--json`` and render results as text (design sections 10.4 and 14).
 
-Every command that prints a machine document builds it here, so the documents share one envelope: ``"api": 1``, the
+Every command that prints a machine document builds it here, so the documents share one envelope: ``"api": 2``, the
 ``command``, ``ok`` and ``exit_code``, then the command's own keys. The plan document of ``--plan --json`` and the result
 document of a lifecycle call are built from the typed objects of ``gupkg.model.plan``; the human texts of ``list``,
 ``info`` and ``--plan`` are rendered from the plain data of ``gupkg.viewdata``. Nothing here prints.

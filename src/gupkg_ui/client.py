@@ -5,7 +5,7 @@ The UI programs never change the machine themselves (decision D44): every operat
 as the running program (never one found on ``PATH``), builds the command line as an argument list that no shell reads, refuses
 an argument that holds a character the launcher could misread, runs the call without ever blocking the caller's event loop,
 follows the call's events file while it runs and returns one ``CallResult``. Everything it reads from the call is untrusted:
-the result document must be one JSON object with ``"api": 1``, the output is capped, and a call whose result cannot be read, whose
+the result document must be one JSON object with ``"api": 2``, the output is capped, and a call whose result cannot be read, whose
 exit code disagrees with its document or whose events file has no ``run_end`` is a failure (``CallResult.problems``), never a success.
 
 Usage and API

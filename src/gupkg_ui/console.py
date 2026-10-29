@@ -3,7 +3,7 @@
 ``gupkg-manager check-updates --all``, ``update --all`` and ``check`` (and the text printed after a UI program closes) write to a normal console.
 This module provides the ``Sink`` that prints a batch's lines (in colour on a terminal, as plain text when output is redirected or ``NO_COLOR``
 is set), the yes-or-no prompts for a plan and for a missing checksum, and the combined ``--json`` document of a batch, which has the shape of
-the CLI's own result document (``"api": 1``) so a schedule reads both the same way.
+the CLI's own result document (``"api": 2``) so a schedule reads both the same way.
 
 Usage and API
 -------------
