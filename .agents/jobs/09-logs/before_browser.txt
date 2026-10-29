@@ -1,4 +1,4 @@
-﻿app title: 'gupkg-manager' | sub_title: ''
+app title: 'gupkg-manager' | sub_title: ''
  Enter open  / find  a avail  c check  u update  U all  s sync  ? help  q quit
  Name   Version  Mode  Status            Registry
  alpha  1.0.0    user  outdated → 2.0.0  -
