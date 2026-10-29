@@ -20,7 +20,7 @@ Not recorded yet. Before T00, the controller records:
 | T01 | Remove migration code | T00 | merged | i035/T01 | 91faed3 | 3765 passed, 0 failed, 11 skipped | none |
 | T02 | Portable is a package kind; mode restriction | T01 | merged | i035/T02 | 30030c3 | 3720 passed, 0 failed, 11 skipped | 035-T02-1, 035-T02-2 (tests/manual_smoke.md) |
 | T03 | Registry conversion (gupkg-registry) | T02 | merged | i035/T03 (registry) | registry da73597 | registry _tests 212 passed; pkg_check.py --all: 192 directories checked, no error; registry_tool validate: 95 packages, 97 pinned versions, 0 hook files, 1 unpinned: OK | none |
-| T04 | Settings schema 4 and root fallback chain | T02 | in progress | i035/T04 | | | | |
+| T04 | Settings schema 4 and root fallback chain | T02 | in review | i035/T04 | | | | |
 | T05 | Scope object; mode from the token | T04 | waiting | | | | |
 | T06 | Catalog over one root | T05 | waiting | | | | |
 | T07 | Remove the elevated relaunch | T06 | waiting | | | | |
@@ -90,3 +90,4 @@ Owner commit not pushed yet (goes to GitHub together with T03): `9fba5c5 volta: 
 - 2026-10-29: T03 worker reported (registry 6279294 + f9f3441); review round 1 started.
 - 2026-10-29: T03 reviewed (0 blocking; CRLF in convert_035.py fixed as cc24abf); merged in the registry as da73597; registry tests 212 passed, validator OK. Check 6: 1.0.8 validator accepts the converted registry. T04 ready.
 - 2026-10-29: T04 dispatched on i035/T04.
+- 2026-10-29: T04 worker reported (37a6c60, 4c5db47; 3722 passed at 37a6c60); review round 1 started.
