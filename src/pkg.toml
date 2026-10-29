@@ -21,6 +21,14 @@ target = "%COMSPEC%"
 arguments = '/d /s /c ""$App\gupkg-manager.cmd" || pause"'
 description = "Manage the packages installed with gupkg"
 
+[[shortcut]]
+name = "gupkg manager (administrator)"
+target = "%COMSPEC%"
+arguments = '/d /s /c ""$App\gupkg-manager.cmd" || pause"'
+description = "Manage the packages installed for all users"
+run_as_admin = true
+modes = ["system"]
+
 [[shim]]
 name = "gupkg"
 target = "$App\\gupkg.cmd"
