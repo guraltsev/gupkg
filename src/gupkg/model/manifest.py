@@ -173,7 +173,8 @@ _SOURCE_KEYS = (
     "require", "verify_manifest", "checksum", "installer", "git", "nested", "extract", "headers",
 )
 _CHECKSUM_KEYS = ("sidecar", "sums_file", "entry", "json", "path", "page_match")
-_SHORTCUT_KEYS = ("name", "target", "arguments", "working_dir", "icon_location", "description")
+_SHORTCUT_KEYS = ("name", "target", "arguments", "working_dir", "icon_location", "description", "run_as_admin", "modes")
+_SHORTCUT_TEXT_KEYS = ("arguments", "working_dir", "icon_location", "description")
 _SHIM_KEYS = ("name", "target", "type", "arguments", "forward_args", "elevate", "working_dir", "content")
 _PREPARE_KEYS = ("remove", "rename", "copy", "write", "module")
 
@@ -469,6 +470,8 @@ class Shortcut:
     working_dir: str = ""
     icon_location: str = ""
     description: str = ""
+    run_as_admin: bool = False
+    modes: tuple[str, ...] | None = None  # None: every mode of the package
 
 
 @dataclass(frozen=True)
@@ -852,7 +855,7 @@ def parse_manifest_data(data: Mapping[str, Any], kind: ManifestKind = ManifestKi
     track = _parse_track(collector, data.get("track"))
     prepare = _parse_prepare(collector, data.get("prepare"))
     portable = _parse_portable(collector, data.get("portable"), modes)
-    shortcuts = _parse_shortcuts(collector, data.get("shortcut"))
+    shortcuts = _parse_shortcuts(collector, data.get("shortcut"), modes)
     envs = _parse_envs(collector, data.get("env"))
     paths = _parse_paths(collector, data.get("path"), modes)
     shims = _parse_shims(collector, data.get("shim"))
@@ -1306,15 +1309,17 @@ def _parse_root_forwarder(collector: _Collector, raw: Any) -> RootForwarder | No
     return RootForwarder(target)
 
 
-def _parse_shortcuts(collector: _Collector, raw: Any) -> tuple[Shortcut, ...]:
-    """Parse ``[[shortcut]]``."""
+def _parse_shortcuts(collector: _Collector, raw: Any, package_modes: tuple[str, ...]) -> tuple[Shortcut, ...]:
+    """Parse ``[[shortcut]]``. Its optional ``modes`` must be a non-empty subset of the package's ``modes`` (never ``portable``)."""
     rows = []
     for index, row in collector.rows(raw, "shortcut"):
         where = f"shortcut[{index}]"
         collector.keys(row, _SHORTCUT_KEYS, where)
         name = collector.string(row, "name", where, required=True)
         target = collector.string(row, "target", where, required=True)
-        optional = {key: collector.string(row, key, where, empty=True) or "" for key in _SHORTCUT_KEYS[2:]}
+        optional: dict[str, Any] = {key: collector.string(row, key, where, empty=True) or "" for key in _SHORTCUT_TEXT_KEYS}
+        optional["run_as_admin"] = bool(collector.boolean(row, "run_as_admin", where))
+        optional["modes"] = _parse_shortcut_modes(collector, row, where, package_modes)
         for key in ("target", "arguments", "working_dir", "icon_location"):
             text = target if key == "target" else optional[key]
             if text:
@@ -1325,6 +1330,27 @@ def _parse_shortcuts(collector: _Collector, raw: Any) -> tuple[Shortcut, ...]:
         if name is not None and target is not None:
             rows.append(Shortcut(name, target, **optional))
     return tuple(rows)
+
+
+def _parse_shortcut_modes(
+    collector: _Collector, row: Mapping[str, Any], where: str, package_modes: tuple[str, ...],
+) -> tuple[str, ...] | None:
+    """Parse a shortcut's ``modes``; ``None`` when it is absent (the package's modes apply)."""
+    if "modes" not in row:
+        return None
+    value = row["modes"]
+    if not isinstance(value, list) or not value or any(not isinstance(item, str) for item in value):
+        collector.error(f"{where}.modes", f"must be a non-empty array of {', '.join(MODES)}")
+        return None
+    ok = True
+    for item in value:
+        if item not in package_modes or item == PORTABLE:
+            collector.error(f"{where}.modes", f"'{item}' is not one of the package's modes ({', '.join(package_modes)})")
+            ok = False
+    if len(set(value)) != len(value):
+        collector.error(f"{where}.modes", "lists a mode twice")
+        ok = False
+    return tuple(value) if ok else None
 
 
 def _parse_envs(collector: _Collector, raw: Any) -> tuple[EnvVar, ...]:
@@ -1506,7 +1532,8 @@ def manifest_to_data(manifest: Manifest, *, explicit_modes: bool = False) -> dic
     data["shortcut"] = [
         _drop_empty({"name": s.name, "target": s.target, "arguments": s.arguments or None,
                      "working_dir": s.working_dir or None, "icon_location": s.icon_location or None,
-                     "description": s.description or None})
+                     "description": s.description or None, "run_as_admin": s.run_as_admin or None,
+                     "modes": list(s.modes) if s.modes is not None else None})
         for s in manifest.shortcuts
     ]
     data["env"] = [{"name": e.name, "value": e.value} for e in manifest.envs]

@@ -80,6 +80,8 @@ class ShortcutSpec:
     Windows limits what a link can hold. Measured limits: a target longer than
     259 characters is refused when writing, and the working directory, the
     description and the icon path are cut at 260 characters when read back.
+    ``run_as_admin`` sets the link flag ``SLDF_RUNAS_USER``: Windows shows the
+    UAC prompt when the link is opened.
     """
 
     target_path: str
@@ -87,6 +89,7 @@ class ShortcutSpec:
     working_directory: str = ""
     icon_location: str = ""
     description: str = ""
+    run_as_admin: bool = False
 
 
 @dataclass(frozen=True)
