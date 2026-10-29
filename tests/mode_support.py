@@ -50,7 +50,7 @@ class Machine:
     def write_app_settings(self, top: str = "", tables: str = "") -> None:
         """Write ``settings.toml`` of the app folder: it places the two roots inside the temporary folder.
 
-        *top* holds extra top-level keys (such as ``default_mode``), *tables* extra tables after ``[roots]``.
+        *top* holds extra top-level keys (such as ``schema``), *tables* extra tables after ``[roots]``.
         """
         self.app.mkdir(parents=True, exist_ok=True)
         roots = f"[roots]\nsystem = '{self.system_root}'\nuser = '{self.user_root}'\n"

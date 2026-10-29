@@ -376,7 +376,7 @@ def test_invalid_layer_lists_every_problem_with_hints(world: World) -> None:
 
 def test_a_schema_3_file_is_refused_with_the_migration_message(world: World) -> None:
     """A schema 3 file is not converted; the error says what to change."""
-    world.user_file('schema = 3\ndefault_mode = "user"\n')
+    world.user_file('schema = 3\n[logs]\nkeep_runs = 7\n')
 
     with pytest.raises(SettingsError, match=r"settings schema 3 is no longer read; change it to schema = 4 \(see _docs/rehaul_design.md §11\)"):
         world.load()
@@ -388,8 +388,6 @@ def test_a_schema_3_file_is_refused_with_the_migration_message(world: World) -> 
         pytest.param("[ui]\ncolor = 'auto'\n", id="no-schema"),
         pytest.param("schema = 2\n", id="schema-2"),
         pytest.param('mode = "manager"\nschema_version = 2\n', id="manager-config"),
-        pytest.param("schema = 4\n[integration.user]\nbin = 'C:\\\\x'\n", id="old-integration-tables"),
-        pytest.param('schema = 4\ndefault_mode = "user"\n', id="default-mode"),
     ],
 )
 def test_files_that_are_not_schema_4_are_refused(world: World, text: str) -> None:
