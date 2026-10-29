@@ -6,10 +6,10 @@ confirmation or immediately with ``--yes``; a declined or unanswerable confirmat
 refused elevation prompt are exit code 5 with nothing started; user contexts, and an already
 elevated process, need no relaunch.
 
-Real: ``ensure_elevation`` and the mode contexts built by the real resolver. Fake: ``FakeSystem`` supplies the
+Real: ``ensure_elevation`` and the scopes built by ``make_scope``. Fake: ``FakeSystem`` supplies the
 elevation flag, the admin-only answer for gupkg's own folders and records the relaunch (UAC itself is manual:
 see ``tests/manual_smoke.md``). Out of scope: what the elevated child does with its arguments
-(``test_mode_resolve.py``).
+(``test_targets.py``).
 """
 
 from __future__ import annotations

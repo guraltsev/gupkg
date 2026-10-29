@@ -15,7 +15,7 @@ files and downloads are real. Put the package roots under the sandbox too, with 
 mkdir %TEMP%\s
 gupkg --sandbox %TEMP%\s settings init
 :: edit %TEMP%\s\settings.toml: [roots] user = '%TEMP%\s\opt' (and system)
-gupkg --sandbox %TEMP%\s --settings %TEMP%\s\settings.toml install <package> --mode user
+gupkg --sandbox %TEMP%\s --settings %TEMP%\s\settings.toml install <package>
 type %TEMP%\s\system.json
 ```
 
@@ -166,11 +166,11 @@ prompt and the broadcast to running programs.
    (`[Environment]::GetEnvironmentVariable('Path','User')`) and the contents of
    `%APPDATA%\Microsoft\Windows\Start Menu\opt`. Run
    `gupkg --sandbox %TEMP%\s install <fixture package with a shortcut,
-   an [[env]] row and a [[path]] row> --mode user`. Confirm the `PATH`, the HKCU
+   an [[env]] row and a [[path]] row>`. Confirm the `PATH`, the HKCU
    environment values and the Start Menu folder are unchanged, and that
    `%TEMP%\s\system.json` lists the environment value and `PATH` entry while a
    `.lnk.json` record exists below `%TEMP%\s`. Run the same install a second time and
-   confirm `system.json` keeps the first run's log. Repeat with `--mode system` after setting
+   confirm `system.json` keeps the first run's log. Repeat after setting
    `"elevated": true` in `system.json` (the sandbox never reads the real token) and
    confirm the HKLM environment and `%ProgramData%` Start Menu are unchanged too.
    Limits to expect: default package and config roots are not redirected (a package
@@ -187,7 +187,7 @@ prompt and the broadcast to running programs.
    elevated window runs `gupkg.cmd` from the installed version folder. Decline UAC and
    confirm nothing changes. Why manual: UAC cannot be automated.
 4. **Administrator detection.** In an elevated and a non-elevated shell run
-   `gupkg self status` and `gupkg install <package>` with no `--mode`; confirm
+   `gupkg self status` and `gupkg install <package>`; confirm
    the elevated shell selects system mode and the other user mode. Why manual: needs
    real tokens.
 
@@ -196,25 +196,17 @@ prompt and the broadcast to running programs.
 The automated tests resolve modes, contexts and the elevation step on a `FakeSystem`. These steps
 cover the parts that need a real token, a real UAC prompt, Explorer's marking or a second account.
 The engine and the command line that call these functions arrive with issues 028 and 029, so the
-steps that need `gupkg install --mode ...` are run once those land.
+steps that need `gupkg install` are run once those land.
 
-1. **Real relaunch from the system gupkg.** With gupkg installed in `C:\opt` (admin-only), run
-   `gupkg install <package> --mode system` from a normal shell. Confirm the question, accept UAC,
-   and confirm the install happened in `C:\opt`. Repeat with `--yes` (no question), with
-   `--no-input` (exit code 5, nothing changed) and by declining UAC (exit code 5). Why manual: UAC
-   cannot be automated.
-2. **A user-writable gupkg never elevates.** From a bundled or user-mode gupkg (for example one
-   in `%USERPROFILE%\opt`), run the same command. Confirm it refuses and says that system
-   installs need the system gupkg, and that no UAC prompt appears. Why manual: it needs the real
-   access-control lists of a user profile and of `C:\opt`.
-3. **Elevated shell and the user root.** In an elevated shell run `gupkg install <package>` with
-   no `--mode` (it prints `system (auto: elevated)`), then `--mode user`, a path inside
-   `%USERPROFILE%\opt` and `user:<name>`. Confirm each of the last three is refused with the
-   advice to use a normal shell and that nothing under `%USERPROFILE%\opt` changed. Why manual:
-   it needs a real elevated token.
+1. **Real relaunch from the system gupkg.** (Retired by issue 035: gupkg no longer starts an elevated copy of itself; the
+   mode of a run is the mode of its own token, see `035-T05-1`.)
+2. **A user-writable gupkg never elevates.** (Retired by issue 035 with the relaunch; the case that remains is an elevated run
+   from a user-writable gupkg, see `035-T05-2`.)
+3. **Elevated shell and the user root.** (Retired by issue 035: an elevated run has one scope, the system's; there is no
+   `--mode` and no `user:` prefix to refuse, see `035-T05-1` and `035-T05-3`.)
 4. **Distribution from an administrator shell.** Extract a distribution ZIP with Explorer (every
    file gets a Mark of the Web), then from an elevated shell run
-   `gupkg install <folder>\<name>\<version> --mode system`. Confirm the folder is copied into
+   `gupkg install <folder>\<name>\<version>` (no flag: the elevated token is the system mode). Confirm the folder is copied into
    `C:\opt\<name>\<version>`, that `Get-Item -Stream * <file>` shows no `Zone.Identifier` on any
    copy, and that the receipt says the source was marked. Why manual: Explorer does the marking.
 5. **Portable in place** (retired by issue 035: a portable package is an ordinary user package, see `035-T02-1`).
@@ -225,14 +217,14 @@ The automated tests render with a recording Rich console and write logs below py
 temporary directories. These steps cover real consoles, real permissions and a real TUI.
 
 1. **Real terminal rendering.** In Windows Terminal, then in a classic console window
-   (`conhost`), run `gupkg install <package with a download_url> --mode user`. Confirm
+   (`conhost`), run `gupkg install <package with a download_url>`. Confirm
    coloured phase rules, a ✓ or ✗ with the time, a download bar that disappears and leaves one
    line, and a closing summary that names the logs and is the last thing printed. Run it again
    with `set NO_COLOR=1` and with output redirected (`> out.txt`); `out.txt` has `==>` headers,
    no escape characters and no carriage returns (`findstr /R "\x1b" out.txt` finds nothing).
    Why manual: terminal modes and fonts cannot be asserted offline.
 2. **System logs are admin-only.** From an elevated shell run `gupkg install
-   <package> --mode system`. In a normal shell confirm `icacls C:\opt\.gupkg\logs` and
+   <package>`. In a normal shell confirm `icacls C:\opt\.gupkg\logs` and
    `icacls C:\opt\<name>\.gupkg\logs` show write access only for administrators and SYSTEM,
    and that a standard user can neither create nor modify a file there. Why manual: needs
    a real admin-only root.
@@ -340,7 +332,7 @@ repository `gupkg-registry`; its README repeats the commands.
    credentials; the tests only record the commands.
 4. **Every package installs under the strict default.** On a clean Windows runner (or VM), with the registry synced, run
    for each package `gupkg --sandbox <dir> install <name>` (no `--skip-checksum`), once in user mode and, for the
-   portable-capable ones (see `PORTABLE-UNVERIFIED.md`), once with `--mode portable`. Expect exit 0, `App` filled, and for
+   portable-capable ones (see `PORTABLE-UNVERIFIED.md`). Expect exit 0, `App` filled, and for
    versions with `sha256_from = "registry"` the label *verified*. Why manual: needs the engine (issue 028), a clean Windows and
    the vendors' downloads.
 5. **Verify each portable mechanism.** For every row of the registry's `PORTABLE-UNVERIFIED.md`: install portable, change a
@@ -352,7 +344,7 @@ repository `gupkg-registry`; its README repeats the commands.
    CI job of the registry runs the recorded cases against its own trackers.
 7. **Distribution folder against the published fingerprint (needs the engine, issues 028 and 029).** Copy a registry version
    directory (for example `<registry cache>\qbittorrent\5.2.3`) to a folder outside every root and run `gupkg install <folder>
-   --mode user` with the registry synced: the install is labelled *verified against registry <name>*. Change one byte of the
+   ` with the registry synced: the install is labelled *verified against registry <name>*. Change one byte of the
    copy's `pkg.toml` and repeat: the install is refused and names `pkg.toml`. The comparison itself is automated
    (`tests/test_fingerprint.py`); what is manual is the engine calling it. Why manual: the install engine does not exist yet.
 8. **GIMP's vendor installer.** The tracker declares `[source.installer]` (Inno Setup, `/DIR=$Stage`). Confirm the engine runs it
@@ -398,7 +390,7 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
 3. **A user-writable gupkg never elevates.** Run `gupkg install system:<name>` with a user-mode gupkg (under
    `%USERPROFILE%\opt`): expect exit 2 and "System installs need the system gupkg". Why manual: the real ACL check.
 4. **The elevated child refuses a user folder.** From an elevated prompt run the system gupkg with `--relaunched`:
-   `gupkg install %USERPROFILE%\Downloads\<dist>\<name>\<version> --mode system --relaunched --yes` and expect exit 2 ("accepts
+   `gupkg install %USERPROFILE%\Downloads\<dist>\<name>\<version> --relaunched --yes` and expect exit 2 ("accepts
    only package names and paths inside the system root"); without `--relaunched` the same folder is copied into `C:\opt`. Why
    manual: the real elevated token and ACLs.
 5. **The forwarders.** `gupkg tui <folder>` opens the package view of that folder and `gupkg manager` opens the browser (both from a normal
@@ -504,7 +496,7 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
    extracted ZIP and the installed copy run, and fix `_docs/troubleshooting.md` with what you see. Why manual: needs a real browser download
    and a machine with Smart App Control (spike S2; it could not be run during the rehaul, so it stays owed before 1.0 is published).
 8. **System install of a distribution.** In an elevated shell with the system gupkg installed, run
-   `gupkg install <folder in Downloads> --mode system`: the folder is copied into `C:\opt\<name>\<v>` and installed from there, nothing
+   `gupkg install <folder in Downloads>`: the folder is copied into `C:\opt\<name>\<v>` and installed from there, nothing
    starts from `Downloads`, and `--in-place` installs where the folder is. Why manual: real elevation and a real `C:\opt`.
 9. **The registry after the launcher change.** In the registry checkout run `python -m gupkg_registry launchers --registry .`, review the
    diff (every tracker gets `check-updates.cmd`, every pinned version gets the new `install.cmd` and `gupkg-tui.cmd`, `_registry.toml`
@@ -521,3 +513,24 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
    message that names the Start Menu entry "gupkg manager (administrator)" and the administrator-shell command. From an
    administrator shell, install a user-only package and a portable package: expect exit 2 and "Run gupkg without administrator
    rights", with nothing created. Why manual: needs a real elevated token.
+
+## One scope per run: the mode comes from the token (issue 035, task T05)
+
+1. **`035-T05-1` The mode is the token's.** From a normal shell run `gupkg install <package>`, then from an administrator shell run
+   `gupkg install <other package>`. Expect the Resolve line `user root %USERPROFILE%\opt (built-in default)` (or the source your
+   settings give) in the first and `system root C:\opt (the installed system gupkg)` in the second, the first package under
+   `%USERPROFILE%\opt` and the second under `C:\opt`, and no question and no UAC prompt in either. Then run
+   `gupkg install <package> --mode user` and `gupkg install system:<package>` from both shells: expect exit code 2 with a usage message and
+   nothing changed. Why manual: needs real tokens and real roots.
+2. **`035-T05-2` An elevated run from a user-writable gupkg.** From an administrator shell run a gupkg that is installed in a
+   user-writable root (for example the bundled copy of a distribution in `%USERPROFILE%\Downloads`): any command, even `gupkg list`,
+   ends at once with exit code 2 and "an elevated gupkg must be installed in an admin-only root; run the system gupkg", and
+   nothing is read from or written to `C:\opt`. Why manual: needs the real access-control lists of a user profile.
+3. **`035-T05-3` `--root` and the system root.** From an administrator shell run `gupkg --root %USERPROFILE%\somewhere install
+   <package>`: expect exit code 2 (a user-writable folder cannot be the system root). From a normal shell the same command
+   installs under `%USERPROFILE%\somewhere` and the Resolve line says `(--root)`. Why manual: needs the real admin-only judgement.
+4. **`035-T05-4` `gupkg self update` from a system gupkg in a normal shell.** With gupkg installed in `C:\opt`, run
+   `gupkg self update` from a normal shell: expect exit code 2 and "This gupkg is installed in C:\opt, but the user root of this run
+   is ...; run it from an administrator shell". The bootstrap script (`gupkg-bootstrap.cmd`) no longer passes `--mode` to
+   `install.cmd`; confirm that `-Scope user` from a normal shell and `-Scope system` from an administrator shell still install. Why
+   manual: needs real tokens.
