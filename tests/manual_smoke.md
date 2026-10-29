@@ -541,3 +541,11 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
    folder `opt` and double-click "gupkg manager (administrator)": expect the UAC prompt, then the manager with the title
    `system · <root>` (after T09). In the link's properties (Advanced), "Run as administrator" is ticked. A user-mode install has only
    "gupkg manager". Why manual: needs a real UAC prompt and a real Start Menu.
+
+## The manager has one scope per run (issue 035, task T09)
+
+1. **`035-T09-1` The manager says which scope it manages.** In a normal terminal start `gupkg-manager`: the terminal window title reads
+   `gupkg-manager - user · <root>`, the status line starts with `user` and ends with `root <root>`, and the table has no Mode column. Start it from the
+   Start Menu entry "gupkg manager (administrator)" (accept UAC): the title reads `system · <root>`, the status line starts with `system`, and only the
+   system packages are listed. Press `a`: a package that the mode cannot install shows `available (system only)` or `(user only)` and, with the cursor on
+   it, the status line gives the CLI's reason. Why manual: needs a real terminal title and a real UAC prompt.

@@ -1,6 +1,6 @@
 """The command line of ``gupkg-tui``: open the package view of one package.
 
-``gupkg-tui PATH|NAME`` shows one package (a folder such as the version directory a package launcher passes, a name, or ``mode:name``) and acts on it. The
+``gupkg-tui PATH|NAME`` shows one package (a folder such as the version directory a package launcher passes, or a name) and acts on it. The
 program needs a terminal; every operation is a call to the ``gupkg`` of the same gupkg tree. ``gupkg tui PATH`` forwards here. When the program closes, the
 summary of the last run and the log path are printed to the console (``[manager] keep_screen``).
 
@@ -60,7 +60,7 @@ def main(
     configure_streams(out, err)
     parser = argparse.ArgumentParser(prog=PROGRAM, description="Show one gupkg package and act on it.")
     add_root_options(parser)
-    parser.add_argument("target", metavar="PATH|NAME", help="a package folder or version directory, a package name, or mode:name")
+    parser.add_argument("target", metavar="PATH|NAME", help="a package folder or version directory, or a package name")
     try:
         args = parser.parse_args(list(sys.argv[1:] if argv is None else argv))
     except SystemExit as stop:
