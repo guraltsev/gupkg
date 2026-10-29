@@ -133,3 +133,4 @@ Owner commit not pushed yet (goes to GitHub together with T03): `9fba5c5 volta: 
 - 2026-10-29: T11 round 1 (1 blocking: elevated `gupkg.exe` shim check missed the shim folder; fixed in acfcb14) and round 2 clean; merged as bd8f48e; suite 3572 passed, 13 skipped. T14 dispatched.
 - 2026-10-29: T14 worker reported (afaa229, 0ca4010, 778b7e1; 3590 passed/13 skipped); review started.
 - 2026-10-29: T14 round 1 (1 blocking: quadratic scan of records; fixed in b539f1f) and round 2 clean; merged as f696975; suite 3596 passed, 13 skipped. T12 dispatched.
+- 2026-10-29: T12 worker reported (15 commits on i035/T12; 3597 passed/13 skipped); review started.
