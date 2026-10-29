@@ -143,7 +143,7 @@ def diagnose(
     # A name that another installed package of the root also claims (two install records on disk): a problem of both packages.
     for key, item in provided_names(view.installed.effects).items():
         other = (owners or {}).get(key)
-        if other is not None:
+        if other is not None and not (item.primary is not None and owners.get(item.primary) == other):
             problems.append(Problem(
                 "name-conflict",
                 f"{view.name} and {other} both provide the {item.word} '{item.name}' ({item.where}). Uninstall one of them, "

@@ -34,7 +34,7 @@ from pathlib import Path
 
 from ..catalog.catalog import Candidate, Catalog, CatalogError, NoValidVersion, NoVersionKnown, NotFound, NotInstalled
 from ..catalog.local import DATA_DIR_NAME, is_inside
-from ..catalog.record import write_install_record
+from ..catalog.record import read_install_record, write_install_record
 from ..catalog.registry import cache_state, registry_cache_dir
 from ..distcopy import COPIED, DIVERGED, CopyResult, DistributionRefused, copy_distribution
 from ..model.manifest import (
@@ -89,8 +89,9 @@ from .planner import (
     CleanupPlan,
     InvalidVersion,
     PlanError,
+    NameIndex,
+    check_names,
     check_names_between,
-    name_owners,
     plan_cleanup,
     plan_install,
     plan_uninstall,
@@ -175,6 +176,38 @@ class _Target:
 
     def __init__(self, request: Request, resolved: ResolvedTarget, catalog: Catalog) -> None:
         self.request, self.resolved, self.catalog = request, resolved, catalog
+        self.names = _RootNames(catalog)
+
+
+class _RootNames:
+    """The name ownership of one root, read once per command and kept current while the command's packages are run.
+
+    Every target of a call shares one of these, so a batch of N packages reads the install records once, and a package that was
+    just installed, changed or removed is read again alone (``reload``).
+    """
+
+    def __init__(self, catalog: Catalog) -> None:
+        self.catalog, self._index = catalog, None
+
+    def index(self) -> NameIndex:
+        """Return the index, reading the root's install records the first time."""
+        if self._index is None:
+            self._index = NameIndex(self.catalog.installed_effects())
+        return self._index
+
+    def reload(self, scope: Scope, package: str) -> None:
+        """Read the install record of *package* again after an operation on it (the rest of the root is not read)."""
+        if self._index is None:
+            return
+        try:
+            record = read_install_record(scope.package_dir(package)).record
+        except (ValueError, OSError):
+            self._index = None  # unknown what changed: read the root again when it is next needed
+            return
+        if record is not None and record.effects:
+            self._index.set(package, record.effects)
+        else:
+            self._index.drop(package)
 
 
 class _UpToDate(Exception):
@@ -205,6 +238,7 @@ def run_batch(engine: Engine, requests: Sequence[Request]) -> BatchResult:
         One ``PackageResult`` per request, in order.
     """
     resolved: list[_Target | PackageResult] = [_resolve(engine, request) for request in requests]
+    _share_names(resolved)
     _refuse_shared_names(engine, resolved)
 
     # One package after another; a stop request is honoured between packages (decision D37).
@@ -219,6 +253,7 @@ def run_batch(engine: Engine, requests: Sequence[Request]) -> BatchResult:
             results.append(PackageResult(request.selector, request.operation, True, "skipped", exit_code=EXIT_INPUT))
             continue
         results.append(_run_one(engine, item, len(requests) == 1))
+        item.names.reload(item.resolved.scope, results[-1].package)
     return BatchResult(tuple(results))
 
 
@@ -226,6 +261,7 @@ def plan(engine: Engine, requests: Sequence[Request]) -> list[InstallPlan | Pack
     """Resolve and plan every request without changing anything; a request that cannot be planned is its failure result."""
     found: list[InstallPlan | PackageResult] = []
     targets = [_resolve(engine, request) for request in requests]
+    _share_names(targets)
     _refuse_shared_names(engine, targets)
     for request, target in zip(requests, targets):
         if isinstance(target, PackageResult):
@@ -256,6 +292,13 @@ def _resolve(engine: Engine, request: Request) -> _Target | PackageResult:
         data = result.error or {}
         emit(Error(f"{request.selector}: {data.get('message', error)}", data.get("hint")))
         return result
+
+
+def _share_names(targets: list[_Target | PackageResult]) -> None:
+    """Make every target of the call share the first one's name index, so the root's records are read once per call."""
+    found = [item for item in targets if isinstance(item, _Target)]
+    for item in found[1:]:
+        item.names = found[0].names
 
 
 def _refuse_shared_names(engine: Engine, targets: list[_Target | PackageResult]) -> None:
@@ -535,12 +578,17 @@ def _prepare_install(
 
     # A package for a newer gupkg is refused with exit code 6, before any effect is planned (design 21.3).
     require_gupkg_version(manifest.requires_gupkg, engine.version, f"{view.name} {candidate.version}")
-    if execute:
-        _ask_about_other_versions(engine, request, view, candidate.version, context.mode)
 
     # Effects the version declares for this mode, and what a repair found missing on the machine.
     desired, notes = desired_effects(manifest, effect_context(context, package_path, engine.effect_env))
     notes = (*notes, *resolved.warnings)
+
+    # A name another installed package provides refuses the version before any question is asked (plan_install holds the same check).
+    owners = target.names.index().owners(view.name)
+    if not request.download_only:
+        check_names(view.name, desired, owners)
+    if execute:
+        _ask_about_other_versions(engine, request, view, candidate.version, context.mode)
     drifted: frozenset[tuple[str, ...]] = frozenset()
     repairing = (
         request.operation in ("install", "repair") and view.installed is not None and view.record is not None
@@ -555,7 +603,7 @@ def _prepare_install(
     install_plan = plan_install(
         request, view, context, chosen, desired, notes=notes, copy_in=copy_in, package_path=package_path,
         url_from=url_from, drifted=drifted, allow_installer=bool(resolved.settings["hooks.allow_vendor_installers"]),
-        owners=name_owners(catalog.installed_effects(), exclude=view.name),
+        owners=owners,
     )
     tracker = catalog.tracker_sync(view) if view.registry is not None else None
     return ExecutionInput(
@@ -866,7 +914,7 @@ def _check(engine: Engine, target: _Target) -> PackageResult:
         raise NotFound(f"{request.selector} was not found")
     view = selection.view
     record_manifest = bool(settings["install.record_manifest"])
-    owners = name_owners(target.catalog.installed_effects(), exclude=view.name)
+    owners = target.names.index().owners(view.name)
     diagnosis = diagnose(engine.system, view, mode=context.mode, record_manifest=record_manifest, owners=owners)
     fixed: list[str] = []
     if request.fix and diagnosis.installed and diagnosis.fixable:

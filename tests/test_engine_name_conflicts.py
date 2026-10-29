@@ -94,6 +94,104 @@ def test_a_package_keeps_its_own_names_across_update_switch_and_reinstall(world:
     assert world.one("repair", "first").ok
 
 
+def test_reinstalling_the_same_package_and_rebuilding_its_app_is_not_a_conflict(world: World) -> None:
+    """``install`` of an installed package and ``install --refresh`` (the nearest thing to a forced reinstall) keep its own names."""
+    install_first(world, SHIM + SHORTCUT.format(name="Tool") + ENV.format(name="TOOL_HOME"), "tool")
+
+    assert world.one("install", "first").ok
+    refreshed = world.one("install", "first", refresh=True)
+
+    assert refreshed.ok, refreshed.error
+
+
+def test_the_configuration_file_of_a_shim_is_a_name_too(world: World) -> None:
+    """A wrapper named ``tool.config.toml`` cannot overwrite the configuration of the shim ``tool`` of another package, nor the reverse."""
+    install_first(world, SHIM, "tool")
+    config = WRAPPER.format(name="tool.config.toml")
+    world.publish("second", "1.0.0", tables=config)
+    before = state(world)
+
+    result = world.one("install", "second")
+
+    assert not result.ok and result.error["code"] == "name-conflict"
+    assert "it would provide the wrapper 'tool.config.toml'" in result.error["message"] and "'first'" in result.error["message"]
+    assert state(world) == before
+
+    # The reverse: the wrapper is installed first, then a shim whose configuration file has that name.
+    assert world.one("uninstall", "first").ok
+    assert world.one("install", "second").ok
+    world.publish("third", "1.0.0", tables=SHIM.format(name="tool"))
+    reverse = world.one("install", "third")
+    assert not reverse.ok and reverse.error["code"] == "name-conflict" and "'second'" in reverse.error["message"]
+
+
+def test_a_refused_install_does_not_ask_the_downgrade_question(world: World) -> None:
+    """The name check comes before the questions: nothing is asked of a user whose install is then refused."""
+    install_first(world, SHIM, "tool")
+    world.publish("second", "1.0.0", tables=SHIM.format(name="other"))
+    assert world.one("install", "second").ok
+    world.publish("second", "2.0.0", tables=SHIM.format(name="other"))
+    assert world.one("update", "second").ok
+    world.publish("second", "1.0.0", tables=SHIM.format(name="tool"))
+    asked: list[str] = []
+    world.engine.confirm = lambda question: asked.append(question) or True
+
+    result = world.one("install", "second@1.0.0")
+
+    assert not result.ok and result.error["code"] == "name-conflict"
+    assert asked == []
+
+
+def count_scans(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Count how often the root's install records are read for name ownership; the counter is the list's length."""
+    calls: list[int] = []
+    original = Catalog.installed_effects
+
+    def counting(self: Catalog):
+        calls.append(1)
+        return original(self)
+
+    monkeypatch.setattr(Catalog, "installed_effects", counting)
+    return calls
+
+
+def test_check_of_many_packages_reads_the_records_once(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    """One ``check`` call over N packages reads the root's install records once, not once per package."""
+    for index in range(12):
+        world.publish(f"pkg{index}", "1.0.0", tables=SHIM.format(name=f"cmd{index}"))
+        assert world.one("install", f"pkg{index}").ok
+    scans = count_scans(monkeypatch)
+
+    batch = world.run("check", *[f"pkg{index}" for index in range(12)])
+
+    assert all(result.ok for result in batch.results) and len(scans) == 1
+
+
+def test_a_batch_install_of_many_packages_reads_the_records_once(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    """One ``install`` call over N packages scans the root once, not once per package."""
+    for index in range(12):
+        world.publish(f"pkg{index}", "1.0.0", tables=SHIM.format(name=f"cmd{index}"))
+    scans = count_scans(monkeypatch)
+
+    batch = world.run("install", *[f"pkg{index}" for index in range(12)])
+
+    assert all(result.ok for result in batch.results) and len(scans) == 1
+
+
+def test_a_package_installed_earlier_in_the_session_owns_its_names_after_it_is_read_again(world: World) -> None:
+    """The index follows one package at a time: after an install it owns its names, after an uninstall it does not."""
+    from gupkg.engine.lifecycle import _RootNames
+
+    names = _RootNames(Catalog(world.scope, world.fake))
+    assert dict(names.index().owners("x")) == {}
+    install_first(world, SHIM, "tool")
+    names.reload(world.scope, "first")
+    assert len(names.index().owners("x")) == 2 and len(names.index().owners("first")) == 0
+    assert world.one("uninstall", "first").ok
+    names.reload(world.scope, "first")
+    assert dict(names.index().owners("x")) == {}
+
+
 def test_a_shared_path_entry_is_not_a_name(world: World) -> None:
     """Two packages with shims of their own both add the bin folder to PATH, and neither is refused."""
     world.publish("first", "1.0.0", tables=SHIM.format(name="one"))
@@ -118,7 +216,7 @@ def test_two_targets_of_one_command_that_provide_one_name_are_both_refused_befor
         assert not result.ok and result.exit_code == 2 and result.error["code"] == "name-conflict"
         assert result.error["message"] == (
             f"first and second both provide the shim 'tool.exe' ({world.fake.scope_folders(Mode.USER).bin_dir / 'tool.exe'}). "
-            "Install them one at a time only if one of them changes the name."
+            "Install one of them, or give one of them a package definition with a different name."
         )
     assert third.ok, third.error
     assert not (world.user / "first" / "current").exists() and not (world.user / "second" / "current").exists()

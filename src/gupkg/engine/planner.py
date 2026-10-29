@@ -83,6 +83,7 @@ class ProvidedName:
     word: str
     name: str
     where: str
+    primary: tuple[str, str] | None = None  # for a shim's configuration file: the key of the shim itself
 
 
 def provided_names(effects: Sequence[Effect]) -> dict[tuple[str, str], ProvidedName]:
@@ -106,7 +107,74 @@ def provided_names(effects: Sequence[Effect]) -> dict[tuple[str, str], ProvidedN
         group = "shortcut" if effect.kind == "shortcut" else "file"
         key = (group, os.path.normcase(os.path.normpath(path)).casefold())
         found.setdefault(key, ProvidedName(key, word, path.rsplit("\\", 1)[-1], path))
+        shim_key = key
+
+        # A launcher shim also writes ``<name>.config.toml`` into ``bin``: the same namespace as a wrapper file.
+        config = str(fields.get("config", "")) if effect.kind == "shim" else ""
+        if config:
+            key = ("file", os.path.normcase(os.path.normpath(config)).casefold())
+            found.setdefault(key, ProvidedName(key, "shim configuration file", config.rsplit("\\", 1)[-1], config, shim_key))
     return found
+
+
+class NameIndex:
+    """Which installed packages provide each name, built once from the install records and updated one package at a time.
+
+    ``owners(exclude)`` is the read-only view the checks use: the first package (by name, letter case ignored) that provides a
+    name and is not *exclude*. Replacing or dropping one package costs only that package's names, so a batch never rescans.
+    """
+
+    def __init__(self, installed: Mapping[str, Sequence[Effect]] | None = None) -> None:
+        """Index *installed*, a map from package name to the effects of its install record."""
+        self._by_key: dict[tuple[str, str], list[str]] = {}
+        self._keys: dict[str, tuple[tuple[str, str], ...]] = {}
+        for package, effects in (installed or {}).items():
+            self.set(package, effects)
+
+    def set(self, package: str, effects: Sequence[Effect]) -> None:
+        """Record that *package* provides the names of *effects* (replacing what it provided before)."""
+        self.drop(package)
+        keys = tuple(provided_names(effects))
+        self._keys[package] = keys
+        for key in keys:
+            owners = self._by_key.setdefault(key, [])
+            owners.append(package)
+            owners.sort(key=str.casefold)
+
+    def drop(self, package: str) -> None:
+        """Forget the names of *package* (it was uninstalled or has no record)."""
+        for key in self._keys.pop(package, ()):
+            owners = self._by_key[key]
+            owners.remove(package)
+            if not owners:
+                del self._by_key[key]
+
+    def owners(self, exclude: str) -> "_Owners":
+        """Return the owners of every name for a package named *exclude*, which never owns a name against itself."""
+        return _Owners(self._by_key, exclude.casefold())
+
+
+class _Owners(Mapping):
+    """Read-only map from a name key to the package that owns it, leaving out one package."""
+
+    def __init__(self, by_key: Mapping[tuple[str, str], list[str]], exclude: str) -> None:
+        self._by_key, self._exclude = by_key, exclude
+
+    def __getitem__(self, key: tuple[str, str]) -> str:
+        for package in self._by_key.get(key, ()):
+            if package.casefold() != self._exclude:
+                return package
+        raise KeyError(key)
+
+    def __iter__(self):
+        return (key for key in self._by_key if key in self)
+
+    def __len__(self) -> int:
+        return sum(1 for _ in self)
+
+    def __bool__(self) -> bool:
+        """Return whether any package provides a name (cheap; a name of *exclude* alone still counts and is skipped on lookup)."""
+        return bool(self._by_key)
 
 
 def name_owners(installed: Mapping[str, Sequence[Effect]], *, exclude: str) -> dict[tuple[str, str], str]:
@@ -114,13 +182,7 @@ def name_owners(installed: Mapping[str, Sequence[Effect]], *, exclude: str) -> d
 
     *installed* maps a package name to the effects of its install record; the first package (by name) that claims a name owns it.
     """
-    owners: dict[tuple[str, str], str] = {}
-    for package in sorted(installed, key=str.casefold):
-        if package.casefold() == exclude.casefold():
-            continue
-        for key in provided_names(installed[package]):
-            owners.setdefault(key, package)
-    return owners
+    return dict(NameIndex(installed).owners(exclude))
 
 
 def _refusal(package: str, other: str, item: ProvidedName) -> NameConflict:
@@ -160,8 +222,8 @@ def check_names_between(wanted: Mapping[str, Sequence[Effect]]) -> dict[str, Nam
             if other.casefold() == package.casefold():
                 continue
             error = NameConflict(
-                f"{other} and {package} both provide the {item.word} '{item.name}' ({item.where}). Install them one at a time "
-                "only if one of them changes the name.",
+                f"{other} and {package} both provide the {item.word} '{item.name}' ({item.where}). Install one of them, or "
+                "give one of them a package definition with a different name.",
                 name=item.name, packages=(other, package),
             )
             refused.setdefault(other, error)
