@@ -114,17 +114,19 @@ def _text(value: Any) -> str | None:
 
 
 def read_packages(document: Mapping[str, Any]) -> list[PackageRow]:
-    """Return the rows of a ``list`` document; a row without a text name and status, or without a mode unless it is ``available``, is left out (it cannot be acted on).
+    """Return the rows of a ``list`` (or ``info``) document; a row without a text name and status, or a document without a text mode, is left out (it cannot be acted on).
 
-    A registry package that is not installed (``available``) has no mode yet: the CLI gives ``null`` and the row's mode is empty.
+    The mode is the run's: the document carries it once, and every row takes it.
     """
     rows: list[PackageRow] = []
+    mode = _text(document.get("mode"))
+    if mode is None:
+        return rows
     for item in document.get("packages", ()):
         if not isinstance(item, Mapping):
             continue
         name, status = _text(item.get("name")), _text(item.get("status"))
-        mode = _text(item.get("mode")) or ("" if status == "available" else None)
-        if not name or mode is None or not status:
+        if not name or not status:
             continue
         warnings = tuple(literal(text) for text in item.get("warnings", ()) if isinstance(text, str))
         rows.append(PackageRow(

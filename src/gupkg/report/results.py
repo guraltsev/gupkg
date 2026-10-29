@@ -34,6 +34,11 @@ def envelope(command: str, *, ok: bool, exit_code: int, **fields: Any) -> dict[s
     return {"api": API_VERSION, "command": command, "ok": ok, "exit_code": exit_code, **fields}
 
 
+def scope_fields(scope: Any) -> dict[str, Any]:
+    """Return the ``mode`` and ``root`` of the run's scope, which a reading document (``list``, ``info``, ``search``) carries once."""
+    return {"mode": str(scope.mode), "root": str(scope.root)}
+
+
 def error_document(
     command: str, code: str, message: str, exit_code: int, hint: str | None = None, **fields: Any
 ) -> dict[str, Any]:
@@ -101,7 +106,10 @@ def dumps(document: Mapping[str, Any]) -> str:
 
 
 def format_listing(rows: Sequence[Mapping[str, Any]], *, details: bool) -> str:
-    """Return the table of ``gupkg list``: name, version, mode and status, with the newest known version of an outdated one."""
+    """Return the table of ``gupkg list``: name, version and status, with the newest known version of an outdated one.
+
+    A registry package that the run's mode cannot install is marked ``(system only)`` or ``(user only)`` and its reason follows.
+    """
     if not rows:
         return "No packages."
     lines: list[str] = []
@@ -111,7 +119,11 @@ def format_listing(rows: Sequence[Mapping[str, Any]], *, details: bool) -> str:
         status = row["status"]
         if status == "outdated" and row["newest_known"]:
             status = f"outdated -> {row['newest_known']}"
-        lines.append(f"{row['name']:<{width}}  {version:<12} {row['mode'] or '-':<9} {status}")
+        if row.get("restriction"):
+            status = f"{status} ({row['restriction']})"
+        lines.append(f"{row['name']:<{width}}  {version:<12} {status}")
+        if row.get("restriction_reason"):
+            lines.append(f"    reason: {row['restriction_reason']}")
         if details:
             lines.extend(f"    {line}" for line in _detail_lines(row))
     return "\n".join(lines)
@@ -145,7 +157,7 @@ def _detail_lines(row: Mapping[str, Any]) -> list[str]:
 
 def format_info(row: Mapping[str, Any]) -> str:
     """Return the text of ``gupkg info`` for one package: the summary line, then every detail."""
-    head = f"{row['name']}  {row['version'] or '-'}  {row['mode'] or '-'}  {row['status']}"
+    head = f"{row['name']}  {row['version'] or '-'}  {row['status']}"
     lines = [head, *(f"  {line}" for line in _detail_lines(row))]
     checksum = row.get("checksum")
     if checksum:

@@ -1,8 +1,7 @@
-"""Cover the install and cleanup options that the command line hands to the engine: ``--refresh``, ``--in-place``, ``--bundled``.
+"""Cover the install and cleanup options that the command line hands to the engine: ``--refresh``, ``--bundled``.
 
 Behavior covered: ``install --refresh`` rebuilds an ``App`` that exists (a file changed by hand comes back) while a plain install
-leaves it; ``install <folder> --in-place`` installs from the folder where it is (nothing is copied into the root) and a plain
-install copies it; ``cleanup --bundled`` removes the bundled gupkg of old versions in a root with a forwarder and a plain cleanup
+leaves it; ``cleanup --bundled`` removes the bundled gupkg of old versions in a root with a forwarder and a plain cleanup
 keeps it; ``--skip-checksum`` never waives a hash that does not match (exit code 3, no ``App``).
 
 Real: the argument parser, the engine and real folders. Mocked: ``FakeSystem`` and the served artifacts.
@@ -40,20 +39,6 @@ def test_refresh_rebuilds_an_app_that_can_be_rebuilt_and_a_plain_install_does_no
 
     assert refreshed.code == 0, refreshed.err
     assert target.read_text(encoding="utf-8") == "tool 1.0.0\n"
-
-
-def test_in_place_installs_from_the_folder_where_it_is_and_a_plain_install_copies_it(world: CliWorld) -> None:
-    """--in-place makes the folder's own package current and copies nothing into the root; without it the root gets a copy."""
-    folder = world.publish("tool", "1.0.0", tables=SHIM, root=world.base / "downloads")
-    other = world.publish("other", "1.0.0", tables=SHIM, root=world.base / "downloads")
-
-    in_place = world.cli("install", str(folder), "--in-place", "--yes")
-    copied = world.cli("install", str(other), "--yes")
-
-    assert in_place.code == 0, in_place.err
-    assert (folder.parent / "current").is_dir() and not (world.user / "tool").exists()
-    assert copied.code == 0, copied.err
-    assert (world.user / "other" / "current").is_dir() and not (other.parent / "current").exists()
 
 
 def test_bundled_removes_the_bundled_gupkg_of_old_versions_and_a_plain_cleanup_keeps_it(world: CliWorld) -> None:

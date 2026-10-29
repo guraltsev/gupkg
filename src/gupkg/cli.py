@@ -402,7 +402,7 @@ def _requests(args: argparse.Namespace, command: str) -> Callable[[str], Request
     if command == "check-updates":
         return lambda target: Request("check-updates", target, no_download=args.no_download)
     if command == "install":
-        return lambda target: Request("install", target, refresh=args.refresh, in_place=args.in_place)
+        return lambda target: Request("install", target, refresh=args.refresh)
     if command == "update":
         return lambda target: Request("update", target)
     if command == "switch":
@@ -593,7 +593,7 @@ def _child_argv(
     else:
         positional = list(targets)
     for flag, option in (
-        ("no_download", "--no-download"), ("refresh", "--refresh"), ("in_place", "--in-place"), ("purge", "--purge"),
+        ("no_download", "--no-download"), ("refresh", "--refresh"), ("purge", "--purge"),
         ("bundled", "--bundled"), ("fix", "--fix"), ("unlink", "--unlink"), ("plan", "--plan"), ("yes", "--yes"),
         ("no_input", "--no-input"), ("allow_downgrade", "--allow-downgrade"),
         ("allow_other_broken_versions", "--allow-other-broken-versions"),
@@ -624,7 +624,7 @@ def _child_argv(
 
 def _catalog(run: _Run) -> Catalog:
     """Build the catalog of the run's scope: its root only."""
-    return Catalog.from_scope(run.scope, run.system, run.env)
+    return Catalog(run.scope, run.system)
 
 
 def _cmd_list(run: _Run) -> int:
@@ -643,12 +643,12 @@ def _cmd_list(run: _Run) -> int:
     if args.names:
         names = [row["name"] for row in rows]
         if run.json:
-            _document(run, results.envelope("list", ok=True, exit_code=EXIT_OK, names=names))
+            _document(run, results.envelope("list", ok=True, exit_code=EXIT_OK, **results.scope_fields(run.scope), names=names))
         else:
             print("\n".join(names))
         return EXIT_OK
     if run.json:
-        _document(run, results.envelope("list", ok=True, exit_code=EXIT_OK, packages=rows, warnings=list(listing.warnings)))
+        _document(run, results.envelope("list", ok=True, exit_code=EXIT_OK, **results.scope_fields(run.scope), packages=rows, warnings=list(listing.warnings)))
     else:
         print(results.format_listing(rows, details=args.details))
     return EXIT_OK
@@ -670,7 +670,7 @@ def _cmd_info(run: _Run) -> int:
             errors.append({"target": target, **data})
             print(f"error: {target}: {data['message']}", file=sys.stderr)
     if run.json:
-        _document(run, results.envelope("info", ok=code == EXIT_OK, exit_code=code, packages=rows, errors=errors))
+        _document(run, results.envelope("info", ok=code == EXIT_OK, exit_code=code, **results.scope_fields(run.scope), packages=rows, errors=errors))
     else:
         print("\n\n".join(results.format_info(row) for row in rows))
     return code
@@ -691,7 +691,7 @@ def _cmd_search(run: _Run) -> int:
         for view in views
     ]
     if run.json:
-        _document(run, results.envelope("search", ok=True, exit_code=EXIT_OK, query=args.query, packages=rows))
+        _document(run, results.envelope("search", ok=True, exit_code=EXIT_OK, **results.scope_fields(run.scope), query=args.query, packages=rows))
     else:
         width = max((len(row["name"]) for row in rows), default=0)
         lines = [f"{row['name']:<{width}}  {row['registry']:<10} {row['registry_version'] or '-':<12} {row['status']}" for row in rows]
@@ -984,7 +984,7 @@ def _sandbox_install(run: _Run, version_dir: Path) -> dict[str, Any]:
 def _pkg_pin(run: _Run) -> int:
     """Show where a receipt's hash came from and, once confirmed, copy it into the version's ``pkg.toml``."""
     args = run.args
-    resolved = _catalog(run).resolve(args.target, for_mutation=True)
+    resolved = _catalog(run).resolve(args.target)
     view = resolved.view
     version = resolved.version or (view.installed.version if view.installed is not None else None)
     if view.local is None or version is None or view.local.version(version) is None:
@@ -1282,7 +1282,6 @@ def _build_parser() -> argparse.ArgumentParser:
               "gupkg install firefox")
     sub.add_argument("targets", nargs="+", metavar="TARGET")
     sub.add_argument("--refresh", action="store_true", help="rebuild an App that can be rebuilt")
-    sub.add_argument("--in-place", action="store_true", help="install a distribution folder where it is (an ad-hoc root)")
     _version_questions(sub)
     _options(sub, mutating=True, plan=True, skip=True, events=True, relaunch=True)
 

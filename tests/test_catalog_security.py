@@ -7,7 +7,7 @@ sibling package, to a folder inside a version, or to the package root itself) ma
 skipped; the containment test recognises one folder under every spelling (``..``, ``\\\\?\\``
 prefix, letter case, trailing dots and spaces, 8.3 names); an elevated run reads only the system
 root, only when it is admin-only, refuses untrusted path targets and reads only the system root's
-registry cache.
+registry cache. (A record of another mode is in ``test_catalog_one_root``.)
 
 Real: junctions (``FakeSystem`` links are real; the ``windows_integration`` test uses
 ``WindowsSystem``), package roots on pytest's temporary folder, the catalog. Mocked: elevation and
@@ -70,7 +70,7 @@ def test_current_that_leaves_its_package_root_is_broken_and_never_followed(syste
     system.create_junction(package / "current", target)
 
     catalog = make_catalog(system, tmp_path)[0]
-    view = catalog.describe("foo", next(root for root in catalog.roots if root.mode == "user"))
+    view = catalog.describe("foo")
 
     assert view.local.current.status == "escapes"
     assert view.installed is None
@@ -249,11 +249,9 @@ def test_real_junctions_are_read_the_same_way(tmp_path: Path) -> None:
 def test_elevated_run_reads_only_the_system_root(tmp_path: Path) -> None:
     """An elevated run lists only the system root (decision D31) and never touches the user root."""
     system = FakeSystem(tmp_path / "machine", elevated=True)
-    roots = make_catalog(system, tmp_path, elevated=True)[1]
+    catalog, roots = make_catalog(system, tmp_path, mode="system")
     write_version(roots["system"] / "sysapp", "1.0")
     write_version(roots["user"] / "userapp", "1.0")
-
-    catalog = make_catalog(system, tmp_path)[0]
 
     assert [view.name for view in catalog.list().views] == ["sysapp"]
     with pytest.raises(NotFound):
@@ -264,34 +262,31 @@ def test_elevated_run_skips_a_system_root_that_users_can_modify(tmp_path: Path) 
     """When the system root is not admin-only, an elevated run reads nothing from it and says why."""
     untrusted = tmp_path / "system"
     system = FakeSystem(tmp_path / "machine", elevated=True, untrusted_dirs={untrusted})
-    roots = make_catalog(system, tmp_path)[1]
+    catalog, roots = make_catalog(system, tmp_path, mode="system")
     write_version(roots["system"] / "sysapp", "1.0")
 
-    listing = make_catalog(system, tmp_path)[0].list()
+    listing = catalog.list()
 
     assert listing.views == ()
     assert any("Skipped" in warning and "elevated" in warning for warning in listing.warnings)
 
 
 def test_elevated_run_refuses_a_path_in_an_untrusted_folder(tmp_path: Path) -> None:
-    """A path target outside the admin-only locations is refused in an elevated run instead of being read."""
-    ordinary = tmp_path / "downloads"
-    write_version(ordinary / "foo", "1.0")
-    system = FakeSystem(tmp_path / "machine", elevated=True, untrusted_dirs={ordinary})
-    catalog = make_catalog(system, tmp_path)[0]
+    """A path target in a folder that users can modify is refused in an elevated run instead of being read."""
+    system = FakeSystem(tmp_path / "machine", elevated=True, untrusted_dirs={tmp_path / "system" / "downloads"})
+    catalog, roots = make_catalog(system, tmp_path, mode="system")
+    write_version(roots["system"] / "downloads" / "foo", "1.0")
 
     with pytest.raises(UntrustedLocation, match="elevated"):
-        catalog.resolve(str(ordinary / "foo"))
+        catalog.resolve(str(roots["system"] / "downloads" / "foo"))
 
 
 def test_elevated_run_uses_only_the_system_roots_registry_cache(tmp_path: Path) -> None:
     """A user root's registry cache is ignored by an elevated run: only the admin-only system cache supplies entries."""
     system = FakeSystem(tmp_path / "machine", elevated=True)
-    roots = make_catalog(system, tmp_path)[1]
+    catalog, roots = make_catalog(system, tmp_path, mode="system")
     build_registry(roots["user"], {"userfoo": {"versions": ["9.9"]}})
     build_registry(roots["system"], {"sysfoo": {"versions": ["1.0"]}})
-
-    catalog = make_catalog(system, tmp_path)[0]
 
     assert catalog.describe("sysfoo").status == "available"
     with pytest.raises(NotFound):
@@ -301,24 +296,8 @@ def test_elevated_run_uses_only_the_system_roots_registry_cache(tmp_path: Path) 
 def test_registry_cache_in_an_untrusted_folder_is_not_read_in_an_elevated_run(tmp_path: Path) -> None:
     """An elevated run refuses a registry cache that users can modify: the registry contributes nothing."""
     system = FakeSystem(tmp_path / "machine", elevated=True, untrusted_dirs={tmp_path / "system" / ".gupkg"})
-    roots = make_catalog(system, tmp_path)[1]
+    catalog, roots = make_catalog(system, tmp_path, mode="system")
     build_registry(roots["system"], {"sysfoo": {"versions": ["1.0"]}})
-
-    catalog = make_catalog(system, tmp_path)[0]
 
     with pytest.raises(NotFound):
         catalog.describe("sysfoo")
-
-
-def test_record_that_claims_a_user_package_inside_the_system_root_is_broken(tmp_path: Path) -> None:
-    """An install record naming another mode than its root is distrusted: the package is broken, not installed."""
-    system = FakeSystem(tmp_path / "machine", elevated=True)
-    roots = make_catalog(system, tmp_path)[1]
-    package = roots["system"] / "foo"
-    write_version(package, "1.0", populated=True)
-    activate(system, package, "1.0")
-    write_record(package, InstallRecord(mode="user"))
-
-    view = make_catalog(system, tmp_path)[0].describe("foo")
-
-    assert view.status == "broken"

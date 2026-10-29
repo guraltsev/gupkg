@@ -1,9 +1,9 @@
-"""Cover ``gupkg check`` (the health check): drift of integration effects, ``--fix``, shadowing and unverified installs.
+"""Cover ``gupkg check`` (the health check): drift of integration effects, ``--fix`` and unverified installs.
 
 Behaviour covered: a deleted shim and a missing ``PATH`` entry are reported and ``--fix`` restores both; a changed shortcut and
 a lost environment value are drift too; a dangling ``current`` and a missing ``App`` are reported; unverified installs
 (skipped checksum, origin not verified) are listed and a recorded ``verified`` in a user-writable receipt is shown as a
-self-report, not proof; shadowing across the system and user roots is reported; an elevated run does not read the user's
+self-report, not proof; an elevated run does not read the user's
 environment; a package that is not installed is not unhealthy.
 
 Real: the engine, the catalog and real folders. Mocked: ``FakeSystem``. Out of scope: rendering (issue 029).

@@ -6,7 +6,7 @@ and what is installed. ``view.status`` derives the one status shown to users
 (``available``, ``local``, ``installed``, ``outdated`` or ``broken``; a version that fails
 validation is ``invalid`` on its own), and ``known_candidates(view)`` lists the versions
 an install or update may choose from. The module also parses and renders the install
-record ``<package>\\.gupkg\\package.toml`` and the ``adhoc`` list of ``state.toml`` as plain
+record ``<package>\\.gupkg\\package.toml`` as plain
 data. It does no input or output and never looks at a disk.
 
 Usage and API
@@ -14,7 +14,7 @@ Usage and API
 ``gupkg.catalog`` builds the views; callers read ``PackageView.status``,
 ``PackageView.local``, ``PackageView.registry`` and friends. ``parse_install_record(data)``
 and ``install_record_to_data(record)`` convert between the TOML data of an install record
-and ``InstallRecord``. ``parse_state(data)`` reads the ad-hoc roots of ``state.toml``.
+and ``InstallRecord``.
 
 Implementation Approach
 -----------------------
@@ -63,25 +63,9 @@ class RecordError(ValueError):
 
 @dataclass(frozen=True)
 class Root:
-    """A directory that holds packages, with one install mode.
-
-    ``mode`` is ``None`` for a path that no configured root contains and no install record
-    decides (``auto`` then applies, design 6.2). ``adhoc`` marks a root recorded in ``state.toml`` rather than configured in the
-    settings; ``single`` says that its ``path`` is itself one package root.
-    """
+    """The directory that holds the packages of the run (its scope's root)."""
 
     path: Path
-    mode: str | None
-    adhoc: bool = False
-    single: bool = False
-
-
-@dataclass(frozen=True)
-class AdhocRoot:
-    """One ``[[adhoc]]`` entry of ``state.toml``: a package root outside every configured root."""
-
-    path: str
-    mode: str
 
 
 @dataclass(frozen=True)
@@ -248,45 +232,6 @@ def install_record_to_data(record: InstallRecord) -> dict[str, Any]:
             for effect in record.effects
         ]
     return data
-
-
-def parse_state(data: Mapping[str, Any]) -> tuple[AdhocRoot, ...]:
-    """Read the ad-hoc roots from the parsed ``state.toml`` of a root data directory.
-
-    Parameters
-    ----------
-    data : mapping
-        The parsed ``state.toml``. Keys other than ``adhoc`` (the last registry sync, for
-        example) belong to other readers and are ignored.
-
-    Returns
-    -------
-    tuple of AdhocRoot
-        One entry per ``[[adhoc]]`` table.
-
-    Raises
-    ------
-    RecordError
-        If ``adhoc`` is not an array of tables with an absolute ``path`` and a valid ``mode``.
-    """
-    raw = data.get("adhoc", [])
-    if not isinstance(raw, list) or any(not isinstance(item, dict) for item in raw):
-        raise RecordError("adhoc must be an array of tables ([[adhoc]])")
-
-    # Each entry needs an absolute path with a drive and one of the three modes.
-    problems: list[str] = []
-    entries: list[AdhocRoot] = []
-    for index, item in enumerate(raw):
-        path, mode = item.get("path"), item.get("mode")
-        if not isinstance(path, str) or not re.match(r"^[A-Za-z]:[\\/]", path):
-            problems.append(f"adhoc[{index}].path must be an absolute path with a drive")
-        elif mode not in MODES:
-            problems.append(f"adhoc[{index}].mode must be one of {', '.join(MODES)}")
-        else:
-            entries.append(AdhocRoot(path, mode))
-    if problems:
-        raise RecordError(problems)
-    return tuple(entries)
 
 
 # ---------------------------------------------------------------------------
@@ -476,14 +421,16 @@ class PackageView:
     diverged : tuple of str
         Local versions whose ``pkg.toml`` differs from the followed registry's copy.
     problems : tuple of str
-        Problems that make the package ``broken``: an unreadable install record, or a
-        recorded mode that disagrees with the root.
+        Problems that make the package ``broken``: an unreadable or missing install record, or a
+        recorded mode that is not the run's.
     warnings : tuple of str
         Problems that do not (a link to a registry entry that is missing, for example).
     record : InstallRecord or None
         The parsed install record.
-    mode : str or None
-        The install mode: the record's, else the root's.
+    restriction : str or None
+        ``system only`` or ``user only`` for an ``available`` package that the run's mode cannot install (Q14).
+    restriction_reason : str or None
+        The refusal text that goes with *restriction*.
     path : Path or None
         The package root directory.
     status : str
@@ -501,13 +448,8 @@ class PackageView:
     problems: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
     record: InstallRecord | None = None
-
-    @property
-    def mode(self) -> str | None:
-        """Return the install mode: the install record's, else the root's."""
-        if self.record is not None and self.record.mode is not None:
-            return self.record.mode
-        return self.root.mode if self.root is not None else None
+    restriction: str | None = None
+    restriction_reason: str | None = None
 
     @property
     def path(self) -> Path | None:

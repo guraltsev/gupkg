@@ -6,7 +6,7 @@ root with no ``current`` resolves to its newest version directory however many i
 a ``current`` that is a plain folder is refused, not reinterpreted.
 
 Real: package roots and ``current`` junctions built under pytest's temporary folder, resolved through the catalog
-(``gupkg.catalog.catalog.resolve_package_path``). Mocked: the machine boundary is ``FakeSystem``, whose links are real. Out of
+(``Catalog.resolve`` of a scope whose root holds the package). Mocked: the machine boundary is ``FakeSystem``, whose links are real. Out of
 scope: the catalog's own states (``test_catalog_*``) and installing.
 """
 
@@ -16,7 +16,12 @@ from pathlib import Path
 
 import pytest
 
-from gupkg.catalog.catalog import resolve_package_path
+from tests.catalog_support import catalog_over
+
+
+def resolve_package_path(path: Path, system):
+    """Resolve *path* in a catalog whose root is the folder that holds it."""
+    return catalog_over(system, Path(path).parent).resolve(str(path))
 
 
 def make_version(root: Path, name: str) -> Path:

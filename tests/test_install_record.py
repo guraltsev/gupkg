@@ -1,4 +1,4 @@
-"""Cover the install record ``<package>\\.gupkg\\package.toml`` and the ``adhoc`` list of ``state.toml``.
+"""Cover the install record ``<package>\\.gupkg\\package.toml`` .
 
 Behavior covered: a record written and read back keeps its mode, its link (registry, name, revision, tracker hash),
 the ``unlinked`` opt-out and its effects (including "adopted" ones); a package with no record reads as no record;
@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from gupkg.catalog.record import read_install_record, record_path, write_install_record
-from gupkg.model.state import Effect, InstallRecord, Link, RecordError, parse_install_record, parse_state
+from gupkg.model.state import Effect, InstallRecord, Link, RecordError, parse_install_record
 
 SHA = "0123456789abcdef" * 4
 
@@ -114,22 +114,3 @@ def test_write_replaces_an_existing_record_atomically(tmp_path: Path) -> None:
 
     assert read_install_record(tmp_path).record.mode == "system"
     assert sorted(path.name for path in (tmp_path / ".gupkg").iterdir()) == ["package.toml"]
-
-
-@pytest.mark.parametrize(
-    ("data", "problem"),
-    [
-        pytest.param({"adhoc": [{"path": "C:\\x", "mode": "user"}]}, None, id="valid"),
-        pytest.param({"adhoc": [{"path": "x", "mode": "user"}]}, "absolute path", id="relative-path"),
-        pytest.param({"adhoc": [{"path": "C:\\x", "mode": "auto"}]}, "mode must be one of", id="unknown-mode"),
-        pytest.param({"adhoc": "C:\\x"}, "array of tables", id="not-a-table-array"),
-        pytest.param({"registry_sync": {"at": "now"}}, None, id="other-keys-are-ignored"),
-    ],
-)
-def test_adhoc_entries_of_state_toml_are_validated(data: dict, problem: str | None) -> None:
-    """``[[adhoc]]`` entries need an absolute path with a drive and a known mode; other keys belong to other readers."""
-    if problem is None:
-        parse_state(data)
-        return
-    with pytest.raises(RecordError, match=problem):
-        parse_state(data)

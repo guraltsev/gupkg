@@ -107,11 +107,11 @@ def check_updates(
 
 
 def install(
-    engine: Engine, selectors: Sequence[str], *, refresh: bool = False, in_place: bool = False, skip: str | None = None,
+    engine: Engine, selectors: Sequence[str], *, refresh: bool = False, skip: str | None = None,
 ) -> BatchResult:
     """Install the named packages (a package that is installed is repaired); a tracker is never run."""
     return run_batch(engine, [
-        Request("install", item, refresh=refresh, in_place=in_place, skip=skip) for item in selectors
+        Request("install", item, refresh=refresh, skip=skip) for item in selectors
     ])
 
 
@@ -269,10 +269,10 @@ def _resolve(engine: Engine, request: Request) -> _Target | PackageResult:
     """Resolve one request to its mode, root and catalog, or to the failure that stops this target only."""
     try:
         resolved = resolve_target(
-            TargetRequest(request.selector, request.operation, request.in_place, engine.relaunched, engine.no_input),
+            TargetRequest(request.selector, request.operation, engine.relaunched, engine.no_input),
             scope=engine.scope, system=engine.system, env=engine.env,
         )
-        catalog = Catalog.from_scope(resolved.scope, engine.system, engine.env)
+        catalog = Catalog(resolved.scope, engine.system)
         target = _Target(request, resolved, catalog)
         _require_supported_mode(target)
         return target
@@ -475,7 +475,7 @@ def _prepare_install(
         # A distribution folder outside every root (design 21.4): it is copied into the mode's root, and the install
         # proceeds from the copy.
         name, version = distribution.parent.name, distribution.name
-        entry = catalog.registry_entry(name, context.mode)
+        entry = catalog.registry_entry(name)
         published = entry.version(version) if entry is not None else None
         if entry is not None and published is not None:
             registry = _Registry(entry.registry, published.fingerprint, published.path)
@@ -568,7 +568,7 @@ def _prepare_install(
     tracker = catalog.tracker_sync(view) if view.registry is not None else None
     return ExecutionInput(
         install_plan, context, view, chosen, request, resolved.settings, tracker, distribution, registry.fingerprint,
-        registry.name, registry.path, adhoc=bool(view.root is not None and view.root.adhoc), precopied=precopied,
+        registry.name, registry.path, precopied=precopied,
         warnings=list(resolved.warnings),
     )
 
@@ -582,11 +582,10 @@ class _Registry:
 
 def _describe_destination(catalog: Catalog, name: str, context: Scope) -> PackageView:
     """Return the view of package *name* in the mode's root, or an empty view when it is not installed there yet."""
-    root = Root(context.root, context.mode)
     try:
-        return catalog.describe(name, root)
+        return catalog.describe(name)
     except NotFound:
-        return PackageView(name, root, None)
+        return PackageView(name, Root(context.root), None)
 
 
 def _choose(engine: Engine | None, target: _Target, view: PackageView, execute: bool) -> tuple[Candidate, CopyIn | None]:
@@ -740,7 +739,7 @@ def _uninstall(engine: Engine, target: _Target) -> PackageResult:
     chosen = Chosen(Candidate(view.installed.version if view.installed else "", "local", view.path), Manifest(ManifestKind.VERSION))
     run = ExecutionInput(
         uninstall_plan, context, view, chosen, request, resolved.settings,
-        adhoc=bool(view.root is not None and view.root.adhoc), warnings=list(resolved.warnings),
+        warnings=list(resolved.warnings),
     )
     return execute_uninstall(engine, run)
 
@@ -869,18 +868,17 @@ def _check(engine: Engine, target: _Target) -> PackageResult:
     selection = resolved.resolved
     if selection is None:
         raise NotFound(f"{request.selector} was not found")
-    shadowing = _listing_warnings(target)
     view = selection.view
     record_manifest = bool(settings["install.record_manifest"])
-    diagnosis = diagnose(engine.system, view, elevated=engine.elevated, record_manifest=record_manifest, shadowing=shadowing)
+    diagnosis = diagnose(engine.system, view, elevated=engine.elevated, record_manifest=record_manifest)
     fixed: list[str] = []
     if request.fix and diagnosis.installed and diagnosis.fixable:
         fixed = [item.message for item in diagnosis.problems if item.fixable]
         outcome = _repair(engine, _Target(replace(request, operation="repair", fix=False), resolved, target.catalog), diagnosis)
         if not outcome.ok:
             return outcome
-        view = target.catalog.describe(view.name, view.root) if view.root is not None else view
-        diagnosis = diagnose(engine.system, view, elevated=engine.elevated, record_manifest=record_manifest, shadowing=shadowing)
+        view = target.catalog.describe(view.name)
+        diagnosis = diagnose(engine.system, view, elevated=engine.elevated, record_manifest=record_manifest)
     return _check_result(view, context, diagnosis, fixed)
 
 
@@ -899,17 +897,9 @@ def _repair(engine: Engine, target: _Target, diagnosis: Diagnosis) -> PackageRes
     )
     run = ExecutionInput(
         repair_plan, context, view, chosen, target.request, target.resolved.settings,
-        adhoc=bool(view.root is not None and view.root.adhoc), warnings=list(target.resolved.warnings),
+        warnings=list(target.resolved.warnings),
     )
     return execute_install(engine, run)
-
-
-def _listing_warnings(target: _Target) -> list[str]:
-    """Return the warnings of the catalog's listing, among them the shadowing across modes."""
-    try:
-        return list(target.catalog.list().warnings)
-    except (OSError, ValueError):
-        return []
 
 
 def _check_result(view: PackageView, context: Scope, diagnosis: Diagnosis, fixed: Sequence[str]) -> PackageResult:

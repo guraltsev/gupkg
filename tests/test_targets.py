@@ -4,8 +4,7 @@ Behavior covered: a name or a path inside the scope's root resolves to that root
 process and in system mode for an elevated one, with no flag; a path outside the root is a distribution folder to copy in
 (or, for an elevated child, refused), never a package of the scope; the package's ``modes`` list is enforced against the
 scope's mode before any work (a portable package is user only); an elevated run does not trust an install record kept in a
-folder users can modify, and never reads the user root or the user settings; a ``system:`` or ``user:`` prefix is refused;
-``--in-place`` in system mode needs an admin-only folder.
+folder users can modify, and never reads the user root or the user settings; a ``system:`` or ``user:`` prefix is refused.
 
 Real: ``resolve_target``, the catalog, settings layering and install records on real folders and junctions below pytest's
 temporary folder. Fake: ``FakeSystem`` for elevation and the admin-only check. Out of scope: the relaunch
@@ -18,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from gupkg.catalog.catalog import CatalogError, parse_selector
+from gupkg.catalog.catalog import CatalogError, NotFound, parse_selector
 from gupkg.model.scope import PORTABLE_REFUSAL, SYSTEM_ONLY_REFUSAL, USER_ONLY_REFUSAL, ModeRefused
 from gupkg.system.port import Mode
 from gupkg.targets import TargetRequest, resolve_target
@@ -131,27 +130,23 @@ def test_an_unknown_name_is_reported_by_the_catalog(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_a_path_into_the_other_modes_root_is_a_folder_to_copy_in_not_a_package_of_this_scope(tmp_path: Path) -> None:
-    """A package folder in the system root, named from a user run, is outside the user root: the scope stays the user's."""
+def test_a_path_into_the_other_modes_root_is_not_a_package_of_this_scope(tmp_path: Path) -> None:
+    """A package folder in the system root, named from a user run, is outside the user root: it is refused, not copied."""
     machine = Machine(tmp_path)
     package = machine.package(machine.system_root, "tool", installed=True)
 
-    result = resolve(machine, str(package))
-
-    assert result.scope.root == machine.user_root and result.scope.mode is Mode.USER
-    assert result.source == package / "1.0.0"
+    with pytest.raises(NotFound, match="not inside this scope's root"):
+        resolve(machine, str(package))
 
 
-def test_a_normal_process_names_a_distribution_folder_and_in_place_keeps_it(tmp_path: Path) -> None:
-    """A distribution folder is copied into the root unless ``--in-place`` is given."""
+def test_a_normal_process_names_a_distribution_folder_to_copy_in(tmp_path: Path) -> None:
+    """A distribution folder outside the root is copied into it."""
     machine = Machine(tmp_path)
     folder = machine.distribution()
 
     copied = resolve(machine, str(folder))
-    kept = resolve(machine, str(folder), in_place=True)
 
     assert (copied.scope.mode, copied.source) == (Mode.USER, folder)
-    assert (kept.scope.mode, kept.source) == (Mode.USER, None)
 
 
 def test_an_administrator_shell_may_name_a_folder_outside_the_root_to_copy_in(tmp_path: Path) -> None:
@@ -163,16 +158,6 @@ def test_an_administrator_shell_may_name_a_folder_outside_the_root_to_copy_in(tm
 
     assert (result.scope.mode, result.scope.root) == (Mode.SYSTEM, machine.system_root)
     assert result.source == folder and result.resolved is None
-
-
-def test_an_administrator_shell_cannot_keep_a_user_writable_folder_in_place(tmp_path: Path) -> None:
-    """``--in-place`` in system mode needs an admin-only folder; a user-writable one is refused."""
-    downloads = tmp_path / "downloads"
-    machine = Machine(tmp_path, elevated=True, untrusted={downloads})
-    folder = machine.distribution()
-
-    with pytest.raises(ModeRefused, match="admin-only"):
-        resolve(machine, str(folder), in_place=True)
 
 
 # ---------------------------------------------------------------------------

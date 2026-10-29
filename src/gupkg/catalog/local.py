@@ -11,8 +11,7 @@ Usage and API
 -------------
 Call ``scan_root(root)`` to list the packages of a root, ``scan_package(path, system)`` to
 build one package's ``LocalState``, ``read_current(package_root, system)`` to inspect the
-activation entry, ``read_adhoc_roots(data_dir)`` to read the ad-hoc roots recorded in a root
-data directory, and ``tree_hash(path)`` for the content hash that the install record keeps
+activation entry, and ``tree_hash(path)`` for the content hash that the install record keeps
 for a copied tracker. ``is_inside(path, root)`` is the containment test used throughout.
 
 Implementation Approach
@@ -30,7 +29,6 @@ import hashlib
 import ntpath
 import os
 import stat
-import tomllib
 from dataclasses import dataclass
 from functools import cmp_to_key
 from pathlib import Path
@@ -38,12 +36,9 @@ from pathlib import Path
 from ..model.state import (
     CurrentState,
     LocalState,
-    RecordError,
     Root,
-    AdhocRoot,
     TrackerState,
     VersionState,
-    parse_state,
 )
 from ..model.version import (
     CURRENT_DIR_NAME,
@@ -54,7 +49,6 @@ from ..model.version import (
 )
 from ..pkgcheck import check_directory
 from ..system.port import System
-from ..tomlio import read_toml
 
 # Windows marks junctions and symbolic links with this file attribute.
 _REPARSE_POINT = 0x400
@@ -201,7 +195,7 @@ def scan_root(root: Root, *, max_depth: int = 8) -> RootScan:
     Parameters
     ----------
     root : Root
-        The root to scan. A root marked ``single`` is itself one package root.
+        The root to scan.
     max_depth : int, default=8
         How many marked grouping folders may be descended through.
 
@@ -211,8 +205,6 @@ def scan_root(root: Root, *, max_depth: int = 8) -> RootScan:
         Packages in name order (none for a root that does not exist), and a diagnostic for every folder that could not be read,
         was skipped because it is a link, or was left out (grouping depth, loops).
     """
-    if root.single:
-        return RootScan(((root.path.name, root.path),))
     packages: list[tuple[str, Path]] = []
     diagnostics: list[str] = []
     visited = {canonical_path(root.path)}
@@ -286,31 +278,6 @@ def looks_like_package(path: Path) -> bool:
             if (path / name / MANIFEST_NAME).is_file():
                 return True
     return False
-
-
-def read_adhoc_roots(data_dir: Path) -> tuple[tuple[AdhocRoot, ...], str | None]:
-    """Read the ad-hoc roots recorded in ``<data_dir>\\state.toml``.
-
-    Parameters
-    ----------
-    data_dir : Path
-        A root data directory (``<root>\\.gupkg``).
-
-    Returns
-    -------
-    tuple
-        ``(roots, problem)``. A missing ``state.toml`` gives no roots and no problem; an
-        unreadable or invalid one gives no roots and a message.
-    """
-    state = Path(data_dir) / "state.toml"
-    if is_reparse_point(Path(data_dir)):
-        return (), f"{data_dir} is a link and is not followed"
-    if not state.is_file():
-        return (), None
-    try:
-        return parse_state(read_toml(state)), None
-    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError, RecordError) as exc:
-        return (), f"Cannot read {state}: {exc}"
 
 
 # ---------------------------------------------------------------------------

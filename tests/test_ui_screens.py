@@ -216,9 +216,9 @@ def test_the_browser_lists_the_packages_and_the_status_line_counts_them(tmp_path
 
 
 def test_the_a_key_lists_the_registry_packages_that_are_not_installed_and_a_second_press_hides_them(tmp_path: Path, fake: FakeGupkg) -> None:
-    """``a`` adds the registry's packages that are not installed to the table (the real CLI gives them ``mode: null``), says so in the status line, and ``a`` again hides them."""
-    available = head("list", packages=[
-        {"name": name, "mode": None, "status": "available", "version": None, "newest_known": "1.0.0", "path": None, "following": f"main/{name}", "problems": [], "warnings": []}
+    """``a`` adds the registry's packages that are not installed to the table (the real CLI gives them the document's mode, like every row), says so in the status line, and ``a`` again hides them."""
+    available = head("list", mode="user", root="C:\\opt", packages=[
+        {"name": name, "status": "available", "version": None, "newest_known": "1.0.0", "path": None, "following": f"main/{name}", "problems": [], "warnings": []}
         for name in ("copyq", "graphviz")
     ], warnings=[])
     # The double answers ``list`` and ``list --available`` alike, in order, and the last answer repeats. The fixture answered the opening

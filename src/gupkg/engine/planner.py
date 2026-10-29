@@ -164,7 +164,7 @@ def plan_install(
     desired : sequence of Effect
         The integration effects the version declares for this mode.
     notes : sequence of str
-        Facts to report (the origin label, shadowing, what the mode left out).
+        Facts to report (the origin label, what the mode left out).
     copy_in : CopyIn, optional
         A version directory that is copied into the package root before anything else.
     package_path : Path, optional

@@ -19,16 +19,15 @@ import pytest
 
 from gupkg_manager.batch import check_all, check_updates_all, pick, update_all
 from gupkg_ui.interaction import Interaction
-from gupkg_ui.plans import PackageRow, read_packages
+from gupkg_ui.plans import PackageRow
 from gupkg_ui.session import BatchOutcome, BatchSession
-from tests.ui_support import FakeGupkg, ListSink, until, entry, list_doc, make_env, plan_doc, plan_entry, plan_failure, result
+from tests.ui_support import FakeGupkg, ListSink, until, entry, make_env, package_rows, plan_doc, plan_entry, plan_failure, result
 
 
 def rows_for(base: Path, *packages: tuple[str, str]) -> list[PackageRow]:
     """Return outdated inventory rows for ``(name, mode)`` pairs, with package folders under the test's roots."""
     roots = base / "roots"
-    document = list_doc([(name, mode, "outdated", "1.0.0", "2.0.0", str(roots / mode / name)) for name, mode in packages])
-    return read_packages(document)
+    return package_rows([(name, mode, "outdated", "1.0.0", "2.0.0", str(roots / mode / name)) for name, mode in packages])
 
 
 def logs_of(base: Path, mode: str) -> str:
@@ -364,10 +363,10 @@ def test_check_with_fix_asks_the_cli_for_one_grouped_call(fake: FakeGupkg, tmp_p
 
 def test_pick_chooses_what_each_all_batch_acts_on() -> None:
     """``update --all`` takes the outdated packages, ``check-updates --all`` the installed and local ones, and a mode filter narrows both."""
-    rows = read_packages(list_doc([
+    rows = package_rows([
         ("a", "user", "outdated", "1", "2", None), ("b", "user", "installed", "1", None, None), ("c", "system", "outdated", "1", "2", None),
         ("d", "user", "local", None, "1", None), ("e", "user", "available", None, None, None), ("f", "user", "broken", "1", None, None),
-    ]))
+    ])
 
     assert [row.name for row in pick(rows, "update")] == ["a", "c"]
     assert [row.name for row in pick(rows, "update", mode="user")] == ["a"]

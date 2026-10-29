@@ -30,7 +30,7 @@ from .model.state import PackageView, known_candidates
 
 
 def package_data(view: PackageView, *, details: bool = False) -> dict[str, Any]:
-    """Return the data of one package: name, mode, status, active and newest known version, with details when asked.
+    """Return the data of one package: name, status, active and newest known version, with details when asked.
 
     Parameters
     ----------
@@ -48,11 +48,12 @@ def package_data(view: PackageView, *, details: bool = False) -> dict[str, Any]:
     candidates = known_candidates(view)
     data: dict[str, Any] = {
         "name": view.name,
-        "mode": view.mode,
         "status": view.status,
         "version": view.installed.version if view.installed is not None else None,
         "newest_known": candidates[0].version if candidates else None,
         "path": str(view.path) if view.path is not None else None,
+        "restriction": view.restriction,
+        "restriction_reason": view.restriction_reason,
         "following": view.following,
         "problems": list(view.broken_reasons),
         "warnings": list(view.warnings),

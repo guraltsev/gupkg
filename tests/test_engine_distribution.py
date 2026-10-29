@@ -3,8 +3,7 @@
 Behaviour covered: a distribution folder with no registry fingerprint is installed and labelled *origin not verified*; with a
 matching fingerprint it is labelled *verified against registry main*; with a mismatching one the install is refused and the
 machine is unchanged; after an install, changing a file of the version directory makes ``check`` report the mismatch; the copy
-never overwrites a diverging directory; the Mark of the Web is not copied and the receipt records it; an in-place install is
-remembered as an ad-hoc root; a registry-only package is copied in with its tracker; a registry that has only a tracker is
+never overwrites a diverging directory; the Mark of the Web is not copied and the receipt records it; a registry-only package is copied in with its tracker; a registry that has only a tracker is
 copied and the install stops with a hint.
 
 Real: the engine, the distribution copy, the registry cache layout and real folders. Mocked: ``FakeSystem``.
@@ -20,7 +19,6 @@ from pathlib import Path
 
 import pytest
 
-from gupkg.catalog.local import read_adhoc_roots
 from gupkg.catalog.record import read_install_record
 from gupkg.engine.receipts import read_receipt
 from gupkg.services.fingerprint import fingerprint_directory
@@ -246,18 +244,6 @@ def test_an_unmarked_distribution_is_recorded_as_unmarked(world: World) -> None:
     world.one("install", str(folder))
 
     assert read_receipt(world.user / "tool", "1.0.0").data["origin"]["source_marked"] is False
-
-
-def test_an_in_place_install_is_remembered_as_an_adhoc_root(world: World) -> None:
-    """--in-place keeps the folder where it is, installs from it and records it in state.toml so list and check see it."""
-    folder = distribution(world)
-
-    result = world.one("install", str(folder), in_place=True)
-
-    package = folder.parent
-    assert result.ok and (package / "current").is_dir() and not (world.user / "tool").exists()
-    adhoc, problem = read_adhoc_roots(world.user / ".gupkg")
-    assert problem is None and [(Path(item.path), item.mode) for item in adhoc] == [(package, "user")]
 
 
 def test_a_registry_only_package_is_copied_in_with_its_tracker(world: World) -> None:

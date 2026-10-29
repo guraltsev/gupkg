@@ -89,8 +89,6 @@ class Request:
         The target as the user wrote it (``name``, ``name@version``, a path).
     version : str, optional
         The version ``switch`` activates.
-    in_place : bool
-        ``--in-place``: do not copy a distribution folder into the root.
     refresh : bool
         ``install --refresh``: rebuild an ``App`` that can be rebuilt.
     purge : bool
@@ -120,7 +118,6 @@ class Request:
     operation: str
     selector: str
     version: str | None = None
-    in_place: bool = False
     refresh: bool = False
     purge: bool = False
     keep: int = 1
@@ -303,7 +300,7 @@ class InstallPlan:
     requires_elevation : bool
         Whether the mode needs an administrator token.
     notes : tuple of str
-        Facts the plan reports (origin label, shadowing, diverged versions).
+        Facts the plan reports (origin label, diverged versions).
     purge : bool
         ``uninstall --purge``.
     """
