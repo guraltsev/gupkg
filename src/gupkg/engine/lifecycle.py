@@ -61,6 +61,7 @@ from ..model.plan import (
 )
 from ..model.scope import InputNeeded, Scope, check_supported
 from ..model.settings import Settings
+from ..system.port import Mode
 from ..model.state import InstallRecord, Link, PackageView, Root
 from ..model.version import MANIFEST_NAME, compare_versions
 from ..targets import ResolvedTarget, TargetRequest, resolve_target
@@ -721,7 +722,11 @@ def _cleanup(engine: Engine, target: _Target) -> PackageResult:
     view = _view(target)
     cleanup_plan = _cleanup_plan(engine, target, view)
     path_value = next((value for name, value in engine.env.items() if name.upper() == "PATH"), None)
-    return execute_cleanup(engine, view.path, cleanup_plan, launchers_find_gupkg(context.root, path_value))
+    judge = None
+    if context.mode is Mode.SYSTEM:
+        # An elevated launcher refuses a gupkg that standard users can change, so it would not find it (design 21.3, 21.8).
+        judge = context.system.directory_untrusted_reason if context.system is not None else (lambda folder: "cannot be judged")
+    return execute_cleanup(engine, view.path, cleanup_plan, launchers_find_gupkg(context.root, path_value, judge))
 
 
 def _old_entries(engine: Engine, folder: Path) -> list[str]:

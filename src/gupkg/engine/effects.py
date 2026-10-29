@@ -30,7 +30,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -259,20 +259,28 @@ def _location_first_line(path: Path) -> str | None:
     return lines[0].strip() if lines else ""
 
 
-def launchers_find_gupkg(root: Path, path_value: str | None) -> bool:
+def launchers_find_gupkg(root: Path, path_value: str | None, untrusted_reason: Callable[[Path], str | None] | None = None) -> bool:
     """Return whether a package launcher of *root* would find a gupkg at step 2 or step 3 of its order (design 21.3, 21.8).
 
     Step 2 is the folder named by the first line of ``<root>\\.gupkg\\gupkg-location`` (relative to *root*) when it holds a
     ``gupkg.cmd``. Step 3 is a ``gupkg.cmd`` or ``gupkg.exe`` in a folder of *path_value* (a ``PATH`` string). The bundled copy
-    (step 1) is deliberately not asked: ``cleanup --bundled`` removes it.
+    (step 1) is deliberately not asked: ``cleanup --bundled`` removes it. The launcher refuses a location line with ``& | < > ^``
+    and removes quotes from it, and its ``where`` ignores quoted ``PATH`` entries; this function does the same.
+
+    *untrusted_reason* is the machine's judge of a folder (``System.directory_untrusted_reason``), given in system mode: an
+    elevated launcher refuses a gupkg that standard users can change, so such a folder does not count as found.
     """
+    def usable(folder: Path) -> bool:
+        return untrusted_reason is None or untrusted_reason(folder) is None
+
     line = _location_first_line(Path(root) / ".gupkg" / LOCATION_FILE)
-    if line and "&" not in line and "|" not in line:
+    if line and not any(char in line for char in "&|<>^"):
         folder = Path(os.path.normpath(Path(root) / line.replace('"', "")))
-        if (folder / "gupkg.cmd").is_file():
+        if (folder / "gupkg.cmd").is_file() and usable(folder):
             return True
     for entry in (path_value or "").split(os.pathsep):
-        if entry.strip() and any((Path(entry.strip().strip('"')) / name).is_file() for name in ("gupkg.cmd", "gupkg.exe")):
+        folder = Path(entry.strip())
+        if entry.strip() and '"' not in entry and any((folder / name).is_file() for name in ("gupkg.cmd", "gupkg.exe")) and usable(folder):
             return True
     return False
 

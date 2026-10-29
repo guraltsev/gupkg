@@ -261,6 +261,51 @@ def test_cleanup_bundled_needs_a_gupkg_location_that_really_names_an_installed_g
     assert (version / "gupkg" / "gupkg.cmd").is_file() and result.details["bundled"] == []
 
 
+def test_launchers_find_a_gupkg_by_the_launchers_own_rules(tmp_path: Path) -> None:
+    """Same refusals as the launcher: a location line with `& | < > ^`, a quoted PATH entry, and (system mode) an untrusted folder."""
+    root = tmp_path / "root"
+    (root / ".gupkg").mkdir(parents=True)
+    app = root / "app"
+    app.mkdir()
+    (app / "gupkg.cmd").write_text("@echo off\r\n", encoding="ascii")
+    location = root / ".gupkg" / "gupkg-location"
+
+    for char in "&|<>^":
+        location.write_text(f"app{char}\r\n", encoding="ascii")
+        assert not launchers_find_gupkg(root, None), char
+    location.write_text("app\r\n", encoding="ascii")
+    assert launchers_find_gupkg(root, None)
+    assert not launchers_find_gupkg(root, None, lambda folder: "Users can modify it")
+    assert launchers_find_gupkg(root, None, lambda folder: None)
+
+    location.write_text("\r\n", encoding="ascii")
+    assert launchers_find_gupkg(root, str(app))
+    assert not launchers_find_gupkg(root, f'"{app}"')
+    assert not launchers_find_gupkg(root, str(app), lambda folder: "Users can modify it")
+
+
+def test_cleanup_bundled_in_system_mode_ignores_a_gupkg_that_standard_users_can_change(tmp_path: Path) -> None:
+    """An elevated launcher refuses a user-writable gupkg, so it would not find it: a user-writable PATH gupkg or location does not let bundled copies go."""
+    world = World(tmp_path, elevated=True)
+    assert world.one("install", str(distribution_with_bundle(world))).ok
+    root = world.root("system")
+    version = root / "tool" / "1.0.0"
+    elsewhere = world.base / "on-path"
+    elsewhere.mkdir()
+    (elsewhere / "gupkg.cmd").write_text("@echo off\r\n", encoding="ascii")
+    world.engine.env = {**world.engine.env, "PATH": str(elsewhere)}
+    world.machine.fake.untrusted_dirs.add(elsewhere.resolve())
+
+    refused = world.one("cleanup", "tool", bundled=True)
+
+    assert refused.ok and (version / "gupkg" / "gupkg.cmd").is_file() and refused.details["bundled"] == []
+    world.machine.fake.untrusted_dirs.clear()
+
+    allowed = world.one("cleanup", "tool", bundled=True)
+
+    assert allowed.ok and allowed.details["bundled"] == ["1.0.0"] and not (version / "gupkg").exists()
+
+
 def test_cleanup_bundled_never_removes_the_bundled_copy_of_gupkg_itself(world: World) -> None:
     """gupkg's own bundled tree is its populate script's input: it stays even with a gupkg-location."""
     install_gupkg(world)
