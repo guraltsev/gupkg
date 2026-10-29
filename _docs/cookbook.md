@@ -151,9 +151,6 @@ gupkg self repair                     :: gupkg's own launch metadata
 3. Edit it to add shortcuts, `PATH` entries or shims, run `gupkg pkg check <folder>`,
    then `gupkg install <name>`.
 
-A 0.17 installation is adopted with the migration tool instead; see
-[Migrating from 0.17 and 0.18](operations.md#migrating-from-017-and-018).
-
 ## Pin a hash after a skipped install
 
 ```bat
@@ -169,8 +166,7 @@ gupkg uninstall <name> --purge         :: also deletes the package folder and it
 gupkg cleanup <name> --keep 2          :: drop old Apps, receipts and logs; never runs on its own
 ```
 
-`uninstall` removes exactly what the install record lists, including what a 0.17 install
-created once the migration tool has adopted it.
+`uninstall` removes exactly what the install record lists.
 
 ## Free disk space
 

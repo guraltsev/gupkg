@@ -1,10 +1,10 @@
-"""Cover the grammar of the 1.0 command line: the commands, the options after them, removed spellings, help and the forwarders.
+"""Cover the grammar of the 1.0 command line: the commands, the options after them, help and the forwarders.
 
 Behaviour covered: every command and subcommand of design 10.2 parses and has an example in its help; the help lists the commands
 in task order; ``config-check``, ``config-fix``, ``doctor``, ``repair-deps`` and ``update-deps`` are unknown commands, and
-``update --check-only``, ``--scope``, ``--no-checksum``, ``update --all`` and ``update --check`` are usage errors (exit 2) that
-name what to use now; options go after the command and are never abbreviated; ``--skip-checksum`` takes no target as its reason
-and accepts only the reasons ``setting`` and ``user-approved``; ``gupkg tui``, ``gupkg manager`` and ``gupkg migrate`` start the
+``--all``, ``--check``, ``--check-only``, ``--scope`` and ``--no-checksum`` are unrecognized arguments (exit 2);
+options go after the command and are never abbreviated; ``--skip-checksum`` takes no target as its reason
+and accepts only the reasons ``setting`` and ``user-approved``; ``gupkg tui`` and ``gupkg manager`` start the
 launchers of the same gupkg tree with the rest of the command line and return the program's exit code, refuse an elevated shell,
 and fail with a clear message when the program is not there.
 
@@ -31,7 +31,7 @@ from tests.mode_support import pin_no_ambient_elevation  # noqa: F401
 
 COMMANDS = [
     "check-updates", "install", "update", "switch", "uninstall", "check", "list", "info", "search", "cleanup", "link", "logs",
-    "shell", "registry", "settings", "pkg", "self", "tui", "manager", "migrate",
+    "shell", "registry", "settings", "pkg", "self", "tui", "manager",
 ]
 SUBCOMMANDS = [
     ("registry", "sync"), ("registry", "status"), ("registry", "list"), ("registry", "add"), ("registry", "remove"),
@@ -71,7 +71,7 @@ def test_the_help_lists_the_commands_in_task_order(world: CliWorld) -> None:
         assert f"  {command} " in text
 
 
-@pytest.mark.parametrize("command", [pytest.param(name, id=name) for name in COMMANDS if name not in ("tui", "manager", "migrate")])
+@pytest.mark.parametrize("command", [pytest.param(name, id=name) for name in COMMANDS if name not in ("tui", "manager")])
 def test_every_command_has_an_example_in_its_help(world: CliWorld, command: str) -> None:
     """gupkg <command> --help shows the options and an example, and exits 0."""
     result = world.cli(command, "--help")
@@ -95,24 +95,6 @@ def test_the_old_commands_are_unknown(world: CliWorld, word: str) -> None:
     assert result.code == 2 and "invalid choice" in result.err and word in result.err
 
 
-@pytest.mark.parametrize(
-    ("argv", "says"),
-    [
-        pytest.param(("update", "tool", "--check-only"), "check-updates", id="check-only"),
-        pytest.param(("update", "tool", "--scope", "user"), "--mode", id="scope-after"),
-        pytest.param(("--scope", "user", "update", "tool"), "--mode", id="scope-before"),
-        pytest.param(("update", "--all"), "gupkg-manager update --all", id="all"),
-        pytest.param(("update", "--check"), "check-updates", id="check"),
-    ],
-)
-def test_the_removed_options_are_usage_errors_that_name_the_replacement(world: CliWorld, argv: tuple[str, ...], says: str) -> None:
-    """A removed 0.17 spelling is exit code 2 and the message says what to use now; nothing runs."""
-    result = world.cli(*argv)
-
-    assert result.code == 2 and says in result.err
-    assert not (world.user / "tool").exists()
-
-
 @pytest.mark.parametrize("argv", [("registry", "sync"), ("list",), ("settings", "show"), ("pkg", "check", ".")], ids=" ".join)
 def test_only_engine_commands_can_be_started_as_a_relaunch(world: CliWorld, argv: tuple[str, ...]) -> None:
     """The hidden `--relaunched` marker exists on the engine commands only: elsewhere it is a usage error (exit 2)."""
@@ -122,23 +104,15 @@ def test_only_engine_commands_can_be_started_as_a_relaunch(world: CliWorld, argv
 
 
 @pytest.mark.parametrize(
-    "option", ["--no-checksum", "--refresh-app", "--shim-linkage", "--format", "--pause", "--download-only"]
+    "option", ["--all", "--check", "--check-only", "--scope", "--no-checksum", "--refresh-app", "--shim-linkage", "--format", "--pause", "--download-only"]
 )
 def test_the_other_removed_options_are_plain_unrecognized_arguments(world: CliWorld, option: str) -> None:
-    """Core keeps no legacy-specific code (D33): only --all, --check, --check-only and --scope are named; the rest is argparse's own error."""
+    """Core keeps no legacy-specific code (D33): every removed spelling is argparse's own error."""
     result = world.cli("install", "tool", option)
 
     assert result.code == 2 and "unrecognized arguments" in result.err and option in result.err
     assert "no longer" not in result.err and "use --" not in result.err
     assert not (world.user / "tool").exists()
-
-
-def test_update_has_no_all_and_names_the_manager(world: CliWorld) -> None:
-    """The refusal of `update --all` points to the manager (D11, D12), also with --json."""
-    result = world.cli("update", "--all", "--json")
-
-    assert result.code == 2 and "gupkg-manager update --all" in result.err
-    assert "gupkg-manager update --all" in result.document()["errors"][0]["message"]
 
 
 def test_options_go_after_the_command_and_are_not_abbreviated(world: CliWorld) -> None:
@@ -229,7 +203,6 @@ def stand_in(tmp_path: Path, **launchers: str) -> tuple[RunningGupkg, Path]:
         pytest.param(("tui", "C:\\opt\\tool\\1.0"), "gupkg-tui C:\\opt\\tool\\1.0", 7, id="tui"),
         pytest.param(("manager", "tui"), "gupkg-manager tui", 3, id="manager-tui"),
         pytest.param(("manager", "update", "--all", "--mode", "user", "--yes"), "gupkg-manager update --all --mode user --yes", 0, id="manager-update"),
-        pytest.param(("migrate", "package", "--check", "C:\\old"), "gupkg-migrate package --check C:\\old", 5, id="migrate"),
         pytest.param(("manager", "--help"), "gupkg-manager --help", 0, id="help-goes-to-the-program"),
     ],
 )
@@ -237,7 +210,7 @@ def test_the_forwarders_start_the_launcher_with_the_arguments_and_pass_the_exit_
     tmp_path: Path, argv: tuple[str, ...], recorded: str, code: int
 ) -> None:
     """gupkg <program> <args> runs <program>.cmd of the same tree with those arguments and returns its exit code."""
-    location, record = stand_in(tmp_path, **{"gupkg-tui": code, "gupkg-manager": code, "gupkg-migrate": code})
+    location, record = stand_in(tmp_path, **{"gupkg-tui": code, "gupkg-manager": code})
 
     result = cli.main(list(argv), system=WindowsSystem(), env={}, location=location)
 
@@ -255,7 +228,7 @@ def test_a_forwarder_records_the_launcher_and_passes_the_exit_code_on_the_fake_m
     assert code == 9 and system.foreground_log == [[str(location.launcher_dirs[0] / "gupkg-tui.cmd"), "somewhere"]]
 
 
-@pytest.mark.parametrize("word", [pytest.param(word, id=f"gupkg-{word}") for word in ("tui", "manager", "migrate")])
+@pytest.mark.parametrize("word", [pytest.param(word, id=f"gupkg-{word}") for word in ("tui", "manager")])
 def test_a_missing_program_is_a_clear_message_and_exit_2(tmp_path: Path, word: str, capsys: pytest.CaptureFixture[str]) -> None:
     """When the launcher is not in the gupkg tree the command says which file is missing, and starts nothing."""
     location, _ = stand_in(tmp_path)
@@ -290,20 +263,9 @@ def test_a_sandbox_that_is_an_existing_file_is_a_usage_error_not_a_traceback(wor
     assert machine.code == 2 and machine.document()["errors"][0]["code"] == "usage"
 
 
-def test_the_migration_tool_is_started_from_an_elevated_shell_and_passes_its_exit_code(tmp_path: Path) -> None:
-    """`migrate` does its own (elevation-aware) work, so an administrator's shell may start it, unlike `tui` and `manager`."""
-    location, _ = stand_in(tmp_path, **{"gupkg-migrate": 0})
-    system = FakeSystem(tmp_path / "machine", elevated=True, processes={"gupkg-migrate.cmd": lambda call: ProcessResult(4)})
-
-    code = cli.main(["migrate", "package", "old"], system=system, env={}, location=location)
-
-    assert code == 4
-    assert [Path(call[0]).name for call in system.foreground_log] == ["gupkg-migrate.cmd"] and system.foreground_log[0][1:] == ["package", "old"]
-
-
 @pytest.mark.parametrize("word", ["tui", "manager"])
 def test_each_ui_forwarder_refuses_an_elevated_shell(tmp_path: Path, capsys: pytest.CaptureFixture[str], word: str) -> None:
-    """Both UI programs refuse an elevated shell; only the migration tool is exempt."""
+    """Both UI programs refuse an elevated shell."""
     location, _ = stand_in(tmp_path, **{f"gupkg-{word}": 0})
     system = FakeSystem(tmp_path / "machine", elevated=True)
 

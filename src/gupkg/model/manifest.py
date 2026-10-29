@@ -860,11 +860,6 @@ def parse_manifest_data(data: Mapping[str, Any], kind: ManifestKind = ManifestKi
     track = _parse_track(collector, data.get("track"))
     prepare = _parse_prepare(collector, data.get("prepare"))
     portable = _parse_portable(collector, data.get("portable"), modes)
-    if "nonportable" in data:
-        collector.error(
-            "nonportable",
-            "was replaced by the install steps of each mode: put `prepare = [[\"remove\", \"path\"]]` under [user] and [system]",
-        )
     user = _parse_mode_steps(collector, data.get("user"), "user", modes)
     system = _parse_mode_steps(collector, data.get("system"), "system", modes)
     shortcuts = _parse_shortcuts(collector, data.get("shortcut"), modes)

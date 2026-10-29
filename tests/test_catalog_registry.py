@@ -2,21 +2,17 @@
 
 Behavior covered: a sync publishes a validated tree and index in the root data directory
 (``<root>\\.gupkg\\registry\\<name>``, not in the gupkg version's ``App``); one invalid package, version or
-tracker is reported and skipped without failing the registry; a registry that is not format 2 (a 0.17
-seed tree) is refused and the previous tree stays active; the validated index is used for a revision and
+tracker is reported and skipped without failing the registry; a registry that is not format 2 is refused and the previous tree stays active; the validated index is used for a revision and
 a stale one is ignored; published fingerprints reach the candidates; several registries are joined with
-the first match winning and ``registry/name`` choosing explicitly; a whole 0.17 registry converted by the
-migration tool is a valid registry 2 of trackers.
+the first match winning and ``registry/name`` choosing explicitly.
 
-Real: ZIP archives built at test time and served by ``FakeSystem`` (``urls``), the real sync, the real
-migration tool on a copy of ``tests/fixtures/registry_017``, and the catalog. Mocked: the network
+Real: ZIP archives built at test time and served by ``FakeSystem`` (``urls``), the real sync and the catalog. Mocked: the network
 (``FakeSystem.add_url``). Out of scope: Git transport, downloading package payloads, and executing installs.
 """
 
 from __future__ import annotations
 
 import io
-import shutil
 import zipfile
 from pathlib import Path
 
@@ -26,11 +22,9 @@ from gupkg.catalog.catalog import NoVersionKnown
 from gupkg.catalog.registry import load_registry, registry_cache_dir, search_snapshot, sync_registry
 from gupkg.model.manifest import ManifestKind, TrackResult, manifest_to_toml, parse_manifest, render_pinned
 from gupkg.tomlio import dumps
-from gupkg_migrate.cli import main as migrate
 from tests.catalog_support import build_registry, make_catalog, tracker_text, version_text
 
 SOURCE = "https://example.org/main.zip"
-REGISTRY_017 = Path(__file__).parent / "fixtures" / "registry_017"
 
 
 def registry_zip(files: dict[str, str], *, registry: dict | None = None, top: str = "gupkg-registry-main") -> bytes:
@@ -111,7 +105,7 @@ def test_one_invalid_package_version_or_tracker_is_reported_and_skipped(system, 
 @pytest.mark.parametrize(
     ("registry", "reason"),
     [
-        pytest.param({}, "unsupported registry format", id="no-registry-file-is-a-0.17-tree"),
+        pytest.param({}, "unsupported registry format", id="no-registry-file"),
         pytest.param({"format": 1}, "unsupported registry format", id="format-1"),
         pytest.param({"format": 2, "fingerprints": {"foo/1.0": "not-a-hash"}}, "fingerprints", id="malformed-fingerprint"),
     ],
@@ -189,58 +183,3 @@ def test_first_registry_with_the_name_wins_and_registry_name_selects_explicitly(
     assert by_default.following == "main/foo" and catalog.install_candidate(by_default).version == "1.0"
     assert explicit.view.following == "team/foo" and catalog.install_candidate(explicit.view).version == "7.0"
     assert only_team.following == "team/only-team"
-
-
-def test_whole_converted_0_17_registry_is_a_valid_registry_of_trackers(system, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """A copy of the real 0.17 registry, converted by the migration tool, syncs as registry 2 and every package is usable.
-
-    Packages that only have a tracker report "no version known yet"; ``gh`` also gets a pinned version rendered from
-    its tracker, which then installs from the registry.
-    """
-    registry = tmp_path / "registry"
-    shutil.copytree(REGISTRY_017, registry)
-    assert migrate(["package", str(registry)]) == 0
-    capsys.readouterr()
-    tracker = parse_manifest((registry / "gh" / "_check_updates" / "pkg.toml").read_text(encoding="utf-8"), ManifestKind.TRACKER)
-    pinned = render_pinned(tracker, TrackResult("2.50.0", {"asset_url": "https://example.org/gh_2.50.0_windows_amd64.zip"}))
-    (registry / "gh" / "2.50.0").mkdir()
-    (registry / "gh" / "2.50.0" / "pkg.toml").write_text(manifest_to_toml(pinned), encoding="utf-8")
-    (registry / "_registry.toml").write_text(dumps({"format": 2, "name": "main"}), encoding="utf-8")
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w") as archive:
-        for path in sorted(registry.rglob("*")):
-            if path.is_file():
-                archive.write(path, f"gupkg-registry-main/{path.relative_to(registry).as_posix()}")
-    roots = make_catalog(system, tmp_path)[1]
-
-    result = sync(system, roots["user"], buffer.getvalue())
-    catalog = make_catalog(system, tmp_path)[0]
-    snapshot = load_registry("main", registry_cache_dir(roots["user"], "main"), system)
-
-    # A tracker that still points at a 0.17 hook is dropped (hook API 2 only); the rest syncs.
-    expected = {path.parent.parent.name for path in REGISTRY_017.glob("*/*/pkg.local")}
-    api_problems = [problem for problem in result.problems if "PKG_MODULE_API = 2" in problem]
-    skipped = {problem.split(":")[0] for problem in result.problems if problem.endswith("no valid version or tracker; skipped")}
-    assert result.ok and len(expected) == 48
-    assert {problem.split("/")[0] for problem in api_problems} == expected and all(p.endswith(("tracker dropped", "version dropped")) for p in api_problems)
-    assert skipped == expected and len(result.problems) == len(api_problems) + len(skipped)
-    assert len(snapshot.entries) == 79 - 48
-    assert "firefox" in expected and "czkawka" not in expected
-    with pytest.raises(NoVersionKnown):
-        catalog.install_candidate(catalog.describe("czkawka"))
-    assert catalog.tracker_sync(catalog.describe("czkawka")).action == "copy"
-    assert catalog.install_candidate(catalog.describe("gh")).version == "2.50.0"
-
-
-def test_untouched_0_17_registry_is_refused(system, tmp_path: Path) -> None:
-    """A 0.17 registry (``_bootstrap`` seeds, no ``_registry.toml``) is not read by core: the sync fails."""
-    archive = io.BytesIO()
-    with zipfile.ZipFile(archive, "w") as zipped:
-        for path in sorted(REGISTRY_017.rglob("*")):
-            if path.is_file():
-                zipped.write(path, f"gupkg-registry-main/{path.relative_to(REGISTRY_017).as_posix()}")
-
-    result = sync(system, tmp_path, archive.getvalue())
-
-    assert not result.ok and "unsupported registry format" in result.error
-    assert load_registry("main", registry_cache_dir(tmp_path, "main"), system).entries == {}

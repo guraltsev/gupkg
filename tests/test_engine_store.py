@@ -158,8 +158,8 @@ def test_a_receipt_over_the_size_limit_is_refused_unread(tmp_path: Path) -> None
 def test_a_receipt_with_an_unknown_schema_or_broken_text_is_a_problem_not_data(tmp_path: Path) -> None:
     """An unreadable or foreign receipt is reported, and a checksum table that is not valid yields no record."""
     package = tmp_path / "tool"
-    write(package / ".gupkg" / "receipts" / "1.0.0.toml", "schema = 9\n")
-    write(package / ".gupkg" / "receipts" / "2.0.0.toml", "not = [toml")
+    write(package / "1.0.0" / "App.info", "schema = 9\n")
+    write(package / "2.0.0" / "App.info", "not = [toml")
 
     assert "unsupported schema" in read_receipt(package, "1.0.0").problem
     assert "Cannot read" in read_receipt(package, "2.0.0").problem

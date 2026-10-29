@@ -3,7 +3,7 @@
  "tracker": "winmerge",
  "provider": "github latest, exact asset",
  "recorded": null,
- "origin": "synthetic fixture modelled on the registry hook's regular expressions (tests/fixtures/registry_017/winmerge/_bootstrap/pkg.toml, the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
  "expected": {
   "version": "2.16.46",
   "download_url": "https://github.com/WinMerge/winmerge/releases/download/v2.16.46/winmerge-2.16.46-x64-exe.zip",

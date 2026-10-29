@@ -1,7 +1,7 @@
 # Operations guide
 
 This is the runbook for installing, configuring, scheduling, repairing and
-migrating `gupkg` 1.0. The top-level [README](../README.md) explains the package
+updating `gupkg` 1.0. The top-level [README](../README.md) explains the package
 model and the command reference; [Getting started](getting_started.md) and the
 [cookbook](cookbook.md) are task-oriented; [Troubleshooting](troubleshooting.md)
 lists every error message.
@@ -13,10 +13,9 @@ lists every error message.
 | `gupkg` | The command line: every operation, no screens, no `--all`. | `gupkg ...` |
 | `gupkg-tui` | One package's interactive view. A separate program that only calls `gupkg`. | `gupkg-tui NAME` or `gupkg tui NAME` |
 | `gupkg-manager` | The browser over every package, and the batch commands for schedules (`check-updates --all`, `update --all`, `check`). A separate program that only calls `gupkg`. | `gupkg-manager` or `gupkg manager ...` |
-| `gupkg-migrate` | The one-time converter for 0.17 data (see [Migrating](#migrating-from-017-and-018)). | `gupkg migrate ...` |
 
 All four live in one gupkg tree, and the UI programs call the `gupkg.cmd` of **their own tree**, never one found on
-`PATH`. `gupkg tui`, `gupkg manager` and `gupkg migrate` are permanent forwarders to them.
+`PATH`. `gupkg tui` and `gupkg manager` are permanent forwarders to them.
 
 ## Installing gupkg
 
@@ -218,45 +217,6 @@ Start Menu, while files and downloads are real. Use it to rehearse an install, a
 without touching it, and for the smoke tests in [`tests/manual_smoke.md`](../tests/manual_smoke.md). `gupkg pkg check PATH
 --install` uses the same machinery with a throw-away root. A sandbox whose `system.json` says `"elevated": true` makes the CLI
 ignore `--settings`.
-
-## Migrating from 0.17 and 0.18
-
-Core 1.0 carries no 0.17 code: no format 1 reader, no `_bootstrap` handling, no aliases. `gupkg config-check` is an unknown
-command, and a format 1 `pkg.toml` is reported as an unsupported format. Migration is two one-time steps.
-
-**1. Re-run the bootstrap (0.17 and 0.18 installs of gupkg).** 0.18's `self update` stops and names the bootstrap when it sees a
-1.0 release. Run `gupkg-bootstrap.cmd` (same `-Scope` as the old install). It installs 1.0 as an ordinary package, creates the
-root data folder and the root forwarder, and leaves the old version directories as they were; only an explicit `gupkg cleanup`
-(and `--bundled` for bundled copies) removes them. Open a new terminal: `gupkg` is now 1.0.
-
-**2. Convert data with the migration tool** (`gupkg migrate ...`, also callable as `gupkg-migrate`):
-
-```bat
-gupkg migrate settings C:\opt\gupkg\0.18.0\gupkg\gupkg-config.toml --check   :: print the result, change nothing
-gupkg migrate settings C:\opt\gupkg\0.18.0\gupkg\gupkg-config.toml           :: write <system root>\.gupkg\settings.toml
-gupkg migrate package C:\opt --check                                         :: diff every package; change nothing
-gupkg migrate package C:\opt                                                 :: convert and adopt every package in the root
-gupkg migrate shortcuts C:\opt\tool\1.0                                      :: .lnk files in _shortcuts -> [[shortcut]]
-```
-
-- `migrate settings` converts the 0.17 manager configuration (schema 2) into `settings.toml` (schema 3): the package roots,
-  the `bin` folders and the registry source. It refuses to replace an existing settings file
-  without `--force`. The 0.17 configuration lived beside `cli.py`; 1.0 reads only the layers listed under [Settings](#settings).
-- `migrate package` converts a version directory, a package folder or a whole root to format 2 (`[origin]` and `[update.*]`
-  become `[source]` and `[track]`; an overloaded `[origin] url` is split into `project_url`, `[track] repo` or `download_url`;
-  `[[origin.versions]]` is dissolved into the single `[source]` of the matching directory, the other entries are reported and
-  dropped; camelCase keys become `snake_case`; `only_portable` becomes `modes`; `ignore_checksum` is dropped with a note;
-  `_bootstrap` is renamed `_check_updates`; hooks that match a known service are reported with the declarative replacement). It
-  keeps a `pkg.toml.bak` (`--no-backup` opts out) and validates the result before replacing the file.
-- **Adoption.** For each converted package that 0.17 installed, the tool writes `.gupkg\package.toml` from the existing
-  `current` and the declared components (each marked adopted), reads the old receipts and `.gupkg\state\update.toml` once and
-  removes them, and writes the 1.0 launchers `install.cmd` and `gupkg-tui.cmd` over the 0.17 `gupkg-tui.cmd`. No reinstall is
-  needed, and a following `gupkg uninstall X` removes the shortcuts and wrappers that 0.17 created. `--no-adopt` only converts;
-  `--mode` and `--settings` decide the mode when the root does not. A package whose active version is not converted yet is
-  reported with the command that converts it.
-
-Then `gupkg list` shows the same installed set and versions as before. The checks to run on a copy of a real 0.17 tree are
-manual smoke check 032-1 in [`tests/manual_smoke.md`](../tests/manual_smoke.md).
 
 ## Self-health and recovery
 

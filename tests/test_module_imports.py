@@ -1,6 +1,6 @@
-"""Cover that every module of gupkg, the migration tool and the registry tool imports under the bundled interpreter.
+"""Cover that every module of gupkg and the registry tool imports under the bundled interpreter.
 
-Behavior covered: each module below ``src\\gupkg``, ``src\\gupkg_migrate`` and ``src\\gupkg_registry`` imports on the committed
+Behavior covered: each module below ``src\\gupkg`` and ``src\\gupkg_registry`` imports on the committed
 Python 3.12 started the way gupkg starts it (``-I -s -B -S``, the bundled ``Lib\\site-packages`` only), so no module still needs
 code that was deleted (the 0.17 coordinators), a third-party package the bundle lacks, or syntax that Python 3.12 does not
 read; importing writes no bytecode.
@@ -23,7 +23,7 @@ import importlib, pathlib, sys
 source = pathlib.Path(sys.argv[1])
 sys.path.insert(0, str(source))
 names = []
-for package in ("gupkg", "gupkg_migrate", "gupkg_registry"):
+for package in ("gupkg", "gupkg_registry"):
     for path in sorted((source / package).rglob("*.py")):
         relative = path.relative_to(source)
         if "python" in relative.parts[:2] and relative.parts[0] == "gupkg" and relative.parts[1] == "python":

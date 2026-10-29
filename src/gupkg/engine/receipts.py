@@ -1,8 +1,7 @@
 """Write and read receipts: what one install of one version did (design sections 4 and 9.2).
 
 A receipt is the file ``App.info`` in the version directory (``<package>\\<version>\\App.info``, beside ``App`` and ``pkg.toml``), so
-a version carries the record of how its ``App`` was built wherever it is copied. Receipts of gupkg 1.0.0 to 1.0.x, kept in
-``<package>\\.gupkg\\receipts\\<version>.toml``, are still read and move to ``App.info`` the next time they are written. The record tells where the version came from (the
+a version carries the record of how its ``App`` was built wherever it is copied. The record tells where the version came from (the
 ``[source]`` kind, the URL, whether a distribution folder it was copied from carried the Mark of the Web),
 the checksum facts (decision, observed SHA-256, final URL, size), the fingerprint of the populated ``App`` (the SHA-256 of
 every file), the log file of the run and the times. There is one receipt per version, so no code picks one
@@ -30,7 +29,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..catalog.local import DATA_DIR_NAME, is_reparse_point
+from ..catalog.local import is_reparse_point
 from ..model.checksum import ChecksumInvalid, ChecksumRecord, parse_checksum_record
 from ..tomlio import read_toml, write_toml
 
@@ -54,19 +53,9 @@ class ReceiptRead:
 INFO_NAME = "App.info"
 
 
-def receipts_dir(package_path: Path) -> Path:
-    """Return the folder where gupkg 1.0.0 to 1.0.x kept receipts, which are still read when a version has no ``App.info``."""
-    return Path(package_path) / DATA_DIR_NAME / "receipts"
-
-
 def receipt_path(package_path: Path, version: str) -> Path:
     """Return the receipt of one version: the file ``App.info`` in the version directory, beside ``App`` and ``pkg.toml``."""
     return Path(package_path) / version / INFO_NAME
-
-
-def legacy_receipt_path(package_path: Path, version: str) -> Path:
-    """Return where the receipt of *version* used to be kept (``<package>\\.gupkg\\receipts\\<version>.toml``)."""
-    return receipts_dir(package_path) / f"{version}.toml"
 
 
 def _check_links(package_path: Path, path: Path) -> None:
@@ -106,26 +95,13 @@ def update_receipt(package_path: Path, version: str, sections: Mapping[str, Any]
     existing = read_receipt(package_path, version).data or {}
     merged = {"schema": RECEIPT_SCHEMA, **dict(existing), **dict(sections)}
     write_toml(path, merged)
-    # A receipt kept in the old place moves here: the record now lives with the version.
-    old = legacy_receipt_path(package_path, version)
-    if not is_reparse_point(old.parent) and old.is_file():
-        try:
-            if read_toml(old).get("schema") == RECEIPT_SCHEMA:
-                old.unlink()
-        except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
-            pass
     return path
 
 
 def read_receipt(package_path: Path, version: str) -> ReceiptRead:
     """Read the receipt of *version*; a missing file is no problem, an unreadable or linked one is."""
     path = receipt_path(package_path, version)
-    if not path.is_file() and legacy_receipt_path(package_path, version).is_file():
-        path = legacy_receipt_path(package_path, version)
-        checked = (Path(package_path) / DATA_DIR_NAME, path.parent, path)
-    else:
-        checked = (path.parent, path)
-    for entry in checked:
+    for entry in (path.parent, path):
         if is_reparse_point(entry):
             return ReceiptRead(problem=f"{entry} is a link and is not followed")
     if not path.is_file():
@@ -159,7 +135,7 @@ def receipt_checksum(data: Mapping[str, Any]) -> ChecksumRecord | None:
 
 
 def list_receipts(package_path: Path) -> list[str]:
-    """Return the versions that have a record (an ``App.info`` in the version directory, or an old receipt); nothing is read."""
+    """Return the versions that have a record (an ``App.info`` in the version directory); nothing is read."""
     found: set[str] = set()
     root = Path(package_path)
     try:
@@ -169,7 +145,4 @@ def list_receipts(package_path: Path) -> list[str]:
                     found.add(entry.name)
     except OSError:
         pass
-    folder = receipts_dir(package_path)
-    if not is_reparse_point(folder) and folder.is_dir():
-        found.update(item.stem for item in folder.iterdir() if item.suffix == ".toml" and item.is_file())
     return sorted(found)

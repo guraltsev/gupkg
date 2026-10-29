@@ -5,7 +5,7 @@ one folder per package: pinned ``<version>\\`` directories (each with the finger
 ``_registry.toml`` publishes under ``[fingerprints]``, when it does) and an optional
 ``_check_updates\\`` tracker. Each configured registry is cached in its own folder inside
 the root data directory, ``<root>\\.gupkg\\registry\\<name>\\`` (decision D20), so the cache
-survives updates of gupkg. Core reads no 0.17 seeds (decision D33): a tree whose
+survives updates of gupkg. A tree whose
 ``_registry.toml`` is missing or not format 2 is refused.
 
 Usage and API

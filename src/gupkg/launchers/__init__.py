@@ -1,7 +1,7 @@
 """Generate the package launchers: ``install.cmd`` and ``gupkg-tui.cmd`` of a version directory, ``check-updates.cmd`` of a tracker.
 
 Every launcher is the same plain ``cmd`` file, written by whichever gupkg runs the operation (``check-updates``, ``pkg new``,
-``pkg bundle``, ``pkg export``, the registry tool and the migration tool all call this module). A launcher lives at
+``pkg bundle``, ``pkg export``, and the registry tool all call this module). A launcher lives at
 ``<root>\\<name>\\<version>\\`` (or ``<root>\\<name>\\_check_updates\\``) and finds a gupkg by its own position: the root
 forwarder ``<root>\\.gupkg\\gupkg.cmd`` first (unless it is given ``--no-system-gupkg=true``), then the gupkg bundled in its folder,
 and exit code 9009 with the way to get gupkg when neither exists. Exit code 6, which an installed gupkg returns for a package it

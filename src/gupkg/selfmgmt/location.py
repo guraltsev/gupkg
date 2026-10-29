@@ -2,7 +2,7 @@
 
 The command line needs three facts about the gupkg that is running it: the ``$App`` folder whose
 ``settings.toml`` is a settings layer, the version directory and root that an elevated relaunch must be able to trust,
-and the folder that holds its sibling launchers (``gupkg-tui.cmd``, ``gupkg-manager.cmd``, ``gupkg-migrate.cmd``).
+and the folder that holds its sibling launchers (``gupkg-tui.cmd``, ``gupkg-manager.cmd``).
 Nothing is read from ``PATH``, the registry or the current directory: the location is derived from where the gupkg
 package itself was loaded from.
 

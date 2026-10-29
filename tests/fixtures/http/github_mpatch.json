@@ -3,7 +3,7 @@
  "tracker": "mpatch",
  "provider": "github latest, exact asset",
  "recorded": null,
- "origin": "synthetic fixture modelled on the registry hook's regular expressions (tests/fixtures/registry_017/mpatch/_bootstrap/pkg.toml, the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
  "expected": {
   "version": "1.3.1",
   "download_url": "https://github.com/Romelium/mpatch/releases/download/v1.3.1/mpatch-x86_64-pc-windows-msvc-v1.3.1.zip",

@@ -40,7 +40,7 @@ gupkg-manager update --all --yes       :: the same for every package you manage 
 | Install my first program in five minutes | [Getting started](_docs/getting_started.md) |
 | Do a specific task (nightly updates, rollback, CI checks, ...) | [Cookbook](_docs/cookbook.md) |
 | Fix an error message | [Troubleshooting](_docs/troubleshooting.md) |
-| Run gupkg for many machines: settings, registries, schedules, migration from 0.17, recovery | [Operations guide](_docs/operations.md) |
+| Run gupkg for many machines: settings, registries, schedules, recovery | [Operations guide](_docs/operations.md) |
 | Look up every `pkg.toml` field | [`pkg.toml` reference](#pkgtoml-reference-format-2) below |
 | Look up every command and option | `gupkg --help` and `gupkg <command> --help`, or [Commands and options](#commands-and-options) below |
 | Understand or change the code | [Development guide](_docs/development_guide.md) |
@@ -82,8 +82,7 @@ package on a Python package index. Pick the route that fits:
   creates `C:\opt` owned by Administrators and writable by nobody else (it refuses
   an existing `C:\opt` that is not like that), unpacks straight into it and runs
   `C:\opt\gupkg\<version>\install.cmd` elevated, which first checks that
-  everything it will run is admin-only. It is safe to repeat, and running it again
-  is how a 0.18 installation moves to 1.0. The only downloads are `RELEASES.md` and
+  everything it will run is admin-only. It is safe to repeat. The only downloads are `RELEASES.md` and
   the ZIP. Use `-Source` with a ZIP (URL or path) and `-Sha256` to install a vetted
   release from your own share, or the distribution of another program in user
   scope (that installs only that program, never gupkg); `-SkipInstall` only
@@ -210,7 +209,7 @@ gupkg registry sync|status|list|add|remove
 gupkg settings show|path|init|set KEY VALUE
 gupkg pkg new|check|pin|bundle|export
 gupkg self status|repair|check-updates|update
-gupkg tui <target> | gupkg manager ... | gupkg migrate ...     start gupkg-tui, gupkg-manager, gupkg-migrate of this gupkg
+gupkg tui <target> | gupkg manager ...     start gupkg-tui, gupkg-manager of this gupkg
 ```
 
 Checking and installing are separate operations. `check-updates` runs a package's tracker and writes the new
@@ -273,10 +272,9 @@ Exit status: `0` success, `2` user or configuration error (including usage error
 unmet `requires_gupkg`: a package launcher then runs its bundled gupkg).
 
 0.17 spellings are not aliases: `config-check`, `config-fix`, `doctor`, `repair-deps` and `update-deps` are unknown
-commands, and `--scope`, `update --check-only`, `update --all` and `update --check` are usage errors that name what to use now (every
-other 0.17 option is simply an unrecognized argument). `gupkg tui`, `gupkg manager` and `gupkg migrate` are permanent forwarders to
-`gupkg-tui`, `gupkg-manager` and `gupkg-migrate` of the same gupkg; they pass the exit code through. `tui` and `manager` refuse an
-elevated shell (they ask for administrator rights themselves, once per batch); `migrate` does its own work and accepts one.
+commands, and every other 0.17 option is an unrecognized argument. `gupkg tui` and `gupkg manager` are permanent forwarders to
+`gupkg-tui` and `gupkg-manager` of the same gupkg; they pass the exit code through. They refuse an
+elevated shell (they ask for administrator rights themselves, once per batch).
 
 ### The UI programs: `gupkg-tui` and `gupkg-manager`
 
@@ -329,7 +327,6 @@ release ZIP.
 layer; `settings init` and `settings set KEY VALUE` write the user layer (`--mode system` writes the system layer from an
 administrator shell) after the schema accepted the value. `gupkg registry add NAME SOURCE` and `remove NAME` edit
 `[[registry]]` the same way; `registry sync` downloads the registries into `<root>\.gupkg\registry\<name>`.
-Converting a 0.17 manager configuration is `gupkg migrate settings`.
 
 `gupkg pkg new NAME[@VERSION] [--track github:OWNER/REPO]` writes a starter; `pkg check PATH [--install]` validates a
 version directory, a tracker or a whole package folder (`--install` also installs into a throw-away root on a pretend
@@ -597,12 +594,6 @@ fingerprint matches (then "verified against registry"); a mismatch against the r
 and its own `pkg.local` folder; gupkg installs nothing for a hook. Version-directory scripts may use the network, because
 Python cannot sandbox trusted code; an elevated run refuses a version directory or `pkg.local` that is not admin-only
 before it imports anything.
-
-## Moving from 0.17
-
-1.0 reads only format 2. A 0.17 package, a 0.17 manager configuration and a 0.17 installation are converted once by the
-separate `gupkg-migrate` tool (`gupkg migrate ...`); core contains no 0.17 code and no alias. See
-[Migrating from 0.17 and 0.18](_docs/operations.md#migrating-from-017-and-018).
 
 ## Development
 

@@ -1,8 +1,7 @@
 """Recognise hook code that a built-in service now replaces, and suggest the format 2 table.
 
 ``gupkg pkg check`` reports a hook that matches a known service pattern together with the
-replacement to write; the separate migration tool offers the same suggestions when it
-converts a package. The scan only reads: it never edits or deletes a hook, and a hint is
+replacement to write. The scan only reads: it never edits or deletes a hook, and a hint is
 advice for the author, not proof that the hook can go.
 
 Usage and API
