@@ -12,11 +12,11 @@ Commands assume `gupkg` is on `PATH`; in scheduled tasks use the full path.
 - **`--json`:** prints exactly one JSON document on standard output (human text goes
   to standard error) with `api`, `command`, `ok`, `exit_code` and one entry per
   target. `--plan` shows what a call would do without doing it.
-- **Options go after the command**, except `--version`, `--help`, `--settings PATH`
-  and `--sandbox DIR`.
+- **Options go after the command**, except `--version`, `--help`, `--settings PATH`,
+  `--root DIR` and `--sandbox DIR`.
 - **Safe to repeat:** `install`, `update`, `check-updates` and `check --fix` can be
   rerun at any time; work already done is recognised and skipped.
-- **Targets** are names (`firefox`, `firefox@135.0`, `user:firefox`, `main/firefox`)
+- **Targets** are names (`firefox`, `firefox@135.0`, `main/firefox`)
   or paths. The command line has no `--all`; `gupkg-manager` is the program for
   batches.
 
@@ -25,7 +25,7 @@ Commands assume `gupkg` is on `PATH`; in scheduled tasks use the full path.
 ```bat
 gupkg registry sync                    :: once, then whenever you want a fresh catalogue
 gupkg search editor
-gupkg install vscode --mode user
+gupkg install vscode
 ```
 
 The registry is the separate repository
@@ -42,15 +42,18 @@ starter.
 ## User, system and portable installs
 
 ```bat
-gupkg install tool --mode user       :: %USERPROFILE%\opt, Start Menu and PATH of your account
-gupkg install tool --mode system     :: C:\opt, all users; asks once and relaunches elevated
-gupkg install tool --mode portable   :: settings and state in <package>\data; the folder can be carried
-gupkg install tool                   :: auto: elevated shell -> system, otherwise user
+gupkg install tool                   :: normal shell: user mode, %USERPROFILE%\opt, Start Menu and PATH of your account
+gupkg install tool                   :: administrator shell: system mode, C:\opt, all users
+gupkg install tool-portable          :: a portable package: state in <package>\data, for one user
+gupkg --root E:\opt install tool-portable   :: a root on a stick (user mode)
 ```
 
-An elevated gupkg never acts on a user or portable root: use a normal shell for those.
-A portable root with `integrate = "none"` in its settings touches neither the registry
-nor the Start Menu; `gupkg shell --mode portable` prints the `PATH` line to use.
+The mode is that of the shell, and a run never touches the other mode's root: use a normal
+shell for your packages and an administrator shell for the all-users ones (the Start Menu entry
+"gupkg manager (administrator)" opens the manager that way). A portable package is a package of
+its own (`<name>-portable`, `modes = ["portable"]`) and installs for a single user only. A root
+with `integrate = "none"` in its own `.gupkg\settings.toml` touches neither the registry nor the
+Start Menu; `gupkg --root E:\opt shell` prints the `PATH` line to use.
 
 ## Install from a distribution folder or ZIP
 
@@ -60,11 +63,12 @@ gupkg:
 
 ```bat
 <name>\<version>\install.cmd           :: double-click, or run; user mode
-gupkg install C:\share\tool\1.0 --mode system   :: with an installed system gupkg, from an admin shell
+gupkg install C:\share\tool\1.0        :: with an installed gupkg: system mode from an admin shell, user mode otherwise
 ```
 
-The installed gupkg copies the folder into the mode's root (dropping the Mark of the
-Web) and installs from the copy; `--in-place` installs where it stands.
+The installed gupkg copies the folder into the run's root (dropping the Mark of the
+Web) and installs from the copy. There is no `--in-place`: to install where the folder stands,
+make it a root of its own, `gupkg install <folder> --root <folder above the package name>`.
 
 ## See everything at a glance
 
@@ -93,8 +97,8 @@ For a handful of packages, name them: `gupkg check-updates a b c` then `gupkg up
 
 ## Update unattended every night
 
-Run both commands as a **normal user** in Task Scheduler (never with "highest
-privileges": the programs refuse an elevated shell):
+Run both commands in Task Scheduler as the account whose packages they manage; a task that runs as a
+normal user manages that user's root:
 
 ```bat
 schtasks /Create /TN "gupkg check" /SC DAILY /ST 03:00 ^
@@ -103,10 +107,9 @@ schtasks /Create /TN "gupkg update" /SC WEEKLY /D SUN /ST 04:00 ^
   /TR "C:\bin\gupkg-manager.exe update --all --yes --json"
 ```
 
-For **system** packages `check-updates` from a normal shell only reports; an
-administrator runs `gupkg check-updates <package>...` from an elevated shell (an elevated
-`gupkg-manager` is refused, so a scheduled elevated task calls `gupkg.cmd` of the system
-root with explicit package names) to write and prepare the new version in `C:\opt`. `update` of a system package asks for administrator rights once.
+For **system** packages (`C:\opt`) create the task with "Run with highest privileges": it then
+works in system mode on the system root, and needs the gupkg installed in `C:\opt` (an elevated
+run refuses any other gupkg tree). gupkg never asks for administrator rights itself.
 gupkg never updates anything on its own; only a task you create does. A package whose
 download has no checksum is refused in a schedule (`ask` behaves as `refuse`); see
 [the checksum policy](operations.md#checksum-policy).
@@ -171,8 +174,8 @@ gupkg cleanup <name> --keep 2          :: drop old Apps, receipts and logs; neve
 ## Free disk space
 
 ```bat
-gupkg cleanup                          :: every root: non-current Apps, receipts, work folders, logs
-gupkg cleanup --bundled                :: also drop bundled gupkg copies in version directories (where a root forwarder exists)
+gupkg cleanup                          :: the run's root: non-current Apps, receipts, work folders, logs
+gupkg cleanup --bundled                :: also drop bundled gupkg copies in version directories (where `gupkg-location` or `PATH` would find another gupkg)
 ```
 
 Recoverable `App` folders are dropped; shipped ones and the active one never are.

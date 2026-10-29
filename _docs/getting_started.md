@@ -29,7 +29,7 @@ Download `gupkg-bootstrap.cmd` from the repository and run it:
 
 ```bat
 gupkg-bootstrap.cmd                  :: all users if the shell is elevated, otherwise just you
-gupkg-bootstrap.cmd -Scope user      :: just you, even from an elevated shell
+gupkg-bootstrap.cmd -Scope user      :: just you (from a normal shell; refused from an elevated one)
 gupkg-bootstrap.cmd -Scope system    :: all users (elevated shell required)
 ```
 
@@ -122,11 +122,11 @@ terminal (Windows hands new environment values only to new processes) and run:
 pandoc --version
 ```
 
-**Which mode?** Without `--mode`, an elevated shell installs for all users (`system`,
-in `C:\opt`) and any other shell installs for you (`user`, in `%USERPROFILE%\opt`).
-Add `--mode user`, `--mode system` or `--mode portable` to be explicit. A call that needs
-administrator rights asks once and relaunches itself elevated, and only when your gupkg
-itself lives in an admin-only folder (the all-users install does).
+**Which mode?** A run has one mode, the mode of the shell you start it from: an elevated shell installs
+for all users (`system`, in `C:\opt`) and any other shell installs for you (`user`, in
+`%USERPROFILE%\opt`). There is no option to choose, and gupkg never relaunches itself elevated. To
+install for all users, open an administrator shell and run the same command there; a package that
+allows only the other mode is refused with a message that says how to run it.
 
 `install` is safe to repeat: if a shortcut was deleted or `PATH` was reset, running it
 again puts everything back without downloading the program. `gupkg install --plan pandoc`
@@ -183,7 +183,7 @@ package's `.gupkg\logs\` folder, and a short run log into the root's
 
 ## Where next
 
-- Many packages at once, schedules, settings, registries, and moving from 0.17:
+- Many packages at once, schedules, settings and registries:
   [Operations guide](operations.md) and the [cookbook](cookbook.md).
 - Something went wrong: [Troubleshooting](troubleshooting.md), which lists each
   error message with its fix.
