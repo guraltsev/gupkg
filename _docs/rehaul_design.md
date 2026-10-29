@@ -2,6 +2,10 @@
 
 Date: 2026-10-22
 Status: **implemented** in gupkg 1.0 (issues 016–033; decisions D1–D46).
+Amended by issue 035 (decisions D47–D55, confirmed by the owner on 2026-10-28): a run belongs to one scope, gupkg never
+elevates itself, portable is a package kind, and there is no migration code. Sections 3, 4, 5.3, 5.4, 6, 9.4, 9.6, 10,
+11, 12, 13.2, 15, 18, 19 and 21 describe that model. Where an older passage says otherwise, issue 035 and section 19
+win.
 Tracking issue: `_issues/_closed/issue020-rehaul-epic.md`.
 Supersedes: the manager-mode and `_bootstrap` parts of issues 012 and 013.
 
@@ -26,12 +30,12 @@ The user documentation (`README.md`, `_docs/*.md`) describes the behaviour of
 **Deviations from the text below, found while implementing.** Where a
 section's wording and the code differ, the code and the decision table win.
 
-- **Check for updates and elevation (issue 030, D22).** `gupkg-manager
+- **Check for updates and elevation (issue 030, D22; superseded by D53, issue 035).** `gupkg-manager
   check-updates --all` is one non-elevated call; a system package is only
   reported from a normal shell, and an administrator checks it from an
   elevated shell. The issue text that sent it "through the single elevated
   call" was wrong and was corrected.
-- **The elevated relaunch waits (issue 029).** The elevated parent waits for
+- **The elevated relaunch waits (issue 029; removed by D49, issue 035).** The elevated parent waits for
   the child and returns its exit code (clamped to 0–6, raw value in
   `child_raw_exit_code`); the events file is the progress channel. The
   design's "exits when the child starts" wording is superseded.
@@ -56,7 +60,7 @@ Contents
 3. Vocabulary
 4. On-disk layout
 5. Package state model (local, registry, both)
-6. Install modes: system, user, portable
+6. Scopes and package kinds
 7. `pkg.toml` format 2
 8. Built-in services (replacing hook scripts)
 9. Checksums and trust
@@ -178,7 +182,7 @@ Goals:
 1. **A Scoop-like, Python-based package manager for Windows** with one command
    grammar, in which a package name and a package path are equally good
    targets.
-2. **First-class `system`, `user` and `portable` install modes.**
+2. **First-class `system` and `user` modes, and portable packages as their own kind** (D47, D51).
 3. **First-class local packages.** A local package root is a full package, not
    a degraded registry entry.
 4. **A defined state for every combination** of registry, local and installed
@@ -214,8 +218,11 @@ Non-goals:
 
 | Term | Meaning |
 | --- | --- |
-| **Package** | One application in one install root: `<root>\<name>\`. Its identity is *(root, name)*. |
-| **Root** | A directory that holds packages, with one install mode (`system`, `user`, `portable`). Configured in the settings; a path given on the command line may also name an *ad-hoc* root. |
+| **Package** | One application in the run's root: `<root>\<name>\`. Its identity is *(root, name)*. |
+| **Scope** | What one run belongs to: *(mode, root)*, one frozen object built once at process start (section 6.1). |
+| **Mode** | `system` or `user`. It comes from the process token alone: an elevated process runs in system mode, any other in user mode (section 6.1). |
+| **Root** | The one directory that holds the packages of a run: `<root>\<name>\`. A run has exactly one root, found by the fallback chain of section 6.1 (`--root`, the settings, the built-in default). |
+| **Portable package** | A package whose `pkg.toml` has a `[portable]` table: its state lives in `<package>\data` and is handed over between versions. It is a kind of package, not a mode, and it installs in user mode only (section 6.3). |
 | **Version directory** | `<root>\<name>\<version>\` holding `pkg.toml`, an optional `App\`, and support files. Immutable once its `App` is populated. |
 | **Pinned version** | A version directory whose `[source]` is concrete: no templates, and either a fixed `download_url` (normally with a SHA-256) or a shipped `App` (section 4). The default unit of distribution. |
 | **Tracker** (`_check_updates`) | `<name>\_check_updates\`: a meta-package that discovers the newest upstream version and writes a *pinned version directory* for it, populated unless `--no-download` is given. That is all it does: it never activates anything and is never installed itself. Activating the new version is a separate `update` or `install`. Replaces `_bootstrap`. |
@@ -227,15 +234,15 @@ Non-goals:
 | **Registry** | A read-only catalogue of package definitions (pinned versions and optional trackers), downloaded into a cache. Several registries may be configured; the official one is named `main`. |
 | **Link** | Which registry entry a local package follows. By default it is the entry with the same name (D2); `gupkg link` points it elsewhere or opts out. Recorded in `<package>\.gupkg\package.toml`. |
 | **Install record** | `<package>\.gupkg\package.toml`: mode, link, and the integration effects last applied (used by uninstall and stale-effect cleanup). |
-| **Receipt** | `<package>\<version>\App.info` (owner decision after 1.0; before that `<package>\.gupkg\receipts\<version>.toml`, which is still read): how the `App` of one version was built (source URL, observed SHA-256, checksum decision, file fingerprint, `[built]` time and gupkg version); nothing about the runs, whose logs are in `.gupkg\logs`. |
-| **Data directory** | `<package>\data\`: version-independent application state for portable mode (section 6.3). |
+| **Receipt** | `<package>\<version>\App.info` (owner decision after 1.0; a version that has only an old `<package>\.gupkg\receipts\<version>.toml` shows "no receipt" until it is reinstalled or repaired): how the `App` of one version was built (source URL, observed SHA-256, checksum decision, file fingerprint, `[built]` time and gupkg version); nothing about the runs, whose logs are in `.gupkg\logs`. |
+| **Data directory** | `<package>\data\`: version-independent application state for portable packages (section 6.3). |
 | **Service** | A built-in, declarative operation named in `pkg.toml` (fetch, extract, flatten, rename, discover versions, find checksums). |
 | **Hook** | Trusted package-local code under `pkg.local\`, used only when no service fits: Python modules, and populate scripts, which may also be `.ps1`, `.cmd`/`.bat` or executables (section 4). |
 
 ## 4. On-disk layout
 
 ```text
-<root>\                                  # one install mode per root
+<root>\                                  # the one root of a run (section 6.1)
   <name>\                                # package root (identity = root + name)
     current\                             # junction -> active version
         _check_updates\                      # optional tracker (never installed)
@@ -245,11 +252,11 @@ Non-goals:
     1.2.3\                               # pinned version
       pkg.toml                           #   [source] download_url + sha256
       App\                               #   payload; absent/empty until populated
-      App.info                           #   the receipt: how the App was built, and for which mode
+      App.info                           #   the receipt: how the App was built
       icons\ ...
     1.2.4\                               # pinned, not yet populated ("available")
       pkg.toml
-    data\                                # portable-mode persistent state (section 6.3)
+    data\                                # persistent state of a portable package (section 6.3)
     .gupkg\
       package.toml                       # install record: mode, link, applied effects
             state\track.toml                   # last tracker check result
@@ -263,7 +270,20 @@ The reserved names in a package root are `current`, `_check_updates`,
 `pkg.local\`, `gupkg\` (a bundled gupkg, section 21), `install.cmd` and
 `gupkg-tui.cmd` (the package launchers) are reserved. 0.17's `_bootstrap`
 gets no special treatment: it starts with `_`, so it is reserved and
-ignored (D33).
+ignored (D54).
+
+**The root data directory** `<root>\.gupkg\` holds gupkg's own files for the
+root (section 9.7): `settings.toml`, `state.toml`, the global `logs\`, the
+registry cache `registry\`, and `gupkg-location`. `gupkg-location` is a
+one-line text file naming the folder that contains `gupkg.cmd` (issue 035
+§4.9, D52). A relative path is resolved against the root. A launcher reads it
+with `set /p`, and nothing in it is executed: it is data, not a script
+calling a script. Installing the `gupkg` package into a root writes it,
+pointing at `$PackageRoot\current\App`; uninstalling gupkg removes it, but
+only if it still holds that value. A person may edit it, for example to let a
+user root use the system gupkg's program (code may be shared, data never,
+section 6.1). A missing file, an empty file, or a named folder without
+`gupkg.cmd` means "no setting". Section 21.3 gives the launcher order.
 
 Rules:
 
@@ -305,7 +325,7 @@ Rules:
     or a `script`, not both. The one combination is `shipped = true` with
     a `download_url`. (Designer's default; it can be relaxed later.)
   - **gupkg's own tools always write the key explicitly:** `pkg new`,
-    `pkg bundle`, the migration tool (section 18), and `check-updates`'
+    `pkg bundle`, and `check-updates`'
     `render_pinned`.
   - **Scripts may use the network** (D28). Python cannot sandbox trusted
     code, so gupkg does not try. What a version fetches is reviewable in its
@@ -368,7 +388,7 @@ A package is described by one immutable `PackageView`, built by one function,
 
 ```text
 PackageView
-  name, root, mode
+  name, root                        # the mode belongs to the run (section 6.1), not to the package view
   local:     LocalState | None      # None = no package root on disk
   registry:  RegistryEntry | None   # entry with the same name in a linked/selected registry
   link:      Link | None            # from .gupkg/package.toml
@@ -397,7 +417,7 @@ One status is derived for display and filtering:
 | `local` | A local package root exists and holds at least one version directory or tracker, but there is no valid `current`. Nothing is installed; the definition is ready. |
 | `installed` | `current` is valid and its target is populated. |
 | `outdated` | Installed, and a newer version is *known*. Known means a newer local version directory (including one written by an earlier `check-updates`) or a newer pinned version in the linked registry entry. |
-| `broken` | `current` is dangling or escapes the package root; the active `App` is missing or empty; or the install record and the system disagree (drift). |
+| `broken` | `current` is dangling or escapes the package root; the active `App` is missing or empty; or the install record and the system disagree (drift); or the install record's mode differs from the run's ("this package was moved between scopes", section 6.3); or the package folder has no install record ("no install record (made by an older gupkg); reinstall with: `gupkg install <name> --force`", D54). |
 | `invalid` | A version directory or tracker fails validation. Shown for that version only. It does not block other valid versions. Today one bad `_bootstrap` marks the whole package unhealthy. |
 
 ### 5.3 The cases the manager must handle
@@ -436,8 +456,8 @@ Rules that apply to every case:
    local package root only when it is selected for install. If a local
    directory of the same name exists and its `pkg.toml` differs from the
    registry copy, the local one is kept and the package is reported as
-   `diverged`. Local files are never overwritten. In a root with no root
-   forwarder, the package's own bundled `gupkg\` folder is carried into the new
+   `diverged`. Local files are never overwritten. In a root with no
+   `gupkg-location` file, the package's own bundled `gupkg\` folder is carried into the new
    directory (section 21.4, D32); the launchers are written fresh in every root (section 7.4).
 2. **The registry tracker is copied in too.** When a linked package has no
    local `_check_updates` and the registry provides one, the registry's
@@ -451,162 +471,134 @@ Rules that apply to every case:
 4. **Downgrades are explicit.** `gupkg switch <name> <version>` is the way back. `install` and `update` of a version older than the
    active one ask first (owner decision, after 1.0); `--yes` or `--allow-downgrade` answers. Other version directories that are broken
    or not supported also ask, and `--yes` or `--allow-other-broken-versions` answers (`--no-input` makes either question exit code 5).
-5. **Each scope is a separate package.** `system:firefox` and `user:firefox`
-   are independent. `list` warns about the pair because their shims shadow
-   each other on PATH. A bare name that exists in several roots is ambiguous
-   for mutating commands and must be qualified.
+5. **A name is unique within one scope.** A run has one root (section 6.1),
+   so a name never means two packages, and no selector needs a mode prefix.
+   gupkg does not compare packages across modes and does not warn about
+   shims that shadow each other on `PATH`: Windows merges `PATH`, and that is
+   not gupkg's business.
 
 ### 5.4 Local packages are first class
 
 A local package root needs no registry and no settings entry:
 
-- **Any path works as a target.** A path to a package root, a version
-  directory or `current` can be given to any command.
-- **The install mode of a path target is resolved as in section 6.2:**
-  `--mode` first, then its install record, then the configured root that
-  contains it, and `auto` (D4) only when none of them decides.
-- **Ad-hoc roots are tracked.** A package installed in place (`--in-place`,
-  section 21.4, or a portable package installed where it is, D42) from a
-  path outside every configured root is added to the
-  `adhoc` list in `state.toml` (section 11), so
-  `list`, `check` and the manager's `update --all` still see it.
+- **Any path inside the run's root works as a target.** A path to a package
+  root, a version directory or `current` can be given to any command.
+- **A path is inside the run's root, or it is a distribution folder that is
+  copied in** (section 21.4). A path into the other mode's root is "not in
+  this scope" (exit code 2). There are no ad-hoc roots: a folder that should
+  stay where it is becomes the root of its own user scope (`--root`, section
+  21.4).
 - **`gupkg pkg new <name>` scaffolds a local package.** It creates a version
   directory, or a tracker with `--track github:owner/repo`.
 
-## 6. Install modes: system, user, portable
+## 6. Scopes and package kinds
 
-### 6.1 One context object
+This section is the model of issue 035. The owner confirmed D47–D55 on 2026-10-28 (§6.1 of the issue, with the amendments of its Q10–Q15). It replaces the 1.0 sections "Install modes: system, user, portable".
 
-`InstallMode` is resolved once, into an immutable `ModeContext`. Every
-subsystem reads only that object:
+### 6.1 A run belongs to one scope
 
-| | `system` | `user` | `portable` |
-| --- | --- | --- | --- |
-| Default root | `C:\opt` | `%USERPROFILE%\opt` | `%USERPROFILE%\opt-portable` (or any path) |
-| Requires elevation | yes | no | no |
-| Start Menu | `%ProgramData%\Microsoft\Windows\Start Menu\opt` | `%APPDATA%\Microsoft\Windows\Start Menu\opt` | user Start Menu, or none (`integrate = "none"`) |
-| Environment / PATH | `HKLM\…\Session Manager\Environment` | `HKCU\Environment` | `HKCU`, or none |
-| Bin (shims) | `C:\bin` (configurable) | `%USERPROFILE%\bin` (configurable) | `<root>\bin`; added to user PATH unless `integrate = "none"` |
-| App settings live | where the app puts them (normally per-user profile) | same | inside the package: `<package>\data` (section 6.3) |
-| gupkg's data (settings, logs, registry cache, state) | `C:\opt\.gupkg\` (admin-only) | `%USERPROFILE%\opt\.gupkg\` | `<portable root>\.gupkg\` |
-| Settings layers read | the system root's only | system root's + user root's | system root's + portable root's |
+- **A scope is *(mode, root)*.** The mode is `system` or `user`. The root is one folder. `Scope` is one frozen object, built **once, at process start**, before any settings file or package is read. Every subsystem receives it. Nothing builds another one (D47).
+- **The mode comes from the process token, and from nothing else.** An elevated process runs in system mode. Any other process runs in user mode, for the user who runs it. There is no mode option, no default-mode setting, no selector prefix, no relaunch and no "auto". A machine where every process is elevated (UAC off, CI) has only system mode: the message says so, and there is no `--user` override (D47, Q10).
+- **Names in the code.** `Scope` is the run's object, and `mode` is its `system`/`user` field. Today's `system.port.Scope` enum (`AUTO`, `USER`, `MACHINE`) already is that distinction under the old name, so it becomes `Mode` (`SYSTEM = "system"`, `USER = "user"`; `AUTO` goes). Its values do not change, so effect records, which store `scope = "system"|"user"`, stay as they are on disk. `ScopeFolders` keeps its name. `Mode` also replaces the string constants `MODE_SYSTEM` and `MODE_USER`. The `pkg.toml` key `modes` keeps its name (section 6.3).
+- **What the mode decides:**
 
-- **The default portable root is a scanned location, not a target.** The
-  built-in `%USERPROFILE%\opt-portable` is where listings look for portable
-  packages. `--mode portable` needs a *configured* portable root (a settings
-  layer above the built-in defaults sets `[roots].portable`), a folder shaped
-  `<name>\<version>\pkg.toml`, or an answer to a question (D42).
-- **The defaults are configurable.** Bin and Start Menu defaults live in the
-  settings. The Start Menu becomes configurable, which it is not today.
-- **One duplicated helper goes away.** The second admin-detection
-  implementation (`windows.is_current_user_admin` beside
-  `elevation.is_elevated`) is removed.
-- **`ModeContext` replaces four scattered sources:**
-  - `layout.compute_scope_paths`
-  - `manager.InstallationContext`
-  - `windows.environment_registry_location`
-  - `distribution._user_bin` / `_system_bin`
+  | | `system` | `user` |
+  | --- | --- | --- |
+  | Default root | `C:\opt` | `%USERPROFILE%\opt` |
+  | Requires elevation | yes | no |
+  | Start Menu | `%ProgramData%\Microsoft\Windows\Start Menu\opt` | `%APPDATA%\Microsoft\Windows\Start Menu\opt` |
+  | Environment / PATH | `HKLM\…\Session Manager\Environment` | `HKCU\Environment` |
+  | Bin (shims) | `C:\bin` (configurable) | `%USERPROFILE%\bin` (configurable) |
+  | App settings live | where the app puts them (normally per-user profile) | same |
+  | gupkg's data (settings, logs, registry cache, state) | `C:\opt\.gupkg\` (admin-only) | `<user root>\.gupkg\` |
 
-### 6.2 Selecting a mode
+  - **The defaults are configurable.** Bin and Start Menu defaults live in the settings (section 11).
+  - **`integrate = "none"` is a property of a scope.** Shims go to `<root>\bin`, nothing else is written (no Start Menu, no environment), and `gupkg shell` prints the `PATH` line to use. It replaces `[integration.portable]`.
 
-The mode of an operation is resolved in this order:
+- **The root of the run is found by a fixed chain of fallbacks** (D48; owner's answer Q1: `--root` exists, and the fallbacks of the earlier design stay). Each mode reads only its own key, and the first source that gives a value wins:
 
-1. `--mode system|user|portable`, or a scope-qualified target (`user:firefox`);
-2. the install record of an existing package;
-3. the root that contains a path target;
-4. `default_mode` from the settings. The default is **`auto`** (owner's
-   decision, 2026-10-22).
+  | Order | System mode (elevated) | User mode |
+  | --- | --- | --- |
+  | 1 | `--root DIR`, which must be admin-only (else exit code 2) | `--root DIR` |
+  | 2 | the root of the installed system gupkg that runs (`installed_system_root`) | `[roots].user` of `--settings PATH` |
+  | 3 | `[roots].system` of `$App\settings.toml` | the root the running gupkg is installed in, when that root is **not** admin-only |
+  | 4 | built-in `C:\opt` | `[roots].user` of `$App\settings.toml` |
+  | 5 | — | built-in `%USERPROFILE%\opt` |
 
-`auto` has exactly one meaning, and every command uses it:
+  - **User row 3** (owner's answer Q11): a gupkg installed in `E:\opt` or `D:\tools\opt` manages that root when started from there, without `--root`. A standard user who runs the system gupkg's program does not get `C:\opt` from this row, because that root is admin-only, so no system data is read.
+  - **One fallback of the earlier design is dropped.** The system root's `settings.toml` no longer moves the user root, because reading it from a user run is exactly the cross-mode read that D50 forbids.
+  - **`[roots]` is never read from a root's own `.gupkg\settings.toml`.** A root cannot name itself, so such a key there is a settings error.
+  - The chosen root and where it came from (`user root C:\Users\x\opt (built-in default)`) are printed in the Resolve phase and logged.
 
-- **An elevated process selects `system`.** If the package does not support
-  `system`, the command refuses and says to run it from a non-elevated
-  shell. An elevated gupkg never acts on a user root, so an explicit
-  `--mode user` in an elevated process is refused the same way (D31,
-  section 9.6 rule 2). A portable root is user-writable too, so `--mode
-  portable` (and a portable target) is refused under elevation the same way.
-- **A non-elevated process selects `user`.**
-- **`auto` never selects `portable`.** Portable is always chosen explicitly,
-  either with `--mode portable` or by a target inside the portable root.
+- **An elevated process runs only an admin-only gupkg tree** (`enforce_bundled_runtime`, unchanged). A user-installed, bundled-in-Downloads or source gupkg started elevated refuses to start, with exit code 2.
+- **The user mode never reads anything under the system root** except the gupkg program it runs and the shipped `$App\settings.toml` that belongs to that program (D50).
+  - **Code may be shared, data never.** A standard user may run the system gupkg's program in user mode. It is trusted code. That run reads and writes only the user root.
+- **Nothing names the other mode.** `Scope` has no field that could hold the other mode's root, settings or cache. A path into the other mode's root is "not in this scope" (exit code 2). That error is a plain containment check on one root, not a list of refusals.
+- **gupkg never elevates itself** (D49). To act in system mode, start gupkg or the manager elevated. To keep this one click, the gupkg package installed in system mode adds a Start Menu shortcut "gupkg manager (administrator)", whose link carries the "run as administrator" flag (`run_as_admin = true` in `[[shortcut]]`). Windows asks for UAC, and gupkg contains no elevation code.
+  - **No way into system mode from a user-mode run** (owner's answer Q12). The manager has no key for it. When a user-mode run refuses a system-only package, the message names the Start Menu shortcut "gupkg manager (administrator)" and the exact command to run in an administrator shell (section 6.4).
 
-`auto` only applies when steps 1–3 give no answer. An existing package keeps
-the mode in its install record, and a path inside a configured root keeps
-that root's mode, whatever the elevation. The chosen mode and the reason for
-it (for example `system (auto: elevated)`) are always printed in the Resolve
-phase and recorded in the log.
+### 6.2 Settings layers of a scope
 
-The 0.17 commands give `auto` four different meanings (single-package
-install, manager list, `manager install` and `self repair`). That variation
-goes away.
+A run has one root layer (D50; the schema is in section 11). The layers, lowest to highest priority:
 
-Further rules:
+1. built-in defaults;
+2. `$App\settings.toml`;
+3. `<root>\.gupkg\settings.toml`;
+4. `--settings PATH` (user mode only; the system mode refuses the option).
 
-- **`pkg.toml` declares which modes a package supports:**
-  `modes = ["system", "user", "portable"]`. The default is
-  `["system", "user"]`.
-- **Unsupported modes are rejected before any work.**
-- **`modes` replaces `only_portable` and the `-portable` name suffix.** The
-  suffix becomes an ordinary part of the name.
+- **`[roots]` has only the keys `system` and `user`,** for the fallback chain of section 6.1. It is read from the app layer and from `--settings`, never from a root layer.
+- **Each mode has its own settings, registry cache, state and logs, and never reads the other's.** There is no machine-wide policy for user runs (D50, Q15). There is no layer for the system root in a user run, and no "read the system layer first to find the user layer" order.
+- **`settings init|set` and `registry add|remove`** write layer 3 of the run's root. They do not branch on the mode and refuse nothing.
+- **`[manager] checksum_missing`** is read from the run's own layers.
 
-### 6.3 Portable mode
+### 6.3 Package kinds: portable or not, and the modes a package allows
 
-Portable means that the application's settings and state live inside the
-package folder, so the whole package can be copied, synced or carried on
-removable media.
+- **A package is portable exactly when its `pkg.toml` has a `[portable]` table** (D51). Portable means its state lives in `<package>\data` and is handed over between versions (persist and markers, D7). A package without the table is non-portable, and nothing about it changes with portability. Portable and non-portable packages are completely separate and unrelated: no package definition, `App`, receipt or code path serves both. A definition that was once both is two packages, `x` and `x-portable`.
+- **A package declares which modes it may be installed in** (D55). This is independent of portability:
+  - a system-level driver, a service or anything that writes machine-wide state is **system only**;
+  - a tool that only makes sense per profile (or a portable package, below) is **user only**;
+  - most packages allow both.
+- **How it is written** (owner's answer Q5): the `modes` key keeps its name, so non-portable definitions need no edit. Its meaning is:
+  - `["system", "user"]` (the default), `["system"]` or `["user"]`: the modes the package may be installed in;
+  - `["portable"]`: the package is portable, and that implies user only;
+  - a list that mixes `portable` with a mode is **invalid** ("a package is portable or not: publish two packages").
+- **A portable package installs only in user mode.** The mode restriction of section 6.4 enforces it, with no separate check. Shared writable state next to code that an elevated gupkg runs is a privilege-escalation risk, which is why it is never machine-wide. In user mode it installs into the user root like any other package, with normal user integration. A package carried on removable media is a user scope rooted on the stick (`--root E:\opt`) with `[integration] integrate = "none"` in its own settings.
+- **Portable state survives updates.** Every version has its own fresh `App`, so portable state must sit outside it. The package declares what to keep:
 
-**State survives updates.** Every version has its own fresh `App`, so
-portable state must sit outside it. The package declares what to keep:
+  ```toml
+  [portable]
+  # Files/folders the app writes inside App, kept in <package>\data and linked
+  # into every version's App (directories: junction; files: copied in on
+  # activation and copied back on switch-away / before update).
+  persist = ["Data", "settings.ini"]
+  # Marker files the app needs to enter portable mode (created in App).
+  markers = ["tixati_portable_mode.txt", { path = "doLocalConf.xml", content = "" }]
+  ```
 
-```toml
-[portable]
-# Files/folders the app writes inside App, kept in <package>\data and linked
-# into every version's App (directories: junction; files: copied in on
-# activation and copied back on switch-away / before update).
-persist = ["Data", "settings.ini"]
-# Marker files the app needs to enter portable mode (created in App).
-markers = ["tixati_portable_mode.txt", { path = "doLocalConf.xml", content = "" }]
-# Optional: arguments and environment that select portable mode for
-# shortcuts and shims.
-args = ["--portable"]
-env = { VSCODE_PORTABLE = "$Data" }
+  - **First population migrates bundled state.** On the first population, a persisted path that exists in the freshly unpacked `App` and not yet in `data\` is moved into `data\`. It is the vendor's default config.
+  - **Persisted files survive a switch.** On switch or update, persisted files are copied back from the outgoing `App` into `data\` before `current` moves.
+  - **Uninstall keeps `data\` unless `--purge` is given.** The same rule applies to anything gupkg did not create.
+- **What a definition does not have.** There are no `[user]` and `[system]` step tables: a package's install steps are its plain `[[prepare]]` (section 8.3), the same in both modes. `[portable]` has `persist` and `markers`, and no `args`, `env` or `prepare`; there is no `$Data` (owner's answer Q6). The receipt does not record the mode an `App` was prepared for: an `App` belongs to one definition. There is no portable root, no `[roots].portable` and no "where a portable package goes" rule (D42 is superseded by D51).
+- **The registry follows the same rule** (owner's answers Q2, Q2a). Each package that was both portable and non-portable became two packages: the base name, non-portable, with `modes = ["system", "user"]`, and `<name>-portable`, with `modes = ["portable"]` and the `[portable]` table. This work is done in the registry repository, with a script in its `_tools`. It is not gupkg core code.
+- **The install record keeps its schema,** and its `mode` key is the mode. A record whose mode differs from the run's is a `broken` reason ("this package was moved between scopes"); it is no longer a mode decision. A record that says `portable` is reported the same way and repaired by reinstalling.
 
-# Install-time steps per mode (owner decision after 1.0; [nonportable] is gone). Each is a list of
-# [verb, argument...] steps run in order on the App being built: remove, create, rename, copy, run.
-# What to remove when the package is NOT installed portable (keypirinha / mogan / systeminformer):
-[user]
-prepare = [["remove", "portable", ".portable", "*/SystemInformer.exe.settings.xml"]]
+### 6.4 The mode restriction (D55)
 
-[system]
-prepare = [["remove", "portable", ".portable", "*/SystemInformer.exe.settings.xml"]]
-# [portable] takes the same `prepare` list beside persist, markers, args and env.
-```
+- **It is checked in the planner,** before any download or file change, for every operation that installs or activates a version (`install`, `update`, `switch`, repair, `check-updates` with download).
+- **The refusal says only what the run can know:** "this package installs only for a single user; run gupkg without administrator rights", or "…only system-wide; run gupkg as administrator". It never looks at the other mode and never names the other mode's locations. The system-only refusal adds how (Q12): `Use the Start Menu entry "gupkg manager (administrator)", or run in an administrator shell: gupkg <command> <name>`.
+- **`uninstall`, `check` and `cleanup` are never refused by it,** so a package whose definition narrowed its modes can always be removed.
+- **Listing** (owner's answer Q14): `list --available` and the manager's `a` key also list packages the run's mode cannot install, marked `system only` or `user only` (a portable package is `user only`), with the refusal text as the reason.
+- **A new version that narrows its modes.** The planner checks the version being activated, so a version that narrows its modes is refused on a scope where it no longer applies. The installed version keeps working, and the package is reported `outdated`, with the refusal as the reason it cannot update.
 
-The receipt records which mode an App was prepared for (`[app] prepared_for`: the mode and a signature of its steps). Installing a
-populated version in another mode asks and rebuilds the App from its verified download; an App that cannot be rebuilt is refused and
-left alone, so steps never run on top of an App prepared for another mode.
+### 6.5 Worked example: copyq
 
-**Rules:**
+How CopyQ chooses its storage is `portableFolder()` in upstream `src/platform/win/winplatform.cpp` (read on `master`). CopyQ runs portable when the folder of `copyq.exe` is writable **and** holds no `unins000.exe`. It then keeps settings, clipboard items and state in `<App>\config` (INI format, never the Windows registry) and logs in `<App>\logs`, unless `COPYQ_LOG_DIR` is set. Otherwise it uses `%APPDATA%\copyq`. No flag or variable selects the settings folder.
 
-- **Where a portable package goes** (D42). `--mode portable` on a folder
-  that already has the shape `<name>\<version>\pkg.toml` installs it in
-  place, and the folder above `<name>` becomes the portable root.
-  Otherwise the configured portable root is used, or gupkg asks; under
-  `--no-input` that question is an error (exit 5).
-- **`$Data` expands to `<package>\data`.** It is valid only in portable mode.
-- **First population migrates bundled state.** On the first population into
-  portable mode, a persisted path that exists in the freshly unpacked `App`
-  and not yet in `data\` is moved into `data\`. It is the vendor's default
-  config.
-- **Persisted files survive a switch.** On switch or update, persisted files
-  are copied back from the outgoing `App` into `data\` before `current` moves.
-- **Uninstall keeps `data\` unless `--purge` is given.** The same rule applies
-  in every mode to anything gupkg did not create.
-- **Integration in portable mode is `user` by default.** Shortcuts, shims and
-  PATH go to the user profile. Setting `integrate = "none"` in the portable
-  root's settings (a "USB stick" root) makes gupkg create shims in `<root>\bin`
-  and nothing else. `gupkg shell` then prints the `PATH` line to use.
-- **Portable is never machine-wide.** Shared writable state in `C:\opt` is a
-  privilege-escalation risk.
+The registry's comment says the same (commits `cf0ada6`, `ee5e8a4`). The `unins000.exe` step exists because a user root is writable: without it, a non-portable user install would silently go portable and lose its settings at every update, because `config` would live inside a version's `App`.
+
+- **`copyq`, non-portable,** `modes = ["system", "user"]`, with `[[prepare]] ["create", "unins000.exe"]` and no `[portable]` table. In user mode the empty `unins000.exe` keeps CopyQ on `%APPDATA%\copyq`. In system mode it changes nothing, because the `App` folder is admin-only and CopyQ already uses `%APPDATA%`. It also makes that behaviour independent of the folder's ACL, so it runs in both modes without a mode-specific step.
+- **`copyq-portable`,** `modes = ["portable"]`, with no `unins000.exe` step and `[portable] persist = ["config"]`. `config` holds the settings, the items and the state, and survives updates in `<package>\data`. `logs` is not persisted: it starts empty in each new version (only diagnostics are lost).
+- **What an acceptance run checks** (user mode, test root): `copyq` writes `%APPDATA%\copyq` and nothing in `App`; `copyq-portable` writes `App\config`, which resolves to `data\config`, and nothing in `%APPDATA%\copyq`; after an update, the portable settings and items are still there. The registry's `PORTABLE-UNVERIFIED.md` gets a row for `copyq-portable`: its evidence is the upstream source quoted above, its confidence is high for the selection rule, and the persist of `config` through a junction is untested.
 
 ## 7. `pkg.toml` format 2
 
@@ -644,8 +636,8 @@ left alone, so steps never run on top of an App prepared for another mode.
 
   The engine keeps them apart by construction. `project_url` is never passed
   to the HTTP client, and a version directory has no `check_url` (D10).
-- **`format = 2` is required.** Version 1 (0.17) files are read only by
-  the separate migration tool (section 18).
+- **`format = 2` is required.** Version 1 (0.17) files are not read
+  (D54, section 18).
 - **`[origin]` and `[update.*]` are replaced** by `[source]` (how to obtain
   *this* version's `App`) and `[track]` (how to find newer versions; trackers
   only). An `[origin] url` that is really a GitHub page used as a "zip"
@@ -737,7 +729,7 @@ target = "$App\\firefox.exe"
      21.3), so a double-click on the new version's `install.cmd` installs
      exactly that version. The tracker's own `check-updates.cmd` is never
      copied into a version;
-   - in a root with no root forwarder (a bundled install), also copy the
+   - in a root with no `gupkg-location` file (a bundled install), also copy the
      package's own bundled `gupkg\` folder into the new directory (section
      21.4, D32).
 4. **Populate it, unless `--no-download`.** Run the version's populate
@@ -1184,16 +1176,27 @@ update-check functionality** (D10). What a version installs is fixed in its
 
 ### 9.4 Elevated runs
 
-The trust rules in `docs/elevated-runtime-design.md` stay (issue 032 moves
-the file to `_docs/`).
+The trust rules in `_docs/elevated-runtime-design.md` stay (issue 032 moves
+the file to `_docs/`), read with the one-scope model of section 6.
 
-- **System-mode runs read only admin-only locations.** That covers the system
-  root and its data directory `C:\opt\.gupkg\` (settings, registry cache,
-  state, logs). The threat model behind this rule is section 9.6.
-- **The user settings layer is ignored when elevated.**
-- **An elevated gupkg never acts on a user root** (D31): not through the
-  `auto` fallback, and not through an explicit `--mode user`. Portable roots
-  are refused under elevation the same way.
+- **An elevated run is in system mode** (D47), and **system-mode runs read
+  only admin-only locations.** That covers the system root and its data
+  directory `C:\opt\.gupkg\` (settings, registry cache, state, logs). The
+  threat model behind this rule is section 9.6.
+- **The system mode names no user location.** This is structural: `Scope` has
+  no field that could hold a user root, user settings or a user cache
+  (section 6.1), so there is no user layer to ignore and no user root to refuse.
+- **An elevated run needs an admin-only root and an admin-only gupkg tree**
+  (D48). `--root` must be admin-only (else exit code 2), and a user-installed,
+  bundled-in-Downloads or source gupkg started elevated refuses to start
+  (`enforce_bundled_runtime`, exit code 2).
+- **Admin-only checks inside the system root stay** (D30, spike S1): hooks,
+  locks, the work folder, the HTTP cache and trusted `git`. They guard against
+  broken inheritance inside the root. The engine reaches them through one call,
+  `scope.require_trusted(path)`, which does nothing in user mode.
+- **The user mode reads nothing under the system root** except the gupkg
+  program it runs and the shipped `$App\settings.toml` that belongs to that
+  program (D50). Code may be shared, data never.
 
 ### 9.5 The Windows registry is a write target, never a source of information
 
@@ -1203,7 +1206,7 @@ installed, settings, package state, installed software, tool locations and
 versions. All information comes from two places:
 
 - **the filesystem:** settings files, package roots, install records and
-  receipts, root data directories and root forwarders (sections 9.7, 21.3);
+  receipts, root data directories and the `gupkg-location` file (sections 9.7, 21.3);
 - **the process:** the elevation token and the environment.
 
 The registry is only the *target* of changes that make software run. In 1.0
@@ -1249,24 +1252,23 @@ accidents and damaged files.
 
 Rules:
 
-1. **Only an admin-only gupkg elevates.** gupkg elevates only by relaunching
-   *itself*, and only when its own location (its version directory and
-   root) is admin-only. A user-mode or bundled gupkg in a user-writable place
-   never elevates, and cannot perform system installs.
-   Before it asks for elevation it also checks the files its child loads first (section 10.4); a
-   check-then-launch race (TOCTOU) remains and is bounded by this very requirement.
-2. **The elevated side resolves everything itself.** From the non-elevated
-   side it accepts only a package name, or a path *inside* the admin-only
-   system root, plus command options such as `--skip-checksum` (D24).
-   Everything else comes from its own location: its root, that
-   root's `.gupkg\settings.toml`, and package definitions. It ignores user
-   settings, user roots and the user's environment.
-3. **Launchers in admin-only roots reach only gupkg copies inside the same
-   root** (section 21.3). Elevated launchers verify, with a trusted system
-   tool and before running anything, that **everything they will run** is
-   not user-writable: the root, the package and version directories, the
-   root's `.gupkg\` and forwarder, and the whole gupkg and Python tree,
-   recursively (D30). They refuse otherwise.
+1. **Only an admin-only gupkg tree runs elevated.** An elevated process runs
+   only a gupkg whose own location (its version directory and root) is
+   admin-only; a user-mode or bundled gupkg in a user-writable place refuses to
+   start elevated, with exit code 2, and cannot perform system installs.
+   gupkg never elevates itself (D49): the system mode is reached by starting
+   gupkg elevated (section 6.1).
+2. **The system mode names no user location.** This is structural, not a list
+   of refusals: `Scope` has no field that could hold a user root, user
+   settings or a user cache (section 6.1). Everything the run uses comes from
+   its own location: its root, that root's `.gupkg\settings.toml`, and package
+   definitions. It does not use the user's environment.
+3. **Elevated launchers verify everything they will run** (section 21.3).
+   Before running anything, with a trusted system tool, they verify that
+   **everything they will run** is not user-writable: the root, the package and
+   version directories, the root's `.gupkg\` with its `gupkg-location` file,
+   and the whole gupkg and Python tree that is selected, recursively (D30).
+   They refuse otherwise.
 4. **Data from user-writable places is only ever data.** An example is a
    distribution folder an administrator installs system-wide (section
    21.4). It is copied and validated into
@@ -1292,7 +1294,7 @@ administrator's environment.
 This is the owner's decision of 2026-10-22 (D20). gupkg's own files live in
 the **root data directory** `<root>\.gupkg\` of the root they belong to:
 `settings.toml`, `state.toml`, the global `logs\`, the registry cache, and the
-root forwarder (section 21.1). Each package's own logs and records live in its
+`gupkg-location` file (section 4, 21.3). Each package's own logs and records live in its
 `<package>\.gupkg\` (section 4). gupkg **never** uses `%LOCALAPPDATA%`,
 `%APPDATA%` or `%ProgramData%` for its own data, and never the registry
 (section 9.5).
@@ -1310,29 +1312,27 @@ root forwarder (section 21.1). Each package's own logs and records live in its
 
 ### 10.1 Principles
 
-- **One grammar, with no manager mode inside the CLI.** The settings are
-  always loaded, and built-in defaults apply when no file exists. A name
-  resolves through the configured roots and registries in every command.
+- **One grammar, with no manager mode inside the CLI.** The settings are always loaded, and built-in defaults apply when no file exists. A name resolves in the run's root and its registries in every command (section 6.1).
 - **The UI programs are separate** (owner's decisions, 2026-10-22: D12, D34).
   `gupkg-tui` shows and acts on one package, and `gupkg-manager` is the
   general manager (section 15). Both may import gupkg core and any libraries
   for reading and reference, but every operation they perform is a `gupkg` CLI
-  call (D44, section 10.4). Inventory browsing, `--all` batches, planning
-  across packages, the missing-checksum policy, grouping operations under one
-  elevation, and the interactive UIs all live there. The CLI acts on explicit
+  call (D44 as amended by D53, section 10.4). Inventory browsing, `--all` batches, planning
+  across packages, the missing-checksum policy and the interactive UIs all live there. The CLI acts on explicit
   targets: one or several names or paths.
-- **Every separate tool is callable as `gupkg <command>`** (D45).
-  `gupkg tui PATH` starts `gupkg-tui PATH`, `gupkg manager …` (including
-  `gupkg manager tui`) starts `gupkg-manager …`, and `gupkg migrate …`
-  starts `gupkg-migrate …`, all from the same gupkg tree. These
+- **Separate tools are callable as `gupkg <command>`** (D45).
+  `gupkg tui PATH` starts `gupkg-tui PATH`, and `gupkg manager …` (including
+  `gupkg manager tui`) starts `gupkg-manager …`, both from the same gupkg tree. These
   forwarders are permanent. The CLI itself still has no UI.
 - **Targets are names or paths.**
-  - Selector grammar: `name`, `name@version`, `mode:name`, or a path. A path is
-    anything containing `\` or `/`, or starting with `.`.
+  - Selector grammar: `name`, `name@version`, or a path. A path is
+    anything containing `\` or `/`, or starting with `.`. There is no mode
+    prefix: a name is unique within the run's scope (section 5.3).
   - `registry/name` (for example `main/firefox`) selects a registry entry
     explicitly.
 - **Options go after the command.** Root-only options are limited to
-  `--version`, `--help`, `--settings PATH` and `--sandbox DIR` (section 16).
+  `--version`, `--help`, `--root DIR` (section 6.1), `--settings PATH` (user
+  mode only; the system mode refuses it) and `--sandbox DIR` (section 16).
 - **Exit codes are unchanged:** 0 ok, 2 user/config error, 3 operation
   failed, 4 internal error. New: 5 declined by the user or input needed, and
   6 this package needs a newer gupkg (it drives the launcher fallback,
@@ -1345,26 +1345,25 @@ root forwarder (section 21.1). Each package's own logs and records live in its
 - **Every command takes `--json` for machine output.** It replaces `--format
   toml`, and the output is one document on stdout. Human output goes to
   stderr.
-- **No legacy code** (D33). The CLI has no 0.17 aliases. Old spellings other
-  than the forwarders are unknown commands. Converting 0.17 data is the
-  job of the separate migration tool (section 18).
+- **No legacy code** (D54). The CLI has no 0.17 aliases and no hints about
+  0.17 spellings. Old spellings other than the forwarders are unknown commands.
 
 ### 10.2 Commands (`gupkg`)
 
 ```text
-gupkg check-updates <target>... [--no-download] [--mode M] [--skip-checksum]   # run trackers; write and populate new version dirs; activate nothing
-gupkg install  <target>... [--mode M] [--skip-checksum] [--refresh] [--in-place] [--yes]
-gupkg update   <target>... [--mode M] [--skip-checksum] [--yes]   # activate the newest KNOWN version; never runs a tracker
+gupkg check-updates <target>... [--no-download] [--skip-checksum]   # run trackers; write and populate new version dirs; activate nothing
+gupkg install  <target>... [--skip-checksum] [--refresh] [--yes]
+gupkg update   <target>... [--skip-checksum] [--yes]      # activate the newest KNOWN version; never runs a tracker
 gupkg switch   <target> <version>                         # activate another local version (rollback)
 gupkg uninstall <target>... [--purge] [--yes]             # remove integration; --purge also deletes the package root and data
 gupkg check    [<target>...] [--fix]                      # health: App fingerprint, current, drift, registry fingerprint (was doctor)
-gupkg list     [--mode M] [--installed|--available|--outdated|--broken|--local] [--details] [--names]
+gupkg list     [--installed|--available|--outdated|--broken|--local] [--details] [--names]   # --available also lists what this mode cannot install, marked (section 6.4)
 gupkg info     <target>...                                # PackageView: versions, link, tracker, last check, receipts, log
 gupkg search   <query> [--registry R] [--offline]
 gupkg cleanup  [<target>...] [--keep N] [--bundled]       # old Apps, receipts, work, registry trees, logs (section 13.3); --bundled: section 21.8
 gupkg link     <target> [<registry>/<name>] [--unlink]    # follow another registry entry, or stop following one (D2)
 gupkg logs     [<target>] [--open | --path]
-gupkg shell    [--mode M]                                 # print the PATH line for an integrate = "none" root (section 6.3)
+gupkg shell                                               # print the PATH line for an integrate = "none" scope (section 6.1)
 
 gupkg registry sync|status|list|add|remove
 gupkg pkg new <name>[@<version>] [--track github:owner/repo] [--dir D]   # authoring: a starter tracker and/or pinned version
@@ -1377,14 +1376,13 @@ gupkg self status|repair|check-updates|update             # check-updates/update
 
 gupkg tui <target>                                        # forwards to gupkg-tui (section 15)
 gupkg manager ...                                         # forwards to gupkg-manager, e.g. `gupkg manager tui`
-gupkg migrate ...                                         # forwards to gupkg-migrate, the migration tool (section 18)
 ```
 
 The CLI has no `--all` and no interactive UI. Several targets in one call
 run one after another, and the run continues past a failure. For scripts,
 `gupkg update $(gupkg list --outdated --names)` is the batch form; with
 planning and confirmation, the batch form is `gupkg-manager`. `check` and
-`cleanup` with no target act on every package of the trusted roots (the
+`cleanup` with no target act on every package of the run's root (the
 sweep: a package that another run holds is left alone, only there).
 
 Readings that the issue 029 implementation settled:
@@ -1392,59 +1390,41 @@ Readings that the issue 029 implementation settled:
 - **Which commands take what.** `--yes`, `--no-input`, `--json` and `--events-file` belong to every command that runs
   through the engine (`check-updates`, `install`, `update`, `switch`, `uninstall`, `check`, `cleanup`, `link`, and
   `self repair|check-updates|update`) and to `registry sync`; `--plan` to every one of those except `check` and
-  `registry sync`; the reading commands take `--json` and `--mode` only. `--skip-checksum[=cli|setting|user-approved]`
+  `registry sync`; the reading commands take `--json` only. `--skip-checksum[=cli|setting|user-approved]`
   belongs to `check-updates`, `install`, `update`, `self check-updates|update` and `pkg check`; a bare flag takes no word
   after it as its reason.
-- **Confirmations (D25)** are asked for `uninstall --purge`, for any engine call with more than one target (including the
-  expansion of `check --fix` and `cleanup` with no target) and for the elevation relaunch. `pkg pin` asks before it writes.
+- **Confirmations (D25)** are asked for `uninstall --purge` and for any engine call with more than one target (including the
+  expansion of `check --fix` and `cleanup` with no target). `pkg pin` asks before it writes.
   The command line never asks about checksums.
-- **`self`.** `self check-updates|update|repair` are `check-updates gupkg`, `update gupkg` and `repair gupkg` in the mode of
-  the root this gupkg is installed in (`--mode` overrides); they produce the same result document as the long spelling.
+- **`self`.** `self check-updates|update|repair` are `check-updates gupkg`, `update gupkg` and `repair gupkg` in the scope
+  of the run; they produce the same result document as the long spelling.
   `self status` reports the interpreter and the `MANIFEST.sha256` check and exits 3 when either fails.
-- **Forwarders** find `gupkg-tui.cmd`, `gupkg-manager.cmd` and `gupkg-migrate.cmd` in the gupkg tree they run from
-  (never on `PATH`), pass the rest of the command line and the exit code, refuse an elevated shell (the UI programs call
-  `gupkg` and ask for administrator rights themselves, once per batch) and refuse `--settings` and `--sandbox`, which they
+- **Forwarders** find `gupkg-tui.cmd` and `gupkg-manager.cmd` in the gupkg tree they run from
+  (never on `PATH`), pass the rest of the command line and the exit code, and refuse `--settings` and `--sandbox`, which they
   could not honour.
-- **Settings, registries and logs.** `settings init|set` and `registry add|remove` write the settings file of the layer of
-  `--mode` (the user layer unless elevated; the system layer only from an administrator shell) after the schema accepted
-  the change; `registry sync|status|list` use the cache in the data directory of that mode's root; `logs` lists the run
-  logs of a package (or of the root), `--path` prints the newest and `--open` opens it.
+- **Settings, registries and logs.** `settings init|set` and `registry add|remove` write the settings file of layer 3 of the
+  run's root (section 6.2) after the schema accepted the change; `registry sync|status|list` use the cache in the data
+  directory of the run's root; `logs` lists the run logs of a package (or of the root), `--path` prints the newest and
+  `--open` opens it.
 
 ### 10.3 What changes for users
 
-| 0.17 | 1.0 |
-| --- | --- |
-| `gupkg install C:\opt\pandoc` | unchanged |
-| `gupkg manager install vscode` | `gupkg install vscode` (`gupkg manager …` now forwards to `gupkg-manager`) |
-| `gupkg --scope user manager update --yes` | `gupkg manager update --all --mode user --yes`, which forwards to `gupkg-manager` |
-| `gupkg update PATH --check-only` | `gupkg check-updates PATH --no-download`. This also writes the new version directory, but installs nothing. |
-| `gupkg update PATH` (check + download + install) | `gupkg check-updates PATH` (finds, downloads and prepares), then `gupkg update PATH` (activates): two separate operations. |
-| `gupkg install PATH --allow-downgrade` | unchanged (it asks first without the option); `gupkg switch PATH 1.2.3` is the explicit way back |
-| `--no-checksum` | `--skip-checksum` (missing hashes only, `https://` URLs only) |
-| `gupkg config-check` / `config-fix` | `gupkg pkg check` / `gupkg migrate` (section 18) |
-| `gupkg manager list/doctor/search/registry` | `gupkg list/check/search/registry` |
-| `gupkg manager self status/repair` | `gupkg self status/repair` |
-| `gupkg manager self update` (which only repaired) | `gupkg self check-updates`, then `gupkg self update`: a real update to a new release |
-| `gupkg manager self repair-deps/update-deps` | removed (issue 016); maintainers use `tools/update_deps.py` |
-| `gupkg tui PATH` / `gupkg manager tui` | unchanged: they forward to `gupkg-tui PATH` and `gupkg-manager` |
-| a 0.17 installation | re-run the bootstrap once, then convert packages and settings with the migration tool (section 18) |
-
-There are no deprecated aliases (D33). `gupkg tui`, `gupkg manager` and
-`gupkg migrate` are permanent forwarders (D45); every other 0.17 spelling
-is an unknown command.
+Removed by issue 035 (D54): the table of 0.17 spellings and their 1.0 replacements. The repository contains no
+0.17 aliases, no hints about 0.17 spellings and no migration command. The only forwarders are `gupkg tui` and
+`gupkg manager` (D45).
 
 ### 10.4 Machine interface (the contract the UI programs and other tools use)
 
-The UI programs may import gupkg core for reading and reference (D44), but
+The UI programs may import gupkg core for reading and reference (D44, D53), but
 they perform every operation by running `gupkg` as a subprocess through this
 interface. Scripts and any other tool use it the same way, so it is a
-public, versioned contract (`"api": 1`).
+public, versioned contract (`"api": 2`).
 
 | Option | Meaning |
 | --- | --- |
 | `--json` | One result document on stdout: per target, the outcome, version, mode, receipt path and log path, plus structured errors such as `{"code": "checksum-missing", "url": …}`. Human output goes to stderr. |
 | `--plan` | Accepted by `check-updates`, `install`, `update`, `uninstall`, `switch` and `cleanup`. Resolves and plans without changing anything. Per target it reports the chosen version, mode, whether elevation is required, `sha256: present \| missing` (a malformed declared hash makes the version invalid: that target has no plan but a failed entry with the stable error code `invalid-checksum` (plus `version` and `field`), exit code 2, which `--skip-checksum` never overrides), the source URL, and the effects to add or remove. |
-| `--events-file NAME` | `NAME` is a plain file name, never a path (D26). The CLI writes the run's event stream (section 14.1) as JSON lines, flushed per event: global events to `<root>\.gupkg\logs\NAME`, which links to each package's events in `<root>\<name>\.gupkg\logs\NAME`. It ends with the result document. The caller follows those files. A file is used rather than a pipe because an elevated child started through `runas` cannot share pipes with a non-elevated parent, and a plain name means a non-elevated caller cannot steer an elevated write (section 9.6). |
+| `--events-file NAME` | `NAME` is a plain file name, never a path (D26). The CLI writes the run's event stream (section 14.1) as JSON lines, flushed per event: global events to `<root>\.gupkg\logs\NAME`, which links to each package's events in `<root>\<name>\.gupkg\logs\NAME`. It ends with the result document. The caller follows those files, so a UI can follow a run. |
 | `--no-input` | Never prompts. Anything that would need an answer becomes a structured error with exit code 5. |
 
 **Cancelling** (D37). A caller asks a running CLI to stop through a stop
@@ -1454,11 +1434,11 @@ the temporary folder): the caller creates a file there. A file that exists
 before the run starts is never a request, because the name is chosen after the
 caller could have created anything. The CLI checks it between packages,
 finishes the current package cleanly, reports the rest as skipped (exit code 5)
-and removes the marker. For an elevated child the request is user-writable data
+and removes the marker. The request is user-writable data
 that can only make the run stop, which is safe under section 9.6.
 
 **The documents.** Every document starts with `api`, `command`, `ok` and
-`exit_code`. A lifecycle call adds `relaunched` and `results` (one entry per
+`exit_code`. `list --json` puts `mode` and `root` once, at document level. A lifecycle call adds `results` (one entry per
 target: `package`, `operation`, `ok`, `status`, `version`, `previous`, `mode`,
 `exit_code`, `receipt`, `log`, `warnings`, and on failure `error` with `code`,
 `message`, `hint` and the facts the code carries, such as the `url` of
@@ -1472,64 +1452,25 @@ answered) has `errors` with `code`, `message` and, when there is one, `hint`. Th
 with `run_end`, whose `result` is the same document. Contract tests pin all of
 this.
 
-**The elevated child.** A call that needs the token starts one elevated child
-of the same gupkg with a command line that the parent rebuilds from its parsed
-options, never from its own input: the command, its targets, `--mode`,
-`--no-download`, `--refresh`, `--in-place`, `--purge`, `--bundled`, `--fix`,
-`--unlink`, `--keep`, `--plan`, `--yes` (only when the user gave it),
-`--no-input`, `--skip-checksum[=reason]`, `--events-file NAME`, and the markers
-`--relaunched` (always) and `--batch-confirmed` (the parent already asked "run
-this on N packages"). `--settings`, `--sandbox` and `--json` never travel, and
-the child refuses `--settings` and `--sandbox` itself. `--relaunched` makes the
-child accept only package names and paths inside the system root. Targets that
-name their mode are run in two groups (the others here, the system ones in the
-child); a call whose targets only reveal their mode when they are resolved
-reports each target the child cannot take as `not-run` (`mixed-modes`, exit
-code 2) instead of dropping it. A root-wide `cleanup` (no target) hands the child no
-targets either, so the child sweeps the system root itself.
+**No elevation inside gupkg.** There is no relaunch, no elevated child and no
+hidden options for such a child: an elevated run is a run
+that was started elevated (section 6.1, D49). The checks that stay are threat
+model T1 and not mode-mixing: the launcher ACL check (section 21.3),
+`enforce_bundled_runtime`, and the admin-only checks on code and caches inside
+the system root (section 9.4). Scheduled and CI callers use a unique
+`--events-file` name per run and treat a missing `run_end` as failure; a
+multi-target call under `--no-input` needs `--yes` (the question "run this on N
+packages?" is otherwise exit code 5).
 
-*How the child is started (T1).* There is no shell in between: `ShellExecuteEx` with
-the `runas` verb starts the bundled `python.exe -I -s -B -S bootstrap.py <arguments>`
-of this gupkg, both paths taken from the location of the running gupkg after its
-folders were checked admin-only; the arguments are quoted by the rules of
-`CreateProcess`. In addition, the parent refuses (exit code 2, before any question)
-every argument value that holds `& | < > ^ " % ! `` ` ``, a control character or a lone
-surrogate, and the child refuses the same characters in its own command line.
-A package whose name holds one of them is installed from an administrator shell. Every
+**Unsafe characters.** The rules stay where a `.cmd` launcher receives the
+argument, and nowhere else. There, every argument value that holds
+`& | < > ^ " % ! `` ` ``, a control character or a lone surrogate is refused (exit code 2). Every
 Unicode category starting with `C` is refused (control characters including C1, bidi overrides
 and isolates, zero-width joiners, lone surrogates, private-use and unassigned code points),
 as are U+2028 and U+2029, and a target that starts with `-`. The options come first and the
 targets follow `--`, so a folder named `--yes` cannot be read as an option. A command line over 30000
-characters is refused (exit code 2), never reported as a declined prompt.
-
-*What is checked before the prompt.* Before `ShellExecuteEx` the parent checks that
-the files the child loads before any of its own code (`bundled_runtime_paths`: the package
-folder and its parent, the bundled runtime folder, `Lib\site-packages`, `python.exe`,
-`python*._pth`, `python*.dll` and `bootstrap.py`, the same list the child checks in
-`enforce_bundled_runtime`) are admin-only; one that is not is exit code 2 and nothing is asked. A
-check-then-launch race (TOCTOU) remains, bounded by the admin-only requirement itself: only an
-administrator can change what the check accepted, and the child checks the same list again.
-
-*The parent waits.* The parent keeps the process handle (`SEE_MASK_NOCLOSEPROCESS`),
-waits for the child and exits with the **child's exit code** (the highest of it and
-the codes of targets that were left out); the document has `relaunched: true` and
-the same `exit_code`. A declined UAC prompt is exit code 5. The progress channel stays
-the events file. When the call named `--events-file`, the parent reads the child's
-last line afterwards: no `run_end` (a killed child, an unreadable file) is a failure,
-exit code 3 with the error `child-no-result`. The child's process exit code is clamped
-to gupkg's codes (`0`-`6` pass through, anything else is `4`); the raw code is the
-`child_raw_exit_code` of the document. The call always gives the child an events file (its own
-name when the caller named none) and prints the child's closing summary, so the output does not
-vanish with the child's window; a scripted `--yes` or `--no-input` child never waits for a key. Ctrl-C while waiting creates the stop
-marker (the parent passes its own marker to the child as the hidden `--stop-file`; the
-child accepts only a fresh `gupkg-stop-<32 hex>` name inside its own temporary folder),
-keeps waiting for 30 seconds, and then gives up with exit code 5, naming the marker and the events
-file. When the user elevates through a *different* administrator account the child's temporary folder
-differs, so the child ignores `--stop-file` and the stop never works: the parent waits 30 seconds and
-gives up with exit code 5 (use the child's own `stop_file` from its events file instead). Scheduled and CI
-callers use a unique `--events-file` name per run and treat a missing `run_end` as
-failure; a multi-target call under `--no-input` needs `--yes` (the question "run this
-on N packages?" is otherwise exit code 5).
+characters is refused (exit code 2). A package whose name holds one of these characters is
+installed from a shell.
 
 *Text encoding.* The launcher runs `python -I`, which ignores `PYTHONIOENCODING`. A
 redirected standard output or error is therefore UTF-8, a console keeps its code
@@ -1546,60 +1487,49 @@ their API versions always match. They still check the `"api"` field and
 refuse a mismatch.
 
 Exit codes follow section 10.1. One `check-updates`, `install`, `update` or
-`uninstall` call may carry several targets. The manager uses that to group
-every system-mode target into **one** elevated call, so the user sees a
-single UAC prompt.
+`uninstall` call may carry several targets. The manager runs one operation as
+one CLI call, in its own scope (section 15).
 
 Contract tests pin the JSON shapes: the plan document, the result document
 and every event type.
 
 ## 11. Settings file
 
-There is one file format, `settings.toml`, with layered locations. The
-separate migration tool converts 0.17's manager config `gupkg-config.toml`
-(schema 2) (section 18).
+There is one file format, `settings.toml`, with layered locations (schema 4, issue 035 §4.2). A file of schema 3
+is a settings error that names the key to change; there is no reader of old schemas (D54).
 
 Layers, lowest to highest priority. All of them are files in roots
-(section 9.7):
+(section 9.7), except the shipped one:
 
-1. **Built-in defaults.** These include the default roots `C:\opt`,
-   `%USERPROFILE%\opt` and `%USERPROFILE%\opt-portable`.
+1. **Built-in defaults.** These include the default roots `C:\opt` and
+   `%USERPROFILE%\opt`.
 2. **`$App\settings.toml`** of the running gupkg, shipped with a release
    (optional).
-3. **The system layer, `C:\opt\.gupkg\settings.toml`.** It is the data
-   directory of the root in which the system gupkg is installed, or of the
-   default system root. It may change `[roots]`. The root it names becomes
-   the system root for the other settings, which is how roots stay
-   configurable without any lookup outside the roots.
-4. **The user layer, `<user root>\.gupkg\settings.toml`.** It is ignored in
-   elevated and system-mode runs. In a portable run it is replaced by the
-   portable root's layer, `<portable root>\.gupkg\settings.toml`, which
-   is where `[integration.portable] integrate` is read from (section 6.1).
-5. **`--settings PATH`.** It is ignored in elevated runs unless `PATH` is
-   inside the admin-only system root.
+3. **The root layer, `<root>\.gupkg\settings.toml`,** the data directory of
+   the run's root (section 6.1). It never holds `[roots]`: a root cannot name
+   itself, so such a key there is a settings error.
+4. **`--settings PATH`.** User mode only; the system mode refuses the option.
+
+`[roots]` is read from layers 2 and 4 only, for the root fallback chain of
+section 6.1. There is no system layer and no user layer: a run has one root
+layer, the layer of its own root (D50).
 
 A bundled gupkg reads the same files when they exist. On a machine without
 an installed gupkg they usually don't, and the built-in defaults apply.
 
 ```toml
-schema = 3
-default_mode = "auto"         # auto (elevated -> system, otherwise user) | system | user
+schema = 4
 
-[roots]
+[roots]                       # only these two keys; read from $App\settings.toml and --settings, never from a root layer
 system = 'C:\opt'
 user = '%USERPROFILE%\opt'
-portable = '%USERPROFILE%\opt-portable'
 
-[integration.system]
-bin = 'C:\bin'
-start_menu = '%ProgramData%\Microsoft\Windows\Start Menu\opt'
-[integration.user]
-bin = '%USERPROFILE%\bin'
-start_menu = '%APPDATA%\Microsoft\Windows\Start Menu\opt'
-[integration.portable]
-integrate = "user"            # user | none
+[integration]                 # one table; its defaults depend on the mode of the run
+bin = 'C:\bin'                # system default; user default: '%USERPROFILE%\bin'
+start_menu = '%ProgramData%\Microsoft\Windows\Start Menu\opt'   # user default: '%APPDATA%\Microsoft\Windows\Start Menu\opt'
+integrate = "full"            # full | none ("none": shims in <root>\bin, nothing else written; section 6.1)
 
-[manager]                     # read only by gupkg-manager; the CLI ignores this table
+[manager]                     # read only by gupkg-manager, from the run's own layers; the CLI ignores this table
 checksum_missing = "ask"      # ask | refuse | skip
 keep_screen = true            # print the last run's summary to the console after a UI program closes
 
@@ -1626,12 +1556,12 @@ allow_vendor_installers = true
 record_manifest = true        # false: no package records the SHA-256 of every App file (D41)
 ```
 
-Machine state that is not configuration lives in `state.toml` in the same root
-data directory: the ad-hoc roots and the last registry sync. Users never need
-to edit it.
+Removed from schema 3: the default-mode key, `[roots].portable`, and the tables
+`[integration.system]`, `[integration.user]` and `[integration.portable]`.
 
-The current module-directory-only lookup (`manager.manager_config_candidates`)
-and its disagreement with issue 013's documented search order both go away.
+Machine state that is not configuration lives in `state.toml` in the same root
+data directory: the last registry sync, and nothing else. Users never need
+to edit it.
 
 ## 12. Architecture and module boundaries
 
@@ -1641,7 +1571,6 @@ gupkg/
     version.py      version parsing/ordering, reserved names
     manifest.py     pkg.toml format 2: parse, validate, typed dataclasses, templates
     settings.py     settings schema + layering
-    mode.py         ModeContext, mode selection (6.2), context building (6.1)
     state.py        PackageView, LocalState, InstalledState, status derivation
     plan.py         InstallPlan, Phase, Effect (data only)
   catalog/      discovery and joins (reads disk, no mutation)
@@ -1667,11 +1596,11 @@ gupkg/
     executor.py     runs phases, emits events, writes receipts/install record, rollback
     appbuild.py     the built-in download script and the custom populate runner (atomic App)
     effects.py      declarations -> effects; apply, remove, verify (shortcuts, shims, env, PATH)
-    portable.py     portable data hand-over, markers, the per-mode prepare steps and the App guard signature
+    portable.py     portable data hand-over (hand_over/hand_back) and markers
     locks.py        the per-package lock (.gupkg\locks\package.lock)
     installer.py    vendor installers ([source.installer]): the guarded run into the stage
     fingerprint.py  the D41 App fingerprint (the version-directory fingerprint is services/fingerprint.py, section 17)
-    receipts.py     receipt files; stateio.py: [[adhoc]] and track.toml
+    receipts.py     receipt files (read only from App.info); stateio.py: track.toml
     checkupdates.py the check-updates plan: track, write, populate, stop
     health.py       what `check` reports
     lifecycle.py    check-updates/install/update/switch/uninstall/cleanup/check entry points
@@ -1679,14 +1608,13 @@ gupkg/
     events.py       event dataclasses + Reporter protocol (contextvar)
     console.py      Rich renderer
     logfile.py      text + JSONL log writer, retention
-  modes.py      target -> mode: install record, containing root, portable target (D42), elevated admission (6.2, 9.6)
-  relaunch.py   the up-front elevation step for system mode (9.6)
-  distcopy.py   copy a distribution folder into a root, dropping the Mark of the Web (21.4)
-  cli.py        argparse grammar -> lifecycle calls -> exit code; --json/--plan/--events-file/--no-input; the tui/manager/migrate forwarders
+  scope.py      Scope (mode, root) and Mode, built once at process start: the mode from the token, the root by the fallback chain (6.1); scope.require_trusted(path) (9.4)
+  distcopy.py   copy a distribution folder into the run's root, dropping the Mark of the Web (21.4)
+  cli.py        argparse grammar -> lifecycle calls -> exit code; --json/--plan/--events-file/--no-input; the tui/manager forwarders
   viewdata.py   PackageView -> the plain data of list, info and --json (reads small files, prints nothing)
   settingsedit.py  create and edit one settings file (settings init/set, registry add/remove), validated by the schema first
   authoring.py  pkg new, pkg export, pkg bundle
-  launchers/    the one template of the package launchers (install.cmd, gupkg-tui.cmd, check-updates.cmd) and the code that writes them; used by check-updates, authoring, the registry tool and the migration tool
+  launchers/    the one template of the package launchers (install.cmd, gupkg-tui.cmd, check-updates.cmd) and the code that writes them; used by check-updates, authoring and the registry tool
   report/results.py  the result, plan and error documents of --json, and the text of list, info and --plan
   selfmgmt/     self status/repair: MANIFEST.sha256 check, bundled-runtime enforcement (issues 016, 018); self check-updates/update are aliases (section 20)
     location.py   where the running gupkg lives (installed, bundled, source): $App, its version directory and root, its sibling launchers
@@ -1695,29 +1623,23 @@ gupkg/
 ```
 
 ```text
-gupkg_ui/       shared by the two UI programs; may import gupkg core for reading (D44), never the engine
+gupkg_ui/       shared by the two UI programs; reads in-process through one typed reader (D53), never the engine
   client.py       the only module that starts a program: the sibling gupkg.cmd, argument lists, api check, stop request
   follow.py       follows --events-file files (global file + the package files it links to), bounded and strict
   render.py       event records -> phase-styled Rich text (literal, cleaned), verdict and summary lines
   plans.py        reads list/info/--plan documents; decides each planned target with model/manager_policy.py (ask/refuse/skip)
-  steps.py        groups targets into calls: one non-elevated call and ONE call for all system targets
-  session.py      runs the calls of a batch, combines their results, cancel through the stop marker
-  flows.py        plan -> one confirmation -> policy -> grouped execution -> cleanup (shared by both programs)
+  session.py      runs the CLI call of an operation, reads its result, cancel through the stop marker
+  flows.py        plan -> one confirmation -> policy -> execution -> cleanup (shared by both programs); no grouping by mode
   settings.py, startup.py, console.py, interaction.py
   screens/        frame (key-hint line, status line), run view, package view, log view, dialogs
 gupkg_tui/      separate program (gupkg-tui launcher): one package's view and actions (cli.py, app.py)
 gupkg_manager/  separate program (gupkg-manager launcher)
   batch.py        inventory, selection of what an --all batch acts on, the batch commands
   app/            Textual UI: the application and the browser
-  cli.py          gupkg-manager [tui] | check-updates --all | update --all [--mode M] [--yes] | check
+  cli.py          gupkg-manager [tui] | check-updates --all | update --all [--yes] | check
 ```
 
 ```text
-gupkg_migrate/  separate, non-core tool (gupkg-migrate), built in issue 023 (section 18); may import gupkg core (D44)
-                0.17 pkg.toml -> format 2, _bootstrap -> _check_updates,
-                gupkg-config -> settings, adoption of 0.17 installs,
-                shortcut import; ships in the release bundle;
-                `gupkg migrate` forwards to it (D45)
 gupkg_registry/ separate maintainer tool (issue 031, section 17); may import gupkg core (D44); not in the
                 release bundle: update (run trackers, write pinned versions with sha256 and fingerprint),
                 pin, validate
@@ -1731,14 +1653,14 @@ Dependency rules:
 - **No input or output below `cli`.** No module below it prints or reads
   input.
 - **No hidden cycles.** There are no function-local imports to hide them.
-- **The separate programs build on core** (D44). `gupkg_ui`, `gupkg_tui`,
-  `gupkg_manager` and `gupkg_migrate` may import gupkg core and any
+- **The separate programs build on core** (D44, amended by D53). `gupkg_ui`,
+  `gupkg_tui` and `gupkg_manager` may import gupkg core and any
   libraries, and reusing core is preferred to reimplementing it. Core never
-  imports them. The UI programs use core only for reading and reference:
-  every operation they perform is a `gupkg` CLI call (section 10.4). The
-  migration tool may use core to do its own work.
-- **The migration tool is not part of core.** Core contains no code for
-  0.17 data (D33).
+  imports them. The UI programs use core only for reading, through one typed
+  reader that the CLI's JSON output shares: every operation they perform is a
+  `gupkg` CLI call (section 10.4).
+- **No migration code anywhere in the repository** (D54). Neither core nor a
+  separate tool contains code for 0.17 data.
 
 This retires several of today's modules:
 
@@ -1792,8 +1714,7 @@ or a re-run converges on the declared state.
 **In the engine.** A CLI call with several targets is a sequence of
 per-package plans:
 
-- the targets are resolved once;
-- elevation is checked once for the call;
+- the targets are resolved once, in the run's one scope (section 6.1);
 - the run continues past failures;
 - per-package output is never discarded: it goes to the same event stream
   and log as any other run.
@@ -1801,13 +1722,15 @@ per-package plans:
 **In the UI programs.** Cross-package orchestration is `gupkg-manager`'s job
 (section 15):
 
-1. **Inventory:** `gupkg list --json`.
+1. **Inventory:** read in-process through the shared typed reader (D53), for
+   the manager's one scope.
 2. **Plan:** `gupkg update <targets> --plan --json`.
 3. **Confirm.** The plan is confirmed once, and the checksum policy may ask
    per package.
-4. **Run, grouped by mode.** One non-elevated `gupkg update <user targets>`
-   call, then one elevated `gupkg update <system targets>` call.
-5. **Report.** The manager shows the combined result.
+4. **Run.** One operation is one CLI call, `gupkg update <targets>`, in the
+   manager's scope. There is no grouping by mode: an elevated manager acts on
+   system packages and a normal manager on that user's packages (section 15).
+5. **Report.** The manager shows the result.
 6. **Cancel** (D37). Stopping takes effect after the current package: the
    running CLI finishes it cleanly and reports the rest as skipped.
 
@@ -1902,7 +1825,7 @@ only to an `App` that gupkg built, never to a shipped one. The `App` comparison 
 persisted paths.
 
 **Origin copies.** A registry pinned version is copied into the package root only when it is chosen
-(into a root with no forwarder it carries the package's own bundled `gupkg\` folder from the
+(into a root with no `gupkg-location` file it carries the package's own bundled `gupkg\` folder from the
 active version, like a `check-updates` directory),
 and its tracker when the package follows the registry and has none or an unedited older one (the hash
 and the revision recorded in the install record's `[link]` say whether the local copy was edited). A
@@ -2064,7 +1987,7 @@ Rendering rules:
 | What | Location |
 | --- | --- |
 | a package's part of a run | `<root>\<name>\.gupkg\logs\` of that package (D26) |
-| the run as a whole: global information, with links to the package logs | `<root>\.gupkg\logs\` of the root it acts on: `C:\opt\.gupkg\logs\` (admin-only) for system mode, `%USERPROFILE%\opt\.gupkg\logs\` for user mode, the portable or ad-hoc root's own for those |
+| the run as a whole: global information, with links to the package logs | `<root>\.gupkg\logs\` of the root it acts on: `C:\opt\.gupkg\logs\` (admin-only) for system mode, `<user root>\.gupkg\logs\` (default `%USERPROFILE%\opt\.gupkg\logs\`) for user mode |
 | a bundled gupkg's run that involves no package (`search`, `registry status`) | the logs of the package the bundled copy belongs to |
 | an installed gupkg's run that acts on no root | the data directory of the running gupkg's own root |
 
@@ -2084,25 +2007,34 @@ from the CLI (D12) and from each other (D34). Both ship in the same bundle,
 and both are specified in issue 030.
 
 - **`gupkg-tui`** shows one package and acts on it: versions (local,
-  registry, tracker), mode, link, data folder, the last receipt and the log,
+  registry, tracker), link, data folder, the last receipt and the log,
   with check-updates, update, repair, switch, uninstall and logs on keys.
   `gupkg-tui.cmd`, the package launcher in each version folder, finds a
   gupkg as described in section 21.3, then runs `gupkg tui "%~dp0."`.
   `gupkg tui PATH` forwards to it.
 - **`gupkg-manager`** is the general manager: the browser over every
-  package, `--all` batches, planning and confirmation across packages, the
-  `[manager] checksum_missing` policy (section 9.1), and grouping system
-  targets into one elevated CLI call. `gupkg-manager` (or
+  package of its scope, `--all` batches, planning and confirmation across
+  packages, and the `[manager] checksum_missing` policy (section 9.1).
+  `gupkg-manager` (or
   `gupkg manager tui`) opens the browser. The non-interactive commands for
   schedules are `gupkg-manager check-updates --all`,
-  `gupkg-manager update --all [--mode M] [--yes]` and
+  `gupkg-manager update --all [--yes]` and
   `gupkg-manager check`. `gupkg manager …` forwards to it.
-- **They read through core and act through the CLI** (D44). They may
-  import gupkg core and any libraries for reading and reference, such as
-  package state, settings and the event renderer, but every operation they
+- **One manager scope per run** (D53). An elevated manager shows and acts on
+  the system packages, the system registry and the system settings; a normal
+  manager does the same for that user's. Elevated is allowed. The title bar
+  shows `system · C:\opt` or `user · C:\Users\<name>\opt`. There is no grouping
+  by mode, no Mode column in the browser, and no key into system mode from a
+  normal manager (section 6.1).
+- **They read in-process and act through the CLI** (D53, amending D44). They
+  read through core with one typed reader that serves both the CLI's JSON and
+  the UI, so the UI does not re-parse documents; but every operation they
   perform is a `gupkg` CLI call through the machine interface (section
   10.4). They share a small UI library of their own (`gupkg_ui`,
   section 12).
+- **What the manager must show** (from issue 034, required with D53).
+  Anything unreadable or failed shows on screen. Tests run against recorded
+  real CLI documents, including `list --available`.
 - **Rendering.** Both render the CLI's event stream (section 14.1), read
   from the files named by `--events-file`, with the same phase styling as
   the console renderer.
@@ -2117,20 +2049,21 @@ and both are specified in issue 030.
   the current package cleanly and skips the rest; a program that is closed
   anyway first asks the CLI to stop, then ends its whole process tree (the
   launcher is a `.cmd`, so the process the program holds is only `cmd.exe`).
-- **Scheduled runs are normal-user runs.** The UI programs refuse an
-  elevated shell, so a task with "Run with highest privileges" is refused;
-  run it as a normal user (system packages are then only reported, D22).
+- **A scheduled task's privilege level is its mode.** "Run with highest
+  privileges" now means "manage in system mode"; it is no longer refused.
+  D22's "a normal shell only reports system packages" is gone (D53).
 
 Textual stays for the interactive parts (D6). It is pinned and already
 bundled. The manager's layout changes completely, and `gupkg-tui` uses the
 same frame for one package:
 
 ```text
+ user · C:\Users\ann\opt                                                                     ← title bar: mode · root
  ↑↓ move  Enter open  / filter  i install  u update  x uninstall  l logs  ? help  q quit   ← key-hint bar (1 line, always)
 ┌─────────────────────────────────────────────────────────────────────────────────────┐
-│ firefox      135.0.1   user    outdated → 136.0   main                              │ ← body: package table, or the
-│ ripgrep      14.1.0    system  installed           main                              │   run log (RichLog, append-only,
-│ my-tool      0.3       user    local               —                                 │   follows the tail, scrollable)
+│ firefox      135.0.1   outdated → 136.0   main                                      │ ← body: package table, or the
+│ ripgrep      14.1.0    installed           main                                      │   run log (RichLog, append-only,
+│ my-tool      0.3       local               —                                         │   follows the tail, scrollable)
 │ …                                                                                    │
 └─────────────────────────────────────────────────────────────────────────────────────┘
  3 outdated · 1 broken · registry main @ 4f2a9c1 (synced 2h ago) · log: …\latest.log      ← status footer (1 line)
@@ -2283,57 +2216,7 @@ gupkg-registry/
 
 ## 18. Migration
 
-Migration is done by a **separate, non-core tool**, `gupkg-migrate` (D33),
-built in issue 023. It may import gupkg core (D44). It ships in the release
-bundle and is called as `gupkg migrate …` (D45). 1.0 core contains no code for
-0.17 data: no format 1 reader, no `_bootstrap` handling and no 0.17 aliases.
-
-- **Upgrading gupkg itself.** 0.18 → 1.0 is a one-time re-run of the
-  bootstrap script (section 21.5). 0.18's `self update` says so when it sees
-  a 1.0 release.
-- **`gupkg-migrate package <path>`** converts a version directory or
-  `_bootstrap` to format 2:
-  - `[origin]` and `[update.*]` become `[source]` and `[track]`. The
-    overloaded `[origin] url` is split by meaning: a GitHub or project page
-    becomes `project_url`, or `[track] repo`; a real artifact becomes
-    `[source] download_url`. `homepage` becomes `project_url`;
-  - a 0.17 origin script (`.ps1`, `.cmd`, `.bat` or an executable) becomes
-    `[source] script` (section 4);
-  - `[[origin.versions]]` is dissolved. The entry whose `version` matches the
-    directory name becomes the single `[source]`. Every other entry is
-    reported, with a suggested `gupkg pkg new <name>`, and dropped. Leftover
-    `name`, `version` and `localVersion` keys are deleted;
-  - camelCase keys become snake_case;
-  - `only_portable` becomes `modes`;
-  - `ignore_checksum` is dropped with a note;
-  - `_bootstrap` is renamed to `_check_updates`;
-  - hooks that match a known service pattern are reported with the suggested
-    declarative replacement.
-
-  It writes a backup by default and validates the result before replacing the
-  file.
-- **`gupkg-migrate settings <gupkg-config.toml>`** converts manager config
-  schema 2 into `settings.toml`.
-- **`gupkg-migrate shortcuts`** turns existing `.lnk` shortcuts into
-  `[[shortcut]]` tables (0.17's `shortcuts_to_gupkg_toml.py`, D45).
-- **Existing installs need no reinstall.** The migration tool *adopts*
-  them. For each converted package that 0.17 installed, it writes
-  `.gupkg\package.toml` from the existing `current` and the declared
-  components, and marks those components "adopted". It reads old receipts
-  and `.gupkg\state\update.toml` once, then removes them. Converting a
-  package also writes its 1.0 launchers (`install.cmd`, `gupkg-tui.cmd`).
-  `gupkg-migrate package <root-or-package>` does both (`--no-adopt` only converts;
-  `--mode` and `--settings` decide the mode when the root does not): the effects of the
-  record are the ones the engine would apply, each marked adopted, and a package whose
-  active version is not converted yet is reported with the command that converts it.
-- **gupkg's own package** (`src\pkg.toml`, `src\pkg.local\check_update.py`,
-  `unpack_app.py`) is rewritten for format 2 as described in section 21.6:
-  a custom tracker and a custom populate script.
-- **The registry is converted with the migration tool** in the registry
-  repository. The 62 hooks are then replaced package by package (issue
-  031). Hooks left with no remaining purpose are deleted.
-- **No compatibility window.** A format 1 manifest gets the generic
-  "unsupported format" error; core does not mention the migration tool.
+Removed by issue 035 (D54): the repository contains no migration code.
 
 ## 19. Decisions
 
@@ -2342,13 +2225,17 @@ were taken by the owner in the review that followed job 07, on the same
 day; they amend D2, D10, D11, D12, D14, D15 and D16 where the rows say so. D2
 and D5–D9 were proposed by the designer and confirmed in that review, D2
 in changed form.
+D47–D55 are the owner's decisions of issue 035, confirmed on 2026-10-28 with the
+amendments of that issue's Q10–Q15. They supersede D4, D16, D17, D20, D22, D24,
+D31, D32, D33, D37, D42, D44 and D45, as the rows of those decisions say. The
+old text stays in those rows.
 
 | # | Decision | Alternatives considered |
 | --- | --- | --- |
 | D1 | Rename `_bootstrap` to **`_check_updates`** (owner's choice, 2026-10-22: the folder's only job is to check for a newer upstream version and write a new version directory). | `_latest`, `_track`, `_upstream`, `_channel` |
 | D2 | **A local package follows the registry entry with the same name automatically** (Scoop-like; owner's change, 2026-10-22). It can opt out with `gupkg link --unlink`, or follow another entry with `gupkg link`. | An explicit link only (the earlier draft: it avoids merging a custom local package with an unrelated registry entry) |
 | D3 | A checksum **mismatch is always fatal**; `--skip-checksum` covers only missing hashes. | Allow `--skip-checksum` to also bypass mismatches (Scoop's `--skip-hash`) |
-| D4 | `default_mode = "auto"` (owner's decision, 2026-10-22). Elevated selects `system` (a package that doesn't support system is refused: an elevated gupkg never acts on a user root, section 9.6); non-elevated selects `user`; never `portable`. It applies only when no flag, install record or containing root decides, and it means the same in every command. | `default_mode = "user"`, with elevation never selecting system (the earlier draft) |
+| D4 | **Superseded by D47 (issue 035).** `default_mode = "auto"` (owner's decision, 2026-10-22). Elevated selects `system` (a package that doesn't support system is refused: an elevated gupkg never acts on a user root, section 9.6); non-elevated selects `user`; never `portable`. It applies only when no flag, install record or containing root decides, and it means the same in every command. | `default_mode = "user"`, with elevation never selecting system (the earlier draft) |
 | D5 | Format 2 is strict, with an explicit migration tool; no dual-format reader. | Read both formats for one release |
 | D6 | Keep Textual for the interactive UI (redesigned, in `gupkg-manager`); Rich for console runs. | Rich-only with inline prompts; prompt_toolkit |
 | D7 | Portable mode persists declared paths in `<package>\data` and links/copies them into each `App`. | Keep everything in `App` and copy the whole old `App` forward on update |
@@ -2360,37 +2247,46 @@ in changed form.
 | D13 | **Stage 0 is issues 016–019, and they land first.** gupkg runs only on its bundled interpreter (`-I -s -B -S`). There is no runtime pip, dependency install or dependency check, and the bundle integrity is `MANIFEST.sha256`. The rehaul builds on these rather than redesigning them (section 20). | Fold them into the rehaul issues |
 | D14 | **gupkg is an ordinary format 2 package of itself.** It has a custom `_check_updates` tracker and a custom populate script, and no `download_url` (D27). `self check-updates` and `self update` are aliases for `check-updates gupkg` and `update gupkg`, so D11 applies to gupkg too. | Keep self-update as special-cased hooks (`src/pkg.local`) |
 | D15 | **Bundled mode** (owner's direction, 2026-10-22). Any version directory may carry a complete gupkg in `<version>\gupkg\`, so a program can be installed **without installing gupkg**. A bundled install keeps (and carries forward) its bundled copy to manage itself later, and never writes a root forwarder. gupkg's own package always carries a bundled gupkg, which its populate script copies into `App` (D27; the earlier `[source] local` is removed). The engine never executes a bundled tree (section 21). | A bundled install also installs gupkg (rejected by the owner: no extra infrastructure); gupkg's payload outside `App` (`into = "gupkg"`, an earlier draft) |
-| D16 | **Package launchers find gupkg relative to themselves.** They try the root forwarder `%~dp0..\..\.gupkg\gupkg.cmd` first, then the bundled `%~dp0gupkg\gupkg.cmd`. They never use `PATH`, the registry, AppData or ProgramData. Elevated launchers first verify, with PowerShell `Get-Acl` from System32 and failing closed, that everything they will run is not user-writable (recursive, D30), and refuse otherwise. Exit code 6 triggers the fallback to the bundled copy (section 21.3). | Search `PATH` (rejected: a fake `gupkg.exe` cannot be trusted to refuse itself); registry registration; locator files in AppData or ProgramData |
-| D17 | **A distribution folder outside every root is copied into the mode's root, then installed** (`--in-place` opts out). System-wide installs of a distribution are done only by the installed system gupkg from an admin shell, which copies the data and runs nothing from the source. A system bootstrap extracts straight into an admin-only `C:\opt` (section 21.4, 21.5). | Elevating a launcher in Downloads and copying with `robocopy` (an earlier draft) |
+| D16 | **Superseded by D52 (issue 035).** **Package launchers find gupkg relative to themselves.** They try the root forwarder `%~dp0..\..\.gupkg\gupkg.cmd` first, then the bundled `%~dp0gupkg\gupkg.cmd`. They never use `PATH`, the registry, AppData or ProgramData. Elevated launchers first verify, with PowerShell `Get-Acl` from System32 and failing closed, that everything they will run is not user-writable (recursive, D30), and refuse otherwise. Exit code 6 triggers the fallback to the bundled copy (section 21.3). | Search `PATH` (rejected: a fake `gupkg.exe` cannot be trusted to refuse itself); registry registration; locator files in AppData or ProgramData |
+| D17 | **Superseded by D47 (issue 035).** (`--in-place` goes; "the mode's root" reads as "the run's root".) **A distribution folder outside every root is copied into the mode's root, then installed** (`--in-place` opts out). System-wide installs of a distribution are done only by the installed system gupkg from an admin shell, which copies the data and runs nothing from the source. A system bootstrap extracts straight into an admin-only `C:\opt` (section 21.4, 21.5). | Elevating a launcher in Downloads and copying with `robocopy` (an earlier draft) |
 | D18 | **The Windows registry is a write target, never a source of information** (owner's decision, 2026-10-22). gupkg never reads it to learn anything: not its own location, not settings, not package state, not installed software. Reads happen only as part of a change (read-modify-write of `PATH`) or to verify a value gupkg wrote. There is no generic registry table; specific effects such as file types may come later (section 9.5). | A `Software\gupkg` registration for discovery (an earlier draft); a generic `[[winreg]]` table |
 | D19 | **Threat model T1** (owner's decision, 2026-10-22). gupkg runs as administrator for system mode. A standard user must not gain administrator rights through gupkg: an elevated gupkg never runs code, and never reads inputs, that a standard user can modify. Only an admin-only gupkg elevates, and only by relaunching itself (section 9.6). | T0: treat elevation as a convenience only |
-| D20 | **gupkg owns no files outside its roots** (owner's decision, 2026-10-22). Its settings, logs, registry cache, state and the root forwarder live in `<root>\.gupkg\`, and each package's own logs and records in `<package>\.gupkg\`. It never uses `%LOCALAPPDATA%`, `%APPDATA%` or `%ProgramData%` for its own data (section 9.7). | Per-user and machine-wide AppData/ProgramData folders (an earlier draft, taken from 0.17's embedded site-packages) |
+| D20 | **Superseded by D52 (issue 035).** (Forwarder part: the root forwarder is replaced by `gupkg-location`.) **gupkg owns no files outside its roots** (owner's decision, 2026-10-22). Its settings, logs, registry cache, state and the root forwarder live in `<root>\.gupkg\`, and each package's own logs and records in `<package>\.gupkg\`. It never uses `%LOCALAPPDATA%`, `%APPDATA%` or `%ProgramData%` for its own data (section 9.7). | Per-user and machine-wide AppData/ProgramData folders (an earlier draft, taken from 0.17's embedded site-packages) |
 | D21 | **Names.** Update discovery is `gupkg check-updates`; `gupkg check [--fix]` is the health check and replaces `doctor`; `gupkg pkg check` stays the authoring validator. | `gupkg check` for update discovery (the earlier draft) |
-| D22 | **Who checks for updates.** For a system package an administrator runs `check-updates` from an admin shell, and it writes into the system root. From a normal shell it implies `--no-download` and, for a system package, only reports. No proposals (section 9.3). | Non-elevated checks writing proposals that an elevated `update` admits; an inbox folder with an `admit` command |
+| D22 | **Superseded by D53 (issue 035).** (Only "a normal shell only reports system packages" goes.) **Who checks for updates.** For a system package an administrator runs `check-updates` from an admin shell, and it writes into the system root. From a normal shell it implies `--no-download` and, for a system package, only reports. No proposals (section 9.3). | Non-elevated checks writing proposals that an elevated `update` admits; an inbox folder with an `admit` command |
 | D23 | **`check-updates` populates by default.** It writes the new version directory and downloads, verifies and unpacks it, but activates nothing. `--no-download` writes only the directory. `update` activates, populating first if needed. | Write `pkg.toml` only, download at `update` (the earlier draft) |
-| D24 | **`--skip-checksum` for system installs** is allowed, also when relayed by the manager, but only for `https://` URLs (section 9.1). | Only from an admin shell; only through the system settings; never in system mode |
+| D24 | **Superseded by D49 (issue 035).** (Relayed part: there is no relay.) **`--skip-checksum` for system installs** is allowed, also when relayed by the manager, but only for `https://` URLs (section 9.1). | Only from an admin shell; only through the system settings; never in system mode |
 | D25 | **The CLI confirms consequential actions** unless `--yes`; `--no-input` turns a question into exit 5. Never about checksums. | The CLI never prompts |
 | D26 | **Logs.** Per-package logs in `<package>\.gupkg\logs\`; the root's `.gupkg\logs\` holds global run information with links. `--events-file` takes a plain name. A bundled gupkg logs package-less runs into its own package (section 14.3). | Per-mode log directory only; a caller-chosen events path |
 | D27 | **Populate scripts are first class** (section 4): the built-in download script, or a custom script (Python, `.ps1`, `.cmd`/`.bat`, executable). A custom-populated `App` is as verified as the package, and recoverable while the script's inputs exist. `[source] local` is removed. | `[source] local` copying a shipped folder (the earlier draft) |
 | D28 | **Version-directory scripts may use the network.** Python cannot sandbox trusted code. D10 keeps only "no update-discovery code in version directories". | A contract that version-directory hooks get no HTTP client, with an import warning |
 | D29 | **Installs with no download** are labelled *origin not verified*, unless a registry fingerprint matches (then *verified against registry*). A mismatch refuses the install (section 9.2). | `verified-by-bootstrap`; the bootstrap vouching for its ZIP |
 | D30 | **Elevated launchers check everything they will run, recursively**, follow `current` safely, and trust `%SystemRoot%` (sections 9.6, 21.3). | Root and version directory only (job 07, spike S1 showed admin-only parents with user-writable children) |
-| D31 | **An elevated gupkg never acts on a user root**, neither through the `auto` fallback nor an explicit `--mode user` (nor `--mode portable`: a portable root is user-writable too). | Fall back to user mode; drop elevation for user-mode work |
-| D32 | **Which gupkg runs.** The installed gupkg through the root forwarder, unless `--no-system-gupkg=true`; otherwise the bundled copy. No version comparison. Carry-forward copies the package's own bundle; bundles stay until an explicit `cleanup --bundled`. | Copy the running gupkg, never an older one; drop old versions' bundles |
-| D33 | **No legacy-specific code in core.** A separate migration tool (built in issue 023) converts formats, settings and `_bootstrap`, and adopts 0.17 installs. No 0.17 aliases. 0.18 → 1.0 is a bootstrap re-run (section 18). | `gupkg pkg migrate`, `settings init --from`, deprecated aliases and automatic adoption in core |
+| D31 | **Superseded by D49 (issue 035).** (Now structural: `Scope` has no field for another root.) **An elevated gupkg never acts on a user root**, neither through the `auto` fallback nor an explicit `--mode user` (nor `--mode portable`: a portable root is user-writable too). | Fall back to user mode; drop elevation for user-mode work |
+| D32 | **Superseded by D52 (issue 035).** **Which gupkg runs.** The installed gupkg through the root forwarder, unless `--no-system-gupkg=true`; otherwise the bundled copy. No version comparison. Carry-forward copies the package's own bundle; bundles stay until an explicit `cleanup --bundled`. | Copy the running gupkg, never an older one; drop old versions' bundles |
+| D33 | **Superseded by D54 (issue 035).** **No legacy-specific code in core.** A separate migration tool (built in issue 023) converts formats, settings and `_bootstrap`, and adopts 0.17 installs. No 0.17 aliases. 0.18 → 1.0 is a bootstrap re-run (section 18). | `gupkg pkg migrate`, `settings init --from`, deprecated aliases and automatic adoption in core |
 | D34 | **Two UI programs:** `gupkg-tui` (one package) and `gupkg-manager` (general), both in issue 030. `gupkg tui` and `gupkg manager` are permanent forwarders (section 15). | One `gupkg-manager` program with a package view |
 | D35 | **Issue 017 lands strictly before issue 021.** | 017 may land after 021 |
 | D36 | **The registry tool** creates new versions with hashes and fingerprints; a maintainer reviews and pushes, or `--auto-push` does. Every version is kept (section 17). | CI committing or opening pull requests; keeping only N versions |
-| D37 | **Cancel stops after the current package** (sections 10.4, 13.2). | After the current phase; only between CLI calls |
+| D37 | **Superseded by D49 (issue 035).** (The hidden `--stop-file` of the elevated child goes; cancelling through the stop marker stays.) **Cancel stops after the current package** (sections 10.4, 13.2). | After the current phase; only between CLI calls |
 | D38 | **The registry rule is tested by behaviour** (`FakeSystem`'s registry access log), not by inspecting code (section 16). Its UI half was dropped by D44. | Module-boundary tests; a CI lint step |
 | D39 | **No `inno` kind in 1.0**; GIMP runs its vendor installer. A `tar` kind is added; MSYS2 uses its `.tar.xz` (section 8.2). | innoextract or innounp; bundling 7-Zip ZS; running MSYS2's `.sfx.exe` |
 | D40 | **Copying a distribution into a root removes the Mark of the Web**, and the receipt records it (section 21.4). | Keep the marks and document `Unblock-File` |
 | D41 | **Every install records an `App` fingerprint**; a package opts out with `record_manifest = false` (section 4). | Off by default; only for shipped `App`s |
-| D42 | **Portable target.** A folder shaped `<name>\<version>\pkg.toml` installs in place; otherwise the configured portable root, or gupkg asks (section 6.3). | A fixed `%USERPROFILE%\opt-portable` default |
+| D42 | **Superseded by D51 (issue 035).** **Portable target.** A folder shaped `<name>\<version>\pkg.toml` installs in place; otherwise the configured portable root, or gupkg asks (section 6.3). | A fixed `%USERPROFILE%\opt-portable` default |
 | D43 | **`cleanup` never runs automatically** (`[cleanup] auto` enables it). **No lite bundle** in 1.0. | Automatic cleanup; `pkg bundle --lite` |
-| D44 | **The separate programs may import core.** `gupkg-tui` and `gupkg-manager` may import gupkg core and any libraries for reading and reference, but every operation they perform is a `gupkg` CLI call (sections 10.4, 12). The migration tool may import core and does its own work. Amends D12 and D38. | No imports at all (D12 as first written); UI programs doing operations in-process |
-| D45 | **Every separate tool is callable as `gupkg <command>`.** `gupkg tui`, `gupkg manager` and `gupkg migrate` are permanent forwarders. The migration tool ships in the release bundle and includes the shortcut import (0.17's `shortcuts_to_gupkg_toml.py`) (sections 10.1, 18). | Separate commands only |
+| D44 | **Superseded by D53 (issue 035).** (Amended: the UI programs read in-process; operations still go through the CLI.) **The separate programs may import core.** `gupkg-tui` and `gupkg-manager` may import gupkg core and any libraries for reading and reference, but every operation they perform is a `gupkg` CLI call (sections 10.4, 12). The migration tool may import core and does its own work. Amends D12 and D38. | No imports at all (D12 as first written); UI programs doing operations in-process |
+| D45 | **Superseded by D54 (issue 035).** (`migrate` forwarder part: the `gupkg tui` and `gupkg manager` forwarders stay.) **Every separate tool is callable as `gupkg <command>`.** `gupkg tui`, `gupkg manager` and `gupkg migrate` are permanent forwarders. The migration tool ships in the release bundle and includes the shortcut import (0.17's `shortcuts_to_gupkg_toml.py`) (sections 10.1, 18). | Separate commands only |
 | D46 | **A refused download leaves the version without `App`.** When `check-updates` finds a version but the checksum rules refuse its download (no hash and no `--skip-checksum`), the version directory stays written without `App`, and the refusal is reported (section 7.4). | Write nothing |
+| D47 | A run belongs to one scope (mode, root), fixed at process start. The mode comes from the token alone. A machine where every process is elevated has only system mode (Q10). | Replaces: D4, design §6.2, §5.3 rule 5 |
+| D48 | The root of a run comes from the per-mode fallback chain of §4.1: `--root`, then (system) the installed system gupkg's root or (user) `--settings`, then `$App\settings.toml`, then the built-in default. A root's own settings never name a root. An elevated run needs an admin-only root and an admin-only gupkg tree. In user mode, the root the running gupkg is installed in comes third, when it is not admin-only (Q11). | Replaces: design §11 layers 3–5 as sources of roots |
+| D49 | gupkg never elevates itself. The system mode is reached by starting gupkg elevated, helped by a run-as-administrator shortcut. No manager key leads to system mode; a refusal names the shortcut and the elevated command (Q12). | Replaces: design §9.6 rule 1 (relaunch part), §10.4 "The elevated child", D24 (relayed part), D31 (now structural) |
+| D50 | Each mode has its own settings, registry cache, state and logs, and never reads the other's. There is no machine-wide policy for user runs (Q15). | Replaces: design §6.1 last row, §9.4, §11 |
+| D51 | Portable is a package kind (`[portable]` present), installed in user mode only. A definition is never both. | Replaces: D7 (kept for persist), D42, design §6.3 "where a portable package goes" |
+| D52 | Launchers try the bundled gupkg, then the one named in `<root>\.gupkg\gupkg-location` (data, not a script), then `PATH`. When elevated, only `PATH` entries whose folder is admin-only are used (no registry read), and everything selected must pass the admin-only check. No root forwarder. | Replaces: D16, D32, D20 (forwarder part), design §21.3 |
+| D53 | One manager scope per run. Elevated is allowed. Reads happen in-process through a shared typed reader. Operations go through the CLI. | Replaces: D44 (amended), design §13.2 step 4, §15 "Scheduled runs" |
+| D54 | No migration code in the repository, core or not. A package folder without an install record is `broken`, with "reinstall" as the fix (Q13). | Replaces: D33, D45 (`migrate` forwarder), design §18 |
+| D55 | A package declares the modes it may be installed in: system only (drivers, services, machine-wide state), user only, or both (the default). A portable package is user only. The planner refuses a version on a mode it does not allow, before any work, and the message never names the other mode's locations. `list --available` and `a` show packages the mode cannot install, marked, with the reason (Q14). `uninstall`, `check` and `cleanup` are never refused by it. | Replaces: the mode part of `modes` in design §6.2 |
 
 There are no open questions. The six questions of the first draft were
 answered by the owner on 2026-10-22: the default portable root (D42), the
@@ -2474,7 +2370,7 @@ package without installing extra infrastructure**. A program's distribution
 can carry gupkg inside its own version directory, as `<version>\gupkg\`.
 Someone unzips the folder anywhere and runs `install.cmd`. The program is
 then installed with its shortcuts, shims, environment and PATH, and **gupkg
-itself is not installed**: no gupkg package, no root forwarder, no gupkg
+itself is not installed**: no gupkg package, no `gupkg-location` file, no gupkg
 shims, and no gupkg `PATH` entry appear on the machine.
 
 gupkg's own package uses the same mechanism. Its distribution *always*
@@ -2492,11 +2388,11 @@ its roots (section 9.7).
 | Term | Meaning |
 | --- | --- |
 | **Root** | A folder that holds packages, one subfolder each, with one install mode (section 3). Default roots: `C:\opt` (system), `%USERPROFILE%\opt` (user). |
-| **Root data directory** | `<root>\.gupkg\`: gupkg's own files for that root (settings, global logs, registry cache, state) and the **root forwarder**. gupkg owns no files outside its roots (section 9.7). |
-| **Root forwarder** | `<root>\.gupkg\gupkg.cmd` and `gupkg-manager.cmd`: two-line scripts that call the installed gupkg (`…\gupkg\current\App\gupkg.cmd` and its sibling). Package launchers find an installed gupkg through it, at a fixed position relative to themselves (section 21.3). |
-| **Bundled gupkg** | A complete gupkg runtime tree in `<version>\gupkg\`: the commands `gupkg.cmd`, `gupkg-tui.cmd` and `gupkg-manager.cmd`, the `gupkg` Python package with the `python\` of issue 018 inside it, the `gupkg_ui`, `gupkg_tui`, `gupkg_manager` and `gupkg_migrate` packages beside it, `VERSION`, `RELEASE.txt` and `MANIFEST.sha256` (issue 016; its paths are relative to the version directory and name only the files of the tree). It needs nothing installed. |
-| **Installed gupkg** | The `current` version of the `gupkg` package in a root (`<root>\gupkg\current\App\`). Only installing the `gupkg` package creates one, and that install writes its root's forwarder. |
-| **Bundled install** | A package installed by a bundled gupkg, with no installed gupkg involved. It writes no forwarder. The package keeps its bundled copy, so it can later be updated, repaired and uninstalled the same way (section 21.4). |
+| **Root data directory** | `<root>\.gupkg\`: gupkg's own files for that root (settings, global logs, registry cache, state) and the **`gupkg-location`** file. gupkg owns no files outside its roots (section 9.7). |
+| **`gupkg-location`** | `<root>\.gupkg\gupkg-location`: a one-line text file holding the folder that contains `gupkg.cmd` (section 4, D52). It is data, not a script. Package launchers find an installed gupkg through it, at a fixed position relative to themselves (section 21.3). |
+| **Bundled gupkg** | A complete gupkg runtime tree in `<version>\gupkg\`: the commands `gupkg.cmd`, `gupkg-tui.cmd` and `gupkg-manager.cmd`, the `gupkg` Python package with the `python\` of issue 018 inside it, the `gupkg_ui`, `gupkg_tui` and `gupkg_manager` packages beside it, `VERSION`, `RELEASE.txt` and `MANIFEST.sha256` (issue 016; its paths are relative to the version directory and name only the files of the tree). It needs nothing installed. |
+| **Installed gupkg** | The `current` version of the `gupkg` package in a root (`<root>\gupkg\current\App\`). Only installing the `gupkg` package creates one, and that install writes its root's `gupkg-location` file. |
+| **Bundled install** | A package installed by a bundled gupkg, with no installed gupkg involved. It writes no `gupkg-location` file. The package keeps its bundled copy, so it can later be updated, repaired and uninstalled the same way (section 21.4). |
 | **Distribution** | A ZIP of a package-root fragment (`<name>\<version>\…`, optionally with `<name>\_check_updates\`) whose version directory carries a bundled gupkg and the package launchers. |
 | **Package launchers** | `install.cmd` and `gupkg-tui.cmd` in a version directory, and `check-updates.cmd` in a `_check_updates` folder (which only checks and never installs). gupkg core generates all of them from one template, whichever gupkg runs the operation. They find a gupkg to run (section 21.3). `gupkg-tui.cmd` keeps today's name and now starts the `gupkg-tui` program (section 15). |
 
@@ -2505,7 +2401,7 @@ its roots (section 9.7).
 ```text
 C:\opt\                               a root (system mode, admin-only)
   .gupkg\                             root data directory (section 9.7)
-        gupkg.cmd  gupkg-manager.cmd      root forwarder -> C:\opt\gupkg\current\App\...
+    gupkg-location                    one line: C:\opt\gupkg\current\App
     settings.toml  state.toml  logs\  registry\
   gupkg\                              gupkg's own package
     current\                          -> 1.0.0
@@ -2513,13 +2409,13 @@ C:\opt\                               a root (system mode, admin-only)
       pkg.toml                        [source] script = "pkg.local/populate.py"; no download_url
       pkg.local\populate.py           copies the bundled tree into App
       App\                            the installed gupkg runs from here
-        gupkg.cmd  gupkg-tui.cmd  gupkg-manager.cmd  gupkg\ (the package, with python\)  gupkg_ui\  gupkg_tui\  gupkg_manager\  gupkg_migrate\  MANIFEST.sha256  VERSION  RELEASE.txt
+        gupkg.cmd  gupkg-tui.cmd  gupkg-manager.cmd  gupkg\ (the package, with python\)  gupkg_ui\  gupkg_tui\  gupkg_manager\  MANIFEST.sha256  VERSION  RELEASE.txt
       gupkg\                          bundled copy: kept, it is the populate script's input
       install.cmd  gupkg-tui.cmd
     _check_updates\pkg.toml  pkg.local\track.py
   firefox\
     135.0.1\
-      install.cmd  gupkg-tui.cmd       launchers find C:\opt\.gupkg\gupkg.cmd (two levels up)
+      install.cmd  gupkg-tui.cmd       launchers: no bundled gupkg, so they read C:\opt\.gupkg\gupkg-location (two levels up)
 
 MyApp-1.2.0.zip                       a distribution of another program
   myapp\
@@ -2550,17 +2446,46 @@ Rules:
 
 `install.cmd`, `gupkg-tui.cmd` and the tracker's `check-updates.cmd` are generated from one template of gupkg core
 (`gupkg\launchers\package-launcher.cmd`) by `check-updates` (new version directories, every root), `gupkg pkg new`,
-`pkg bundle` and `pkg export`, the registry tool (`launchers`) and the migration tool. They are plain `cmd`.
+`pkg bundle` and `pkg export`, and the registry tool (`launchers`). They are plain `cmd`.
 A launcher lives at `<root>\<name>\<version>\`, so its root is `%~dp0..\..`.
 
-**Which gupkg** (D16, D32):
+**Which gupkg** (D52; owner's answer Q4, issue 035 §4.9). The order is the
+bundled gupkg, then the root's setting, then `PATH`:
 
-1. `%~dp0..\..\.gupkg\gupkg.cmd`: the root forwarder, meaning the installed
-   gupkg that manages this root. It is skipped when the launcher is given
-   `--no-system-gupkg=true`.
-2. `%~dp0gupkg\gupkg.cmd`: the bundled gupkg.
-3. If neither exists, print how to get gupkg (the bootstrap URL) and exit
-   9009.
+1. **The bundled gupkg,** `%~dp0gupkg\gupkg.cmd`, when the version directory
+   carries one.
+2. **The gupkg named by the root's setting.** `<root>\.gupkg\gupkg-location`
+   is a one-line text file holding the folder that contains `gupkg.cmd` (section 4).
+   A relative path is resolved against the root. The launcher reads it with
+   `set /p`, and nothing in it is executed. It is data, not a script calling
+   a script.
+   - Installing the `gupkg` package into a root writes this file, pointing at
+     `$PackageRoot\current\App`. It replaces the root forwarder
+     (`[root_forwarder]`). Uninstalling gupkg removes the file, but only if
+     it still holds that value.
+   - A person may edit it, for example to let a user root use the system
+     gupkg's program. *Code may be shared, data never* (section 6.1): the
+     program it names still runs as a user-mode run on that root.
+   - A missing file, an empty file, or a named folder without `gupkg.cmd`
+     means "no setting". The launcher goes on to step 3 and prints which file
+     it skipped.
+3. **`gupkg` on `PATH`.**
+   - **Not elevated:** the first `gupkg.cmd` or `gupkg.exe` that the process
+     `PATH` finds.
+   - **Elevated** (owner's answer Q7: (b)):
+     - **Which entries:** the process `PATH` is scanned in order, and an entry
+       is used only if its folder passes the admin-only check. A
+       user-writable entry is skipped and named in the output.
+     - **No registry read:** the launcher never reads the machine `PATH` from
+       the registry, so D18 stays whole.
+     - **What must be admin-only:** the whole chain of what will run: the
+       shim, its `.config.toml`, the target it names, and that target's gupkg
+       tree, recursively, with the existing ACL check (D30). It fails closed.
+     - **Accepted consequence:** an entry from an administrator's own user
+       `PATH` is used when its folder happens to be admin-only. Only an
+       administrator can change such a folder, so threat model T1 is
+       unaffected.
+4. **Else** exit 9009 with the bootstrap hint (the bootstrap URL).
 
 The launcher never compares versions. The only fallback is the exit code 6
 rule below.
@@ -2571,8 +2496,8 @@ proceed** otherwise.
 
 - **What is checked** (D30): everything the launcher will run, recursively.
   That is the root (`%~dp0..\..`), the package directory (`%~dp0..`), the
-  version directory (`%~dp0`), the root's `.gupkg\` with the forwarder, and
-  the whole gupkg tree that will start, including its `python\`. Each must
+  version directory (`%~dp0`), the root's `.gupkg\` with the `gupkg-location`
+  file, and the whole gupkg tree that step 1, 2 or 3 selects, including its `python\`. Each must
   be owned by Administrators, SYSTEM or TrustedInstaller. No other security
   identifier may hold any write-type right on any of them: write, append,
   create files or folders, delete, delete-child, change permissions, or
@@ -2608,36 +2533,26 @@ proceed** otherwise.
   - `%SystemRoot%` is trusted to locate PowerShell (section 9.6, D30).
   - This is the only PowerShell use left in gupkg's own operation. It is a
     narrow exception to issue 017.
-- **Then** it uses the root forwarder, or the bundled gupkg. Both lie inside
-  the verified root.
+- **Then** it runs the gupkg that step 1, 2 or 3 selected. Everything
+  selected has been verified.
 
 Further rules:
 
-- **Never the registry, `PATH`, AppData, ProgramData or the current
-  directory** (sections 9.5 and 9.7). Today's `gupkg-tui.cmd` searches
-  `PATH`, and that search is removed.
+- **Never the Windows registry, AppData, ProgramData or the current
+  directory** (sections 9.5 and 9.7). `PATH` is only step 3 above, and an
+  elevated launcher takes only admin-only entries from the process `PATH`.
 - **The refusal in a user-writable launcher is only a safety rail**, not a
   security control. Anyone who can write that folder can edit the `.cmd`
-  and remove the check. Security comes from the other direction: launchers
-  in admin-only roots only ever reach gupkg copies inside those roots
-  (section 9.6).
-- **A root's forwarder points only to a gupkg at least as trusted as the
-  root.**
-  - A system root's forwarder points only to the gupkg installed in that
-    same root.
-  - A user root's forwarder may point to a user-mode gupkg, or to the system
-    gupkg (user → system is safe).
-  - The forwarder is written when the gupkg package is installed into a
-    root. A non-elevated installed gupkg managing a user root that has no
-    forwarder writes one pointing at itself.
-- **Bundled installs never write a forwarder.** Their launchers keep finding
-  the bundled copy for as long as the root has no installed gupkg. That is
-  how a bundled install stays free of infrastructure.
-- **Version fallback.** An installed gupkg that cannot handle the package
-  exits with code **6**: an unknown `pkg.toml` `format`, or an unmet
-  `requires_gupkg`. The launcher then prints a notice and re-runs the same
-  command with the bundled gupkg, if there is one. When elevated, the
-  bundled gupkg has been checked with everything else.
+  and remove the check. Security comes from the other direction: an elevated
+  launcher runs only what passed the admin-only check (section 9.6).
+- **Only installing the `gupkg` package writes `gupkg-location`.** Bundled
+  installs never write it. Their launchers find the bundled copy first, so a
+  bundled install stays free of infrastructure.
+- **Version fallback** (the exit code 6 fallback reverses). A selected gupkg
+  that cannot handle the package exits with code **6**: an unknown `pkg.toml`
+  `format`, or an unmet `requires_gupkg`. The launcher then prints a notice
+  and tries the next step of the order above. When elevated, the next gupkg
+  is checked with everything else.
 - **The launchers:**
   - `check-updates.cmd` (in `_check_updates` only) runs `gupkg check-updates <name>`, the name being the folder's
     parent, and nothing else.
@@ -2646,14 +2561,13 @@ Further rules:
     which starts `gupkg-tui` and opens the package view: check-updates,
     update, repair, uninstall, logs.
 
-  Both pass through `GUPKG_NO_PAUSE` as today, and accept
-  `--no-system-gupkg=true`.
+  Both pass through `GUPKG_NO_PAUSE` as today.
 
 ### 21.4 Installing from a distribution folder
 
-A version directory that lies outside every configured root, such as a
+A version directory that lies outside the run's root, such as a
 distribution unzipped into Downloads, is installed by **copying it into the
-mode's root first** (`<root>\<name>\<version>\`, copied whole, including the
+run's root first** (`<root>\<name>\<version>\`, copied whole, including the
 bundled gupkg and a shipped `_check_updates`). The install then proceeds
 from that copy, so the result is an ordinary managed package. The source
 folder can be deleted afterwards.
@@ -2669,17 +2583,20 @@ folder can be deleted afterwards.
   *origin not verified*, unless the registry publishes a fingerprint for
   that package and version and it matches. A mismatch refuses the install
   (section 9.2).
-- **`--in-place` keeps the folder where it is.** It becomes an ad-hoc root
-  (section 5.4). A portable install of a folder shaped
-  `<name>\<version>\pkg.toml` stays in place without the flag (D42).
-- **User and portable modes.** The unzipped launcher runs non-elevated. Its
-  root is the extraction folder, which has no forwarder, so the bundled
-  gupkg does a **bundled install** into the user or portable root.
+- **There is no `--in-place` and there are no ad-hoc roots** (owner's answer
+  Q1). A folder that should stay where it is becomes the root of its own user
+  scope: `gupkg install <folder> --root <folder above name>`. Its launchers
+  already treat `%~dp0..\..` as the root, so a bundled install in place needs
+  no new mechanism. The user root's manager does not list such a folder: it
+  is another scope.
+- **User mode.** The unzipped launcher runs non-elevated. Its
+  root is the extraction folder, which has no `gupkg-location` file, so the bundled
+  gupkg does a **bundled install** into the user root.
 - **System mode** is never started from a user-writable launcher: an
   elevated `install.cmd` in Downloads refuses (section 21.3). An
   administrator installs a distribution system-wide with the installed
   system gupkg, from an admin shell:
-  `gupkg install <folder> --mode system`. That gupkg only *reads and copies*
+  `gupkg install <folder>`. That gupkg only *reads and copies*
   the folder into `C:\opt`, and runs nothing from the source location. It
   then installs from the admin-only copy. The admin has chosen to trust that
   package's contents, as with any installer.
@@ -2690,15 +2607,16 @@ folder can be deleted afterwards.
   version's `gupkg-tui.cmd` uses it for check-updates, update, repair and
   uninstall.
 - **It is carried forward** (D32). When `check-updates` or `update` creates
-  a new version directory in a root that has no forwarder, the package's
+  a new version directory in a root that has no `gupkg-location` file, the package's
   own bundled gupkg is copied into it. The active version of a bundled
   install therefore always has a gupkg to run.
 - **Uninstalling leaves only gupkg's data.** `uninstall --purge` removes the
   package. What remains is the root's `.gupkg\logs`.
-- **An installed gupkg takes over later.** If gupkg is later installed into
-  the same root, the launchers of existing bundled installs find the new
-  forwarder and use it, unless they are given `--no-system-gupkg=true`.
-  `cleanup --bundled` can then drop their bundled copies (section 21.8).
+- **An installed gupkg does not take over.** The bundled copy is tried first
+  (section 21.3), so the launchers of existing bundled installs keep using it
+  when gupkg is later installed into the same root.
+  `cleanup --bundled` can drop their bundled copies where step 2 or 3 of the
+  launcher order would find a gupkg (section 21.8).
 
 ### 21.5 Bootstrap: installing gupkg itself
 
@@ -2716,13 +2634,14 @@ is also how a 0.18 installation moves to 1.0 (D33).
      admin-only owner and permissions on it, or refuses if an existing
      `C:\opt` is not admin-only. It then extracts the release **directly
      into `C:\opt\gupkg\<version>\`**.
-3. **Run `gupkg\<version>\install.cmd`**, mapping `-Scope` to `--mode`.
-   - **User mode:** the launcher in staging finds no forwarder, so the bundled
+3. **Run `gupkg\<version>\install.cmd`.** The mode is that of the process: elevated
+   for system mode (there is no `--mode`, section 6.1).
+   - **User mode:** the launcher in staging finds no `gupkg-location` file, so the bundled
      gupkg runs and copies the version directory into
      `%USERPROFILE%\opt\gupkg\<version>\`.
    - **System mode:** the elevated launcher in `C:\opt\gupkg\<version>\`
-     verifies everything it will run (section 21.3). It finds no forwarder
-     yet, so it runs the bundled gupkg, which is inside the verified root.
+     verifies everything it will run (section 21.3). It runs the bundled gupkg
+     first, which is inside the verified root.
 
    Either way, the `gupkg` package is installed like any other package. The
    install:
@@ -2732,13 +2651,13 @@ is also how a 0.18 installation moves to 1.0 (D33).
    - creates the shims `gupkg.exe`, `gupkg-tui.exe` and `gupkg-manager.exe`
      pointing into `$App`, puts the bin directory on `PATH`, and adds the
      Start Menu entry;
-   - creates the **root data directory** `<root>\.gupkg\`, with the forwarder
-     and default settings;
+   - creates the **root data directory** `<root>\.gupkg\`, with the
+     `gupkg-location` file and default settings;
    - labels the install like any distribution install: *verified against
      registry* when the registry's fingerprint matches, otherwise *origin
      not verified* (D29). The bootstrap's own ZIP check is not passed on.
-4. **Done.** Launchers of packages in that root now find the installed
-   gupkg through the forwarder. The bootstrap script has no install logic of
+4. **Done.** Launchers of packages in that root that carry no bundled gupkg now find the installed
+   gupkg through the `gupkg-location` file. The bootstrap script has no install logic of
    its own beyond creating the system root safely. The same script can
    perform a bundled install of any distribution in user mode
    (`-Source <url> -Sha256 …`). Run that way, it installs only that program,
@@ -2770,9 +2689,12 @@ target = "$App\\gupkg-tui.cmd"
 name = "gupkg-manager"
 target = "$App\\gupkg-manager.cmd"
 
-[root_forwarder]                    # only valid in the gupkg package: writes <root>\.gupkg\gupkg.cmd and gupkg-manager.cmd
-target = '$PackageRoot\current\App'
 ```
+
+There is no `[root_forwarder]` table (D52). Installing the `gupkg` package
+writes `<root>\.gupkg\gupkg-location`, pointing at `$PackageRoot\current\App`
+(section 21.3); uninstalling removes it, but only if it still holds that
+value.
 
 - **The populate script** copies the bundled tree `<version>\gupkg\` into
   `App` and checks it against its `MANIFEST.sha256`. When a version
@@ -2789,11 +2711,11 @@ target = '$PackageRoot\current\App'
 - **Self-update.**
   1. `gupkg self check-updates` writes `<root>\gupkg\<new>\` with
      `pkg.toml`, `pkg.local\populate.py` and the two launchers, and by
-     default populates it, fetching the release as described above. For a
-     system root it runs from an admin shell (D22).
+     default populates it, fetching the release as described above. In
+     system mode it runs elevated.
   2. `gupkg self update` activates it by switching `current`.
 
-  The forwarder already goes through `current`, so it needs no change. The
+  `gupkg-location` already goes through `current`, so it needs no change. The
   running process keeps executing from the old version's `App`, which stays
   on disk until `cleanup`.
 - **The bundled copy is kept** in gupkg's own version directories, because
@@ -2806,11 +2728,9 @@ target = '$PackageRoot\current\App'
 | `[source] script = "<path>"` | 4, 8.6 | A custom populate script: Python, `.ps1`, `.cmd`/`.bat` or an executable (D27). |
 | Reserved version-directory names `gupkg\`, `install.cmd`, `gupkg-tui.cmd` | 4 | The bundled runtime and the launchers. The engine never executes the bundled tree. |
 | Carrying a bundled gupkg forward | 5.3, 7.4 | New version directories of a bundled install get a copy of the package's own bundle, so the active version can always manage itself (D32). |
-| `[root_forwarder]` (gupkg package only) | 7, 13.1, 21.3 | Writes `<root>\.gupkg\gupkg.cmd` and `gupkg-manager.cmd`, recorded in the install record and removed by uninstall. |
+| `<root>\.gupkg\gupkg-location` (written by installing the gupkg package) | 4, 21.3 | A one-line text file naming the folder that contains `gupkg.cmd`. Launchers read it as data after the bundled copy (D52). It replaces `[root_forwarder]`. |
 | `requires_gupkg = ">=1.2"` (optional) | 7 | The minimum gupkg version a package needs. An older gupkg exits 6. |
 | Exit code **6** | 10.1 | "This package needs a newer gupkg." It drives the launcher fallback. |
-| `--no-system-gupkg=true` (launchers) | 21.3 | Use the bundled gupkg even when an installed one is reachable (D32). |
-| `gupkg install PATH --in-place` | 10.2, 21.4 | Install a distribution folder where it is (an ad-hoc root) instead of copying it into the mode's root. |
 | `gupkg pkg bundle <version-dir>` | 10.2 | Copy the *running* gupkg's verified bundle into `<version-dir>\gupkg\`. Issue 033 adds writing the two launchers (the template is theirs). There is no lite bundle in 1.0 (D43). |
 | `gupkg pkg export <version-dir> -o X.zip` | 10.2 | Write a distribution ZIP (`<name>\<version>\…`, plus `_check_updates` if present) and print its SHA-256. |
 | Registry fingerprints | 9.2, 17 | Verify a package that is installed without a download (D29). |
@@ -2820,12 +2740,13 @@ target = '$PackageRoot\current\App'
 A bundled gupkg is roughly 40 MB: the embedded Python, Textual and Rich.
 
 - **Bundled copies stay** in every version directory a bundled install
-  carries forward to, old ones included (D32). Plain `cleanup` does not
+  carries forward to, old ones included. Plain `cleanup` does not
   touch them, so switching back to an old version always finds its gupkg.
 - **`gupkg cleanup --bundled`** removes bundled copies from the packages of
-  a root only when that root has a forwarder to an installed gupkg. It never
+  a root only where step 2 (`gupkg-location`) or step 3 (`PATH`) of the
+  launcher order would find a gupkg (section 21.3). Otherwise the packages'
+  launchers would be left with nothing to run. It never
   removes gupkg's own bundled copies, which are its populate script's input,
-  and it runs only when asked (D32, D43). Afterwards, `--no-system-gupkg=true`
-  no longer works for those packages.
+  and it runs only when asked (D43, D52).
 - **Registry packages do not ship a bundled gupkg.** Registry users already
   have gupkg. Bundling is for distributions outside the registry.
