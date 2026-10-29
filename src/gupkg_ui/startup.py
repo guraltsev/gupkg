@@ -36,6 +36,32 @@ from .client import Client, ClientError, sibling_launcher
 from .settings import UiSettings, load_ui_settings
 
 
+SHORT_ROOT = 40
+
+
+def shorten_path(path: str, home: str | None = None, width: int = SHORT_ROOT) -> str:
+    """Return *path* in at most *width* characters: the home folder as ``~``, and a long path with the middle replaced by ``…`` (the drive and the last folders stay)."""
+    text = path
+    base = (home or "").rstrip("\\")
+    if base and text.casefold().startswith(base.casefold()) and text[len(base):len(base) + 1] in ("", "\\"):
+        text = "~" + text[len(base):]
+    if len(text) <= width:
+        return text
+    head, *folders = text.split("\\")
+    if not folders:
+        return text[:width - 1] + "…"
+
+    # Keep the drive, then as many of the last folders as fit after the ``…``.
+    room = width - len(head) - len("\\…\\")
+    tail = folders[-1:]
+    for folder in reversed(folders[:-1]):
+        if len("\\".join([folder, *tail])) > room:
+            break
+        tail.insert(0, folder)
+    shown = "\\".join(tail)
+    return f"{head}\\…\\{shown if len(shown) <= room else '…' + shown[len(shown) - room + 1:]}"
+
+
 class StartupError(Exception):
     """Report that the program cannot start, with the exit code to return (2: the caller must change something)."""
 
@@ -75,6 +101,11 @@ class UiEnvironment:
     def scope_label(self) -> str:
         """Return ``system · <root>`` or ``user · <root>``: what the title and the status line say about the run."""
         return f"{self.scope.mode} · {self.scope.root}"
+
+    @property
+    def scope_text(self) -> str:
+        """Return the label with the root shortened to ``SHORT_ROOT`` characters (``user · ~\\opt``, ``system · C:\\opt``), for the status line."""
+        return f"{self.scope.mode} · {shorten_path(str(self.scope.root), self.env.get('USERPROFILE'))}"
 
 
 def add_root_options(parser: argparse.ArgumentParser) -> None:

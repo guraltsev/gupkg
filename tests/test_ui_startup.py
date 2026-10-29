@@ -17,7 +17,7 @@ import pytest
 
 from gupkg.scope import NOT_ADMIN_ONLY_REFUSAL
 from gupkg.system.port import Mode
-from gupkg_ui.startup import StartupError, build_environment
+from gupkg_ui.startup import StartupError, build_environment, shorten_path
 from tests.mode_support import pin_no_ambient_elevation  # noqa: F401 - autouse fixture
 from tests.test_scope import Machine
 
@@ -66,3 +66,26 @@ def test_the_checksum_policy_is_read_from_the_layers_of_the_run(tmp_path: Path, 
     machine.app_settings(f'[manager]\nchecksum_missing = "{value}"\n')
 
     assert environment(machine).settings.checksum_policy == value
+
+
+@pytest.mark.parametrize(
+    ("path", "home", "expected"),
+    [
+        pytest.param("C:\\opt", "C:\\Users\\me", "C:\\opt", id="short-stays"),
+        pytest.param("C:\\Users\\me\\opt", "C:\\Users\\me", "~\\opt", id="home-is-tilde"),
+        pytest.param("C:\\Users\\mess\\opt", "C:\\Users\\me", "C:\\Users\\mess\\opt", id="a-longer-name-is-not-home"),
+        pytest.param("D:\\a\\very\\long\\folder\\chain\\that\\goes\\on\\and\\on\\and\\on\\roots\\user", None, "D:\\…\\goes\\on\\and\\on\\and\\on\\roots\\user", id="middle-is-cut"),
+    ],
+)
+def test_a_root_is_shortened_for_the_status_line(path: str, home: str | None, expected: str) -> None:
+    """The home folder is ``~``, and a long path keeps the drive and the last folders with the middle replaced by an ellipsis, in at most 40 characters."""
+    shortened = shorten_path(path, home)
+
+    assert shortened == expected and len(shortened) <= 40
+
+
+def test_a_single_very_long_folder_name_is_cut_from_its_front(tmp_path: Path) -> None:
+    """Even one huge last folder fits in the bound, keeping the end of its name."""
+    shortened = shorten_path("C:\\" + "x" * 80 + "\\end")
+
+    assert len(shortened) <= 40 and shortened.startswith("C:\\…\\") and shortened.endswith("end")

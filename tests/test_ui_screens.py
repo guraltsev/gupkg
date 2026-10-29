@@ -207,7 +207,7 @@ def test_the_browser_lists_the_packages_and_the_status_line_counts_them(tmp_path
     async def scenario(app, pilot) -> None:
         """Read the table and the status line."""
         await open_browser(app, pilot)
-        await wait_for(pilot, lambda: has(app, "registry main @ 4f2a9c1"), "the registry state")
+        await wait_for(pilot, lambda: "registry main @ 4f2a9c1" in app.registry and has(app, "2 packages"), "the registry state")
         rows = screen_text(app)
         assert any(word in rows[1] for word in ("Name", "Version")) and any("alpha" in row and "outdated → 2.0.0" in row for row in rows)
         assert "2 packages · 2 outdated · 0 broken" in rows[-1]
@@ -215,26 +215,42 @@ def test_the_browser_lists_the_packages_and_the_status_line_counts_them(tmp_path
     run_app(tmp_path, fake, scenario)
 
 
-def test_the_browser_shows_the_scope_in_the_title_and_the_status_line_and_has_no_mode_column(tmp_path: Path, fake: FakeGupkg) -> None:
-    """A run has one scope: ``user · <root>`` is the title, the status line says ``user`` first and the root after the counts; the table has no Mode column; the status line counts what ``list --json`` holds."""
+def test_the_browser_shows_the_scope_on_the_status_line_at_80x24_and_has_no_mode_column(tmp_path: Path, fake: FakeGupkg) -> None:
+    """A run has one scope: at 80x24 the status line starts with ``user · <root>`` (the root shortened, its last folders kept) and then the counts of ``list --json``; the window title has the full root; the table has no Mode column."""
     shown: dict[str, object] = {}
     listed = fixture_json("list.json", tmp_path)
 
     async def scenario(app, pilot) -> None:
-        """Wait for the registry state and keep what the screen and the app show."""
+        """Wait for the inventory and keep what the screen and the app show."""
         await open_browser(app, pilot)
-        await wait_for(pilot, lambda: has(app, "registry main @ 4f2a9c1"), "the registry state")
+        await wait_for(pilot, lambda: "registry main @ 4f2a9c1" in app.registry and has(app, "2 packages"), "the registry state")
         shown["rows"], shown["title"], shown["label"] = screen_text(app), app.sub_title, app.env.scope_label
 
-    run_app(tmp_path, fake, scenario, size=(200, 50))
+    run_app(tmp_path, fake, scenario)
 
     rows = shown["rows"]
     root = tmp_path / "roots" / "user"
     assert shown["label"] == f"user · {root}" and shown["title"] == f"user · {root}"
     counts = [sum(item["status"] == status for item in listed["packages"]) for status in ("outdated", "broken")]
-    assert rows[-1].strip().startswith(f"user · {len(listed['packages'])} packages · {counts[0]} outdated · {counts[1]} broken · registry main @ 4f2a9c1")
-    assert f"root {root.parts[0]}" in rows[-1]
+    status = rows[-1].strip()
+    assert status.startswith("user · C:\\…\\") and "\\roots\\user · " in status and len(rows[-1]) <= 80
+    assert f"{len(listed['packages'])} packages · {counts[0]} outdated · {counts[1]} broken" in status
     assert "Mode" not in rows[1] and rows[1].split() == ["Name", "Version", "Status", "Registry"]
+
+
+def test_the_package_program_shows_the_scope_first_on_its_status_line_at_80x24(tmp_path: Path, fake: FakeGupkg) -> None:
+    """``gupkg-tui`` shares the app: its status line starts with ``user · <root>`` and then names the package; the window title has the full root."""
+    seen: dict[str, object] = {}
+
+    async def scenario(app, pilot) -> None:
+        """Wait for the package view and keep the status line."""
+        await wait_for(pilot, lambda: has(app, "Installed:") and "alpha outdated" in screen_text(app)[-1], "the package view")
+        seen["status"], seen["title"] = screen_text(app)[-1].strip(), app.sub_title
+
+    run_app(tmp_path, fake, scenario, program="tui")
+
+    assert seen["status"].startswith("user · C:\\…\\") and " · alpha outdated" in seen["status"]
+    assert seen["title"] == f"user · {tmp_path / 'roots' / 'user'}"
 
 
 def test_the_a_key_lists_the_registry_packages_that_are_not_installed_and_a_second_press_hides_them(tmp_path: Path, fake: FakeGupkg) -> None:
@@ -255,7 +271,7 @@ def test_the_a_key_lists_the_registry_packages_that_are_not_installed_and_a_seco
         await open_browser(app, pilot)
         await pilot.press("a")
         await wait_for(pilot, lambda: has(app, "copyq") and has(app, "graphviz"), "the available packages")
-        seen["shown"] = (screen_text(app)[0], screen_text(app)[-1], [row for row in screen_text(app) if "copyq" in row])
+        seen["shown"] = (screen_text(app)[0], app.status_line(), [row for row in screen_text(app) if "copyq" in row])
         await pilot.press("a")
         await wait_for(pilot, lambda: not has(app, "copyq"), "the available packages to be hidden")
 
@@ -263,7 +279,7 @@ def test_the_a_key_lists_the_registry_packages_that_are_not_installed_and_a_seco
 
     hint, status, rows = seen["shown"]
     assert "a hide" in hint
-    assert "2 available in the registry" in status and "2 packages" in status
+    assert "2 available in the registry" in status and "2 packages" in status and status.startswith("user · ")
     assert rows and "available" in rows[0]
 
 
@@ -292,7 +308,7 @@ def test_the_a_key_marks_a_package_this_mode_cannot_install_and_the_status_line_
 
     rows = seen["rows"]
     assert any("drv" in row and "available (system only)" in row for row in rows)
-    assert rows[-1].strip().startswith("drv is system only: " + reason[:40])
+    assert rows[-1].strip().startswith("user · C:\\…\\") and " · drv is system only: " in rows[-1]
 
 
 def test_filter_selection_and_the_application_survive_opening_a_package_and_a_run(tmp_path: Path, fake: FakeGupkg) -> None:
@@ -493,14 +509,15 @@ def test_a_registry_that_was_never_downloaded_is_announced_in_the_hint_line_and_
     async def scenario(app, pilot) -> None:
         """Read the two frame lines once the browser has loaded."""
         await open_browser(app, pilot)
-        await wait_for(pilot, lambda: "NOT DOWNLOADED" in screen_text(app)[-1], "the registry state")
+        await wait_for(pilot, lambda: "NOT DOWNLOADED" in app.registry and app.registry_unsynced and has(app, "2 packages"), "the registry state")
         rows = screen_text(app)
-        seen["hint"], seen["status"] = rows[0], rows[-1]
+        seen["hint"], seen["status"], seen["full"] = rows[0], rows[-1], app.status_line()
 
-    run_app(tmp_path, fake, scenario, size=(120, 24))
+    run_app(tmp_path, fake, scenario)
 
     assert seen["hint"].strip().startswith("s DOWNLOAD THE REGISTRY") and "a avail" in seen["hint"]
-    assert "registry main: NOT DOWNLOADED, press s" in seen["status"]
+    assert seen["status"].strip().startswith("user · C:\\…\\") and "2 packages" in seen["status"]
+    assert "registry main: NOT DOWNLOADED, press s" in seen["full"]
 
 
 def test_a_downloaded_registry_leaves_a_plain_hint_line_that_still_names_s(tmp_path: Path, fake: FakeGupkg) -> None:
@@ -512,7 +529,7 @@ def test_a_downloaded_registry_leaves_a_plain_hint_line_that_still_names_s(tmp_p
     async def scenario(app, pilot) -> None:
         """Read the hint line after the registry state is in the status line."""
         await open_browser(app, pilot)
-        await wait_for(pilot, lambda: "registry main @ abcdef1" in screen_text(app)[-1], "the registry state")
+        await wait_for(pilot, lambda: "registry main @ abcdef1" in app.registry and has(app, "2 packages"), "the registry state")
         seen["hint"] = screen_text(app)[0]
 
     run_app(tmp_path, fake, scenario)

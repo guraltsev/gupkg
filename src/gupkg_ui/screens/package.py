@@ -125,9 +125,8 @@ class PackageScreen(PackageActions, FrameScreen):
     def status_text(self) -> str:
         """Return the package's status and the program's status line."""
         row = self.info.row if self.info is not None else self._row
-        base = str(getattr(self.app, "status_line", lambda: "")())
         own = f"{literal(row.name)} {literal(row.status)}" if row is not None else literal(self._target, limit=120)
-        return f"{own} · {base}" if base else own
+        return str(getattr(self.app, "status_line", lambda own="": own)(own))
 
     def compose_body(self) -> ComposeResult:
         """Yield the scrolling text of the view."""

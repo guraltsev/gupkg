@@ -69,12 +69,10 @@ class BrowserScreen(PackageActions, FrameScreen):
         return f"Enter open  / find  {shown}  c check  u update  U all  s sync  ? help  q quit"
 
     def status_text(self) -> str:
-        """Return the program's scope, counts and registry state; on a package this mode cannot install, its restriction and the reason come first."""
-        base = str(getattr(self.app, "status_line", lambda: "")())
+        """Return the program's scope, counts and registry state; on a package this mode cannot install, its restriction and the reason follow the scope."""
         row = self.selected_row() if self.loaded else None
-        if row is not None and row.restriction:
-            return f"{literal(row.name, limit=60)} is {literal(row.restriction, limit=20)}: {literal(row.restriction_reason or '', limit=300)} · {base}"
-        return base
+        own = f"{literal(row.name, limit=60)} is {literal(row.restriction, limit=20)}: {literal(row.restriction_reason or '', limit=300)}" if row is not None and row.restriction else ""
+        return str(getattr(self.app, "status_line", lambda own="": own)(own))
 
     def compose_body(self) -> ComposeResult:
         """Yield the filter line (hidden until ``/``) and the table."""
