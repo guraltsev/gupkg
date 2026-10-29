@@ -5,7 +5,7 @@ Usage and API
 ``resolve_root(mode, ...)`` returns the ``RootChoice`` of a run: the root folder and the source that named it.
 ``load_mode_settings(mode, root, ...)`` returns a ``LoadedSettings``: the merged ``Settings`` (each value knows its
 layer) and a ``LayerReport`` per layer that says whether it was applied or missing. ``settings_file(root)`` names the
-settings file of a root. ``load_settings`` is the adapter that the callers of the old design still use.
+settings file of a root. ``read_root_layers`` reads the two layers that name a root before the root is known.
 
 Implementation Approach
 -----------------------
@@ -27,14 +27,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .system.port import System
+from .system.port import Mode, System
 from .model.settings import (
     LAYER_APP,
     LAYER_CLI,
     LAYER_DEFAULTS,
     LAYER_ROOT,
-    MODE_SYSTEM,
-    MODE_USER,
     Layer,
     Settings,
     SettingsError,
@@ -181,11 +179,11 @@ def resolve_root(
     ValueError
         If *mode* is unknown.
     """
-    if mode not in (MODE_SYSTEM, MODE_USER):
+    if mode not in (Mode.SYSTEM, Mode.USER):
         raise ValueError(f"unknown mode {mode!r}; use 'system' or 'user'")
     if root_option is not None:
         chosen = _absolute(Path(root_option), "--root")
-        if mode == MODE_SYSTEM:
+        if mode == Mode.SYSTEM:
             try:
                 reason = _untrusted_reason(chosen, system)
             except OSError as exc:
@@ -193,7 +191,7 @@ def resolve_root(
             if reason is not None:
                 raise SettingsError(f"--root {chosen} is not admin-only, so it cannot be the system root: {reason}")
         return RootChoice(chosen, SOURCE_ROOT_OPTION)
-    if mode == MODE_SYSTEM:
+    if mode == Mode.SYSTEM:
         if installed_root is not None and _admin_only(Path(installed_root), system):
             return RootChoice(Path(installed_root), SOURCE_INSTALLED_SYSTEM)
     else:
@@ -285,11 +283,11 @@ def load_mode_settings(
         If a layer is invalid (schema 3 included), ``[roots]`` is in the root's own file, ``--settings`` is missing or
         given in system mode, or a system-mode run would read a file from a folder that is not admin-only.
     """
-    if mode not in (MODE_SYSTEM, MODE_USER):
+    if mode not in (Mode.SYSTEM, Mode.USER):
         raise ValueError(f"unknown mode {mode!r}; use 'system' or 'user'")
-    if mode == MODE_SYSTEM and settings_path is not None:
+    if mode == Mode.SYSTEM and settings_path is not None:
         raise SettingsError("--settings is not accepted in system mode: an elevated run reads only admin-only files")
-    strict = mode == MODE_SYSTEM
+    strict = mode == Mode.SYSTEM
     layers: list[Layer] = [default_layer(mode)]
     reports: list[LayerReport] = [LayerReport(LAYER_DEFAULTS, None, "applied", "built in")]
     wanted: list[tuple[str, Path, bool]] = []
@@ -306,39 +304,38 @@ def load_mode_settings(
     return LoadedSettings(merge_layers(layers), tuple(reports))
 
 
-# Removed in issue 035 T05.
-def load_settings(
+def read_root_layers(
+    mode: str,
     *,
-    system: System,
-    env: Mapping[str, str],
-    elevated: bool,
-    system_mode: bool,
     app_dir: Path | None,
-    installed_system_root: Path | None = None,
-    settings_path: Path | None = None,
+    settings_path: Path | None,
+    system: System,
     read_text: Callable[[Path], str | None] = read_text_file,
-) -> LoadedSettings:
-    """Adapter for the callers of the old design: load the settings of one mode (system when elevated or *system_mode*).
+) -> tuple[Mapping[str, Any] | None, Mapping[str, Any] | None]:
+    """Read the two layers that name a root before the root is known: ``$App\\settings.toml`` and ``--settings``.
 
-    The run's root is found by ``resolve_root`` from ``installed_system_root`` (system mode), the app layer and
-    ``--settings``; ``--root`` and the user mode's installed-root row are not used until T05 wires them. In system mode
-    ``--settings`` is not read.
+    ``resolve_root`` needs their ``[roots]`` tables; ``load_mode_settings`` reads them again, together with the root's own
+    file, once the root is known. A system-mode run reads ``$App\\settings.toml`` only from an admin-only folder and
+    never reads ``--settings``.
+
+    Returns
+    -------
+    tuple
+        The parsed ``$App\\settings.toml`` and the parsed ``--settings`` file, each ``None`` when absent.
+
+    Raises
+    ------
+    SettingsError
+        If a file cannot be read or is not valid TOML, ``--settings`` is missing, or a system-mode run would read a file
+        from a folder that is not admin-only.
     """
-    mode = MODE_SYSTEM if (elevated or system_mode) else MODE_USER
-    strict = mode == MODE_SYSTEM
+    strict = mode == Mode.SYSTEM
     app_data = None
     if app_dir is not None:
         layer, _ = _read_layer(LAYER_APP, Path(app_dir) / SETTINGS_FILE_NAME, strict=strict, system=system, read_text=read_text)
         app_data = layer.data if layer is not None else None
     cli_data = None
-    if mode == MODE_USER and settings_path is not None:
+    if mode == Mode.USER and settings_path is not None:
         layer, _ = _read_layer(LAYER_CLI, Path(settings_path), strict=False, system=system, read_text=read_text, required=True)
         cli_data = layer.data if layer is not None else None
-    choice = resolve_root(
-        mode, root_option=None, installed_root=installed_system_root if mode == MODE_SYSTEM else None,
-        app_layer=app_data, cli_layer=cli_data, env=env, system=system,
-    )
-    return load_mode_settings(
-        mode, choice.path, app_dir=app_dir, settings_path=settings_path if mode == MODE_USER else None,
-        system=system, env=env, read_text=read_text,
-    )
+    return app_data, cli_data

@@ -41,7 +41,7 @@ def _gupkg(root: Path, *arguments: str, stdout) -> subprocess.CompletedProcess:
     environment = {key: value for key, value in os.environ.items() if not key.startswith("PYTHON")}
     environment.pop("NO_COLOR", None)
     return subprocess.run(
-        [str(LAUNCHER), "--settings", str(root / "settings.toml"), *arguments, "--mode", "user"],
+        [str(LAUNCHER), "--settings", str(root / "settings.toml"), *arguments],
         cwd=root, stdout=stdout, stderr=subprocess.PIPE, env=environment, timeout=180,
     )
 

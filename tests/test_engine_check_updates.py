@@ -1,9 +1,7 @@
 """Cover ``check-updates``: who runs it, what it writes, what it never touches, and how a refused download is reported.
 
 Behaviour covered: an administrator on a system package writes and populates the version in the system root; a normal shell
-on a system package only reports and changes nothing under the system root (with or without ``--no-download``); a normal
-shell on a user package with ``--no-download`` writes only ``pkg.toml`` and the support files; an elevated run on a user package
-refuses; the version directory is rendered from the tracker without any update-check code and with the pinned digest the
+on a user package with ``--no-download`` writes only ``pkg.toml`` and the support files; the version directory is rendered from the tracker without any update-check code and with the pinned digest the
 tracker discovered; a download the checksum rules refuse leaves the version written without ``App`` (decision D46) and
 ``update`` can then populate it; the tracker of a followed registry is copied in; a bundled install carries its gupkg forward.
 
@@ -24,7 +22,6 @@ from gupkg.launchers import launcher_text
 from gupkg.report.events import Warning, use_reporter
 from gupkg.model.checksum import parse_skip_flag
 from tests.engine_support import BASE_URL, World, pin_no_ambient_elevation  # noqa: F401
-from tests.mode_support import tree_snapshot
 
 ENV_ONLY = '[[env]]\nname = "TOOL_HOME"\nvalue = "$App"\n'
 
@@ -33,8 +30,7 @@ def installed(world: World, mode: str = "user", **options) -> World:
     """Publish tool 1.0.0 with a tracker in *mode*'s root and install it."""
     world.publish("tool", "1.0.0", mode=mode, tables=ENV_ONLY)
     world.tracker("tool", mode=mode, tables=ENV_ONLY)
-    selector = "tool" if mode == "user" and not world.fake.elevated else f"{mode}:tool"
-    assert world.one("install", selector, **options).ok
+    assert world.one("install", "tool", **options).ok
     return world
 
 
@@ -49,42 +45,6 @@ def test_an_administrator_checking_a_system_package_writes_and_populates_the_ver
     package = world.system_root / "tool"
     assert result.ok and result.status == "new-version" and result.version == "1.1.0" and result.mode == "system"
     assert (package / "1.1.0" / "App" / "app.exe").is_file() and Path(os.path.realpath(package / "current")).name == "1.0.0"
-
-
-@pytest.mark.parametrize("no_download", [False, True], ids=["with-download", "no-download"])
-def test_a_normal_shell_checking_a_system_package_only_reports(tmp_path: Path, no_download: bool) -> None:
-    """Non-elevated, on a system package: the new version is reported and nothing under the system root changes."""
-    world = World(tmp_path, elevated=True)
-    installed(world, "system")
-    world.fake.elevated = False
-    world.engine = type(world.engine)(
-        system=world.fake, env=world.machine.env, load=world.machine.loader(elevated=False), sleep=lambda seconds: None, retries=0,
-    )
-    world.announce("tool", "1.1.0")
-    before = tree_snapshot(world.system_root)
-
-    result = world.one("check-updates", "system:tool", no_download=no_download)
-
-    assert result.ok and result.status == "new-version" and result.version == "1.1.0"
-    assert result.details["written"] is False and tree_snapshot(world.system_root) == before
-
-
-def test_a_report_only_check_takes_its_scratch_folder_from_the_system_boundary(tmp_path: Path) -> None:
-    """The tracker's scratch folder of a report-only run comes from `System.scratch_directory`, never the real temporary folder."""
-    world = World(tmp_path, elevated=True)
-    installed(world, "system")
-    world.fake.elevated = False
-    world.engine = type(world.engine)(
-        system=world.fake, env=world.machine.env, load=world.machine.loader(elevated=False), sleep=lambda seconds: None, retries=0,
-    )
-    world.announce("tool", "1.1.0")
-    world.fake.failures["scratch_directory"] = OSError("no scratch for you")
-
-    refused = world.one("check-updates", "system:tool", no_download=True)
-    reported = world.one("check-updates", "system:tool", no_download=True)
-
-    assert not refused.ok and refused.error["code"] == "io-error" and "no scratch" in refused.error["message"]
-    assert reported.ok and reported.status == "new-version" and list((world.fake.root / "scratch").iterdir()) == []
 
 
 def test_a_normal_shell_with_no_download_writes_only_the_manifest_and_support_files(tmp_path: Path) -> None:
@@ -102,21 +62,6 @@ def test_a_normal_shell_with_no_download_writes_only_the_manifest_and_support_fi
     assert result.ok and result.details["populated"] is False
     assert sorted(item.name for item in version.iterdir()) == ["gupkg-tui.cmd", "icons", "install.cmd", "pkg.toml"]
     assert f"{BASE_URL}/tool-1.1.0.zip" not in world.fake.fetch_log
-
-
-def test_an_elevated_check_of_a_user_package_refuses_and_changes_nothing(tmp_path: Path) -> None:
-    """Elevated, on a user package: it refuses, says to use a normal shell and nothing changes."""
-    world = World(tmp_path)
-    installed(world)
-    world.announce("tool", "1.1.0")
-    before = tree_snapshot(world.user)
-    world.fake.elevated = True
-    world.engine.load = world.machine.loader(elevated=True)
-
-    result = world.one("check-updates", "user:tool")
-
-    assert not result.ok and result.exit_code == 2 and "normal" in result.error["message"]
-    assert tree_snapshot(world.user) == before
 
 
 def test_the_new_version_directory_is_pinned_and_carries_no_update_check_code(tmp_path: Path) -> None:

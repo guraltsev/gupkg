@@ -24,7 +24,7 @@ import pytest
 from gupkg.catalog.record import read_install_record, write_install_record
 from gupkg.model.state import Effect, InstallRecord
 from gupkg.services.gitenv import GitUnavailable, git_command, git_environment, git_executable
-from gupkg.system.port import Scope, trusted_path_entries
+from gupkg.system.port import Mode, trusted_path_entries
 from gupkg.system.fake import FakeSystem
 from tests.engine_support import World, pin_no_ambient_elevation, pkg_text  # noqa: F401
 
@@ -107,8 +107,8 @@ def test_an_elevated_run_expands_only_machine_variables_in_a_packages_declaratio
     good = world.one("install", "good")
     bad = world.one("install", "bad")
 
-    assert good.ok and world.fake.env_values(Scope.MACHINE)["GOOD"].value == "C:\\ProgramData\\good"
-    assert not bad.ok and "USERPROFILE" in bad.error["message"] and "BAD" not in world.fake.env_values(Scope.MACHINE)
+    assert good.ok and world.fake.env_values(Mode.SYSTEM)["GOOD"].value == "C:\\ProgramData\\good"
+    assert not bad.ok and "USERPROFILE" in bad.error["message"] and "BAD" not in world.fake.env_values(Mode.SYSTEM)
     assert not (world.system_root / "bad" / "current").exists()
 
 
@@ -140,7 +140,7 @@ def test_a_hostile_install_record_cannot_steer_uninstall_outside_the_modes_folde
     assert result.ok and victim.read_text() == "keep me"
     assert any("Ignored a recorded effect" in warning for warning in result.warnings)
     assert read_install_record(package).record.effects == ()
-    assert not (world.fake.scope_folders(Scope.USER).bin_dir / "tool.exe").exists()
+    assert not (world.fake.scope_folders(Mode.USER).bin_dir / "tool.exe").exists()
 
 
 def test_a_gupkg_folder_that_is_a_junction_elsewhere_is_never_written_through(tmp_path: Path) -> None:

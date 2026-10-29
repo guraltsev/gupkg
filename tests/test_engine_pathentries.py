@@ -22,7 +22,7 @@ from gupkg.engine.effects import EffectContext, EffectError, apply_effect, desir
 from gupkg.model.manifest import ManifestError, parse_manifest, path_entry_shape_problem
 from gupkg.model.state import Effect
 from gupkg.system.fake import FakeSystem
-from gupkg.system.port import Scope
+from gupkg.system.port import Mode
 from tests.engine_support import World, pin_no_ambient_elevation  # noqa: F401
 
 HEAD = 'format = 2\nmodes = ["system", "user"]\n[source]\ndownload_url = "https://x.test/a.zip"\n'
@@ -86,7 +86,7 @@ def context(tmp_path: Path, *, mode: str = "user", env: dict[str, str] | None = 
     """An effect context below *tmp_path*: the user scope, or the machine scope for mode `system`."""
     package = tmp_path / "opt" / "tool"
     return EffectContext(
-        package, mode, tmp_path / "bin", tmp_path / "menu", Scope.MACHINE if mode == "system" else Scope.USER,
+        package, mode, tmp_path / "bin", tmp_path / "menu", Mode.SYSTEM if mode == "system" else Mode.USER,
         env if env is not None else {"ProgramFiles": str(tmp_path / "pf"), "SystemRoot": str(tmp_path / "win"), "LOCALAPPDATA": "C:\\Users\\me\\AppData\\Local"},
     )
 
@@ -144,17 +144,17 @@ def test_an_existing_junction_or_user_writable_folder_cannot_go_on_the_machine_p
     writable = ctx.package_path / "writable"
     writable.mkdir()
     system.untrusted_dirs = {Path(str(writable))}
-    system.set_path(Scope.MACHINE, ["C:\\Windows"])
+    system.set_path(Mode.SYSTEM, ["C:\\Windows"])
 
     for entry in (link, writable):
         with pytest.raises(EffectError):
             apply_effect(system, Effect("path", {"scope": "system", "entry": str(entry), "added": False}), ctx)
 
-    assert system.get_path(Scope.MACHINE) == ["C:\\Windows"]
+    assert system.get_path(Mode.SYSTEM) == ["C:\\Windows"]
     fine = ctx.package_path / "fine"
     fine.mkdir()
     applied = apply_effect(system, Effect("path", {"scope": "system", "entry": str(fine), "added": False}), ctx)
-    assert applied.fields["added"] is True and system.get_path(Scope.MACHINE) == ["C:\\Windows", str(fine)]
+    assert applied.fields["added"] is True and system.get_path(Mode.SYSTEM) == ["C:\\Windows", str(fine)]
 
 
 @pytest.mark.parametrize("entry", ["C:\\a;C:\\evil", "rel", "..\\x", "\\\\srv\\share", "C:\\Windows\\System32", "%LOCALAPPDATA%\\bin"])
@@ -163,39 +163,39 @@ def test_a_hostile_install_record_cannot_make_uninstall_touch_the_machine_path(t
     system = FakeSystem(tmp_path / "machine")
     ctx = context(tmp_path, mode="system")
     before = ["C:\\Windows\\System32", "C:\\a", "C:\\evil", "C:\\Tools"]
-    system.set_path(Scope.MACHINE, before)
+    system.set_path(Mode.SYSTEM, before)
 
     with pytest.raises(EffectError):
         remove_effect(system, Effect("path", {"scope": "system", "entry": entry, "added": True}), ctx)
 
-    assert system.get_path(Scope.MACHINE) == before
+    assert system.get_path(Mode.SYSTEM) == before
 
 
 def test_uninstall_removes_exactly_what_was_added_and_leaves_unrelated_entries(tmp_path: Path) -> None:
     """End to end in an elevated system install: the package's entry goes on PATH and off again; other entries stay in order."""
     world = World(tmp_path, elevated=True)
     world.publish("tool", "1.0.0", mode="system", tables='[[path]]\nvalue = "$App"\n[[path]]\nvalue = "$App\\\\bin"\n')
-    world.fake.set_path(Scope.MACHINE, ["C:\\Windows", "C:\\Tools"])
+    world.fake.set_path(Mode.SYSTEM, ["C:\\Windows", "C:\\Tools"])
 
-    assert world.one("install", "system:tool").ok
-    entries = world.fake.get_path(Scope.MACHINE)
+    assert world.one("install", "tool").ok
+    entries = world.fake.get_path(Mode.SYSTEM)
     package = str(world.system_root / "tool" / "current" / "App")
     assert entries[:2] == ["C:\\Windows", "C:\\Tools"] and package in entries and package + "\\bin" in entries
 
-    assert world.one("uninstall", "system:tool").ok
-    assert world.fake.get_path(Scope.MACHINE) == ["C:\\Windows", "C:\\Tools"]
+    assert world.one("uninstall", "tool").ok
+    assert world.fake.get_path(Mode.SYSTEM) == ["C:\\Windows", "C:\\Tools"]
 
 
 def test_a_package_with_a_hostile_path_is_not_installed(tmp_path: Path) -> None:
     """The validator refuses the package before anything is downloaded, in the elevated system mode too."""
     world = World(tmp_path, elevated=True)
     world.publish("tool", "1.0.0", mode="system", tables='[[path]]\nvalue = "C:\\\\a;C:\\\\evil"\n')
-    world.fake.set_path(Scope.MACHINE, ["C:\\Windows"])
+    world.fake.set_path(Mode.SYSTEM, ["C:\\Windows"])
     world.fake.fetch_log.clear()
 
-    result = world.one("install", "system:tool")
+    result = world.one("install", "tool")
 
-    assert not result.ok and world.fake.get_path(Scope.MACHINE) == ["C:\\Windows"] and world.fake.fetch_log == []
+    assert not result.ok and world.fake.get_path(Mode.SYSTEM) == ["C:\\Windows"] and world.fake.fetch_log == []
 
 
 def machine(tmp_path: Path):
@@ -205,7 +205,7 @@ def machine(tmp_path: Path):
     temp.mkdir(parents=True)
     (ctx.package_path / "current" / "App").mkdir(parents=True)
     system = FakeSystem(tmp_path / "machine", untrusted_dirs={temp})
-    system.set_path(Scope.MACHINE, ["C:\\Windows"])
+    system.set_path(Mode.SYSTEM, ["C:\\Windows"])
     return ctx, system, temp
 
 
@@ -226,7 +226,7 @@ def test_a_machine_path_entry_below_an_untrusted_machine_folder_is_refused_even_
         with pytest.raises(EffectError):
             desired_effects(with_paths(str(entry)), ctx)  # planning refuses a missing folder outside the package; an existing one is judged on apply
 
-    assert system.get_path(Scope.MACHINE) == ["C:\\Windows"]
+    assert system.get_path(Mode.SYSTEM) == ["C:\\Windows"]
 
 
 def test_a_missing_folder_below_a_junction_inside_the_package_is_refused(tmp_path: Path) -> None:
@@ -238,7 +238,7 @@ def test_a_missing_folder_below_a_junction_inside_the_package_is_refused(tmp_pat
         with pytest.raises(EffectError, match="junction|link|outside the package"):
             apply_effect(system, system_effect(entry), ctx)
 
-    assert system.get_path(Scope.MACHINE) == ["C:\\Windows"]
+    assert system.get_path(Mode.SYSTEM) == ["C:\\Windows"]
 
 
 def test_a_missing_folder_below_an_untrusted_folder_inside_the_package_is_refused(tmp_path: Path) -> None:
@@ -273,18 +273,18 @@ def test_a_not_yet_created_app_bin_in_an_admin_only_package_is_accepted(tmp_path
     applied = apply_effect(system, system_effect(entry), ctx)
 
     assert [effect.fields["entry"] for effect in effects] == [str(entry)]
-    assert applied.fields["added"] is True and system.get_path(Scope.MACHINE) == ["C:\\Windows", str(entry)]
+    assert applied.fields["added"] is True and system.get_path(Mode.SYSTEM) == ["C:\\Windows", str(entry)]
 
 
 def test_removal_can_delete_a_recorded_entry_whose_folder_is_gone(tmp_path: Path) -> None:
     """The existence and ancestor rules are for applying; an entry that was added and whose folder vanished still comes off the PATH."""
     ctx, system, _ = machine(tmp_path)
     gone = ctx.package_path / "current" / "App" / "bin"
-    system.set_path(Scope.MACHINE, ["C:\\Windows", str(gone)])
+    system.set_path(Mode.SYSTEM, ["C:\\Windows", str(gone)])
 
     assert remove_effect(system, Effect("path", {"scope": "system", "entry": str(gone), "added": True}), ctx) is True
 
-    assert system.get_path(Scope.MACHINE) == ["C:\\Windows"]
+    assert system.get_path(Mode.SYSTEM) == ["C:\\Windows"]
 
 
 def test_apply_effect_judges_a_hostile_effect_itself(tmp_path: Path) -> None:
@@ -296,7 +296,7 @@ def test_apply_effect_judges_a_hostile_effect_itself(tmp_path: Path) -> None:
             with pytest.raises(EffectError):
                 apply_effect(system, Effect("path", {"scope": scope, "entry": entry, "added": False}), ctx)
 
-    assert system.get_path(Scope.MACHINE) == ["C:\\Windows"] and system.get_path(Scope.USER) == []
+    assert system.get_path(Mode.SYSTEM) == ["C:\\Windows"] and system.get_path(Mode.USER) == []
 
 
 def test_user_mode_is_unchanged_by_the_machine_rules(tmp_path: Path) -> None:
@@ -306,7 +306,7 @@ def test_user_mode_is_unchanged_by_the_machine_rules(tmp_path: Path) -> None:
 
     applied = apply_effect(system, Effect("path", {"scope": "user", "entry": str(tmp_path / "later" / "bin"), "added": False}), ctx)
 
-    assert applied.fields["added"] is True and system.get_path(Scope.USER) == [str(tmp_path / "later" / "bin")]
+    assert applied.fields["added"] is True and system.get_path(Mode.USER) == [str(tmp_path / "later" / "bin")]
 
 
 INVISIBLE = ["\x85", "\x7f", "\u200b", "\u202e", "\u2028", "\u2029", "\ufeff", "\ue000", "\ud800", "\u0378"]

@@ -3,7 +3,7 @@
 ``Catalog.describe`` builds one immutable ``PackageView``; ``Catalog.list`` lists every
 package of every trusted root (and, on request, the registry entries that are not local);
 ``Catalog.resolve`` turns a selector of design 10.1 (``name``, ``name@version``,
-``mode:name``, ``registry/name`` or a path) into a view; ``candidates``,
+``registry/name`` or a path) into a view; ``candidates``,
 ``install_candidate``, ``update_candidate``, ``tracker_sync`` and ``compare`` are the pure
 decisions that installs, updates and ``check-updates`` take from a view. The catalog reads
 disk and never changes it, prints nothing and asks nothing. A tracker is never run: only
@@ -11,7 +11,7 @@ versions already on disk or already in the linked registry are known (decision D
 
 Usage and API
 -------------
-Build a catalog with ``Catalog.from_settings(settings, system, env)`` and call ``describe``,
+Build a catalog with ``Catalog.from_scope(scope, system, env)`` and call ``describe``,
 ``list`` and ``resolve``. ``resolve_package_path(path, system)`` resolves a path with no
 settings, for callers that have only a ``System``. Errors are ``CatalogError`` subclasses
 (``NotFound``, ``AmbiguousSelector``, ``NoVersionKnown``, ``NotInstalled``, ``NeedsRepair``,
@@ -53,7 +53,8 @@ from ..model.state import (
     known_candidates,
 )
 from ..model.version import MANIFEST_NAME, TRACKER_DIR_NAME, compare_versions, is_version_name
-from ..system.port import Scope, System, is_elevated_run
+from ..model.scope import Scope
+from ..system.port import Mode, System, is_elevated_run
 from .local import (
     DATA_DIR_NAME,
     canonical_path,
@@ -136,7 +137,6 @@ class Selector:
     text: str
     kind: str
     name: str | None = None
-    mode: str | None = None
     version: str | None = None
     registry: str | None = None
     path: Path | None = None
@@ -217,8 +217,8 @@ class Comparison:
         return self.status == "newer"
 
 
-_MODE_PREFIX = re.compile(r"^(system|user):(?![\\/])(.+)$", re.IGNORECASE)
 _DRIVE = re.compile(r"^[A-Za-z]:")
+_REMOVED_PREFIX = re.compile(r"^(system|user):(?![\\/])", re.IGNORECASE)
 
 
 def parse_selector(text: str, registry_names: Iterable[str] = ()) -> Selector:
@@ -227,7 +227,7 @@ def parse_selector(text: str, registry_names: Iterable[str] = ()) -> Selector:
     Parameters
     ----------
     text : str
-        ``name``, ``name@version``, ``mode:name``, ``registry/name`` or a path (anything
+        ``name``, ``name@version``, ``registry/name`` or a path (anything
         containing ``\``, starting with ``.`` or ``/`` or with a drive).
     registry_names : iterable of str
         The configured registry names. A selector ``a/b`` whose first part is one of them
@@ -241,22 +241,22 @@ def parse_selector(text: str, registry_names: Iterable[str] = ()) -> Selector:
     Raises
     ------
     CatalogError
-        If the selector is empty or names an unknown mode.
+        If the selector is empty, or has a ``mode:`` prefix (``system:name``, ``user:name``): a run has one scope,
+        so the mode is never part of a target.
     """
     text = text.strip()
     if not text:
         raise CatalogError("empty selector")
-
-    # A leading mode, as in ``user:firefox``, never a drive letter.
-    mode: str | None = None
     rest = text
-    match = _MODE_PREFIX.match(text)
-    if match:
-        mode, rest = match.group(1).lower(), match.group(2)
+    if _REMOVED_PREFIX.match(text):
+        raise CatalogError(
+            f"'{text}': a target no longer names a mode; a run works in the mode of its own token. "
+            "Run gupkg from an administrator shell for system packages, otherwise for user packages."
+        )
 
     # Anything that looks like a path is a path, whatever it names.
     if "\\" in rest or rest.startswith((".", "/")) or _DRIVE.match(rest):
-        return Selector(text, "path", mode=mode, path=Path(rest))
+        return Selector(text, "path", path=Path(rest))
 
     # An optional version, then the name or registry/name.
     name, version = rest, None
@@ -267,10 +267,10 @@ def parse_selector(text: str, registry_names: Iterable[str] = ()) -> Selector:
     if "/" in name:
         first, _, remainder = name.partition("/")
         if remainder and first.casefold() in {item.casefold() for item in registry_names}:
-            return Selector(text, "registry", name=remainder, mode=mode, version=version, registry=first)
-        if os.path.exists(text) and mode is None and version is None:
+            return Selector(text, "registry", name=remainder, version=version, registry=first)
+        if os.path.exists(text) and version is None:
             return Selector(text, "path", path=Path(text))
-    return Selector(text, "name", name=name, mode=mode, version=version)
+    return Selector(text, "name", name=name, version=version)
 
 
 # ---------------------------------------------------------------------------
@@ -343,6 +343,36 @@ class Catalog:
         """
         is_elevated = is_elevated_run(system) if elevated is None else elevated
         configured = {mode: Path(expand_env(settings[f"roots.{mode}"], env)) for mode in MODES}
+        return cls._from_roots(configured, settings, system, is_elevated, verify_effects)
+
+    @classmethod
+    def from_scope(cls, scope: Scope, system: System, env: Mapping[str, str], *, verify_effects: bool = False) -> "Catalog":
+        """Build the catalog of a run from its scope: the scope's root only, in the scope's mode.
+
+        Parameters
+        ----------
+        scope : Scope
+            The scope of the run: its mode, root and settings (registries).
+        system : System
+            The machine boundary.
+        env : mapping
+            Unused; kept so that both constructors take the same arguments.
+        verify_effects : bool, default=False
+            See the class.
+
+        Returns
+        -------
+        Catalog
+            A catalog whose root is ``scope.root`` (and the ad-hoc roots recorded in its ``state.toml``). A system scope is
+            elevated by definition (decision D31).
+        """
+        return cls._from_roots({scope.mode.value: scope.root}, scope.settings, system, scope.mode is Mode.SYSTEM, verify_effects)
+
+    @classmethod
+    def _from_roots(
+        cls, configured: Mapping[str, Path], settings: Settings, system: System, is_elevated: bool, verify_effects: bool
+    ) -> "Catalog":
+        """Build a catalog over the configured roots (``{mode: path}``) and the registries of *settings*."""
         warnings: list[str] = []
         roots: list[Root] = []
         for mode, path in configured.items():
@@ -468,7 +498,7 @@ class Catalog:
         Parameters
         ----------
         selector : str
-            ``name``, ``name@version``, ``mode:name``, ``registry/name`` or a path.
+            ``name``, ``name@version``, ``registry/name`` or a path.
         for_mutation : bool, default=False
             Whether the caller changes the package. A bare name that exists in several roots
             is then ambiguous and must be qualified with its mode.
@@ -493,30 +523,30 @@ class Catalog:
 
         # ``registry/name`` selects that registry's entry, whether or not a local package exists.
         if parsed.kind == "registry":
-            snapshot = next((item for item in self._snapshots_for(parsed.mode) if item.name.casefold() == parsed.registry.casefold()), None)
+            snapshot = next((item for item in self._snapshots_for(None) if item.name.casefold() == parsed.registry.casefold()), None)
             entry = snapshot.entry(parsed.name) if snapshot is not None else None
             if entry is None:
                 raise NotFound(f"registry entry '{parsed.registry}/{parsed.name}' was not found")
-            matches = self._matches_for(parsed.name, parsed.mode)
+            matches = self._matches_for(parsed.name, None)
             if len(matches) > 1 and for_mutation:
                 raise AmbiguousSelector(parsed.name, _qualified(parsed.name, matches))
             if matches:
                 view = self._view(matches[0][0], matches[0][1], matches[0][2], follow=(entry.registry, entry.name))
             else:
-                view = PackageView(entry.name, self._root_for_mode(parsed.mode), None, registry=entry)
+                view = PackageView(entry.name, self._root_for_mode(None), None, registry=entry)
             return Resolved(view, parsed.version, named_version=parsed.version is not None)
 
         # A bare name: the roots decide, then the registries.
-        matches = self._matches_for(parsed.name, parsed.mode)
+        matches = self._matches_for(parsed.name, None)
         if len(matches) > 1 and for_mutation:
             raise AmbiguousSelector(parsed.name, _qualified(parsed.name, matches))
         if matches:
             view = self._view(*matches[0])
         else:
-            entry = self._first_entry(parsed.name, parsed.mode)
+            entry = self._first_entry(parsed.name, None)
             if entry is None:
                 raise NotFound(f"package '{parsed.name}' was not found in any root or registry")
-            view = PackageView(entry.name, self._root_for_mode(parsed.mode), None, registry=entry)
+            view = PackageView(entry.name, self._root_for_mode(None), None, registry=entry)
         return Resolved(view, parsed.version, named_version=parsed.version is not None)
 
     def registry_entry(self, name: str, mode: str | None) -> RegistryEntry | None:
@@ -846,7 +876,7 @@ class Catalog:
         unverified: list[str] = []
         for effect in effects:
             fields = effect.fields
-            scope = {"system": Scope.MACHINE, "user": Scope.USER}.get(fields.get("scope", ""))
+            scope = {"system": Mode.SYSTEM, "user": Mode.USER}.get(fields.get("scope", ""))
             try:
                 if effect.kind in ("shim", "file"):
                     if not os.path.exists(str(fields["path"])):
@@ -856,11 +886,11 @@ class Catalog:
                         self.system.read_shortcut(Path(str(fields["path"])))
                     except OSError:
                         drift.append(f"shortcut missing: {fields['path']}")
-                elif effect.kind == "env" and scope is not None and not (self.elevated and scope is Scope.USER):
+                elif effect.kind == "env" and scope is not None and not (self.elevated and scope is Mode.USER):
                     stored = self.system.get_env(scope, str(fields["name"]))
                     if stored is None or stored.value != str(fields["value"]):
                         drift.append(f"environment variable {fields['name']} differs")
-                elif effect.kind == "path" and scope is not None and not (self.elevated and scope is Scope.USER):
+                elif effect.kind == "path" and scope is not None and not (self.elevated and scope is Mode.USER):
                     entries = [item.casefold().rstrip("\\") for item in self.system.get_path(scope)]
                     if str(fields["entry"]).casefold().rstrip("\\") not in entries:
                         drift.append(f"PATH entry missing: {fields['entry']}")
@@ -895,12 +925,12 @@ class Catalog:
         else:
             raise NotFound(f"Path does not exist: {candidate}")
         if self.elevated:
-            self._require_system_path(package_root, parsed.mode)
+            self._require_system_path(package_root, None)
         if not _is_local_package(package_root, allow_link=not self.elevated):
             raise NotFound(f"Not a package root, version directory or current: {candidate}")
 
         # The root decides the mode: the configured root that contains the path, else the record, else auto.
-        root, name = self._root_of(package_root, parsed.mode)
+        root, name = self._root_of(package_root, None)
         view = self._view(root, name, package_root)
         if via_current:
             if view.local.current.status != "valid":

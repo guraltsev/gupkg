@@ -1,7 +1,7 @@
 """Build a pretend machine with published packages for the engine tests.
 
-``World`` wraps the temporary machine of ``tests.mode_support`` (two roots, a settings loader, a ``FakeSystem``) and an
-``Engine`` over it. ``World.publish`` writes a pinned version directory into a root and serves its zip artifact from the
+``World`` wraps the temporary machine of ``tests.mode_support`` (two roots, an app settings file, a ``FakeSystem``) and an
+``Engine`` over the one scope of a run on it (user mode, or system mode when the fake machine is elevated). ``World.publish`` writes a pinned version directory into a root and serves its zip artifact from the
 fake's URL map, with the digest in ``pkg.toml`` when asked, so install, update, check-updates and repair run end to end on
 real folders, real ``current`` junctions and the fake registry, shortcuts and ``PATH``.
 """
@@ -18,9 +18,8 @@ from pathlib import Path
 from gupkg.catalog.registry import registry_cache_dir
 from gupkg.engine import lifecycle
 from gupkg.engine.context import Engine
-from gupkg.model.mode import ModeChoice, ModeContext, build_mode_context
+from gupkg.model.scope import Scope
 from gupkg.model.plan import BatchResult, PackageResult
-from gupkg.modes import default_folders
 from gupkg.services.fingerprint import fingerprint_directory
 from gupkg.system.fake import FakeSystem, ProcessCall
 from gupkg.system.port import ProcessResult
@@ -98,7 +97,7 @@ class World:
         self.fake: FakeSystem = self.machine.fake
         self.base = base
         self.engine = Engine(
-            system=self.fake, env=self.machine.env, load=self.machine.loader(), sleep=lambda seconds: None, retries=0,
+            system=self.fake, env=self.machine.env, scope=self.machine.scope(), sleep=lambda seconds: None, retries=0,
         )
 
     # -- roots -------------------------------------------------------------------
@@ -117,12 +116,25 @@ class World:
         """Return the root of *mode*."""
         return {"user": self.user, "system": self.system_root}[mode]
 
-    def mode_context(self, mode: str = "user") -> ModeContext:
-        """Return the resolved install-mode context of *mode* on this machine (for tests that call the services directly)."""
-        loaded = self.engine.load(system_mode=mode == "system")
-        return build_mode_context(
-            ModeChoice(mode, "test"), loaded.settings, self.machine.env, defaults=default_folders(self.fake),
-        )
+    def write_app_settings(self, top: str = "", tables: str = "") -> Scope:
+        """Rewrite ``$App\\settings.toml`` and build the scope again (a run reads its settings once, when it starts)."""
+        self.machine.write_app_settings(top, tables)
+        return self.rescope()
+
+    def rescope(self, **options) -> Scope:
+        """Build the scope again (after the test changed a settings file) and give it to the engine; return it."""
+        self.engine.scope = self.machine.scope(**options)
+        return self.engine.scope
+
+    @property
+    def scope(self) -> Scope:
+        """The scope of the run (for tests that call the services directly)."""
+        return self.engine.scope
+
+    def mode_context(self, mode: str | None = None) -> Scope:
+        """Return the scope of the run; *mode*, when given, must be the mode of this world's run."""
+        assert mode is None or mode == self.scope.mode, f"this world runs in {self.scope.mode} mode, not {mode}"
+        return self.scope
 
     # -- publishing ---------------------------------------------------------------
 

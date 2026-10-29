@@ -18,7 +18,7 @@ import pytest
 from gupkg.engine.receipts import MAX_RECEIPT_BYTES, read_receipt
 from gupkg.model.checksum import parse_skip_flag
 from gupkg.report.events import PhaseEnd, PhaseStart, Warning, use_reporter
-from gupkg.system.port import Scope
+from gupkg.system.port import Mode
 from tests.engine_support import World, pin_no_ambient_elevation  # noqa: F401
 
 FULL = (
@@ -50,10 +50,10 @@ def test_a_healthy_install_has_no_problems(world: World) -> None:
 
 def test_check_reports_a_deleted_shim_and_a_missing_path_entry_and_fix_restores_both(world: World) -> None:
     """Drift is reported for the shim and the PATH entry; --fix applies both again and the package is healthy."""
-    shim = world.fake.scope_folders(Scope.USER).bin_dir / "tool.exe"
+    shim = world.fake.scope_folders(Mode.USER).bin_dir / "tool.exe"
     package_dir = str(world.user / "tool" / "current" / "App")
     shim.unlink()
-    world.fake.set_path(Scope.USER, [item for item in world.fake.get_path(Scope.USER) if item != package_dir])
+    world.fake.set_path(Mode.USER, [item for item in world.fake.get_path(Mode.USER) if item != package_dir])
 
     result = world.one("check", "tool")
 
@@ -64,7 +64,7 @@ def test_check_reports_a_deleted_shim_and_a_missing_path_entry_and_fix_restores_
     fixed = world.one("check", "tool", fix=True)
 
     assert fixed.ok and len(fixed.details["fixed"]) == 2
-    assert shim.is_file() and package_dir in world.fake.get_path(Scope.USER)
+    assert shim.is_file() and package_dir in world.fake.get_path(Mode.USER)
     assert world.one("check", "tool").status == "healthy"
 
 
@@ -73,19 +73,19 @@ def test_a_changed_shortcut_and_a_lost_environment_value_are_drift_too(world: Wo
     link = next(iter(world.fake.shortcuts()))
     spec = world.fake.read_shortcut(link)
     world.fake.write_shortcut(link, type(spec)(target_path="C:\\elsewhere.exe"))
-    world.fake.delete_env(Scope.USER, "TOOL_HOME")
+    world.fake.delete_env(Mode.USER, "TOOL_HOME")
 
     result = world.one("check", "tool")
     assert kinds(result).count("drift") == 2
 
     assert world.one("check", "tool", fix=True).ok
     assert world.fake.read_shortcut(link).target_path.endswith("app.exe")
-    assert world.fake.env_values(Scope.USER)["TOOL_HOME"].value.endswith("App")
+    assert world.fake.env_values(Mode.USER)["TOOL_HOME"].value.endswith("App")
 
 
 def test_install_again_repairs_drift(world: World) -> None:
     """The install of an installed package re-applies a recorded effect that is missing from the machine."""
-    shim = world.fake.scope_folders(Scope.USER).bin_dir / "tool.exe"
+    shim = world.fake.scope_folders(Mode.USER).bin_dir / "tool.exe"
     shim.unlink()
 
     result = world.one("install", "tool")
@@ -190,23 +190,11 @@ def test_an_app_with_too_many_files_to_list_is_still_checked_by_its_digest(tmp_p
     assert not result.ok and "app-modified" in kinds(result) and "too many files" in result.details["problems"][0]["message"]
 
 
-def test_shadowing_between_the_system_and_the_user_root_is_reported(tmp_path: Path) -> None:
-    """The same package in both roots is a warning of the check: their shims shadow each other on PATH."""
-    world = World(tmp_path)
-    world.publish("tool", "1.0.0", mode="user", tables=FULL)
-    world.publish("tool", "1.0.0", mode="system", tables=FULL)
-    assert world.one("install", "user:tool").ok
-
-    result = world.one("check", "user:tool")
-
-    assert [note["kind"] for note in result.details["notes"] if note["kind"] == "shadowing"] == ["shadowing"]
-
-
 def test_an_elevated_check_does_not_read_the_users_environment(tmp_path: Path) -> None:
     """An elevated run verifies system-scope effects only and never asks the user's environment."""
     world = World(tmp_path, elevated=True)
     world.publish("tool", "1.0.0", mode="system", tables=FULL)
-    assert world.one("install", "system:tool").ok
+    assert world.one("install", "tool").ok
     world.fake.registry_log.clear()
 
     result = world.one("check", "tool")

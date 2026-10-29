@@ -274,7 +274,7 @@ try {
     }
     Step "Version directory: $versionDir"
     if ($SkipInstall) {
-        Step "Verified and unpacked. Finish later with: `"$versionDir\install.cmd`" --mode $Scope"
+        Step "Verified and unpacked. Finish later with: `"$versionDir\install.cmd`""
         return
     }
 
@@ -283,7 +283,7 @@ try {
     Step 'Running install.cmd'
     $env:GUPKG_NO_PAUSE = '1'
     # Called directly: wrapping it in `cmd /c "<path>"` breaks when the path has an ampersand (cmd strips the quotes).
-    & "$versionDir\install.cmd" --mode $Scope
+    & "$versionDir\install.cmd"
     if ($LASTEXITCODE -ne 0) { throw "install.cmd failed (exit $LASTEXITCODE)." }
     Step 'Done. Open a NEW terminal, then try:  gupkg --help'
     if ($Scope -eq 'system') { Step "The root forwarder is $Root\.gupkg\gupkg.cmd; package launchers of this root now find the installed gupkg through it." }

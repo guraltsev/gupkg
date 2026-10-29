@@ -28,6 +28,8 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..system.port import Mode
+
 SCHEMA = 4
 
 LAYER_DEFAULTS = "defaults"
@@ -36,8 +38,6 @@ LAYER_ROOT = "root"
 LAYER_CLI = "cli"
 LAYER_NAMES = (LAYER_DEFAULTS, LAYER_APP, LAYER_ROOT, LAYER_CLI)
 
-MODE_SYSTEM = "system"
-MODE_USER = "user"
 SCHEMA_3_REFUSAL = "settings schema 3 is no longer read; change it to schema = 4 (see _docs/rehaul_design.md §11)"
 
 OFFICIAL_REGISTRY_SOURCE = "https://github.com/guraltsev/gupkg-registry.git"
@@ -267,13 +267,13 @@ def default_layer(mode: str) -> Layer:
 
     The two modes differ only in the ``[integration]`` folders.
     """
-    if mode == MODE_SYSTEM:
+    if mode == Mode.SYSTEM:
         integration = {
             "bin": "C:\\bin",
             "start_menu": "%ProgramData%\\Microsoft\\Windows\\Start Menu\\opt",
             "integrate": "full",
         }
-    elif mode == MODE_USER:
+    elif mode == Mode.USER:
         integration = {
             "bin": "%USERPROFILE%\\bin",
             "start_menu": "%APPDATA%\\Microsoft\\Windows\\Start Menu\\opt",

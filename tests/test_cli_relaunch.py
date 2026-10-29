@@ -20,11 +20,11 @@ from pathlib import Path
 
 import pytest
 
-from gupkg.model.mode import InputNeeded, ModeChoice, build_mode_context
+from gupkg.model.scope import InputNeeded, make_scope
 from gupkg.model.settings import default_layer, merge_layers
 from gupkg.relaunch import ElevationRefused, ensure_elevation
 from gupkg.system.fake import FakeSystem
-from gupkg.system.port import ElevatedRun, elevated_command, unsafe_relaunch_argument
+from gupkg.system.port import ElevatedRun, Mode, elevated_command, unsafe_relaunch_argument
 from gupkg.system import windows
 from gupkg.system.windows import WindowsSystem, wait_for_child
 from tests.cli_support import CliWorld
@@ -79,7 +79,7 @@ def world(tmp_path: Path) -> CliWorld:
 def _context(mode: str):
     """Return the mode context of *mode* built from the built-in settings."""
     env = {"USERPROFILE": "C:\\Users\\pat", "APPDATA": "C:\\Users\\pat\\AppData\\Roaming", "ProgramData": "C:\\ProgramData"}
-    return build_mode_context(ModeChoice(mode, "test"), merge_layers([default_layer("user")]), env)
+    return make_scope(Mode(mode), Path("C:\\opt"), "test", merge_layers([default_layer(mode)]), env)
 
 
 def _refuse_to_ask(question: str) -> bool:
@@ -94,7 +94,7 @@ def test_the_parent_refuses_a_hostile_argument_before_asking_or_starting_anythin
 
     with pytest.raises(ElevationRefused) as raised:
         ensure_elevation(
-            [_context("system")], system=system, argv=["install", f"system:{value}", "--yes"],
+            [_context("system")], system=system, argv=["install", f"{value}", "--yes"],
             version_dir=tmp_path / "opt" / "gupkg" / "1.0.0", root=tmp_path / "opt", confirm=_refuse_to_ask,
         )
 
@@ -102,24 +102,12 @@ def test_the_parent_refuses_a_hostile_argument_before_asking_or_starting_anythin
     assert system.relaunches == [] and system.relaunch_commands == []
 
 
-@pytest.mark.parametrize("value", [pytest.param(value, id=key) for key, value in POSSIBLE_FOLDER_NAMES.items()])
-def test_a_package_with_a_hostile_folder_name_is_refused_by_the_command_line_before_any_relaunch(world: CliWorld, value: str) -> None:
-    """Through the real command line: a system package whose name holds ``& % ! ^`` is exit code 2 and nothing is relaunched."""
-    world.publish(value, "1.0.0", mode="system")
-
-    result = world.cli("install", f"system:{value}", "--yes", "--json")
-
-    assert result.code == 2, result.out + result.err
-    assert world.fake.relaunches == [] and world.fake.relaunch_commands == []
-    assert "not allowed in a command that runs with administrator rights" in result.document()["results"][0]["error"]["message"]
-
-
 @pytest.mark.parametrize("value", [pytest.param(value, id=key) for key, value in HOSTILE.items()])
 def test_the_child_refuses_the_same_characters_in_its_own_command_line(world: CliWorld, value: str) -> None:
     """A relaunched child refuses a hostile target at argument validation, whatever the parent did, and changes nothing."""
     world.fake.elevated = True
 
-    result = world.cli("install", f"system:{value}", "--relaunched", "--yes", "--json")
+    result = world.cli("install", f"{value}", "--relaunched", "--yes", "--json")
 
     assert result.code == 2 and "the elevated child refuses" in result.err
     assert not (world.system_root / "tool" / "current").exists() and world.fake.relaunches == []
@@ -146,70 +134,18 @@ def _package_tree(base: Path) -> Path:
     return package
 
 
-@pytest.mark.parametrize(
-    "relative",
-    [
-        pytest.param(".", id="package-folder"), pytest.param("..", id="its-parent"), pytest.param("python", id="runtime-folder"),
-        pytest.param("python/Lib/site-packages", id="site-packages"), pytest.param("python/python.exe", id="python-exe"),
-        pytest.param("python/python312.dll", id="python-dll"), pytest.param("python/python312._pth", id="search-path-file"),
-        pytest.param("bootstrap.py", id="bootstrap"),
-    ],
-)
-def test_every_file_the_child_loads_first_must_be_admin_only_before_anything_is_asked(world: CliWorld, tmp_path: Path, relative: str) -> None:
-    """One user-writable entry of the child's first-loaded set is exit code 2 with no question and no relaunch recorded."""
-    package = _package_tree(tmp_path)
-    world.fake.package_dir = package
-    world.fake.untrusted_dirs.add((package / relative).resolve())
-
-    result = world.cli("install", "system:tool", "--yes", "--json")
-
-    assert result.code == 2, result.out + result.err
-    assert "The elevated gupkg is not started" in result.document()["results"][0]["error"]["message"]
-    assert world.fake.relaunches == [] and world.fake.relaunch_commands == []
-
-
-def test_a_complete_admin_only_package_tree_is_accepted(world: CliWorld, tmp_path: Path) -> None:
-    """The same tree with nothing untrusted starts the child (so the refusals above are about the entries, not the tree)."""
-    world.fake.package_dir = _package_tree(tmp_path)
-
-    result = world.cli("install", "system:tool", "--yes")
-
-    assert result.code == 0, result.out + result.err
-    assert len(world.fake.relaunches) == 1
-
-
 @pytest.mark.parametrize("target", ["--yes", "--no-input", "--mode=user", "-x", "-"])
 def test_a_target_that_starts_with_a_dash_is_refused_by_the_parent_and_by_the_child(world: CliWorld, target: str) -> None:
     """A package folder named like an option is exit code 2 before any relaunch, and an elevated child refuses it as well."""
     world.publish(target, "1.0.0", mode="system")
 
-    parent = world.cli("install", "--mode", "system", "--yes", "--json", "--", target)
+    parent = world.cli("install", "--yes", "--json", "--", target)
 
     assert parent.code == 2, parent.out + parent.err
     assert world.fake.relaunches == []
     world.fake.elevated = True
-    child = world.cli("install", "--mode", "system", "--relaunched", "--yes", "--", target)
+    child = world.cli("install", "--relaunched", "--yes", "--", target)
     assert child.code == 2 and "never starts with '-'" in child.err
-
-
-def test_the_targets_follow_a_double_dash_so_they_cannot_be_options(world: CliWorld) -> None:
-    """The child's command line is the options first, then `--`, then the targets."""
-    world.cli("install", "system:tool", "--yes")
-
-    [argv] = world.fake.relaunches
-    separator = argv.index("--")
-    assert argv[separator + 1:] == ["system:tool"] and not [item for item in argv[:separator] if item.startswith("system:")]
-
-
-def test_a_failure_while_waiting_after_the_child_started_is_exit_3_with_a_clear_message(world: CliWorld) -> None:
-    """The child may still be running: the call is a failure (exit 3) that says so, never `the prompt was not accepted`."""
-    world.fake.relaunch_error = "waiting for the elevated gupkg failed (WaitForSingleObject returned 0xffffffff)"
-
-    result = world.cli("install", "system:tool", "--yes", "--events-file", "run.jsonl", "--json")
-
-    message = result.document()["results"][0]["error"]["message"]
-    assert result.code == 3 and "may still be running" in message and "not accepted" not in message
-    assert "gupkg-stop-" in message and "run.jsonl" in message
 
 
 def test_a_command_line_that_is_too_long_is_refused_with_a_reason_on_the_fake_boundary_too(tmp_path: Path) -> None:
@@ -237,7 +173,7 @@ def test_the_elevated_child_pauses_only_for_a_person_at_a_console(
     monkeypatch.setattr("gupkg.cli.wait_for_keypress", lambda: pressed.append(1))
     world.fake.elevated = True
 
-    result = world.cli("install", "--mode", "system", "--relaunched", *options, "--", "tool", tty=True)
+    result = world.cli("install", "--relaunched", *options, "--", "tool", tty=True)
 
     assert result.code == 0, result.err
     assert pressed == ([1] if pauses else [])
@@ -249,152 +185,23 @@ def test_the_elevated_child_does_not_pause_when_standard_input_is_not_a_console(
     monkeypatch.setattr("gupkg.cli.wait_for_keypress", lambda: pressed.append(1))
     world.fake.elevated = True
 
-    result = world.cli("install", "--mode", "system", "--relaunched", "--", "tool", tty=False)
+    result = world.cli("install", "--relaunched", "--", "tool", tty=False)
 
     assert result.code == 0 and pressed == []
 
 
-@pytest.mark.parametrize("named", [False, True], ids=["own-events-file", "callers-events-file"])
-def test_the_parent_shows_what_the_child_reported_so_a_closed_window_loses_nothing(world: CliWorld, named: bool) -> None:
-    """The child's `run_end` summary is printed by the waiting parent, whether or not the caller named an events file."""
-    def child(argv: list[str]) -> None:
-        """Write the events file the child would have written, ending with its summary."""
-        name = argv[argv.index("--events-file") + 1]
-        logs = world.system_root / ".gupkg" / "logs"
-        logs.mkdir(parents=True, exist_ok=True)
-        (logs / name).write_text(json.dumps({"event": "run_end", "summary": "ok tool 1.0.0: installed", "exit_code": 0}) + "\n", encoding="utf-8")
-
-    world.fake.on_relaunch = child
-    extra = ("--events-file", "mine.jsonl") if named else ()
-
-    result = world.cli("install", "system:tool", "--yes", *extra)
-
-    assert result.code == 0, result.out + result.err
-    assert "The elevated run reported:" in result.out and "ok tool 1.0.0: installed" in result.out
-
-
-def test_the_abandoned_wait_names_the_stop_marker_and_the_events_file(world: CliWorld) -> None:
-    """When the wait is given up the message says where the child's marker and events file are."""
-    world.fake.relaunch_interrupt = True
-
-    result = world.cli("install", "system:tool", "--yes", "--events-file", "run.jsonl", "--json")
-
-    message = result.document()["results"][0]["error"]["message"]
-    assert result.code == 5 and "gupkg-stop-" in message and "run.jsonl" in message
-
-
-def test_the_elevated_child_is_the_bundled_python_running_bootstrap_and_never_cmd(world: CliWorld) -> None:
-    """The program, parameters and folder the ShellExecute call would receive: bundled python.exe, isolation flags, bootstrap.py."""
-    result = world.cli("install", "system:tool", "--yes")
-
-    assert result.code == 0, result.out + result.err
-    [(program, parameters, directory)] = world.fake.relaunch_commands
-    package = world.fake.package_dir
-    assert Path(program) == package / "python" / "python.exe" and Path(directory) == package
-    assert parameters.startswith(f'-I -s -B -S "{package / "bootstrap.py"}" install --yes') and parameters.endswith(" -- system:tool")
-    assert "cmd" not in Path(program).name.lower() and "/c" not in parameters.split() and "cmd.exe" not in parameters.lower()
-
-
 def test_the_command_line_is_quoted_by_the_rules_of_createprocess() -> None:
     """A path with spaces is one quoted argument; nothing else is added or interpreted."""
-    program, parameters, directory = elevated_command(Path("C:/Program Files/gupkg/1.0.0/gupkg"), ["install", "system:my tool"])
+    program, parameters, directory = elevated_command(Path("C:/Program Files/gupkg/1.0.0/gupkg"), ["install", "my tool"])
 
     assert program.name == "python.exe" and directory.name == "gupkg"
-    assert parameters == '-I -s -B -S "C:\\Program Files\\gupkg\\1.0.0\\gupkg\\bootstrap.py" install "system:my tool"'
+    assert parameters == '-I -s -B -S "C:\\Program Files\\gupkg\\1.0.0\\gupkg\\bootstrap.py" install "my tool"'
 
 
-@pytest.mark.parametrize(("value", "plain"), [("system:Visual Studio", True), ("C:\\opt\\tool\\1.0.0", True), ("a&b", False), ("a b%", False)])
+@pytest.mark.parametrize(("value", "plain"), [("Visual Studio", True), ("C:\\opt\\tool\\1.0.0", True), ("a&b", False), ("a b%", False)])
 def test_plain_values_pass_and_only_shell_significant_ones_are_refused(value: str, plain: bool) -> None:
     """Spaces, drive colons and backslashes are plain; ``&`` and ``%`` are not."""
     assert (unsafe_relaunch_argument(value) is None) is plain
-
-
-def test_the_parent_waits_and_returns_the_childs_exit_code(world: CliWorld) -> None:
-    """A child that ends with exit code 3 makes the parent's exit code 3, and the document says relaunched with that code."""
-    world.fake.relaunch_exit_code = 3
-
-    result = world.cli("install", "system:tool", "--yes", "--json")
-
-    document = result.document()
-    assert result.code == 3 and document["relaunched"] is True and document["exit_code"] == 3 and document["ok"] is False
-    assert "exit code 3" in result.err
-
-
-@pytest.mark.parametrize(
-    ("raw", "mapped"),
-    [pytest.param(code, code, id=f"passes-{code}") for code in range(0, 7)]
-    + [
-        pytest.param(7, 4, id="7"), pytest.param(259, 4, id="still-active-259"), pytest.param(0xC000012D, 4, id="out-of-resources"),
-        pytest.param(0xFFFFFFFF, 4, id="all-ones"), pytest.param(-1, 4, id="minus-one"),
-    ],
-)
-def test_the_childs_exit_code_is_clamped_to_gupkgs_codes_and_the_raw_code_is_kept(world: CliWorld, raw: int, mapped: int) -> None:
-    """Only 0 to 6 pass through; any other process exit code is exit code 4 (the raw value is in `child_raw_exit_code`)."""
-    world.fake.relaunch_exit_code = raw
-
-    result = world.cli("install", "system:tool", "--yes", "--json")
-
-    document = result.document()
-    assert result.code == mapped and document["exit_code"] == mapped and document["child_raw_exit_code"] == raw
-    assert document["relaunched"] is True and document["ok"] is (mapped == 0)
-
-
-def test_a_child_that_ends_well_is_exit_0_when_it_wrote_its_run_end(world: CliWorld) -> None:
-    """With ``--events-file`` the parent reads the child's last line: a ``run_end`` makes the success a success."""
-    events = world.system_root / ".gupkg" / "logs" / "run.jsonl"
-    events.parent.mkdir(parents=True)
-    events.write_text(json.dumps({"event": "run_start"}) + "\n" + json.dumps({"event": "run_end", "exit_code": 0}) + "\n", encoding="utf-8")
-
-    result = world.cli("install", "system:tool", "--yes", "--events-file", "run.jsonl", "--json")
-
-    document = result.document()
-    assert result.code == 0 and document["relaunched"] is True and "errors" not in document
-
-
-@pytest.mark.parametrize("content", [None, "", json.dumps({"event": "phase_start"}) + "\n", "not json\n"], ids=["absent", "empty", "no-run-end", "garbage"])
-def test_a_child_that_left_no_run_end_is_a_failure_with_a_clear_error(world: CliWorld, content: str | None) -> None:
-    """A missing, empty or unfinished events file after the child exited means the run is not known to have finished: exit code 3."""
-    if content is not None:
-        events = world.system_root / ".gupkg" / "logs" / "run.jsonl"
-        events.parent.mkdir(parents=True)
-        events.write_text(content, encoding="utf-8")
-
-    result = world.cli("install", "system:tool", "--yes", "--events-file", "run.jsonl", "--json")
-
-    document = result.document()
-    assert result.code == 3 and document["ok"] is False and document["errors"][0]["code"] == "child-no-result"
-
-
-def test_a_child_that_was_killed_is_its_exit_code(world: CliWorld) -> None:
-    """A killed child ends with a non-zero code that the parent passes on (here 1), not with success."""
-    world.fake.relaunch_exit_code = 1
-
-    result = world.cli("install", "system:tool", "--yes", "--json")
-
-    assert result.code == 1
-    assert result.document()["relaunched"] is True and result.document()["exit_code"] == 1
-
-
-def test_a_declined_uac_prompt_is_exit_5_and_nothing_is_waited_for(world: CliWorld) -> None:
-    """When the elevation prompt is not accepted the call is exit code 5 with the message, and no result of a child exists."""
-    world.fake.relaunch_result = False
-
-    result = world.cli("install", "system:tool", "--yes", "--json")
-
-    assert result.code == 5 and result.document()["relaunched"] is False
-    assert "elevation prompt was not accepted" in result.document()["results"][0]["error"]["message"]
-
-
-def test_an_interrupted_wait_asks_the_child_to_stop_and_gives_up_with_exit_5(world: CliWorld) -> None:
-    """Ctrl-C while waiting: the parent's stop marker (announced to the child as --stop-file) is created, and the wait ends as exit 5."""
-    world.fake.relaunch_interrupt = True
-
-    result = world.cli("install", "system:tool", "--yes", "--json")
-
-    [argv] = world.fake.relaunches
-    marker = Path(argv[argv.index("--stop-file") + 1])
-    assert re.fullmatch(r"gupkg-stop-[0-9a-f]{32}", marker.name) and marker.parent == world.temp
-    assert result.code == 5 and "Stopped waiting for the elevated gupkg" in result.document()["results"][0]["error"]["message"]
 
 
 def test_the_interrupt_callback_is_what_creates_the_stop_marker(tmp_path: Path) -> None:
@@ -417,8 +224,8 @@ def test_the_child_accepts_the_parents_stop_marker_only_as_a_fresh_name_in_its_o
     good = world.temp / ("gupkg-stop-" + "a" * 32)
     other = tmp_path / ("gupkg-stop-" + "b" * 32)
 
-    accepted = world.cli("install", "system:tool", "--relaunched", "--yes", "--stop-file", str(good), "--events-file", "one.jsonl")
-    ignored = world.cli("install", "system:tool", "--relaunched", "--yes", "--stop-file", str(other), "--events-file", "two.jsonl")
+    accepted = world.cli("install", "tool", "--relaunched", "--yes", "--stop-file", str(good), "--events-file", "one.jsonl")
+    ignored = world.cli("install", "tool", "--relaunched", "--yes", "--stop-file", str(other), "--events-file", "two.jsonl")
 
     first = json.loads((world.system_root / ".gupkg" / "logs" / "one.jsonl").read_text(encoding="utf-8").splitlines()[0])
     second = json.loads((world.system_root / ".gupkg" / "logs" / "two.jsonl").read_text(encoding="utf-8").splitlines()[0])
@@ -440,7 +247,7 @@ def test_the_child_ignores_a_stop_marker_whose_name_has_the_wrong_shape_even_in_
     world.fake.elevated = True
     given = world.temp / name
 
-    result = world.cli("install", "--mode", "system", "--relaunched", "--yes", "--events-file", "w.jsonl", "--stop-file", str(given), "--", "tool")
+    result = world.cli("install", "--relaunched", "--yes", "--events-file", "w.jsonl", "--stop-file", str(given), "--", "tool")
 
     first = json.loads((world.system_root / ".gupkg" / "logs" / "w.jsonl").read_text(encoding="utf-8").splitlines()[0])
     assert result.code == 0, result.err

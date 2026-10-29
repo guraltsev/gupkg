@@ -38,10 +38,10 @@ from typing import Any
 from ..catalog.local import canonical_path, is_inside, is_reparse_point
 from ..core import write_bytes_atomic
 from ..model.manifest import Manifest, env_name_problem, name_part_problem, path_entry_shape_problem
-from ..model.mode import ENV_MACHINE, ModeContext
+from ..model.scope import ENV_MACHINE, Scope
 from ..model.plan import effect_key, normalize_entry
 from ..model.state import Effect
-from ..system.port import Scope, ShortcutSpec, System
+from ..system.port import Mode, ShortcutSpec, System
 from ..tomlio import dumps
 
 # The launcher binaries, the project licenses that sit beside them, and the folder of runtime files a dynamically linked launcher
@@ -71,7 +71,7 @@ class EffectContext:
         The mode's ``bin`` folder.
     start_menu : Path or None
         The Start Menu ``opt`` folder; ``None`` when the mode creates no shortcuts.
-    scope : Scope or None
+    scope : Mode or None
         The environment and ``PATH`` target; ``None`` when the mode does not touch the environment.
     env : mapping
         The environment used to expand ``${NAME}`` references.
@@ -85,18 +85,18 @@ class EffectContext:
     mode: str
     bin_dir: Path
     start_menu: Path | None
-    scope: Scope | None
+    scope: Mode | None
     env: Mapping[str, str]
     linkage: str = "dynamic"
     root_data: Path | None = None
 
 
-def effect_context(mode_context: ModeContext, package_path: Path, env: Mapping[str, str]) -> EffectContext:
+def effect_context(mode_context: Scope, package_path: Path, env: Mapping[str, str]) -> EffectContext:
     """Build the effect context of a package from its resolved install mode.
 
     Parameters
     ----------
-    mode_context : ModeContext
+    mode_context : Scope
         The resolved mode (root, ``bin``, Start Menu and environment target).
     package_path : Path
         The package root.
@@ -110,7 +110,7 @@ def effect_context(mode_context: ModeContext, package_path: Path, env: Mapping[s
     """
     scope = None
     if mode_context.env_target is not None:
-        scope = Scope.MACHINE if mode_context.env_target == ENV_MACHINE else Scope.USER
+        scope = Mode.SYSTEM if mode_context.env_target == ENV_MACHINE else Mode.USER
     return EffectContext(
         Path(package_path), mode_context.mode, mode_context.bin_dir, mode_context.start_menu, scope, env,
         root_data=mode_context.data_dir,
@@ -209,7 +209,7 @@ def desired_effects(manifest: Manifest, context: EffectContext) -> tuple[tuple[E
         if manifest.shims:
             notes.append(f"shims are in {context.bin_dir}; run `gupkg shell` for the PATH line to use")
     elif wants_environment:
-        scope = "system" if context.scope is Scope.MACHINE else "user"
+        scope = "system" if context.scope is Mode.SYSTEM else "user"
         for row in manifest.envs:
             _require_free_name(row.name)
             effects.append(Effect("env", {
@@ -613,7 +613,7 @@ def verify_each(system: System, effects: Sequence[Effect], *, elevated: bool) ->
                     drift = f"{'root forwarder' if effect.kind == 'forwarder' else 'file'} missing or changed: {fields['path']}"
             elif effect.kind in ("env", "path"):
                 scope = _scope(fields)
-                if elevated and scope is Scope.USER:
+                if elevated and scope is Mode.USER:
                     unverified = f"{effect.kind} in the user environment (not read in an elevated run)"
                 elif effect.kind == "env":
                     stored_value = system.get_env(scope, str(fields["name"]))
@@ -640,9 +640,9 @@ def verify_effects(system: System, effects: Sequence[Effect], *, elevated: bool)
 # ---------------------------------------------------------------------------
 
 
-def _scope(fields: Mapping[str, Any]) -> Scope:
+def _scope(fields: Mapping[str, Any]) -> Mode:
     """Return the environment scope named by an effect."""
-    scope = {"system": Scope.MACHINE, "user": Scope.USER}.get(str(fields.get("scope", "")))
+    scope = {"system": Mode.SYSTEM, "user": Mode.USER}.get(str(fields.get("scope", "")))
     if scope is None:
         raise EffectError(f"an effect names the unknown environment scope {fields.get('scope')!r}")
     return scope

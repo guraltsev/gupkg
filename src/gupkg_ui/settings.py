@@ -6,15 +6,15 @@ same layered loader the CLI uses (``--settings`` included). Reading is all they 
 
 Usage and API
 -------------
-``load_ui_settings(...)`` returns a ``UiSettings``: ``checksum_policy(mode)`` is the effective ``ask``, ``refuse`` or ``skip`` for a
-target of that mode, ``keep_screen`` and ``cleanup_auto`` are the booleans, and ``root_of(mode)`` is the configured root.
+``load_ui_settings(...)`` returns a ``UiSettings``: ``checksum_policy()`` is the effective ``ask``, ``refuse`` or ``skip`` of the run's
+scope, ``keep_screen`` and ``cleanup_auto`` are the booleans, and ``root`` is the root of the run's scope.
 
 Implementation Approach
 -----------------------
-The loader runs as a normal (non-elevated) process. ``WindowsSystem`` is imported only to *read* (whether the process is elevated and whether a folder is admin-only):
-the ``System`` protocol has no implementation apart from it and the sandbox's ``FakeSystem``, so there is no smaller read-only facade to use instead. Because a system target is run by an elevated child, the policy for a system
-target is evaluated as an elevated run would see it: a value that comes from the loaded root layer (the user root a normal process reads) or from ``--settings`` (which an elevated child ignores) does not count, so a
-setting a standard user can edit never lets an administrator-run install skip a missing checksum (design 9.6).
+The settings are those of the run's own scope (``gupkg.scope.build_scope``), read exactly as the CLI of the same gupkg reads them:
+the policy is read from the layers the run itself reads, so a setting a standard user can edit never reaches an administrator run (an
+elevated scope reads only admin-only files). ``WindowsSystem`` is imported only to *read* (whether the process is elevated and whether a
+folder is admin-only): the ``System`` protocol has no implementation apart from it and the sandbox's ``FakeSystem``.
 """
 
 from __future__ import annotations
@@ -25,8 +25,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from gupkg.model.manager_policy import POLICY_KEY, manager_checksum_policy
-from gupkg.model.settings import LAYER_CLI, LAYER_ROOT, Settings, SettingsError, expand_env
-from gupkg.modes import settings_loader
+from gupkg.model.scope import Scope
+from gupkg.model.settings import LAYER_CLI, LAYER_ROOT, Settings, SettingsError
+from gupkg.scope import build_scope
 from gupkg.selfmgmt.location import RunningGupkg, locate_running_gupkg
 from gupkg.system.port import System
 from gupkg.system.windows import WindowsSystem
@@ -42,17 +43,22 @@ class UiSettings:
         The merged settings with the layer of every value.
     env : mapping
         The environment used to expand ``%NAME%`` in the roots.
+    scope : Scope, optional
+        The scope of the run; its root is ``root``.
     """
 
     settings: Settings
     env: Mapping[str, str]
+    scope: Scope | None = None
 
-    def checksum_policy(self, mode: str | None) -> str:
-        """Return ``ask``, ``refuse`` or ``skip`` for a target of *mode*; a system target is judged as an elevated run would judge it."""
+    def checksum_policy(self, mode: str | None = None) -> str:
+        """Return ``ask``, ``refuse`` or ``skip``: ``[manager] checksum_missing`` as the run's own layers set it.
+
+        A system target is run by an elevated child (design 9.6), which never honours a value from the user's root file or from
+        ``--settings``: for it such a ``skip`` is a ``refuse``.
+        """
         policy = manager_checksum_policy(self.settings)
-
-        # An elevated child ignores ``--settings`` unless the file is in the system root, so a value that came from it, or from the user root's own file, is not trusted for a system target either.
-        if mode == "system" and self.settings.source_of(POLICY_KEY) in (LAYER_ROOT, LAYER_CLI):
+        if mode == "system" and policy == "skip" and self.settings.source_of(POLICY_KEY) in (LAYER_ROOT, LAYER_CLI):  # Removed in issue 035 T09.
             return "refuse"
         return policy
 
@@ -71,14 +77,10 @@ class UiSettings:
         """Whether ``update --all`` ends with a cleanup (decision D43)."""
         return bool(self.settings["cleanup.auto"])
 
-    def root_of(self, mode: str) -> Path:
-        """Return the configured root of *mode* (``system``, ``user`` or ``portable``)."""
-        return Path(expand_env(self.settings[f"roots.{mode}"], self.env))
-
     @property
-    def default_mode(self) -> str:  # Removed in issue 035 T05.
-        """The mode a run without a named package uses: the user root, because the UI settings are loaded as a normal run."""
-        return "user"
+    def root(self) -> Path:
+        """Return the root of the run's scope."""
+        return Path(self.scope.root) if self.scope is not None else Path(self.settings["roots.user"])
 
 
 def load_ui_settings(
@@ -110,13 +112,8 @@ def load_ui_settings(
     machine = system or WindowsSystem()
     environment = dict(os.environ if env is None else env)
 
-    # The system root counts as the installed one only when this gupkg really sits in an admin-only root.
-    installed_root = where.root if where.kind == "installed" and where.root is not None and machine.directory_is_admin_only(where.root) else None
-    loaded = settings_loader(
-        system=machine, env=environment, elevated=False, app_dir=where.app_dir, installed_system_root=installed_root,
-        settings_path=settings_path,
-    )()
-    return UiSettings(loaded.settings, environment)
+    scope = build_scope(system=machine, env=environment, location=where, settings_path=settings_path)
+    return UiSettings(scope.settings, environment, scope)
 
 
 __all__ = ["SettingsError", "UiSettings", "load_ui_settings"]

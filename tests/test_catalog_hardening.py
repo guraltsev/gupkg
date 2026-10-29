@@ -189,8 +189,6 @@ def test_elevated_path_must_be_in_the_system_root_even_when_admin_only(tmp_path:
 
     with pytest.raises(UntrustedLocation, match="not in the system root"):
         catalog.resolve(str(outside))
-    with pytest.raises(UntrustedLocation, match="acts only on system"):
-        catalog.resolve(f"user:{inside}")
     assert catalog.resolve(str(inside)).view.mode == "system"
 
 

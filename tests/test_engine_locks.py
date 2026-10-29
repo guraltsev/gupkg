@@ -264,7 +264,7 @@ def test_an_elevated_run_refuses_a_locks_folder_that_is_not_admin_only(tmp_path:
     with pytest.raises(PackageBusy, match="admin-only"):
         with package_lock(world.fake, world.system_root / "tool", "install", world.engine.now, elevated=True):
             pytest.fail("the lock was taken")
-    result = world.one("install", "system:tool")
+    result = world.one("install", "tool")
 
     assert not result.ok and result.error["code"] == "package-busy"
 
@@ -281,7 +281,7 @@ def test_an_elevated_install_locks_inside_the_system_package_and_never_writes_th
 
     world.engine.clock = clock
 
-    result = world.one("install", "system:tool")
+    result = world.one("install", "tool")
 
     assert result.ok and seen and {item.parent.parent.parent for item in seen} == {world.system_root / "tool"}
     assert not any("tool" in item.name for item in world.user.rglob("*"))

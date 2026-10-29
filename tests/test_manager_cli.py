@@ -53,7 +53,7 @@ def manager(tmp_path: Path, fake: FakeGupkg, *argv: str, typed: str | None = Non
 def schedule_update_all(fake: FakeGupkg, tmp_path: Path, *, missing: bool = False) -> None:
     """Schedule an inventory with two outdated user packages (one without a checksum when *missing*), its plan and its run."""
     fake.respond("list", doc=list_doc([(name, "user", "outdated", "1.0.0", "2.0.0", str(tmp_path / "roots" / "user" / name)) for name in ("a", "b")]))
-    fake.respond("update:plan", doc=plan_doc([plan_entry("user:a", "a", sha256="present"), plan_entry("user:b", "b", sha256="missing" if missing else "present")]))
+    fake.respond("update:plan", doc=plan_doc([plan_entry("a", "a", sha256="present"), plan_entry("b", "b", sha256="missing" if missing else "present")]))
     schedule_run(fake, tmp_path, "user", ["a"] if missing else ["a", "b"])
 
 
@@ -65,7 +65,7 @@ def test_update_all_with_yes_runs_and_exits_zero(fake: FakeGupkg, tmp_path: Path
 
     assert code == 0 and "Plan" in out and "ok a 2.0.0: updated" in out and out.rstrip().splitlines()[-1].startswith("    ok b")
     (call,) = [item for item in fake.calls() if item["key"] == "update"]
-    assert call["targets"] == ["user:a", "user:b"] and "--yes" in call["options"] and "--no-input" in call["options"]
+    assert call["targets"] == ["a", "b"] and "--yes" in call["options"] and "--no-input" in call["options"]
 
 
 def test_update_all_without_yes_and_without_a_terminal_changes_nothing(fake: FakeGupkg, tmp_path: Path) -> None:
@@ -96,7 +96,7 @@ def test_a_schedule_with_ask_refuses_the_package_without_a_checksum_and_runs_the
 
     assert code == 3 and "refused: no checksum" in out and "ok a 2.0.0: updated" in out
     (call,) = [item for item in fake.calls() if item["key"] == "update"]
-    assert call["targets"] == ["user:a"]
+    assert call["targets"] == ["a"]
 
 
 def test_json_prints_one_document_and_the_human_text_goes_to_standard_error(fake: FakeGupkg, tmp_path: Path) -> None:
@@ -149,7 +149,7 @@ def test_check_updates_all_is_one_call_without_questions(fake: FakeGupkg, tmp_pa
     code, out, _ = manager(tmp_path, fake, "check-updates", "--all")
 
     (call,) = [item for item in fake.calls() if item["key"] == "check-updates"]
-    assert code == 0 and call["targets"] == ["user:a", "user:b"] and not [item for item in fake.calls() if item["key"] == "update"]
+    assert code == 0 and call["targets"] == ["a", "b"] and not [item for item in fake.calls() if item["key"] == "update"]
 
 
 def test_check_is_one_read_only_call(fake: FakeGupkg, tmp_path: Path) -> None:

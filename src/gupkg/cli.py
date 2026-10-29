@@ -40,17 +40,16 @@ from typing import Any
 from . import authoring, settingsedit
 from ._version import __version__
 from .authoring import AuthoringError
-from .catalog.catalog import Catalog, ListFilter
+from .catalog.catalog import Catalog, CatalogError, ListFilter, parse_selector
 from .catalog.registry import cache_state, load_registry, registry_cache_dir, sync_registry
 from .engine import lifecycle
 from .engine.context import Engine, stop_marker
 from .engine.errors import describe
 from .engine.receipts import read_receipt, receipt_checksum
 from .model.checksum import ChecksumInvalid, parse_skip_flag
-from .model.mode import ModeContext, ModeRefused, build_mode_context, select_mode
 from .model.plan import EXIT_FAILED, EXIT_INPUT, EXIT_OK, EXIT_USER, BatchResult, Request
-from .model.settings import LAYER_ROOT, Settings, SettingsError, expand_env
-from .modes import SettingsLoader, default_folders, settings_loader
+from .model.scope import ModeRefused, Scope
+from .model.settings import LAYER_ROOT, Settings, SettingsError
 from .pinning import PinError, pin_hash
 from .pkgcheck import check_directory
 from .report import results
@@ -61,9 +60,10 @@ from .report.session import RunSession
 from .selfmgmt.location import RunningGupkg, locate_running_gupkg
 from .selfmgmt.status import self_status
 from .system.port import ElevatedRun, unsafe_relaunch_argument
-from .settingsload import settings_file
+from .scope import build_scope, build_scope_and_layers
+from .settingsload import LayerReport, settings_file
 from .system.fake import FakeSystem
-from .system.port import System, is_elevated_run
+from .system.port import Mode, System, is_elevated_run
 from .system.windows import WindowsSystem, wait_for_keypress
 from .tls import enable_partial_chain_verification
 from .viewdata import info_data, package_data
@@ -82,14 +82,19 @@ _ENGINE_COMMANDS = ("check-updates", "install", "update", "switch", "uninstall",
 
 @dataclass
 class _Run:
-    """What one invocation needs besides its parsed arguments: the machine, the environment and the settings loader."""
+    """What one invocation needs besides its parsed arguments: the machine, the environment and the one scope of the run."""
 
     args: argparse.Namespace
     system: System
     env: Mapping[str, str]
     location: RunningGupkg
-    elevated: bool
-    loader: SettingsLoader
+    scope: Scope | None
+    layers: tuple[LayerReport, ...]
+
+    @property
+    def elevated(self) -> bool:
+        """Return whether this run is elevated: whether its scope is the system's."""
+        return self.scope is not None and self.scope.mode is Mode.SYSTEM
 
     @property
     def json(self) -> bool:
@@ -174,11 +179,18 @@ def _configure_streams() -> None:
             pass
 
 
+def _needs_scope(args: argparse.Namespace) -> bool:
+    """Return whether the command works on a root: ``pkg new|check|export|bundle`` and ``self status`` need none, so they build no scope."""
+    if args.command == "pkg":
+        return args.pkg_command == "pin" or bool(getattr(args, "install", False))
+    return not (args.command == "self" and args.self_command == "status")
+
+
 def _run(args: argparse.Namespace, tokens: list[str], machine: System, env: Mapping[str, str], where: RunningGupkg) -> int:
     """Run a parsed command on the real or sandboxed machine and turn what goes wrong into an exit code."""
     # The elevated child accepts a fixed set of options only: a standard user cannot steer it through the root options.
-    if getattr(args, "relaunched", False) and (args.settings is not None or args.sandbox is not None):
-        return _usage_error(tokens, "--settings and --sandbox are not accepted by the elevated child of a relaunch")
+    if getattr(args, "relaunched", False) and (args.settings is not None or args.sandbox is not None or args.root is not None):
+        return _usage_error(tokens, "--settings, --root and --sandbox are not accepted by the elevated child of a relaunch")
     if getattr(args, "relaunched", False):
         named = list(getattr(args, "targets", None) or ([args.target] if getattr(args, "target", None) else []))
         for target in named:
@@ -192,19 +204,24 @@ def _run(args: argparse.Namespace, tokens: list[str], machine: System, env: Mapp
         parse_skip_flag(getattr(args, "skip_checksum", None))
     except ChecksumInvalid as error:
         return _usage_error(tokens, str(error))
+    # A target never names a mode (``system:name``, ``user:name``): the mode of a run is the mode of its token.
+    for target in list(getattr(args, "targets", None) or ([args.target] if getattr(args, "target", None) else [])):
+        try:
+            parse_selector(target)
+        except CatalogError as error:
+            return _usage_error(tokens, str(error))
     try:
         if args.sandbox is not None:
             args.sandbox.mkdir(parents=True, exist_ok=True)
             machine = FakeSystem.sandbox(args.sandbox, machine)
-        elevated = is_elevated_run(machine)
-        installed_root = where.root if where.kind == "installed" and machine.directory_is_admin_only(where.root) else None
-        loader = settings_loader(
-            system=machine, env=env, elevated=elevated, app_dir=where.app_dir, installed_system_root=installed_root,
-            settings_path=args.settings,
-        )
+        scope, layers = None, ()
+        if _needs_scope(args):
+            scope, layers = build_scope_and_layers(
+                system=machine, env=env, location=where, root_option=args.root, settings_path=args.settings,
+            )
     except (OSError, ValueError) as error:
         return _usage_error(tokens, f"cannot set up the run{f' in --sandbox {args.sandbox}' if args.sandbox is not None else ''}: {error}")
-    run = _Run(args, machine, env, where, elevated, loader)
+    run = _Run(args, machine, env, where, scope, layers)
 
     # Dispatch; a settings or usage problem is the caller's to fix, anything else unexpected is exit code 4.
     handler = _HANDLERS[args.command]
@@ -343,7 +360,7 @@ def _execute(
     # An elevated child always writes an events file, so that this process can show how it ended (a name the caller chose, or its own).
     relaunch_events = args.events_file or f"gupkg-relaunch-{uuid.uuid4().hex}.jsonl"
     relaunched = False
-    for group in _groups(targets):
+    for group in [targets]:
         engine = _engine(run, session, command, group, stop_path, batch_confirmed=confirmed and not args.yes, events_name=relaunch_events)
         batch = lifecycle.run_batch(engine, [replace(make(item), skip=skip) for item in group])
         merged.extend(batch.results)
@@ -366,8 +383,7 @@ def _execute(
             text += f"\nerror: {problem}"
             extra["errors"] = [{"code": "child-no-result", "message": problem, "hint": "The elevated run may have been killed; check the system root's logs."}]
     if sweep:
-        # The system root is the elevated child's to prune when one ran.
-        extra["root_cleanup"] = _prune_roots(run, session, group_modes=_modes_of(targets) - ({"system"} if relaunched else set()), command=command)
+        extra["root_cleanup"] = _prune_roots(run, session, command=command)
     document = results.result_document(command, combined)
     document.update(extra)
     if "errors" in extra:
@@ -383,36 +399,32 @@ def _declined(command: str, message: str) -> tuple[int, dict[str, Any], str]:
 
 def _requests(args: argparse.Namespace, command: str) -> Callable[[str], Request]:
     """Return the function that turns one target into the ``Request`` of *command* from the parsed options."""
-    mode = getattr(args, "mode", None)
     if command == "check-updates":
-        return lambda target: Request("check-updates", target, mode=mode, no_download=args.no_download)
+        return lambda target: Request("check-updates", target, no_download=args.no_download)
     if command == "install":
-        return lambda target: Request("install", target, mode=mode, refresh=args.refresh, in_place=args.in_place)
+        return lambda target: Request("install", target, refresh=args.refresh, in_place=args.in_place)
     if command == "update":
-        return lambda target: Request("update", target, mode=mode)
+        return lambda target: Request("update", target)
     if command == "switch":
-        return lambda target: Request("switch", target, mode=mode, version=args.version)
+        return lambda target: Request("switch", target, version=args.version)
     if command == "uninstall":
-        return lambda target: Request("uninstall", target, mode=mode, purge=args.purge)
+        return lambda target: Request("uninstall", target, purge=args.purge)
     if command == "cleanup":
-        return lambda target: Request("cleanup", target, mode=mode, keep=args.keep, bundled=args.bundled, sweep=not args.targets)
+        return lambda target: Request("cleanup", target, keep=args.keep, bundled=args.bundled, sweep=not args.targets)
     if command == "check":
-        return lambda target: Request("check", target, mode=mode, fix=args.fix)
+        return lambda target: Request("check", target, fix=args.fix)
     if command == "repair":
-        return lambda target: Request("repair", target, mode=mode)
-    return lambda target: Request("link", target, mode=mode, link_to=args.entry, unlink=args.unlink)
+        return lambda target: Request("repair", target)
+    return lambda target: Request("link", target, link_to=args.entry, unlink=args.unlink)
 
 
 def _targets(run: _Run) -> list[str]:
-    """Return the targets of the call; ``check`` and ``cleanup`` without targets act on every package of the trusted roots."""
+    """Return the targets of the call; ``check`` and ``cleanup`` without targets act on every package of the run's root."""
     args = run.args
     named = list(getattr(args, "targets", None) or ([args.target] if getattr(args, "target", None) else []))
     if named or args.command not in ("check", "cleanup"):
         return named
-    settings = run.loader().settings
-    catalog = Catalog.from_settings(settings, run.system, run.env, elevated=run.elevated)
-    modes = frozenset({args.mode}) if args.mode else None
-    return [f"{view.mode}:{view.name}" for view in catalog.list(ListFilter(modes=modes)).views]
+    return [view.name for view in _catalog(run).list(ListFilter()).views]
 
 
 def _is_sweep(args: argparse.Namespace) -> bool:
@@ -420,42 +432,10 @@ def _is_sweep(args: argparse.Namespace) -> bool:
     return args.command == "cleanup" and not args.targets
 
 
-def _mode_prefix(target: str) -> str | None:
-    """Return the mode a ``mode:name`` target names (``system`` or ``user``), else ``None``."""
-    prefix, colon, rest = target.partition(":")
-    return prefix.casefold() if colon and rest and prefix.casefold() in ("system", "user") and rest[0] not in "\\/" else None
-
-
-def _groups(targets: list[str]) -> list[list[str]]:
-    """Split targets that all name their mode into a normal group and a system group; any other call stays one group.
-
-    A call whose targets were expanded from every package of the roots (or that qualified each target) may hold system
-    and user packages. The system group needs the elevated token and is run apart (and last), so one elevation covers it
-    and the other packages are not left out of an elevated child that would refuse them.
-    """
-    if not all(_mode_prefix(item) is not None for item in targets):
-        return [targets]
-    normal = [item for item in targets if _mode_prefix(item) != "system"]
-    system = [item for item in targets if _mode_prefix(item) == "system"]
-    return [group for group in (normal, system) if group]
-
-
-def _modes_of(targets: Sequence[str]) -> set[str]:
-    """Return the modes named by ``mode:name`` targets."""
-    return {mode for mode in (_mode_prefix(item) for item in targets) if mode is not None}
-
-
-def _prune_roots(run: _Run, session: RunSession, *, group_modes: set[str], command: str) -> dict[str, Any]:
-    """Prune the logs and old registry trees of each root a root-wide ``cleanup`` covered (a system root only from an admin shell)."""
-    done: dict[str, Any] = {}
-    for mode in sorted(group_modes & {"system", "user"}):
-        if mode == "system" and not run.elevated:
-            emit(Warning("The system root's logs and registry trees are pruned from an administrator shell; they were left alone."))
-            continue
-        settings, context = _context(run, mode)
-        engine = _engine(run, session, command, [], None, batch_confirmed=False)
-        done[mode] = lifecycle.cleanup_root(engine, context, settings)
-    return done
+def _prune_roots(run: _Run, session: RunSession, *, command: str) -> dict[str, Any]:
+    """Prune the logs and old registry trees of the run's root after a root-wide ``cleanup``; keyed by the run's mode."""
+    engine = _engine(run, session, command, [], None, batch_confirmed=False)
+    return {run.scope.mode.value: lifecycle.cleanup_root(engine, run.scope, run.scope.settings)}
 
 
 # ---------------------------------------------------------------------------
@@ -488,8 +468,7 @@ def _stop_path(run: _Run) -> Path | None:
 def _child_run_end(run: _Run, events_name: str) -> dict[str, Any] | None:
     """Return the ``run_end`` record that the elevated child wrote as the last line of its events file, else ``None``."""
     try:
-        _, context = _context(run, "system")
-        lines = (context.log_dir / events_name).read_text(encoding="utf-8").splitlines()
+        lines = (run.scope.log_dir / events_name).read_text(encoding="utf-8").splitlines()
         last = json.loads(next((line for line in reversed(lines) if line.strip()), ""))
     except (OSError, ModeRefused, SettingsError, ValueError):
         return None
@@ -504,8 +483,7 @@ def _missing_run_end(run: _Run, events_name: str | None) -> str | None:
     if not events_name:
         return None
     try:
-        _, context = _context(run, "system")
-        lines = (context.log_dir / events_name).read_text(encoding="utf-8").splitlines()
+        lines = (run.scope.log_dir / events_name).read_text(encoding="utf-8").splitlines()
     except (OSError, ModeRefused, SettingsError, ValueError):
         return f"The elevated run ended but its events file {events_name} could not be read, so how it ended is not known."
     last = next((line for line in reversed(lines) if line.strip()), "")
@@ -528,12 +506,13 @@ def _remove_marker(path: Path | None) -> None:
 def _session(run: _Run, command: str, stop_path: Path | None) -> RunSession:
     """Build the run's session: the console, the log files (retention from the settings) and the events file."""
     args = run.args
-    settings = run.loader().settings
+    settings = run.scope.settings
     console = ConsoleReporter(sys.stderr if run.json else None, problems_to_stderr=not run.json, color=settings["ui.color"])
     return RunSession(
         command=command,
         argv=_argv_text(run),
-        mode=getattr(args, "mode", None) or "auto",
+        mode=run.scope.mode.value,
+        scope=run.scope.describe(),
         elevated=run.elevated,
         version=__version__,
         reporters=[console],
@@ -541,7 +520,7 @@ def _session(run: _Run, command: str, stop_path: Path | None) -> RunSession:
         keep_runs=settings["logs.keep_runs"],
         keep_days=settings["logs.keep_days"],
         fallback_base=running_gupkg_logs_base(),
-        settings_layers=[item.name for item in run.loader().layers if item.status == "applied"],
+        settings_layers=[item.name for item in run.layers if item.status == "applied"],
         stop_file=str(stop_path) if stop_path is not None else None,
     )
 
@@ -567,7 +546,7 @@ def _engine(
         return str(found) if found is not None else None
 
     return Engine(
-        system=run.system, env=run.env, load=run.loader, confirm=_ask, yes=bool(args.yes), no_input=bool(args.no_input),
+        system=run.system, env=run.env, scope=run.scope, confirm=_ask, yes=bool(args.yes), no_input=bool(args.no_input),
         allow_downgrade=bool(getattr(args, "allow_downgrade", False)),
         allow_other_broken_versions=bool(getattr(args, "allow_other_broken_versions", False)),
         cancel=stop_marker(stop_path) if stop_path is not None else (lambda: False), log_path=log_path,
@@ -613,8 +592,6 @@ def _child_argv(
         pass
     else:
         positional = list(targets)
-    if getattr(args, "mode", None):
-        argv += ["--mode", args.mode]
     for flag, option in (
         ("no_download", "--no-download"), ("refresh", "--refresh"), ("in_place", "--in-place"), ("purge", "--purge"),
         ("bundled", "--bundled"), ("fix", "--fix"), ("unlink", "--unlink"), ("plan", "--plan"), ("yes", "--yes"),
@@ -646,17 +623,17 @@ def _child_argv(
 
 
 def _catalog(run: _Run) -> Catalog:
-    """Build the catalog of the trusted roots (only the system root in an elevated run)."""
-    return Catalog.from_settings(run.loader().settings, run.system, run.env, elevated=run.elevated)
+    """Build the catalog of the run's scope: its root only."""
+    return Catalog.from_scope(run.scope, run.system, run.env)
 
 
 def _cmd_list(run: _Run) -> int:
-    """List the packages of the trusted roots, or the names for scripts, filtered by status and mode."""
+    """List the packages of the run's root, or the names for scripts, filtered by status."""
     args = run.args
     chosen = next((name for name in ("installed", "available", "outdated", "broken", "local") if getattr(args, name)), None)
     filters = ListFilter(
         statuses=frozenset({chosen}) if chosen in ("outdated", "broken", "local", "available") else None,
-        modes=frozenset({args.mode}) if args.mode else None, include_available=chosen == "available",
+        include_available=chosen == "available",
     )
     listing = _catalog(run).list(filters)
     views = [view for view in listing.views if chosen != "installed" or view.installed is not None]
@@ -664,10 +641,7 @@ def _cmd_list(run: _Run) -> int:
     for warning in listing.warnings:
         print(f"warning: {warning}", file=sys.stderr)
     if args.names:
-        counts = {row["name"].casefold(): 0 for row in rows}
-        for row in rows:
-            counts[row["name"].casefold()] += 1
-        names = [row["name"] if counts[row["name"].casefold()] == 1 else f"{row['mode']}:{row['name']}" for row in rows]
+        names = [row["name"] for row in rows]
         if run.json:
             _document(run, results.envelope("list", ok=True, exit_code=EXIT_OK, names=names))
         else:
@@ -688,9 +662,8 @@ def _cmd_info(run: _Run) -> int:
     errors: list[dict[str, Any]] = []
     code = EXIT_OK
     for target in args.targets:
-        selector = _qualify(target, args.mode)
         try:
-            rows.append(info_data(catalog.resolve(selector).view))
+            rows.append(info_data(catalog.resolve(target).view))
         except Exception as error:  # noqa: BLE001 - one unknown target must not hide the others
             exit_code, data = describe(error)
             code = max(code, exit_code)
@@ -706,10 +679,9 @@ def _cmd_info(run: _Run) -> int:
 def _cmd_search(run: _Run) -> int:
     """Find registry packages by name (refreshing a registry that was never synchronised unless ``--offline``)."""
     args = run.args
-    settings, context = _context(run, args.mode)
     if not args.offline:
-        _sync_missing(run, settings, context)
-    catalog = Catalog.from_settings(settings, run.system, run.env, elevated=run.elevated)
+        _sync_missing(run, run.scope.settings, run.scope)
+    catalog = _catalog(run)
     views = [
         view for view in catalog.list(ListFilter(query=args.query, registry=args.registry, include_available=True)).views
         if view.registry is not None
@@ -727,13 +699,7 @@ def _cmd_search(run: _Run) -> int:
     return EXIT_OK
 
 
-def _qualify(target: str, mode: str | None) -> str:
-    """Return *target* qualified with ``--mode`` when it is a plain package name (a path or a qualified name is left alone)."""
-    plain = ":" not in target and "\\" not in target and "/" not in target and not target.startswith(".")
-    return f"{mode}:{target}" if mode and plain else target
-
-
-def _sync_missing(run: _Run, settings: Settings, context: ModeContext) -> None:
+def _sync_missing(run: _Run, settings: Settings, context: Scope) -> None:
     """Synchronise the registries that were never synchronised into the root of *context*, so a first search finds something."""
     for registry in settings.registries:
         cache = registry_cache_dir(context.root, registry.name)
@@ -741,7 +707,7 @@ def _sync_missing(run: _Run, settings: Settings, context: ModeContext) -> None:
             known = cache_state(cache, run.system).tree_dir is not None
         except Exception:  # noqa: BLE001 - an untrusted cache is reported by the sync below
             known = False
-        if not known and (context.mode != "system" or run.elevated):
+        if not known:
             outcome = sync_registry(cache, run.system, name=registry.name, source=registry.source)
             if not outcome.ok:
                 print(f"warning: registry {registry.name} could not be refreshed: {outcome.error}", file=sys.stderr)
@@ -751,13 +717,13 @@ def _cmd_logs(run: _Run) -> int:
     """List the run logs of a package (or of the root), print the newest path, or open the newest log."""
     args = run.args
     if args.target:
-        found = _catalog(run).resolve(_qualify(args.target, args.mode))
+        found = _catalog(run).resolve(args.target)
         if found.view.path is None:
             return _fail(run, "logs", ModeRefused(f"'{args.target}' is not a local package, so it has no logs"))
         logs = list_run_logs(found.view.path)
         owner = found.view.name
     else:
-        _, context = _context(run, args.mode)
+        context = run.scope
         logs = list_run_logs(context.root)
         owner = f"the {context.mode} root"
     if (args.open or args.path) and not logs:
@@ -777,7 +743,7 @@ def _cmd_logs(run: _Run) -> int:
 
 def _cmd_shell(run: _Run) -> int:
     """Print the ``PATH`` line for a root that does not touch the environment (``integrate = "none"``)."""
-    _, context = _context(run, run.args.mode)
+    context = run.scope
     line = context.path_line()
     if run.json:
         _document(run, results.envelope("shell", ok=True, exit_code=EXIT_OK, mode=context.mode, bin=str(context.bin_dir), path_line=line))
@@ -788,34 +754,16 @@ def _cmd_shell(run: _Run) -> int:
     return EXIT_OK
 
 
-def _context(run: _Run, mode: str | None) -> tuple[Settings, ModeContext]:
-    """Return the effective settings and the ``ModeContext`` of *mode* (``--mode``, else the process token) without a package.
-
-    Raises
-    ------
-    ModeRefused
-        If the mode is refused (an elevated run never uses a user root).
-    """
-    settings = run.loader().settings
-    choice = select_mode(explicit=mode, elevated=run.elevated)
-    if choice.mode == "system" and not run.elevated:
-        settings = run.loader(system_mode=True).settings
-    return settings, build_mode_context(choice, settings, run.env, defaults=default_folders(run.system))
-
-
 # ---------------------------------------------------------------------------
 # registry, settings
 # ---------------------------------------------------------------------------
 
 
 def _cmd_registry(run: _Run) -> int:
-    """Run ``registry sync|status|list|add|remove`` against the cache and the settings of the chosen root."""
+    """Run ``registry sync|status|list|add|remove`` against the cache and the settings of the run's root."""
     args = run.args
-    settings, context = _context(run, args.mode)
+    settings, context = run.scope.settings, run.scope
     action = args.registry_command
-    if action in ("sync", "add", "remove") and context.mode == "system" and not run.elevated:
-        return _fail(run, f"registry {action}", ModeRefused(
-            "The system root is written from an administrator shell: run this command there, or use --mode user."))
     if action == "sync":
         return _registry_sync(run, settings, context)
     if action == "add" or action == "remove":
@@ -848,7 +796,7 @@ def _cmd_registry(run: _Run) -> int:
     return EXIT_OK
 
 
-def _registry_sync(run: _Run, settings: Settings, context: ModeContext) -> int:
+def _registry_sync(run: _Run, settings: Settings, context: Scope) -> int:
     """Synchronise the named registries (all of them by default) into the root's cache, inside a session."""
     args = run.args
     wanted = [item for item in settings.registries if not args.names or item.name.casefold() in {n.casefold() for n in args.names}]
@@ -882,7 +830,7 @@ def _registry_sync(run: _Run, settings: Settings, context: ModeContext) -> int:
     return code
 
 
-def _registry_edit(run: _Run, settings: Settings, context: ModeContext) -> int:
+def _registry_edit(run: _Run, settings: Settings, context: Scope) -> int:
     """Add or remove a ``[[registry]]`` entry in the settings file of the chosen layer."""
     args = run.args
     layer, path = _layer_file(context)
@@ -898,7 +846,7 @@ def _registry_edit(run: _Run, settings: Settings, context: ModeContext) -> int:
     return EXIT_OK
 
 
-def _layer_file(context: ModeContext) -> tuple[str, Path]:
+def _layer_file(context: Scope) -> tuple[str, Path]:
     """Return the settings layer and file that a write for *context*'s mode goes to (``<root>\\.gupkg\\settings.toml``)."""
     return LAYER_ROOT, settings_file(context.root)
 
@@ -907,9 +855,8 @@ def _cmd_settings(run: _Run) -> int:
     """Run ``settings show|path|init|set``: read the layers, or change the file of one layer."""
     args = run.args
     action = args.settings_command
-    loaded = run.loader()
     if action == "show":
-        rows = [{"key": item.key, "value": item.value, "layer": item.layer} for item in loaded.settings.effective()]
+        rows = [{"key": item.key, "value": item.value, "layer": item.layer} for item in run.scope.settings.effective()]
         if run.json:
             _document(run, results.envelope("settings show", ok=True, exit_code=EXIT_OK, settings=rows))
         else:
@@ -918,7 +865,7 @@ def _cmd_settings(run: _Run) -> int:
     if action == "path":
         layers = [
             {"layer": item.name, "path": str(item.path) if item.path is not None else None, "status": item.status, "reason": item.reason}
-            for item in loaded.layers
+            for item in run.layers
         ]
         if run.json:
             _document(run, results.envelope("settings path", ok=True, exit_code=EXIT_OK, layers=layers))
@@ -926,11 +873,8 @@ def _cmd_settings(run: _Run) -> int:
             print("\n".join(f"{row['layer']:<9} {row['path'] or '(built in)'}  [{row['status']}{': ' + row['reason'] if row['reason'] else ''}]" for row in layers))
         return EXIT_OK
 
-    # init and set write one layer's file: the user's by default, the system's from an administrator shell.
-    _, context = _context(run, args.mode)
-    layer, path = _layer_file(context)
-    if context.mode == "system" and not run.elevated:
-        return _fail(run, f"settings {action}", ModeRefused("The system settings are written from an administrator shell."))
+    # init and set write the run's root file: the user's from a normal shell, the system's from an administrator shell.
+    layer, path = _layer_file(run.scope)
     try:
         if action == "init":
             settingsedit.init_settings(path, layer, force=args.force)
@@ -1028,19 +972,19 @@ def _sandbox_install(run: _Run, version_dir: Path) -> dict[str, Any]:
         settings_path = scratch / "settings.toml"
         settings_path.write_text(text, encoding="utf-8")
         pretend = FakeSystem.sandbox(scratch / "machine", run.system)
-        loader = settings_loader(
-            system=pretend, env=run.env, elevated=False, settings_path=settings_path,
+        scope = build_scope(
+            system=pretend, env=run.env, location=RunningGupkg("source", run.location.package_dir, ()), settings_path=settings_path,
             read_text=lambda path: text if Path(path) == settings_path else None,
         )
-        engine = Engine(system=pretend, env=run.env, load=loader, yes=True, no_input=True)
-        batch = lifecycle.run_batch(engine, [Request("install", str(version_dir), mode="user", skip=parse_skip_flag(run.args.skip_checksum))])
+        engine = Engine(system=pretend, env=run.env, scope=scope, yes=True, no_input=True)
+        batch = lifecycle.run_batch(engine, [Request("install", str(version_dir), skip=parse_skip_flag(run.args.skip_checksum))])
     return results.result_document("install", batch)
 
 
 def _pkg_pin(run: _Run) -> int:
     """Show where a receipt's hash came from and, once confirmed, copy it into the version's ``pkg.toml``."""
     args = run.args
-    resolved = _catalog(run).resolve(_qualify(args.target, args.mode), for_mutation=True)
+    resolved = _catalog(run).resolve(args.target, for_mutation=True)
     view = resolved.view
     version = resolved.version or (view.installed.version if view.installed is not None else None)
     if view.local is None or version is None or view.local.version(version) is None:
@@ -1129,21 +1073,16 @@ def _cmd_self(run: _Run) -> int:
                 print("ok")
         return EXIT_OK if status.ok else EXIT_FAILED
 
-    # The aliases are exactly the lifecycle commands on the package ``gupkg``, in the mode this gupkg lives in.
+    # The aliases are exactly the lifecycle commands on the package ``gupkg``, in the scope of this run.
     command = {"repair": "repair", "check-updates": "check-updates", "update": "update"}[action]
-    if args.mode is None and run.location.kind == "installed" and run.location.root is not None:
-        args.mode = _mode_of_root(run, run.location.root)
+    root, scope = run.location.root, run.scope
+    if run.location.kind == "installed" and root is not None and os.path.normcase(os.path.normpath(root)) != os.path.normcase(os.path.normpath(scope.root)):
+        hint = "an administrator shell" if scope.mode is Mode.USER else "the gupkg that is installed in that root"
+        return _fail(run, f"self {action}", ModeRefused(
+            f"This gupkg is installed in {root}, but the {scope.mode} root of this run is {scope.root}, so `gupkg {command} gupkg` "
+            f"would look for it there. Run it from {hint}."))
     args.command = command
     return _lifecycle(run, command, ["gupkg"], _requests(args, command))
-
-
-def _mode_of_root(run: _Run, root: Path) -> str | None:
-    """Return the mode of the configured root that *root* is, or ``None`` when it is none of them."""
-    settings = run.loader().settings
-    for mode in ("system", "user"):
-        if os.path.normcase(os.path.normpath(expand_env(settings[f"roots.{mode}"], run.env))) == os.path.normcase(os.path.normpath(root)):
-            return mode
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -1154,16 +1093,16 @@ def _mode_of_root(run: _Run, root: Path) -> str | None:
 def _forwarder(tokens: Sequence[str]) -> tuple[str, list[str], list[str]] | None:
     """Return ``(program, arguments, root options)`` when the command is ``tui`` or ``manager``, else ``None``.
 
-    The root options (``--settings PATH``, ``--sandbox DIR``) may come first; everything after the command word belongs to
+    The root options (``--settings PATH``, ``--root DIR``, ``--sandbox DIR``) may come first; everything after the command word belongs to
     the program and is passed on unchanged, ``--help`` included.
     """
     index, root_options = 0, []
     while index < len(tokens):
         token = tokens[index]
-        if token in ("--settings", "--sandbox"):
+        if token in ("--settings", "--root", "--sandbox"):
             root_options += tokens[index:index + 2]
             index += 2
-        elif token.startswith(("--settings=", "--sandbox=")):
+        elif token.startswith(("--settings=", "--root=", "--sandbox=")):
             root_options.append(token)
             index += 1
         else:
@@ -1176,7 +1115,7 @@ def _forwarder(tokens: Sequence[str]) -> tuple[str, list[str], list[str]] | None
 def _forward(program: str, rest: list[str], root_options: list[str], system: System, location: RunningGupkg) -> int:
     """Start the program of the same gupkg tree with *rest* and return its exit code."""
     if root_options:
-        print(f"gupkg: error: --settings and --sandbox are not passed on to gupkg-{program}", file=sys.stderr)
+        print(f"gupkg: error: --settings, --root and --sandbox are not passed on to gupkg-{program}", file=sys.stderr)
         return EXIT_USER
     # The UI programs ask for administrator rights themselves, through `gupkg`, so `tui` and `manager` refuse an elevated
     # shell (D44, D45). They start through their own launcher, which runs bootstrap's trust check before importing anything.
@@ -1239,16 +1178,14 @@ def _events_file_name(text: str) -> str:
 
 
 def _options(
-    parser: argparse.ArgumentParser, *, mutating: bool = False, plan: bool = False, mode: bool = True, skip: bool = False,
+    parser: argparse.ArgumentParser, *, mutating: bool = False, plan: bool = False, skip: bool = False,
     events: bool = False, relaunch: bool = False,
 ) -> None:
-    """Add the options a command shares: ``--mode``, ``--json``, ``--no-input``, ``--yes``, ``--plan``, ``--skip-checksum``.
+    """Add the options a command shares: ``--json``, ``--no-input``, ``--yes``, ``--plan``, ``--skip-checksum``.
 
     ``relaunch`` adds the two hidden markers of the elevated child (``--relaunched``, ``--batch-confirmed``) to the commands that
     run through the engine; no other command can be started as a relaunch.
     """
-    if mode:
-        parser.add_argument("--mode", choices=("system", "user"), help="the install mode (default: system when elevated, else user)")
     parser.add_argument("--json", action="store_true", help="print one JSON result document on standard output; human text goes to standard error")
     parser.add_argument("--no-input", action="store_true", help="never ask: a question that would be asked is exit code 5")
     if mutating:
@@ -1304,7 +1241,7 @@ separate programs of this gupkg:
   tui            gupkg tui PATH starts gupkg-tui
   manager        gupkg manager ... starts gupkg-manager
 
-Targets are names (firefox, firefox@135.0, user:firefox, main/firefox) or paths. Options go after the command.
+Targets are names (firefox, firefox@135.0, main/firefox) or paths. Options go after the command.
 Exit status: 0 ok, 2 user or configuration error, 3 the operation failed, 4 internal error, 5 declined or input needed,
 6 the package needs a newer gupkg. Add --json for scripts. Run 'gupkg <command> --help' for the options of one command."""
 
@@ -1317,7 +1254,12 @@ def _build_parser() -> argparse.ArgumentParser:
         epilog=HELP_EPILOG,
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    parser.add_argument("--settings", type=Path, metavar="PATH", help="read this settings file as the highest layer")
+    parser.add_argument("--settings", type=Path, metavar="PATH", help="read this settings file as the highest layer (user mode only)")
+    parser.add_argument(
+        "--root", type=Path, metavar="DIR",
+        help="work on this root instead of the default one (in system mode it must be admin-only); the mode is still the mode of "
+             "the process: administrator or not",
+    )
     parser.add_argument(
         "--sandbox", type=Path, metavar="DIR",
         help="run against a pretend machine kept in DIR: environment variables, PATH, shortcuts and elevation are recorded "
@@ -1337,7 +1279,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _options(sub, mutating=True, plan=True, skip=True, events=True, relaunch=True)
 
     sub = add("install", "Install (or repair) packages: download App if missing, then create shortcuts, PATH entries and shims.",
-              "gupkg install firefox --mode user")
+              "gupkg install firefox")
     sub.add_argument("targets", nargs="+", metavar="TARGET")
     sub.add_argument("--refresh", action="store_true", help="rebuild an App that can be rebuilt")
     sub.add_argument("--in-place", action="store_true", help="install a distribution folder where it is (an ad-hoc root)")
@@ -1441,7 +1383,7 @@ def _build_parser() -> argparse.ArgumentParser:
         if name == "set":
             leaf.add_argument("key")
             leaf.add_argument("value")
-        _options(leaf, mode=name in ("init", "set"))
+        _options(leaf)
 
     sub = add("pkg", "Authoring: create, validate, pin, bundle and export package definitions.", "gupkg pkg check .")
     actions = sub.add_subparsers(dest="pkg_command", required=True, metavar="<action>", parser_class=_Parser)
@@ -1449,27 +1391,27 @@ def _build_parser() -> argparse.ArgumentParser:
     leaf.add_argument("name", metavar="NAME[@VERSION]")
     leaf.add_argument("--track", metavar="github:OWNER/REPO", help="write a tracker that follows the releases of a GitHub repository")
     leaf.add_argument("--dir", metavar="FOLDER", help="the folder that receives the package (default: the current folder)")
-    _options(leaf, mode=False)
+    _options(leaf)
     leaf = actions.add_parser("check", description="Validate a version directory, a tracker or a package folder.", epilog="example:\n  gupkg pkg check .\\mytool\\1.0 --install")
     leaf.add_argument("path")
     leaf.add_argument("--install", action="store_true", help="also run a sandboxed install (files and downloads are real)")
-    _options(leaf, mode=False, skip=True)
+    _options(leaf, skip=True)
     leaf = actions.add_parser("pin", description="Copy the hash of an install without a checksum into the version's pkg.toml.", epilog="example:\n  gupkg pkg pin mytool@1.0")
     leaf.add_argument("target", metavar="TARGET")
     _options(leaf, mutating=True)
     leaf = actions.add_parser("bundle", description="Copy the running gupkg's verified bundle into a version directory.", epilog="example:\n  gupkg pkg bundle .\\mytool\\1.0")
     leaf.add_argument("directory", metavar="VERSION-DIR")
-    _options(leaf, mode=False)
+    _options(leaf)
     leaf = actions.add_parser("export", description="Write a distribution ZIP of a version directory and print its SHA-256.", epilog="example:\n  gupkg pkg export .\\mytool\\1.0 -o mytool-1.0.zip")
     leaf.add_argument("directory", metavar="VERSION-DIR")
     leaf.add_argument("-o", "--output", required=True, metavar="X.zip")
-    _options(leaf, mode=False)
+    _options(leaf)
 
     sub = add("self", "Check and maintain gupkg itself; check-updates and update are `gupkg check-updates gupkg` and `gupkg update gupkg`.",
               "gupkg self status")
     actions = sub.add_subparsers(dest="self_command", required=True, metavar="<action>", parser_class=_Parser)
     leaf = actions.add_parser("status", description="Report the interpreter and the MANIFEST.sha256 check.", epilog="example:\n  gupkg self status")
-    _options(leaf, mode=False)
+    _options(leaf)
     for name, text in (("repair", "re-apply gupkg's own integration"), ("check-updates", "look for a new gupkg release"),
                        ("update", "activate the newest known gupkg")):
         leaf = actions.add_parser(name, description=text.capitalize() + ".", epilog=f"example:\n  gupkg self {name}")

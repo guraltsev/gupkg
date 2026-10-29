@@ -1,7 +1,7 @@
 """Hold what every lifecycle operation needs: the machine, the environment and the run's callbacks.
 
 An ``Engine`` is built once per call by the front end. It carries the ``System`` boundary, the
-environment used to expand variables, the loader of the effective settings, and the optional hooks a front
+environment used to expand variables, the ``Scope`` of the run (its mode, root and settings), and the optional hooks a front
 end plugs in: how to ask a question (``confirm``), how to learn that the user asked to stop (``cancel``), where
 a package's log file is (``log_path``), and the facts about the running gupkg that elevation needs. Nothing
 here prints or reads input: a question is a callable that the front end provides, and an engine without one
@@ -9,8 +9,8 @@ treats every question as unanswerable (exit code 5).
 
 Usage and API
 -------------
-Create ``Engine(system=..., env=..., load=...)`` and pass it to the functions of ``gupkg.engine.lifecycle``.
-``Engine.http_client(...)`` builds the shared HTTP client for a mode; ``Engine.now()`` is the clock.
+Create ``Engine(system=..., env=..., scope=...)`` and pass it to the functions of ``gupkg.engine.lifecycle``.
+``Engine.http_client(...)`` builds the shared HTTP client for the scope; ``Engine.now()`` is the clock.
 
 Implementation Approach
 -----------------------
@@ -31,11 +31,10 @@ from pathlib import Path
 
 from .._version import __version__
 from ..extractors import find_7z
-from ..model.mode import ModeContext
-from ..modes import SettingsLoader
+from ..model.scope import Scope
 from ..services.http import HttpClient, github_environment
 from ..services.unpack import Limits
-from ..system.port import System, is_elevated_run, require_admin_only
+from ..system.port import Mode, System, require_admin_only
 
 
 # The largest App whose files are listed one by one in a receipt (about 150 bytes each, under the receipt size limit).
@@ -59,8 +58,8 @@ class Engine:
         The machine boundary.
     env : mapping
         The environment for ``${NAME}`` expansion and the HTTP client's token; never read from ``os.environ`` here.
-    load : callable
-        ``load(system_mode=False)`` returns the loaded settings (``gupkg.modes.settings_loader``).
+    scope : Scope
+        The one scope of the run (``gupkg.scope.build_scope``): its mode, root and effective settings.
     confirm : callable, optional
         Asks a yes-or-no question and returns the answer; ``None`` when nobody can be asked.
     yes, no_input : bool
@@ -101,7 +100,7 @@ class Engine:
 
     system: System
     env: Mapping[str, str]
-    load: SettingsLoader
+    scope: Scope
     confirm: Callable[[str], bool] | None = None
     yes: bool = False
     no_input: bool = False
@@ -130,8 +129,8 @@ class Engine:
 
     @property
     def elevated(self) -> bool:
-        """Return whether this run is elevated (unknown counts as elevated)."""
-        return is_elevated_run(self.system)
+        """Return whether this run is elevated: whether its scope is the system's (unknown counts as elevated)."""
+        return self.scope.mode is Mode.SYSTEM
 
     @property
     def version(self) -> str:
@@ -158,7 +157,7 @@ class Engine:
         except FileNotFoundError:
             return None
 
-    def http_client(self, context: ModeContext, headers: Mapping[str, str] | None = None) -> HttpClient:
+    def http_client(self, context: Scope, headers: Mapping[str, str] | None = None) -> HttpClient:
         """Build the shared HTTP client whose download cache is the mode's ``<root>\\.gupkg\\cache``.
 
         In an elevated run the cache folder must be admin-only (it is created first, then judged), so a

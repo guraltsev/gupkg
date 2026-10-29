@@ -49,8 +49,9 @@ is `model` <- `catalog`, `services` <- `engine` <- `cli`, and nothing below
   is what `check` reports and `lifecycle.py` has the entry points (`install`,
   `update`, `switch`, `uninstall`, `cleanup`, `check`, `repair`, `check_updates`,
   `link`, `run_batch`, `plan`).
-- `modes.py`, `relaunch.py`, `distcopy.py`: which install mode a target gets, the
-  one elevation for a call, and the copy of a distribution folder into a root.
+- `scope.py` builds the one `Scope` of a run (its mode, from the process token, its root and
+  its settings); `targets.py` resolves a target inside it; `relaunch.py` (the one elevation for a
+  call, removed in issue 035 T07) and `distcopy.py` (the copy of a distribution folder into a root).
 - `settingsload.py`: the settings layers a run may read.
 - `selfmgmt/`: the elevated-run trust checks (`elevation.py`), where the running
   gupkg lives (`location.py`) and what `gupkg self status` reports (`status.py`).

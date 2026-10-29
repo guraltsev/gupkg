@@ -19,8 +19,8 @@ from pathlib import Path
 
 import pytest
 
-from gupkg.model.mode import PORTABLE_REFUSAL, SYSTEM_ONLY_REFUSAL, USER_ONLY_REFUSAL
-from gupkg.system.port import Scope
+from gupkg.model.scope import PORTABLE_REFUSAL, SYSTEM_ONLY_REFUSAL, USER_ONLY_REFUSAL
+from gupkg.system.port import Mode
 from tests.engine_support import World, pin_no_ambient_elevation, pkg_text  # noqa: F401
 
 PORTABLE_TOP = 'modes = ["portable"]\n'
@@ -141,7 +141,7 @@ def publish_in_registry(world: World, base: Path, *, top: str, tables: str = "",
 def assert_nothing_was_created(world: World, mode: str) -> None:
     """Assert that the package folder, the bin folder, the receipt and the install record of ``tool`` do not exist, and nothing was fetched."""
     package = world.root(mode) / "tool"
-    scope = Scope.MACHINE if mode == "system" else Scope.USER
+    scope = Mode.SYSTEM if mode == "system" else Mode.USER
     assert not package.exists(), "the package folder was created"
     assert not (package / "1.0.0" / "App.info").exists(), "a receipt was written"
     assert not world.fake.scope_folders(scope).bin_dir.exists(), "the bin folder was created"
@@ -168,7 +168,7 @@ def test_a_system_only_package_in_user_mode_is_refused_before_any_file_is_create
 
     result = world.one("install", "tool")
 
-    assert not result.ok and result.exit_code == 2 and result.error["message"] == SYSTEM_ONLY_REFUSAL
+    assert not result.ok and result.exit_code == 2 and result.error["message"] == SYSTEM_ONLY_REFUSAL.replace("<command> <name>", "install tool")
     assert SYSTEM_ONLY_REFUSAL == (
         'This package installs only system-wide. Run gupkg as administrator: use the Start Menu entry "gupkg manager '
         '(administrator)", or run in an administrator shell: gupkg <command> <name>'
@@ -215,7 +215,7 @@ def test_uninstall_is_never_refused_by_the_modes_of_the_package(tmp_path: Path, 
 
 def test_integrate_none_touches_no_registry_start_menu_or_path(world: World) -> None:
     """A user root with integrate = "none": shims go to <root>\\bin and nothing else of the machine changes."""
-    world.machine.write_app_settings(tables="[integration]\nintegrate = 'none'\n")
+    world.write_app_settings(tables="[integration]\nintegrate = 'none'\n")
     tables = (
         '[[shortcut]]\nname = "Tool"\ntarget = "$App\\\\app.exe"\n\n[[shim]]\nname = "tool"\ntarget = "$App\\\\app.exe"\n\n'
         '[[env]]\nname = "TOOL_HOME"\nvalue = "$App"\n\n[[path]]\nvalue = "$App"\n'
@@ -228,18 +228,18 @@ def test_integrate_none_touches_no_registry_start_menu_or_path(world: World) -> 
     assert result.ok, result.error
     assert (world.user / "bin" / "tool.exe").is_file() and (world.user / "bin" / "tool.config.toml").is_file()
     assert world.fake.registry_log == [] and world.fake.broadcasts == 0 and world.fake.shortcuts() == {}
-    assert not (world.fake.scope_folders(Scope.USER).shortcut_root).exists()
-    assert not (world.fake.scope_folders(Scope.USER).bin_dir).exists()
+    assert not (world.fake.scope_folders(Mode.USER).shortcut_root).exists()
+    assert not (world.fake.scope_folders(Mode.USER).bin_dir).exists()
 
 
-def test_user_mode_is_refused_in_an_elevated_run(tmp_path: Path) -> None:
-    """An elevated gupkg never acts on a user root (decision D31): the request is refused and nothing is written."""
+def test_a_mode_prefix_is_refused_and_nothing_is_written(tmp_path: Path) -> None:
+    """``user:tool`` is not a target: a run works in the mode of its token (an elevated run never reaches a user root)."""
     world = World(tmp_path, elevated=True)
     world.publish("tool", "1.0.0", mode="user", members=MEMBERS)
 
     result = world.one("install", "user:tool")
 
-    assert not result.ok and result.exit_code == 2 and "elevated" in result.error["message"]
+    assert not result.ok and result.exit_code == 2 and "no longer names a mode" in result.error["message"]
     assert not (world.user / "tool" / "current").exists()
 
 
@@ -251,5 +251,5 @@ def test_a_portable_package_integrates_like_any_user_package(world: World) -> No
     result = world.one("install", "tool")
 
     assert result.ok and result.mode == "user", result.error
-    shim_folder = world.fake.scope_folders(Scope.USER).bin_dir
-    assert (shim_folder / "tool.exe").is_file() and str(shim_folder) in world.fake.get_path(Scope.USER)
+    shim_folder = world.fake.scope_folders(Mode.USER).bin_dir
+    assert (shim_folder / "tool.exe").is_file() and str(shim_folder) in world.fake.get_path(Mode.USER)

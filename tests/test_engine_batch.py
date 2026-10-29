@@ -2,8 +2,7 @@
 
 Behaviour covered: a 3-package install where package 2 fails still installs package 3 and both the summary and the log name the
 failure; cancelling while package 1 runs finishes package 1 cleanly and reports packages 2 and 3 as skipped and unchanged; a stop
-marker given to an elevated batch does the same; elevation is asked once for the whole call and an elevated child is started
-once; a declined or unanswerable relaunch changes nothing; the receipt stores the package's log path; the registry rule (design
+marker given to an elevated batch does the same; the receipt stores the package's log path; the registry rule (design
 9.5): install, update and uninstall read nothing from the Windows registry except ``PATH``.
 
 Real: the engine, the run session and log files, real folders. Mocked: ``FakeSystem`` (elevation flag, relaunch record, process
@@ -111,47 +110,6 @@ def test_a_stop_marker_given_to_an_elevated_batch_has_the_same_effect(tmp_path: 
 
     assert [item.status for item in batch.results] == ["installed", "skipped"]
     assert not (world.system_root / "two" / "current").exists()
-
-
-def test_elevation_is_asked_once_for_the_whole_call(tmp_path: Path) -> None:
-    """Three system targets from a normal shell start one elevated child (after one confirmation) and run nothing themselves."""
-    world = World(tmp_path)
-    for name in ("one", "two", "three"):
-        world.publish(name, "1.0.0", mode="system", tables=ENV)
-    asked: list[str] = []
-    world.engine.confirm = lambda question: asked.append(question) or True
-    world.engine.argv = ("install", "one", "two", "three")
-    world.engine.gupkg_dir, world.engine.gupkg_root = world.system_root / "gupkg" / "1.0.0", world.system_root
-
-    batch = lifecycle.install(world.engine, ["system:one", "system:two", "system:three"])
-
-    assert batch.relaunched and batch.results == () and len(asked) == 1
-    assert world.fake.relaunches == [["install", "one", "two", "three"]]
-    assert not (world.system_root / "one" / "current").exists()
-
-
-def test_a_declined_relaunch_changes_nothing_and_exits_5(tmp_path: Path) -> None:
-    """When the confirmation is declined every target fails with exit code 5 and nothing is installed."""
-    world = World(tmp_path)
-    world.publish("one", "1.0.0", mode="system", tables=ENV)
-    world.engine.confirm = lambda question: False
-    world.engine.gupkg_dir, world.engine.gupkg_root = world.system_root / "gupkg" / "1.0.0", world.system_root
-
-    batch = lifecycle.install(world.engine, ["system:one"])
-
-    assert not batch.results[0].ok and batch.exit_code == 5 and world.fake.relaunches == []
-    assert not (world.system_root / "one" / "current").exists()
-
-
-def test_a_run_that_does_not_know_its_own_gupkg_never_relaunches(tmp_path: Path) -> None:
-    """Without the location of the running gupkg the engine cannot show it is admin-only, so it refuses to elevate."""
-    world = World(tmp_path)
-    world.publish("one", "1.0.0", mode="system", tables=ENV)
-    world.engine.yes = True
-
-    batch = lifecycle.install(world.engine, ["system:one"])
-
-    assert not batch.results[0].ok and world.fake.relaunches == []
 
 
 def test_install_update_and_uninstall_read_nothing_from_the_registry_but_path(world: World) -> None:

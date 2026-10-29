@@ -37,7 +37,7 @@ from ..catalog.record import write_install_record
 from ..distcopy import COPIED, DIVERGED, CopyResult, DistributionRefused, copy_distribution
 from ..model.checksum import ORIGIN_NOT_VERIFIED, REGISTRY_FINGERPRINT, ChecksumMismatch, ChecksumRecord
 from ..model.manifest import parse_manifest
-from ..model.mode import ModeContext
+from ..model.scope import Scope
 from ..model.plan import InstallPlan, PackageResult, Request
 from ..model.settings import Settings
 from ..model.state import Effect, InstallRecord, Link, PackageView
@@ -70,7 +70,7 @@ class ExecutionInput:
     ----------
     plan : InstallPlan
         What to do.
-    context : ModeContext
+    context : Scope
         The resolved install mode.
     view : PackageView
         The package as it was when it was planned.
@@ -94,7 +94,7 @@ class ExecutionInput:
     """
 
     plan: InstallPlan
-    context: ModeContext
+    context: Scope
     view: PackageView
     chosen: Chosen
     request: Request
@@ -260,7 +260,7 @@ def _copy_in(engine: Engine, run: ExecutionInput) -> _Origin:
     version_dir = plan.package_path / (plan.version or "")
     if run.precopied is not None or copy.origin == "distribution":
         source = run.distribution if run.precopied is not None else copy.source
-        outcome = run.precopied or copy_distribution(source, context.root, required=context.choice)
+        outcome = run.precopied or copy_distribution(source, context.root, required=context)
         if outcome.status == DIVERGED:
             raise DistributionRefused(
                 f"{outcome.destination} exists and differs from {source}; it was left alone. Install the local copy "
@@ -374,7 +374,7 @@ def _differs_only_by_launchers(version_dir: Path, registry_copy: Path | None) ->
     return bool(found) and all(line in {f"{name} (extra)" for name in WRITTEN_LAUNCHERS} for line in found)
 
 
-def copy_registry_version(engine: Engine, context: ModeContext, package_path: Path, source: Path, version: str) -> Path:
+def copy_registry_version(engine: Engine, context: Scope, package_path: Path, source: Path, version: str) -> Path:
     """Copy one pinned version of a registry into ``<package>\\<version>``, never overwriting.
 
     Returns

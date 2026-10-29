@@ -6,10 +6,10 @@ confirmation or immediately with ``--yes``; a declined or unanswerable confirmat
 refused elevation prompt are exit code 5 with nothing started; user contexts, and an already
 elevated process, need no relaunch.
 
-Real: ``ensure_elevation`` and the mode contexts built by the real resolver. Fake: ``FakeSystem`` supplies the
+Real: ``ensure_elevation`` and the scopes built by ``make_scope``. Fake: ``FakeSystem`` supplies the
 elevation flag, the admin-only answer for gupkg's own folders and records the relaunch (UAC itself is manual:
 see ``tests/manual_smoke.md``). Out of scope: what the elevated child does with its arguments
-(``test_mode_resolve.py``).
+(``test_targets.py``).
 """
 
 from __future__ import annotations
@@ -18,19 +18,20 @@ from pathlib import Path
 
 import pytest
 
-from gupkg.model.mode import InputNeeded, ModeChoice, build_mode_context
+from gupkg.model.scope import InputNeeded, make_scope
 from gupkg.model.settings import default_layer, merge_layers
 from gupkg.relaunch import ElevationRefused, ensure_elevation
 from gupkg.system.fake import FakeSystem
+from gupkg.system.port import Mode
 from tests.mode_support import pin_no_ambient_elevation  # noqa: F401
 
 ENV = {"USERPROFILE": "C:\\Users\\pat", "APPDATA": "C:\\Users\\pat\\AppData\\Roaming", "ProgramData": "C:\\ProgramData"}
-ARGV = ["install", "tool", "--mode", "system"]
+ARGV = ["install", "tool", "--relaunched"]
 
 
 def context(mode: str):
-    """Return the context of *mode* built from the built-in settings."""
-    return build_mode_context(ModeChoice(mode, "test"), merge_layers([default_layer("user")]), ENV)
+    """Return the scope of *mode* built from the built-in settings."""
+    return make_scope(Mode(mode), Path("C:\\opt"), "test", merge_layers([default_layer(mode)]), ENV)
 
 
 def call(system: FakeSystem, contexts, tmp_path: Path, **options):

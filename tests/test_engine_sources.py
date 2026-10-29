@@ -20,7 +20,7 @@ import pytest
 
 from gupkg.model.manifest import APP_MISSING_ERROR
 from gupkg.engine.receipts import read_receipt
-from gupkg.system.port import Scope
+from gupkg.system.port import Mode
 from tests.engine_support import World, pin_no_ambient_elevation  # noqa: F401
 from tests.mode_support import tree_snapshot
 
@@ -35,10 +35,10 @@ def world(tmp_path: Path) -> World:
 
 def machine_state(world: World) -> tuple:
     """Return what integration produced: shortcuts, environment, launchers and the install record text."""
-    folder = world.fake.scope_folders(Scope.USER).bin_dir
+    folder = world.fake.scope_folders(Mode.USER).bin_dir
     record = (world.user / "tool" / ".gupkg" / "package.toml").read_text(encoding="utf-8")
     return (
-        dict(world.fake.shortcuts()), dict(world.fake.env_values(Scope.USER)),
+        dict(world.fake.shortcuts()), dict(world.fake.env_values(Mode.USER)),
         sorted(item.name for item in folder.glob("*")) if folder.is_dir() else [], record,
     )
 
@@ -258,7 +258,7 @@ def test_check_reports_a_modified_app_file_unless_the_fingerprint_is_switched_of
     """A changed file of a shipped App is reported; `record_manifest = false` (package) or the global switch silences it (D41)."""
     top = "record_manifest = false\n" if opt_out == "package" else ""
     if opt_out == "global":
-        world.machine.write_app_settings(tables="[install]\nrecord_manifest = false\n")
+        world.write_app_settings(tables="[install]\nrecord_manifest = false\n")
     world.publish_shipped("tool", "1.0.0", tables=SHIM, top=top)
     world.one("install", "tool")
     (world.user / "tool" / "1.0.0" / "App" / "app.exe").write_text("modified", encoding="utf-8")

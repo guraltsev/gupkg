@@ -9,21 +9,21 @@ under ``--no-input`` or a refused UAC prompt is exit code 5 with nothing changed
 
 Usage and API
 -------------
-After resolving the mode of every target of a CLI call, pass all the contexts to
+After resolving every target of a CLI call, pass all the scopes to
 ``ensure_elevation(contexts, system=..., argv=..., version_dir=..., root=...)``. The call checks once for the
 whole call, however many system targets there are, and relaunches at most once. ``ElevationOutcome.relaunched``
 says an elevated child ran to its end; the call waits for it and ``exit_code`` is the child's. ``ElevationRefused`` (exit code 2) and
-``InputNeeded`` (exit code 5, from ``gupkg.model.mode``) carry the message to print.
+``InputNeeded`` (exit code 5, from ``gupkg.model.scope``) carry the message to print.
 
 Implementation Approach
 -----------------------
-The decision reads only the ``ModeContext`` objects, the elevation reported by the ``System`` boundary
+The decision reads only the ``Scope`` objects, the elevation reported by the ``System`` boundary
 (unknown counts as elevated) and the access-control answer of ``System.directory_untrusted_reason`` for
 gupkg's own folders. The relaunch itself is ``System.relaunch_elevated``, so tests observe it on a ``FakeSystem``.
 
 See Also
 --------
-gupkg.modes : resolves the mode and the admission rules of the elevated child.
+gupkg.targets : resolves a target and the admission rules of the elevated child.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from .model.mode import InputNeeded, ModeContext, ModeRefused
+from .model.scope import InputNeeded, ModeRefused, Scope
 from .system.port import ProcessFailed, System, is_elevated_run, unsafe_relaunch_argument
 
 
@@ -50,7 +50,7 @@ class ElevationOutcome:
 
 
 def ensure_elevation(
-    contexts: Sequence[ModeContext],
+    contexts: Sequence[Scope],
     *,
     system: System,
     argv: Sequence[str],
@@ -67,7 +67,7 @@ def ensure_elevation(
 
     Parameters
     ----------
-    contexts : sequence of ModeContext
+    contexts : sequence of Scope
         The resolved context of every target of the CLI call.
     system : System
         The machine boundary (elevation, access check, relaunch).

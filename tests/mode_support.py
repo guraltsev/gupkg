@@ -1,4 +1,4 @@
-"""Build a pretend machine for the install-mode tests: two roots, an app settings file and a settings loader.
+"""Build a pretend machine for the scope tests: two roots, an app settings file and the scope of a run on it.
 
 Everything lives below one temporary folder. The builders write real format 2 version directories, real
 ``current`` junctions (through the ``FakeSystem`` they are given) and real install records, so the mode code is
@@ -14,7 +14,9 @@ import pytest
 
 from gupkg.catalog.record import write_install_record
 from gupkg.model.state import InstallRecord
-from gupkg.modes import settings_loader
+from gupkg.model.scope import Scope
+from gupkg.scope import build_scope
+from gupkg.selfmgmt.location import RunningGupkg
 from gupkg.settingsload import read_text_file
 from gupkg.system.fake import FakeSystem
 
@@ -62,11 +64,16 @@ class Machine:
         self.reads.append(Path(path))
         return read_text_file(path)
 
-    def loader(self, *, settings_path: Path | None = None, elevated: bool | None = None):
-        """Return the settings loader of a run on this machine."""
-        return settings_loader(
-            system=self.fake, env=self.env, elevated=self.fake.elevated if elevated is None else elevated,
-            app_dir=self.app, settings_path=settings_path, read_text=self.read_text,
+    @property
+    def location(self) -> RunningGupkg:
+        """A stand-in for the running gupkg: a source tree whose ``$App`` folder is this machine's app folder."""
+        return RunningGupkg("source", self.base / "gupkg-src" / "gupkg", (), app_dir=self.app)
+
+    def scope(self, *, settings_path: Path | None = None, root_option: Path | None = None) -> Scope:
+        """Return the scope of a run on this machine: system mode when the fake machine is elevated, else user mode."""
+        return build_scope(
+            system=self.fake, env=self.env, location=self.location, root_option=root_option, settings_path=settings_path,
+            read_text=self.read_text,
         )
 
     def package(

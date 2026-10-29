@@ -116,12 +116,14 @@ def test_the_other_removed_options_are_plain_unrecognized_arguments(world: CliWo
 
 
 def test_options_go_after_the_command_and_are_not_abbreviated(world: CliWorld) -> None:
-    """--mode before the command and an abbreviated --mod are refused; the full option after the command is accepted."""
+    """An option before the command and an abbreviated option are refused; --mode no longer exists in any position (exit code 2)."""
     world.publish("tool", "1.0.0")
 
+    assert world.cli("--yes", "install", "tool").code == 2
+    assert world.cli("install", "tool", "--ye").code == 2
     assert world.cli("--mode", "user", "install", "tool").code == 2
-    assert world.cli("install", "tool", "--mod", "user").code == 2
-    assert world.cli("install", "tool", "--mode", "user").code == 0
+    assert world.cli("install", "tool", "--mode", "user").code == 2
+    assert world.cli("install", "tool").code == 0
 
 
 def test_a_target_is_required_by_the_lifecycle_commands(world: CliWorld) -> None:

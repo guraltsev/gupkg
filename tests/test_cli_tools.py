@@ -28,7 +28,7 @@ import pytest
 from gupkg.engine.receipts import read_receipt
 from gupkg.launchers import launcher_text
 from gupkg.selfmgmt.location import RunningGupkg
-from gupkg.system.port import Scope
+from gupkg.system.port import Mode
 from gupkg.tomlio import dumps, read_toml
 from tests.cli_support import CliWorld
 from tests.engine_support import pkg_text, zip_bytes
@@ -116,17 +116,18 @@ def test_registry_add_and_remove_edit_the_user_settings_and_refuse_duplicates(wo
     assert [item["name"] for item in read_toml(world.user / ".gupkg" / "settings.toml")["registry"]] == ["main"]
 
 
-def test_the_system_registry_is_written_only_from_an_administrator_shell(tmp_path: Path) -> None:
-    """From a normal shell --mode system is refused; an elevated shell syncs into the system root's cache."""
+def test_registry_sync_writes_the_cache_of_the_scopes_root(tmp_path: Path) -> None:
+    """A normal shell syncs into the user root's cache and never touches the system root; an elevated shell syncs into the system root's."""
     normal = CliWorld(tmp_path / "a")
     elevated = CliWorld(tmp_path / "b", elevated=True)
     for machine in (normal, elevated):
         machine.fake.add_url("https://github.com/guraltsev/gupkg-registry/archive/HEAD.zip", registry_zip(version_files("gamma", "1.0")))
 
-    refused = normal.cli("registry", "sync", "--mode", "system")
+    refused = normal.cli("registry", "sync")
     synced = elevated.cli("registry", "sync")
 
-    assert refused.code == 2 and "administrator shell" in refused.err and not (normal.system_root / ".gupkg").exists()
+    assert refused.code == 0, refused.err
+    assert (normal.user / ".gupkg" / "registry" / "main" / "state.toml").is_file() and not (normal.system_root / ".gupkg").exists()
     assert synced.code == 0, synced.err
     assert (elevated.system_root / ".gupkg" / "registry" / "main" / "state.toml").is_file()
 
@@ -201,14 +202,15 @@ def test_settings_set_refuses_what_the_schema_refuses_and_leaves_the_file_alone(
     assert result.code == 2 and says in result.err and path.read_bytes() == before
 
 
-def test_the_system_settings_are_written_only_from_an_administrator_shell(tmp_path: Path) -> None:
-    """From a normal shell --mode system is refused; elevated, the value goes to the system root's file."""
+def test_settings_set_writes_the_file_of_the_scopes_root(tmp_path: Path) -> None:
+    """A normal shell writes the user root's file and never the system root's; elevated, the value goes to the system root's file."""
     normal, elevated = CliWorld(tmp_path / "a"), CliWorld(tmp_path / "b", elevated=True)
 
-    refused = normal.cli("settings", "set", "logs.keep_runs", "9", "--mode", "system")
+    refused = normal.cli("settings", "set", "logs.keep_runs", "9")
     written = elevated.cli("settings", "set", "logs.keep_runs", "9")
 
-    assert refused.code == 2 and not (normal.system_root / ".gupkg" / "settings.toml").exists()
+    assert refused.code == 0 and not (normal.system_root / ".gupkg" / "settings.toml").exists()
+    assert read_toml(normal.user / ".gupkg" / "settings.toml")["logs"] == {"keep_runs": 9}
     assert written.code == 0 and read_toml(elevated.system_root / ".gupkg" / "settings.toml")["logs"] == {"keep_runs": 9}
 
 
@@ -467,8 +469,8 @@ def test_self_repair_check_updates_and_update_are_the_lifecycle_on_the_package_g
     world.tracker("gupkg", mode="system")
     world.announce("gupkg", "1.0.0")
     world.publish("gupkg", "1.0.0", mode="system", tables=FULL)
-    assert world.cli("install", "gupkg", "--mode", "system").code == 0
-    shim = world.fake.scope_folders(Scope.MACHINE).bin_dir / "tool.exe"
+    assert world.cli("install", "gupkg").code == 0
+    shim = world.fake.scope_folders(Mode.SYSTEM).bin_dir / "tool.exe"
     shim.unlink()
     world.announce("gupkg", "1.1.0")
 

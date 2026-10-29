@@ -26,7 +26,7 @@ import pytest
 
 from gupkg.catalog.record import read_install_record
 from gupkg.engine.locks import Holder, lock_path, render_lock
-from gupkg.system.port import Scope
+from gupkg.system.port import Mode
 from tests.cli_support import CliWorld
 from tests.engine_support import World
 from tests.mode_support import pin_no_ambient_elevation  # noqa: F401
@@ -59,20 +59,20 @@ def requests_made(world: World) -> int:
 
 
 def test_a_name_and_a_path_install_to_identical_destinations(world: CliWorld) -> None:
-    """Installing by name with --mode user and by the package's path put the same shortcut, shim and PATH entries in place."""
+    """Installing by name and by the package's path put the same shortcut, shim and PATH entries in place."""
     world.publish("tool", "1.0.0", tables=FULL)
     package = world.user / "tool"
 
     def destinations() -> tuple[list[str], list[str], set[tuple[str, str]]]:
         """Return where the install put its shortcuts and shims, and the effects its install record lists."""
-        bin_dir = world.fake.scope_folders(Scope.USER).bin_dir
+        bin_dir = world.fake.scope_folders(Mode.USER).bin_dir
         recorded = {
             (effect.kind, str(effect.fields.get("path") or effect.fields.get("entry")))
             for effect in read_install_record(package).record.effects
         }
         return sorted(str(path) for path in world.fake.shortcuts()), sorted(path.name for path in bin_dir.glob("*.exe")), recorded
 
-    by_name = world.cli("install", "tool", "--mode", "user")
+    by_name = world.cli("install", "tool")
     first = destinations()
     assert by_name.code == 0, by_name.err
     assert world.cli("uninstall", "tool", "--yes").code == 0 and not world.fake.shortcuts()
@@ -83,33 +83,33 @@ def test_a_name_and_a_path_install_to_identical_destinations(world: CliWorld) ->
     assert destinations() == first and first[0] and first[1] == ["tool.exe"]
 
 
-def test_the_mode_is_chosen_by_elevation_and_printed(tmp_path: Path) -> None:
-    """An elevated process installs in system mode and prints the reason; a normal shell installs in user mode."""
+def test_the_mode_is_the_tokens_and_the_resolve_line_names_mode_root_and_source(tmp_path: Path) -> None:
+    """An elevated process installs in the system root, a normal shell in the user root; each prints ``<mode> root <path> (<source>)``."""
     elevated = CliWorld(tmp_path / "a", elevated=True)
     elevated.publish("tool", "1.0.0", mode="system")
     normal = CliWorld(tmp_path / "b")
     normal.publish("tool", "1.0.0", mode="user")
 
-    system_run = elevated.cli("install", "tool", "--mode", "system")
-    auto_run = elevated.cli("install", "system:tool", "--no-input")
+    system_run = elevated.cli("install", "tool")
+    auto_run = elevated.cli("install", "tool", "--no-input")
     user_run = normal.cli("install", "tool")
 
     assert system_run.code == 0, system_run.err
-    assert "mode: system (--mode)" in system_run.out
-    assert auto_run.code == 0 and "system" in auto_run.out
-    assert user_run.code == 0 and "mode: user (inside the user root)" in user_run.out
+    assert f"system root {elevated.system_root} (the installed system gupkg)" in system_run.out
+    assert auto_run.code == 0 and f"system root {elevated.system_root}" in auto_run.out
+    assert user_run.code == 0 and f"user root {normal.user} (" in user_run.out
     assert (elevated.system_root / "tool" / "current").is_dir() and not (elevated.user / "tool" / "current").exists()
 
 
-def test_auto_installs_in_system_mode_when_elevated_and_says_why(tmp_path: Path) -> None:
-    """With no --mode an elevated gupkg picks the system root for a package that exists nowhere yet, and prints the reason."""
+def test_an_elevated_gupkg_installs_a_registry_package_in_the_system_root_and_says_so(tmp_path: Path) -> None:
+    """With no flag an elevated gupkg installs a package that exists nowhere yet into the system root, and prints the root and its source."""
     world = CliWorld(tmp_path, elevated=True)
     world.registry({"tool": {"versions": {"1.0.0": None}}}, mode="system")
 
     result = world.cli("install", "tool")
 
     assert result.code == 0, result.err
-    assert "system (auto: elevated)" in result.out
+    assert f"system root {world.system_root} (the installed system gupkg)" in result.out
     assert (world.system_root / "tool" / "current").is_dir()
 
 
@@ -121,7 +121,7 @@ def test_check_updates_writes_a_prepared_version_and_changes_nothing_else(world:
     assert world.cli("install", "tool").code == 0
     package = world.user / "tool"
     record_before = (package / ".gupkg" / "package.toml").read_text(encoding="utf-8")
-    state_before = (sorted(path.name for path in world.fake.shortcuts()), dict(world.fake.env_values(Scope.USER)), len(world.fake.registry_log))
+    state_before = (sorted(path.name for path in world.fake.shortcuts()), dict(world.fake.env_values(Mode.USER)), len(world.fake.registry_log))
     world.announce("tool", "1.1.0")
 
     result = world.cli("check-updates", "tool")
@@ -130,7 +130,7 @@ def test_check_updates_writes_a_prepared_version_and_changes_nothing_else(world:
     assert (package / "1.1.0" / "App" / "app.exe").is_file() and (package / "1.1.0" / "pkg.toml").is_file()
     assert current(package) == "1.0.0"
     assert (package / ".gupkg" / "package.toml").read_text(encoding="utf-8") == record_before
-    assert (sorted(path.name for path in world.fake.shortcuts()), dict(world.fake.env_values(Scope.USER)), len(world.fake.registry_log)) == state_before
+    assert (sorted(path.name for path in world.fake.shortcuts()), dict(world.fake.env_values(Mode.USER)), len(world.fake.registry_log)) == state_before
 
 
 def test_check_updates_no_download_writes_no_app_and_asks_only_the_tracker(world: CliWorld) -> None:
@@ -203,7 +203,7 @@ def test_update_never_runs_a_tracker(world: CliWorld) -> None:
 
 def test_self_check_updates_and_check_updates_gupkg_give_the_same_result_document(tmp_path: Path) -> None:
     """The self alias is the lifecycle command applied to the package gupkg: the two result documents are equal."""
-    first, second = CliWorld(tmp_path / "a"), CliWorld(tmp_path / "b")
+    first, second = CliWorld(tmp_path / "a", installed=False), CliWorld(tmp_path / "b", installed=False)
     for world in (first, second):
         world.tracker("gupkg")
         world.announce("gupkg", "1.0.0")
@@ -211,8 +211,8 @@ def test_self_check_updates_and_check_updates_gupkg_give_the_same_result_documen
         assert world.cli("install", "gupkg").code == 0
         world.announce("gupkg", "1.1.0")
 
-    alias = first.cli("self", "check-updates", "--mode", "user", "--json")
-    direct = second.cli("check-updates", "gupkg", "--mode", "user", "--json")
+    alias = first.cli("self", "check-updates", "--json")
+    direct = second.cli("check-updates", "gupkg", "--json")
 
     assert alias.code == direct.code == 0, (alias.err, direct.err)
 
@@ -232,7 +232,7 @@ def test_check_reports_a_deleted_shim_as_drift_and_fix_restores_it(world: CliWor
     """check names the deleted shim and changes nothing; check --fix puts it back and then reports healthy."""
     world.publish("tool", "1.0.0", tables=FULL)
     assert world.cli("install", "tool").code == 0
-    shim = world.fake.scope_folders(Scope.USER).bin_dir / "tool.exe"
+    shim = world.fake.scope_folders(Mode.USER).bin_dir / "tool.exe"
     shim.unlink()
 
     report = world.cli("check", "tool")

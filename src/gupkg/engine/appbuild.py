@@ -34,7 +34,7 @@ from typing import Any
 from ..catalog.local import DATA_DIR_NAME, is_reparse_point
 from ..model.checksum import ChecksumMismatch, ChecksumRecord, git_gate, git_record, unverified_note
 from ..model.manifest import INSTALLER_LABEL, Manifest
-from ..model.mode import ModeContext
+from ..model.scope import Scope
 from ..report.events import Step, Warning, emit, phase
 from ..services.artifact import fetch_artifact, reverify
 from ..services.hooks import HookContext, HookPaths
@@ -68,7 +68,7 @@ class Populated:
 
 def populate_version(
     engine: Engine,
-    context: ModeContext,
+    context: Scope,
     package_path: Path,
     version_dir: Path,
     manifest: Manifest,
@@ -86,7 +86,7 @@ def populate_version(
     ----------
     engine : Engine
         The machine, the HTTP client factory and the limits.
-    context : ModeContext
+    context : Scope
         The resolved install mode (decides the cache folder).
     package_path, version_dir : Path
         The package root and the version directory that holds ``pkg.toml``.

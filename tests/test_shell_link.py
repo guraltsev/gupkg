@@ -65,7 +65,7 @@ def _install(tmp_path: Path, version_dir: Path) -> int:
     )
     # The settings layers below ``--settings`` still expand the built-in defaults, so the variables they name are given too.
     env = {"USERPROFILE": str(tmp_path / "UserProfile"), "APPDATA": str(tmp_path / "AppData"), "ProgramData": str(tmp_path / "ProgramData")}
-    return cli.main(["--settings", str(settings), "install", str(version_dir), "--mode", "user"], system=SYSTEM, env=env)
+    return cli.main(["--settings", str(settings), "install", str(version_dir)], system=SYSTEM, env=env)
 
 
 def test_shortcut_fields_round_trip_exactly(tmp_path: Path) -> None:

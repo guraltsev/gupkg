@@ -63,7 +63,7 @@ from .port import (
     ProcessResult,
     ResponseTooLarge,
     WorkerDidNotStart,
-    Scope,
+    Mode,
     ScopeFolders,
     ShortcutSpec,
     MAX_RELAUNCH_PARAMETERS,
@@ -185,20 +185,20 @@ class WindowsSystem(WindowsLinks):
 
     # -- environment -------------------------------------------------------
 
-    def _environment_location(self, scope: Scope) -> tuple[Any, str]:
+    def _environment_location(self, scope: Mode) -> tuple[Any, str]:
         """Return the registry ``(hive, subkey)`` holding one scope's environment."""
         if winreg is None:
             raise OSError("The Windows registry is only available on Windows.")
-        if scope == Scope.USER:
+        if scope == Mode.USER:
             return self._user_environment or (winreg.HKEY_CURRENT_USER, "Environment")
-        if scope == Scope.MACHINE:
+        if scope == Mode.SYSTEM:
             return self._machine_environment or (
                 winreg.HKEY_LOCAL_MACHINE,
                 r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
             )
         raise ValueError(f"Environment scope must be user or system, not {scope.value}")
 
-    def get_env(self, scope: Scope, name: str) -> EnvValue | None:
+    def get_env(self, scope: Mode, name: str) -> EnvValue | None:
         """Return one stored environment value, or ``None`` when it is not a string value."""
         hive, subkey = self._environment_location(scope)
         try:
@@ -210,14 +210,14 @@ class WindowsSystem(WindowsLinks):
             return None
         return EnvValue(str(value), kind == winreg.REG_EXPAND_SZ)
 
-    def set_env(self, scope: Scope, name: str, value: str, expandable: bool) -> None:
+    def set_env(self, scope: Mode, name: str, value: str, expandable: bool) -> None:
         """Store one environment value, creating its key when it does not exist."""
         hive, subkey = self._environment_location(scope)
         kind = winreg.REG_EXPAND_SZ if expandable else winreg.REG_SZ
         with winreg.CreateKeyEx(hive, subkey, 0, winreg.KEY_SET_VALUE) as key:
             winreg.SetValueEx(key, name, 0, kind, value)
 
-    def delete_env(self, scope: Scope, name: str) -> None:
+    def delete_env(self, scope: Mode, name: str) -> None:
         """Remove one environment value; an absent value or key is not an error."""
         hive, subkey = self._environment_location(scope)
         try:
@@ -226,14 +226,14 @@ class WindowsSystem(WindowsLinks):
         except FileNotFoundError:
             return
 
-    def get_path(self, scope: Scope) -> list[str]:
+    def get_path(self, scope: Mode) -> list[str]:
         """Return the non-empty ``PATH`` entries of *scope*; a missing value is an empty list."""
         stored = self.get_env(scope, "Path")
         if stored is None:
             return []
         return [item.strip() for item in stored.value.split(";") if item.strip()]
 
-    def set_path(self, scope: Scope, entries: Sequence[str]) -> None:
+    def set_path(self, scope: Mode, entries: Sequence[str]) -> None:
         """Store *entries* as the expandable ``PATH`` of *scope*."""
         self.set_env(scope, "Path", ";".join(entries), True)
 
@@ -432,7 +432,7 @@ class WindowsSystem(WindowsLinks):
 
     # -- locations ---------------------------------------------------------
 
-    def scope_folders(self, scope: Scope) -> ScopeFolders:
+    def scope_folders(self, scope: Mode) -> ScopeFolders:
         """Resolve the default Start Menu ``opt`` folder and ``bin`` folder of one scope.
 
         Raises
@@ -448,7 +448,7 @@ class WindowsSystem(WindowsLinks):
             return value
 
         start_menu = Path("Microsoft") / "Windows" / "Start Menu" / "opt"
-        if scope == Scope.USER:
+        if scope == Mode.USER:
             return ScopeFolders(
                 Path(env("APPDATA", "User-scope shortcut directory")) / start_menu,
                 Path(env("USERPROFILE", "User-scope bin directory")) / "bin",

@@ -32,7 +32,7 @@ from gupkg.system.fake import FakeSystem, RegistryAccess, UnexpectedCall
 from gupkg.system.port import (
     ProcessFailed,
     ProcessResult,
-    Scope,
+    Mode,
     ShortcutSpec,
     is_elevated_run,
     require_admin_only,
@@ -49,11 +49,11 @@ from tests.mode_support import Machine, pin_no_ambient_elevation  # noqa: F401
 
 def test_registry_access_log_lists_each_read_write_and_delete_in_order(system: FakeSystem) -> None:
     """Every registry operation is logged once, in the order it happened, with the value written."""
-    system.set_env(Scope.USER, "TOOL_HOME", r"C:\Tools", True)
-    system.get_path(Scope.USER)
-    system.set_path(Scope.USER, [r"C:\Tools\bin"])
-    system.delete_env(Scope.MACHINE, "OLD_VALUE")
-    system.get_env(Scope.USER, "tool_home")
+    system.set_env(Mode.USER, "TOOL_HOME", r"C:\Tools", True)
+    system.get_path(Mode.USER)
+    system.set_path(Mode.USER, [r"C:\Tools\bin"])
+    system.delete_env(Mode.SYSTEM, "OLD_VALUE")
+    system.get_env(Mode.USER, "tool_home")
 
     assert system.registry_log == [
         RegistryAccess("write", "user", "TOOL_HOME", r"C:\Tools"),
@@ -72,7 +72,7 @@ def test_registry_access_log_lists_each_read_write_and_delete_in_order(system: F
 def test_shortcut_records_are_lnk_json_files_inside_the_fake_tree(tmp_path: Path) -> None:
     """A shortcut becomes a visible ``.lnk.json`` record, and a path outside the fake's root is redirected below it."""
     system = FakeSystem(tmp_path / "machine")
-    inside = system.scope_folders(Scope.USER).shortcut_root / "Group" / "Tool.lnk"
+    inside = system.scope_folders(Mode.USER).shortcut_root / "Group" / "Tool.lnk"
     outside = tmp_path / "elsewhere" / "Other.lnk"
     spec = ShortcutSpec(r"C:\Tools\tool.exe", "--go", r"C:\Tools", r"C:\Tools\tool.ico,2", "A tool")
 
@@ -148,17 +148,17 @@ def test_sandbox_state_persists_in_system_json_across_runs(tmp_path: Path) -> No
     sandbox = tmp_path / "sandbox"
     sandbox.mkdir()
     first = FakeSystem.sandbox(sandbox, FakeSystem(tmp_path / "delegate"))
-    first.set_env(Scope.USER, "TOOL_HOME", "home", True)
-    first.set_path(Scope.USER, [r"C:\a", r"C:\b"])
+    first.set_env(Mode.USER, "TOOL_HOME", "home", True)
+    first.set_path(Mode.USER, [r"C:\a", r"C:\b"])
     first.broadcast_environment_change()
     first.relaunch_elevated(["manager", "update"])
 
     second = FakeSystem.sandbox(sandbox, FakeSystem(tmp_path / "delegate"))
 
     assert second.registry_log == first.registry_log
-    assert second.env_values(Scope.USER)["TOOL_HOME"].value == "home"
+    assert second.env_values(Mode.USER)["TOOL_HOME"].value == "home"
     assert second.broadcasts == 1 and second.relaunches == [["manager", "update"]]
-    assert second.get_path(Scope.USER) == [r"C:\a", r"C:\b"]
+    assert second.get_path(Mode.USER) == [r"C:\a", r"C:\b"]
     assert json.loads((sandbox / "system.json").read_text(encoding="utf-8"))["env"]["user"]["Path"]["expandable"] is True
 
 
@@ -178,7 +178,7 @@ def real_machine_trap() -> WindowsSystem:
         setattr(Trap, name, trapped)
     trap = Trap()
     with pytest.raises(AssertionError, match="reached the real machine"):
-        trap.get_path(Scope.USER)  # the trap is armed
+        trap.get_path(Mode.USER)  # the trap is armed
     return trap
 
 
@@ -216,7 +216,7 @@ def test_sandbox_install_leaves_the_real_machine_alone_and_records_what_it_would
     version = package_with_every_effect(machine)
     sandbox = tmp_path / "sandbox"
 
-    code = sandboxed(machine, sandbox, "install", str(version), "--mode", "user")
+    code = sandboxed(machine, sandbox, "install", str(version))
 
     captured = capsys.readouterr()
     state = json.loads((sandbox / "system.json").read_text(encoding="utf-8"))
@@ -231,10 +231,10 @@ def test_sandbox_install_leaves_the_real_machine_alone_and_records_what_it_would
     assert (sandbox / "bin" / "user" / "tool.exe").is_file()
 
 
-def test_sandbox_system_mode_install_follows_the_elevated_flag_in_system_json(
+def test_sandbox_install_follows_the_elevated_flag_in_system_json(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A system-mode sandbox install is refused until ``system.json`` says elevated, then records machine-scope state.
+    """A sandbox install is a user-mode run until ``system.json`` says elevated, then a system-mode run that records machine-scope state.
 
     Elevation in the sandbox is the flag in ``system.json``, never the real token.
     """
@@ -243,17 +243,16 @@ def test_sandbox_system_mode_install_follows_the_elevated_flag_in_system_json(
     sandbox = tmp_path / "sandbox"
     sandbox.mkdir()
 
-    refused = sandboxed(machine, sandbox, "install", str(version), "--mode", "system", "--yes")
-    assert refused == 2
-    assert "administrator" in (lambda c: c.out + c.err)(capsys.readouterr()).lower()
-    assert not (machine.system_root / "tool").exists()
+    normal = sandboxed(machine, sandbox, "install", str(version), "--yes")
+    assert normal == 0, capsys.readouterr()
+    assert not (machine.system_root / "tool").exists() and (machine.user_root / "tool" / "current").exists()
 
     (sandbox / "system.json").write_text('{"elevated": true}\n', encoding="utf-8")
-    code = sandboxed(machine, sandbox, "install", str(version), "--mode", "system", "--yes")
+    code = sandboxed(machine, sandbox, "install", str(version), "--yes")
 
     state = json.loads((sandbox / "system.json").read_text(encoding="utf-8"))
     assert code == 0, capsys.readouterr()
-    assert "TOOL_HOME" in state["env"]["system"] and state["env"]["user"] == {}
+    assert "TOOL_HOME" in state["env"]["system"] and (machine.system_root / "tool" / "current").exists()
     assert (sandbox / "bin" / "system" / "tool.exe").is_file()
 
 

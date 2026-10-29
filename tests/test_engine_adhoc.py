@@ -28,7 +28,7 @@ def system_package(tmp_path: Path) -> World:
     """An elevated machine with tool installed in the system root."""
     world = World(tmp_path, elevated=True)
     world.publish("tool", "1.0.0", mode="system", tables=SHIM)
-    assert world.one("install", "system:tool").ok
+    assert world.one("install", "tool").ok
     world.engine.confirm = lambda question: True
     return world
 
@@ -40,7 +40,7 @@ def test_an_elevated_purge_ignores_a_garbage_user_state_file(tmp_path: Path) -> 
     state.parent.mkdir(parents=True, exist_ok=True)
     state.write_bytes(b"adhoc = [oops")
 
-    result = world.one("uninstall", "system:tool", purge=True)
+    result = world.one("uninstall", "tool", purge=True)
 
     assert result.ok and result.status == "purged" and not (world.system_root / "tool").exists()
     assert state.read_bytes() == b"adhoc = [oops" and result.warnings == ()
@@ -53,7 +53,7 @@ def test_an_elevated_purge_never_rewrites_a_valid_user_state_file(tmp_path: Path
     write_toml(state, {"adhoc": [{"path": str(world.system_root / "tool"), "mode": "user"}]})
     before = state.read_bytes()
 
-    result = world.one("uninstall", "system:tool", purge=True)
+    result = world.one("uninstall", "tool", purge=True)
 
     assert result.ok and state.read_bytes() == before
 
@@ -106,7 +106,7 @@ def test_the_guard_never_lets_an_elevated_run_touch_a_user_state_file(tmp_path: 
     state = world.root(mode) / ".gupkg" / "state.toml"
     write_toml(state, {"adhoc": [{"path": str(package), "mode": mode}]})
     before = state.read_bytes()
-    run = SimpleNamespace(adhoc=True, context=SimpleNamespace(mode=mode), settings=world.engine.load(system_mode=True).settings, warnings=[])
+    run = SimpleNamespace(adhoc=True, context=SimpleNamespace(mode=mode), settings=world.scope.settings, warnings=[])
 
     _forget_adhoc(world.engine, run, package)
 
@@ -120,7 +120,7 @@ def test_the_same_call_removes_the_entry_in_a_normal_run_and_in_the_system_root(
         package = tmp_path / "elsewhere" / mode / "tool"
         state = world.root(mode) / ".gupkg" / "state.toml"
         write_toml(state, {"adhoc": [{"path": str(package), "mode": mode}]})
-        run = SimpleNamespace(adhoc=True, context=SimpleNamespace(mode=mode), settings=world.engine.load(system_mode=elevated).settings, warnings=[])
+        run = SimpleNamespace(adhoc=True, context=SimpleNamespace(mode=mode), settings=world.scope.settings, warnings=[])
 
         _forget_adhoc(world.engine, run, package)
 

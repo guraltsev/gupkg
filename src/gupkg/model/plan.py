@@ -86,9 +86,7 @@ class Request:
     operation : str
         One of ``OPERATIONS``.
     selector : str
-        The target as the user wrote it (``name``, ``name@version``, ``mode:name``, a path).
-    mode : str, optional
-        The ``--mode`` flag.
+        The target as the user wrote it (``name``, ``name@version``, a path).
     version : str, optional
         The version ``switch`` activates.
     in_place : bool
@@ -121,7 +119,6 @@ class Request:
 
     operation: str
     selector: str
-    mode: str | None = None
     version: str | None = None
     in_place: bool = False
     refresh: bool = False

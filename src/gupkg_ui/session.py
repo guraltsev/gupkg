@@ -131,7 +131,7 @@ class BatchOutcome:
 
 
 def unqualified(target: str) -> str:
-    """Return the package name of a target such as ``system:firefox`` (a bare name stays as it is)."""
+    """Return the package name of a target (a bare name stays as it is; a leftover ``mode:`` prefix is dropped)."""
     mode, colon, rest = target.partition(":")
     return rest if colon and rest and mode in ("system", "user", "portable") else target
 

@@ -46,12 +46,12 @@ from ..model.manifest import (
     render_pinned,
     require_gupkg_version,
 )
-from ..model.mode import ModeContext
+from ..model.scope import Scope
+from ..targets import ResolvedTarget
 from ..model.plan import PackageResult
 from ..model.settings import Settings
 from ..model.state import PackageView
 from ..model.version import MANIFEST_NAME, TRACKER_DIR_NAME
-from ..modes import ResolvedMode
 from ..pkgcheck import check_directory, defines_track
 from ..report.events import Step, Warning, emit, phase
 from ..services.http import HttpClient, github_environment
@@ -68,16 +68,16 @@ from .stateio import write_track_state
 
 
 
-def writes_root(engine: Engine, context: ModeContext) -> bool:
-    """Return whether this run may write the package's root: an administrator for system, a normal shell for user.
+def writes_root(engine: Engine, context: Scope) -> bool:
+    """Return whether this run writes the package's root: always, since a run has one scope and its own token.
 
-    A system package checked from a normal shell is only reported (decision D22); the resolution of the mode already
-    refused an elevated run on a user root (decision D31).
+    A system scope exists only in an elevated run, so there is no longer a normal shell that only reports a system package
+    (decision D22 is gone). The flag still feeds ``details["written"]`` of the result document and the plan; issue 035 T07 removes it.
     """
     return engine.elevated if context.mode == "system" else True
 
 
-def plan_check(engine: Engine, request, resolved: ResolvedMode, catalog: Catalog):
+def plan_check(engine: Engine, request, resolved: ResolvedTarget, catalog: Catalog):
     """Plan ``check-updates`` for one resolved target without running anything (``--plan``).
 
     Raises
@@ -90,14 +90,14 @@ def plan_check(engine: Engine, request, resolved: ResolvedMode, catalog: Catalog
         name = view.name if view is not None else request.selector
         raise NotInstalled(f"'{name}' is not a local package, so there is nothing to check; use `gupkg install {name}`")
     sync = catalog.check_updates_plan(view).tracker
-    writes = writes_root(engine, resolved.context)
+    writes = writes_root(engine, resolved.scope)
     return plan_check_updates(
-        request, view, resolved.context, tracker_action=sync.action, writes=writes, download=writes and not request.no_download
+        request, view, resolved.scope, tracker_action=sync.action, writes=writes, download=writes and not request.no_download
     )
 
 
 def check_updates_one(
-    engine: Engine, request, resolved: ResolvedMode, catalog: Catalog, settings: Settings
+    engine: Engine, request, resolved: ResolvedTarget, catalog: Catalog, settings: Settings
 ) -> PackageResult:
     """Check one package for a newer version and write (and, by default, populate) it without activating anything.
 
@@ -107,7 +107,7 @@ def check_updates_one(
         The machine, the clock and the HTTP settings.
     request : Request
         The ``check-updates`` request (``no_download``, ``skip``).
-    resolved : ResolvedMode
+    resolved : ResolvedTarget
         The resolved target and install mode.
     catalog : Catalog
         Used to compare the tracker's result with the known versions.
@@ -126,7 +126,7 @@ def check_updates_one(
     TrackError, ChecksumDiscoveryError, HookError, HttpError
         If the tracker fails; nothing was written.
     """
-    context = resolved.context
+    context = resolved.scope
     view = resolved.resolved.view if resolved.resolved is not None else None
     if view is None or view.local is None:
         name = view.name if view is not None else request.selector
@@ -136,7 +136,7 @@ def check_updates_one(
         return PackageResult(view.name, "check-updates", True, "no-new-version", view.installed.version if view.installed else None,
                              None, context.mode, details={"reason": "nothing to check: the package has no tracker"})
 
-    # Who writes: an administrator in an admin shell for the system root, a normal shell for everything else.
+    # Who writes: always the run itself (see ``writes_root``).
     writes = writes_root(engine, context)
     download = writes and not request.no_download
     package_path = view.local.path
@@ -246,7 +246,7 @@ def _tracker(view: PackageView, sync, package_path: Path, writes: bool) -> tuple
 
 
 def _run_tracker(
-    engine: Engine, context: ModeContext, manifest: Manifest, directory: Path, name: str, package_path: Path, writes: bool
+    engine: Engine, context: Scope, manifest: Manifest, directory: Path, name: str, package_path: Path, writes: bool
 ):
     """Run the tracker's provider; a report-only run keeps its cache and scratch folder out of the root."""
     # An elevated run starts the regex worker with its own interpreter: judge both before anything is launched.
@@ -273,7 +273,7 @@ def _run_tracker(
 
 
 def _write_version(
-    engine: Engine, context: ModeContext, view: PackageView, package_path: Path, tracker_dir: Path, pinned: Manifest, version: str
+    engine: Engine, context: Scope, view: PackageView, package_path: Path, tracker_dir: Path, pinned: Manifest, version: str
 ) -> Path:
     """Write ``<package>\\<version>`` from the tracker: support files without update-check code, the pinned ``pkg.toml``.
 

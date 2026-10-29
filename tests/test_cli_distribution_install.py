@@ -39,7 +39,7 @@ def test_installing_a_distribution_folder_writes_nothing_into_the_source(tmp_pat
     root = world.system_root if mode == "system" else world.user
     before = snapshot(source.parent.parent)
 
-    result = world.cli("install", str(source), "--mode", mode, "--yes", "--skip-checksum")
+    result = world.cli("install", str(source), "--yes", "--skip-checksum")
 
     assert result.code == 0, result.out + result.err
     assert snapshot(source.parent.parent) == before, "the download folder was changed"
@@ -48,5 +48,5 @@ def test_installing_a_distribution_folder_writes_nothing_into_the_source(tmp_pat
     [package_log] = (destination / ".gupkg" / "logs").glob("*-install.log")
     receipt_file = next(destination.glob("*/App.info"))
     assert "run" not in tomllib.loads(receipt_file.read_text(encoding="utf-8"))
-    listed = world.cli("logs", "demo", "--path", "--mode", mode)
+    listed = world.cli("logs", "demo", "--path")
     assert listed.code == 0 and str(destination / ".gupkg" / "logs") in listed.out
