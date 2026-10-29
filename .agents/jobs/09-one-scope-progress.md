@@ -21,8 +21,8 @@ Not recorded yet. Before T00, the controller records:
 | T02 | Portable is a package kind; mode restriction | T01 | merged | i035/T02 | 30030c3 | 3720 passed, 0 failed, 11 skipped | 035-T02-1, 035-T02-2 (tests/manual_smoke.md) |
 | T03 | Registry conversion (gupkg-registry) | T02 | merged | i035/T03 (registry) | registry da73597 | registry _tests 212 passed; pkg_check.py --all: 192 directories checked, no error; registry_tool validate: 95 packages, 97 pinned versions, 0 hook files, 1 unpinned: OK | none |
 | T04 | Settings schema 4 and root fallback chain | T02 | merged | i035/T04 | 6ab01f8 | 3720 passed, 0 failed, 11 skipped | none | |
-| T05 | Scope object; mode from the token | T04 | in review | i035/T05 | | | |
-| T06 | Catalog over one root | T05 | waiting | | | | |
+| T05 | Scope object; mode from the token | T04 | merged | i035/T05 | fc47455 | 3649 passed, 0 failed, 11 skipped (87 tests removed, 63 added; reasons in 09-logs/T05.md) | 035-T05-1..4 (tests/manual_smoke.md) |
+| T06 | Catalog over one root | T05 | in progress | i035/T06 | | | |
 | T07 | Remove the elevated relaunch | T06 | waiting | | | | |
 | T08 | Run-as-administrator shortcut | T07 | waiting | | | | |
 | T09 | Manager: one scope per run | T07 | waiting | | | | |
@@ -75,6 +75,8 @@ git -C gupkg-registry log --oneline github/main..main -> 9fba5c5 volta: shim onl
 
 Owner commit not pushed yet (goes to GitHub together with T03): `9fba5c5 volta: shim only volta and put App on the PATH`.
 
+- Non-blocking, from T05 (for T06/T07/T09/T12): `gupkg-bootstrap.ps1` lost `--mode $Scope` on its install lines (consequence of removing `--mode`; T11 reviews the script). `Scope.requires_elevation`, the one-element group loop and the mixed-modes text in `cli.py`/`lifecycle.py`, `engine/checkupdates.py` `writes_root` are dead until T07. `gupkg_manager/cli.py` still has its own `--mode` filter (T09). The UI two-group logic and `can_elevate` are untouched (T09); the UI `checksum_policy` guard for system targets is kept and marked `# Removed in issue 035 T09.` (it only turns a user-layer `skip` into `refuse`; main also turned an explicit `ask`). `self update` from a system gupkg in a normal shell is now refused (T09 must handle the manager's `U` key). `execute`/plan documents still carry per-package `mode` and `root_cleanup` keyed by mode (T06/T07). `selfmgmt/elevation.py` `untrusted_reason` does not recurse; `build_scope` names version dir, root, package folder, `python` and `python\Lib\site-packages` one by one; file-level ACL checks are not done (open, non-blocking). The `self update` same-root comparison uses `normpath` only (no realpath). `pkg new|check|export|bundle` and `self status` build no scope.
+
 ## Log
 
 - 2026-10-26: job prepared from issue 035; not started.
@@ -94,3 +96,4 @@ Owner commit not pushed yet (goes to GitHub together with T03): `9fba5c5 volta: 
 - 2026-10-29: T04 worker reported (37a6c60, 4c5db47; 3722 passed at 37a6c60); review round 1 started.
 - 2026-10-29: T04 reviewed (0 blocking, 8 minor), merged as 6ab01f8; suite 3720 passed, 11 skipped. T05 dispatched.
 - 2026-10-29: T05 worker reported (6497ef2, 8e2752b, 2b5b5c6, 19c12d4; 3645 passed/11 skipped); review round 1 started.
+- 2026-10-29: T05 review round 1 (1 blocking: UI checksum guard; fixed in 3d9e9ab), round 2 clean; merged as fc47455; suite 3649 passed, 11 skipped. T06 dispatched.
