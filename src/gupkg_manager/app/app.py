@@ -10,7 +10,8 @@ Usage and API
 
 Implementation Approach
 -----------------------
-The registry state comes from ``gupkg registry status --json`` (a read-only call); a failure only leaves it out of the status line.
+The registry state is read in-process (the core behind ``gupkg registry status --json``); a failed read puts ``ERROR: ...`` in the status line and its full text in
+a notification and in ``problems``, so nothing the program cannot read is dropped silently.
 """
 
 from __future__ import annotations
@@ -18,7 +19,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from gupkg_ui.app import UiApp
-from gupkg_ui.client import ClientError
 from gupkg_ui.plans import PackageRow
 from gupkg_ui.render import literal
 from gupkg_ui.startup import UiEnvironment
@@ -67,7 +67,9 @@ class ManagerApp(UiApp):
         self.rows: list[PackageRow] = []
         self.inventory_error: str | None = None
         self.registry: str = ""
+        self.registry_error: str | None = None
         self.registry_unsynced = False
+        self.problems: list[str] = []
 
     def on_mount(self) -> None:
         """Open the browser."""
@@ -82,25 +84,31 @@ class ManagerApp(UiApp):
         self.rows, self.inventory_error = rows, error
         self.refresh_status()
 
+    def report_problem(self, what: str, error: BaseException) -> str:
+        """Keep the full text of a failed read in ``problems``, show it in a notification and return the one-line form for the status line."""
+        full = f"{what}: {type(error).__name__}: {error}"
+        self.problems.append(full)
+        self.notify(literal(full, limit=2000), title="Read failed", severity="error", timeout=20, markup=False)
+        return f"{what}: {literal(str(error), limit=100)}"
+
     async def read_registry(self) -> None:
-        """Read the registry revision and age (``gupkg registry status``); leave it out of the status line when it cannot be read."""
+        """Read the registry revision and age in-process (what ``gupkg registry status`` reports); a failed read is shown in the status line, never left out silently."""
+        self.registry_error = None
         try:
-            document = await self.env.client.query(["registry", "status"])
-        except ClientError:
+            document = await self.env.source.registry()
+        except Exception as error:  # noqa: BLE001 - every failure of the read is shown
             self.registry = ""
+            self.registry_error = self.report_problem("registry unreadable", error)
             return
         parts = []
         unsynced = False
-        for item in document.get("registries", ()):
-            if isinstance(item, dict) and isinstance(item.get("name"), str):
-                revision = item.get("revision") if isinstance(item.get("revision"), str) else None
-                name = literal(item["name"], limit=30)
-                synced = item.get("synchronized_at") if isinstance(item.get("synchronized_at"), str) else None
-                unsynced = unsynced or not revision
-                parts.append(
-                    f"registry {name} @ {literal(revision[:7], limit=12)} (synced {age(synced)})" if revision
-                    else f"registry {name}: NOT DOWNLOADED, press s"
-                )
+        for item in document.registries:
+            name = literal(item.name, limit=30)
+            unsynced = unsynced or not item.revision
+            parts.append(
+                f"registry {name} @ {literal(item.revision[:7], limit=12)} (synced {age(item.synchronized_at)})" if item.revision
+                else f"registry {name}: NOT DOWNLOADED, press s"
+            )
         if not parts:
             parts.append("no registry configured (gupkg registry add NAME SOURCE)")
         self.registry = " · ".join(parts)
@@ -116,5 +124,7 @@ class ManagerApp(UiApp):
             parts.append(f"{available} available in the registry (i installs)")
         if self.inventory_error:
             parts.insert(0, f"ERROR: {literal(self.inventory_error, limit=120)}")
+        if self.registry_error:
+            parts.insert(1 if self.inventory_error else 0, f"ERROR: {literal(self.registry_error, limit=140)}")
         parts.append(self.registry)
         return parts

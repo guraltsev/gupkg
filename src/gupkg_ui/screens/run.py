@@ -117,8 +117,8 @@ class RunScreen(FrameScreen):
         return "Esc back  ↑↓ PgUp PgDn Home End scroll  q quit  ? help"
 
     def status_text(self) -> str:
-        """Return the program status with this run's state and title."""
-        return str(getattr(self.app, "status_line", lambda own="": own)(f"{self._title}: {self.state}"))
+        """Return the program status with this run's title and state first (before the scope), so a long root never pushes the state out of the line."""
+        return str(getattr(self.app, "status_line", lambda own="", own_first=False: own)(f"{self._title}: {self.state}", own_first=True))
 
     def compose_body(self) -> ComposeResult:
         """Yield the log and the live progress line."""
