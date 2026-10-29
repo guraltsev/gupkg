@@ -69,7 +69,7 @@ never starts an elevated copy of itself, so none of these messages can be answer
 | `<name> <version> is older than the active version <active>. Install it anyway?` (exit 5 with `--no-input`) | Answer yes, or pass `--allow-downgrade` (or `--yes`). `gupkg switch <name> <version>` goes back without asking. |
 | `<name> has other version directories that are broken or not supported: ...` (exit 5 with `--no-input`) | Fix or delete those folders, or pass `--allow-other-broken-versions` (or `--yes`) to install anyway. |
 | `The bundled Python is missing: ...` or an `ImportError` in gupkg itself | The install is damaged. `gupkg self status` shows which files differ from `MANIFEST.sha256`; install the release ZIP again with `gupkg-bootstrap.cmd`. gupkg never repairs or downloads its runtime. |
-| A mode prefix such as `user:firefox`: `a target no longer names a mode` | Remove the prefix. The mode of a run is the mode of its shell. |
+| A mode prefix in front of a name (`a target no longer names a mode`) | Remove the prefix. The mode of a run is the mode of its shell. |
 ### Checksums (exit 2 or 3)
 
 | Code and message | What it means and what to do |
