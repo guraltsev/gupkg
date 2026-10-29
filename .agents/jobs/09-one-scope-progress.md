@@ -26,8 +26,8 @@ Not recorded yet. Before T00, the controller records:
 | T07 | Remove the elevated relaunch | T06 | merged | i035/T07 | 0f266d0 | 3518 passed, 0 failed, 11 skipped (net 119 cases fewer than T06 before follow-ups: relaunch tests; log lists them) | 035-T07-1, 035-T07-2 (tests/manual_smoke.md) |
 | T08 | Run-as-administrator shortcut | T07 | merged | i035/T08 | 8bb0283 | 3524 passed, 0 failed, 11 skipped | 035-T08-1 (tests/manual_smoke.md; needs T09 for the title) |
 | T09 | Manager: one scope per run | T07 | merged | i035/T09 | 954a06c | 3534 passed, 0 failed, 11 skipped | 035-T09-1 (tests/manual_smoke.md) |
-| T10 | Manager: shared reader, visible failures | T09 | in review | i035/T10 | | | |
-| T11 | Launchers: bundled, gupkg-location, PATH | T07 | ready | | | | |
+| T10 | Manager: shared reader, visible failures | T09 | merged | i035/T10 | b38a87c | 3558 passed, 0 failed, 11 skipped | 035-T10-1 (tests/manual_smoke.md) |
+| T11 | Launchers: bundled, gupkg-location, PATH | T07 | in progress | i035/T11 | | | |
 | T12 | Docs and consistency sweep | T01â€“T11 | waiting | | | | |
 | T13 | Acceptance | T12 | waiting | | | | |
 
@@ -87,6 +87,8 @@ Owner commit not pushed yet (goes to GitHub together with T03): `9fba5c5 volta: 
 - Non-blocking, from T09 (for T10/T12): the scope is shown at the left of the status line (`user · <root shortened to 40 characters>`); `sub_title` holds the full root but is invisible. `shorten_path` (gupkg_ui/startup.py) drops the head of a UNC path (`\\server\share\...` becomes `\...`), which can mislead about which root is managed: T10 fixes it (keep `\\server\share` as the head). A long root can clip the run state in the status line (`Failed (exit code 3) ...`); the verdict stays in the run body: T10 considers putting the run state before the root on the run view. The registry state is clipped at 80 columns in some cases (the hint line leads with `s DOWNLOAD THE REGISTRY` when never synced). Two different roots can shorten to the same text. The new skip-checksum step label has no test. `_docs/tui_style_guide.md` still shows a Mode column and `mode: user` in its examples (T12). The manager has no self-update key; `U` is "update all outdated".
 - Added by the owner 2026-10-29 (outside issue 035): T14, a package cannot take over another package's bin names, shortcuts or env variables; the install stops before any work, with a message naming both packages (`09-tasks/T14-name-conflicts.md`). Runs after T11, before T12/T13. Files that no gupkg package owns keep today's behaviour; a follow-up is an owner question (see T14 rule 7).
 
+- Non-blocking, from T10 (owner questions or later tasks): one unreadable plan row now fails the whole plan with the field named (nothing runs); the reviewer judges it right. `read_results` exists but `session.py`/`client.py` still parse result documents with their own dict handling (wire it in, or delete it). No committed test feeds live `PackageResult.to_data`/`InstallPlan.to_data` output to `read_plan`/`read_results` (only recorded fixtures cover them): add one in T13 or T12. A failed `info` read shows on the package view only in the TUI (`TuiApp` has no `report_problem`). A read failure's full text goes to a notification and `ManagerApp.problems`, not to a log file (nice-to-have). Unused imports: `cli.py:40 load_registry`, `tests/test_ui_screens.py:29 head`. `tests/manual_smoke.md` T10 entry starts with `. **` instead of `1. **`. `src/gupkg/README.md` still says `"api": 1` (T12).
+
 ## Log
 
 - 2026-10-26: job prepared from issue 035; not started.
@@ -117,3 +119,4 @@ Owner commit not pushed yet (goes to GitHub together with T03): `9fba5c5 volta: 
 - 2026-10-29: T09 round 1 (1 blocking: scope not visible at 80x24; fixed in 991b132) and round 2 clean; merged as 954a06c. Owner added T14 (name conflicts between packages); task file written; order T10, T11, T14, T12, T13.
 - 2026-10-29: T09 post-merge suite 3534 passed, 11 skipped. T10 dispatched.
 - 2026-10-29: T10 worker reported (6f6f8e9..a58e302; 3558 passed/11 skipped); review started.
+- 2026-10-29: T10 reviewed (0 blocking, 4 minor), merged as b38a87c; suite 3558 passed, 11 skipped. T11 dispatched.
