@@ -2,12 +2,13 @@
 
 Every launcher is the same plain ``cmd`` file, written by whichever gupkg runs the operation (``check-updates``, ``pkg new``,
 ``pkg bundle``, ``pkg export``, and the registry tool all call this module). A launcher lives at
-``<root>\\<name>\\<version>\\`` (or ``<root>\\<name>\\_check_updates\\``) and finds a gupkg by its own position: the root
-forwarder ``<root>\\.gupkg\\gupkg.cmd`` first (unless it is given ``--no-system-gupkg=true``), then the gupkg bundled in its folder,
-and exit code 9009 with the way to get gupkg when neither exists. Exit code 6, which an installed gupkg returns for a package it
-cannot handle, re-runs the command with the bundled gupkg. ``PATH``, the registry, AppData, ProgramData and the current directory
-are never searched. An elevated launcher first checks, with System32's PowerShell, that everything it will run is admin-only, and
-refuses otherwise (design section 21.3, decisions D16, D30 and D32).
+``<root>\\<name>\\<version>\\`` (or ``<root>\\<name>\\_check_updates\\``) and finds a gupkg by its own position, in this order: the
+gupkg bundled in its folder, the folder named by the first line of ``<root>\\.gupkg\\gupkg-location`` (read as data, never
+executed), then the first ``gupkg.cmd`` or ``gupkg.exe`` on ``PATH``; with none of them it exits 9009 with the way to get gupkg.
+Exit code 6, which a gupkg returns for a package it cannot handle, moves on to the next step. The registry, AppData, ProgramData
+and the current directory are never searched. An elevated launcher first checks, with System32's PowerShell, that everything it
+will run is admin-only (on ``PATH`` it skips and names every entry that is not) and refuses otherwise (design section 21.3,
+decisions D30 and D52).
 
 Usage and API
 -------------

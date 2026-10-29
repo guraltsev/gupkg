@@ -5,7 +5,7 @@ built-in providers, lets the catalog compare the result with the known versions,
 ``render_pinned`` (strip every template and the ``[track]`` table, fill ``sha256`` only from a checksum the tracker
 discovered), writes ``<package>\\<version>\\`` atomically with the support files but without any update-check code and with
 the launchers of its own (``install.cmd`` and ``gupkg-tui.cmd``, in every root) and the package's own bundled gupkg carried
-forward where no root forwarder exists (decision D32), and, unless
+forward where the root has no gupkg-location (decision D32), and, unless
 ``--no-download``, downloads, verifies and populates its ``App``. It then stops: ``current``, shortcuts, shims and the
 environment are unchanged. A system package checked from a normal shell is only reported (nothing under the system root
 is written); a version whose download the checksum rules refuse stays written without ``App`` (decision D46).
@@ -56,6 +56,7 @@ from ..services.safepath import remove_tree
 from ..services.track import TrackEnvironment, run_tracker
 from .appbuild import populate_version
 from .context import Engine, require_trusted_tools, require_work_folder, tracker_tools
+from .effects import LOCATION_FILE
 from .errors import describe
 from .executor import carry_forward, emit_skipped, sync_registry_tracker
 from .planner import PlanError, plan_check_updates
@@ -269,8 +270,8 @@ def _write_version(
         # double-click on the new version's install.cmd installs exactly that version.
         write_launchers(staged)
 
-        # In a root with no forwarder (a bundled install) the package's own gupkg is carried forward as well.
-        if not (context.root / DATA_DIR_NAME / "gupkg.cmd").is_file():
+        # In a root with no gupkg-location (a bundled install) the package's own gupkg is carried forward as well.
+        if not (context.root / DATA_DIR_NAME / LOCATION_FILE).is_file():
             carry_forward(view, staged)
 
         report = check_directory(staged, package=package_path.name)

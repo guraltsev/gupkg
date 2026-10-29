@@ -1,15 +1,14 @@
-"""Cover bundled mode and the root forwarder in the engine (design 21; decisions D14, D15, D32, D43).
+"""Cover bundled mode and the root's `gupkg-location` in the engine (design 21; decisions D14, D15, D32, D43, D52).
 
-Behaviour covered: installing the `gupkg` package writes the root forwarder (`<root>\\.gupkg\\gupkg.cmd` and
-`gupkg-manager.cmd`) that calls the installed gupkg, records it in the install record, reports it as drift when it is
-changed or removed, and removes it on uninstall; any other package that declares `[root_forwarder]` is refused; a bundled
-install (any other package, installed from a distribution folder) leaves no gupkg package, no forwarder, no gupkg shim and no
-gupkg `PATH` entry behind, writes nothing outside its root and the Start Menu, and reads no registry value but `PATH`;
-`check-updates` and `update` carry the package's own bundled gupkg forward while old versions keep theirs, and switching back
-works; `uninstall --purge` leaves only the root's `.gupkg`; `cleanup --bundled` removes bundled copies only when the root's
-forwarder points to an installed gupkg, says why otherwise, never touches gupkg's own copy, and plain `cleanup` never touches
-bundles; an `App` built by a custom populate script that copies a folder shipped in the version directory is repopulated after
-every `App` is deleted, and the shipped folder is never moved.
+Behaviour covered: installing the `gupkg` package writes `<root>\\.gupkg\\gupkg-location` (`gupkg\\current\\App`, relative to the
+root), records it in the install record as a `location_file` effect, reports it as drift when it is changed or removed, and
+uninstall removes it only while it still holds the value gupkg wrote; a bundled install (any other package, installed from a distribution folder) leaves no gupkg package, no
+`gupkg-location`, no gupkg shim and no gupkg `PATH` entry behind, writes nothing outside its root and the Start Menu, and reads no
+registry value but `PATH`; `check-updates` and `update` carry the package's own bundled gupkg forward while old versions keep
+theirs, and switching back works; `uninstall --purge` leaves only the root's `.gupkg`; `cleanup --bundled` removes bundled copies
+only where a launcher would find a gupkg through `gupkg-location` or `PATH`, says why otherwise, never touches gupkg's own copy,
+and plain `cleanup` never touches bundles; an `App` built by a custom populate script that copies a folder shipped in the version
+directory is repopulated after every `App` is deleted, and the shipped folder is never moved.
 
 Real: the engine and real folders. Mocked: `FakeSystem` (registry, shortcuts, processes).
 Out of scope: the launchers themselves (test_package_launcher), the distribution copy (test_engine_distribution) and the
@@ -25,16 +24,12 @@ from pathlib import Path
 import pytest
 
 from gupkg.catalog.record import read_install_record
-from gupkg.engine.effects import forwarder_target
+from gupkg.engine.effects import launchers_find_gupkg
 from gupkg.launchers import launcher_text
-from gupkg.pkgcheck import check_directory
 from gupkg.system.port import ProcessResult, Mode
 from tests.engine_support import World, pin_no_ambient_elevation  # noqa: F401
 
-FORWARDER = "[root_forwarder]\ntarget = '$PackageRoot\\current\\App'\n"
-GUPKG_TABLES = (
-    '[[shim]]\nname = "gupkg"\ntarget = "$App\\\\gupkg.cmd"\n\n[[shim]]\nname = "gupkg-manager"\ntarget = "$App\\\\gupkg-manager.cmd"\n\n' + FORWARDER
-)
+GUPKG_TABLES = '[[shim]]\nname = "gupkg"\ntarget = "$App\\\\gupkg.cmd"\n\n[[shim]]\nname = "gupkg-manager"\ntarget = "$App\\\\gupkg-manager.cmd"\n'
 SHIM = '[[shim]]\nname = "tool"\ntarget = "$App\\\\app.exe"\n'
 
 
@@ -45,7 +40,7 @@ def world(tmp_path: Path) -> World:
 
 
 def install_gupkg(world: World, mode: str = "user") -> Path:
-    """Install a `gupkg` package that declares the root forwarder, and return its root data folder."""
+    """Install a `gupkg` package, and return its root data folder."""
     world.publish("gupkg", "1.0.0", mode=mode, tables=GUPKG_TABLES)
     result = world.one("install", "gupkg")
     assert result.ok, result.error
@@ -53,73 +48,87 @@ def install_gupkg(world: World, mode: str = "user") -> Path:
 
 
 # ---------------------------------------------------------------------------
-# The root forwarder
+# The root's gupkg-location
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("mode", ["user", "system"])
-def test_installing_gupkg_writes_the_root_forwarder_that_calls_the_installed_gupkg(tmp_path: Path, mode: str) -> None:
-    """The install creates `<root>\\.gupkg\\gupkg.cmd` and `gupkg-manager.cmd`; each calls the sibling in `gupkg\\current\\App`."""
+def test_installing_gupkg_writes_gupkg_location_naming_the_installed_gupkg(tmp_path: Path, mode: str) -> None:
+    """The install creates `<root>\\.gupkg\\gupkg-location` whose first line is `gupkg\\current\\App`, relative to the root."""
     world = World(tmp_path, elevated=mode == "system")
 
     data = install_gupkg(world, mode)
 
-    for name in ("gupkg.cmd", "gupkg-manager.cmd"):
-        text = (data / name).read_bytes().decode("ascii")
-        assert f'call "%~dp0..\\gupkg\\current\\App\\{name}" %*' in text and text.endswith("exit /b %ERRORLEVEL%\r\n")
-    app = world.root(mode) / "gupkg" / "current" / "App"
-    app.mkdir(parents=True, exist_ok=True)
-    (app / "gupkg.cmd").write_text("@echo off\r\n", encoding="ascii")
-    assert forwarder_target(data).samefile(app / "gupkg.cmd")
+    text = (data / "gupkg-location").read_bytes().decode("ascii")
+    assert text.splitlines() == ["gupkg\\current\\App"]
+    assert not (data / "gupkg.cmd").exists() and not (data / "gupkg-manager.cmd").exists()
 
 
-def test_the_forwarder_is_recorded_in_the_install_record_and_removed_by_uninstall(world: World) -> None:
-    """The effect is in the install record, uninstall removes both files, and the root data folder itself stays."""
+def test_gupkg_location_is_recorded_in_the_install_record_and_removed_by_uninstall(world: World) -> None:
+    """The effect is in the install record, uninstall removes the file, and the root data folder itself stays."""
     data = install_gupkg(world)
 
     kinds = [effect.kind for effect in read_install_record(world.user / "gupkg").record.effects]
-    assert kinds.count("forwarder") == 2
+    assert kinds.count("location_file") == 1
 
     assert world.one("uninstall", "gupkg").ok
 
-    assert not (data / "gupkg.cmd").exists() and not (data / "gupkg-manager.cmd").exists()
+    assert not (data / "gupkg-location").exists()
     assert data.is_dir()
 
 
-def test_a_missing_or_changed_forwarder_is_reported_by_check_and_restored_by_repair(world: World) -> None:
-    """`check` names a deleted or edited forwarder, and `repair` writes it again."""
+def test_uninstall_leaves_an_edited_gupkg_location_alone(world: World) -> None:
+    """A person who pointed the file somewhere else keeps it: uninstall removes it only while it holds the value gupkg wrote."""
     data = install_gupkg(world)
-    (data / "gupkg.cmd").write_text("@echo off\r\ncall evil.cmd\r\n", encoding="ascii")
-    (data / "gupkg-manager.cmd").unlink()
+    (data / "gupkg-location").write_text("C:\\somewhere\\else\r\n", encoding="ascii")
+
+    assert world.one("uninstall", "gupkg").ok
+
+    assert (data / "gupkg-location").read_text(encoding="ascii").strip() == "C:\\somewhere\\else"
+
+
+def test_a_missing_or_changed_gupkg_location_is_reported_by_check_and_restored_by_repair(world: World) -> None:
+    """`check` names a deleted or edited file, and `repair` writes it again."""
+    data = install_gupkg(world)
+    (data / "gupkg-location").write_text("evil\r\n", encoding="ascii")
 
     drift = world.one("check", "gupkg")
 
-    text = str(drift.details)
-    assert "root forwarder missing or changed" in text and "gupkg.cmd" in text
+    assert "gupkg-location missing or changed" in str(drift.details)
     assert world.one("repair", "gupkg").ok
-    assert "evil" not in (data / "gupkg.cmd").read_text(encoding="ascii") and (data / "gupkg-manager.cmd").is_file()
+    assert (data / "gupkg-location").read_text(encoding="ascii").strip() == "gupkg\\current\\App"
+
+    (data / "gupkg-location").unlink()
+    assert "gupkg-location missing or changed" in str(world.one("check", "gupkg").details)
 
 
-def test_another_package_cannot_declare_a_root_forwarder(world: World) -> None:
-    """A package that is not `gupkg` and declares `[root_forwarder]` is refused, and nothing is written into the root's data folder."""
-    folder = world.publish("tool", "1.0.0", tables=FORWARDER + SHIM)
+def test_only_the_gupkg_package_writes_gupkg_location(world: World) -> None:
+    """Any other package leaves the root's data folder without a `gupkg-location`."""
+    world.publish("tool", "1.0.0", tables=SHIM)
 
-    result = world.one("install", "tool")
+    assert world.one("install", "tool").ok
 
-    assert not result.ok
-    assert not (world.user / ".gupkg" / "gupkg.cmd").exists()
-    assert "[root_forwarder] is valid only in the gupkg package" in " ".join(check_directory(folder).errors)
+    assert not (world.user / ".gupkg" / "gupkg-location").exists()
 
 
-def test_a_forwarder_target_outside_the_package_is_refused_by_the_manifest() -> None:
-    """The target must be a folder below `$PackageRoot`, so a forwarder can only point into the gupkg package of its root."""
-    from gupkg.model.manifest import ManifestError, parse_manifest
+def test_launchers_find_a_gupkg_by_gupkg_location_or_path_only(tmp_path: Path) -> None:
+    """`cleanup --bundled` may drop bundled copies only where step 2 (a usable location) or step 3 (PATH) finds a gupkg."""
+    root = tmp_path / "root"
+    (root / ".gupkg").mkdir(parents=True)
+    app = root / "gupkg" / "current" / "App"
+    app.mkdir(parents=True)
+    on_path = tmp_path / "bin"
+    on_path.mkdir()
 
-    for target in ("C:\\\\elsewhere", "$PackageRoot\\\\..\\\\x", "$PackageRoot", "$App\\\\x"):
-        with pytest.raises(ManifestError):
-            parse_manifest(f"format = 2\n[root_forwarder]\ntarget = '{target}'\n")
-    assert parse_manifest(f"format = 2\n{FORWARDER}").root_forwarder.target == "$PackageRoot\\current\\App"
-
+    assert not launchers_find_gupkg(root, None)
+    (root / ".gupkg" / "gupkg-location").write_text("gupkg\\current\\App\r\n", encoding="ascii")
+    assert not launchers_find_gupkg(root, None)  # the folder has no gupkg.cmd
+    (app / "gupkg.cmd").write_text("@echo off\r\n", encoding="ascii")
+    assert launchers_find_gupkg(root, None)
+    (root / ".gupkg" / "gupkg-location").write_text("\r\n", encoding="ascii")
+    assert not launchers_find_gupkg(root, str(on_path))
+    (on_path / "gupkg.exe").write_text("x", encoding="ascii")
+    assert launchers_find_gupkg(root, f"{tmp_path / 'nothing'};{on_path}")
 
 # ---------------------------------------------------------------------------
 # A bundled install leaves no gupkg behind
@@ -137,7 +146,7 @@ def distribution_with_bundle(world: World, version: str = "1.0.0") -> Path:
 
 
 def test_a_bundled_install_leaves_no_gupkg_behind_and_touches_nothing_else(world: World) -> None:
-    """Installing a distribution adds the program only: no gupkg package, forwarder, gupkg shim or PATH entry; one PATH read-modify-write."""
+    """Installing a distribution adds the program only: no gupkg package, gupkg-location, gupkg shim or PATH entry; one PATH read-modify-write."""
     folder = distribution_with_bundle(world)
     world.fake.registry_log.clear()
 
@@ -146,7 +155,7 @@ def test_a_bundled_install_leaves_no_gupkg_behind_and_touches_nothing_else(world
     assert result.ok, result.error
     assert (world.user / "tool" / "1.0.0" / "gupkg" / "gupkg.cmd").is_file()
     assert sorted(item.name for item in world.user.iterdir() if item.name != "tool") == []
-    assert not (world.user / ".gupkg" / "gupkg.cmd").exists() and not (world.user / "gupkg").exists()
+    assert not (world.user / ".gupkg" / "gupkg-location").exists() and not (world.user / "gupkg").exists()
     bin_names = {item.name for item in world.mode_context("user").bin_dir.iterdir()}
     assert not any(name.startswith("gupkg") for name in bin_names)
     assert not any("gupkg" in entry.lower() for entry in world.fake.get_path(Mode.USER))
@@ -203,18 +212,18 @@ def bundled_install(world: World) -> Path:
     return world.user / "tool" / "1.0.0"
 
 
-def test_cleanup_bundled_keeps_the_copies_and_says_why_when_the_root_has_no_forwarder(world: World) -> None:
-    """With no installed gupkg to take over, `cleanup --bundled` removes no bundled copy and reports the reason."""
+def test_cleanup_bundled_keeps_the_copies_and_says_why_when_no_launcher_would_find_a_gupkg(world: World) -> None:
+    """With no gupkg-location and no gupkg on PATH, `cleanup --bundled` removes no bundled copy and reports the reason."""
     version = bundled_install(world)
 
     result = world.one("cleanup", "tool", bundled=True)
 
     assert result.ok and (version / "gupkg" / "gupkg.cmd").is_file()
-    assert result.details["bundled"] == [] and "no root forwarder" in result.details["bundled_kept"]
+    assert result.details["bundled"] == [] and "gupkg-location" in result.details["bundled_kept"]
 
 
 def test_cleanup_bundled_removes_the_copies_once_an_installed_gupkg_can_take_over(world: World) -> None:
-    """With a root forwarder that points to an installed gupkg the bundled copies go; the launchers stay for the forwarder."""
+    """With a gupkg-location that names an installed gupkg the bundled copies go; the launchers stay."""
     version = bundled_install(world)
     data = install_gupkg(world)
     app = world.user / "gupkg" / "current" / "App"
@@ -224,23 +233,81 @@ def test_cleanup_bundled_removes_the_copies_once_an_installed_gupkg_can_take_ove
     result = world.one("cleanup", "tool", bundled=True)
 
     assert result.ok and result.details["bundled"] == ["1.0.0"] and not (version / "gupkg").exists()
-    assert (version / "install.cmd").is_file() and (data / "gupkg.cmd").is_file()
+    assert (version / "install.cmd").is_file() and (data / "gupkg-location").is_file()
 
 
-def test_cleanup_bundled_needs_a_forwarder_that_really_points_to_an_installed_gupkg(world: World) -> None:
-    """A forwarder whose gupkg is gone (or that is not one of gupkg's) does not let bundled copies go."""
+def test_cleanup_bundled_removes_the_copies_when_a_gupkg_is_on_path(world: World) -> None:
+    """Step 3 of the launcher order counts: a gupkg.cmd on the PATH of the run lets the bundled copies go."""
+    version = bundled_install(world)
+    elsewhere = world.base / "on-path"
+    elsewhere.mkdir()
+    (elsewhere / "gupkg.cmd").write_text("@echo off\r\n", encoding="ascii")
+    world.engine.env = {**world.engine.env, "PATH": str(elsewhere)}
+
+    result = world.one("cleanup", "tool", bundled=True)
+
+    assert result.ok and result.details["bundled"] == ["1.0.0"] and not (version / "gupkg").exists()
+
+
+def test_cleanup_bundled_needs_a_gupkg_location_that_really_names_an_installed_gupkg(world: World) -> None:
+    """A gupkg-location whose gupkg is gone (or that is empty) does not let bundled copies go."""
     version = bundled_install(world)
     data = world.user / ".gupkg"
     data.mkdir(exist_ok=True)
-    (data / "gupkg.cmd").write_text("@echo off\r\ncall \"%~dp0..\\gupkg\\current\\App\\gupkg.cmd\" %*\r\n", encoding="ascii")
+    (data / "gupkg-location").write_text("gupkg\\current\\App\r\n", encoding="ascii")
 
     result = world.one("cleanup", "tool", bundled=True)
 
     assert (version / "gupkg" / "gupkg.cmd").is_file() and result.details["bundled"] == []
 
 
+def test_launchers_find_a_gupkg_by_the_launchers_own_rules(tmp_path: Path) -> None:
+    """Same refusals as the launcher: a location line with `& | < > ^`, a quoted PATH entry, and (system mode) an untrusted folder."""
+    root = tmp_path / "root"
+    (root / ".gupkg").mkdir(parents=True)
+    app = root / "app"
+    app.mkdir()
+    (app / "gupkg.cmd").write_text("@echo off\r\n", encoding="ascii")
+    location = root / ".gupkg" / "gupkg-location"
+
+    for char in "&|<>^":
+        location.write_text(f"app{char}\r\n", encoding="ascii")
+        assert not launchers_find_gupkg(root, None), char
+    location.write_text("app\r\n", encoding="ascii")
+    assert launchers_find_gupkg(root, None)
+    assert not launchers_find_gupkg(root, None, lambda folder: "Users can modify it")
+    assert launchers_find_gupkg(root, None, lambda folder: None)
+
+    location.write_text("\r\n", encoding="ascii")
+    assert launchers_find_gupkg(root, str(app))
+    assert not launchers_find_gupkg(root, f'"{app}"')
+    assert not launchers_find_gupkg(root, str(app), lambda folder: "Users can modify it")
+
+
+def test_cleanup_bundled_in_system_mode_ignores_a_gupkg_that_standard_users_can_change(tmp_path: Path) -> None:
+    """An elevated launcher refuses a user-writable gupkg, so it would not find it: a user-writable PATH gupkg or location does not let bundled copies go."""
+    world = World(tmp_path, elevated=True)
+    assert world.one("install", str(distribution_with_bundle(world))).ok
+    root = world.root("system")
+    version = root / "tool" / "1.0.0"
+    elsewhere = world.base / "on-path"
+    elsewhere.mkdir()
+    (elsewhere / "gupkg.cmd").write_text("@echo off\r\n", encoding="ascii")
+    world.engine.env = {**world.engine.env, "PATH": str(elsewhere)}
+    world.machine.fake.untrusted_dirs.add(elsewhere.resolve())
+
+    refused = world.one("cleanup", "tool", bundled=True)
+
+    assert refused.ok and (version / "gupkg" / "gupkg.cmd").is_file() and refused.details["bundled"] == []
+    world.machine.fake.untrusted_dirs.clear()
+
+    allowed = world.one("cleanup", "tool", bundled=True)
+
+    assert allowed.ok and allowed.details["bundled"] == ["1.0.0"] and not (version / "gupkg").exists()
+
+
 def test_cleanup_bundled_never_removes_the_bundled_copy_of_gupkg_itself(world: World) -> None:
-    """gupkg's own bundled tree is its populate script's input: it stays even with a forwarder."""
+    """gupkg's own bundled tree is its populate script's input: it stays even with a gupkg-location."""
     install_gupkg(world)
     own = world.user / "gupkg" / "1.0.0" / "gupkg"
     own.mkdir()
@@ -254,7 +321,7 @@ def test_cleanup_bundled_never_removes_the_bundled_copy_of_gupkg_itself(world: W
 
 
 def test_plain_cleanup_never_removes_a_bundled_copy(world: World) -> None:
-    """Without `--bundled`, cleanup leaves the bundled copies alone, even with a forwarder."""
+    """Without `--bundled`, cleanup leaves the bundled copies alone, even with a gupkg-location."""
     version = bundled_install(world)
     install_gupkg(world)
     app = world.user / "gupkg" / "current" / "App"
@@ -263,7 +330,6 @@ def test_plain_cleanup_never_removes_a_bundled_copy(world: World) -> None:
     assert world.one("cleanup", "tool").ok
 
     assert (version / "gupkg" / "gupkg.cmd").is_file()
-
 
 # ---------------------------------------------------------------------------
 # Recoverable bundled installs

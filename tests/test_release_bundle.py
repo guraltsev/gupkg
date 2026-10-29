@@ -57,14 +57,14 @@ def test_zip_is_a_package_root_fragment_of_the_gupkg_package(release_bundle) -> 
 
 
 def test_the_versions_pkg_toml_is_pinned_without_a_download_address_and_the_hooks_are_where_they_belong(release_bundle, installed: Path) -> None:
-    """The version has no [track] and no download_url, declares the populate script and the root forwarder; only the tracker has track.py."""
+    """The version has no [track] and no download_url, declares the populate script and no root setting table; only the tracker has track.py."""
     manifest = parse_manifest((installed / "pkg.toml").read_text(encoding="utf-8"), ManifestKind.VERSION)
     tracker = parse_manifest((installed.parent / "_check_updates" / "pkg.toml").read_text(encoding="utf-8"), ManifestKind.TRACKER)
 
     assert manifest.track is None and manifest.source.download_url is None
-    assert manifest.source.script == "pkg.local/populate.py" and manifest.root_forwarder is not None
+    assert manifest.source.script == "pkg.local/populate.py"
     assert [shim.name for shim in manifest.shims] == ["gupkg", "gupkg-tui", "gupkg-manager"]
-    assert tracker.track is not None and tracker.root_forwarder == manifest.root_forwarder
+    assert tracker.track is not None
     assert sorted(path.name for path in (installed / "pkg.local").iterdir()) == ["populate.py", "releases.py"]
     assert sorted(path.name for path in (installed.parent / "_check_updates" / "pkg.local").iterdir()) == ["populate.py", "releases.py", "track.py"]
     assert check_directory(installed).ok and check_directory(installed.parent / "_check_updates").ok
