@@ -17,7 +17,7 @@ Not recorded yet. Before T00, the controller records:
 | Task | Title | Depends on | Status | Branch | Merge commit | Tests | Manual checks pending |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | T00 | Design note | — | merged | i035/T00 | 7c62967 | 3915 passed, 0 failed, 11 skipped | none |
-| T01 | Remove migration code | T00 | in progress | i035/T01 | | | |
+| T01 | Remove migration code | T00 | in review | i035/T01 | | | |
 | T02 | Portable is a package kind; mode restriction | T01 | waiting | | | | |
 | T03 | Registry conversion (gupkg-registry) | T02 | waiting | | | | |
 | T04 | Settings schema 4 and root fallback chain | T02 | waiting | | | | |
@@ -58,3 +58,4 @@ Not recorded yet. Before T00, the controller records:
 - 2026-10-29: T00 worker reported (1df03dc on i035/T00); review started.
 - 2026-10-29: T00 reviewed (0 blocking, 8 minor), merged as 7c62967; suite 3915 passed, 11 skipped. T01 ready.
 - 2026-10-29: T01 dispatched on i035/T01.
+- 2026-10-29: T01 worker reported (6c83a4f, 3765 passed/11 skipped); review round 1 started.
