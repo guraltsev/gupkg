@@ -16,7 +16,7 @@ Not recorded yet. Before T00, the controller records:
 
 | Task | Title | Depends on | Status | Branch | Merge commit | Tests | Manual checks pending |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| T00 | Design note | — | in progress | i035/T00 | | | |
+| T00 | Design note | — | in review | i035/T00 | | | |
 | T01 | Remove migration code | T00 | waiting | | | | |
 | T02 | Portable is a package kind; mode restriction | T01 | waiting | | | | |
 | T03 | Registry conversion (gupkg-registry) | T02 | waiting | | | | |
@@ -44,3 +44,4 @@ Not recorded yet. Before T00, the controller records:
 - 2026-10-26: job prepared from issue 035; not started.
 
 - 2026-10-28: baseline recorded (3915 passed, 11 skipped; src 37739, tests 40938 lines). T00 dispatched on `i035/T00`.
+- 2026-10-29: T00 worker reported (1df03dc on i035/T00); review started.
