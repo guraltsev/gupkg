@@ -126,16 +126,10 @@ class BatchOutcome:
         return list(seen)
 
 
-def unqualified(target: str) -> str:
-    """Return the package name of a target (a bare name stays as it is; a leftover ``mode:`` prefix is dropped)."""
-    mode, colon, rest = target.partition(":")
-    return rest if colon and rest and mode in ("system", "user", "portable") else target
-
-
 def synthetic_entry(package: str, operation: str, status: str, code: int, message: str, *, ok: bool = False) -> dict[str, Any]:
     """Return a result entry for a target the UI itself decided (``refused``, ``skipped``, ``failed`` with no result)."""
     return {
-        "package": unqualified(package), "operation": operation, "ok": ok, "status": status, "version": None, "previous": None,
+        "package": package, "operation": operation, "ok": ok, "status": status, "version": None, "previous": None,
         "exit_code": code, "receipt": None, "log": None, "warnings": [],
         "error": {"code": status, "message": message},
     }
@@ -301,7 +295,7 @@ class BatchSession:
         )
         code = result.exit_code if type(result.exit_code) is int and result.exit_code else EXIT_INTERNAL
         for target in step.targets:
-            if unqualified(target) not in answered:
+            if target not in answered:
                 outcome.entries.append(synthetic_entry(target, operation, "failed", code, reason))
         if not step.targets and not entries and not result.ok:
             outcome.entries.append(synthetic_entry("(no target)", operation, "failed", code, reason))

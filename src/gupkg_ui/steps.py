@@ -118,7 +118,7 @@ def make_steps(
     for extra, members in groups.items():
         targets = tuple(item.target for item in members)
         steps.append(Step(
-            LABELS.get(command, command), targets_after_options(command, [*options, *extra], [*targets, *trailing]), targets,
+            LABELS.get(command, command) + (f" ({' '.join(extra)})" if extra else ""), targets_after_options(command, [*options, *extra], [*targets, *trailing]), targets,
             events_dir_for(members[0], settings),
         ))
     return steps

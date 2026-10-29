@@ -1,6 +1,6 @@
 """The operations a person starts from a package list or a package view, as one shared set of actions.
 
-Each action asks the questions it needs in a dialog (uninstall, purge, repair of system packages), then pushes a run screen whose job is one of the shared
+Each action asks the questions it needs in a dialog (uninstall, purge, repair, switching a version), then pushes a run screen whose job is one of the shared
 flows of ``gupkg_ui.flows``: every operation is a ``gupkg`` call (decision D44), with ``--yes`` only for the confirmations already given. Check for updates and
 update are separate operations (D11, D23). When the run screen closes, the screen that started it is told to reload what it shows.
 

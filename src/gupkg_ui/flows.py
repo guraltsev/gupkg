@@ -32,7 +32,7 @@ from .client import ClientError, targets_after_options
 from .interaction import Interaction
 from .plans import PackageRow, PlannedTarget, decide_targets, read_plan
 from .render import literal
-from .session import EXIT_INPUT, BatchOutcome, BatchSession, FollowUp, Sink, Step, synthetic_entry, unqualified
+from .session import EXIT_INPUT, BatchOutcome, BatchSession, FollowUp, Sink, Step, synthetic_entry
 from .startup import UiEnvironment
 from .steps import Subject, events_dir_for, make_steps, safe_subjects, subject_of
 
@@ -135,7 +135,7 @@ def plan_lines(
     count = 0
     for item in planned:
         decision = decisions.get(item.target)
-        name = literal(item.package or unqualified(item.target), limit=60)
+        name = literal(item.package or item.target, limit=60)
         change = f"{literal(item.previous or '-', limit=40)} -> {literal(item.version or '?', limit=40)}"
         if item.state == "up-to-date":
             note, style = "up to date", "dim"
@@ -189,7 +189,7 @@ async def run_check_updates(
         approved: list[Subject] = []
         for entry in outcome.entries:
             error = entry.get("error") if isinstance(entry.get("error"), dict) else {}
-            subject = next((item for item in subjects if unqualified(item.target) == entry.get("package")), None)
+            subject = next((item for item in subjects if item.target == entry.get("package")), None)
             if error.get("code") != "checksum-missing" or subject is None or subject.target in offered or interaction.ask_checksum is None:
                 continue
             offered.add(subject.target)
