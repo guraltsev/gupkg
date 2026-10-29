@@ -1,0 +1,13 @@
+﻿app title: 'gupkg-manager' | sub_title: ''
+ Enter open  / find  a avail  c check  u update  U all  s sync  ? help  q quit
+ Name   Version  Mode  Status            Registry
+ alpha  1.0.0    user  outdated → 2.0.0  -
+ beta   1.0.0    user  outdated → 2.0.0  -
+
+
+
+
+
+
+
+ 2 packages · 2 outdated · 0 broken · registry main @ 4f2a9c1 (synced never)

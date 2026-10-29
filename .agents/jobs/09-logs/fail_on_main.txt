@@ -1,0 +1,47 @@
+﻿
+E           gupkg_ui.startup.StartupError: this program is not started from an elevated shell: it calls gupkg and asks 
+for administrator rights itself. Run it from a normal shell.
+E       AttributeError: 'UiEnvironment' object has no attribute 'scope'
+E       AssertionError: assert (2 == 2 and 'an elevated gupkg must be installed in an admin-only root; run the system 
+gupkg. On a machine where every process is elevated (UAC off, a CI runner) gupkg has only system mode, so it must be 
+the admin-only system gupkg there too' in 'this program is not started from an elevated shell: it calls gupkg and asks 
+for administrator rights itself. Run it from a normal shell.')
+E        +  where 2 = StartupError('this program is not started from an elevated shell: it calls gupkg and asks for 
+administrator rights itself. Run it from a normal shell.').code
+E        +    where StartupError('this program is not started from an elevated shell: it calls gupkg and asks for 
+administrator rights itself. Run it from a normal shell.') = <ExceptionInfo StartupError('this program is not started 
+from an elevated shell: it calls gupkg and asks for administrator rights itself. Run it from a normal shell.') 
+tblen=3>.value
+E        +  and   'this program is not started from an elevated shell: it calls gupkg and asks for administrator 
+rights itself. Run it from a normal shell.' = str(StartupError('this program is not started from an elevated shell: it 
+calls gupkg and asks for administrator rights itself. Run it from a normal shell.'))
+E        +    where StartupError('this program is not started from an elevated shell: it calls gupkg and asks for 
+administrator rights itself. Run it from a normal shell.') = <ExceptionInfo StartupError('this program is not started 
+from an elevated shell: it calls gupkg and asks for administrator rights itself. Run it from a normal shell.') 
+tblen=3>.value
+E           gupkg_ui.startup.StartupError: this program is not started from an elevated shell: it calls gupkg and asks 
+for administrator rights itself. Run it from a normal shell.
+E           gupkg_ui.startup.StartupError: this program is not started from an elevated shell: it calls gupkg and asks 
+for administrator rights itself. Run it from a normal shell.
+E           gupkg_ui.startup.StartupError: this program is not started from an elevated shell: it calls gupkg and asks 
+for administrator rights itself. Run it from a normal shell.
+E       assert (2 == 7)
+E       assert (2 == 7)
+E       TypeError: UiEnvironment.__init__() missing 1 required positional argument: 'env'
+E       TypeError: UiEnvironment.__init__() missing 1 required positional argument: 'env'
+FAILED tests/test_ui_startup.py::test_an_elevated_run_with_an_admin_only_gupkg_starts_and_its_scope_is_the_systems
+FAILED tests/test_ui_startup.py::test_a_normal_run_manages_the_users_root - A...
+FAILED 
+tests/test_ui_startup.py::test_an_elevated_run_from_a_tree_standard_users_can_change_is_refused_with_the_scopes_message
+FAILED tests/test_ui_startup.py::test_the_checksum_policy_is_read_from_the_layers_of_the_run[ask]
+FAILED tests/test_ui_startup.py::test_the_checksum_policy_is_read_from_the_layers_of_the_run[refuse]
+FAILED tests/test_ui_startup.py::test_the_checksum_policy_is_read_from_the_layers_of_the_run[skip]
+FAILED tests/test_cli_grammar.py::test_each_ui_forwarder_starts_from_an_elevated_shell_and_does_not_refuse[tui]
+FAILED tests/test_cli_grammar.py::test_each_ui_forwarder_starts_from_an_elevated_shell_and_does_not_refuse[manager]
+FAILED tests/test_ui_flows.py::test_an_update_of_three_packages_makes_one_plan_one_confirmation_and_one_call_with_all_t
+hree_targets
+FAILED 
+tests/test_ui_screens.py::test_the_browser_shows_the_scope_in_the_title_and_the_status_line_and_has_no_mode_column
+10 failed in 1.00s
+
+

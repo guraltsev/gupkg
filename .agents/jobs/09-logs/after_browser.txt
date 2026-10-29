@@ -1,0 +1,13 @@
+﻿app title: 'gupkg-manager' | sub_title: 'user · C:\\Users\\GURALT~1\\AppData\\Local\\Temp\\tmppiwxiyo4\\roots\\user'
+ Enter open  / find  a avail  c check  u update  U all  s sync  ? help  q quit
+ Name   Version  Status            Registry
+ alpha  1.0.0    outdated → 2.0.0  -
+ beta   1.0.0    outdated → 2.0.0  -
+
+
+
+
+
+
+
+ user · 2 packages · 2 outdated · 0 broken · registry main @ 4f2a9c1 (synced never) · root C:\Users\GURALT~1\AppData\Local\Temp\tmppiwxiyo4\roots\user
