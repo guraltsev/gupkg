@@ -573,3 +573,72 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
    use a package definition with a different name.` and exit code 2; `<root>\two\current` does not exist and `<root>\bin` holds only the files of `one`. Then
    `gupkg --root <test root> uninstall one` and `install two` succeed. Also `install one two` in a fresh root names both packages and installs neither. Why manual:
    shows the real message and the real folders once.
+
+## Acceptance of issue 035 on a test machine (issue 035, task T13)
+
+Setup for all entries below (never `C:\opt`, never `%USERPROFILE%\opt`, never the real Start Menu or `PATH`). From an **administrator** PowerShell:
+`$T = "$env:TEMP\t13-manual"; mkdir $T\sys, $T\user, $T\sysbin, $T\userbin, $T\sysmenu, $T\usermenu`, then
+`icacls $T\sys /inheritance:r /grant:r "*S-1-5-32-544:(OI)(CI)F" "*S-1-5-18:(OI)(CI)F"` (administrators and SYSTEM only). Put
+`schema = 4`, `[integration] bin = '<folder>'`, `start_menu = '<folder>'` in `$T\user\.gupkg\settings.toml` and (admin-only, by the same `icacls`)
+in `$T\sys\.gupkg\settings.toml`, pointing at the `*bin` and `*menu` folders. Use a gupkg tree that is admin-only (a release copied under
+`$T\sys`, or the installed system gupkg), started with `--root $T\sys` (elevated) or `--root $T\user` (normal). Use local test packages
+(a folder with `pkg.toml`, `[source] shipped = true` and an `App\` folder), so nothing needs the network. Delete `$T` at the end
+(`icacls $T /reset /t` first when a folder refuses deletion).
+
+1. **`035-T13-1` The system run never considers the user root (issue 035 section 9 item 1, elevated half).** In `$T\user` create a
+   `.gupkg\settings.toml` that is not TOML, a `.gupkg\state.toml` of junk, a package `poison\1.0.0` whose `pkg.toml` has
+   `[source] script = "pkg.local/populate.cmd"` and a `populate.cmd` that runs `echo x > %TEMP%\T13-MARKER`, and a registry cache
+   `.gupkg\registry\main\trees\<40 hex digits other than the system cache's>` with `pkgs\` and `registry.toml`. From the administrator shell
+   run, each with `--root $T\sys`: `gupkg list`, `gupkg check`, `gupkg install <local package> --yes`, `gupkg update <it> --yes` (after
+   adding a newer version folder), `gupkg cleanup --yes`, `gupkg registry sync`, and `gupkg manager` (press `a`, `q`). Expect: every
+   command exits 0 (the sync only if a registry source is reachable; otherwise the failure names only the system root), no line of any
+   output names `$T\user` or `poison`, `%TEMP%\T13-MARKER` does not exist. Swap the roles from a normal shell with `--root $T\user`
+   and a poisoned `$T\sys` (its `settings.toml` is then unreadable to you: grant `Users` read on it for the experiment only): the same
+   result. Automated counterpart with a fake machine: `tests/test_scope_isolation.py`. Why manual: needs a real elevated token and real ACLs.
+2. **`035-T13-2` Fresh install of gupkg by the bootstrap, system and user (item 3).** On a VM or a machine without gupkg, run
+   `gupkg-bootstrap.cmd -Scope user` from a normal shell and `-Scope system` from an administrator shell (with a release ZIP or folder as source).
+   Expect `current` to exist, `gupkg self status` to say `ok`, the Start Menu folder `opt` to hold "gupkg manager" (user) and "gupkg manager" plus
+   "gupkg manager (administrator)" (system), and the manager title to read `user · <root>` or `system · <root>`. Open the
+   administrator shortcut: UAC prompt, then the system manager (see also `035-T08-1`). Why manual: clean machine, real UAC.
+3. **`035-T13-3` gupkg updates itself with a failure part-way (item 4).** With gupkg installed in each mode on the test machine and a newer
+   release published (a test release ZIP, or the real next release), run `gupkg self update` in the mode's own shell. Expect `current` to name
+   the new version and `gupkg self status` to say `ok`. Then repeat with a failure part-way: (a) disconnect the network before the download: exit code 3,
+   `current` unchanged, the message says nothing was changed; (b) hold a file of the new version open (`[IO.File]::Open(path,'Open','Read','None')`
+   in another PowerShell) so the finish step fails: expect exit code 3, and read `gupkg self status`, `<root>\gupkg\current` and the message: `current`
+   must still be a working junction (to the old or the new version, never missing) and the message must say which. (In the 2026-10-29 trial with an
+   ordinary package, the update reported `failed` after `current` had already moved to the new version, and the message did not say so; see the T13
+   report.) After each failure run `gupkg self repair` and then a launcher (`<bin>\gupkg.exe list`): it starts. Why manual: a real self update needs a
+   release download and the real running interpreter behind the junction (AGENTS rule 6).
+4. **`035-T13-4` First manager run with an empty registry, in each mode, with a real sync (item 5).** Start from a root without `.gupkg\registry`. Start
+   `gupkg-manager` (normal shell for the user root, the administrator shortcut for the system root). Expect the hint line
+   `s DOWNLOAD THE REGISTRY  a avail ...`, the status line `registry main: NOT DOWNLOADED`, and the title `<mode> · <root>`. Press `s`: the run view
+   shows `registry sync`, then `ok`, and the status line shows `registry main @ <revision>`; press `a`: packages are listed (a system-only package is
+   marked `(system only)` in the user mode and the reverse in the system mode); select one and install it with the key the hint line names: the install
+   shows each phase and ends with `ok <name> <version>: installed`, and the package appears in the list as `installed`. It needs the converted registry
+   (the local clone `gupkg-registry` at merge `da73597`, pushed) and the network. Why manual: the registry on GitHub is still the old one, and a real
+   sync and a real download need the network.
+5. **`035-T13-5` Update, check, repair and uninstall in the system mode (item 6, system half).** Elevated, `--root $T\sys`, with two local versions of a
+   package: `install` the first; copy in the second and `update`; change a file of `current\App` and run `check` (expect `unhealthy` and the file name,
+   exit code 3); delete `<sysbin>\<shim>.exe` and run `check --fix --yes` (the shim returns); `uninstall`, then `uninstall --purge --yes`. Each prints its
+   result. Then `install` a portable package (`modes = ["portable"]`): exit code 2 before any file is created (`<root>` and `<sysbin>` unchanged) and a
+   message that says it installs only for a single user (see `035-T02-2`). Why manual: needs an elevated token.
+6. **`035-T13-6` Mode restrictions, elevated half (item 7).** Elevated: a package with `modes = ["system"]` installs; a package with `modes = ["user"]` is
+   refused with exit code 2 and "Run gupkg without administrator rights", and `<sysroot>` and `<sysbin>` are identical before and after (compare
+   `Get-ChildItem -Recurse` with sizes and times). A new version that narrows `modes` to the other mode: `gupkg update <name>` exits 2, says why, and the
+   installed version still runs. Why manual: needs an elevated token. (The user-mode half was run on 2026-10-29 and is in the T13 report.)
+7. **`035-T13-7` The system rows of the root fallback chain (item 8).** Elevated, run `gupkg install <local package> --yes` and read the Resolve line
+   each time: (1) `--root $T\sys` gives `system root <T>\sys (--root)`; (2) without `--root`, from the system gupkg installed in a root, gives `(the
+   installed system gupkg)`; (3) from a gupkg whose `$App\settings.toml` has `[roots] system = '<admin-only folder>'` and which is installed nowhere (a
+   bundled copy in an admin-only folder) gives `($App\settings.toml)`; (4) with nothing set gives `system root C:\opt (built-in default)`: **run (4) only on a
+   VM**. In a normal shell, user row 4: run a gupkg program that is installed in an admin-only root (the system gupkg) with a `$App\settings.toml` that has
+   `[roots] user = '<folder>'`: `user root <folder> ($App\settings.toml)`; row 3 does not win because that root is admin-only. The elevated launcher refusals
+   (a `PATH` entry in a user-writable folder is skipped and named; a `gupkg-location` that names a user-writable tree; a shim whose config or target is
+   user-writable) are `035-T11-1`. Why manual: needs a real elevated token and real ACLs.
+8. **`035-T13-8` Failures in the system mode, and the elevated start of a user-installed gupkg (item 9).** (a) From an administrator shell start a gupkg
+   that is installed in a user-writable root: exit code 2, "an elevated gupkg must be installed in an admin-only root; run the system gupkg" (see
+   `035-T05-2`), nothing read or written under the test roots. (b) Elevated, offline: `gupkg registry sync` exits 3, names the registry and says the
+   previous tree stays; the roots are unchanged. (c) Elevated, with a file of `<sysroot>\<pkg>\current\App` held open: `uninstall --purge` exits 3; read the
+   message, then close the program and repeat: it succeeds (the user-mode trial showed that the first attempt had already removed the shim and `current`;
+   the message must say that). (d) Elevated, with `<sysroot>\<pkg>\current` removed (`cmd /c rmdir`): `gupkg list`, `check` and `check --fix` must say the
+   package is broken or not installed and how to recover (the user-mode trial printed `ok: not-installed`; see the T13 report). Why manual: needs an
+   elevated token.
