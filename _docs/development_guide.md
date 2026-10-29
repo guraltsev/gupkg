@@ -1,7 +1,7 @@
 # Development guide
 
 This page summarizes the module map and the testing approach of gupkg 1.0. The full design, with the
-decision table D1-D46 and the reasons, is [rehaul_design.md](rehaul_design.md) (sections 12 and 16 are
+decision table D1-D55 and the reasons, is [rehaul_design.md](rehaul_design.md) (sections 12 and 16 are
 summarized here); the per-module description is [src/gupkg/README.md](../src/gupkg/README.md). Style and test
 rules are in [python_rules.md](python_rules.md), [docstring_schema.md](docstring_schema.md) and [tests.md](tests.md).
 
@@ -9,7 +9,7 @@ rules are in [python_rules.md](python_rules.md), [docstring_schema.md](docstring
 
 ```text
 src/gupkg/            core (the `gupkg` command)
-  model/       pure data, no I/O: versions, pkg.toml format 2, settings, install modes, package state, plans, checksum policy
+  model/       pure data, no I/O: versions, pkg.toml format 2, settings (schema 4), the run's scope and mode check, package state, plans, checksum policy
   catalog/     discovery and joins over the roots and registry caches; the only place package state is derived
   services/    built-in declarative operations: HTTP client, track providers, unpack, [[prepare]], checksum, fingerprints, hooks
   system/      THE side-effect boundary: port.py (the System protocol), windows.py (real), fake.py (tests and --sandbox)
@@ -17,8 +17,8 @@ src/gupkg/            core (the `gupkg` command)
   report/      events, the Rich console renderer, log files, the --json documents
   selfmgmt/    gupkg's own tree: where it lives, MANIFEST.sha256 status, elevated-run trust checks
   launchers/   the one template of install.cmd, gupkg-tui.cmd and check-updates.cmd
-  modes.py, relaunch.py, distcopy.py   target -> mode, the one elevation step, copying a distribution into a root
-  cli.py       the grammar -> lifecycle calls -> exit code; --json, --plan, --events-file, --no-input; the forwarders
+  scope.py, settingsload.py, targets.py, distcopy.py   the one Scope of a run (mode from the process token, root), its settings, target -> package, copying a distribution into the root
+  cli.py       the grammar -> lifecycle calls -> exit code; --json, --plan, --events-file, --no-input; the pass-through commands tui and manager
 src/gupkg_ui/         shared by the two UI programs; reads through core, never the engine
 src/gupkg_tui/        gupkg-tui: one package's view
 src/gupkg_manager/    gupkg-manager: the browser and the batch commands (check-updates --all, update --all, check)
@@ -32,7 +32,9 @@ Dependency rules:
 - The separate programs build on core (D44): `gupkg_ui`, `gupkg_tui`, and `gupkg_manager` may import core, and core
   never imports them. The UI programs use core only to read; every operation they perform is a `gupkg` call through the machine
   interface (`--json`, `--plan`, `--events-file`, `--no-input`), to the `gupkg.cmd` of their own tree.
-- Core contains no code for 0.17 data (D33): no format 1 reader, no `_bootstrap` handling, no aliases.
+- Core contains no code for 0.17 data (D33, D54): no format 1 reader, no `_bootstrap` handling, no migration of old layouts, no aliases.
+- A run has one `Scope`, built once at process start from the process token (D47). Nothing below `cli` builds another one, and no
+  code starts an elevated copy of gupkg (D49).
 - The Windows registry is written, never read to learn anything (D18); a test checks the behaviour through `FakeSystem`'s access log.
 
 ## Testing
@@ -56,13 +58,13 @@ Dependency rules:
 
 A version directory carries `install.cmd` and `gupkg-tui.cmd` (a tracker folder carries `check-updates.cmd`), all generated from the one
 template in `gupkg.launchers` by whichever gupkg runs `check-updates`, `pkg new/bundle/export`, or the registry tool.
-They find a gupkg relative to themselves (the root forwarder, then the bundled copy) and forward their arguments through `cmd.exe`, so
+They find a gupkg relative to themselves (the bundled copy, then the folder in `<root>\.gupkg\gupkg-location`, then `PATH`; an elevated launcher takes only admin-only candidates) and forward their arguments through `cmd.exe`, so
 a `%`, `^` or `"` inside a forwarded argument is re-expanded by `cmd`: call `gupkg` directly for such values (documented, not fixed).
 
 The Python package folder of a release (`gupkg\gupkg\`) also holds `gupkg.exe`, `gupkg-tui.exe` and so on beside their `.config.toml` (a `cmd /d /s /c <name>.cmd` shim made by
 `tools/build_standalone.py`). Their relative argument `gupkg.cmd` is resolved by `cmd.exe` against the *current directory*, not the shim's
 folder, so they work only when started from their own folder. The shims that gupkg installs from `pkg.toml` do not use them: they target
-`$App\gupkg.cmd` by absolute path. The tree's own `.cmd` wrappers are what the root forwarder, the package launchers and the UI programs call.
+`$App\gupkg.cmd` by absolute path. The tree's own `.cmd` wrappers are what `gupkg-location`, the package launchers and the UI programs call.
 
 ### One distribution, built in the development tree
 
