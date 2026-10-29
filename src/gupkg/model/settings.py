@@ -34,9 +34,8 @@ LAYER_DEFAULTS = "defaults"
 LAYER_APP = "app"
 LAYER_SYSTEM = "system"
 LAYER_USER = "user"
-LAYER_PORTABLE = "portable"
 LAYER_CLI = "cli"
-LAYER_NAMES = (LAYER_DEFAULTS, LAYER_APP, LAYER_SYSTEM, LAYER_USER, LAYER_PORTABLE, LAYER_CLI)
+LAYER_NAMES = (LAYER_DEFAULTS, LAYER_APP, LAYER_SYSTEM, LAYER_USER, LAYER_CLI)
 
 OFFICIAL_REGISTRY_SOURCE = "https://github.com/guraltsev/gupkg-registry.git"
 _REGISTRY_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -89,11 +88,10 @@ def _count(value: Any) -> int:
 # ``[[registry]]`` array are handled separately.
 _SCHEMA: dict[str, Any] = {
     "default_mode": _choice("auto", "system", "user"),
-    "roots": {"system": _text, "user": _text, "portable": _text},
+    "roots": {"system": _text, "user": _text},
     "integration": {
         "system": {"bin": _text, "start_menu": _text},
-        "user": {"bin": _text, "start_menu": _text},
-        "portable": {"integrate": _choice("user", "none")},
+        "user": {"bin": _text, "start_menu": _text, "integrate": _choice("full", "none")},
     },
     "manager": {"checksum_missing": _choice("ask", "refuse", "skip"), "keep_screen": _boolean},
     "logs": {"keep_runs": _count, "keep_days": _count},
@@ -268,7 +266,6 @@ def default_layer() -> Layer:
             "roots": {
                 "system": "C:\\opt",
                 "user": "%USERPROFILE%\\opt",
-                "portable": "%USERPROFILE%\\opt-portable",
             },
             "integration": {
                 "system": {
@@ -278,8 +275,8 @@ def default_layer() -> Layer:
                 "user": {
                     "bin": "%USERPROFILE%\\bin",
                     "start_menu": "%APPDATA%\\Microsoft\\Windows\\Start Menu\\opt",
+                    "integrate": "full",
                 },
-                "portable": {"integrate": "user"},
             },
             "manager": {"checksum_missing": "ask", "keep_screen": True},
             "registry": [{"name": "main", "source": OFFICIAL_REGISTRY_SOURCE}],
