@@ -20,8 +20,8 @@ Not recorded yet. Before T00, the controller records:
 | T01 | Remove migration code | T00 | merged | i035/T01 | 91faed3 | 3765 passed, 0 failed, 11 skipped | none |
 | T02 | Portable is a package kind; mode restriction | T01 | merged | i035/T02 | 30030c3 | 3720 passed, 0 failed, 11 skipped | 035-T02-1, 035-T02-2 (tests/manual_smoke.md) |
 | T03 | Registry conversion (gupkg-registry) | T02 | merged | i035/T03 (registry) | registry da73597 | registry _tests 212 passed; pkg_check.py --all: 192 directories checked, no error; registry_tool validate: 95 packages, 97 pinned versions, 0 hook files, 1 unpinned: OK | none |
-| T04 | Settings schema 4 and root fallback chain | T02 | in review | i035/T04 | | | | |
-| T05 | Scope object; mode from the token | T04 | waiting | | | | |
+| T04 | Settings schema 4 and root fallback chain | T02 | merged | i035/T04 | 6ab01f8 | 3720 passed, 0 failed, 11 skipped | none | |
+| T05 | Scope object; mode from the token | T04 | in progress | i035/T05 | | | |
 | T06 | Catalog over one root | T05 | waiting | | | | |
 | T07 | Remove the elevated relaunch | T06 | waiting | | | | |
 | T08 | Run-as-administrator shortcut | T07 | waiting | | | | |
@@ -46,6 +46,7 @@ Not recorded yet. Before T00, the controller records:
   2. `X` and `X-portable` declare identical shim and shortcut names (e.g. `keypirinha`/`Keypirinha`, `copyq`/`CopyQ`). Installed together in one root they collide. Owner decision: distinct names for the portable twins, or mutual exclusion?
   3. The copyq step is `write = { path = "unins000.exe", content = "" }` (the literal `["create", "unins000.exe"]` is not a verb of the plain `[[prepare]]`). Reviewer confirmed it creates the empty file; it now also runs in system mode, as the issue accepts.
   4. `gupkg-registry/README.md` line ~101 still mentions `[nonportable] remove` (stale; registry docs outside T03's list). `_tools/convert_035.py` is a one-shot tool left in `_tools`; owner may delete it.
+- Non-blocking, from T04 review, handed to T05 (they are T05's to finish): `integrate = "none"` is silently ignored in system mode (`build_mode_context`); `gupkg_ui/settings.py` `checksum_policy(mode)` reads only the user-mode layers; `modes.py` "roots differ" check and stale wording (modes.py:25, :153, :222-229; model/settings.py:311 `default_layer()` docstring); `MODE_SYSTEM`/`MODE_USER` defined twice (model/settings.py, model/mode.py). `test_a_user_run_never_reads_the_system_root` is weak (uses the user root as `root=`); a variant with both `[roots]` keys set is wanted. README/_docs/operations.md still describe `default_mode`, `[integration.system|user]` (operations.md:67 `schema = 3`): T12.
 - Non-blocking, from the T00 review (rulings needed by the task that touches them):
   1. Machine-interface `--json` results and `--plan` documents still carry a per-target `mode` and `requires_elevation`
      (design §10.4). Issue 035 §4.3 only says `list --json` carries `mode`/`root` once. Needed by T07 (api 2). Suggest: drop
@@ -91,3 +92,4 @@ Owner commit not pushed yet (goes to GitHub together with T03): `9fba5c5 volta: 
 - 2026-10-29: T03 reviewed (0 blocking; CRLF in convert_035.py fixed as cc24abf); merged in the registry as da73597; registry tests 212 passed, validator OK. Check 6: 1.0.8 validator accepts the converted registry. T04 ready.
 - 2026-10-29: T04 dispatched on i035/T04.
 - 2026-10-29: T04 worker reported (37a6c60, 4c5db47; 3722 passed at 37a6c60); review round 1 started.
+- 2026-10-29: T04 reviewed (0 blocking, 8 minor), merged as 6ab01f8; suite 3720 passed, 11 skipped. T05 dispatched.
