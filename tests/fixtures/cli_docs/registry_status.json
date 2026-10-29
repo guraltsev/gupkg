@@ -1,0 +1,19 @@
+{
+  "api": 2,
+  "command": "registry status",
+  "ok": true,
+  "exit_code": 0,
+  "mode": "user",
+  "registries": [
+    {
+      "name": "main",
+      "source": "https://example.org/main.zip",
+      "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "synchronized_at": null,
+      "last_failure": null,
+      "cache": "@ROOT@\\home\\opt\\.gupkg\\registry\\main",
+      "packages": 3,
+      "problems": []
+    }
+  ]
+}

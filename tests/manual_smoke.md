@@ -549,3 +549,6 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
    Start Menu entry "gupkg manager (administrator)" (accept UAC): the title reads `system · <root>`, the status line starts with `system`, and only the
    system packages are listed. Press `a`: a package that the mode cannot install shows `available (system only)` or `(user only)` and, with the cursor on
    it, the status line gives the CLI's reason. Why manual: needs a real terminal title and a real UAC prompt.
+
+## The manager reads in-process and shows what it cannot read (issue 035, task T10)
+. **`035-T10-1` A read that fails is visible.** In a normal terminal start `gupkg-manager`. Make the registry cache unreadable (rename `<root>\.gupkg\registry\main\state.toml` to a folder, or lock it), press `r`: the status line shows `ERROR: registry unreadable: ...` (or `package list unreadable`) and a red notification gives the full text; the list stays usable. Restore the file and press `r`: the error goes away. Why manual: needs a real root and a real file lock.

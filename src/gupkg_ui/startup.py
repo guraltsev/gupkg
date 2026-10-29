@@ -33,6 +33,7 @@ from gupkg.system.port import System
 from gupkg.system.windows import WindowsSystem
 
 from .client import Client, ClientError, sibling_launcher
+from .reads import Reads
 from .settings import UiSettings, load_ui_settings
 
 
@@ -47,7 +48,12 @@ def shorten_path(path: str, home: str | None = None, width: int = SHORT_ROOT) ->
         text = "~" + text[len(base):]
     if len(text) <= width:
         return text
-    head, *folders = text.split("\\")
+    parts = text.split("\\")
+    if text.startswith("\\\\") and len(parts) > 4:
+        # A UNC path keeps ``\\server\share`` as its head: which share is managed must never be hidden.
+        head, folders = "\\".join(parts[:4]), parts[4:]
+    else:
+        head, folders = parts[0], parts[1:]
     if not folders:
         return text[:width - 1] + "…"
 
@@ -84,6 +90,8 @@ class UiEnvironment:
         Where this gupkg lives and the machine boundary used for reading.
     env : mapping
         The environment of the program.
+    reads : Reads, optional
+        A replacement for the in-process reads (a test double); ``source`` builds the real ones from the scope and the machine.
     """
 
     client: Client
@@ -91,6 +99,12 @@ class UiEnvironment:
     location: RunningGupkg
     system: System
     env: Mapping[str, str]
+    reads: Reads | None = None
+
+    @property
+    def source(self) -> Reads:
+        """Return the in-process reads of the run's scope (the inventory, a package, the registry state); the field ``reads`` replaces them (tests)."""
+        return self.reads if self.reads is not None else Reads(self.scope, self.system)
 
     @property
     def scope(self) -> Scope:
@@ -124,6 +138,7 @@ def build_environment(
     system: System | None = None,
     env: Mapping[str, str] | None = None,
     command: Sequence[str] | None = None,
+    reads: Reads | None = None,
 ) -> UiEnvironment:
     """Build the environment of a UI program from its parsed root options.
 
@@ -139,6 +154,8 @@ def build_environment(
         The environment; ``os.environ`` by default.
     command : sequence of str, optional
         The program that stands for ``gupkg``; the sibling ``gupkg.cmd`` by default. Tests pass a double.
+    reads : Reads, optional
+        A replacement for the in-process reads; tests pass a double that serves recorded documents.
 
     Raises
     ------
@@ -165,4 +182,4 @@ def build_environment(
         raise StartupError(str(error)) from error
     except (SettingsError, OSError, ValueError) as error:
         raise StartupError(f"cannot read the settings: {error}") from error
-    return UiEnvironment(Client(program, options, environment), settings, where, machine, environment)
+    return UiEnvironment(Client(program, options, environment), settings, where, machine, environment, reads)

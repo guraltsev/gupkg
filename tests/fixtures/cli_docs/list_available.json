@@ -1,0 +1,47 @@
+{
+  "api": 2,
+  "command": "list",
+  "ok": true,
+  "exit_code": 0,
+  "mode": "user",
+  "root": "@ROOT@\\home\\opt",
+  "packages": [
+    {
+      "name": "copyq",
+      "status": "available",
+      "version": null,
+      "newest_known": "1.0.0",
+      "path": null,
+      "restriction": null,
+      "restriction_reason": null,
+      "following": "main/copyq",
+      "problems": [],
+      "warnings": []
+    },
+    {
+      "name": "drv",
+      "status": "available",
+      "version": null,
+      "newest_known": "1.0.0",
+      "path": null,
+      "restriction": "system only",
+      "restriction_reason": "This package installs only system-wide. Run gupkg as administrator: use the Start Menu entry \"gupkg manager (administrator)\", or run in an administrator shell: gupkg install drv",
+      "following": "main/drv",
+      "problems": [],
+      "warnings": []
+    },
+    {
+      "name": "graphviz",
+      "status": "available",
+      "version": null,
+      "newest_known": "1.0.0",
+      "path": null,
+      "restriction": null,
+      "restriction_reason": null,
+      "following": "main/graphviz",
+      "problems": [],
+      "warnings": []
+    }
+  ],
+  "warnings": []
+}

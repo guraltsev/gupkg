@@ -7,7 +7,7 @@ and coming back never restarts the program: the browser stays below, so its filt
 
 Usage and API
 -------------
-``BrowserScreen`` is the first screen of ``ManagerApp``; it reads the inventory with ``gupkg list --json`` through ``load_inventory``.
+``BrowserScreen`` is the first screen of ``ManagerApp``; it reads the inventory in-process (the core behind ``gupkg list --json``) through ``load_inventory``.
 
 Implementation Approach
 -----------------------
@@ -24,8 +24,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.widgets import DataTable, Input
 
-from gupkg_ui.client import ClientError, targets_after_options
-from gupkg_ui.plans import PackageRow, read_info
+from gupkg_ui.plans import PackageRow
 from gupkg_ui.render import literal
 from gupkg_ui.screens.actions import PackageActions
 from gupkg_ui.screens.frame import FrameScreen
@@ -93,12 +92,12 @@ class BrowserScreen(PackageActions, FrameScreen):
         self.run_worker(self._load(), name="inventory", exclusive=True, exit_on_error=False)
 
     async def _load(self) -> None:
-        """Read ``gupkg list --json`` and the registry state, then show the rows."""
+        """Read the inventory and the registry state in-process, then show the rows; a read that fails shows ``ERROR:`` in the status line and its full text in a notification."""
         try:
             self.rows = await load_inventory(self.app.env, available=self.available)
             self.error = None
-        except ClientError as error:
-            self.error = str(error)
+        except Exception as error:  # noqa: BLE001 - every failure of the read is shown, never dropped
+            self.error = self.app.report_problem("package list unreadable", error)
         self.loaded = True
         await self.app.read_registry()
         self.app.set_inventory(self.rows, self.error)
@@ -119,14 +118,21 @@ class BrowserScreen(PackageActions, FrameScreen):
         """Rebuild the table from the visible rows and put the cursor back on the row that was selected."""
         table = self.query_one(DataTable)
         keep = self.selected_target()
-        table.clear()
+        cells = []
         for row in self._visible():
             newer = f" → {row.newest_known}" if row.status == "outdated" and row.newest_known else ""
-            table.add_row(
-                Text(literal(row.name, limit=60)), Text(literal(row.version or "-", limit=30)),
-                Text(literal(row.status + newer + (f" ({row.restriction})" if row.restriction else ""), limit=60)), Text(literal(row.following or "-", limit=60)), key=row.target,
-            )
-        if keep is not None and keep in [item.target for item in self._visible()]:
+            cells.append((row.target, (
+                literal(row.name, limit=60), literal(row.version or "-", limit=30),
+                literal(row.status + newer + (f" ({row.restriction})" if row.restriction else ""), limit=60), literal(row.following or "-", limit=60),
+            )))
+
+        # The column widths are set here from the cells: Textual measures them on an idle event, which a fast in-process read can outrun (the table then stays at header width).
+        table.clear(columns=True)
+        for index, label in enumerate(("Name", "Version", "Status", "Registry")):
+            table.add_column(label, width=max([len(label), *(len(texts[index]) for _, texts in cells)]))
+        for target, texts in cells:
+            table.add_row(*(Text(text) for text in texts), key=target)
+        if keep is not None and keep in [target for target, _ in cells]:
             table.move_cursor(row=table.get_row_index(keep))
         self.refresh_frame()
 
@@ -232,13 +238,13 @@ class BrowserScreen(PackageActions, FrameScreen):
             self.run_worker(self._show_log(row), name="logs", exit_on_error=False)
 
     async def _show_log(self, row: PackageRow) -> None:
-        """Find the package's log through ``gupkg info`` and show it."""
+        """Find the package's log through the in-process ``info`` read and show it."""
         try:
-            info = read_info(await self.app.env.client.query(targets_after_options("info", [], [row.target])))
-        except ClientError as error:
-            self.notify(literal(error), severity="error", markup=False)
+            info = await self.app.env.source.info(row.target)
+        except Exception as error:  # noqa: BLE001 - every failure of the read is shown
+            self.app.report_problem(f"package {literal(row.name, limit=60)} unreadable", error)
             return
-        self.app.push_screen(LogScreen(info.log if info else None, Path(row.path) if row.path else None, row.name))
+        self.app.push_screen(LogScreen(info.log, Path(row.path) if row.path else None, row.name))
 
     def action_sync_registry(self) -> None:
         """Download the registries, so that ``a`` has packages to show."""

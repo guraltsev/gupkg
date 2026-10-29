@@ -74,6 +74,7 @@ def test_the_checksum_policy_is_read_from_the_layers_of_the_run(tmp_path: Path, 
         pytest.param("C:\\opt", "C:\\Users\\me", "C:\\opt", id="short-stays"),
         pytest.param("C:\\Users\\me\\opt", "C:\\Users\\me", "~\\opt", id="home-is-tilde"),
         pytest.param("C:\\Users\\mess\\opt", "C:\\Users\\me", "C:\\Users\\mess\\opt", id="a-longer-name-is-not-home"),
+        pytest.param("\\\\fileserver\\share\\team\\projects\\gupkg\\root\\opt\\very\\long\\path", None, "\\\\fileserver\\share\\…\\opt\\very\\long\\path", id="unc-keeps-server-and-share"),
         pytest.param("D:\\a\\very\\long\\folder\\chain\\that\\goes\\on\\and\\on\\and\\on\\roots\\user", None, "D:\\…\\goes\\on\\and\\on\\and\\on\\roots\\user", id="middle-is-cut"),
     ],
 )

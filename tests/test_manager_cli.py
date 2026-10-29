@@ -45,7 +45,7 @@ def manager(tmp_path: Path, fake: FakeGupkg, *argv: str, typed: str | None = Non
     environment = {**fake.client().env, **env.env}
     code = cli.main(
         ["--settings", str(tmp_path / "ui-settings.toml"), *argv], location=env.location, system=FakeSystem(tmp_path / "machine", elevated=elevated),
-        env=environment, command=fake.client().command, stdin=source, stdout=out, stderr=err,
+        env=environment, command=fake.client().command, stdin=source, stdout=out, stderr=err, reads=fake.reads(),
     )
     return code, out.getvalue(), err.getvalue()
 
@@ -137,7 +137,7 @@ def test_nothing_to_update_is_success(fake: FakeGupkg, tmp_path: Path) -> None:
 
     code, out, _ = manager(tmp_path, fake, "update", "--all", "--yes")
 
-    assert code == 0 and "No packages to update" in out and [item["key"] for item in fake.calls()] == ["list"]
+    assert code == 0 and "No packages to update" in out and fake.read_calls() == ["list"] and fake.calls() == []
 
 
 def test_check_updates_all_is_one_call_without_questions(fake: FakeGupkg, tmp_path: Path) -> None:
@@ -170,7 +170,7 @@ def test_check_with_fix_needs_a_yes(fake: FakeGupkg, tmp_path: Path) -> None:
 
     code, out, _ = manager(tmp_path, fake, "check", "--fix")
 
-    assert code == 5 and [item["key"] for item in fake.calls()] == ["list"]
+    assert code == 5 and fake.read_calls() == ["list"] and fake.calls() == []
 
 
 @pytest.mark.parametrize("command", ["update", "check-updates"])
@@ -189,8 +189,8 @@ def test_an_elevated_run_from_a_gupkg_tree_that_standard_users_can_change_is_ref
 
 
 def test_an_unreadable_package_list_is_a_failure(fake: FakeGupkg, tmp_path: Path) -> None:
-    """If ``gupkg list`` prints nothing readable the command fails with exit 3 and says why; nothing is planned."""
-    fake.respond("list", raw="garbage", exit=0)
+    """If the listing cannot be read (a document the reader refuses) the command fails with exit 3 and says why; nothing is planned."""
+    fake.respond("list", doc={"garbage": True})
 
     code, _, err = manager(tmp_path, fake, "update", "--all", "--yes")
 

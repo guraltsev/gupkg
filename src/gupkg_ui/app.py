@@ -57,14 +57,16 @@ class UiApp(App[int]):
         """Return the program's own pieces of the status line (counts, registry); the subclass overrides this."""
         return []
 
-    def status_line(self, own: str = "") -> str:
+    def status_line(self, own: str = "", *, own_first: bool = False) -> str:
         """Return the status line: the run's scope, the program's counts and registry, then where the latest log is.
 
         The scope comes first as ``user · <root>`` or ``system · <root>`` (the root shortened: ``~`` for the home folder, the middle of a long path as ``…``),
         so it is visible at 80 columns; a narrow terminal then clips the tail (the registry state), never the scope. The window title (``sub_title``)
-        carries the full root. *own* is what a screen adds about itself (the package view: the package and its status), right after the scope.
+        carries the full root. *own* is what a screen adds about itself (the package view: the package and its status), right after the scope. The run view
+        passes ``own_first=True``: the state of the run (``Synchronise the registry: Failed``) then comes before the scope, so a long root never pushes it out of an 80-column line.
         """
-        parts = [literal(self.env.scope_text, limit=80), own, *self.status_parts()]
+        scope = literal(self.env.scope_text, limit=80)
+        parts = [own, scope, *self.status_parts()] if own_first else [scope, own, *self.status_parts()]
         if self.last_outcome is not None and self.last_outcome.logs():
             parts.append(f"log: {literal(self.last_outcome.logs()[-1], limit=300)}")
         return " · ".join(part for part in parts if part)

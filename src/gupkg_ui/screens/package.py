@@ -7,7 +7,7 @@ logs (``l``). Every operation is a ``gupkg`` call through the shared flows; afte
 
 Usage and API
 -------------
-Push ``PackageScreen(target, row=None, root=False)`` in either program. ``target`` is a name or a folder; the view reads ``gupkg info <target> --json``.
+Push ``PackageScreen(target, row=None, root=False)`` in either program. ``target`` is a name or a folder; the view reads what ``gupkg info <target> --json`` reports, in-process.
 With ``root=True`` (``gupkg-tui``) Escape and ``q`` leave the program; otherwise Escape returns to the screen below.
 
 Implementation Approach
@@ -28,8 +28,9 @@ from textual.containers import VerticalScroll
 from textual.css.query import NoMatches
 from textual.widgets import Static
 
-from ..client import ClientError, targets_after_options
-from ..plans import PackageInfo, PackageRow, read_info
+from gupkg.report.documents import InfoRow, VersionRow
+
+from ..plans import PackageRow
 from ..render import literal
 from .actions import PackageActions
 from .frame import FrameScreen
@@ -37,7 +38,7 @@ from .logview import LogScreen
 from .versions import VersionPicker
 
 
-def info_lines(info: PackageInfo) -> list[Text]:
+def info_lines(info: InfoRow) -> list[Text]:
     """Return the lines of the package view for *info*: identity first, then problems, versions, registry, tracker, link, data, receipt and log."""
     row = info.row
     installed = literal(row.version) if row.version else "not installed"
@@ -48,39 +49,40 @@ def info_lines(info: PackageInfo) -> list[Text]:
         lines.append(Text(f"{literal(row.restriction)}: {literal(row.restriction_reason or '', limit=400)}", style="yellow"))
 
     # Problems and warnings first: they change what the person decides.
-    for reason in info.problems:
-        lines.append(Text(f"Problem: {reason}", style="bold red"))
+    for reason in row.problems:
+        lines.append(Text(f"Problem: {literal(reason)}", style="bold red"))
     for warning in (*row.warnings, *info.diverged):
-        lines.append(Text(f"Warning: {warning}", style="yellow"))
+        lines.append(Text(f"Warning: {literal(warning)}", style="yellow"))
     for note in info.notes:
-        lines.append(Text(f"Note: {note}", style="dim"))
+        lines.append(Text(f"Note: {literal(note.kind, limit=40)}: {literal(note.message)}", style="dim"))
     if row.path:
         lines.append(Text(f"folder: {literal(row.path)}"))
 
     # The versions in the package root, with the active one marked in words.
     lines.append(Text(""))
     lines.append(Text("Versions in the package folder", style="bold"))
-    for name, status, problems, label in info.versions or (("(none)", "", (), None),):
-        mark = "  (active)" if name == row.version else ""
-        extra = f"  {label}" if label else ""
-        problem = f"  PROBLEM: {'; '.join(problems)}" if problems else ""
-        lines.append(Text(f"  {name:<14} {status}{mark}{extra}{problem}"))
-    lines.append(Text(f"Registry versions: {', '.join(info.registry_versions) or 'none'}" + (f"   following: {literal(row.following)}" if row.following else "")))
+    for version in info.versions or (VersionRow("(none)", ""),):
+        name = literal(version.name, limit=80)
+        mark = "  (active)" if version.name == row.version else ""
+        extra = f"  {literal(version.label)}" if version.label else ""
+        problem = f"  PROBLEM: {literal('; '.join(version.problems))}" if version.problems else ""
+        lines.append(Text(f"  {name:<14} {literal(version.status, limit=40)}{mark}{extra}{problem}"))
+    lines.append(Text(f"Registry versions: {literal(', '.join(info.registry_versions)) or 'none'}" + (f"   following: {literal(row.following)}" if row.following else "")))
     if info.tracker is None:
         lines.append(Text("Tracker: none"))
     else:
-        valid, problems = info.tracker
-        lines.append(Text(f"Tracker: {'valid' if valid else 'INVALID: ' + '; '.join(problems)}"))
+        tracker = info.tracker
+        lines.append(Text(f"Tracker: {'valid' if tracker.valid else 'INVALID: ' + literal('; '.join(tracker.problems))}"))
     if info.link is not None:
-        registry, name, unlinked = info.link
-        lines.append(Text(f"Link: {'follows no registry entry' if unlinked else f'{literal(registry)}/{literal(name)}'}"))
+        link = info.link
+        lines.append(Text(f"Link: {'follows no registry entry' if link.unlinked else f'{literal(link.registry)}/{literal(link.name)}'}"))
 
     # What gupkg last did here.
     data = Path(row.path) / "data" if row.path else None
     lines.append(Text(f"Data folder: {literal(data)}" if data is not None and data.is_dir() else "Data folder: none"))
-    lines.append(Text(f"Last receipt: {info.receipts[-1] if info.receipts else 'none'}"))
+    lines.append(Text(f"Last receipt: {literal(info.receipts[-1]) if info.receipts else 'none'}"))
     if info.last_check:
-        lines.append(Text(f"Last check for updates: {info.last_check}"))
+        lines.append(Text(f"Last check for updates: {literal(info.last_check)}"))
     lines.append(Text(f"Log: {literal(info.log) if info.log else 'none yet'}"))
     return lines
 
@@ -111,7 +113,7 @@ class PackageScreen(PackageActions, FrameScreen):
         super().__init__()
         self._target = target
         self._root = root
-        self.info: PackageInfo | None = None
+        self.info: InfoRow | None = None
         self._row = row
         self._error: str | None = None
 
@@ -141,19 +143,22 @@ class PackageScreen(PackageActions, FrameScreen):
         self.reload()
 
     def reload(self) -> None:
-        """Read ``gupkg info`` again (in a worker) and show it."""
+        """Read the package again (in a worker, in-process) and show it."""
         self.run_worker(self._read(), name="read package", exclusive=True, exit_on_error=False)
 
     async def _read(self) -> None:
-        """Run ``gupkg info <target> --json`` and show the package, or the reason it cannot be shown."""
+        """Read what ``gupkg info <target> --json`` knows and show the package, or the reason it cannot be shown (the full text goes to the application's problems)."""
         try:
-            info = read_info(await self.app.env.client.query(targets_after_options("info", [], [self._target])))
-            self._error = None if info is not None else f"gupkg has no information about {literal(self._target, limit=200)}"
-        except ClientError as error:
+            info = await self.app.env.source.info(self._target)
+            self._error = None
+        except Exception as error:  # noqa: BLE001 - every failure of the read is shown
             info, self._error = None, str(error)
+            report = getattr(self.app, "report_problem", None)
+            if report is not None:
+                report(f"package {literal(self._target, limit=60)} unreadable", error)
         self.info = info if info is not None else self.info
         if info is not None:
-            self._row = replace(info.row, target_text=self._target if Path(self._target).is_absolute() else None)
+            self._row = replace(PackageRow.of(info.row), target_text=self._target if Path(self._target).is_absolute() else None)
         lines = info_lines(self.info) if self.info is not None else []
         if self._error:
             lines.insert(0, Text(f"Error: {literal(self._error)}", style="bold red"))
@@ -214,7 +219,7 @@ class PackageScreen(PackageActions, FrameScreen):
         if self.info is None or self._row is None:
             self.notify("The package is not known yet.", severity="warning", markup=False)
             return
-        others = [name for name, status, _, _ in self.info.versions if name != self.info.row.version]
+        others = [item.name for item in self.info.versions if item.name != self.info.row.version]
         if not others:
             self.notify("There is no other version to switch to.", severity="warning", markup=False)
             return

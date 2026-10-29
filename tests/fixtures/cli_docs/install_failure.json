@@ -1,0 +1,26 @@
+{
+  "api": 2,
+  "command": "install",
+  "ok": false,
+  "exit_code": 2,
+  "results": [
+    {
+      "package": "nothere",
+      "operation": "install",
+      "ok": false,
+      "status": "failed",
+      "version": null,
+      "previous": null,
+      "mode": null,
+      "exit_code": 2,
+      "receipt": null,
+      "log": null,
+      "warnings": [],
+      "error": {
+        "code": "not-found",
+        "message": "package 'nothere' was not found in the root or any registry"
+      }
+    }
+  ],
+  "warnings": []
+}

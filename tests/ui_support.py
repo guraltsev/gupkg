@@ -23,7 +23,9 @@ from typing import Any
 
 from gupkg.selfmgmt.location import RunningGupkg
 from gupkg.system.fake import FakeSystem
+from gupkg.report.documents import InfoRow, ListDocument, RegistryStatusDocument, read_info, read_list, read_registry_status
 from gupkg_ui.client import Client
+from gupkg_ui.reads import Reads, one_info
 from gupkg_ui.settings import load_ui_settings
 from gupkg_ui.startup import UiEnvironment
 
@@ -43,6 +45,17 @@ options = rest[: rest.index("--")] if "--" in rest else rest
 targets = rest[rest.index("--") + 1:] if "--" in rest else []
 name = options[options.index("--events-file") + 1] if "--events-file" in options else None
 key = command + (":plan" if "--plan" in options else "")
+# The full argument list (the command and its options, without the machine-interface flags) is the most exact key: ``list`` and ``list --available`` differ.
+skipped = {"--json", "--no-input"}
+full, held = [command], False
+for option in options:
+    if held:
+        held = False
+    elif option == "--events-file":
+        held = True
+    elif option not in skipped:
+        full.append(option)
+full_key = " ".join(full)
 
 def retry(function):
     """Try a file operation again a few times: a virus scanner or the test's own reader may hold the file for a moment on Windows."""
@@ -58,23 +71,24 @@ def retry(function):
 def bump():
     counts_path = base / "counts.json"
     counts = json.loads(counts_path.read_text()) if counts_path.exists() else {}
-    counts[key] = counts.get(key, 0) + 1
+    counts[matched] = counts.get(matched, 0) + 1
     counts_path.write_text(json.dumps(counts))
-    return counts[key] - 1
+    return counts[matched] - 1
 
 
 def log_call():
     with open(base / "calls.jsonl", "a", encoding="utf-8") as handle:
-        handle.write(json.dumps({"argv": args, "key": key, "targets": targets, "options": options, "elevated_env": os.environ.get("GUPKG_ELEVATED")}) + "\n")
+        handle.write(json.dumps({"argv": args, "key": key, "full_key": full_key, "targets": targets, "options": options, "elevated_env": os.environ.get("GUPKG_ELEVATED")}) + "\n")
 
 
+scenario = retry(lambda: json.loads((base / "scenario.json").read_text()))
+matched = next((name for name in (full_key, key, command) if scenario.get(name)), full_key)
 turn = retry(bump)
 retry(log_call)
 
-scenario = retry(lambda: json.loads((base / "scenario.json").read_text()))
-responses = scenario.get(key) or scenario.get(command) or []
+responses = scenario.get(matched) or []
 if not responses:
-    print("no scheduled response for " + key, file=sys.stderr)
+    print("no scheduled response for " + full_key, file=sys.stderr)
     sys.exit(97)
 response = responses[min(turn, len(responses) - 1)]
 
@@ -148,6 +162,9 @@ class FakeGupkg:
         self.temp.mkdir()
         (self.dir / "fake_gupkg.py").write_text(SCRIPT, encoding="utf-8")
         self.scenario: dict[str, list[dict[str, Any]]] = {}
+        # What the manager reads in-process (``list``, ``list --available``, ``info``, ``registry status``) is served by ``reads()``, not by the script.
+        self.read_scenario: dict[str, list[dict[str, Any]]] = {}
+        self.read_log: list[str] = []
         self._write()
 
     def _write(self) -> None:
@@ -155,9 +172,25 @@ class FakeGupkg:
         (self.dir / "scenario.json").write_text(json.dumps(self.scenario), encoding="utf-8")
 
     def respond(self, key: str, **response: Any) -> None:
-        """Schedule the next response for *key* (``update``, ``update:plan``, ``list``, ``check-updates`` ...); the last one repeats."""
+        """Schedule the next response for *key*; the last one repeats.
+
+        *key* is the full argument list of the call (``install --plan``), or the command word (``update``) or the command word with ``:plan`` (``update:plan``). The
+        reads of the manager (``READ_KEYS``: ``list``, ``list --available``, ``info``, ``registry status``) are served in-process by ``reads()``, not by the script;
+        their response holds ``doc``, or ``error`` (an exception to raise).
+        """
+        if key in READ_KEYS:
+            self.read_scenario.setdefault(key, []).append(response)
+            return
         self.scenario.setdefault(key, []).append(response)
         self._write()
+
+    def reads(self) -> FakeReads:
+        """Return the in-process reads double that serves the scheduled read responses."""
+        return FakeReads(self)
+
+    def read_calls(self) -> list[str]:
+        """Return the keys of the reads that were made, in order."""
+        return list(self.read_log)
 
     def client(self, *root_options: str) -> Client:
         """Return a ``Client`` that runs the double instead of the CLI, with an environment of its own (no ambient variable leaks in)."""
@@ -176,15 +209,54 @@ class FakeGupkg:
         return [item for item in map(json.loads, path.read_text(encoding="utf-8").splitlines()) if "saw_stop" in item] if path.exists() else []
 
 
-def load_fixture(name: str, root: Path) -> str:
-    """Return the recorded fixture *name* with ``@ROOT@`` replaced by *root* (JSON-escaped, which is also right inside a JSON line)."""
+READ_KEYS = ("list", "list --available", "info", "registry status")
+
+
+class FakeReads(Reads):
+    """The in-process reads of the manager, served from the documents a test scheduled (read through the same typed reader as the real ones).
+
+    The real ``Reads`` calls the core; this double returns what ``FakeGupkg.respond`` was given for ``list``, ``list --available``, ``info`` and ``registry status``
+    (a ``doc``, run through ``read_list``, ``read_info`` or ``read_registry_status``, or an ``error`` to raise). Every read is logged in ``FakeGupkg.read_log``.
+    """
+
+    def __init__(self, fake: FakeGupkg) -> None:
+        self._fake = fake
+        self._turns: dict[str, int] = {}
+
+    def _serve(self, key: str) -> Any:
+        """Return the scheduled document for *key* (the last one repeats), or raise the scheduled error."""
+        self._fake.read_log.append(key)
+        responses = self._fake.read_scenario.get(key)
+        assert responses, f"no scheduled read for {key}"
+        turn = self._turns.get(key, 0)
+        self._turns[key] = turn + 1
+        response = responses[min(turn, len(responses) - 1)]
+        if "error" in response:
+            raise response["error"]
+        return response["doc"]
+
+    def list_document(self, available: bool) -> ListDocument:
+        """Serve ``list`` or ``list --available``."""
+        return read_list(self._serve("list --available" if available else "list"))
+
+    def info_document(self, target: str) -> InfoRow:
+        """Serve ``info``."""
+        return one_info(read_info(self._serve("info")), target)
+
+    def registry_document(self) -> RegistryStatusDocument:
+        """Serve ``registry status``."""
+        return read_registry_status(self._serve("registry status"))
+
+
+def load_fixture(name: str, root: Path, folder: str = "ui") -> str:
+    """Return the recorded fixture *name* of *folder* (``ui``: the world of the UI tests with its events files; ``cli_docs``: one document of every kind) with ``@ROOT@`` replaced by *root* (JSON-escaped, which is also right inside a JSON line)."""
     escaped = json.dumps(str(root))[1:-1]
-    return (FIXTURES / name).read_text(encoding="utf-8").replace("@ROOT@", escaped)
+    return (FIXTURES.parent / folder / name).read_text(encoding="utf-8").replace("@ROOT@", escaped)
 
 
-def fixture_json(name: str, root: Path) -> Any:
+def fixture_json(name: str, root: Path, folder: str = "ui") -> Any:
     """Return the recorded JSON fixture *name* parsed, with *root* put in."""
-    return json.loads(load_fixture(name, root))
+    return json.loads(load_fixture(name, root, folder))
 
 
 def head(command: str, *, ok: bool = True, code: int = 0, **fields: Any) -> dict[str, Any]:
@@ -240,11 +312,20 @@ def list_doc(packages: list[tuple[str, str, str, str | None, str | None, str | N
     A run has one scope, so the document names its ``mode`` once (the first row's, ``user`` for no rows) and the rows carry none.
     """
     rows = [
-        {"name": name, "status": status, "version": version, "newest_known": newest, "path": path, "following": None, "problems": [], "warnings": []}
+        {"name": name, "status": status, "version": version, "newest_known": newest, "path": path, "restriction": None, "restriction_reason": None,
+         "following": None, "problems": [], "warnings": []}
         for name, _, status, version, newest, path in packages
     ]
     mode = packages[0][1] if packages else "user"
     return head("list", mode=mode, root=f"C:\\opt-{mode}", packages=rows, warnings=[])
+
+
+def registry_doc(revision: str | None, *, name: str = "main", synchronized_at: str | None = None) -> dict[str, Any]:
+    """Return a ``registry status --json`` document with one registry at *revision* (``None``: never downloaded)."""
+    return head("registry status", mode="user", registries=[{
+        "name": name, "source": "https://example.org/main.zip", "revision": revision, "synchronized_at": synchronized_at, "last_failure": None,
+        "cache": "C:\\opt\\.gupkg\\registry\\main", "packages": 0, "problems": [],
+    }])
 
 
 async def until(condition, what: str, timeout: float = 20.0) -> None:
@@ -305,7 +386,7 @@ def make_env(base: Path, fake: FakeGupkg, *, settings: str = "", user_layer: str
     env = {"USERPROFILE": str(base / "home"), "APPDATA": str(base / "appdata")}
     system = FakeSystem(base / "machine")
     loaded = load_ui_settings(settings_path=file, env=env, location=where, system=system)
-    return UiEnvironment(fake.client(*root_options), loaded, where, system, env)
+    return UiEnvironment(fake.client(*root_options), loaded, where, system, env, fake.reads())
 
 
 # ---------------------------------------------------------------------------
