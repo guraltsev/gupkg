@@ -29,7 +29,7 @@ Not recorded yet. Before T00, the controller records:
 | T10 | Manager: shared reader, visible failures | T09 | merged | i035/T10 | b38a87c | 3558 passed, 0 failed, 11 skipped | 035-T10-1 (tests/manual_smoke.md) |
 | T11 | Launchers: bundled, gupkg-location, PATH | T07 | merged | i035/T11 | bd8f48e | 3572 passed, 0 failed, 13 skipped (12 needs_admin tests skip in a normal shell) | 035-T11-1 (tests/manual_smoke.md; elevated shell, owner) |
 | T12 | Docs and consistency sweep | T01â€“T11 | waiting | | | | |
-| T13 | Acceptance | T12 | in progress | i035/T13 | | | |
+| T13 | Acceptance | T12 | in review | i035/T13 | | | |
 
 ## Owner actions pending
 
@@ -137,3 +137,4 @@ Owner commit not pushed yet (goes to GitHub together with T03): `9fba5c5 volta: 
 - 2026-10-29: T14 round 1 (1 blocking: quadratic scan of records; fixed in b539f1f) and round 2 clean; merged as f696975; suite 3596 passed, 13 skipped. T12 dispatched.
 - 2026-10-29: T12 worker reported (15 commits on i035/T12; 3597 passed/13 skipped); review started.
 - 2026-10-29: T12 round 1 (2 documentation errors B1/B2 and minors; fixed in fdf4fab, 44664da) ; merged as 2593919; suite 3597 passed, 13 skipped. T13 dispatched.
+- 2026-10-29: T13 worker reported (branch i035/T13: 3 new test files, manual checks 035-T13-1..8; 3602 passed/13 skipped); review started.
