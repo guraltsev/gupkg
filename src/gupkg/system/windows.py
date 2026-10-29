@@ -12,8 +12,7 @@ Create one ``WindowsSystem()`` at process start and pass it to the engine. Pass
 ``user_environment=(hive, subkey)`` or ``machine_environment=(hive, subkey)`` to
 point the environment operations at another registry key; the contract tests
 use a throwaway ``HKCU\\Software\\gupkg-test-<uuid>`` key this way.
-``enable_virtual_terminal(...)`` and ``wait_for_keypress()`` are console helpers
-for the command line.
+``enable_virtual_terminal(...)`` is a console helper for the command line.
 
 Implementation Approach
 -----------------------
@@ -706,16 +705,6 @@ def enable_virtual_terminal(fileno: int) -> bool:
         return bool(kernel32.SetConsoleMode(handle, mode.value | 0x0004))
     except (OSError, AttributeError):
         return False
-
-
-def wait_for_keypress() -> None:
-    """Pause for a keypress using the Windows console when possible."""
-    try:
-        import msvcrt
-
-        msvcrt.getch()
-    except ImportError:
-        input("Press Enter to continue...")
 
 
 # ---------------------------------------------------------------------------
