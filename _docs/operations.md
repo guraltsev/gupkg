@@ -70,7 +70,6 @@ default_mode = "auto"         # auto (elevated -> system, otherwise user) | syst
 [roots]
 system = 'C:\opt'
 user = '%USERPROFILE%\opt'
-portable = '%USERPROFILE%\opt-portable'
 
 [integration.system]
 bin = 'C:\bin'
@@ -78,8 +77,7 @@ start_menu = '%ProgramData%\Microsoft\Windows\Start Menu\opt'
 [integration.user]
 bin = '%USERPROFILE%\bin'
 start_menu = '%APPDATA%\Microsoft\Windows\Start Menu\opt'
-[integration.portable]
-integrate = "user"            # user | none
+integrate = "full"            # full | none (none: shims in <root>\bin, no Start Menu, no environment)
 
 [manager]                     # read only by gupkg-manager
 checksum_missing = "ask"      # ask | refuse | skip
