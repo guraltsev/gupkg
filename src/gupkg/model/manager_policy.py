@@ -20,7 +20,7 @@ target is refused with its own message. (The CLI's plan carries only ``present``
 invalid, so the manager (issue 030) builds this ``invalid`` entry from the error document, whose ``code`` is ``invalid-checksum``.) Fail-closed everywhere: an unknown policy value, a plan entry that is not clearly ``missing``
 and skippable, no way to ask, a failed answer: all of them mean the target is not run with a
 skip. In an elevated run only admin-only layers count (the settings loader already drops the
-user layer; the source layer is checked again here, and a value from the user or portable layer
+user layer; the source layer is checked again here, and a value from the user layer
 means ``refuse``). A target whose URL is not ``https://`` is never offered a skip, because the CLI
 would refuse it anyway. The answer to a question is never stored.
 """
@@ -31,19 +31,19 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
 from .checksum import INVALID, MISSING, SKIP_FLAG, SKIP_REASON_OF, SKIPPED_SETTING, USER_APPROVED, ChecksumPlan
-from .settings import LAYER_PORTABLE, LAYER_USER, Settings
+from .settings import LAYER_USER, Settings
 
 POLICIES = ("ask", "refuse", "skip")
 POLICY_KEY = "manager.checksum_missing"
 REFUSED_NO_CHECKSUM = "refused: no checksum"
 REFUSED_INVALID_CHECKSUM = "refused: the checksum in pkg.toml is malformed (fix it; a malformed checksum cannot be skipped)"
-_USER_LAYERS = (LAYER_USER, LAYER_PORTABLE)
+_USER_LAYERS = (LAYER_USER,)
 
 
 def manager_checksum_policy(settings: Settings, *, elevated: bool = False) -> str:
     """Return the effective ``[manager] checksum_missing``: ``ask``, ``refuse`` or ``skip``.
 
-    In an elevated run a value that came from the user or portable layer is not honoured
+    In an elevated run a value that came from the user layer is not honoured
     and the answer is ``refuse``; an unknown value is ``refuse`` as well.
     """
     try:

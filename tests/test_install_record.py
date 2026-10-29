@@ -24,7 +24,7 @@ SHA = "0123456789abcdef" * 4
 def test_record_round_trips_mode_link_and_effects(tmp_path: Path) -> None:
     """Writing a full record and reading it again returns the same record."""
     record = InstallRecord(
-        mode="portable",
+        mode="user",
         link=Link(registry="main", name="bar", revision="a" * 40, tracker_sha256=SHA),
         effects=(
             Effect("shortcut", {"path": "C:\\menu\\Foo.lnk"}),

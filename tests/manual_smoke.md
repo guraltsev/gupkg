@@ -14,7 +14,7 @@ files and downloads are real. Put the package roots under the sandbox too, with 
 ```bat
 mkdir %TEMP%\s
 gupkg --sandbox %TEMP%\s settings init
-:: edit %TEMP%\s\settings.toml: [roots] user = '%TEMP%\s\opt' (and system, portable)
+:: edit %TEMP%\s\settings.toml: [roots] user = '%TEMP%\s\opt' (and system)
 gupkg --sandbox %TEMP%\s --settings %TEMP%\s\settings.toml install <package> --mode user
 type %TEMP%\s\system.json
 ```
@@ -217,12 +217,7 @@ steps that need `gupkg install --mode ...` are run once those land.
    `gupkg install <folder>\<name>\<version> --mode system`. Confirm the folder is copied into
    `C:\opt\<name>\<version>`, that `Get-Item -Stream * <file>` shows no `Zone.Identifier` on any
    copy, and that the receipt says the source was marked. Why manual: Explorer does the marking.
-5. **Portable in place.** On a folder shaped `<name>\<version>\pkg.toml` that declares portable
-   in `modes`, run `gupkg install <folder> --mode portable` as a normal user. Confirm nothing is
-   copied, that `<name>\..` becomes the portable root, and, with `integrate = "none"` in that
-   root's `.gupkg\settings.toml`, that no Start Menu entry or `HKCU\Environment` change appears and
-   `gupkg shell` prints the `PATH` line. Why manual: it compares against the real Start Menu and
-   registry.
+5. **Portable in place** (retired by issue 035: a portable package is an ordinary user package, see `035-T02-1`).
 
 ## Event stream, console and logs (issue 022)
 
@@ -415,8 +410,8 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
    directory and expect exit 3 naming it. Why manual: needs a real install.
 8. **`gupkg pkg check --install` with real downloads.** On a package from the registry (a version directory with its pinned hash)
    expect exit 0 with the real network, and the real user root and registry unchanged. Why manual: real downloads.
-9. **`gupkg shell`.** With `[integration.portable] integrate = "none"` and a portable root set, `for /f "delims=" %i in ('gupkg
-   shell --mode portable') do %i` puts `<root>\bin` on that console's `PATH`. Why manual: `cmd` interprets the line.
+9. **`gupkg shell`.** With `[integration.user] integrate = "none"`, `for /f "delims=" %i in ('gupkg
+   shell') do %i` puts `<root>\bin` on that console's `PATH`. Why manual: `cmd` interprets the line.
 10. **`uninstall --purge` on a real machine.** After a purge the package folder is gone including this run's own package log (it
     cannot stay open), and the root's run log under `<root>\.gupkg\logs` records the deletion. Why manual: only real file locking
     shows whether the log files were released.
@@ -514,3 +509,15 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
 9. **The registry after the launcher change.** In the registry checkout run `python -m gupkg_registry launchers --registry .`, review the
    diff (every tracker gets `check-updates.cmd`, every pinned version gets the new `install.cmd` and `gupkg-tui.cmd`, `_registry.toml`
    gets the new fingerprints), run `validate`, then commit. Why manual: the registry is a separate repository.
+
+## Portable packages and the modes a package declares (issue 035, task T02)
+
+1. **`035-T02-1` A portable package in the user root.** In a sandbox or a throw-away user root, install a portable package
+   (`modes = ["portable"]`, `[portable] persist = ["config"]`) as a normal user, change a file in `App\config`, then publish and
+   install a newer version. Expect `<package>\data\config` to hold the change and the new `App\config` to be a junction to it, the
+   package to sit in the user root, and its shortcuts and shims to be the normal user ones. Why manual: needs a real NTFS junction and a
+   real application that writes its own settings.
+2. **`035-T02-2` The refusal texts on a real machine.** From a normal shell, install a system-only package: expect exit 2 and the
+   message that names the Start Menu entry "gupkg manager (administrator)" and the administrator-shell command. From an
+   administrator shell, install a user-only package and a portable package: expect exit 2 and "Run gupkg without administrator
+   rights", with nothing created. Why manual: needs a real elevated token.

@@ -37,7 +37,7 @@ from typing import Any
 from .manifest import Manifest
 from .version import compare_versions
 
-MODES = ("system", "user", "portable")
+MODES = ("system", "user")
 
 # The statuses of design 5.2 that describe a whole package; ``invalid`` belongs to one version.
 STATUSES = ("available", "local", "installed", "outdated", "broken")

@@ -1,7 +1,7 @@
 format = 2
 description = "Open source video recording and live streaming."
 project_url = "https://obsproject.com/"
-modes = ["system", "user", "portable"]
+modes = ["system", "user"]
 
 [track]
 provider = "github"
@@ -11,11 +11,6 @@ asset = "OBS-Studio-${version}-Windows-x64.zip"
 [source]
 download_url = "${asset_url}"
 require = ["bin/64bit/obs64.exe"]
-
-# UNVERIFIED upstream portable mechanism
-[portable]
-markers = [{ path = "portable_mode.txt", content = "" }]
-persist = ["config"]
 
 [[shortcut]]
 name = "OBS Studio"

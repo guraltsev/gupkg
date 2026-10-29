@@ -2,7 +2,7 @@
 
 Behaviour covered: variable expansion (``$App``, ``$PackageRoot``, ``$Bin``, ``$$``, ``${NAME}``) and its errors; shortcuts and
 shims confined to the Start Menu and ``bin`` folders; a mode without a Start Menu or an environment target leaves those
-rows out and says so; ``[portable]`` arguments and environment; apply and remove of every kind through ``FakeSystem``;
+rows out and says so; apply and remove of every kind through ``FakeSystem``;
 a hostile install record cannot make gupkg delete or write outside the mode's folders; a ``PATH`` entry is removed only when this install
 added it and never when it is the shared ``bin`` folder; verification reads only what gupkg wrote and skips the user's
 environment in an elevated run.
@@ -41,14 +41,13 @@ def context(tmp_path: Path, *, mode: str = "user", start_menu: bool = True, scop
     """Return an effect context below *tmp_path*."""
     package = tmp_path / "opt" / "tool"
     return EffectContext(
-        package, mode, tmp_path / "bin", tmp_path / "menu" if start_menu else None, scope,
-        package / "data" if mode == "portable" else None, env or {"USERPROFILE": "C:\\Users\\me"},
+        package, mode, tmp_path / "bin", tmp_path / "menu" if start_menu else None, scope, env or {"USERPROFILE": "C:\\Users\\me"},
     )
 
 
 def manifest(text: str):
     """Parse a version manifest with a download source and *text* after it."""
-    return parse_manifest('format = 2\nmodes = ["system", "user", "portable"]\n[source]\ndownload_url = "https://x.test/a.zip"\n' + text)
+    return parse_manifest('format = 2\n[source]\ndownload_url = "https://x.test/a.zip"\n' + text)
 
 
 def test_variables_expand_against_current_so_shortcuts_survive_a_switch(tmp_path: Path) -> None:
@@ -71,7 +70,6 @@ def test_variables_expand_against_current_so_shortcuts_survive_a_switch(tmp_path
         pytest.param('[[env]]\nname = "A"\nvalue = "${NOPE}"\n', "not defined", id="unknown-environment-reference"),
         pytest.param('[[shortcut]]\nname = "..\\\\..\\\\evil"\ntarget = "$App\\\\a.exe"\n', "outside", id="shortcut-escapes-the-menu"),
         pytest.param('[[shortcut]]\nname = "C:\\\\evil"\ntarget = "$App\\\\a.exe"\n', "relative", id="absolute-shortcut-name"),
-        pytest.param('[[env]]\nname = "A"\nvalue = "$Data"\n', "portable mode", id="data-outside-portable"),
         pytest.param('[[shortcut]]\nname = "Tool:ads"\ntarget = "$App\\\\a.exe"\n', "stream", id="shortcut-ntfs-stream"),
         pytest.param('[[shortcut]]\nname = "NUL"\ntarget = "$App\\\\a.exe"\n', "device name", id="shortcut-nul"),
         pytest.param('[[shortcut]]\nname = "aux.lnk"\ntarget = "$App\\\\a.exe"\n', "device name", id="shortcut-aux-lnk"),
@@ -80,41 +78,22 @@ def test_variables_expand_against_current_so_shortcuts_survive_a_switch(tmp_path
     ],
 )
 def test_a_declaration_that_cannot_become_an_effect_is_refused(tmp_path: Path, row: str, message: str) -> None:
-    """Unknown references, a name that leaves the Start Menu and `$Data` outside portable mode are errors, not guesses."""
+    """Unknown references, a name that leaves the Start Menu are errors, not guesses."""
     with pytest.raises(EffectError, match=message):
         desired_effects(manifest(row), context(tmp_path))
 
 
 def test_a_mode_without_a_start_menu_or_an_environment_target_leaves_those_rows_out(tmp_path: Path) -> None:
-    """Portable `integrate = "none"`: shims stay, shortcuts, environment values and PATH entries are skipped and reported."""
+    """User `integrate = "none"`: shims stay, shortcuts, environment values and PATH entries are skipped and reported."""
     text = (
         '[[shortcut]]\nname = "T"\ntarget = "$App\\\\a.exe"\n[[shim]]\nname = "t"\ntarget = "$App\\\\a.exe"\n'
         '[[env]]\nname = "A"\nvalue = "1"\n[[path]]\nvalue = "$App"\n'
     )
 
-    effects, notes = desired_effects(manifest(text), context(tmp_path, mode="portable", start_menu=False, scope=None))
+    effects, notes = desired_effects(manifest(text), context(tmp_path, start_menu=False, scope=None))
 
     assert [effect.kind for effect in effects] == ["shim"] and len(notes) == 3
     assert any("gupkg shell" in note for note in notes)
-
-
-def test_portable_arguments_and_environment_apply_only_in_portable_mode(tmp_path: Path) -> None:
-    """`[portable] args` are appended to shortcuts and shims and `[portable] env` becomes environment values, in portable mode only."""
-    text = (
-        '[[shortcut]]\nname = "T"\ntarget = "$App\\\\a.exe"\narguments = "--x"\n[[shim]]\nname = "t"\ntarget = "$App\\\\a.exe"\n'
-        '[portable]\nargs = ["--portable", "$Data\\\\p"]\nenv = { TOOL_DATA = "$Data" }\n'
-    )
-
-    portable, _ = desired_effects(manifest(text), context(tmp_path, mode="portable"))
-    plain, _ = desired_effects(manifest(text), context(tmp_path))
-
-    data = str(tmp_path / "opt" / "tool" / "data")
-    by_kind = {effect.kind: effect for effect in portable if effect.kind != "path"}
-    assert by_kind["shortcut"].fields["arguments"] == f'--x --portable {data}\\p'
-    assert by_kind["shim"].fields["arguments"] == ["--portable", f"{data}\\p"]
-    assert by_kind["env"].fields == {"scope": "user", "name": "TOOL_DATA", "value": data}
-    assert [effect.fields.get("arguments") for effect in plain if effect.kind in ("shortcut", "shim")] == ["--x", []]
-    assert "env" not in {effect.kind for effect in plain}
 
 
 def test_two_declarations_of_the_same_thing_are_an_error(tmp_path: Path) -> None:

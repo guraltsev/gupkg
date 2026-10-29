@@ -382,7 +382,7 @@ def _install_phases(
         steps["Unpack"].append(PlanStep(verb))
         steps["Prepare"].append(PlanStep("run the prepare steps, rename the finished App into place"))
     if activating:
-        if context.mode == "portable" and chosen.manifest.portable and chosen.manifest.portable.persist:
+        if chosen.manifest.portable and chosen.manifest.portable.persist:
             steps["Activate"].append(PlanStep(f"hand over persisted data: {', '.join(chosen.manifest.portable.persist)}"))
         steps["Activate"].append(PlanStep(f"switch current to {version}"))
     steps["Integrate"] = [_effect_line(item) for item in effects if item.action != "keep"]

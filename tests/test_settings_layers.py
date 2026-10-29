@@ -34,7 +34,6 @@ class World:
         self.base = base
         self.system = base / "sys"
         self.user = base / "home" / "opt"
-        self.portable = base / "home" / "opt-portable"
         self.app = base / "app"
         self.env = {
             "USERPROFILE": str(base / "home"),
@@ -46,9 +45,9 @@ class World:
         self.write(self.app / "settings.toml", self.app_text())
 
     def app_text(self, extra: str = "") -> str:
-        """Return the app layer text: it places the three roots inside the temporary folder."""
+        """Return the app layer text: it places the two roots inside the temporary folder."""
         return (
-            f"schema = 3\n[roots]\nsystem = '{self.system}'\nuser = '{self.user}'\nportable = '{self.portable}'\n" + extra
+            f"schema = 3\n[roots]\nsystem = '{self.system}'\nuser = '{self.user}'\n" + extra
         )
 
     @staticmethod
@@ -103,7 +102,7 @@ def test_defaults_alone_give_the_documented_values_and_say_so() -> None:
 
     assert settings["default_mode"] == "auto"
     assert settings["roots.system"] == "C:\\opt"
-    assert settings["integration.portable.integrate"] == "user"
+    assert settings["integration.user.integrate"] == "full"
     assert settings["manager.checksum_missing"] == "ask"
     assert [(r.name, r.source) for r in settings.registries] == [("main", "https://github.com/guraltsev/gupkg-registry.git")]
     assert {row.layer for row in settings.effective()} == {"defaults"}
@@ -277,9 +276,9 @@ def test_roots_must_be_absolute_distinct_and_not_nested(world: World) -> None:
     nested = world.user / "inner"
     for text in (
         "schema = 3\n[roots]\nuser = 'relative\\opt'\n",
-        f"schema = 3\n[roots]\nportable = '{world.user}'\n",
-        f"schema = 3\n[roots]\nportable = '{nested}'\n",
-        "schema = 3\n[roots]\nportable = '%NOT_DEFINED%\\x'\n",
+        f"schema = 3\n[roots]\nsystem = '{world.user}'\n",
+        f"schema = 3\n[roots]\nsystem = '{nested}'\n",
+        "schema = 3\n[roots]\nsystem = '%NOT_DEFINED%\\x'\n",
     ):
         world.user_file(text)
         with pytest.raises(SettingsError):

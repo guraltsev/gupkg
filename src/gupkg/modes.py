@@ -6,9 +6,7 @@ of the run, ``resolve_mode`` finds the install record and the containing root, a
 ``modes`` before any work, and returns the context every other subsystem reads. It also decides what an
 elevated run may be given: package names and paths inside the admin-only system root; in a direct
 administrator shell also a distribution folder outside every root, to be copied into the system root;
-never a user or portable root, never the user's settings (D31, D18). For portable mode it implements D42
-(an in-place ``<name>\\<version>\\pkg.toml`` folder, else the configured portable root, else a question that
-``--no-input`` turns into exit code 5) and refuses a portable root that is, or lies in, the system root.
+never a user root, never the user's settings (D31, D18).
 
 Usage and API
 -------------
@@ -17,7 +15,7 @@ Build a loader with ``settings_loader(...)``, then call
 ``ModeContext``, the ``ModeChoice`` (``system (auto: elevated)``), the catalog resolution, warnings (a
 package of the same name in two modes shadows itself on ``PATH``), and, for a distribution folder, the
 folder to copy in.
-``ModeRefused`` and ``InputNeeded`` (from ``gupkg.model.mode``) carry the message and exit code.
+``ModeRefused`` (from ``gupkg.model.mode``) carries the message and exit code.
 
 Implementation Approach
 -----------------------
@@ -41,23 +39,21 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from .catalog.catalog import Catalog, CatalogError, Resolved, Selector, UntrustedLocation, parse_selector
+from .catalog.catalog import Catalog, CatalogError, Resolved, UntrustedLocation, parse_selector
 from .catalog.local import DATA_DIR_NAME, canonical_path, is_inside, strip_extended_prefix
 from .model.manifest import MODES, ManifestError, parse_manifest
 from .model.mode import (
-    MODE_PORTABLE,
     MODE_SYSTEM,
     MODE_USER,
     DefaultFolders,
-    InputNeeded,
     ModeChoice,
     ModeContext,
     ModeRefused,
     build_mode_context,
     select_mode,
 )
-from .model.settings import LAYER_DEFAULTS, Settings, expand_env
-from .model.version import MANIFEST_NAME, is_version_name
+from .model.settings import Settings, expand_env
+from .model.version import MANIFEST_NAME
 from .settingsload import LoadedSettings, load_settings, read_text_file
 from .system.port import Scope, System, is_elevated_run
 
@@ -80,9 +76,7 @@ class ModeRequest:
         This process is the elevated child that a non-elevated gupkg started; it accepts only package
         names and paths inside the system root (design 9.6 rule 2).
     no_input : bool
-        ``--no-input``: a question becomes ``InputNeeded`` (exit code 5).
-    ask_portable_root : callable, optional
-        Asks the user for a portable root and returns it, or ``None`` when declined.
+        ``--no-input``: a question is not asked.
     """
 
     selector: str
@@ -90,7 +84,6 @@ class ModeRequest:
     in_place: bool = False
     relaunched: bool = False
     no_input: bool = False
-    ask_portable_root: Callable[[], Path | None] | None = None
 
 
 @dataclass(frozen=True)
@@ -134,7 +127,7 @@ def resolve_mode(
     env : mapping of str to str
         The environment used to expand configured paths.
     load : callable
-        ``load(system_mode=False, portable_root=None)`` returns the ``LoadedSettings`` of the run
+        ``load(system_mode=False)`` returns the ``LoadedSettings`` of the run
         (see ``settings_loader``).
     elevated : bool, optional
         Overrides the elevation reported by *system*.
@@ -149,9 +142,7 @@ def resolve_mode(
     ------
     ModeRefused
         If the mode is not allowed (D31, unsupported ``modes``, a conflicting flag, an elevated run
-        given a target it must not trust, a portable root in the system root).
-    InputNeeded
-        If a portable root is needed and none can be asked for (exit code 5).
+        given a target it must not trust).
     gupkg.catalog.catalog.CatalogError
         If the target is not found or is ambiguous.
     gupkg.model.settings.SettingsError
@@ -229,13 +220,7 @@ def resolve_mode(
 
     # Where the package goes, and the settings layers of the final run.
     folder: Path | None = None
-    root: Path | None = None
-    in_place = False
-    if choice.mode == MODE_PORTABLE:
-        root, in_place = _portable_root(request, parsed, target_folder, container, resolved, settings, env, configured)
-        _check_portable_root(root, configured)
-        final = load(portable_root=root)
-    elif choice.mode == MODE_SYSTEM and not is_elevated:
+    if choice.mode == MODE_SYSTEM and not is_elevated:
         final = load(system_mode=True)
         if {m: Path(expand_env(final.settings[f"roots.{m}"], env)) for m in MODES} != dict(configured):
             raise ModeRefused(
@@ -244,12 +229,10 @@ def resolve_mode(
             )
     else:
         final = first
-    if outside and not in_place:
+    if outside:
         folder = _copy_source(request, target_folder, resolved, choice, system)
 
-    context = build_mode_context(
-        choice, final.settings, env, defaults=default_folders(system), root=root, in_place=in_place
-    )
+    context = build_mode_context(choice, final.settings, env, defaults=default_folders(system))
     warnings = _shadow_warnings(catalog, resolved, folder, choice, is_elevated)
     return ResolvedMode(context, choice, final.settings, resolved, warnings, folder)
 
@@ -264,17 +247,16 @@ def settings_loader(
     settings_path: Path | None = None,
     read_text: Callable[[Path], str | None] = read_text_file,
 ) -> SettingsLoader:
-    """Return the ``load(system_mode=False, portable_root=None)`` function that ``resolve_mode`` calls.
+    """Return the ``load(system_mode=False)`` function that ``resolve_mode`` calls.
 
     The arguments are those of ``gupkg.settingsload.load_settings`` that stay fixed for a run.
     """
 
-    def load(*, system_mode: bool = False, portable_root: Path | None = None) -> LoadedSettings:
+    def load(*, system_mode: bool = False) -> LoadedSettings:
         """Load the layers of this run for one mode."""
         return load_settings(
             system=system, env=env, elevated=elevated, system_mode=system_mode, app_dir=app_dir,
-            installed_system_root=installed_system_root, settings_path=settings_path,
-            portable_root=portable_root, read_text=read_text,
+            installed_system_root=installed_system_root, settings_path=settings_path, read_text=read_text,
         )
 
     return load
@@ -309,8 +291,8 @@ def _normalize(path: Path) -> Path:
 def _container_mode(path: Path, configured: Mapping[str, Path], catalog: Catalog, elevated: bool) -> str | None:
     """Return the mode of the root that contains *path* by identity, or ``None`` when no root does.
 
-    Configured roots are compared first (an elevated run needs the user and portable roots here, only to
-    refuse them); a normal run then also considers the ad-hoc roots that ``state.toml`` records.
+    Configured roots are compared first (an elevated run needs the user root here, only to
+    refuse it); a normal run then also considers the ad-hoc roots that ``state.toml`` records.
     """
     for mode, root in configured.items():
         if canonical_path(path) == canonical_path(root) or is_inside(path, root):
@@ -353,82 +335,6 @@ def _supported_modes(resolved: Resolved | None, folder: Path | None, elevated: b
     if folder is not None and not elevated:
         return _manifest_modes(folder / MANIFEST_NAME)
     return None
-
-
-# ---------------------------------------------------------------------------
-# Portable mode (design 6.3, D42)
-# ---------------------------------------------------------------------------
-
-
-def _in_place_shape(folder: Path | None) -> bool:
-    """Return whether *folder* is shaped ``<name>\\<version>\\pkg.toml`` (a version directory under a package folder)."""
-    return (
-        folder is not None
-        and is_version_name(folder.name)
-        and folder.parent.name != ""
-        and folder.parent.parent != folder.parent
-        and (folder / MANIFEST_NAME).is_file()
-    )
-
-
-def _portable_root(
-    request: ModeRequest,
-    parsed: Selector,
-    folder: Path | None,
-    container: str | None,
-    resolved: Resolved | None,
-    settings: Settings,
-    env: Mapping[str, str],
-    configured: Mapping[str, Path],
-) -> tuple[Path, bool]:
-    """Choose the portable root of an operation and say whether it comes from an in-place folder (D42)."""
-    # A package that already lives in a portable root keeps that root.
-    if container == MODE_PORTABLE and resolved is not None and resolved.view.root is not None:
-        root = resolved.view.root.path
-        return (root.parent if resolved.view.root.single else root), False
-
-    # ``--mode portable`` on a folder shaped <name>\<version>\pkg.toml installs it in place: the folder above <name> is the root.
-    if parsed.kind == "path" and container is None and _in_place_shape(folder):
-        return folder.parent.parent, True
-
-    # Otherwise the configured portable root. The built-in default is not "configured" (D42): gupkg asks.
-    if settings.source_of("roots.portable") != LAYER_DEFAULTS:
-        return configured[MODE_PORTABLE], False
-    answer = None if request.no_input or request.ask_portable_root is None else request.ask_portable_root()
-    if answer is None:
-        raise InputNeeded(
-            "No portable root is configured and none was given: set [roots].portable in settings.toml, or name a "
-            "folder shaped <name>\\<version>\\pkg.toml with --mode portable to install it in place."
-        )
-    return _normalize(answer), False
-
-
-def _check_portable_root(root: Path, configured: Mapping[str, Path]) -> None:
-    """Refuse a portable root that could be machine-wide or that user-mode scanning would also see.
-
-    Forbidden: a root that is the system root, lies inside it, or contains it (portable is never
-    machine-wide, 6.3), and a root that is the user root or lies inside it (one folder, two modes).
-    A root that merely contains the user root, such as the profile folder, is allowed.
-    """
-    system_root, user_root = configured[MODE_SYSTEM], configured[MODE_USER]
-    same_system = canonical_path(root) == canonical_path(system_root)
-    reasons = (
-        (same_system, f"is the system root ({system_root})"),
-        (is_inside(root, system_root), f"lies inside the system root ({system_root})"),
-        (is_inside(system_root, root), f"contains the system root ({system_root})"),
-    )
-    for fired, text in reasons:
-        if fired:
-            raise ModeRefused(
-                f"The portable root {root} {text}. Portable is never machine-wide: state kept inside the system "
-                "root would be shared, writable state next to code that an elevated gupkg runs."
-            )
-    if canonical_path(root) == canonical_path(user_root) or is_inside(root, user_root):
-        relation = "is" if canonical_path(root) == canonical_path(user_root) else "lies inside"
-        raise ModeRefused(
-            f"The portable root {root} {relation} the user root ({user_root}); packages there are user-mode "
-            "packages. Choose a folder outside the user root (a folder that contains it is fine)."
-        )
 
 
 # ---------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 format = 2
 description = "Mozilla Firefox web browser, unpacked from the official 64-bit installer."
 project_url = "https://www.mozilla.org/firefox/"
-modes = ["system", "user", "portable"]
+modes = ["system", "user"]
 
 [track]
 provider = "json"
@@ -17,10 +17,6 @@ require = ["firefox.exe"]
 [source.checksum]
 sums_file = "https://archive.mozilla.org/pub/firefox/releases/${version}/SHA256SUMS"
 entry = "win64/en-US/Firefox Setup ${version}.exe"
-
-# UNVERIFIED upstream portable mechanism
-[portable]
-args = ["-profile", "$Data\\profile"]
 
 [[shortcut]]
 name = "Firefox"

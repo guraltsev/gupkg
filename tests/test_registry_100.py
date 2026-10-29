@@ -3,8 +3,8 @@
 Behavior covered: every tracker and pinned version of the committed snapshot of the real registry
 (``tests/fixtures/registry_100``) passes the package checker with no error and no warning; the
 registry rules hold (hashes, fingerprints, launchers, explicit modes); no manifest or script says
-``ignore_checksum``; at most 13 hook files remain and each says why; the portable-capable packages
-declare ``portable`` in their modes; the package-specific faults of the issue are fixed (qbittorrent,
+``ignore_checksum``; at most 13 hook files remain and each says why; a portable package
+declares ``modes = ["portable"]`` and a ``[portable]`` table, and no other package has one; the package-specific faults of the issue are fixed (qbittorrent,
 zotero, msys2, GIMP, nano); every
 pattern compiles under the pattern guard; and every tracker but the three Git ones has a fixture case.
 Real: the snapshot, the package checker, the registry validation. Mocked: nothing. Out of scope: running the
@@ -36,10 +36,7 @@ DIRECTORIES = [
     for path in sorted(package.iterdir())
     if (path / "pkg.toml").is_file()
 ]
-PORTABLE_CAPABLE = (
-    "tixati", "SumatraPDF-portable", "notepadplusplus", "hwinfo", "crystaldiskinfo", "crystaldiskmark", "rufus",
-    "keepassxc", "winscp", "winmerge", "vscode", "obsstudio", "firefox", "keypirinha", "systeminformer",
-)
+PORTABLE_ONLY = ("tixati", "SumatraPDF-portable", "sqlitebrowser")
 GIT_TRACKED = {"latex-toolkit", "overleaf-sync", "windebloattools"}
 
 
@@ -89,13 +86,13 @@ def test_at_most_thirteen_hook_files_remain() -> None:
     assert len(hooks) <= MAX_HOOK_FILES
 
 
-@pytest.mark.parametrize("package", [pytest.param(name, id=name) for name in PORTABLE_CAPABLE])
-def test_a_portable_capable_package_declares_portable_mode(package: str) -> None:
-    """Each package on the issue's portable-capable list has ``portable`` in its modes and a non-empty ``[portable]`` table."""
+@pytest.mark.parametrize("package", [pytest.param(name, id=name) for name in PORTABLE_ONLY])
+def test_a_portable_package_declares_modes_portable_and_a_portable_table(package: str) -> None:
+    """Each portable package of the registry has ``modes = ["portable"]`` and a ``[portable]`` table."""
     data = tracker(package)
 
-    assert "portable" in data["modes"]
-    assert data["portable"], "a portable-capable package declares how it enters portable mode"
+    assert data["modes"] == ["portable"]
+    assert data["portable"], "a portable package declares how it enters portable mode"
 
 
 def test_sqlitebrowser_declares_how_its_settings_survive_an_update() -> None:
@@ -105,16 +102,22 @@ def test_sqlitebrowser_declares_how_its_settings_survive_an_update() -> None:
     assert data["modes"] == ["portable"] and data["portable"]["persist"] == ["DB4S-settings.ini"]
 
 
-def test_ordinary_packages_do_not_claim_portable_mode() -> None:
-    """Only the portable-capable packages (and nobody else) list ``portable`` in their modes."""
+def test_ordinary_packages_are_not_portable_and_no_package_mixes_portable_with_another_mode() -> None:
+    """Only the portable packages list ``portable`` in their modes or carry a ``[portable]`` table, and none lists another mode too."""
     claimed = sorted(name for name in PACKAGES if "portable" in tracker(name)["modes"])
-    expected = sorted({*PORTABLE_CAPABLE, "sqlitebrowser"})
+    tabled = sorted(name for name in PACKAGES if "portable" in tracker(name))
 
-    assert claimed == expected
+    assert claimed == tabled == sorted(PORTABLE_ONLY)
+    assert all(tracker(name)["modes"] == ["portable"] for name in claimed)
+
+
+def test_no_package_uses_the_removed_mode_tables() -> None:
+    """``[user]`` and ``[system]`` are gone from every package; their steps are plain ``[[prepare]]``."""
+    assert [name for name in PACKAGES if "user" in tracker(name) or "system" in tracker(name)] == []
 
 
 def test_portable_only_packages_say_so() -> None:
-    """The three packages that were ``only_portable`` in 0.17 install only in portable mode."""
+    """The three packages that were ``only_portable`` in 0.17 are portable packages (user only)."""
     assert {name: tracker(name)["modes"] for name in ("tixati", "SumatraPDF-portable", "sqlitebrowser")} == {
         "tixati": ["portable"], "SumatraPDF-portable": ["portable"], "sqlitebrowser": ["portable"],
     }

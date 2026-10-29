@@ -1,7 +1,7 @@
 format = 2
 description = "System information and hardware monitoring tool."
 project_url = "https://www.hwinfo.com/"
-modes = ["system", "user", "portable"]
+modes = ["system", "user"]
 
 [track]
 provider = "page"
@@ -21,10 +21,6 @@ require = ["HWiNFO64.exe"]
 [source.headers]
 User-Agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124 Safari/537.36"
 Referer = "https://www.hwinfo.com/download/"
-
-# UNVERIFIED upstream portable mechanism
-[portable]
-persist = ["HWiNFO64.INI"]
 
 [[shortcut]]
 name = "HWiNFO"

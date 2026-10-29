@@ -217,7 +217,7 @@ class Comparison:
         return self.status == "newer"
 
 
-_MODE_PREFIX = re.compile(r"^(system|user|portable):(?![\\/])(.+)$", re.IGNORECASE)
+_MODE_PREFIX = re.compile(r"^(system|user):(?![\\/])(.+)$", re.IGNORECASE)
 _DRIVE = re.compile(r"^[A-Za-z]:")
 
 
@@ -795,7 +795,7 @@ class Catalog:
         A system run (or package) uses only the system root's cache; other modes use the
         first of their own, the user and the system root's cache that has been synchronised.
         """
-        preference = {"system": ("system",), "user": ("user", "system"), "portable": ("portable", "user", "system"), None: ("user", "system")}
+        preference = {"system": ("system",), "user": ("user", "system"), None: ("user", "system")}
         order = ("system",) if self.elevated else preference.get(mode, ("user", "system"))
         base = next(
             (self.data_roots[item] for item in order if item in self.data_roots and any(

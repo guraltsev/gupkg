@@ -4,8 +4,7 @@
 ``App`` in a scratch folder below ``<package>\\.gupkg\\work`` and moves the finished folder to
 ``<version>\\App`` with one rename, so a version directory is never half-populated and a failure leaves nothing
 outside the work folder. It applies the checksum policy before a byte is requested (``fetch_artifact``), hashes the
-cached file again right before unpacking (``reverify``), runs ``[[prepare]]`` steps, creates the portable markers
-or removes the non-portable files, and records the SHA-256 of every file of the finished ``App`` (decision D41).
+cached file again right before unpacking (``reverify``), runs ``[[prepare]]`` steps, creates the portable markers, and records the SHA-256 of every file of the finished ``App`` (decision D41).
 
 Usage and API
 -------------
@@ -48,7 +47,7 @@ from ..services.values import file_name_from_url
 from .context import MAX_RECORDED_FILES, Engine, require_trusted_tools, require_work_folder
 from .fingerprint import aggregate_digest, app_files
 from .installer import InstallerError, run_installer
-from .portable import apply_mode_adjustments, mode_signature, scratch_name
+from .portable import create_markers, scratch_name
 
 
 class AppBuildError(RuntimeError):
@@ -88,7 +87,7 @@ def populate_version(
     engine : Engine
         The machine, the HTTP client factory and the limits.
     context : ModeContext
-        The resolved install mode (decides the portable markers and the cache folder).
+        The resolved install mode (decides the cache folder).
     package_path, version_dir : Path
         The package root and the version directory that holds ``pkg.toml``.
     manifest : Manifest
@@ -165,12 +164,12 @@ def populate_version(
             raise AppBuildError(f"the populate step of {name} {version} left an empty App")
 
         with phase("Prepare"):
-            # Mode adjustments touch only an App that gupkg built, never a shipped one.
+            # Markers go only into an App that gupkg built, never a shipped one.
             if source.shipped:
-                emit(Warning(f"The App of {name} {version} is shipped; portable markers and non-portable removals are not applied."))
+                if manifest.portable is not None and manifest.portable.markers:
+                    emit(Warning(f"The App of {name} {version} is shipped; portable markers are not applied."))
             else:
-                mode_hook = HookContext(name, version, engine.system, client, paths)
-                for line in apply_mode_adjustments(staged, manifest, context.mode, mode_hook):
+                for line in create_markers(staged, manifest):
                     emit(Step(line, "info"))
 
             # Record the SHA-256 of every file (decision D41), unless the package or the settings opt out.
@@ -178,10 +177,6 @@ def populate_version(
             emit(Step("The finished App is moved into place", "ok"))
             _move_into_place(staged, target, work_root, replace, engine.replace)
         sections["app"] = app_section(files, engine.max_recorded_files)
-        signature = mode_signature(manifest, context.mode)
-        if signature is not None and not source.shipped:
-            # Which mode the App was prepared for: an install in another mode must not run more steps on top of it (design: App guard).
-            sections["app"]["prepared_for"] = {"mode": context.mode, "signature": signature}
         sections["inputs"] = _inputs(version_dir) if kind == "script" else []
         return Populated(sections, checksum)
     finally:

@@ -94,10 +94,10 @@ def test_registry_only_name_resolves_to_an_available_view_in_the_requested_root(
     catalog = make_catalog(system, tmp_path)[0]
 
     plain = catalog.resolve("foo").view
-    portable = catalog.resolve("portable:foo").view
+    qualified = catalog.resolve("user:foo").view
 
     assert plain.status == "available" and plain.root is None
-    assert portable.status == "available" and portable.root.mode == "portable" and portable.root.path == roots["portable"]
+    assert qualified.status == "available" and qualified.root.mode == "user" and qualified.root.path == roots["user"]
 
 
 def test_registry_name_selector_follows_that_entry_for_an_existing_local_package(system, tmp_path: Path) -> None:
@@ -160,12 +160,12 @@ def test_path_outside_every_root_is_an_ad_hoc_root_with_the_recorded_mode(system
     write_version(plain, "1.0")
     recorded = tmp_path / "elsewhere" / "recorded"
     write_version(recorded, "1.0")
-    write_record(recorded, InstallRecord(mode="portable"))
+    write_record(recorded, InstallRecord(mode="system"))
 
     assert catalog.resolve(str(plain)).view.mode is None
-    assert catalog.resolve(str(recorded)).view.mode == "portable"
+    assert catalog.resolve(str(recorded)).view.mode == "system"
     assert catalog.resolve(str(plain)).view.root.adhoc
-    assert catalog.resolve(f"portable:{plain}").view.mode == "portable"
+    assert catalog.resolve(f"system:{plain}").view.mode == "system"
 
 
 def test_package_in_a_grouping_folder_is_selected_by_its_folder_path(system, tmp_path: Path) -> None:

@@ -22,7 +22,6 @@ from gupkg.model.manifest import (
     ManifestKind,
     TrackResult,
     manifest_to_toml,
-    step_to_list,
     parse_manifest,
     render_pinned,
 )
@@ -61,7 +60,7 @@ FIREFOX_TRACKER = """\
 format = 2
 description = "Mozilla Firefox web browser"
 project_url = "https://www.mozilla.org/firefox/"
-modes = ["system", "user", "portable"]
+modes = ["system", "user"]
 
 [track]
 provider = "json"
@@ -77,9 +76,6 @@ require = ["firefox.exe"]
 [source.checksum]
 sums_file = "https://archive.mozilla.org/pub/firefox/releases/${version}/SHA256SUMS"
 entry = "win64/en-US/Firefox Setup ${version}.exe"
-
-[portable]
-args = ["-profile", "$Data\\\\profile"]
 
 [[shortcut]]
 name = "Firefox"
@@ -131,8 +127,8 @@ def test_tracker_example_parses_with_templates_and_track() -> None:
     assert "${version}" in manifest.source.download_url
     assert manifest.source.checksum.sums_file.endswith("SHA256SUMS")
     assert manifest.source.require == ("firefox.exe",)
-    assert manifest.portable.args == ("-profile", "$Data\\profile")
-    assert manifest.supports("portable")
+    assert manifest.portable is None
+    assert manifest.supports("system") and manifest.supports("user")
 
 
 def test_manifest_written_back_to_toml_parses_to_the_same_manifest() -> None:
@@ -143,11 +139,11 @@ def test_manifest_written_back_to_toml_parses_to_the_same_manifest() -> None:
 
 
 def test_every_section_of_a_full_manifest_round_trips() -> None:
-    """Prepare steps, the portable, user and system tables, shims with content and nested archives survive a write and read."""
+    """Prepare steps, shims with content and nested archives survive a write and read."""
     text = """\
 format = 2
 description = "Everything"
-modes = ["system", "user", "portable"]
+modes = ["system", "user"]
 requires = ["vcredist"]
 record_manifest = false
 
@@ -182,19 +178,6 @@ write = { path = "portable.ini", content = "x=1" }
 [[prepare]]
 module = "pkg.local/fix.py"
 
-[portable]
-persist = ["Data"]
-markers = ["portable.txt", { path = "a.xml", content = "" }]
-args = ["--portable"]
-env = { HOME = "$Data" }
-prepare = [["create", "portable.txt"]]
-
-[user]
-prepare = [["remove", "portable", "*/legacy.cfg"], ["create", "mark.txt", "x"]]
-
-[system]
-prepare = [["rename", "a", "b"], ["copy", "c", "d", "e"], ["run", "pkg.local/fix.py"]]
-
 [[shim]]
 name = "tool"
 target = "$App\\\\tool.exe"
@@ -211,6 +194,20 @@ content = "@echo off"
     original = parse_manifest(text)
 
     assert original.record_manifest is False
+    assert parse_manifest(manifest_to_toml(original)) == original
+
+
+def test_a_portable_package_round_trips() -> None:
+    """``modes = ["portable"]`` with ``persist`` and ``markers`` survives a write and read, and the package is user only."""
+    text = (
+        'format = 2\nmodes = ["portable"]\n[source]\ndownload_url = "https://x.test/a.zip"\n\n'
+        '[portable]\npersist = ["Data"]\nmarkers = ["portable.txt", { path = "a.xml", content = "" }]\n'
+    )
+
+    original = parse_manifest(text)
+
+    assert original.is_portable and original.portable.persist == ("Data",) and len(original.portable.markers) == 2
+    assert original.supports("user") and not original.supports("system") and not original.supports("portable")
     assert parse_manifest(manifest_to_toml(original)) == original
 
 
@@ -503,9 +500,40 @@ def test_record_manifest_defaults_to_true() -> None:
 def test_modes_default_and_validation() -> None:
     """`modes` defaults to system and user, and rejects unknown, empty and repeated modes."""
     assert version_manifest().modes == ("system", "user")
-    assert version_manifest('modes = ["portable"]\n').modes == ("portable",)
+    assert version_manifest('modes = ["portable"]\n[portable]\npersist = ["config"]\n').modes == ("portable",)
+    assert version_manifest('modes = ["user"]\n').modes == ("user",)
     for bad in ('modes = []', 'modes = ["mars"]', 'modes = ["user", "user"]', 'modes = "user"'):
         assert problems(f"format = 2\n{bad}\n")
+
+
+@pytest.mark.parametrize("modes", ['["system", "user", "portable"]', '["user", "portable"]', '["system", "portable"]'])
+def test_portable_mixed_with_another_mode_is_invalid(modes: str) -> None:
+    """A package is portable or not: ``portable`` next to ``system`` or ``user`` is one problem that names the way out."""
+    found = problems(f"format = 2\nmodes = {modes}\n[portable]\npersist = [\"config\"]\n")
+
+    assert 'modes: a package is portable or not; publish a separate "<name>-portable" package' in found
+
+
+def test_the_portable_table_is_required_for_a_portable_package_and_allowed_only_there() -> None:
+    """``modes = ["portable"]`` needs ``[portable]``; ``[portable]`` in a package that is not portable is an error."""
+    assert any("portable" in item and "required" in item for item in problems('format = 2\nmodes = ["portable"]\n'))
+    assert any("portable" in item and "needs" in item for item in problems('format = 2\n[portable]\npersist = ["config"]\n'))
+
+
+@pytest.mark.parametrize("key", ["args", "env", "prepare"])
+def test_the_removed_keys_of_the_portable_table_are_unknown(key: str) -> None:
+    """``[portable]`` keeps ``persist`` and ``markers``; ``args``, ``env`` and ``prepare`` are unknown keys (owner answer Q6)."""
+    text = f'format = 2\nmodes = ["portable"]\n[portable]\npersist = ["config"]\n{key} = []\n'
+
+    assert any(f"portable: unknown key '{key}'" in item for item in problems(text))
+
+
+@pytest.mark.parametrize("table", ["user", "system"])
+def test_the_per_mode_tables_are_unknown_keys(table: str) -> None:
+    """``[user] prepare`` and ``[system] prepare`` are gone: the table is an unknown key (steps belong in ``[[prepare]]``)."""
+    found = problems(f'format = 2\n[{table}]\nprepare = [["create", "a"]]\n')
+
+    assert any(item.startswith(f"unknown key '{table}'") for item in found)
 
 
 # ---------------------------------------------------------------------------
@@ -513,12 +541,13 @@ def test_modes_default_and_validation() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_data_variable_is_valid_only_when_portable_is_a_mode() -> None:
-    """`$Data` is accepted when `portable` is in `modes` and rejected otherwise."""
-    shortcut = '[[shortcut]]\nname = "S"\ntarget = "$App\\\\s.exe"\narguments = "--data $Data"\n'
+def test_the_package_data_variable_no_longer_exists() -> None:
+    """The variable that named ``<package>\\data`` is unknown in every package (a portable package persists paths instead)."""
+    removed = "$" + "Data"
+    shortcut = f'[[shortcut]]\nname = "S"\ntarget = "$App\\\\s.exe"\narguments = "--data {removed}"\n'
 
-    assert version_manifest(shortcut, 'format = 2\nmodes = ["portable"]\n').shortcuts
-    assert any("$Data is valid only when 'portable'" in p for p in problems("format = 2\n" + shortcut))
+    assert any(f"unknown variable {removed}" in p for p in problems("format = 2\n" + shortcut))
+    assert any(f"unknown variable {removed}" in p for p in problems('format = 2\nmodes = ["user"]\n' + shortcut))
 
 
 def test_package_root_bin_and_version_root_variables_are_accepted() -> None:
@@ -764,15 +793,6 @@ def test_a_shim_may_not_be_named_like_a_device_or_a_stream(name: str) -> None:
         parse_manifest(text)
 
 
-def test_a_portable_env_table_may_not_name_a_reserved_variable() -> None:
-    """The same rule holds for the `[portable] env` table."""
-    text = ('format = 2\nmodes = ["portable"]\n[source]\ndownload_url = "https://x.test/a.zip"\n\n[portable]\n'
-            'env = { Path = "x" }\n')
-
-    with pytest.raises(ManifestError, match="not a usable variable name"):
-        parse_manifest(text)
-
-
 @pytest.mark.parametrize("name", ["A" * 129, "A%B", "A\u200bB", "A\u0007B", "A B", "A=B", "A\u2060B", "A\ufeffB"])
 def test_an_env_name_is_capped_and_refuses_percent_and_invisible_characters(name: str) -> None:
     """128 characters at most, no `%` (it would be expanded), no zero-width or control character, no space or `=`."""
@@ -811,41 +831,3 @@ def test_a_nonportable_table_is_reported_like_any_other_unknown_key() -> None:
     found = problems(HEAD + '[nonportable]\nremove = ["x"]\n')
 
     assert found == ["unknown key 'nonportable'; did you mean 'portable'?"]
-
-
-@pytest.mark.parametrize("table", ["user", "system"])
-def test_a_mode_table_needs_its_mode_in_modes(table: str) -> None:
-    """`[user]` in a package that does not list `user` (and `[system]` likewise) is an error, as `[portable]` is without `portable`."""
-    other = "portable" if table == "user" else "user"
-    with pytest.raises(ManifestError, match=f"{table}.*needs '{table}' in modes"):
-        parse_manifest(f'format = 2\nmodes = ["{other}"]\n[source]\ndownload_url = "https://x.test/a.zip"\n[{table}]\nprepare = [["create", "a"]]\n')
-
-
-@pytest.mark.parametrize(
-    ("step", "message"),
-    [
-        pytest.param('["explode", "a"]', "unknown step 'explode'", id="unknown-verb"),
-        pytest.param('["remove"]', '"remove" needs at least one path', id="remove-without-path"),
-        pytest.param('["create", "a", "b", "c"]', '"create" takes a path', id="create-with-three"),
-        pytest.param('["rename", "a"]', '"rename" takes', id="rename-with-one"),
-        pytest.param('["copy", "a"]', '"copy" takes', id="copy-with-one"),
-        pytest.param('["run", "a.py", "b.py"]', '"run" takes the one bundled script', id="run-with-two"),
-        pytest.param('["remove", "../escape"]', "user.prepare", id="path-leaves-app"),
-        pytest.param('"remove a"', "must be an array of strings", id="not-an-array"),
-    ],
-)
-def test_a_wrong_step_is_an_error_that_names_the_step(step: str, message: str) -> None:
-    """Each step is a verb and its arguments; a wrong verb, count or path is reported with the place of the step."""
-    with pytest.raises(ManifestError, match=message):
-        parse_manifest(HEAD + f"[user]\nprepare = [{step}]\n")
-
-
-def test_mode_steps_round_trip_in_the_documented_shapes() -> None:
-    """`create` writes the content only when there is one, and every verb comes back as it went in."""
-    text = HEAD + '[user]\nprepare = [["create", "a"], ["create", "b", "x"], ["remove", "c", "d"], ["run", "pkg.local/f.py"]]\n'
-
-    manifest = parse_manifest(text)
-
-    assert [step_to_list(step) for step in manifest.user.prepare] == [["create", "a"], ["create", "b", "x"], ["remove", "c", "d"], ["run", "pkg.local/f.py"]]
-    assert parse_manifest(manifest_to_toml(manifest)).user == manifest.user
-

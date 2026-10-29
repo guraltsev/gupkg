@@ -3,7 +3,7 @@
 Behavior covered: a gupkg that runs from a user-writable place never relaunches elevated and says that system
 installs need the system gupkg; an admin-only gupkg relaunches itself once for the whole call, after a
 confirmation or immediately with ``--yes``; a declined or unanswerable confirmation (``--no-input``) and a
-refused elevation prompt are exit code 5 with nothing started; user and portable contexts, and an already
+refused elevation prompt are exit code 5 with nothing started; user contexts, and an already
 elevated process, need no relaunch.
 
 Real: ``ensure_elevation`` and the mode contexts built by the real resolver. Fake: ``FakeSystem`` supplies the
@@ -130,12 +130,11 @@ def test_a_refused_elevation_prompt_is_exit_5(tmp_path: Path) -> None:
     assert raised.value.exit_code == 5
 
 
-@pytest.mark.parametrize("mode", ["user", "portable"])
-def test_user_and_portable_targets_need_no_elevation(tmp_path: Path, mode: str) -> None:
-    """Only system mode elevates; user and portable work never relaunches."""
+def test_user_targets_need_no_elevation(tmp_path: Path) -> None:
+    """Only system mode elevates; user work never relaunches."""
     system = FakeSystem(tmp_path / "machine")
 
-    outcome = call(system, [context(mode)], tmp_path)
+    outcome = call(system, [context("user")], tmp_path)
 
     assert (outcome.needed, outcome.relaunched) == (False, False) and system.relaunches == []
 

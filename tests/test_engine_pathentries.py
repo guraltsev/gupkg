@@ -25,7 +25,7 @@ from gupkg.system.fake import FakeSystem
 from gupkg.system.port import Scope
 from tests.engine_support import World, pin_no_ambient_elevation  # noqa: F401
 
-HEAD = 'format = 2\nmodes = ["system", "user", "portable"]\n[source]\ndownload_url = "https://x.test/a.zip"\n'
+HEAD = 'format = 2\nmodes = ["system", "user"]\n[source]\ndownload_url = "https://x.test/a.zip"\n'
 
 BAD = [
     pytest.param("..\\x", id="parent"),
@@ -65,7 +65,7 @@ def test_the_manifest_validator_accepts_ordinary_entries(value: str) -> None:
     assert parse_manifest(HEAD + f"[[path]]\nvalue = {toml_value}\n").paths == (value,)
 
 
-@pytest.mark.parametrize("modes", ['["system", "user"]', '["system"]', '["system", "user", "portable"]'])
+@pytest.mark.parametrize("modes", ['["system", "user"]', '["system"]'])
 def test_an_entry_that_follows_an_environment_variable_fails_inspection_when_system_mode_is_supported(modes: str) -> None:
     """`%LOCALAPPDATA%\\Volta\\bin` can never go on the machine PATH, so a package that lists 'system' and declares it is invalid."""
     text = f'format = 2\nmodes = {modes}\n[source]\ndownload_url = "https://x.test/a.zip"\n[[path]]\nvalue = "%LOCALAPPDATA%\\\\Volta\\\\bin"\n'
@@ -74,7 +74,7 @@ def test_an_entry_that_follows_an_environment_variable_fails_inspection_when_sys
         parse_manifest(text)
 
 
-@pytest.mark.parametrize("modes", ['["user"]', '["user", "portable"]'])
+@pytest.mark.parametrize("modes", ['["user"]'])
 def test_a_package_without_system_mode_may_declare_an_entry_that_follows_an_environment_variable(modes: str) -> None:
     """A user PATH is the user's own, so `%LOCALAPPDATA%\\Volta\\bin` is a valid entry when system mode is not supported."""
     text = f'format = 2\nmodes = {modes}\n[source]\ndownload_url = "https://x.test/a.zip"\n[[path]]\nvalue = "%LOCALAPPDATA%\\\\Volta\\\\bin"\n'
@@ -86,7 +86,7 @@ def context(tmp_path: Path, *, mode: str = "user", env: dict[str, str] | None = 
     """An effect context below *tmp_path*: the user scope, or the machine scope for mode `system`."""
     package = tmp_path / "opt" / "tool"
     return EffectContext(
-        package, mode, tmp_path / "bin", tmp_path / "menu", Scope.MACHINE if mode == "system" else Scope.USER, None,
+        package, mode, tmp_path / "bin", tmp_path / "menu", Scope.MACHINE if mode == "system" else Scope.USER,
         env if env is not None else {"ProgramFiles": str(tmp_path / "pf"), "SystemRoot": str(tmp_path / "win"), "LOCALAPPDATA": "C:\\Users\\me\\AppData\\Local"},
     )
 

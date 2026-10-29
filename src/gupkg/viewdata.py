@@ -3,7 +3,7 @@
 The data is the public machine shape of a package (decision D44, ``"api": 1``): the manager and other tools read
 the same keys that the human output prints. Details add what only the disk knows: the versions in the package root
 with their problems and labels, the tracker, the link, the last ``check-updates`` and how the active version was
-verified. A stored ``verified`` is reported as the install's own report (``self_reported``) in user and portable
+verified. A stored ``verified`` is reported as the install's own report (``self_reported``) in user
 mode, because a user-mode receipt can be edited by the user.
 
 Usage and API

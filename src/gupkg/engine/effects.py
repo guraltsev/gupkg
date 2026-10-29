@@ -2,9 +2,9 @@
 
 The effects of a version are its ``[[shortcut]]`` rows (Start Menu links), ``[[shim]]`` rows
 (commands in the mode's ``bin`` folder), ``[[env]]`` rows (environment values), ``[[path]]`` rows
-(``PATH`` entries) and, in portable mode, the arguments and environment of ``[portable]``. Each
+(``PATH`` entries). Each
 becomes one ``Effect`` of ``gupkg.model.state`` whose fields hold everything needed to apply, remove
-and verify it. Variables (``$App``, ``$Data``, ``$Bin``...) are expanded when the effect is built, against
+and verify it. Variables (``$App``, ``$Bin``...) are expanded when the effect is built, against
 the package's ``current`` folder, so a link or shim keeps working when ``current`` moves to another version.
 
 Usage and API
@@ -30,7 +30,6 @@ from __future__ import annotations
 import hashlib
 import os
 import re
-import subprocess
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -67,15 +66,13 @@ class EffectContext:
     package_path : Path
         The package root.
     mode : str
-        ``system``, ``user`` or ``portable``.
+        ``system`` or ``user``.
     bin_dir : Path
         The mode's ``bin`` folder.
     start_menu : Path or None
         The Start Menu ``opt`` folder; ``None`` when the mode creates no shortcuts.
     scope : Scope or None
         The environment and ``PATH`` target; ``None`` when the mode does not touch the environment.
-    data_dir : Path or None
-        ``<package>\\data`` in portable mode, else ``None``.
     env : mapping
         The environment used to expand ``${NAME}`` references.
     linkage : str
@@ -89,7 +86,6 @@ class EffectContext:
     bin_dir: Path
     start_menu: Path | None
     scope: Scope | None
-    data_dir: Path | None
     env: Mapping[str, str]
     linkage: str = "dynamic"
     root_data: Path | None = None
@@ -115,9 +111,8 @@ def effect_context(mode_context: ModeContext, package_path: Path, env: Mapping[s
     scope = None
     if mode_context.env_target is not None:
         scope = Scope.MACHINE if mode_context.env_target == ENV_MACHINE else Scope.USER
-    data_dir = Path(package_path) / "data" if mode_context.mode == "portable" else None
     return EffectContext(
-        Path(package_path), mode_context.mode, mode_context.bin_dir, mode_context.start_menu, scope, data_dir, env,
+        Path(package_path), mode_context.mode, mode_context.bin_dir, mode_context.start_menu, scope, env,
         root_data=mode_context.data_dir,
     )
 
@@ -140,13 +135,13 @@ def desired_effects(manifest: Manifest, context: EffectContext) -> tuple[tuple[E
     Returns
     -------
     tuple
-        ``(effects, notes)``. A mode that creates no shortcuts or touches no environment (a portable
+        ``(effects, notes)``. A mode that creates no shortcuts or touches no environment (a user
         root with ``integrate = "none"``) leaves those rows out and says so in the notes.
 
     Raises
     ------
     EffectError
-        If a row cannot be expanded (an unknown ``${NAME}``, ``$Data`` outside portable mode) or would
+        If a row cannot be expanded (an unknown ``${NAME}`` or ``$Name``) or would
         write outside the Start Menu or ``bin`` folder.
     """
     package = context.package_path
@@ -156,10 +151,6 @@ def desired_effects(manifest: Manifest, context: EffectContext) -> tuple[tuple[E
         "PackageRoot": str(package),
         "Bin": str(context.bin_dir),
     }
-    if context.data_dir is not None:
-        values["Data"] = str(context.data_dir)
-    portable = manifest.portable if context.mode == "portable" else None
-    extra_arguments = [_expand(item, values, context.env, "[portable] args") for item in (portable.args if portable else ())]
     effects: list[Effect] = []
     notes: list[str] = []
 
@@ -171,8 +162,6 @@ def desired_effects(manifest: Manifest, context: EffectContext) -> tuple[tuple[E
         name = _expand(row.name, values, context.env, f"{label} name").strip()
         link = _confined(context.start_menu, name if name.lower().endswith(".lnk") else name + ".lnk", label)
         arguments = _expand(row.arguments, values, context.env, f"{label} arguments")
-        if extra_arguments:
-            arguments = " ".join(part for part in (arguments, subprocess.list2cmdline(extra_arguments)) if part)
         effects.append(Effect("shortcut", {
             "path": str(link),
             "target": _expand(row.target, values, context.env, f"{label} target"),
@@ -200,9 +189,7 @@ def desired_effects(manifest: Manifest, context: EffectContext) -> tuple[tuple[E
             "type": shim.type,
             "linkage": context.linkage,
             "target": _expand(shim.target, values, context.env, f"{label} target"),
-            "arguments": [
-                *(_expand(item, values, context.env, f"{label} argument") for item in shim.arguments), *extra_arguments
-            ],
+            "arguments": [_expand(item, values, context.env, f"{label} argument") for item in shim.arguments],
             "forward_args": shim.forward_args,
             "elevate": shim.elevate,
             "working_dir": _expand(shim.working_dir or "", values, context.env, f"{label} working_dir"),
@@ -215,9 +202,9 @@ def desired_effects(manifest: Manifest, context: EffectContext) -> tuple[tuple[E
         effects.extend(_forwarder_effects(manifest.root_forwarder.target, values, context))
 
     # Environment values and PATH entries need an environment target.
-    wants_environment = bool(manifest.envs or manifest.paths or (portable.env if portable else None) or manifest.shims)
+    wants_environment = bool(manifest.envs or manifest.paths or manifest.shims)
     if context.scope is None:
-        if manifest.envs or manifest.paths or (portable.env if portable else None):
+        if manifest.envs or manifest.paths:
             notes.append("this root does not touch the environment (integrate = \"none\"): environment values and PATH entries were left out")
         if manifest.shims:
             notes.append(f"shims are in {context.bin_dir}; run `gupkg shell` for the PATH line to use")
@@ -227,11 +214,6 @@ def desired_effects(manifest: Manifest, context: EffectContext) -> tuple[tuple[E
             _require_free_name(row.name)
             effects.append(Effect("env", {
                 "scope": scope, "name": row.name, "value": _expand(row.value, values, context.env, f"environment variable '{row.name}'"),
-            }))
-        for name, value in (portable.env if portable else {}).items():
-            _require_free_name(name)
-            effects.append(Effect("env", {
-                "scope": scope, "name": name, "value": _expand(value, values, context.env, f"[portable] env '{name}'"),
             }))
         if manifest.shims:
             effects.append(Effect("path", {"scope": scope, "entry": str(context.bin_dir), "added": False, "shared": True}))
@@ -431,8 +413,6 @@ def _expand(text: str, values: Mapping[str, str], env: Mapping[str, str], label:
         name = braced if braced is not None else plain
         if name in values:
             return values[name]
-        if name == "Data":
-            raise EffectError(f"{label} uses $Data, which exists only in portable mode")
         if braced is not None:
             if name.casefold() in folded:
                 return folded[name.casefold()]

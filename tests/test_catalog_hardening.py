@@ -199,7 +199,7 @@ def test_elevated_view_treats_a_record_for_another_mode_as_broken(tmp_path: Path
     system = FakeSystem(tmp_path / "machine", elevated=True)
     package = tmp_path / "opt" / "foo"
     write_version(package, "1.0")
-    write_record(package, InstallRecord(mode="portable"))
+    write_record(package, InstallRecord(mode="user"))
     catalog = make_catalog(system, tmp_path)[0]
 
     view = catalog._view(Root(tmp_path / "opt", None), "foo", package)
@@ -236,7 +236,7 @@ def test_package_named_by_an_ad_hoc_entry_inside_a_configured_root_is_listed_onc
     """An ``[[adhoc]]`` path inside a configured root does not duplicate the package in ``list`` or make it ambiguous."""
     roots = make_catalog(system, tmp_path)[1]
     write_version(roots["user"] / "foo", "1.0")
-    write_toml(roots["user"] / ".gupkg" / "state.toml", {"adhoc": [{"path": str(roots["user"] / "foo"), "mode": "portable"}]})
+    write_toml(roots["user"] / ".gupkg" / "state.toml", {"adhoc": [{"path": str(roots["user"] / "foo"), "mode": "system"}]})
     catalog = make_catalog(system, tmp_path)[0]
 
     listing = catalog.list()

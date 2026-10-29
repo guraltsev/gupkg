@@ -35,7 +35,6 @@ from gupkg.model.manager_policy import (
 from gupkg.model.settings import (
     LAYER_APP,
     LAYER_CLI,
-    LAYER_PORTABLE,
     LAYER_SYSTEM,
     LAYER_USER,
     Layer,
@@ -63,7 +62,7 @@ def test_the_default_policy_is_ask() -> None:
     assert manager_checksum_policy(settings_with(None)) == "ask"
 
 
-@pytest.mark.parametrize("layer", [LAYER_APP, LAYER_SYSTEM, LAYER_USER, LAYER_PORTABLE, LAYER_CLI])
+@pytest.mark.parametrize("layer", [LAYER_APP, LAYER_SYSTEM, LAYER_USER, LAYER_CLI])
 @pytest.mark.parametrize("value", ["ask", "refuse", "skip"])
 def test_a_normal_run_honours_the_setting_from_any_layer(layer: str, value: str) -> None:
     """The three values are read from every layer when the run is not elevated."""
@@ -77,7 +76,6 @@ def test_a_normal_run_honours_the_setting_from_any_layer(layer: str, value: str)
         pytest.param(LAYER_SYSTEM, True, id="system-layer"),
         pytest.param(LAYER_CLI, True, id="settings-file-in-the-system-root"),
         pytest.param(LAYER_USER, False, id="user-layer"),
-        pytest.param(LAYER_PORTABLE, False, id="portable-layer"),
     ],
 )
 def test_an_elevated_run_reads_the_policy_only_from_admin_only_layers(layer: str, honoured: bool) -> None:

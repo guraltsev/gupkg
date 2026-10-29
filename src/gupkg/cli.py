@@ -49,7 +49,7 @@ from .engine.receipts import read_receipt, receipt_checksum
 from .model.checksum import ChecksumInvalid, parse_skip_flag
 from .model.mode import ModeContext, ModeRefused, build_mode_context, select_mode
 from .model.plan import EXIT_FAILED, EXIT_INPUT, EXIT_OK, EXIT_USER, BatchResult, Request
-from .model.settings import LAYER_DEFAULTS, LAYER_PORTABLE, LAYER_SYSTEM, LAYER_USER, Settings, SettingsError, expand_env
+from .model.settings import LAYER_SYSTEM, LAYER_USER, Settings, SettingsError, expand_env
 from .modes import SettingsLoader, default_folders, settings_loader
 from .pinning import PinError, pin_hash
 from .pkgcheck import check_directory
@@ -421,9 +421,9 @@ def _is_sweep(args: argparse.Namespace) -> bool:
 
 
 def _mode_prefix(target: str) -> str | None:
-    """Return the mode a ``mode:name`` target names (``system``, ``user`` or ``portable``), else ``None``."""
+    """Return the mode a ``mode:name`` target names (``system`` or ``user``), else ``None``."""
     prefix, colon, rest = target.partition(":")
-    return prefix.casefold() if colon and rest and prefix.casefold() in ("system", "user", "portable") and rest[0] not in "\\/" else None
+    return prefix.casefold() if colon and rest and prefix.casefold() in ("system", "user") and rest[0] not in "\\/" else None
 
 
 def _groups(targets: list[str]) -> list[list[str]]:
@@ -794,15 +794,11 @@ def _context(run: _Run, mode: str | None) -> tuple[Settings, ModeContext]:
     Raises
     ------
     ModeRefused
-        If the mode is refused (an elevated run never uses a user or portable root) or portable has no configured root.
+        If the mode is refused (an elevated run never uses a user root).
     """
     settings = run.loader().settings
     choice = select_mode(explicit=mode, elevated=run.elevated, default_mode=settings["default_mode"])
-    if choice.mode == "portable":
-        if settings.source_of("roots.portable") == LAYER_DEFAULTS:
-            raise ModeRefused("No portable root is configured: set [roots].portable with `gupkg settings set roots.portable <folder>`.")
-        settings = run.loader(portable_root=Path(expand_env(settings["roots.portable"], run.env))).settings
-    elif choice.mode == "system" and not run.elevated:
+    if choice.mode == "system" and not run.elevated:
         settings = run.loader(system_mode=True).settings
     return settings, build_mode_context(choice, settings, run.env, defaults=default_folders(run.system))
 
@@ -904,7 +900,7 @@ def _registry_edit(run: _Run, settings: Settings, context: ModeContext) -> int:
 
 def _layer_file(context: ModeContext) -> tuple[str, Path]:
     """Return the settings layer and file that a write for *context*'s mode goes to (``<root>\\.gupkg\\settings.toml``)."""
-    layer = {"system": LAYER_SYSTEM, "user": LAYER_USER, "portable": LAYER_PORTABLE}[context.mode]
+    layer = {"system": LAYER_SYSTEM, "user": LAYER_USER}[context.mode]
     return layer, settings_file(context.root)
 
 
@@ -1024,10 +1020,10 @@ def _sandbox_install(run: _Run, version_dir: Path) -> dict[str, Any]:
         raise ModeRefused("`pkg check --install` runs the package's own code: run it from a normal shell.")
     with run.system.scratch_directory("gupkg-pkgcheck-") as scratch:
         scratch = Path(scratch)
-        roots = {name: scratch / name for name in ("system", "user", "portable")}
+        roots = {name: scratch / name for name in ("system", "user")}
         text = (
             'schema = 3\ndefault_mode = "user"\nregistry = []\n'
-            f"[roots]\nsystem = '{roots['system']}'\nuser = '{roots['user']}'\nportable = '{roots['portable']}'\n"
+            f"[roots]\nsystem = '{roots['system']}'\nuser = '{roots['user']}'\n"
             f"[integration.user]\nbin = '{scratch / 'bin'}'\nstart_menu = '{scratch / 'menu'}'\n"
         )
         settings_path = scratch / "settings.toml"
@@ -1145,7 +1141,7 @@ def _cmd_self(run: _Run) -> int:
 def _mode_of_root(run: _Run, root: Path) -> str | None:
     """Return the mode of the configured root that *root* is, or ``None`` when it is none of them."""
     settings = run.loader().settings
-    for mode in ("system", "user", "portable"):
+    for mode in ("system", "user"):
         if os.path.normcase(os.path.normpath(expand_env(settings[f"roots.{mode}"], run.env))) == os.path.normcase(os.path.normpath(root)):
             return mode
     return None
@@ -1253,7 +1249,7 @@ def _options(
     run through the engine; no other command can be started as a relaunch.
     """
     if mode:
-        parser.add_argument("--mode", choices=("system", "user", "portable"), help="the install mode (default: default_mode, auto)")
+        parser.add_argument("--mode", choices=("system", "user"), help="the install mode (default: default_mode, auto)")
     parser.add_argument("--json", action="store_true", help="print one JSON result document on standard output; human text goes to standard error")
     parser.add_argument("--no-input", action="store_true", help="never ask: a question that would be asked is exit code 5")
     if mutating:
@@ -1418,7 +1414,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _options(sub)
 
     sub = add("shell", "Print the PATH line for a root that does not touch the environment (integrate = \"none\").",
-              "gupkg shell --mode portable")
+              "gupkg shell")
     _options(sub)
 
     sub = add("registry", "Synchronise, inspect and configure the registries.", "gupkg registry sync")

@@ -5,7 +5,7 @@ Behaviour covered: ``list`` shows each package with its status and filters by st
 install was verified; ``info`` shows everything for each target, reports an unknown target without hiding the others, and shows
 a registry-only package; ``search`` finds registry entries offline, and refreshes a registry that was never synchronised unless
 ``--offline``; ``logs`` lists a package's run logs newest first, prints the newest path and opens it; ``shell`` prints the PATH
-line of a portable root with ``integrate = "none"`` and says nothing is needed for the others. The ``--json`` documents carry
+line of a user root with ``integrate = "none"`` and says nothing is needed for the others. The ``--json`` documents carry
 the same facts.
 
 Real: the argument parser, the catalog, the engine (to install the packages), real folders. Mocked: ``FakeSystem`` and the
@@ -216,15 +216,15 @@ def test_logs_without_a_target_lists_the_roots_logs_and_a_package_without_logs_i
 
 
 def test_shell_prints_the_path_line_of_an_integrate_none_root(tmp_path: Path) -> None:
-    """With integrate = "none" the portable root's bin folder is not on PATH, so `gupkg shell` prints the line that adds it."""
+    """With ``[integration.user] integrate = "none"`` the root's bin folder is not on PATH, so `gupkg shell` prints the line that adds it."""
     world = CliWorld(tmp_path)
-    world.machine.write_app_settings(tables='[integration.portable]\nintegrate = "none"\n')
+    world.machine.write_app_settings(tables='[integration.user]\nintegrate = "none"\n')
 
-    result = world.cli("shell", "--mode", "portable")
+    result = world.cli("shell")
 
-    assert result.code == 0 and result.out.strip() == f'set "PATH={world.portable / "bin"};%PATH%"'
-    document = world.cli("shell", "--mode", "portable", "--json").document()
-    assert document["path_line"] == result.out.strip() and document["bin"] == str(world.portable / "bin")
+    assert result.code == 0 and result.out.strip() == f'set "PATH={world.user / "bin"};%PATH%"'
+    document = world.cli("shell", "--json").document()
+    assert document["path_line"] == result.out.strip() and document["bin"] == str(world.user / "bin")
 
 
 def test_shell_has_nothing_to_print_for_a_mode_that_edits_the_path_itself(world: CliWorld) -> None:

@@ -130,9 +130,9 @@ application whose files are already there, and `check` finds what drifted.
 ## At a glance
 
 - Windows only. The release ZIP carries its own Python; nothing else needs to be installed.
-- Three **install modes** per package: `system` (all users, `C:\opt`), `user` (`%USERPROFILE%\opt`) and `portable`
-  (settings kept inside the package folder). `default_mode = "auto"` picks `system` in an elevated shell and `user`
-  otherwise.
+- Two **install modes**: `system` (all users, `C:\opt`) and `user` (`%USERPROFILE%\opt`). `default_mode = "auto"` picks
+  `system` in an elevated shell and `user` otherwise. A package says which it allows (`modes`); a **portable** package
+  (`modes = ["portable"]`, settings kept in the package folder) installs for a single user only.
 - **Format 2 `pkg.toml`.** One `[source]` per version, a separate `[track]` table in a tracker folder, built-in services
   instead of scripts (version discovery, unpacking, checksum discovery, post-unpack steps), and `snake_case` everywhere.
 - **Checking and installing are separate.** `check-updates` runs a package's tracker and writes (and by default prepares) a
@@ -150,7 +150,7 @@ Each root (one per install mode) holds package folders. A package folder holds i
 `current` junction that points to the active one:
 
 ```text
-<root>\                                # C:\opt, %USERPROFILE%\opt or the portable root
+<root>\                                # C:\opt or %USERPROFILE%\opt
   .gupkg\                              # root data: settings.toml, state.toml, logs\, registry\, gupkg.cmd (root forwarder)
   <name>\                              # the package folder: its name is the package's identity
     current\                           # NTFS junction to the active version
@@ -162,7 +162,7 @@ Each root (one per install mode) holds package folders. A package folder holds i
       install.cmd, gupkg-tui.cmd       # package launchers (double-click installs / opens this version)
       gupkg\                           # optional: a bundled gupkg (bundled mode)
     1.2.4\                             # pinned, not populated yet: status "available"
-    data\                              # portable mode only: persistent state
+    data\                              # portable packages only: persistent state
     .gupkg\                            # package.toml (install record), logs\, locks\, work\, state\   (each <version>\App.info records how its App was built)
 ```
 
@@ -218,7 +218,7 @@ unpacked; it never activates anything. `update` then activates the newest versio
 the followed registry, and prepares its `App` first if it has none. `install` and `update` never run a tracker, so
 `update` of a package with nothing newer says "up to date" and makes no request.
 
-Every command takes `--json`. Every mutating command takes `--yes`. The mode comes from `--mode system|user|portable`,
+Every command takes `--json`. Every mutating command takes `--yes`. The mode comes from `--mode system|user`,
 else from the package's install record or the root that holds it, else from `default_mode` in the settings (`auto`: an
 elevated shell installs in system mode, any other in user mode). A call that needs administrator rights relaunches
 gupkg **once** elevated, after one question, and only when this gupkg itself lives in an admin-only folder. The call then
@@ -238,13 +238,12 @@ with exit code 5 (the child's own `stop_file` is in its events file).
 | --- | --- | --- | --- | --- |
 | `user` | `%USERPROFILE%\opt` | `%APPDATA%\Microsoft\Windows\Start Menu\opt` | `HKCU\Environment` | `%USERPROFILE%\bin` |
 | `system` | `C:\opt` (admin-only) | `%ProgramData%\Microsoft\Windows\Start Menu\opt` | `HKLM` environment | `C:\bin` |
-| `portable` | `[roots].portable` | the user's, unless `integrate = "none"` | the user's, unless `integrate = "none"` | `<root>\bin` |
 
 `gupkg install firefox --mode user` and `gupkg install %USERPROFILE%\opt\firefox` put the same shortcuts, shims and
 `PATH` entries in place, because both use the context built from the settings. A folder outside every root (an unzipped
 distribution) is copied into the mode's root first, unless `--in-place`. With `integrate = "none"` in
-`[integration.portable]`, a portable install touches neither the registry nor the Start Menu, and `gupkg shell` prints the
-line that puts `<root>\bin` on `PATH`.
+`[integration.user]`, an install touches neither the registry nor the Start Menu, its shims go to `<root>\bin`, and
+`gupkg shell` prints the line that puts `<root>\bin` on `PATH`.
 
 `install` and `update` ask before two things, and `--yes` answers both: installing a version **older than the active one**
 (`--allow-downgrade` answers only that), and installing while **other version directories of the package are broken or not
@@ -383,7 +382,7 @@ The version is the folder name and the package name is the package folder's name
 format = 2
 description = "Fast text search"                       # information only
 project_url = "https://github.com/BurntSushi/ripgrep"  # information only, never fetched
-modes = ["system", "user"]                             # system | user | portable (default: all three)
+modes = ["system", "user"]                             # system | user (default: both), or ["portable"]
 requires_gupkg = ">=1.0"                               # minimum gupkg; an older one exits with code 6
 record_manifest = true                                 # false: no App fingerprint (very large trees only)
 
@@ -410,7 +409,7 @@ target = "$App\\rg.exe"
 ```
 
 Top-level keys are exactly: `format`, `description`, `project_url`, `modes`, `requires`, `requires_gupkg`,
-`record_manifest`, `source`, `track`, `prepare`, `portable`, `user`, `system`, `shortcut`, `env`, `path`, `shim` and
+`record_manifest`, `source`, `track`, `prepare`, `portable`, `shortcut`, `env`, `path`, `shim` and
 `root_forwarder` (only gupkg's own package may use the last). There is no `version`, `localVersion`, `name`, `homepage`,
 `only_portable`, `[origin]`, `[update]`, `[[bin]]`, `[[environment]]` or `ignore_checksum`.
 
@@ -481,15 +480,14 @@ module = "pkg.local/fix.py"                                 # escape hatch (hook
   `<name>.config.toml` in the mode's `bin` folder and starts the target directly, without a shell. For shell behaviour
   write a content shim instead, `content = "@echo off\r\n..."` with a name such as `tool.cmd`; `content` cannot be combined
   with the other shim options. Names may not be device names, streams or end in a dot or space.
-- **`[portable]`** (needs `portable` in `modes`): `persist` (paths kept in `<package>\data` and linked into every version's
-  `App`), `markers` (files that switch the program to portable mode) and `args`/`env` that select portable mode for
-  shortcuts and shims. **`[user]`**, **`[system]`** (each needs its mode in `modes`) and `[portable]` take a `prepare` list of install-time steps for that
-  mode, run in order after the steps every mode runs (`[[prepare]]`): `["remove", "a", "b*"]` deletes paths,
-  `["create", "path"]` (or `["create", "path", "content"]`) writes a file, `["rename", "from", "to"]`, `["copy", "from", "to"...]`
-  and `["run", "pkg.local/fix.py"]` (a bundled script, for anything else). A step only changes the `App` that is being built.
-  The receipt records the mode the `App` was prepared for; installing that version in another mode asks, then rebuilds the `App`
-  from its verified download (an `App` that cannot be rebuilt is refused and left alone). `[nonportable]` no longer exists: use
-  `[user]` and `[system]`.
+- **`modes`** says where the package may be installed: `["system", "user"]` (the default), `["system"]` or `["user"]`, or
+  `["portable"]` for a portable package, which installs for a single user only. A list that mixes `portable` with `system` or
+  `user` is invalid: publish a separate `<name>-portable` package. A package whose `modes` lack the mode of the run is
+  refused before any work.
+- **`[portable]`** (required when `modes = ["portable"]`, and allowed only then): `persist` (paths kept in `<package>\data`
+  and linked into every version's `App`) and `markers` (files that switch the program to portable mode). There are no
+  per-mode step tables: the install-time steps of every package are its `[[prepare]]` rows
+  (`remove`, `rename`, `copy`, `write`, `module`).
 
 ### Variables
 
@@ -498,7 +496,6 @@ module = "pkg.local/fix.py"                                 # escape hatch (hook
 | `$App` | The active version's `App`. |
 | `$VersionRoot` | The version directory. |
 | `$PackageRoot` | The package folder. |
-| `$Data` | `<package>\data` (portable mode only). |
 | `$Bin` | The mode's shim folder. |
 | `$Stage` | The staging folder (`[source.installer]` only). |
 | `${version}` | The version, with filters: `${version\|replace:.:-}`, `${version\|major}`. |
