@@ -18,7 +18,7 @@ Not recorded yet. Before T00, the controller records:
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | T00 | Design note | — | merged | i035/T00 | 7c62967 | 3915 passed, 0 failed, 11 skipped | none |
 | T01 | Remove migration code | T00 | merged | i035/T01 | 91faed3 | 3765 passed, 0 failed, 11 skipped | none |
-| T02 | Portable is a package kind; mode restriction | T01 | ready | | | | |
+| T02 | Portable is a package kind; mode restriction | T01 | in progress | i035/T02 | | | |
 | T03 | Registry conversion (gupkg-registry) | T02 | waiting | | | | |
 | T04 | Settings schema 4 and root fallback chain | T02 | waiting | | | | |
 | T05 | Scope object; mode from the token | T04 | waiting | | | | |
@@ -62,3 +62,4 @@ Not recorded yet. Before T00, the controller records:
 - 2026-10-29: T01 dispatched on i035/T01.
 - 2026-10-29: T01 worker reported (6c83a4f, 3765 passed/11 skipped); review round 1 started.
 - 2026-10-29: T01 round 1 (6 comment defects) fixed in 656ae44; merged as 91faed3; suite 3765 passed, 11 skipped (150 fewer tests: deleted migration/legacy tests). T02 ready.
+- 2026-10-29: T02 dispatched on i035/T02.
