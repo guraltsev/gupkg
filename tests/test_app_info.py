@@ -1,8 +1,7 @@
 """Cover ``App.info``: the record of how an App was built lives in the version directory.
 
-Behavior covered: an install writes ``<version>\\App.info`` and no file in ``.gupkg\\receipts``; a receipt kept in the old place by gupkg
-1.0.0 to 1.0.x is still read and moves to ``App.info`` when it is next written; ``App.info`` is not part of the fingerprint of a
-version directory (a registry fingerprint still matches a version that was installed); copying a populated version directory
+Behavior covered: an install writes ``<version>\\App.info`` and no file in ``.gupkg\\receipts``; a receipt file in the old place (``.gupkg\\receipts``) is not read;
+``App.info`` is not part of the fingerprint of a version directory (a registry fingerprint still matches a version that was installed); copying a populated version directory
 to another root carries its record, so the mode the App was prepared for travels with it.
 
 Real: the engine, the receipt module, the fingerprint and real folders. Mocked: ``FakeSystem``.
@@ -17,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from gupkg.engine.receipts import legacy_receipt_path, list_receipts, read_receipt, receipt_path, update_receipt
+from gupkg.engine.receipts import list_receipts, read_receipt, update_receipt
 from gupkg.services.fingerprint import fingerprint_directory
 from tests.engine_support import World
 
@@ -40,21 +39,19 @@ def test_an_install_writes_app_info_in_the_version_directory_and_nothing_in_the_
     assert not (package / ".gupkg" / "receipts").exists() and list_receipts(package) == ["1.0.0"]
 
 
-def test_an_old_receipt_is_read_and_moves_to_app_info_on_the_next_write(tmp_path: Path) -> None:
-    """A receipt in `.gupkg\\receipts` is found when the version has no `App.info`; writing creates `App.info` and removes the old file."""
+def test_a_version_with_only_an_old_receipt_file_has_no_receipt(tmp_path: Path) -> None:
+    """A `.gupkg\\receipts\\<version>.toml` is not read: the version has no receipt and is not listed."""
     package = tmp_path / "tool"
     (package / "1.0.0").mkdir(parents=True)
-    old = legacy_receipt_path(package, "1.0.0")
+    old = package / ".gupkg" / "receipts" / "1.0.0.toml"
     old.parent.mkdir(parents=True)
     old.write_text('schema = 1\n[source]\nkind = "download"\n', encoding="utf-8")
 
-    assert read_receipt(package, "1.0.0").data["source"]["kind"] == "download" and list_receipts(package) == ["1.0.0"]
+    assert read_receipt(package, "1.0.0").data is None and list_receipts(package) == []
 
-    written = update_receipt(package, "1.0.0", {"run": {"operation": "install"}})
+    update_receipt(package, "1.0.0", {"run": {"operation": "install"}})
 
-    assert written == receipt_path(package, "1.0.0") and not old.exists()
-    merged = read_receipt(package, "1.0.0").data
-    assert merged["source"]["kind"] == "download" and merged["run"]["operation"] == "install"
+    assert old.exists() and read_receipt(package, "1.0.0").data == {"schema": 1, "run": {"operation": "install"}}
 
 
 def test_app_info_does_not_change_the_fingerprint_of_a_version_directory(tmp_path: Path) -> None:

@@ -61,13 +61,13 @@ ROOT = Path(__file__).resolve().parents[1]
 
 # Imported by the build probe when the bundle's dependencies are installed: the command line and every
 # module it reaches, so a module that needs something the bundle lacks fails the build. The UI programs
-# of issue 030 (``gupkg_ui``, ``gupkg_tui``, ``gupkg_manager``) and the migration tool are probed through their entry modules; any other
+# of issue 030 (``gupkg_ui``, ``gupkg_tui``, ``gupkg_manager``) are probed through their entry modules; any other
 # package directory named in ``OPTIONAL_PROBE_PACKAGES`` is probed as soon as it exists beside ``gupkg`` in the version directory.
 PROBE_MODULES = (
-    "gupkg.cli", "gupkg_migrate.cli",
+    "gupkg.cli",
     "gupkg.services.track", "gupkg.services.unpack", "gupkg.services.prepare", "gupkg.hooklib",
     "gupkg.services.artifact", "gupkg.model.manager_policy", "gupkg.pinning",
-    "gupkg.engine.lifecycle", "gupkg.model.plan", "gupkg_migrate.adopt", "gupkg.engine.locks", "gupkg.engine.installer",
+    "gupkg.engine.lifecycle", "gupkg.model.plan", "gupkg.engine.locks", "gupkg.engine.installer",
     "gupkg.redact", "gupkg.authoring", "gupkg.settingsedit", "gupkg.viewdata", "gupkg.report.results",
     "gupkg.selfmgmt.location", "gupkg.selfmgmt.status", "gupkg.services.registrysource", "gupkg.catalog.registry",
     "gupkg_ui.client", "gupkg_ui.app", "gupkg_manager.cli", "gupkg_tui.cli",
@@ -198,7 +198,7 @@ def build_bundle(
         # command whose ``.cmd`` launcher is in the package (the UI programs of
         # issue 030 add theirs).
         shim = source / "shim" / "shim-console.static.exe"  # static: no exe-shim-lib folder is needed beside it
-        commands = [name for name in ("gupkg", "gupkg-tui", "gupkg-manager", "gupkg-migrate") if (payload / f"{name}.cmd").is_file()]
+        commands = [name for name in ("gupkg", "gupkg-tui", "gupkg-manager") if (payload / f"{name}.cmd").is_file()]
         if shim.is_file():
             for command in commands:
                 shutil.copy2(shim, payload / f"{command}.exe")
@@ -216,9 +216,9 @@ def build_bundle(
             if wrapper.is_file():
                 shutil.copy2(wrapper, tree / wrapper_name)
 
-        # The separate programs (the migration tool, the UI programs and their shared library) sit beside the ``gupkg``
+        # The separate programs (the UI programs and their shared library) sit beside the ``gupkg``
         # package in the tree (design section 12).
-        for program in ("gupkg_migrate", "gupkg_ui", "gupkg_tui", "gupkg_manager"):
+        for program in ("gupkg_ui", "gupkg_tui", "gupkg_manager"):
             program_dir = source.parent / program
             if program_dir.is_dir():
                 shutil.copytree(program_dir, tree / program, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))

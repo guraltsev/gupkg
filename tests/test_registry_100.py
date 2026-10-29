@@ -1,15 +1,13 @@
-"""Cover the real converted registry: all 79 packages in format 2, onto the services, with nothing lost from 0.17.
+"""Cover the real registry: all 79 packages in format 2, onto the services.
 
 Behavior covered: every tracker and pinned version of the committed snapshot of the real registry
 (``tests/fixtures/registry_100``) passes the package checker with no error and no warning; the
 registry rules hold (hashes, fingerprints, launchers, explicit modes); no manifest or script says
 ``ignore_checksum``; at most 13 hook files remain and each says why; the portable-capable packages
 declare ``portable`` in their modes; the package-specific faults of the issue are fixed (qbittorrent,
-zotero, msys2, GIMP, nano); every 0.17 package's shortcuts, shims, environment variables, PATH entries
-and requirements survive the rewrite, apart from five differences listed here with their reasons; every
+zotero, msys2, GIMP, nano); every
 pattern compiles under the pattern guard; and every tracker but the three Git ones has a fixture case.
-Real: the snapshot, the package checker, the migration tool's reading of the 0.17 originals
-(``tests/fixtures/registry_017``), the registry validation. Mocked: nothing. Out of scope: running the
+Real: the snapshot, the package checker, the registry validation. Mocked: nothing. Out of scope: running the
 trackers (``test_track_providers.py``, ``test_registry_expressible.py``) and the live vendors (manual).
 """
 
@@ -25,13 +23,11 @@ import pytest
 
 from gupkg.model.patterns import compile_pattern
 from gupkg.pkgcheck import check_directory
-from gupkg_migrate.package import plan_package
 from gupkg_registry.layout import package_dirs
 from gupkg_registry.validate import MAX_HOOK_FILES, validate_registry
 from tests.http_fixtures import FIXTURES, HTTP_CASES
 
 REGISTRY = FIXTURES / "registry_100"
-OLD = FIXTURES / "registry_017"
 
 PACKAGES = [path.name for path in package_dirs(REGISTRY)]
 DIRECTORIES = [
@@ -52,9 +48,9 @@ def tracker(package: str) -> dict[str, Any]:
     return tomllib.loads((REGISTRY / package / "_check_updates" / "pkg.toml").read_text(encoding="utf-8"))
 
 
-def test_the_registry_holds_every_package_of_0_17() -> None:
-    """The 79 packages of the 0.17 snapshot are all here, and each has a tracker."""
-    assert PACKAGES == [path.name for path in package_dirs(OLD)] and len(PACKAGES) == 79
+def test_the_registry_holds_79_packages_and_each_has_a_tracker() -> None:
+    """The snapshot holds 79 packages, and each has a tracker."""
+    assert len(PACKAGES) == 79
     assert all((REGISTRY / name / "_check_updates" / "pkg.toml").is_file() for name in PACKAGES)
 
 
@@ -87,7 +83,7 @@ def test_no_package_uses_the_checksum_bypass() -> None:
 
 
 def test_at_most_thirteen_hook_files_remain() -> None:
-    """The migration leaves no more hook files than the limit; the validation enforces the notes."""
+    """No more hook files remain than the limit; the validation enforces the notes."""
     hooks = [p for p in REGISTRY.glob("*/*/pkg.local/**/*.py")]
 
     assert len(hooks) <= MAX_HOOK_FILES
@@ -162,42 +158,6 @@ def test_gimp_runs_its_vendor_installer_and_the_package_says_so() -> None:
 def test_nano_has_no_hook_whose_docstring_could_describe_the_wrong_archive() -> None:
     """The wrong-archive-type docstrings are gone because the hooks are."""
     assert not (REGISTRY / "nano" / "_check_updates" / "pkg.local").exists()
-
-
-# Differences from the converted 0.17 originals that were chosen on purpose, with the reason.
-INTENTIONAL = {
-    ("backrest", "shortcut"): "the 0.17 icon file never existed in the registry; the shortcut uses the program's own icon",
-    ("graphviz", "description"): "shorter text",
-    ("hwinfo", "shortcut"): "0.17 had no shortcut, so the package could not be started from the Start menu",
-    ("qbittorrent", "shortcut"): "the forward slash in the target is fixed (issue 031)",
-    ("testdisk", "description"): "shorter text",
-    ("volta", "path"): "the machine PATH cannot name %LOCALAPPDATA%\\Volta\\bin, so that entry is gone and only `$App` (where volta keeps its node, npm, ... shims) is on the PATH; each user runs `volta setup` (see the tracker)",
-}
-COMPARED = ("shortcut", "shim", "env", "path", "requires", "description", "project_url")
-
-
-def rows(data: dict[str, Any], key: str) -> Any:
-    """Return the value of *key* with tables sorted, so order does not matter."""
-    value = data.get(key)
-    if isinstance(value, list):
-        return sorted((sorted(item.items()) if isinstance(item, dict) else item for item in value), key=str)
-    return value
-
-
-@pytest.mark.parametrize("package", [pytest.param(name, id=name) for name in PACKAGES])
-def test_nothing_the_0_17_package_declared_is_lost(package: str) -> None:
-    """Shortcuts, shims, environment variables, PATH entries, requirements and texts equal what the migration tool made of the original.
-
-    The comparison is against the tool's own conversion of the 0.17 file, so the only differences left are the
-    hand-made ones, and they are listed in ``INTENTIONAL``.
-    """
-    seed = next(d for d in (OLD / package).iterdir() if d.is_dir() and (d / "pkg.toml").is_file())
-    original = tomllib.loads(plan_package(seed).new_text)
-    rewritten = tracker(package)
-
-    differing = {key for key in COMPARED if rows(original, key) != rows(rewritten, key)}
-
-    assert differing == {key for (name, key) in INTENTIONAL if name == package}
 
 
 def test_every_pattern_in_every_tracker_passes_the_pattern_guard() -> None:

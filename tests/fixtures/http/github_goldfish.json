@@ -3,7 +3,7 @@
  "tracker": "goldfish",
  "provider": "github latest, exact asset",
  "recorded": null,
- "origin": "synthetic fixture modelled on the registry hook's regular expressions (tests/fixtures/registry_017/goldfish/_bootstrap/pkg.toml, the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
  "expected": {
   "version": "17.11.26",
   "download_url": "https://github.com/MoganLab/goldfish/releases/download/v17.11.26/goldfish-scheme-x64-v17.11.26-win.zip",

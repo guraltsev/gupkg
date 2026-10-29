@@ -3,7 +3,7 @@
  "tracker": "gsmartcontrol",
  "provider": "github latest, exact asset",
  "recorded": null,
- "origin": "synthetic fixture modelled on the registry hook's regular expressions (tests/fixtures/registry_017/gsmartcontrol/_bootstrap/pkg.toml, the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
  "expected": {
   "version": "2.0.2",
   "download_url": "https://github.com/ashaduri/gsmartcontrol/releases/download/v2.0.2/gsmartcontrol-2.0.2-win64.zip",

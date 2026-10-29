@@ -21,7 +21,7 @@ gupkg self status               :: is gupkg's own installation healthy?
 
 | Message | What it means and what to do |
 | --- | --- |
-| `Unsupported pkg.toml format ('missing'): this gupkg reads only format 2; set format = 2.` | The file has no `format = 2` (a 0.17 file has none, or `format = 1`). 1.0 reads only format 2; convert 0.17 files once with `gupkg migrate package <path>` (see [Migrating](operations.md#migrating-from-017-and-018)). |
+| `Unsupported pkg.toml format ('missing'): this gupkg reads only format 2; set format = 2.` | The file has no `format = 2` (a 0.17 file has none, or `format = 1`). 1.0 reads only format 2. |
 | `Unsupported pkg.toml format (3): this package needs a newer gupkg ...` (exit 6) | The package is written for a newer gupkg than the one running. A package launcher then runs its bundled gupkg; otherwise update gupkg with `gupkg self check-updates` and `gupkg self update`. The same exit code is used for an unmet `requires_gupkg`. |
 | `Unknown key 'x' in ...` | A typo, or a 0.17 spelling (`[origin]`, `[update]`, `[[bin]]`, `[[environment]]`, `targetPath`, `homepage`, `only_portable`). There are no aliases; the message names the key. |
 | `version is not allowed: the version is the name of the version directory and the name is the package folder` | `pkg.toml` holds `version`, `localVersion` or `name`. Delete the line; the folder name is the identity. |
@@ -155,7 +155,6 @@ when no `gupkg` is running:
 
 - `<package>\.gupkg\work\` &mdash; disposable download and staging space.
 - `<package>\.gupkg\locks\` &mdash; a stale lock from a killed run (the next run removes it too).
-- `pkg.toml.bak` files that `gupkg migrate` kept.
 
 Never delete the version folder `current` points to, or `<package>\.gupkg\package.toml` (the install record that `uninstall`
 uses to remove exactly what was installed).

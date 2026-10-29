@@ -806,10 +806,11 @@ def test_shim_and_shortcut_names_are_capped_at_255(table: str) -> None:
 HEAD = 'format = 2\n[source]\ndownload_url = "https://x.test/a.zip"\n'
 
 
-def test_the_old_nonportable_table_is_refused_and_names_its_replacement() -> None:
-    """`[nonportable]` is gone: the error says to use the `prepare` steps of [user] and [system]."""
-    with pytest.raises(ManifestError, match=r"nonportable.*\[user\] and \[system\]"):
-        parse_manifest(HEAD + '[nonportable]\nremove = ["x"]\n')
+def test_a_nonportable_table_is_reported_like_any_other_unknown_key() -> None:
+    """`[nonportable]` has no special message any more: it is one generic unknown-key problem."""
+    found = problems(HEAD + '[nonportable]\nremove = ["x"]\n')
+
+    assert found == ["unknown key 'nonportable'; did you mean 'portable'?"]
 
 
 @pytest.mark.parametrize("table", ["user", "system"])

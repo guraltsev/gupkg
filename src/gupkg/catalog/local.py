@@ -1,7 +1,6 @@
 """Scan roots and package roots on disk and build their ``LocalState``.
 
-The module reads a root's packages (grouping folders marked by ``gupkg-dir.toml`` work as
-in 0.17), each package's version directories and tracker, and what ``current`` is. It
+The module reads a root's packages (grouping folders marked by ``gupkg-dir.toml``), each package's version directories and tracker, and what ``current`` is. It
 never changes anything and prints nothing. Nothing inside a package root is followed out of
 it: a version directory, tracker, ``App`` or ``pkg.toml`` that is a link is reported as
 invalid instead of being read, and ``current`` must be a junction to a direct child of its
@@ -60,7 +59,7 @@ from ..tomlio import read_toml
 # Windows marks junctions and symbolic links with this file attribute.
 _REPARSE_POINT = 0x400
 
-# The marker file that turns a folder into a grouping folder (as in 0.17).
+# The marker file that turns a folder into a grouping folder.
 GROUP_MARKER = "gupkg-dir.toml"
 
 # The folder of a root, or of a package, that holds gupkg's own files.
@@ -271,8 +270,8 @@ def looks_like_package(path: Path) -> bool:
     """Return whether the folder *path* is a package root.
 
     A package root holds a version directory (a valid version name with a ``pkg.toml``), a
-    tracker, a ``current`` entry or an install record. 0.17's ``_bootstrap`` is reserved
-    and counts for nothing (decision D33).
+    tracker, a ``current`` entry or an install record. ``_bootstrap`` is reserved
+    and counts for nothing.
     """
     try:
         names = {entry.name: entry for entry in os.scandir(path)}

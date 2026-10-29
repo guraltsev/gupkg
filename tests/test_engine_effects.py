@@ -305,19 +305,3 @@ def test_verify_reports_a_missing_library_and_apply_puts_it_back(tmp_path: Path,
     assert drift and "libwinpthread-1.dll" in drift[0] and "exe-shim-lib" in drift[0]
     apply_effect(system, effect, ctx)
     assert [row for row in verify_each(system, [applied], elevated=False) if row[1] or row[2]] == []
-
-
-def test_loose_copies_from_an_older_gupkg_are_removed_only_when_they_are_ours(tmp_path: Path, system: FakeSystem) -> None:
-    """An identical loose DLL in ``bin`` is deleted; a DLL with other bytes (someone else's) stays."""
-    ctx = context(tmp_path)
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir(parents=True)
-    ours = (Path(__file__).resolve().parents[1] / "src" / "gupkg" / "shim" / "exe-shim-lib" / "libgcc_s_seh-1.dll").read_bytes()
-    (bin_dir / "libgcc_s_seh-1.dll").write_bytes(ours)
-    (bin_dir / "libwinpthread-1.dll").write_bytes(b"somebody else's library")
-    effect = next(item for item in desired_effects(manifest(SHIM), ctx)[0] if item.kind == "shim")
-
-    apply_effect(system, effect, ctx)
-
-    assert not (bin_dir / "libgcc_s_seh-1.dll").exists()
-    assert (bin_dir / "libwinpthread-1.dll").read_bytes() == b"somebody else's library"

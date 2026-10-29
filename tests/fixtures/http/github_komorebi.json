@@ -3,7 +3,7 @@
  "tracker": "komorebi",
  "provider": "github latest, exact asset",
  "recorded": null,
- "origin": "synthetic fixture modelled on the registry hook's regular expressions (tests/fixtures/registry_017/komorebi/_bootstrap/pkg.toml, the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
  "expected": {
   "version": "0.1.35",
   "download_url": "https://github.com/LGUG2Z/komorebi/releases/download/v0.1.35/komorebi-0.1.35-x86_64-pc-windows-msvc.zip",

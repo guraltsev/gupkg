@@ -3,8 +3,8 @@
 Every command takes explicit targets (names or paths, design section 10.1) and options after the command. The lifecycle
 commands (``check-updates``, ``install``, ``update``, ``switch``, ``uninstall``, ``check``, ``cleanup``, ``link`` and the
 ``self`` aliases) call ``gupkg.engine.lifecycle``; ``list``, ``info``, ``search``, ``logs`` and ``shell`` read the catalog;
-``registry``, ``settings`` and ``pkg`` work on registries, settings files and package definitions; ``tui``, ``manager`` and
-``migrate`` start the separate programs of the same gupkg tree and pass their exit code through. The command line has no
+``registry``, ``settings`` and ``pkg`` work on registries, settings files and package definitions; ``tui`` and ``manager``
+start the separate programs of the same gupkg tree and pass their exit code through. The command line has no
 interactive screen and no ``--all`` (decisions D11, D12): batches and interactive use belong to ``gupkg-manager``.
 
 Usage and API
@@ -69,7 +69,7 @@ from .tls import enable_partial_chain_verification
 from .viewdata import info_data, package_data
 
 # The commands that are programs of their own: ``gupkg <word> ...`` starts the launcher in the same gupkg tree.
-FORWARDERS = {"tui": "gupkg-tui.cmd", "manager": "gupkg-manager.cmd", "migrate": "gupkg-migrate.cmd"}
+FORWARDERS = {"tui": "gupkg-tui.cmd", "manager": "gupkg-manager.cmd"}
 
 # The lifecycle commands, which run through ``gupkg.engine.lifecycle`` inside one session.
 _ENGINE_COMMANDS = ("check-updates", "install", "update", "switch", "uninstall", "check", "cleanup", "link")
@@ -1157,7 +1157,7 @@ def _mode_of_root(run: _Run, root: Path) -> str | None:
 
 
 def _forwarder(tokens: Sequence[str]) -> tuple[str, list[str], list[str]] | None:
-    """Return ``(program, arguments, root options)`` when the command is ``tui``, ``manager`` or ``migrate``, else ``None``.
+    """Return ``(program, arguments, root options)`` when the command is ``tui`` or ``manager``, else ``None``.
 
     The root options (``--settings PATH``, ``--sandbox DIR``) may come first; everything after the command word belongs to
     the program and is passed on unchanged, ``--help`` included.
@@ -1183,10 +1183,9 @@ def _forward(program: str, rest: list[str], root_options: list[str], system: Sys
     if root_options:
         print(f"gupkg: error: --settings and --sandbox are not passed on to gupkg-{program}", file=sys.stderr)
         return EXIT_USER
-    # The UI programs ask for administrator rights themselves, through `gupkg`; the migration tool does its own work and
-    # needs the token to adopt the system root, so only `tui` and `manager` refuse an elevated shell (D44, D45). It still
-    # starts through its own launcher, which runs bootstrap's trust check before importing anything.
-    if program != "migrate" and is_elevated_run(system):
+    # The UI programs ask for administrator rights themselves, through `gupkg`, so `tui` and `manager` refuse an elevated
+    # shell (D44, D45). They start through their own launcher, which runs bootstrap's trust check before importing anything.
+    if is_elevated_run(system):
         print(
             f"gupkg: error: gupkg {program} is not started from an elevated shell: the programs call `gupkg` and ask for "
             "administrator rights once themselves. Run it from a normal shell.", file=sys.stderr,
@@ -1217,16 +1216,6 @@ _HANDLERS: dict[str, Callable[[_Run], int]] = {
     "registry": _cmd_registry, "settings": _cmd_settings, "pkg": _cmd_pkg, "self": _cmd_self,
 }
 
-# The four spellings the issue keeps as usage errors that name the 1.0 way (they are not aliases, decision D33); every other
-# removed 0.17 option is simply unknown to argparse.
-_REMOVED_OPTIONS = {
-    "--all": "gupkg has no --all (decisions D11, D12): the batch form is `gupkg-manager update --all`, or "
-             "`gupkg update $(gupkg list --outdated --names)`",
-    "--check": "`update` never looks for new versions: use `gupkg check-updates <target>` first, then `gupkg update <target>`",
-    "--check-only": "use `gupkg check-updates <target> --no-download`",
-    "--scope": "use --mode system|user|portable, after the command",
-}
-
 
 class _Parser(argparse.ArgumentParser):
     """An argument parser that raises ``UsageError`` instead of exiting, and refuses abbreviated options."""
@@ -1239,13 +1228,6 @@ class _Parser(argparse.ArgumentParser):
     def error(self, message: str) -> Any:  # type: ignore[override]
         """Raise the usage error; ``main`` prints it and returns exit code 2."""
         raise UsageError(message)
-
-
-class _Removed(argparse.Action):
-    """A removed 0.17 option: seeing it is a usage error that says what to use now."""
-
-    def __call__(self, parser: argparse.ArgumentParser, namespace: Any, values: Any, option_string: str | None = None) -> None:
-        raise UsageError(f"{option_string} is not an option of this command: {_REMOVED_OPTIONS[option_string or '']}")
 
 
 def _normalise(tokens: Sequence[str]) -> list[str]:
@@ -1295,8 +1277,6 @@ def _options(
         parser.add_argument("--relaunched", action="store_true", help=argparse.SUPPRESS)
         parser.add_argument("--stop-file", default=None, help=argparse.SUPPRESS)
         parser.add_argument("--batch-confirmed", action="store_true", help=argparse.SUPPRESS)
-    for option in _REMOVED_OPTIONS:
-        parser.add_argument(option, action=_Removed, nargs=0, help=argparse.SUPPRESS)
 
 
 HELP_EPILOG = """\
@@ -1328,7 +1308,6 @@ gupkg itself:
 separate programs of this gupkg:
   tui            gupkg tui PATH starts gupkg-tui
   manager        gupkg manager ... starts gupkg-manager
-  migrate        gupkg migrate ... starts gupkg-migrate
 
 Targets are names (firefox, firefox@135.0, user:firefox, main/firefox) or paths. Options go after the command.
 Exit status: 0 ok, 2 user or configuration error, 3 the operation failed, 4 internal error, 5 declined or input needed,
@@ -1349,8 +1328,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help="run against a pretend machine kept in DIR: environment variables, PATH, shortcuts and elevation are recorded "
              "in DIR instead of the registry and Start Menu; files and downloads are real",
     )
-    for option in ("--scope",):
-        parser.add_argument(option, action=_Removed, nargs=0, help=argparse.SUPPRESS)
     commands = parser.add_subparsers(dest="command", metavar="<command>", parser_class=_Parser)
 
     def add(name: str, text: str, example: str, **options: Any) -> argparse.ArgumentParser:

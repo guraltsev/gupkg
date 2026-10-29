@@ -3,7 +3,7 @@
  "tracker": "gh",
  "provider": "github latest, exact asset",
  "recorded": null,
- "origin": "synthetic fixture modelled on the registry hook's regular expressions (tests/fixtures/registry_017/gh/_bootstrap/pkg.toml, the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
  "expected": {
   "version": "2.63.2",
   "download_url": "https://github.com/cli/cli/releases/download/v2.63.2/gh_2.63.2_windows_amd64.zip",

@@ -253,17 +253,14 @@ def test_cleanup_drops_old_recoverable_apps_and_keeps_current_and_one_previous(w
     assert current_version(package) == "1.2.0"
 
 
-def test_cleanup_removes_receipts_of_versions_that_are_gone_and_leftover_work_folders(world: World) -> None:
-    """A receipt whose version directory was deleted and anything left in .gupkg\\work go; the receipt of a version that exists stays."""
+def test_cleanup_removes_leftover_work_folders_and_keeps_the_receipt_of_a_version_that_exists(world: World) -> None:
+    """Anything old left in .gupkg\\work goes; the receipt (App.info) of a version that exists stays."""
     world.publish("tool", "1.0.0", tables=ENV_ONLY)
     world.one("install", "tool")
     world.publish("tool", "1.1.0", tables=ENV_ONLY)
     world.one("update", "tool")
     package = world.user / "tool"
     shutil.rmtree(package / "1.0.0")
-    old_receipts = package / ".gupkg" / "receipts"  # where gupkg 1.0.0 to 1.0.x kept them: a leftover of a version that is gone
-    old_receipts.mkdir(parents=True)
-    (old_receipts / "1.0.0.toml").write_text("schema = 1\n", encoding="utf-8")
     leftover = package / ".gupkg" / "work" / "populate-crashed"
     leftover.mkdir(parents=True)
     (leftover / "half.bin").write_text("x", encoding="utf-8")
@@ -272,8 +269,8 @@ def test_cleanup_removes_receipts_of_versions_that_are_gone_and_leftover_work_fo
 
     result = world.one("cleanup", "tool")
 
-    assert result.ok and result.details["receipts"] == ["1.0.0"] and result.details["work"] == ["populate-crashed"]
-    assert not (old_receipts / "1.0.0.toml").exists() and (package / "1.1.0" / "App.info").is_file()
+    assert result.ok and result.details["receipts"] == [] and result.details["work"] == ["populate-crashed"]
+    assert (package / "1.1.0" / "App.info").is_file()
     assert not leftover.exists()
 
 

@@ -8,7 +8,7 @@ temporary files so replacements remain atomic on the destination volume.
 Usage and API
 -------------
 Import the function or exception that is needed; ``gupkg.tomlio`` wraps the readers and writers for TOML files, and the
-engine, the migration tool and ``gupkg pkg pin`` call the atomic writers directly.
+engine and ``gupkg pkg pin`` call the atomic writers directly.
 
 Implementation Approach
 -----------------------

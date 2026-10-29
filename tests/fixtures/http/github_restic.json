@@ -3,7 +3,7 @@
  "tracker": "restic",
  "provider": "github latest, exact asset",
  "recorded": null,
- "origin": "synthetic fixture modelled on the registry hook's regular expressions (tests/fixtures/registry_017/restic/_bootstrap/pkg.toml, the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
  "expected": {
   "version": "0.17.3",
   "download_url": "https://github.com/restic/restic/releases/download/v0.17.3/restic_0.17.3_windows_amd64.zip",

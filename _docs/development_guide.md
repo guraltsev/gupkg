@@ -22,7 +22,6 @@ src/gupkg/            core (the `gupkg` command)
 src/gupkg_ui/         shared by the two UI programs; reads through core, never the engine
 src/gupkg_tui/        gupkg-tui: one package's view
 src/gupkg_manager/    gupkg-manager: the browser and the batch commands (check-updates --all, update --all, check)
-src/gupkg_migrate/    gupkg-migrate: the one-time 0.17 converter (separate, non-core, ships in the bundle)
 src/gupkg_registry/   the registry maintainer tool (separate, not in the bundle)
 ```
 
@@ -30,7 +29,7 @@ Dependency rules:
 
 - Inside `gupkg`: `model` <- `catalog`, `services` <- `engine` <- `cli`. `system` is reached only through the `System` protocol that
   `engine` and `services` receive. Nothing below `cli` prints or reads input, and there are no function-local imports hiding cycles.
-- The separate programs build on core (D44): `gupkg_ui`, `gupkg_tui`, `gupkg_manager` and `gupkg_migrate` may import core, and core
+- The separate programs build on core (D44): `gupkg_ui`, `gupkg_tui`, and `gupkg_manager` may import core, and core
   never imports them. The UI programs use core only to read; every operation they perform is a `gupkg` call through the machine
   interface (`--json`, `--plan`, `--events-file`, `--no-input`), to the `gupkg.cmd` of their own tree.
 - Core contains no code for 0.17 data (D33): no format 1 reader, no `_bootstrap` handling, no aliases.
@@ -56,7 +55,7 @@ Dependency rules:
 ## Package launchers and shims
 
 A version directory carries `install.cmd` and `gupkg-tui.cmd` (a tracker folder carries `check-updates.cmd`), all generated from the one
-template in `gupkg.launchers` by whichever gupkg runs `check-updates`, `pkg new/bundle/export`, the registry tool or the migration tool.
+template in `gupkg.launchers` by whichever gupkg runs `check-updates`, `pkg new/bundle/export`, or the registry tool.
 They find a gupkg relative to themselves (the root forwarder, then the bundled copy) and forward their arguments through `cmd.exe`, so
 a `%`, `^` or `"` inside a forwarded argument is re-expanded by `cmd`: call `gupkg` directly for such values (documented, not fixed).
 
@@ -93,7 +92,7 @@ To refresh the committed runtime's `site-packages` run
 lock unchanged). The build ends with a probe: the staged
 `python\python.exe -I -s -B` imports every top-level package of the lock (by
 import name, read from each `RECORD`), the entry modules of the programs
-(`gupkg.cli`, `gupkg_migrate.cli`, `gupkg_ui`, `gupkg_tui.cli`,
+(`gupkg.cli`, `gupkg_ui`, `gupkg_tui.cli`,
 `gupkg_manager.cli`; see `PROBE_MODULES` in `tools/build_standalone.py`), and
 asserts pip and ensurepip are not importable. A failing probe fails the build.
 

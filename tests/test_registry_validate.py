@@ -152,7 +152,7 @@ def tracker_warning_only(root: Path) -> None:
     """Add the old HWiNFO scraper, as an API 2 module: the checker only warns that a built-in provider could do it."""
     hook = root / "gh" / "_check_updates" / "pkg.local"
     hook.mkdir()
-    original = (FIXTURES / "registry_017" / "hwinfo" / "_bootstrap" / "pkg.local" / "check_update.py").read_text(encoding="utf-8")
+    original = (FIXTURES / "hints" / "hwinfo" / "check_update.py").read_text(encoding="utf-8")
     (hook / "scrape.py").write_text("PKG_MODULE_API = 2\n" + original, encoding="utf-8", newline="\n")
 
 

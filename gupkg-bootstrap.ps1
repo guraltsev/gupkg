@@ -19,8 +19,7 @@
     everything it will run is admin-only, and refuses otherwise.
 
     Needs Windows PowerShell 5.1 or newer. No Python, Git or pip is needed in advance: the release carries its own Python,
-    the locked dependencies and the native launchers. The only downloads are RELEASES.md and the ZIP. Re-running the
-    script is also how a 0.18 installation moves to 1.0.
+    the locked dependencies and the native launchers. The only downloads are RELEASES.md and the ZIP.
 
     Run with -Source <url or ZIP> and -Sha256, the same script installs any other program's distribution (a ZIP made
     with 'gupkg pkg export') in user scope; that installs only that program, not gupkg.

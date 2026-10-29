@@ -11,7 +11,7 @@ Start at the top and stop when you have what you need.
 3. [troubleshooting.md](troubleshooting.md) — every error message with its fix.
 4. [operations.md](operations.md) — the operator runbook: bootstrap, settings
    layers, registries and the registry tool, schedules, the health check, logs,
-   sandbox runs, migration from 0.17 and 0.18, self-repair, and releasing.
+   sandbox runs, self-repair, and releasing.
 5. [../README.md](../README.md) — the complete format 2 `pkg.toml` and command reference.
 
 `gupkg --help` and `gupkg <command> --help` are always the authoritative list of

@@ -3,7 +3,7 @@
  "tracker": "sharex",
  "provider": "github latest, exact asset",
  "recorded": null,
- "origin": "synthetic fixture modelled on the registry hook's regular expressions (tests/fixtures/registry_017/sharex/_bootstrap/pkg.toml, the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
+ "origin": "synthetic fixture modelled on the registry hook's regular expressions (the 0.17 github check); marked recorded: null; to be re-recorded by tools/record_http_fixtures.py",
  "expected": {
   "version": "17.0.0",
   "download_url": "https://github.com/ShareX/ShareX/releases/download/v17.0.0/ShareX-17.0.0-portable-x64.zip",

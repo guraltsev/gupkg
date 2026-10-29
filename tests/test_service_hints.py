@@ -1,10 +1,10 @@
-"""Cover the service hints that ``gupkg pkg check`` and the migration tool give for hook scripts.
+"""Cover the service hints that ``gupkg pkg check`` gives for hook scripts.
 
-The hooks scanned are the real 0.17 registry hooks committed under ``tests/fixtures/registry_017``
-(62 files). Covers which service each known hook is recognised as, that a hook of no known
+The hooks scanned are real registry hooks committed under ``tests/fixtures/hints``
+(18 files, one folder per package). Covers which service each known hook is recognised as, that a hook of no known
 pattern (GIMP's vendor-installer unpack) gets no hint, that ``pkg check`` reports a hint as a
 warning with the replacement, and that the hint count supports the epic's goal that most
-hooks are replaceable. Out of scope: converting a package (``test_migrate_package``).
+hooks are replaceable.
 """
 
 from __future__ import annotations
@@ -16,13 +16,13 @@ import pytest
 from gupkg.pkgcheck import check_directory
 from gupkg.services.hints import scan_directory, scan_text
 
-REGISTRY = Path(__file__).resolve().parent / "fixtures" / "registry_017"
-HOOKS = sorted(REGISTRY.glob("*/*/pkg.local/*.py"))
+REGISTRY = Path(__file__).resolve().parent / "fixtures" / "hints"
+HOOKS = sorted(REGISTRY.glob("*/*.py"))
 
 
 def services_of(package: str, hook: str) -> list[str]:
     """Return the services hinted for one committed registry hook."""
-    path = next(REGISTRY.glob(f"{package}/*/pkg.local/{hook}"))
+    path = REGISTRY / package / hook
     return [hint.service for hint in scan_text(path.read_text(encoding="utf-8-sig"), hook)]
 
 
@@ -55,7 +55,7 @@ def test_known_hooks_are_recognised_as_the_service_that_replaces_them(package: s
 
 def test_a_hint_for_a_github_hook_names_the_repository_it_reads() -> None:
     """The suggestion for a GitHub client fills in the `owner/name` found in the hook."""
-    path = next(REGISTRY.glob("bulkcrapuninstaller/*/pkg.local/check_update.py"))
+    path = REGISTRY / "bulkcrapuninstaller" / "check_update.py"
 
     hint = next(h for h in scan_text(path.read_text(encoding="utf-8-sig"), "check_update.py") if h.service == "track: github")
 
@@ -63,13 +63,13 @@ def test_a_hint_for_a_github_hook_names_the_repository_it_reads() -> None:
 
 
 def test_the_vendor_installer_hook_has_no_hint_and_most_hooks_have_one() -> None:
-    """GIMP's installer-running unpack hook is not replaceable by a service (decision D39); at least 50 of 62 hooks are."""
+    """GIMP's installer-running unpack hook is not replaceable by a service (decision D39); every other committed hook is."""
     hinted = [path for path in HOOKS if scan_text(path.read_text(encoding="utf-8-sig"), path.name)]
     unhinted = [path for path in HOOKS if path not in hinted]
 
-    assert len(HOOKS) == 62
-    assert len(hinted) >= 50
-    assert [(path.parts[-4], path.name) for path in unhinted] == [("gimp", "unpack_app.py")]
+    assert len(HOOKS) == 18
+    assert len(hinted) == 17
+    assert [(path.parts[-2], path.name) for path in unhinted] == [("gimp", "unpack_app.py")]
 
 
 def test_discovery_patterns_do_not_fire_on_an_unpack_hook_and_hooks_without_patterns_are_silent(tmp_path: Path) -> None:
@@ -88,7 +88,7 @@ def test_pkg_check_reports_a_matching_hook_as_a_warning_with_the_replacement(tmp
     (tracker / "pkg.toml").write_text(
         'format = 2\n[track]\nprovider = "module"\nmodule = "pkg.local/check_update.py"\n[source]\ndownload_url = "${download_url}"\n',
         encoding="utf-8")
-    source = next(REGISTRY.glob("bulkcrapuninstaller/*/pkg.local/check_update.py")).read_text(encoding="utf-8-sig")
+    source = (REGISTRY / "bulkcrapuninstaller" / "check_update.py").read_text(encoding="utf-8-sig")
     (tracker / "pkg.local" / "check_update.py").write_text("PKG_MODULE_API = 2\n" + source, encoding="utf-8")
 
     report = check_directory(tracker)

@@ -74,16 +74,3 @@ class RuntimeCommandTests(unittest.TestCase):
             result = self.run_command("pkg", "check", str(version_directory), cwd=package_root)
 
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
-
-    def test_the_migrate_forwarder_and_its_launcher_reach_the_migration_tool(self) -> None:
-        """`gupkg migrate --help` and `gupkg-migrate.cmd --help` both print the migration tool's help."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            forwarded = self.run_command("migrate", "--help", cwd=Path(tmpdir))
-            direct = subprocess.run(
-                [str(RUNTIME_DIRECTORY / "gupkg" / "gupkg-migrate.cmd"), "--help"],
-                cwd=tmpdir, capture_output=True, text=True, check=False,
-            )
-
-        for result in (forwarded, direct):
-            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
-            self.assertIn("migrate", result.stdout.lower())

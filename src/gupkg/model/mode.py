@@ -359,7 +359,7 @@ def build_mode_context(
         layer set the bin or Start Menu folder.
     root : Path, optional
         The root to use instead of the configured one: the portable root of ``--mode portable`` on a
-        folder or of a root the user named, or the manager's root for the 0.17 front end.
+        folder or of a root the user named.
     in_place : bool, default=False
         Whether the portable root comes from the shape of an installed folder (D42).
 

@@ -51,15 +51,6 @@ from ..tomlio import dumps
 _SHIM_DIR = Path(__file__).resolve().parents[1] / "shim"
 SHIM_LIB_NAME = "exe-shim-lib"
 _SHIM_LICENSES = ("LICENSE-exe-shim-MIT.txt", "LICENSE-exe-shim-UNLICENSE.txt")
-# What older gupkg versions copied loose into ``bin``; an identical copy there is removed when a launcher is written.
-_LEGACY_LOOSE_FILES = (
-    "libgcc_s_seh-1.dll",
-    "libstdc++-6.dll",
-    "libwinpthread-1.dll",
-    "LICENSE-GCC-3.0.txt",
-    "LICENSE-GCC-RUNTIME-EXCEPTION-3.1.txt",
-    "LICENSE-libwinpthread-MIT.txt",
-)
 _TOKEN = re.compile(r"\$(?:(\$)|\{([^}]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
 
 
@@ -721,21 +712,6 @@ def shim_library_files() -> list[Path]:
     return sorted(item for item in folder.iterdir() if item.is_file()) if folder.is_dir() else []
 
 
-def _remove_legacy_loose_files(bin_dir: Path) -> None:
-    """Delete the runtime files an older gupkg left loose in *bin_dir*, but only a file that is byte-for-byte ours.
-
-    A launcher now loads its libraries from ``exe-shim-lib`` alone, so a loose copy is dead weight that could be picked up by
-    another program in ``bin``; a file that differs is somebody else's and stays.
-    """
-    for name in _LEGACY_LOOSE_FILES:
-        loose, ours = bin_dir / name, _SHIM_DIR / SHIM_LIB_NAME / name
-        try:
-            if loose.is_file() and ours.is_file() and loose.read_bytes() == ours.read_bytes():
-                loose.unlink()
-        except OSError:
-            pass  # in use or not ours to delete: leave it
-
-
 def shim_runtime_missing(bin_dir: Path) -> list[str]:
     """Return the names of the ``exe-shim-lib`` files missing from *bin_dir* (what a dynamic launcher cannot start without)."""
     folder = bin_dir / SHIM_LIB_NAME
@@ -767,4 +743,3 @@ def _write_shim(fields: Mapping[str, Any], context: EffectContext) -> None:
             target = library / source.name
             if not target.exists():
                 write_bytes_atomic(target, source.read_bytes())
-        _remove_legacy_loose_files(context.bin_dir)

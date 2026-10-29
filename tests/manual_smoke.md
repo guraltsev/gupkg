@@ -29,27 +29,11 @@ These are the checks that no sandbox or fake can replace.
 - **UAC and elevation:** entries 025-1 to 025-3, 029-2, 029-3, 030-2, 030-3, 033-1 and 033-3.
 - **The Start Menu, the registry and the `PATH` broadcast:** 021-1, 021-2 and 028-1.
 - **A real GitHub release and a real second version:** 016-5, 033-6 and 032-3.
-- **A real 0.17 `C:\opt` tree:** 023-3 and 032-1.
 - **Smart App Control and the Mark of the Web:** 033-7.
 
-## Migration, documentation and the 1.0 release (issue 032)
+## Documentation and the 1.0 release (issue 032)
 
-1. **032-1. A real 0.17 tree, migrated.** Copy a real 0.17 `C:\opt` (or `%USERPROFILE%\opt`) tree and its `gupkg-config.toml` to a
-   scratch folder, write a `settings.toml` that names the copy as the user root, and run everything with
-   `gupkg --sandbox <dir> --settings <settings.toml> ...` so the real registry and Start Menu stay untouched (a 0.17 install made its
-   shortcuts and `PATH` entries on the real machine, which the sandbox does not know; for the uninstall half of this check use a
-   scratch virtual machine).
-   - Before migrating: `gupkg config-check` is an unknown command, and `gupkg pkg check <a 0.17 package>` reports the missing
-     `format = 2` with no mention of format 1 or of a migration tool. `gupkg list` shows no 0.17 package as healthy.
-   - Run the bootstrap (`gupkg-bootstrap.cmd -Scope user -Source <1.0 zip> -Sha256 <digest>` on the VM), then
-     `gupkg migrate settings <gupkg-config.toml> --check`, then without `--check`, then `gupkg migrate package <root> --check` and
-     `gupkg migrate package <root>`.
-   - Expect: `gupkg list` shows the same installed set and versions as before the migration; `_bootstrap` folders are now
-     `_check_updates`; each package has `.gupkg\package.toml`, `install.cmd` and `gupkg-tui.cmd`; the old `gupkg-tui.cmd` is
-     replaced; `gupkg uninstall X` removes the Start Menu shortcuts, shims, `PATH` entries and environment values that 0.17
-     created for X (compare the Start Menu folder, `HKCU\Environment` and `<bin>` before and after); a package that cannot be
-     converted is reported with its reason and left alone.
-   Why manual: it needs a real 0.17 installation and the real registry and Start Menu to compare against.
+1. **032-1. Removed.** The migration tool no longer exists (issue 035 T01), so there is nothing to check here.
 2. **032-2. Documentation reads true.** On a machine where gupkg 1.0 is installed, follow
    [Getting started](../_docs/getting_started.md) from step 0 to step 7 literally (pandoc, user mode), then the
    [cookbook](../_docs/cookbook.md) recipes "Update everything", "Roll back an update" and "Uninstall", and the scheduled-task
@@ -154,14 +138,12 @@ the probe on the committed runtime.
    `src\gupkg\python`, and the folder has no `pip*` entry. Why manual: it
    downloads the locked wheels from PyPI.
 
-## Format 2, settings layers and the migration tool (issue 023)
+## Format 2 and settings layers (issue 023)
 
 The automated tests cover the model, the validator, the settings layers (with the
-admin-only check replaced by a stand-in) and the migration tool over the real 0.17
-registry manifests. These steps need a real administrator token or a real 0.17 install.
+admin-only check replaced by a stand-in). These steps need a real administrator token.
 
-1. **Elevated launchers refuse.** Convert a version directory with
-   `gupkg-migrate package <dir>`, open an administrator shell, and run the generated
+1. **Elevated launchers refuse.** Take an installed version directory, open an administrator shell, and run the generated
    `install.cmd` and `gupkg-tui.cmd` in it. Each prints "This launcher does not run
    elevated" and exits 1 without starting any gupkg. Run them from a normal shell and
    confirm they start the root forwarder or the bundled gupkg. Why manual: the
@@ -173,13 +155,7 @@ registry manifests. These steps need a real administrator token or a real 0.17 i
    `C:\opt\.gupkg\` and confirm it is used. Also make `C:\opt\.gupkg` writable by `Users`
    and confirm the elevated run refuses the layer. Why manual: it needs a real
    administrator token and real access-control lists (automation uses a stand-in check).
-3. **A real 0.17 `C:\opt` tree.** On a copy of a real 0.17 root, run
-   `gupkg-migrate package <root>` with `--check` and then without it, and confirm every
-   package and `_bootstrap` converts or is reported with its error. Run
-   `gupkg-migrate settings <gupkg-config.toml>` and compare the roots, `bin` folders and
-   registry with the old file. Adoption of the installed packages (an install record per
-   package, no reinstall) is checked here once issues 024 and 028 land. Why manual: it
-   needs a real installed 0.17 root.
+3. **Removed.** The migration tool no longer exists (issue 035 T01).
 ## The system boundary and sandbox mode (issue 021)
 
 The contract tests run the real `WindowsSystem` against throwaway locations. These
@@ -324,10 +300,7 @@ root such as `%TEMP%\gupkg-028`). Everything the tests do on `FakeSystem` is rep
    and leaves `current` alone. Repeat from a normal shell: it only reports and `C:\opt` is unchanged.
    With the interpreter folder made user-writable (`icacls`), the elevated run refuses before it
    starts the regex worker. Why manual: UAC and real ACLs cannot be automated.
-3. **Adoption on a copy of a real 0.17 root.** Copy a real `C:\opt` of a 0.17 machine to a
-   throwaway folder, point a settings file at it, run `gupkg-migrate package <copy>`, then
-   `gupkg list` (unchanged), `check` (healthy; shows what was adopted) and `uninstall` of one package:
-   the 0.17 shortcut and wrapper go away. Why manual: needs real 0.17 data.
+3. **Removed.** The migration tool no longer exists (issue 035 T01).
 4. **Portable state across an update.** Install a real portable application (for example a
    SumatraPDF zip with `persist = ["SumatraPDF-settings.txt"]`), change a setting, `update` to the next
    version and `switch` back: the setting survives. Why manual: needs a real application that
@@ -433,8 +406,7 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
    `gupkg install %USERPROFILE%\Downloads\<dist>\<name>\<version> --mode system --relaunched --yes` and expect exit 2 ("accepts
    only package names and paths inside the system root"); without `--relaunched` the same folder is copied into `C:\opt`. Why
    manual: the real elevated token and ACLs.
-5. **The forwarders.** `gupkg migrate --help` prints the migration tool's help and `gupkg migrate package <old>` converts a copy of a
-   real 0.17 package; `gupkg tui <folder>` opens the package view of that folder and `gupkg manager` opens the browser (both from a normal
+5. **The forwarders.** `gupkg tui <folder>` opens the package view of that folder and `gupkg manager` opens the browser (both from a normal
    shell; from an elevated shell they refuse with exit 2). Check that the exit code of each program is the exit code of `gupkg`. Why
    manual: needs the real bundle layout and a real console.
 6. **`gupkg logs`.** `gupkg logs <name> --open` opens the newest log in the program Windows associates with `.log`; `--path` prints
