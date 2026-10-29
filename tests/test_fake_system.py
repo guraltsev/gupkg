@@ -35,11 +35,11 @@ from gupkg.system.port import (
     Mode,
     ShortcutSpec,
     is_elevated_run,
-    require_admin_only,
     run_checked,
 )
 from gupkg.system.windows import WindowsSystem
 from tests.mode_support import Machine, pin_no_ambient_elevation  # noqa: F401
+from tests.scope_support import scope_of
 
 
 # ---------------------------------------------------------------------------
@@ -144,20 +144,19 @@ def test_a_real_seven_zip_runs_even_though_other_programs_do_not(tmp_path: Path)
 
 
 def test_sandbox_state_persists_in_system_json_across_runs(tmp_path: Path) -> None:
-    """Registry values, their log, broadcasts and relaunch requests survive in ``system.json`` and are read by the next run."""
+    """Registry values, their log, broadcasts survive in ``system.json`` and are read by the next run."""
     sandbox = tmp_path / "sandbox"
     sandbox.mkdir()
     first = FakeSystem.sandbox(sandbox, FakeSystem(tmp_path / "delegate"))
     first.set_env(Mode.USER, "TOOL_HOME", "home", True)
     first.set_path(Mode.USER, [r"C:\a", r"C:\b"])
     first.broadcast_environment_change()
-    first.relaunch_elevated(["manager", "update"])
 
     second = FakeSystem.sandbox(sandbox, FakeSystem(tmp_path / "delegate"))
 
     assert second.registry_log == first.registry_log
     assert second.env_values(Mode.USER)["TOOL_HOME"].value == "home"
-    assert second.broadcasts == 1 and second.relaunches == [["manager", "update"]]
+    assert second.broadcasts == 1
     assert second.get_path(Mode.USER) == [r"C:\a", r"C:\b"]
     assert json.loads((sandbox / "system.json").read_text(encoding="utf-8"))["env"]["user"]["Path"]["expandable"] is True
 
@@ -169,7 +168,7 @@ def real_machine_trap() -> WindowsSystem:
 
     for name in (
         "get_env", "set_env", "delete_env", "get_path", "set_path", "broadcast_environment_change",
-        "write_shortcut", "read_shortcut", "delete_shortcut", "is_elevated", "relaunch_elevated",
+        "write_shortcut", "read_shortcut", "delete_shortcut", "is_elevated",
         "scope_folders",
     ):
         def trapped(self, *args, _name=name, **kwargs):
@@ -356,14 +355,15 @@ def test_a_run_is_elevated_when_the_token_or_the_launcher_marker_says_so(
     assert is_elevated_run(ordinary) is True
 
 
-def test_a_folder_users_can_modify_is_refused_with_the_reason_and_a_repair_command(tmp_path: Path) -> None:
+def test_a_folder_users_can_modify_is_refused_in_system_mode_with_the_reason_and_a_repair_command(tmp_path: Path) -> None:
     """Asking for an admin-only folder that is not one raises ``UntrustedLocationError`` naming the folder, reason and fix."""
     folder = tmp_path / "shared"
-    system = FakeSystem(tmp_path / "machine", untrusted_dirs={folder})
+    system = FakeSystem(tmp_path / "machine", elevated=True, untrusted_dirs={folder})
+    scope = scope_of(system)
 
-    require_admin_only(system, tmp_path / "private")
+    scope.require_trusted(tmp_path / "private", "the folder")
     with pytest.raises(UntrustedLocationError) as caught:
-        require_admin_only(system, folder / "child")
+        scope.require_trusted(folder / "child", "the folder")
 
     message = str(caught.value)
     assert str(folder / "child") in message and "Users can modify it" in message and "icacls" in message

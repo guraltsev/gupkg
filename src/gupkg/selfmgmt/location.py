@@ -1,7 +1,7 @@
 """Find where the running gupkg lives: installed in a root, bundled with a package, or a source checkout.
 
 The command line needs three facts about the gupkg that is running it: the ``$App`` folder whose
-``settings.toml`` is a settings layer, the version directory and root that an elevated relaunch must be able to trust,
+``settings.toml`` is a settings layer, the version directory and root that an elevated run must be able to trust,
 and the folder that holds its sibling launchers (``gupkg-tui.cmd``, ``gupkg-manager.cmd``).
 Nothing is read from ``PATH``, the registry or the current directory: the location is derived from where the gupkg
 package itself was loaded from.
@@ -16,7 +16,7 @@ Implementation Approach
 -----------------------
 The kind follows the folder layout of design section 21.2 and is confirmed by a ``pkg.toml`` in the version directory,
 so a folder that merely has the right names is not taken for an installation. A ``source`` run knows neither a
-version directory nor a root, and therefore never relaunches itself elevated.
+version directory nor a root.
 """
 
 from __future__ import annotations

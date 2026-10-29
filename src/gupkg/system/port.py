@@ -10,9 +10,8 @@ Usage and API
 -------------
 Annotate parameters with ``System`` and call its methods. Use ``Mode`` to name
 the user or machine target of an environment or shortcut operation. Use
-``is_elevated_run(system)``, ``require_admin_only(system, directory)`` and
-``run_checked(system, argv, ...)`` for the three patterns that every caller
-repeats.
+``run_checked(system, argv, ...)`` for the pattern that every caller repeats. ``is_elevated_run(system)`` is
+asked once, by ``gupkg.scope.process_mode``; every other place receives the run's ``Scope``.
 
 ``http_request`` returns the response of any status without following redirects, and
 ``http_download`` streams a body into a file (appending a ``206`` answer when asked); redirect,
@@ -41,7 +40,6 @@ gupkg.system.fake : the test and sandbox implementation.
 from __future__ import annotations
 
 import os
-import subprocess
 import unicodedata
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
@@ -49,7 +47,6 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Callable, Mapping, Protocol, Sequence
 
-from ..selfmgmt.elevation import UntrustedLocationError, untrusted_message
 
 
 class Mode(StrEnum):
@@ -125,41 +122,12 @@ class ProcessFailed(RuntimeError):
     """Report that a child process that had to succeed exited with a failure status."""
 
 
-@dataclass(frozen=True)
-class ElevatedRun:
-    """What one elevated relaunch did: whether the child started, and how it ended.
-
-    Attributes
-    ----------
-    started : bool
-        False when the elevation prompt was declined or the child could not be started.
-    exit_code : int, optional
-        The child's exit code once it ended; ``None`` when it never started or this process stopped waiting.
-    abandoned : bool
-        True when this process stopped waiting after an interrupt while the child may still be running.
-    refused : str, optional
-        Why nothing was started although it was asked for (a gupkg file that users can modify, a command line that is too long):
-        the prompt was never shown.
-    error : str, optional
-        What went wrong while waiting after the child started; the child may still be running.
-    """
-
-    started: bool
-    exit_code: int | None = None
-    abandoned: bool = False
-    refused: str | None = None
-    error: str | None = None
+# Characters that mean something to ``cmd.exe``: a ``.cmd`` launcher must never receive them.
+UNSAFE_LAUNCHER_CHARACTERS = frozenset('&|<>^"%!`')
 
 
-# ShellExecuteEx fails above about 32 K characters of parameters; both systems refuse above this many.
-MAX_RELAUNCH_PARAMETERS = 30000
-
-# Characters that mean something to ``cmd.exe`` or break a command line: the elevated child must never receive them.
-UNSAFE_RELAUNCH_CHARACTERS = frozenset('&|<>^"%!`')
-
-
-def unsafe_relaunch_argument(value: str) -> str | None:
-    """Return why *value* may not travel to (or arrive in) an elevated child, or ``None`` when it is plain.
+def unsafe_launcher_argument(value: str) -> str | None:
+    """Return why *value* may not be passed to a ``.cmd`` launcher, or ``None`` when it is plain.
 
     The child is started without a shell, but the value also reaches log files and later shell commands, so the set
     stays the strict one: none of ``& | < > ^ " % ! ` ``, and no character of a Unicode category starting with ``C`` (control
@@ -168,22 +136,10 @@ def unsafe_relaunch_argument(value: str) -> str | None:
     """
     for character in str(value):
         category = unicodedata.category(character)
-        if character in UNSAFE_RELAUNCH_CHARACTERS or category[0] == "C" or category in ("Zl", "Zp"):
+        if character in UNSAFE_LAUNCHER_CHARACTERS or category[0] == "C" or category in ("Zl", "Zp"):
             shown = character if category[0] not in "CZ" else f"U+{ord(character):04X}"
             return f"the character {shown} in {str(value)[:60]!r}"
     return None
-
-
-def elevated_command(package_dir: Path, argv: Sequence[str]) -> tuple[Path, str, Path]:
-    """Return the program, parameter string and working folder of one elevated child (never ``cmd.exe``).
-
-    The child is the bundled interpreter in isolated mode running ``bootstrap.py`` of *package_dir*, the same as
-    ``gupkg.cmd`` does, with *argv* quoted by the rules of ``CreateProcess`` (no shell reads it). The two paths come from
-    the trusted package location, never from the environment.
-    """
-    package = Path(package_dir)
-    parameters = subprocess.list2cmdline(["-I", "-s", "-B", "-S", str(package / "bootstrap.py"), *[str(part) for part in argv]])
-    return package / "python" / "python.exe", parameters, package
 
 
 @dataclass(frozen=True)
@@ -285,16 +241,6 @@ class System(Protocol):
 
     def is_elevated(self) -> bool:
         """Return whether this process may hold an administrator token (unknown counts as elevated)."""
-
-    def relaunch_elevated(
-        self, argv: Sequence[str], *, on_interrupt: Callable[[], None] | None = None, grace: float = 30.0,
-    ) -> ElevatedRun:
-        """Run the bundled gupkg once elevated with *argv* and wait for it to end.
-
-        The child is the bundled ``python.exe -I -s -B -S bootstrap.py`` (see ``elevated_command``), started with the
-        ``runas`` verb and no shell. An interrupt while waiting calls *on_interrupt* (it asks the child to stop) and the
-        wait continues for *grace* seconds; after that, or on a second interrupt, the wait is abandoned.
-        """
 
     def directory_is_admin_only(self, path: Path) -> bool:
         """Return whether only administrators can modify *path* and replace its parents."""
@@ -459,16 +405,18 @@ class System(Protocol):
 _SAFE_ENVIRONMENT_NAMES = ("PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC", "TEMP", "TMP", "PROGRAMDATA")
 
 
-def safe_process_environment(extra: Mapping[str, str] | None = None, *, system: "System | None" = None) -> dict[str, str]:
+def safe_process_environment(
+    extra: Mapping[str, str] | None = None, *, system: "System | None" = None, mode: Mode = Mode.USER
+) -> dict[str, str]:
     """Return a minimal environment for a child process: machine-level variables plus *extra*.
 
     Nothing of the user's own settings is passed on (decision D19: an elevated gupkg ignores them,
-    and a normal one gives a child process no more than it needs). When *system* is given and the run is elevated, ``PATH``
+    and a normal one gives a child process no more than it needs). When *system* is given and *mode* is ``Mode.SYSTEM`` (an elevated run), ``PATH``
     holds only the folders of the process ``PATH`` that only administrators can change (``trusted_path_entries``), because
     the process ``PATH`` can hold the user's own writable folders and an elevated child must not find a program there.
     """
     kept = {name: value for name, value in os.environ.items() if name.upper() in _SAFE_ENVIRONMENT_NAMES}
-    if system is not None and is_elevated_run(system):
+    if system is not None and mode is Mode.SYSTEM:
         # Nothing here may come from the process environment, which a standard user can influence: ``PATH`` is the admin-only
         # folders, the Windows folder values come from the trusted Windows folder (and are left out when there is none),
         # ``PATHEXT`` is the fixed default, and ``TEMP``/``TMP``/``PROGRAMDATA`` are left out unless the caller gives them.
@@ -536,27 +484,6 @@ def is_elevated_run(system: System) -> bool:
     so it counts even when the token says otherwise.
     """
     return os.environ.get("GUPKG_ELEVATED") == "1" or system.is_elevated()
-
-
-def require_admin_only(system: System, directory: Path) -> None:
-    """Raise ``UntrustedLocationError`` unless only administrators can modify *directory*.
-
-    Parameters
-    ----------
-    system : System
-        Boundary that answers the question.
-    directory : Path
-        Directory an elevated run is about to trust.
-
-    Raises
-    ------
-    UntrustedLocationError
-        If *directory* or one of its parents can be changed by anyone else, or
-        its permissions cannot be read.
-    """
-    reason = system.directory_untrusted_reason(directory)
-    if reason is not None:
-        raise UntrustedLocationError(untrusted_message(Path(directory), reason))
 
 
 def run_checked(
