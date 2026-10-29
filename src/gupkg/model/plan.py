@@ -290,7 +290,7 @@ class InstallPlan:
     root : Path
         The root that holds the package.
     mode : str
-        ``system``, ``user`` or ``portable``.
+        ``system`` or ``user``.
     version : str, optional
         The version the plan activates (or, for ``uninstall``, the active one).
     previous : str, optional

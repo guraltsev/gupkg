@@ -217,7 +217,7 @@ def scan_root(root: Root, *, max_depth: int = 8) -> RootScan:
     diagnostics: list[str] = []
     visited = {canonical_path(root.path)}
 
-    # A root that does not exist yet (a portable root nobody has used) simply holds no packages.
+    # A root that does not exist yet (a root nobody has used) simply holds no packages.
     if not root.path.is_dir():
         return RootScan((), ())
 

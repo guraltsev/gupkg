@@ -1,10 +1,10 @@
 """Install modes as data: the mode of an operation and the immutable context built from it (design section 6).
 
-An install mode (``system``, ``user`` or ``portable``) fixes where a package lives and which parts of the
+An install mode (``system`` or ``user``) fixes where a package lives and which parts of the
 machine gupkg touches for it. ``select_mode`` picks the mode of one operation by the order of design 6.2
 (an explicit flag or qualified selector, the install record, the containing root, ``default_mode``) and
-enforces the rules that no later step may weaken: an elevated gupkg never acts on a user or portable root
-(D31), and a package is only installed in a mode its ``modes`` list supports. ``build_mode_context`` turns the
+enforces the rules that no later step may weaken: an elevated gupkg never acts on a user root
+(D31), and a package is only installed in a mode its ``modes`` list supports (a portable package: user only). ``build_mode_context`` turns the
 choice and the effective settings into a ``ModeContext``, which every other subsystem reads: root, bin and
 Start Menu folders, environment target, log folders and the settings layers of the run.
 
@@ -37,19 +37,18 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from .manifest import MODES
+from .manifest import MODES, PORTABLE
 from .settings import (
     LAYER_APP,
     LAYER_CLI,
     LAYER_DEFAULTS,
-    LAYER_PORTABLE,
     LAYER_SYSTEM,
     LAYER_USER,
     Settings,
     expand_env,
 )
 
-MODE_SYSTEM, MODE_USER, MODE_PORTABLE = MODES
+MODE_SYSTEM, MODE_USER = MODES
 
 # Exit codes of design 10.1 that mode handling can return.
 EXIT_REFUSED = 2
@@ -62,6 +61,14 @@ ENV_USER = "HKCU"
 AUTO_ELEVATED = "auto: elevated"
 _UNSAFE_PART = re.compile(r'[<>:"|?*\\]')
 NORMAL_SHELL_HINT = "Run it from a normal (non-elevated) shell."
+
+# The refusals of a package whose ``modes`` lack the chosen mode (issue 035, D55, owner answer Q12).
+SYSTEM_ONLY_REFUSAL = (
+    'This package installs only system-wide. Run gupkg as administrator: use the Start Menu entry "gupkg manager '
+    '(administrator)", or run in an administrator shell: gupkg <command> <name>'
+)
+USER_ONLY_REFUSAL = "This package installs only for a single user. Run gupkg without administrator rights."
+PORTABLE_REFUSAL = "This is a portable package: it installs only for a single user. Run gupkg without administrator rights."
 
 
 class ModeRefused(ValueError):
@@ -103,7 +110,7 @@ class ModeContext:
     Attributes
     ----------
     mode : str
-        ``system``, ``user`` or ``portable``.
+        ``system`` or ``user``.
     root : Path
         The root that holds the package.
     bin_dir : Path
@@ -115,13 +122,11 @@ class ModeContext:
     requires_elevation : bool
         Whether the mode needs an administrator token.
     integrate : str
-        ``user`` or ``none``; ``none`` is possible only in portable mode.
+        ``full`` or ``none``; ``none`` (``[integration.user] integrate``) is possible only in user mode.
     layers : tuple of str
         The settings layers the run reads, lowest priority first (design 6.1).
     reason : str
         Why the mode was chosen, as printed in the Resolve phase.
-    in_place : bool
-        Whether the portable root is the folder above an installed ``<name>\\<version>`` folder (D42).
     """
 
     mode: str
@@ -133,7 +138,6 @@ class ModeContext:
     integrate: str
     layers: tuple[str, ...]
     reason: str = ""
-    in_place: bool = False
 
     @property
     def data_dir(self) -> Path:
@@ -231,7 +235,7 @@ def select_mode(
     ------
     ModeRefused
         If an explicit mode contradicts the install record or the containing root; if an elevated
-        run is asked to act on a user or portable root (D31); if a record from an untrusted place
+        run is asked to act on a user root (D31); if a record from an untrusted place
         would decide an elevated run; or if the package does not support the chosen mode.
     """
     for label, value in (("--mode", explicit), ("install record", record), ("containing root", container),
@@ -239,7 +243,7 @@ def select_mode(
         if value is not None and value not in MODES:
             raise ModeRefused(f"Unknown install mode '{value}' ({label}); use one of {_supported_text(MODES)}.")
 
-    # An elevated gupkg never acts on a user or portable root (D31, design 9.6), whichever step names it:
+    # An elevated gupkg never acts on a user root (D31, design 9.6), whichever step names it:
     # the flag, the install record or the root that contains the path. This comes first so that nothing
     # below can turn such a request into anything else.
     if elevated:
@@ -295,31 +299,28 @@ def select_mode(
 
 
 def check_supported(choice: ModeChoice, supported: Sequence[str]) -> None:
-    """Refuse a mode that the package's ``modes`` list does not allow, before any work (design 6.2).
+    """Refuse a mode that the package's ``modes`` list does not allow, before any work (design 6.2, D55).
 
     Parameters
     ----------
     choice : ModeChoice
         The selected mode.
     supported : sequence of str
-        The ``modes`` of the package.
+        The ``modes`` of the package: ``system`` and/or ``user``, or ``["portable"]`` (a portable package installs
+        for a single user only).
 
     Raises
     ------
     ModeRefused
-        If *supported* lacks the mode; an elevated ``auto`` choice says to use a normal shell.
+        If the package cannot be installed in the mode; the message says how to run gupkg instead.
     """
+    if PORTABLE in supported:
+        if choice.mode != MODE_USER:
+            raise ModeRefused(PORTABLE_REFUSAL)
+        return
     if choice.mode in supported:
         return
-    if choice.reason == AUTO_ELEVATED:
-        raise ModeRefused(
-            f"This package does not support system mode (it supports {_supported_text(supported)}), and "
-            "an elevated gupkg only acts on the system root. " + NORMAL_SHELL_HINT
-        )
-    raise ModeRefused(
-        f"This package does not support {choice.mode} mode (it supports {_supported_text(supported)}); "
-        "its pkg.toml lists the modes it allows."
-    )
+    raise ModeRefused(SYSTEM_ONLY_REFUSAL if choice.mode == MODE_USER else USER_ONLY_REFUSAL)
 
 
 def _folder(settings: Settings, key: str, env: Mapping[str, str], known: Path | None) -> Path:
@@ -331,7 +332,7 @@ def _folder(settings: Settings, key: str, env: Mapping[str, str], known: Path | 
 
 def layers_of(mode: str) -> tuple[str, ...]:
     """Return the settings layers a run in *mode* reads, lowest priority first (design 6.1)."""
-    middle = {MODE_SYSTEM: (), MODE_USER: (LAYER_USER,), MODE_PORTABLE: (LAYER_PORTABLE,)}[mode]
+    middle = {MODE_SYSTEM: (), MODE_USER: (LAYER_USER,)}[mode]
     return (LAYER_DEFAULTS, LAYER_APP, LAYER_SYSTEM, *middle, LAYER_CLI)
 
 
@@ -342,7 +343,6 @@ def build_mode_context(
     *,
     defaults: Mapping[str, DefaultFolders] | None = None,
     root: Path | None = None,
-    in_place: bool = False,
 ) -> ModeContext:
     """Build the context of a chosen mode from the effective settings (design 6.1).
 
@@ -358,10 +358,7 @@ def build_mode_context(
         The machine's own default folders for ``system`` and ``user``; used where no settings
         layer set the bin or Start Menu folder.
     root : Path, optional
-        The root to use instead of the configured one: the portable root of ``--mode portable`` on a
-        folder or of a root the user named.
-    in_place : bool, default=False
-        Whether the portable root comes from the shape of an installed folder (D42).
+        The root to use instead of the configured one.
 
     Returns
     -------
@@ -381,7 +378,7 @@ def build_mode_context(
             mode, Path(root) if root is not None else Path(expand_env(settings["roots.system"], env)),
             _folder(settings, "integration.system.bin", env, sys_defaults.bin_dir if sys_defaults else None),
             _folder(settings, "integration.system.start_menu", env, sys_defaults.start_menu if sys_defaults else None),
-            ENV_MACHINE, True, "user", layers_of(mode), choice.reason,
+            ENV_MACHINE, True, "full", layers_of(mode), choice.reason,
         )
     user_defaults = known.get(MODE_USER)
 
@@ -391,18 +388,13 @@ def build_mode_context(
             settings, "integration.user.start_menu", env, user_defaults.start_menu if user_defaults else None
         )
 
-    if mode == MODE_USER:
-        return ModeContext(
-            mode, Path(root) if root is not None else Path(expand_env(settings["roots.user"], env)),
-            _folder(settings, "integration.user.bin", env, user_defaults.bin_dir if user_defaults else None),
-            user_start_menu(), ENV_USER, False, "user", layers_of(mode), choice.reason,
-        )
-
-    # Portable: shims live in the root; the user's profile is touched unless integrate = "none".
-    portable = Path(root) if root is not None else Path(expand_env(settings["roots.portable"], env))
-    integrate = settings["integration.portable.integrate"]
-    integrated = integrate == "user"
+    # User: shims live in the user's bin folder and the user's profile is touched, unless integrate = "none":
+    # then shims live in ``<root>\\bin`` and neither the Start Menu nor the environment is touched.
+    user_root = Path(root) if root is not None else Path(expand_env(settings["roots.user"], env))
+    integrate = settings["integration.user.integrate"]
+    if integrate == "none":
+        return ModeContext(mode, user_root, user_root / "bin", None, None, False, integrate, layers_of(mode), choice.reason)
     return ModeContext(
-        mode, portable, portable / "bin", user_start_menu() if integrated else None, ENV_USER if integrated else None,
-        False, integrate, layers_of(mode), choice.reason, in_place,
+        mode, user_root, _folder(settings, "integration.user.bin", env, user_defaults.bin_dir if user_defaults else None),
+        user_start_menu(), ENV_USER, False, integrate, layers_of(mode), choice.reason,
     )
