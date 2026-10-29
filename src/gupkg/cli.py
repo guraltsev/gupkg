@@ -1118,7 +1118,7 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_argument("--fix", action="store_true", help="re-apply the integration and rebuild a missing App")
     _options(sub, mutating=True, events=True)
 
-    sub = add("list", "List the packages of the roots with their status; nothing is checked over the network.",
+    sub = add("list", "List the packages of the run's root with their status; nothing is checked over the network.",
               "gupkg list --outdated --names")
     kinds = sub.add_mutually_exclusive_group()
     for name, text in (("installed", "installed packages"), ("available", "registry packages that are not installed"),
@@ -1142,7 +1142,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sub = add("cleanup", "Remove old Apps, receipts, work folders, registry trees and logs; never runs by itself.",
               "gupkg cleanup --keep 1")
-    sub.add_argument("targets", nargs="*", metavar="TARGET", help="packages to clean (default: every package of the roots)")
+    sub.add_argument("targets", nargs="*", metavar="TARGET", help="packages to clean (default: every package of the root)")
     sub.add_argument("--keep", type=int, default=1, metavar="N", help="older Apps to keep (default: 1)")
     sub.add_argument("--bundled", action="store_true", help="also drop bundled gupkg copies where a launcher would find another gupkg (gupkg-location or PATH)")
     _options(sub, mutating=True, plan=True, events=True)
