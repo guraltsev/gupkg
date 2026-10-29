@@ -1365,6 +1365,10 @@ def _write_shortcut_file(path: Path, link: ShortcutSpec) -> None:
             )
             _check(set_icon(icon_path, index), path)
 
+        # SLDF_RUNAS_USER makes Explorer ask for elevation (UAC) when the link is opened.
+        if link.run_as_admin:
+            _set_link_flags(shell_link, path, _link_flags(shell_link, path) | _SLDF_RUNAS_USER)
+
         # Save through IPersistFile; this replaces any existing file.
         save = _method(persist, _IPERSISTFILE_SLOTS["Save"], wintypes.LPCWSTR, wintypes.BOOL)
         _check(save(os.fspath(path), True), path)
@@ -1427,7 +1431,8 @@ def _read_shortcut_file(path: Path) -> ShortcutSpec:
         )
         _check(get_icon(icon_buffer, _BUFFER_CHARS, ctypes.byref(icon_index)), path)
         icon = f"{icon_buffer.value},{icon_index.value}" if icon_buffer.value else ""
-    return ShortcutSpec(target, arguments, working_directory, icon, description)
+        run_as_admin = bool(_link_flags(shell_link, path) & _SLDF_RUNAS_USER)
+    return ShortcutSpec(target, arguments, working_directory, icon, description, run_as_admin)
 
 
 # ------------------------------------------
@@ -1456,6 +1461,11 @@ _ISHELLLINK_SLOTS = {
 # IPersistFile vtable slots (IUnknown 0-2, IPersist::GetClassID 3):
 #   4 IsDirty, 5 Load, 6 Save, 7 SaveCompleted, 8 GetCurFile
 _IPERSISTFILE_SLOTS = {"Load": 5, "Save": 6}
+
+# IShellLinkDataList vtable slots (IUnknown 0-2): 3 AddDataBlock, 4 CopyDataBlock, 5 RemoveDataBlock,
+#   6 GetFlags, 7 SetFlags
+_ISHELLLINKDATALIST_SLOTS = {"GetFlags": 6, "SetFlags": 7}
+_SLDF_RUNAS_USER = 0x2000
 
 _IUNKNOWN_QUERY_INTERFACE = 0
 _IUNKNOWN_RELEASE = 2
@@ -1594,6 +1604,36 @@ def _open_link(path: Path) -> Iterator[tuple[ctypes.c_void_p, ctypes.c_void_p]]:
         finally:
             _release(persist)
             _release(link)
+
+
+@contextmanager
+def _data_list(shell_link: ctypes.c_void_p, path: Path) -> Iterator[ctypes.c_void_p]:
+    """Yield the ``IShellLinkDataList`` interface of the same link object."""
+    data_list = ctypes.c_void_p()
+    iid = _guid("45E2B4AE-B1C3-11D0-B92F-00A0C90312E1")  # IID_IShellLinkDataList
+    query = _method(
+        shell_link, _IUNKNOWN_QUERY_INTERFACE, ctypes.POINTER(_GUID), ctypes.POINTER(ctypes.c_void_p)
+    )
+    try:
+        _check(query(ctypes.byref(iid), ctypes.byref(data_list)), path)
+        yield data_list
+    finally:
+        _release(data_list)
+
+
+def _link_flags(shell_link: ctypes.c_void_p, path: Path) -> int:
+    """Return the ``SLDF_*`` flags of the link."""
+    with _data_list(shell_link, path) as data_list:
+        flags = wintypes.DWORD(0)
+        _check(_method(data_list, _ISHELLLINKDATALIST_SLOTS["GetFlags"], ctypes.POINTER(wintypes.DWORD))(
+            ctypes.byref(flags)), path)
+        return flags.value
+
+
+def _set_link_flags(shell_link: ctypes.c_void_p, path: Path, flags: int) -> None:
+    """Set the ``SLDF_*`` flags of the link."""
+    with _data_list(shell_link, path) as data_list:
+        _check(_method(data_list, _ISHELLLINKDATALIST_SLOTS["SetFlags"], wintypes.DWORD)(flags), path)
 
 
 def _split_icon(icon_location: str) -> tuple[str, int]:
