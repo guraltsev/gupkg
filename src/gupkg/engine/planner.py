@@ -370,7 +370,10 @@ def plan_install(
     """
     manifest = chosen.manifest
     version = chosen.candidate.version
-    check_supported(context, manifest.modes, command=request.operation, name=view.name)
+    check_supported(
+        context, manifest.modes, command=request.operation, name=view.name, version=version,
+        installed=view.installed.version if view.installed is not None else None,
+    )
     if owners and not request.download_only:
         check_names(view.name, desired, owners)
     path = package_path or view.path or context.package_dir(view.name)

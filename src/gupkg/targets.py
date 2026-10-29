@@ -141,7 +141,11 @@ def resolve_target(request: TargetRequest, *, scope: Scope, system: System, env:
     supported = _supported_modes(resolved, target_folder if outside else None, elevated)
     if supported is not None:
         name = resolved.view.name if resolved is not None else (target_folder.parent.name if target_folder is not None else None)
-        check_supported(scope, supported, command=request.operation, name=name)
+        installed = resolved.view.installed.version if resolved is not None and resolved.view.installed is not None else None
+        check_supported(
+            scope, supported, command=request.operation, name=name,
+            version=resolved.version if resolved is not None else None, installed=installed,
+        )
 
     folder = _copy_source(target_folder) if outside else None
     return ResolvedTarget(scope, resolved, (), folder)

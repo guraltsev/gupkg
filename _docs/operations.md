@@ -120,7 +120,7 @@ there is only system mode.
 
 A package says which modes it may be installed in (`modes`). It is checked in the planner, before any download or file change,
 for `install`, `update`, `switch`, repair and `check-updates` with download; `uninstall`, `check` and `cleanup` are never refused
-by it. The refusal says "This package installs only for a single user. Run gupkg without administrator rights." or "This package installs only system-wide. Run gupkg as administrator: use the Start Menu entry "gupkg manager (administrator)", or run in an administrator shell: gupkg <command> <name>", and names nothing of the other mode. A **portable** package (`modes = ["portable"]`, with a `[portable]` table, state
+by it. The refusal says "This package installs only for a single user. Run gupkg without administrator rights." or "This package installs only system-wide. Run gupkg as administrator: use the Start Menu entry "gupkg manager (administrator)", or run in an administrator shell: gupkg <command> <name>", and names nothing of the other mode. An `update` of a package that is already installed in the user root, to a version that allows only the system, says "<name> <version> installs only system-wide, so it cannot be installed in this user root. The installed version <installed> keeps working." and gives no administrator advice. A **portable** package (`modes = ["portable"]`, with a `[portable]` table, state
 in `<package>\data`) installs in user mode only, and is a package of its own (`<name>-portable`); nothing in the system root keeps
 state a standard user can write.
 

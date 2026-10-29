@@ -37,6 +37,7 @@ from . import authoring, settingsedit
 from ._version import __version__
 from .authoring import AuthoringError
 from .catalog.catalog import Catalog, CatalogError, ListFilter, parse_selector
+from .catalog.local import canonical_path
 from .catalog.registry import cache_state, registry_cache_dir, sync_registry
 from .engine import lifecycle
 from .engine.context import Engine, stop_marker
@@ -243,11 +244,27 @@ def _fail(run: _Run, command: str, error: BaseException) -> int:
     return exit_code
 
 
+_ROOT_OPTIONS = ("--settings", "--root", "--sandbox")  # the options before the command that take a value
+
+
+def _command_word(tokens: Sequence[str]) -> str:
+    """Return the first word of *tokens* that is neither an option nor the value of a root option (``gupkg`` when there is none)."""
+    skip = False
+    for token in tokens:
+        if skip:
+            skip = False
+        elif token in _ROOT_OPTIONS:
+            skip = True
+        elif not token.startswith("-"):
+            return token
+    return "gupkg"
+
+
 def _usage_error(tokens: Sequence[str], message: str) -> int:
     """Report a usage error (exit code 2): the message on standard error and, when ``--json`` is among the arguments, a document."""
     print(f"gupkg: error: {message}", file=sys.stderr)
     if "--json" in tokens:
-        command = next((item for item in tokens if not item.startswith("-")), "gupkg")
+        command = _command_word(tokens)
         sys.stdout.write(results.dumps(results.error_document(command, "usage", message, EXIT_USER)))
     return EXIT_USER
 
@@ -898,8 +915,13 @@ def _cmd_self(run: _Run) -> int:
     # The aliases are exactly the lifecycle commands on the package ``gupkg``, in the scope of this run.
     command = {"repair": "repair", "check-updates": "check-updates", "update": "update"}[action]
     root, scope = run.location.root, run.scope
-    if run.location.kind == "installed" and root is not None and os.path.normcase(os.path.normpath(root)) != os.path.normcase(os.path.normpath(scope.root)):
-        hint = "an administrator shell" if scope.mode is Mode.USER else "the gupkg that is installed in that root"
+    if run.location.kind == "installed" and root is not None and canonical_path(root) != canonical_path(scope.root):
+        if scope.mode is Mode.SYSTEM:
+            hint = "the gupkg that is installed in that root"
+        elif scope.system.directory_untrusted_reason(root) is None:
+            hint = "an administrator shell"
+        else:
+            hint = f"`--root {root}` (or without `--root`, from a shell that starts this gupkg)"
         return _fail(run, f"self {action}", ModeRefused(
             f"This gupkg is installed in {root}, but the {scope.mode} root of this run is {scope.root}, so `gupkg {command} gupkg` "
             f"would look for it there. Run it from {hint}."))
@@ -921,7 +943,7 @@ def _pass_through(tokens: Sequence[str]) -> tuple[str, list[str], list[str]] | N
     index, root_options = 0, []
     while index < len(tokens):
         token = tokens[index]
-        if token in ("--settings", "--root", "--sandbox"):
+        if token in _ROOT_OPTIONS:
             root_options += tokens[index:index + 2]
             index += 2
         elif token.startswith(("--settings=", "--root=", "--sandbox=")):

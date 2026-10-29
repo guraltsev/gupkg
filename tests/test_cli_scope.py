@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import socket
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -242,3 +243,68 @@ def test_purging_the_root_its_parent_or_a_drive_is_refused_before_anything_is_de
         assert result.code != 0, (target, result.out + result.err)
         assert world.user.is_dir() and (world.user / "tool" / "current").exists(), target
     assert tree_snapshot(world.user) == before
+
+
+def test_self_update_accepts_the_gupkgs_own_root_under_another_spelling(tmp_path: Path) -> None:
+    """A root named through a junction is the same root: the refusal compares folders, not spellings."""
+    world = CliWorld(tmp_path)
+    link = tmp_path / "link-to-system-root"
+    world.system_root.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(world.system_root)], check=True, capture_output=True)
+
+    result = world.cli("--root", str(link), "self", "update", "--plan")
+
+    assert "would look for it there" not in result.err and "administrator shell" not in result.err, result.err
+
+
+def test_self_update_in_another_user_writable_root_is_refused_without_advising_an_administrator_shell(tmp_path: Path) -> None:
+    """A gupkg that users can change, run on another root: the hint names ``--root``, not an administrator shell."""
+    world = CliWorld(tmp_path, untrusted={tmp_path / "sys"})
+
+    result = world.cli("self", "update")
+
+    assert result.code == 2 and "This gupkg is installed in" in result.err and "would look for it there" in result.err
+    assert "administrator shell" not in result.err and f"--root {world.system_root}" in result.err
+
+
+def test_an_update_to_a_version_that_narrows_modes_names_the_version_and_keeps_the_installed_one(tmp_path: Path) -> None:
+    """The refused new version is named, the installed one keeps working, and no administrator advice is given for an update."""
+    world = CliWorld(tmp_path)
+    world.publish("tool", "1.0.0")
+    assert world.cli("install", "tool", "--yes").code == 0
+    world.publish("tool", "2.0.0", top='modes = ["system"]\n')
+
+    result = world.cli("update", "tool", "--yes", "--json")
+
+    message = result.document()["results"][0]["error"]["message"]
+    assert result.code == 2
+    assert message == "tool 2.0.0 installs only system-wide, so it cannot be installed in this user root. The installed version 1.0.0 keeps working."
+    assert (world.user / "tool" / "current").resolve().name == "1.0.0"
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        pytest.param(("--settings", "{bad}"), id="settings"),
+        pytest.param(("--root", "{root}"), id="root"),
+        pytest.param(("--settings", "{bad}", "--root", "{root}"), id="settings-and-root"),
+        pytest.param(("--sandbox", "{sandbox}", "--settings", "{bad}"), id="sandbox"),
+    ],
+)
+def test_a_setup_error_document_names_the_command_not_the_value_of_a_root_option(tmp_path: Path, prefix: tuple[str, ...]) -> None:
+    """``command`` of the failure document is ``list`` whatever root options come first."""
+    bad = tmp_path / "bad.toml"
+    bad.write_text("schema = [\n", encoding="utf-8")
+    (tmp_path / "r" / ".gupkg").mkdir(parents=True)
+    (tmp_path / "r" / ".gupkg" / "settings.toml").write_text("schema = [\n", encoding="utf-8")
+    values = {"bad": str(bad), "root": str(tmp_path / "r"), "sandbox": str(tmp_path / "sb")}
+    world = CliWorld(tmp_path / "w")
+
+    result = world.cli(*(item.format(**values) for item in prefix), "list", "--json")
+
+    assert result.code == 2 and result.document()["command"] == "list", result.out
+
+def test_a_root_option_after_the_command_still_reports_the_command(tmp_path: Path) -> None:
+    """``list --root X --json`` is a usage error (the option is global), and its document names ``list``."""
+    result = CliWorld(tmp_path).cli("list", "--root", str(tmp_path / "r"), "--json")
+
+    assert result.code == 2 and result.document()["command"] == "list", result.out
