@@ -27,7 +27,7 @@ Not recorded yet. Before T00, the controller records:
 | T08 | Run-as-administrator shortcut | T07 | merged | i035/T08 | 8bb0283 | 3524 passed, 0 failed, 11 skipped | 035-T08-1 (tests/manual_smoke.md; needs T09 for the title) |
 | T09 | Manager: one scope per run | T07 | merged | i035/T09 | 954a06c | 3534 passed, 0 failed, 11 skipped | 035-T09-1 (tests/manual_smoke.md) |
 | T10 | Manager: shared reader, visible failures | T09 | merged | i035/T10 | b38a87c | 3558 passed, 0 failed, 11 skipped | 035-T10-1 (tests/manual_smoke.md) |
-| T11 | Launchers: bundled, gupkg-location, PATH | T07 | in review | i035/T11 | | | |
+| T11 | Launchers: bundled, gupkg-location, PATH | T07 | merged | i035/T11 | bd8f48e | 3572 passed, 0 failed, 13 skipped (12 needs_admin tests skip in a normal shell) | 035-T11-1 (tests/manual_smoke.md; elevated shell, owner) |
 | T12 | Docs and consistency sweep | T01â€“T11 | waiting | | | | |
 | T13 | Acceptance | T12 | waiting | | | | |
 
@@ -37,6 +37,9 @@ Not recorded yet. Before T00, the controller records:
 - Push it **before** releasing any gupkg built from this job: gupkg from T02 on rejects the old registry. Check 6 (below) says gupkg 1.0.8 accepts the converted registry, so an earlier push is possible, with the consequence under "Owner questions".
 - After the push, run `gupkg registry sync` in each mode.
 - `f9f3441` refreshes the volta/2.0.2 fingerprint that owner commit `9fba5c5` left stale (`registry_tool validate` failed on `main` before). It is a separate commit the owner may drop, but then `validate` fails on volta again.
+
+- Run `035-T11-1` (tests/manual_smoke.md) from an elevated shell on a test root: it covers the 12 `needs_admin` launcher tests plus: a `gupkg.exe` shim and config that are admin-only in a folder Users can write is refused (entry skipped); a `gupkg-location` naming a tree whose package or root folder is user-writable under an admin-only launcher root is refused. The elevated ACL end-to-end could not be run by any worker or reviewer (no admin shell).
+- The gupkg-registry repo has its own launcher copies and fingerprints made from the OLD template: regenerate them with the registry tool (not done: T03 is closed and the registry is the owner's) before pushing, otherwise the registry's launchers still use the forwarder order. (T11 regenerated only `tests/fixtures/registry_100`.)
 
 ## Owner questions
 
@@ -89,6 +92,9 @@ Owner commit not pushed yet (goes to GitHub together with T03): `9fba5c5 volta: 
 
 - Non-blocking, from T10 (owner questions or later tasks): one unreadable plan row now fails the whole plan with the field named (nothing runs); the reviewer judges it right. `read_results` exists but `session.py`/`client.py` still parse result documents with their own dict handling (wire it in, or delete it). No committed test feeds live `PackageResult.to_data`/`InstallPlan.to_data` output to `read_plan`/`read_results` (only recorded fixtures cover them): add one in T13 or T12. A failed `info` read shows on the package view only in the TUI (`TuiApp` has no `report_problem`). A read failure's full text goes to a notification and `ManagerApp.problems`, not to a log file (nice-to-have). Unused imports: `cli.py:40 load_registry`, `tests/test_ui_screens.py:29 head`. `tests/manual_smoke.md` T10 entry starts with `. **` instead of `1. **`. `src/gupkg/README.md` still says `"api": 1` (T12).
 
+- Owner question, from T11 (decide before T13): your installed gupkg 1.0.8 in `C:\opt\gupkg` declares `[root_forwarder]`, and its install record `C:\opt\gupkg\.gupkg\package.toml` holds two `kind = "forwarder"` effects (reviewer confirmed on a copy). With this build `gupkg check` prints `not verified: effect kind forwarder` twice; on uninstall or update the old effects are warned about ("Ignored a recorded effect") and dropped, leaving `C:\opt\.gupkg\gupkg.cmd` and `gupkg-manager.cmd` on disk as orphans (read from the code, not run). An update 1.0.8 -> this build is run by the OLD code, which would remove the forwarders and write no `gupkg-location`; packages without a bundled copy then depend on PATH until the new gupkg runs `repair gupkg` (hypothesis, not reproduced). Options: (a) leave as is (D54: no migration code); (b) let removal of the old `forwarder` effect delete the two recorded files and drop it silently (about 10 lines, a migration-shaped exception to D54). I did not choose; no installed root was touched.
+- Non-blocking, from T11 review: `check` flags an edited `gupkg-location` as drift and install/update/repair rewrite it, only where the gupkg package is installed (uninstall leaves an edited one alone). Elevated with a `gupkg-location` naming a failing tree, the launcher refuses (exit 1) instead of going on to PATH (consistent with issue §9 item 8). `launchers_find_gupkg` still differs from the launcher in edge cases (`""` location line, a rooted line without a drive, whitespace stripping; the system-mode judge covers folder and ancestors, not the recursive tree): safe direction, bundled copies are kept. The `n:` check is stricter than `directory_untrusted_reason` for ancestors: a shim directly under a drive-root folder (`C:\tools\gupkg.exe`) is refused when elevated. `%` in a folder name is expanded twice through `call` in `:check_location`/`:path_candidate` (no exploit found, the location file itself is ACL-checked). `location_file` is confined to `<root>\.gupkg`, not to the single file name. Docs still describe the forwarder: README.md 77-79, 144, 154, 413; `_docs/{cookbook.md:175, development_guide.md:59,65, operations.md:41-42,111, troubleshooting.md:112}`; `tools/build_standalone.py:213` comment; issue §448 says "machine PATH only" while §4.9 and the launcher scan the process PATH (T12). `pkgcheck.py` has a leftover double blank line.
+
 ## Log
 
 - 2026-10-26: job prepared from issue 035; not started.
@@ -121,3 +127,4 @@ Owner commit not pushed yet (goes to GitHub together with T03): `9fba5c5 volta: 
 - 2026-10-29: T10 worker reported (6f6f8e9..a58e302; 3558 passed/11 skipped); review started.
 - 2026-10-29: T10 reviewed (0 blocking, 4 minor), merged as b38a87c; suite 3558 passed, 11 skipped. T11 dispatched.
 - 2026-10-29: T11 worker reported (1780078, 0b65911, 14a7f91, e73ce94; 3564 passed/13 skipped); review started.
+- 2026-10-29: T11 round 1 (1 blocking: elevated `gupkg.exe` shim check missed the shim folder; fixed in acfcb14) and round 2 clean; merged as bd8f48e; suite 3572 passed, 13 skipped. T14 dispatched.
