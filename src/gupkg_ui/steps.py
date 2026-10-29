@@ -86,7 +86,7 @@ def can_elevate(location: RunningGupkg, system: System) -> bool:
 
 def events_dir_for(subject: Subject, settings: UiSettings) -> Path:
     """Return the ``.gupkg\\logs`` folder where a call on *subject* writes its events file: its root's, known from its folder or the settings."""
-    root = subject.package_dir.parent if subject.package_dir is not None else settings.root_of(subject.mode or settings.default_mode)
+    root = subject.package_dir.parent if subject.package_dir is not None else settings.root_of(subject.mode or settings.default_mode)  # Removed in issue 035 T05.
     return root / ".gupkg" / "logs"
 
 

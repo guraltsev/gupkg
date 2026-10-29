@@ -55,11 +55,11 @@ def test_the_settings_file_round_trips_unusual_paths_and_registry_sources(tmp_pa
     """`settings set` and `registry add` write a path with a quote and a source with non-ASCII text, and the file reads back equal."""
     path = tmp_path / "settings.toml"
 
-    settingsedit.set_setting(path, "user", "roots.user", HOSTILE)
-    settingsedit.add_registry(path, "user", "team", 'https://example.org/team-"registry"-ü.git', (RegistryEntry("main", "https://example.org/m.git"),))
+    settingsedit.set_setting(path, "root", "integration.bin", HOSTILE)
+    settingsedit.add_registry(path, "root", "team", 'https://example.org/team-"registry"-ü.git', (RegistryEntry("main", "https://example.org/m.git"),))
 
     data = read_toml(path)
-    assert data["roots"]["user"] == HOSTILE
+    assert data["integration"]["bin"] == HOSTILE
     assert data["registry"] == [
         {"name": "main", "source": "https://example.org/m.git"},
         {"name": "team", "source": 'https://example.org/team-"registry"-ü.git'},

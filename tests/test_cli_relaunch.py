@@ -79,7 +79,7 @@ def world(tmp_path: Path) -> CliWorld:
 def _context(mode: str):
     """Return the mode context of *mode* built from the built-in settings."""
     env = {"USERPROFILE": "C:\\Users\\pat", "APPDATA": "C:\\Users\\pat\\AppData\\Roaming", "ProgramData": "C:\\ProgramData"}
-    return build_mode_context(ModeChoice(mode, "test"), merge_layers([default_layer()]), env)
+    return build_mode_context(ModeChoice(mode, "test"), merge_layers([default_layer("user")]), env)
 
 
 def _refuse_to_ask(question: str) -> bool:

@@ -148,21 +148,21 @@ def test_settings_path_names_the_file_of_every_layer(world: CliWorld) -> None:
     """path lists each layer's file with whether it was applied or is missing."""
     layers = {item["layer"]: item for item in world.cli("settings", "path", "--json").document()["layers"]}
 
-    assert layers["app"]["status"] == "applied" and layers["user"]["status"] == "missing"
-    assert Path(layers["user"]["path"]) == world.user / ".gupkg" / "settings.toml"
+    assert layers["app"]["status"] == "applied" and layers["root"]["status"] == "missing"
+    assert Path(layers["root"]["path"]) == world.user / ".gupkg" / "settings.toml"
 
 
 def test_settings_init_then_set_writes_the_user_file_after_validation(world: CliWorld) -> None:
     """init creates the file with the schema number (and refuses to replace it); set changes one value that the schema accepts."""
     path = world.user / ".gupkg" / "settings.toml"
 
-    assert world.cli("settings", "init").code == 0 and read_toml(path) == {"schema": 3}
+    assert world.cli("settings", "init").code == 0 and read_toml(path) == {"schema": 4}
     assert world.cli("settings", "init").code == 2
     assert world.cli("settings", "init", "--force").code == 0
     assert world.cli("settings", "set", "logs.keep_runs", "20").code == 0 and world.cli("settings", "set", "ui.color", "never").code == 0
     assert read_toml(path)["logs"] == {"keep_runs": 20} and read_toml(path)["ui"] == {"color": "never"}
     rows = {row["key"]: row for row in world.cli("settings", "show", "--json").document()["settings"]}
-    assert rows["logs.keep_runs"]["value"] == 20 and rows["logs.keep_runs"]["layer"] == "user"
+    assert rows["logs.keep_runs"]["value"] == 20 and rows["logs.keep_runs"]["layer"] == "root"
 
 
 def test_the_toml_reader_accepts_a_utf8_bom_and_settings_set_edits_such_a_file(world: CliWorld, tmp_path: Path) -> None:
@@ -171,7 +171,7 @@ def test_the_toml_reader_accepts_a_utf8_bom_and_settings_set_edits_such_a_file(w
     plain.write_bytes('﻿name = "tool"\n'.encode("utf-8"))
     path = world.user / ".gupkg" / "settings.toml"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes("﻿schema = 3\n[logs]\nkeep_days = 10\n".encode("utf-8"))
+    path.write_bytes("﻿schema = 4\n[logs]\nkeep_days = 10\n".encode("utf-8"))
 
     result = world.cli("settings", "set", "logs.keep_runs", "20")
 
@@ -186,7 +186,8 @@ def test_the_toml_reader_accepts_a_utf8_bom_and_settings_set_edits_such_a_file(w
         pytest.param("logs.keep_runs", "zero", "whole number", id="wrong-type"),
         pytest.param("logs.keep_runz", "5", "did you mean 'keep_runs'", id="unknown-key"),
         pytest.param("registry", "[]", "gupkg registry", id="registry-array"),
-        pytest.param("default_mode", "portable", "must be one of", id="not-a-choice"),
+        pytest.param("integration.integrate", "maybe", "must be one of", id="not-a-choice"),
+        pytest.param("roots.user", "C:\\x", "cannot be set in a root's own settings.toml", id="roots-in-a-root-layer"),
     ],
 )
 def test_settings_set_refuses_what_the_schema_refuses_and_leaves_the_file_alone(world: CliWorld, key: str, value: str, says: str) -> None:

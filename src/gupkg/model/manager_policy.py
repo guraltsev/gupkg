@@ -8,7 +8,7 @@ function) and the CLI never imports it.
 
 Usage and API
 -------------
-``manager_checksum_policy(settings, elevated=...)`` returns ``ask``, ``refuse`` or ``skip``.
+``manager_checksum_policy(settings)`` returns ``ask``, ``refuse`` or ``skip``.
 ``decide_target(plan, policy, interactive=..., ask=...)`` returns a ``TargetDecision``:
 ``run`` and the extra ``arguments`` for the call, or a refusal with the words to show.
 ``decide_targets`` does that for a batch, asking at most once per package.
@@ -19,9 +19,7 @@ A plan entry marked ``invalid`` (a malformed declared hash) is never asked about
 target is refused with its own message. (The CLI's plan carries only ``present`` or ``missing``: a malformed hash makes the version
 invalid, so the manager (issue 030) builds this ``invalid`` entry from the error document, whose ``code`` is ``invalid-checksum``.) Fail-closed everywhere: an unknown policy value, a plan entry that is not clearly ``missing``
 and skippable, no way to ask, a failed answer: all of them mean the target is not run with a
-skip. In an elevated run only admin-only layers count (the settings loader already drops the
-user layer; the source layer is checked again here, and a value from the user layer
-means ``refuse``). A target whose URL is not ``https://`` is never offered a skip, because the CLI
+skip. The settings are those of the run's one scope, so every layer in them is one the run may trust. A target whose URL is not ``https://`` is never offered a skip, because the CLI
 would refuse it anyway. The answer to a question is never stored.
 """
 
@@ -31,27 +29,24 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
 from .checksum import INVALID, MISSING, SKIP_FLAG, SKIP_REASON_OF, SKIPPED_SETTING, USER_APPROVED, ChecksumPlan
-from .settings import LAYER_USER, Settings
+from .settings import Settings
 
 POLICIES = ("ask", "refuse", "skip")
 POLICY_KEY = "manager.checksum_missing"
 REFUSED_NO_CHECKSUM = "refused: no checksum"
 REFUSED_INVALID_CHECKSUM = "refused: the checksum in pkg.toml is malformed (fix it; a malformed checksum cannot be skipped)"
-_USER_LAYERS = (LAYER_USER,)
 
 
-def manager_checksum_policy(settings: Settings, *, elevated: bool = False) -> str:
+def manager_checksum_policy(settings: Settings) -> str:
     """Return the effective ``[manager] checksum_missing``: ``ask``, ``refuse`` or ``skip``.
 
-    In an elevated run a value that came from the user layer is not honoured
-    and the answer is ``refuse``; an unknown value is ``refuse`` as well.
+    An unknown value is ``refuse``.
     """
     try:
         value = settings[POLICY_KEY]
-        layer = settings.source_of(POLICY_KEY)
     except KeyError:
         return "refuse"
-    if value not in POLICIES or (elevated and layer in _USER_LAYERS):
+    if value not in POLICIES:
         return "refuse"
     return value
 

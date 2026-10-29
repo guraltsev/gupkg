@@ -13,7 +13,7 @@ Implementation Approach
 -----------------------
 The loader runs as a normal (non-elevated) process. ``WindowsSystem`` is imported only to *read* (whether the process is elevated and whether a folder is admin-only):
 the ``System`` protocol has no implementation apart from it and the sandbox's ``FakeSystem``, so there is no smaller read-only facade to use instead. Because a system target is run by an elevated child, the policy for a system
-target is evaluated as an elevated run would see it: a value that comes from the user or portable layer (or from ``--settings``, which an elevated child ignores) does not count, so a
+target is evaluated as an elevated run would see it: a value that comes from the loaded root layer (the user root a normal process reads) or from ``--settings`` (which an elevated child ignores) does not count, so a
 setting a standard user can edit never lets an administrator-run install skip a missing checksum (design 9.6).
 """
 
@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from gupkg.model.manager_policy import POLICY_KEY, manager_checksum_policy
-from gupkg.model.settings import LAYER_CLI, Settings, SettingsError, expand_env
+from gupkg.model.settings import LAYER_CLI, LAYER_ROOT, Settings, SettingsError, expand_env
 from gupkg.modes import settings_loader
 from gupkg.selfmgmt.location import RunningGupkg, locate_running_gupkg
 from gupkg.system.port import System
@@ -49,10 +49,10 @@ class UiSettings:
 
     def checksum_policy(self, mode: str | None) -> str:
         """Return ``ask``, ``refuse`` or ``skip`` for a target of *mode*; a system target is judged as an elevated run would judge it."""
-        policy = manager_checksum_policy(self.settings, elevated=mode == "system")
+        policy = manager_checksum_policy(self.settings)
 
-        # An elevated child ignores ``--settings`` unless the file is in the system root, so a value that came from it is not trusted for a system target either.
-        if mode == "system" and self.settings.source_of(POLICY_KEY) == LAYER_CLI:
+        # An elevated child ignores ``--settings`` unless the file is in the system root, so a value that came from it, or from the user root's own file, is not trusted for a system target either.
+        if mode == "system" and self.settings.source_of(POLICY_KEY) in (LAYER_ROOT, LAYER_CLI):
             return "refuse"
         return policy
 
@@ -76,10 +76,9 @@ class UiSettings:
         return Path(expand_env(self.settings[f"roots.{mode}"], self.env))
 
     @property
-    def default_mode(self) -> str:
-        """The mode a new install uses when nothing says otherwise (``auto`` means the user root for a normal process)."""
-        value = self.settings["default_mode"]
-        return "user" if value == "auto" else str(value)
+    def default_mode(self) -> str:  # Removed in issue 035 T05.
+        """The mode a run without a named package uses: the user root, because the UI settings are loaded as a normal run."""
+        return "user"
 
 
 def load_ui_settings(

@@ -58,9 +58,9 @@ def _install(tmp_path: Path, version_dir: Path) -> int:
     """Run ``gupkg install`` in user mode on the real machine boundary, with every folder below *tmp_path* by a settings file."""
     settings = tmp_path / "settings.toml"
     settings.write_text(
-        "schema = 3\n"
+        "schema = 4\n"
         f"[roots]\nsystem = '{tmp_path / 'sys'}'\nuser = '{tmp_path / 'opt'}'\n"
-        f"[integration.user]\nbin = '{tmp_path / 'bin'}'\nstart_menu = '{tmp_path / 'AppData' / 'Microsoft' / 'Windows' / 'Start Menu' / 'opt'}'\n",
+        f"[integration]\nbin = '{tmp_path / 'bin'}'\nstart_menu = '{tmp_path / 'AppData' / 'Microsoft' / 'Windows' / 'Start Menu' / 'opt'}'\n",
         encoding="utf-8",
     )
     # The settings layers below ``--settings`` still expand the built-in defaults, so the variables they name are given too.

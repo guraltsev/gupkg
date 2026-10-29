@@ -1,6 +1,6 @@
 """Cover how one target resolves to an install mode and context (design 6.2, 9.6, D4, D31, D55).
 
-Behavior covered: ``default_mode = "auto"`` resolves system for an elevated process and user otherwise, with the
+Behavior covered: the process token resolves system for an elevated process and user otherwise, with the
 printed reason; an install record wins over ``auto`` and a path inside a configured root keeps
 that root's mode; an elevated process refuses user work (an existing user package, a path inside a
 user root however it is spelled or linked, ``--mode user``, ``user:name``, an untrusted record) and changes nothing
@@ -24,6 +24,7 @@ import pytest
 
 from gupkg.catalog.catalog import CatalogError
 from gupkg.model.mode import PORTABLE_REFUSAL, SYSTEM_ONLY_REFUSAL, USER_ONLY_REFUSAL, ModeRefused
+from gupkg.model.settings import SettingsError
 from gupkg.modes import ModeRequest, resolve_mode
 from tests.catalog_support import build_registry, version_text
 from tests.mode_support import Machine, pin_no_ambient_elevation, tree_snapshot  # noqa: F401
@@ -101,23 +102,10 @@ def test_an_elevated_process_refuses_a_user_only_package_and_says_to_run_without
     assert str(raised.value) == USER_ONLY_REFUSAL
 
 
-def test_default_mode_from_settings_decides_when_nothing_earlier_does(tmp_path: Path) -> None:
-    """``default_mode = "system"`` replaces ``auto`` for a non-elevated run, and the reason says so."""
-    machine = Machine(tmp_path)
-    machine.write_app_settings(top='default_mode = "system"\n')
-    registry_package(machine)
-
-    result = resolve(machine, "tool")
-
-    assert str(result.choice) == "system (default_mode)"
-    assert result.context.requires_elevation
-
-
 def test_an_existing_user_package_resolves_user_because_the_record_wins_over_auto(tmp_path: Path) -> None:
     """In a normal process an installed user-mode package stays user: its install record decides, not ``auto``."""
     machine = Machine(tmp_path)
     machine.package(machine.user_root, "tool", record="user", installed=True)
-    machine.write_app_settings(top='default_mode = "system"\n')
 
     result = resolve(machine, "tool")
 
@@ -284,7 +272,7 @@ def test_an_elevated_process_never_reads_the_user_settings_or_the_user_root(tmp_
     machine = Machine(tmp_path, elevated=True)
     user_settings = machine.user_root / ".gupkg" / "settings.toml"
     user_settings.parent.mkdir(parents=True)
-    user_settings.write_text("schema = 3\ndefault_mode = 'user'\n[integration.system]\nbin = 'C:\\\\evil'\n", encoding="utf-8")
+    user_settings.write_text("schema = 4\n[integration]\nbin = 'C:\\\\evil'\n", encoding="utf-8")
     registry_package(machine)
 
     result = resolve(machine, "tool")
@@ -294,20 +282,20 @@ def test_an_elevated_process_never_reads_the_user_settings_or_the_user_root(tmp_
     assert result.context.bin_dir != Path("C:\\evil")
 
 
-def test_an_elevated_process_ignores_a_settings_file_outside_the_system_root(tmp_path: Path) -> None:
-    """``--settings`` outside the admin-only system root has no effect on an elevated run; inside it, it applies."""
+def test_an_elevated_process_applies_no_settings_option(tmp_path: Path) -> None:
+    """``--settings`` has no effect on an elevated run, outside the system root or inside it (the system mode takes none)."""
     machine = Machine(tmp_path, elevated=True)
     registry_package(machine)
     outside = tmp_path / "elsewhere.toml"
-    outside.write_text(f"schema = 3\n[integration.system]\nbin = '{tmp_path / 'outside-bin'}'\n", encoding="utf-8")
+    outside.write_text(f"schema = 4\n[integration]\nbin = '{tmp_path / 'outside-bin'}'\n", encoding="utf-8")
     inside = machine.system_root / "chosen.toml"
-    inside.write_text(f"schema = 3\n[integration.system]\nbin = '{tmp_path / 'inside-bin'}'\n", encoding="utf-8")
+    inside.write_text(f"schema = 4\n[integration]\nbin = '{tmp_path / 'inside-bin'}'\n", encoding="utf-8")
 
     ignored = resolve(machine, "tool", settings_path=outside)
     applied = resolve(machine, "tool", settings_path=inside)
 
     assert ignored.context.bin_dir != tmp_path / "outside-bin"
-    assert applied.context.bin_dir == tmp_path / "inside-bin"
+    assert applied.context.bin_dir != tmp_path / "inside-bin"
 
 
 # ---------------------------------------------------------------------------
@@ -432,17 +420,17 @@ def test_a_distribution_installed_for_user_warns_when_a_system_package_has_its_n
     assert any("shadowing: 'tool'" in warning for warning in result.warnings)
 
 
-def test_a_user_layer_that_moves_the_system_root_cannot_steer_a_system_run(tmp_path: Path) -> None:
-    """If the user settings name another system root than the system layer would, a system-mode run is refused."""
+def test_a_root_layer_that_names_a_root_is_refused(tmp_path: Path) -> None:
+    """A ``[roots]`` table in a root's own settings.toml cannot move any root: the run is refused."""
     machine = Machine(tmp_path)
     machine.package(tmp_path / "other-system", "tool")
     user_settings = machine.user_root / ".gupkg" / "settings.toml"
     user_settings.parent.mkdir(parents=True)
     user_settings.write_text(
-        f"schema = 3\n[roots]\nsystem = '{tmp_path / 'other-system'}'\nuser = '{machine.user_root}'\n", encoding="utf-8",
+        f"schema = 4\n[roots]\nsystem = '{tmp_path / 'other-system'}'\nuser = '{machine.user_root}'\n", encoding="utf-8",
     )
 
-    with pytest.raises(ModeRefused, match="roots differ"):
+    with pytest.raises(SettingsError, match="cannot be set in a root's own settings.toml"):
         resolve(machine, "tool", explicit_mode="system")
 
 

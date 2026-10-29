@@ -5,7 +5,7 @@ its settings and ``Data`` across ``update`` and ``switch`` back and forth (they 
 into every ``App``), and the first population migrates the vendor's defaults into ``data``; ``[portable] markers`` are
 created for a portable package and for no other; a package whose ``modes`` lack the run's mode (a portable package in
 system mode, a system-only package in user mode, a user-only package in system mode) is refused before any file is
-created, with the message of the case; ``uninstall`` removes a package whatever its ``modes`` say; ``[integration.user]
+created, with the message of the case; ``uninstall`` removes a package whatever its ``modes`` say; ``[integration]
 integrate = "none"`` leaves HKCU, the Start Menu and ``PATH`` alone and puts shims in ``<root>\\bin``; user mode is refused
 in an elevated run; uninstall keeps ``data``.
 
@@ -215,7 +215,7 @@ def test_uninstall_is_never_refused_by_the_modes_of_the_package(tmp_path: Path, 
 
 def test_integrate_none_touches_no_registry_start_menu_or_path(world: World) -> None:
     """A user root with integrate = "none": shims go to <root>\\bin and nothing else of the machine changes."""
-    world.machine.write_app_settings(tables="[integration.user]\nintegrate = 'none'\n")
+    world.machine.write_app_settings(tables="[integration]\nintegrate = 'none'\n")
     tables = (
         '[[shortcut]]\nname = "Tool"\ntarget = "$App\\\\app.exe"\n\n[[shim]]\nname = "tool"\ntarget = "$App\\\\app.exe"\n\n'
         '[[env]]\nname = "TOOL_HOME"\nvalue = "$App"\n\n[[path]]\nvalue = "$App"\n'
