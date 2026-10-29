@@ -122,7 +122,7 @@ class PackageScreen(PackageActions, FrameScreen):
     def key_hints(self) -> str:
         """Return the keys of the package view."""
         leave = "Esc quit" if self._root else "Esc back"
-        return f"{leave}  c check  u update  r repair  s switch  x remove  l logs  ? help"
+        return f"{leave}  c check  u update  r repair  s switch  x uninstall  l logs  ? help"
 
     def status_text(self) -> str:
         """Return the package's status and the program's status line."""
