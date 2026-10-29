@@ -49,7 +49,13 @@ section's wording and the code differ, the code and the decision table win.
   it computed itself without `--allow-computed`.
 - **Hook API.** Hooks declare `PKG_MODULE_API = 2` and receive a typed
   context (section 8.6), not the 0.17 dictionaries.
-- **Not verified on real hardware:** Smart App Control (spike S2), and the
+- **Chosen differently while implementing issue 035 (job 09, T12).** The code and the text of the sections above agree on these:
+  `gupkg-location` is stored relative to the root (`gupkg\current\App`) and is a sixth effect kind, `location_file`;
+  `[[shortcut]]` has `run_as_admin` and `modes` (a subset of the package's `modes`); `copyq` writes `unins000.exe` with
+  `write`, not `create`; the broken-package reason for a folder without an install record says `reinstall with: gupkg
+  install <name>` (issue 035 4.7 quoted `--force`, which `install` does not have); the manager and `gupkg-tui` take
+  `--settings` and `--sandbox` but no `--root`; the scope is shown at the left of the status line, not in a title bar; the
+  plan documents carry no `requires_elevation` and every document is `"api": 2`.- **Not verified on real hardware:** Smart App Control (spike S2), and the
   manual checks listed in `tests/manual_smoke.md`.
 
 Contents
@@ -278,7 +284,7 @@ one-line text file naming the folder that contains `gupkg.cmd` (issue 035
 §4.9, D52). A relative path is resolved against the root. A launcher reads it
 with `set /p`, and nothing in it is executed: it is data, not a script
 calling a script. Installing the `gupkg` package into a root writes it,
-pointing at `$PackageRoot\current\App`; uninstalling gupkg removes it, but
+pointing at `$PackageRoot\current\App` (written relative to the root); uninstalling gupkg removes it, but
 only if it still holds that value. A person may edit it, for example to let a
 user root use the system gupkg's program (code may be shared, data never,
 section 6.1). A missing file, an empty file, or a named folder without
@@ -416,7 +422,7 @@ One status is derived for display and filtering:
 | `local` | A local package root exists and holds at least one version directory or tracker, but there is no valid `current`. Nothing is installed; the definition is ready. |
 | `installed` | `current` is valid and its target is populated. |
 | `outdated` | Installed, and a newer version is *known*. Known means a newer local version directory (including one written by an earlier `check-updates`) or a newer pinned version in the linked registry entry. |
-| `broken` | `current` is dangling or escapes the package root; the active `App` is missing or empty; or the install record and the system disagree (drift); or the install record's mode differs from the run's ("this package was moved between scopes", section 6.3); or the package folder has no install record ("no install record (made by an older gupkg); reinstall with: `gupkg install <name> --force`", D54). |
+| `broken` | `current` is dangling or escapes the package root; the active `App` is missing or empty; or the install record and the system disagree (drift); or the install record's mode differs from the run's ("this package was moved between scopes", section 6.3); or the package folder has no install record ("no install record (made by an older gupkg); reinstall with: `gupkg install <name>`", D54). |
 | `invalid` | A version directory or tracker fails validation. Shown for that version only. It does not block other valid versions. Today one bad `_bootstrap` marks the whole package unhealthy. |
 
 ### 5.3 The cases the manager must handle
@@ -612,7 +618,7 @@ How CopyQ chooses its storage is `portableFolder()` in upstream `src/platform/wi
 
 The registry's comment says the same (commits `cf0ada6`, `ee5e8a4`). The `unins000.exe` step exists because a user root is writable: without it, a non-portable user install would silently go portable and lose its settings at every update, because `config` would live inside a version's `App`.
 
-- **`copyq`, non-portable,** `modes = ["system", "user"]`, with `[[prepare]] ["create", "unins000.exe"]` and no `[portable]` table. In user mode the empty `unins000.exe` keeps CopyQ on `%APPDATA%\copyq`. In system mode it changes nothing, because the `App` folder is admin-only and CopyQ already uses `%APPDATA%`. It also makes that behaviour independent of the folder's ACL, so it runs in both modes without a mode-specific step.
+- **`copyq`, non-portable,** `modes = ["system", "user"]`, with `[[prepare]] write = { path = "unins000.exe", content = "" }` (the plain `[[prepare]]` has no `create` verb; the code and the registry use `write`) and no `[portable]` table. In user mode the empty `unins000.exe` keeps CopyQ on `%APPDATA%\copyq`. In system mode it changes nothing, because the `App` folder is admin-only and CopyQ already uses `%APPDATA%`. It also makes that behaviour independent of the folder's ACL, so it runs in both modes without a mode-specific step.
 - **`copyq-portable`,** `modes = ["portable"]`, with no `unins000.exe` step and `[portable] persist = ["config"]`. `config` holds the settings, the items and the state, and survives updates in `<package>\data`. `logs` is not persisted: it starts empty in each new version (only diagnostics are lost).
 - **What an acceptance run checks** (user mode, test root): `copyq` writes `%APPDATA%\copyq` and nothing in `App`; `copyq-portable` writes `App\config`, which resolves to `data\config`, and nothing in `%APPDATA%\copyq`; after an update, the portable settings and items are still there. The registry's `PORTABLE-UNVERIFIED.md` gets a row for `copyq-portable`: its evidence is the upstream source quoted above, its confidence is high for the selection rule, and the persist of `config` through a junction is untested.
 
@@ -1766,12 +1772,12 @@ implementations.
 
 These readings settle what sections 13.1 to 13.3 leave open. They are what `gupkg.engine` does.
 
-**Effects and the install record.** An effect is one of five kinds, each with the fields that
+**Effects and the install record.** An effect is one of six kinds, each with the fields that
 apply, remove and verify it: `shortcut` (`path`, `target`, `arguments`, `working_dir`,
 `icon_location`, `description`, and `run_as_admin` when true), `shim` (`path`, `config`, `type`, `linkage`, `target`,
 `arguments`, `forward_args`, `elevate`, `working_dir`, `config_sha256`), `file` (a content
 wrapper: `path`, `content`, `sha256`), `env` (`scope`, `name`, `value`) and `path` (`scope`,
-`entry`, `added`, `shared`). `$App`, `$VersionRoot` and the other variables expand against
+`entry`, `added`, `shared`) and `location_file` (`path`, `content`: the root's `gupkg-location`, which only the `gupkg` package declares; its one line is stored relative to the root, `gupkg\current\App`, so the file stays right when the root moves). `$App`, `$VersionRoot` and the other variables expand against
 `<package>\current`, so a link or shim keeps working when `current` moves. An effect is
 identified by its path (an `env` by scope and name, a `PATH` entry by scope and normalised
 entry): same identity with other fields is an *update*, a recorded effect that is no longer
@@ -2406,7 +2412,7 @@ its roots (section 9.7).
 ```text
 C:\opt\                               a root (system mode, admin-only)
   .gupkg\                             root data directory (section 9.7)
-    gupkg-location                    one line: C:\opt\gupkg\current\App
+    gupkg-location                    one line: gupkg\current\App (relative to the root)
     settings.toml  state.toml  logs\  registry\
   gupkg\                              gupkg's own package
     current\                          -> 1.0.0
@@ -2465,7 +2471,7 @@ bundled gupkg, then the root's setting, then `PATH`:
    `set /p`, and nothing in it is executed. It is data, not a script calling
    a script.
    - Installing the `gupkg` package into a root writes this file, pointing at
-     `$PackageRoot\current\App`. It replaces the per-root launcher file of
+     `$PackageRoot\current\App` (written relative to the root). It replaces the per-root launcher file of
      earlier designs. Uninstalling gupkg removes the file, but only if
      it still holds that value.
    - A person may edit it, for example to let a user root use the system
@@ -2639,7 +2645,7 @@ installation (D54).
      admin-only owner and permissions on it, or refuses if an existing
      `C:\opt` is not admin-only. It then extracts the release **directly
      into `C:\opt\gupkg\<version>\`**.
-3. **Run `gupkg\<version>\install.cmd`.** The mode is that of the process: elevated
+3. **Run `gupkg\<version>\install.cmd`.** The mode is that of the process (`-Scope user` from an elevated shell is refused by the script: gupkg never acts on a user's folders as administrator): elevated
    for system mode (there is no mode option, section 6.1).
    - **User mode:** the launcher in staging finds no `gupkg-location` file, so the bundled
      gupkg runs and copies the version directory into
@@ -2698,7 +2704,7 @@ target = "$App\\gupkg-manager.cmd"
 
 There is no per-root launcher table (D52). Installing the `gupkg` package
 writes `<root>\.gupkg\gupkg-location`, pointing at `$PackageRoot\current\App`
-(section 21.3); uninstalling removes it, but only if it still holds that
+(written relative to the root; section 21.3); uninstalling removes it, but only if it still holds that
 value.
 
 - **The populate script** copies the bundled tree `<version>\gupkg\` into
