@@ -14,7 +14,7 @@ Usage and API
 Build a catalog with ``Catalog(scope, system)`` and call ``describe``, ``list`` and ``resolve``.
 ``resolve_distribution(path)`` reads a distribution folder outside the root, to be copied in. Errors are
 ``CatalogError`` subclasses (``NotFound``, ``NoVersionKnown``, ``NotInstalled``, ``NeedsRepair``,
-``NoValidVersion``, ``UntrustedLocation``).
+``NoValidVersion``; a location that an elevated run must not trust raises ``UntrustedLocationError``).
 
 Implementation Approach
 -----------------------
@@ -51,6 +51,7 @@ from ..model.state import (
 )
 from ..model.version import MANIFEST_NAME, TRACKER_DIR_NAME, compare_versions, is_version_name
 from ..model.scope import ModeRefused, Scope, check_supported
+from ..selfmgmt.elevation import UntrustedLocationError
 from ..system.port import Mode, System
 from .local import (
     is_inside,
@@ -103,10 +104,6 @@ class NotInstalled(CatalogError):
 
 class NeedsRepair(CatalogError):
     """Report that a broken package must be repaired before it can be updated."""
-
-
-class UntrustedLocation(CatalogError):
-    """Report that an elevated run refuses a location that standard users can modify."""
 
 
 # ---------------------------------------------------------------------------
@@ -292,7 +289,11 @@ class Catalog:
     def _untrusted_reason(self) -> str | None:
         """Return why an elevated run must not read the root (standard users can modify it), or ``None`` (design 9.4, D31)."""
         if self._untrusted is None:
-            reason = self.system.directory_untrusted_reason(self.scope.root) if self.scope.mode is Mode.SYSTEM else None
+            try:
+                self.scope.require_trusted(self.scope.root, "the root")
+                reason = None
+            except UntrustedLocationError as error:
+                reason = str(error)
             self._untrusted = (reason,)
         return self._untrusted[0]
 
@@ -388,7 +389,7 @@ class Catalog:
         ------
         NotFound
             If nothing matches, a path is not a package, or a path is not inside the root.
-        UntrustedLocation
+        gupkg.selfmgmt.elevation.UntrustedLocationError
             If an elevated run is given a path in a folder that standard users can modify.
         """
         parsed = parse_selector(selector, (item.name for item in self.registries))
@@ -676,7 +677,7 @@ class Catalog:
             cache = registry_cache_dir(self.scope.root, config.name)
             key = (str(cache), config.name)
             if key not in self._snapshots:
-                self._snapshots[key] = load_registry(config.name, cache, self.system)
+                self._snapshots[key] = load_registry(config.name, cache, self.scope)
             snapshots.append(self._snapshots[key])
         return snapshots
 
@@ -778,10 +779,7 @@ class Catalog:
         if not inside and not (distribution and version is not None):
             raise NotFound(f"{candidate} is not inside this scope's root ({self.scope.root})")
         elevated = self.scope.mode is Mode.SYSTEM
-        if elevated:
-            reason = self.system.directory_untrusted_reason(package_root)
-            if reason is not None:
-                raise UntrustedLocation(f"Refusing {package_root} in an elevated run: {reason}")
+        self.scope.require_trusted(package_root, "the package folder")
         if not _is_local_package(package_root, allow_link=not elevated):
             raise NotFound(f"Not a package root, version directory or current: {candidate}")
 

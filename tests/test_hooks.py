@@ -35,6 +35,7 @@ from gupkg.services.track import TrackError, run_tracker
 from gupkg.system.fake import FakeHttp, FakeSystem, ProcessCall
 from gupkg.system.port import ProcessResult
 from tests.http_fixtures import environment
+from tests.scope_support import scope_of
 
 
 @pytest.fixture(autouse=True)
@@ -55,7 +56,7 @@ def write_hook(root: Path, name: str, body: str, *, api: int | None = 2) -> str:
 def make_context(system: FakeSystem, root: Path, **paths) -> HookContext:
     """Return a hook context over *system* with a real shared client (no waiting, no ambient environment)."""
     client = HttpClient(system, env={}, sleep=lambda seconds: None, timeout=17.0, cache_dir=root / "cache")
-    return HookContext("tool", "1.0", system, client, HookPaths(root.parent, root, **paths))
+    return HookContext("tool", "1.0", system, scope_of(system), client, HookPaths(root.parent, root, **paths))
 
 
 # ---------------------------------------------------------------------------
@@ -67,7 +68,7 @@ def test_a_hook_declaring_api_2_loads_and_exposes_its_entry_point(tmp_path: Path
     """`PKG_MODULE_API = 2` loads, and the module's functions are callable."""
     reference = write_hook(tmp_path, "x.py", "def unpack(ctx):\n    return 'done'\n")
 
-    module = load_hook(tmp_path, reference, system)
+    module = load_hook(tmp_path, reference, scope_of(system))
 
     assert module.unpack(None) == "done"
 
@@ -78,7 +79,7 @@ def test_a_hook_with_another_api_version_is_rejected_like_any_invalid_hook(tmp_p
     reference = write_hook(tmp_path, "old.py", "def check_update(context):\n    return None\n", api=api)
 
     with pytest.raises(HookError) as raised:
-        load_hook(tmp_path, reference, system)
+        load_hook(tmp_path, reference, scope_of(system))
 
     assert str(raised.value) == "pkg.local/old.py must declare PKG_MODULE_API = 2"
 
@@ -100,7 +101,7 @@ def test_a_hook_path_that_is_not_a_python_file_inside_pkg_local_is_refused(tmp_p
     write_hook(tmp_path, "present.py", "")
 
     with pytest.raises(HookError):
-        load_hook(tmp_path, reference, system)
+        load_hook(tmp_path, reference, scope_of(system))
 
 
 def test_a_hook_cannot_be_a_junction_to_a_file_outside(tmp_path: Path, system: FakeSystem) -> None:
@@ -113,7 +114,7 @@ def test_a_hook_cannot_be_a_junction_to_a_file_outside(tmp_path: Path, system: F
     system.create_junction(version / "pkg.local", outside)
 
     with pytest.raises(HookError, match="link or junction"):
-        load_hook(version, "pkg.local/x.py", system)
+        load_hook(version, "pkg.local/x.py", scope_of(system))
 
 
 def test_a_hook_may_import_a_sibling_module_and_leaves_no_bytecode(tmp_path: Path, system: FakeSystem) -> None:
@@ -121,7 +122,7 @@ def test_a_hook_may_import_a_sibling_module_and_leaves_no_bytecode(tmp_path: Pat
     write_hook(tmp_path, "helper.py", "VALUE = 41\n", api=None)
     reference = write_hook(tmp_path, "main.py", "from . import helper\n\ndef unpack(ctx):\n    return helper.VALUE + 1\n")
 
-    module = load_hook(tmp_path, reference, system)
+    module = load_hook(tmp_path, reference, scope_of(system))
 
     assert module.unpack(None) == 42
     assert not (tmp_path / "pkg.local" / "__pycache__").exists()
@@ -132,7 +133,7 @@ def test_a_hook_that_imports_something_unavailable_fails_with_an_explanation(tmp
     reference = write_hook(tmp_path, "x.py", "import module_that_does_not_exist_anywhere\n")
 
     with pytest.raises(HookError, match="module_that_does_not_exist_anywhere.*gupkg installs nothing|standard library"):
-        load_hook(tmp_path, reference, system)
+        load_hook(tmp_path, reference, scope_of(system))
 
 
 # ---------------------------------------------------------------------------
@@ -149,11 +150,11 @@ def test_a_track_hook_must_return_a_track_result(tmp_path: Path, system: FakeSys
     bad = write_hook(tmp_path, "bad.py", "def track(ctx):\n    return {'version': '2.0'}\n")
     context = make_context(system, tmp_path)
 
-    assert call_track(load_hook(tmp_path, good, system), context) == TrackResult(
+    assert call_track(load_hook(tmp_path, good, scope_of(system)), context) == TrackResult(
         "2.0", {"download_url": "https://example.org/t.zip"}, DiscoveredChecksum("a" * 64, "vendor-sums")
     )
     with pytest.raises(HookError, match="must return a TrackResult"):
-        call_track(load_hook(tmp_path, bad, system), context)
+        call_track(load_hook(tmp_path, bad, scope_of(system)), context)
 
 
 def test_a_hook_without_the_requested_entry_point_is_an_error(tmp_path: Path, system: FakeSystem) -> None:
@@ -161,7 +162,7 @@ def test_a_hook_without_the_requested_entry_point_is_an_error(tmp_path: Path, sy
     reference = write_hook(tmp_path, "x.py", "def track(ctx):\n    pass\n")
 
     with pytest.raises(HookError, match=r"does not define unpack\(ctx\)"):
-        call_unpack(load_hook(tmp_path, reference, system), make_context(system, tmp_path))
+        call_unpack(load_hook(tmp_path, reference, scope_of(system)), make_context(system, tmp_path))
 
 
 def test_the_module_provider_runs_a_tracker_hook_through_run_tracker(tmp_path: Path, system: FakeSystem) -> None:
@@ -211,7 +212,7 @@ def test_a_version_directory_hook_gets_the_shared_client_with_the_user_agent_and
     system.urls["https://example.org/payload.txt"] = "fetched"
     context = make_context(system, version, app=version / "App")
 
-    call_populate(load_hook(version, reference, system), context)
+    call_populate(load_hook(version, reference, scope_of(system)), context)
 
     request = system.request_log[0]
     assert (version / "App" / "payload.txt").read_text() == "fetched"

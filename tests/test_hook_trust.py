@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from gupkg.model.manifest import PrepareModule
+from gupkg.selfmgmt.elevation import UntrustedLocationError
 from gupkg.services.hooks import (
     HookContext,
     HookError,
@@ -30,6 +31,7 @@ from gupkg.services.populate import run_custom_populate
 from gupkg.services.prepare import PrepareError, run_prepare
 from gupkg.system.fake import FakeSystem, ProcessCall
 from gupkg.system.port import ProcessResult
+from tests.scope_support import scope_of
 
 
 @pytest.fixture(autouse=True)
@@ -55,7 +57,7 @@ def version(tmp_path: Path) -> Path:
 
 def context(system: FakeSystem, version: Path) -> HookContext:
     """Return a hook context for *version* over *system*."""
-    return HookContext("tool", "1.0", system, HttpClient(system, env={}), HookPaths(version.parent, version, app=version / "App"))
+    return HookContext("tool", "1.0", system, scope_of(system), HttpClient(system, env={}), HookPaths(version.parent, version, app=version / "App"))
 
 
 def elevated(tmp_path: Path, version: Path, *, untrusted: bool) -> FakeSystem:
@@ -68,14 +70,14 @@ def test_an_elevated_run_refuses_to_import_a_hook_from_a_user_writable_directory
     system = elevated(tmp_path, version, untrusted=True)
 
     with pytest.raises(HookError, match="Refusing to run code .* not admin-only"):
-        load_hook(version, "pkg.local/planted.py", system)
+        load_hook(version, "pkg.local/planted.py", scope_of(system))
 
     assert not (version / "pkg.local" / "executed.txt").exists()
 
 
 def test_an_elevated_run_loads_a_hook_from_an_admin_only_directory(tmp_path: Path, version: Path) -> None:
     """The same hook loads when only administrators can change its folder."""
-    module = load_hook(version, "pkg.local/planted.py", elevated(tmp_path, version, untrusted=False))
+    module = load_hook(version, "pkg.local/planted.py", scope_of(elevated(tmp_path, version, untrusted=False)))
 
     assert module.PKG_MODULE_API == 2 and (version / "pkg.local" / "executed.txt").exists()
 
@@ -84,7 +86,7 @@ def test_a_normal_run_may_run_the_users_own_hook(tmp_path: Path, version: Path) 
     """Without elevation the code is the user's own and the folder is not judged."""
     system = FakeSystem(tmp_path / "machine", untrusted_dirs={version})
 
-    load_hook(version, "pkg.local/planted.py", system)
+    load_hook(version, "pkg.local/planted.py", scope_of(system))
 
     assert (version / "pkg.local" / "executed.txt").exists()
 
@@ -95,7 +97,7 @@ def test_the_elevation_marker_counts_even_when_the_token_says_otherwise(tmp_path
     system = FakeSystem(tmp_path / "machine", untrusted_dirs={version})
 
     with pytest.raises(HookError, match="not admin-only"):
-        load_hook(version, "pkg.local/planted.py", system)
+        load_hook(version, "pkg.local/planted.py", scope_of(system))
 
     assert not (version / "pkg.local" / "executed.txt").exists()
 
@@ -105,7 +107,7 @@ def test_a_planted_pkg_local_folder_is_judged_too(tmp_path: Path, version: Path)
     system = FakeSystem(tmp_path / "machine", elevated=True, untrusted_dirs={version / "pkg.local"})
 
     with pytest.raises(HookError, match="pkg.local"):
-        load_hook(version, "pkg.local/planted.py", system)
+        load_hook(version, "pkg.local/planted.py", scope_of(system))
 
     assert not (version / "pkg.local" / "executed.txt").exists()
 
@@ -120,11 +122,11 @@ def test_the_script_file_and_the_folders_between_it_and_the_version_directory_ar
     trusted = FakeSystem(tmp_path / "m3", elevated=True)
 
     with pytest.raises(HookError, match=r"deep\.py"):
-        load_hook(version, "pkg.local/sub/deep.py", file_untrusted)
+        load_hook(version, "pkg.local/sub/deep.py", scope_of(file_untrusted))
     with pytest.raises(HookError, match="sub"):
-        load_hook(version, "pkg.local/sub/deep.py", folder_untrusted)
+        load_hook(version, "pkg.local/sub/deep.py", scope_of(folder_untrusted))
     assert not (nested / "ran.txt").exists()
-    load_hook(version, "pkg.local/sub/deep.py", trusted)
+    load_hook(version, "pkg.local/sub/deep.py", scope_of(trusted))
     assert (nested / "ran.txt").exists()
 
 
@@ -149,7 +151,7 @@ def test_a_hook_that_exits_while_loading_is_a_hook_error(tmp_path: Path, system:
     (tmp_path / "pkg.local" / "quit.py").write_text("PKG_MODULE_API = 2\n" + body, encoding="utf-8")
 
     with pytest.raises(HookError, match=r"pkg\.local/quit\.py failed while loading: SystemExit"):
-        load_hook(tmp_path, "pkg.local/quit.py", system)
+        load_hook(tmp_path, "pkg.local/quit.py", scope_of(system))
 
 
 @pytest.mark.parametrize("entry", ["track", "unpack", "prepare", "populate"])
@@ -158,7 +160,7 @@ def test_a_hook_that_exits_inside_an_entry_point_is_a_hook_error(tmp_path: Path,
     (tmp_path / "pkg.local").mkdir()
     body = f"import sys\nPKG_MODULE_API = 2\n\ndef {entry}(ctx):\n    sys.exit(4)\n"
     (tmp_path / "pkg.local" / "quit.py").write_text(body, encoding="utf-8")
-    module = load_hook(tmp_path, "pkg.local/quit.py", system)
+    module = load_hook(tmp_path, "pkg.local/quit.py", scope_of(system))
     call = {"track": call_track, "unpack": call_unpack, "prepare": call_prepare, "populate": call_populate}[entry]
 
     with pytest.raises(HookError, match=rf"{entry}\(ctx\) called sys.exit\(4\)"):
@@ -171,7 +173,7 @@ def test_a_keyboard_interrupt_in_a_hook_still_stops_the_run(tmp_path: Path, syst
     (tmp_path / "pkg.local" / "stop.py").write_text("PKG_MODULE_API = 2\nraise KeyboardInterrupt\n", encoding="utf-8")
 
     with pytest.raises(KeyboardInterrupt):
-        load_hook(tmp_path, "pkg.local/stop.py", system)
+        load_hook(tmp_path, "pkg.local/stop.py", scope_of(system))
 
 
 def test_an_elevated_run_refuses_a_populate_script_and_a_prepare_module_from_an_untrusted_directory(tmp_path: Path, version: Path) -> None:
@@ -210,7 +212,7 @@ def test_any_exception_in_a_hooks_import_time_code_is_a_hook_error(tmp_path: Pat
     (tmp_path / "pkg.local" / "bad.py").write_text("PKG_MODULE_API = 2\n" + body, encoding="utf-8")
 
     with pytest.raises(HookError, match="pkg.local/bad.py"):
-        load_hook(tmp_path, "pkg.local/bad.py", system)
+        load_hook(tmp_path, "pkg.local/bad.py", scope_of(system))
 
 
 def test_a_prepare_module_that_fails_to_load_is_a_prepare_error(tmp_path: Path, system: FakeSystem) -> None:
@@ -223,3 +225,22 @@ def test_a_prepare_module_that_fails_to_load_is_a_prepare_error(tmp_path: Path, 
 
     with pytest.raises(PrepareError, match=r"\[\[prepare\]\] module 'pkg.local/bad.py'.*boom"):
         run_prepare([PrepareModule("pkg.local/bad.py")], app, context(system, version))
+
+
+def test_a_hook_folder_that_is_user_writable_is_refused_through_require_trusted_in_system_mode_and_runs_in_user_mode(
+    tmp_path: Path, version: Path
+) -> None:
+    """The trust check is `Scope.require_trusted`: the same folder is refused by the system-mode scope and accepted by the user-mode one."""
+    system_scope = scope_of(FakeSystem(tmp_path / "m1", elevated=True, untrusted_dirs={version}))
+    user_scope = scope_of(FakeSystem(tmp_path / "m2", untrusted_dirs={version}))
+
+    with pytest.raises(UntrustedLocationError, match="the hook folder"):
+        system_scope.require_trusted(version, "the hook folder")
+    user_scope.require_trusted(version, "the hook folder")
+    with pytest.raises(HookError, match="not admin-only"):
+        load_hook(version, "pkg.local/planted.py", system_scope)
+    assert not (version / "pkg.local" / "executed.txt").exists()
+
+    load_hook(version, "pkg.local/planted.py", user_scope)
+
+    assert (version / "pkg.local" / "executed.txt").exists()

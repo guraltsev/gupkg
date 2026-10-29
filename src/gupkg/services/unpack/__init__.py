@@ -35,7 +35,7 @@ from pathlib import Path
 
 from ...model.manifest import ExtractRule, NestedArchive, Source
 from ...report.events import Step, emit
-from ...system.port import System
+from ...system.port import Mode, System
 from ..safepath import UnsafePath, confine, remove_tree, safe_file_name
 from .detect import detect_kind, require_kind
 from .extract import Budget, Limits, UnpackError, check_tree, extract_archive
@@ -157,7 +157,7 @@ def unpack_artifact(
     return UnpackReport(kind, files, size)
 
 
-def unpack_git(system: System, url: str, ref: str | None, commit: str | None, destination: Path, plan: UnpackPlan,
+def unpack_git(system: System, mode: Mode, url: str, ref: str | None, commit: str | None, destination: Path, plan: UnpackPlan,
                *, limits: Limits = Limits()) -> UnpackReport:
     """Check out a repository commit into the new folder *destination*, then apply the shared options.
 
@@ -173,7 +173,7 @@ def unpack_git(system: System, url: str, ref: str | None, commit: str | None, de
     try:
         raw = scratch / "raw"
         emit(Step(f"Checking out {url}"))
-        resolved = checkout_commit(system, url, ref, commit, raw, scratch)
+        resolved = checkout_commit(system, mode, url, ref, commit, raw, scratch)
         if plan.strip not in (None, 0):
             strip_levels(raw, plan.strip)
         if plan.subdir:

@@ -41,6 +41,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from gupkg.model.manifest import ManifestKind, parse_manifest, render_pinned  # noqa: E402
+from gupkg.model.scope import make_scope  # noqa: E402
+from gupkg.model.settings import LAYER_APP, Layer, default_layer, merge_layers  # noqa: E402
+from gupkg.scope import process_mode  # noqa: E402
 from gupkg.services.http import HttpClient  # noqa: E402
 from gupkg.services.track import TrackEnvironment, run_tracker  # noqa: E402
 from gupkg.system.port import HttpResponse, System  # noqa: E402
@@ -88,7 +91,12 @@ def record_case(path: Path, system: System, *, write: bool = True, trackers: Pat
     logging = _Logging(system)
     with tempfile.TemporaryDirectory(prefix="gupkg-record-") as work:
         client = HttpClient(logging, user_agent=USER_AGENT, env={}, sleep=time.sleep)
-        environment = TrackEnvironment(logging, client, work_dir=Path(work), directory=tracker_dir, package=document["tracker"])
+        mode = process_mode(logging)
+        scope = make_scope(
+            mode, Path(work), "record_http_fixtures",
+            merge_layers([default_layer(mode.value), Layer(LAYER_APP, {"schema": 4, "integration": {"integrate": "none"}})]), {}, system=logging,
+        )
+        environment = TrackEnvironment(logging, scope, client, work_dir=Path(work), directory=tracker_dir, package=document["tracker"])
         result = run_tracker(manifest, environment)
     pinned = render_pinned(manifest, result)
 

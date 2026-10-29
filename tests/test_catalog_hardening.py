@@ -19,8 +19,9 @@ from pathlib import Path
 
 import pytest
 
-from gupkg.catalog.catalog import NoValidVersion, NotFound, UntrustedLocation
+from gupkg.catalog.catalog import NoValidVersion, NotFound
 from gupkg.catalog.registry import load_registry, registry_cache_dir, sync_registry
+from gupkg.selfmgmt.elevation import UntrustedLocationError
 from gupkg.system.fake import FakeSystem
 from gupkg.system.windows import WindowsSystem
 from gupkg.tomlio import dumps, write_toml
@@ -31,6 +32,7 @@ from tests.catalog_support import (
     version_text,
     write_version,
 )
+from tests.scope_support import scope_of
 
 BAD_BYTES = b"\xff\xfe\x00 not utf-8 \xc3\x28"
 
@@ -40,9 +42,9 @@ def test_registry_cache_files_that_are_not_utf8_leave_the_registry_empty_not_cra
     cache = build_registry(tmp_path, {"foo": {"versions": ["1.0"]}})
 
     (cache / "trees" / REVISION / "registry.toml").write_bytes(BAD_BYTES)
-    broken_registry = load_registry("main", cache, system)
+    broken_registry = load_registry("main", cache, scope_of(system))
     (cache / "state.toml").write_bytes(BAD_BYTES)
-    broken_state = load_registry("main", cache, system)
+    broken_state = load_registry("main", cache, scope_of(system))
 
     assert broken_registry.entries == {} and "Cannot read _registry.toml" in broken_registry.problems[0]
     assert broken_state.entries == {} and broken_state.revision is None
@@ -74,7 +76,7 @@ def test_version_and_tracker_files_that_are_not_utf8_are_invalid_not_fatal(syste
         zipped.writestr("r/foo/_check_updates/pkg.toml", BAD_BYTES)
     system.add_url("https://example.org/main.zip", archive.getvalue())
 
-    result = sync_registry(registry_cache_dir(roots["user"], "main"), system, name="main", source="https://example.org/main.zip")
+    result = sync_registry(registry_cache_dir(roots["user"], "main"), scope_of(system), name="main", source="https://example.org/main.zip")
     view = make_catalog(system, tmp_path)[0].describe("foo")
 
     assert result.ok and any("foo/2.0" in problem for problem in result.problems)
@@ -91,7 +93,7 @@ def test_cache_revision_that_could_leave_the_cache_folder_is_ignored(system, tmp
     cache.mkdir(parents=True)
     write_toml(cache / "state.toml", {"revision": "..\\..\\..\\..\\x", "source": "", "synchronized_at": "", "last_failure": ""})
 
-    snapshot = load_registry("main", cache, system)
+    snapshot = load_registry("main", cache, scope_of(system))
 
     assert snapshot.entries == {} and snapshot.revision is None
 
@@ -105,7 +107,7 @@ def test_index_with_names_that_could_leave_the_tree_is_rebuilt(system, tmp_path:
         "entry": [{"name": "..\\..\\evil", "version": [{"name": "1.0"}]}],
     })
 
-    snapshot = load_registry("main", cache, system)
+    snapshot = load_registry("main", cache, scope_of(system))
 
     assert sorted(snapshot.entries) == ["foo"]
 
@@ -176,7 +178,7 @@ def test_elevated_run_refuses_a_path_in_a_folder_that_users_can_modify(tmp_path:
     write_version(roots["system"] / "bad", "1.0")
 
     assert catalog.resolve(str(roots["system"] / "good")).version == "1.0"
-    with pytest.raises(UntrustedLocation):
+    with pytest.raises(UntrustedLocationError):
         catalog.resolve(str(roots["system"] / "bad"))
 
 

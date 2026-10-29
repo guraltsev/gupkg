@@ -46,6 +46,7 @@ from gupkg.services.http import Download, DownloadMismatch as HttpMismatch, Http
 from gupkg.system.fake import FakeHttp, FakeSystem
 from gupkg.system.windows import WindowsSystem
 from tests.test_git_services import COMMIT, OTHER, FakeGit, machine
+from gupkg.system.port import Mode
 
 BODY = bytes(range(256)) * 700
 GOOD = hashlib.sha256(BODY).hexdigest()
@@ -489,8 +490,8 @@ SOURCE_ROOT = Path(__file__).resolve().parents[1] / "src" / "gupkg"
 # The roots of the download rule: the gate, the fetch, the client it downloads through, and the git checkout.
 RULE_ROOTS = ("gupkg.model.checksum", "gupkg.services.artifact", "gupkg.services.http", "gupkg.services." + "unpack.git" + "source")
 # Modules that read the environment, and why that cannot weaken a check: they only detect an elevated run
-# (``GUPKG_ELEVATED`` and the process token), and an elevated run is stricter.
-ENVIRONMENT_READERS = {"gupkg.system.port", "gupkg.selfmgmt.elevation"}
+# (``GUPKG_ELEVATED``), and an elevated run is stricter.
+ENVIRONMENT_READERS = {"gupkg.system.port"}
 FORBIDDEN_ATTRIBUTES = {"environ", "environb", "getenv", "argv", "import_module"}
 FORBIDDEN_NAMES = {"__import__", "getenv"}
 
@@ -553,7 +554,7 @@ def reads_the_environment(tree: ast.AST) -> bool:
 
 
 def test_the_download_rule_and_everything_it_imports_read_neither_settings_nor_the_environment() -> None:
-    """Across the transitive imports of the rule, only the two elevation detectors touch the environment; none imports settings.
+    """Across the transitive imports of the rule, only the elevation detector touches the environment; none imports settings.
 
     Flags `os.environ`, `os.environb`, `os.getenv`, `sys.argv`, `__import__` and `importlib.import_module`.
     """
@@ -598,7 +599,7 @@ def checkout(tmp_path: Path, git: FakeGit, *, commit: str | None, skip: str | No
     """Run `fetch_git` on a machine whose only process is *git*."""
     work = tmp_path / "work"
     work.mkdir(exist_ok=True)
-    return fetch_git(machine(tmp_path, git), url, "refs/heads/main", commit, tmp_path / "app", work, skip=skip)
+    return fetch_git(machine(tmp_path, git), Mode.USER, url, "refs/heads/main", commit, tmp_path / "app", work, skip=skip)
 
 
 def test_a_pinned_commit_is_verified_and_recorded(tmp_path: Path) -> None:

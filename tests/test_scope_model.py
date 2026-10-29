@@ -39,27 +39,27 @@ def builtin(mode: str, **kwargs) -> Scope:
 
 
 @pytest.mark.parametrize(
-    ("mode", "root", "bin_dir", "start_menu", "env_target", "elevation"),
+    ("mode", "root", "bin_dir", "start_menu", "env_target"),
     [
         pytest.param(
-            "system", "C:\\opt", "C:\\bin", "C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\opt", "HKLM", True,
+            "system", "C:\\opt", "C:\\bin", "C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\opt", "HKLM",
             id="system-row-of-the-table",
         ),
         pytest.param(
             "user", "C:\\Users\\pat\\opt", "C:\\Users\\pat\\bin",
-            "C:\\Users\\pat\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\opt", "HKCU", False, id="user-row-of-the-table",
+            "C:\\Users\\pat\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\opt", "HKCU", id="user-row-of-the-table",
         ),
     ],
 )
 def test_the_built_in_settings_give_the_rows_of_the_design_table(
-    mode: str, root: str, bin_dir: str, start_menu: str, env_target: str, elevation: bool
+    mode: str, root: str, bin_dir: str, start_menu: str, env_target: str
 ) -> None:
-    """Each mode's default root, bin, Start Menu, environment target and elevation need match design 6.1."""
+    """Each mode's default root, bin, Start Menu and environment target match design 6.1."""
     scope = builtin(mode)
 
     assert scope.mode is Mode(mode)
     assert (scope.root, scope.bin_dir, scope.start_menu) == (Path(root), Path(bin_dir), Path(start_menu))
-    assert (scope.env_target, scope.requires_elevation) == (env_target, elevation)
+    assert scope.env_target == env_target
     assert scope.root_source == "built-in default"
 
 
@@ -99,7 +99,7 @@ def test_user_integrate_none_touches_no_start_menu_or_environment_and_offers_the
     scope = machine.scope()
 
     assert (scope.root, scope.bin_dir, scope.start_menu, scope.env_target) == (machine.user_root, machine.user_root / "bin", None, None)
-    assert scope.integrate == "none" and not scope.requires_elevation
+    assert scope.integrate == "none"
     assert scope.path_line() == f'set "PATH={machine.user_root / "bin"};%PATH%"'
 
 

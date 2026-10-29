@@ -11,9 +11,9 @@ sees only such folders on its own ``PATH``.
 
 Usage and API
 -------------
-``git_command(*arguments, system=...)`` returns the argument list to pass to ``System.run`` and
-``git_environment(system)`` the environment mapping; both take the ``System`` so an elevated run
-can judge the folders. ``GitUnavailable`` reports an elevated run that finds no trusted ``git``.
+``git_command(*arguments, system=..., mode=...)`` returns the argument list to pass to ``System.run`` and
+``git_environment(system, mode)`` the environment mapping; both take the machine boundary and the run's ``Mode`` so a
+system-mode run can judge the folders (the download rule's modules import no settings, so they take the ``Mode``, not the ``Scope``). ``GitUnavailable`` reports an elevated run that finds no trusted ``git``.
 
 Implementation Approach
 -----------------------
@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..system.port import System, is_elevated_run, safe_process_environment, trusted_path_entries
+from ..system.port import Mode, System, safe_process_environment, trusted_path_entries
 
 _NULL_DEVICE = "NUL"
 _SETTINGS = (
@@ -45,15 +45,15 @@ class GitUnavailable(RuntimeError):
     """Report that an elevated run found no ``git.exe`` in a folder that only administrators can change."""
 
 
-def git_executable(system: System | None) -> str:
-    """Return what to run as ``git``: the bare name for a normal run, a trusted full path for an elevated one.
+def git_executable(system: System, mode: Mode) -> str:
+    """Return what to run as ``git``: the bare name in user mode, a trusted full path in system mode.
 
     Raises
     ------
     GitUnavailable
-        If the run is elevated and no admin-only folder of ``PATH`` holds ``git.exe``.
+        If the run is in system mode and no admin-only folder of ``PATH`` holds ``git.exe``.
     """
-    if system is None or not is_elevated_run(system):
+    if mode is not Mode.SYSTEM:
         return "git"
     for folder in trusted_path_entries(system):
         candidate = Path(folder) / "git.exe"
@@ -64,15 +64,15 @@ def git_executable(system: System | None) -> str:
     )
 
 
-def git_command(*arguments: str, system: System | None = None) -> list[str]:
-    """Return ``git`` (resolved for an elevated *system*) with the safety settings, then *arguments*."""
-    command = [git_executable(system)]
+def git_command(*arguments: str, system: System, mode: Mode) -> list[str]:
+    """Return ``git`` (resolved for a system-mode run) with the safety settings, then *arguments*."""
+    command = [git_executable(system, mode)]
     for setting in _SETTINGS:
         command += ["-c", setting]
     return [*command, *arguments]
 
 
-def git_environment(system: System | None = None, temp: Path | None = None) -> dict[str, str]:
+def git_environment(system: System, mode: Mode, temp: Path | None = None) -> dict[str, str]:
     """Return the scrubbed environment for a Git process.
 
     An elevated run sees only admin-only folders on ``PATH``, values for the Windows folder, ``COMSPEC`` and ``PATHEXT`` that
@@ -88,5 +88,5 @@ def git_environment(system: System | None = None, temp: Path | None = None) -> d
         "GIT_ASKPASS": "",
         "SSH_ASKPASS": "",
         **({"TEMP": str(temp), "TMP": str(temp)} if temp is not None else {}),
-    }, system=system)
+    }, system=system, mode=mode)
     return environment

@@ -18,6 +18,8 @@ import pytest
 from gupkg.services.http import HttpClient, HttpError, check_header_map, github_environment
 from gupkg.system.fake import FakeHttp, FakeSystem
 from gupkg.system.windows import WindowsSystem
+from gupkg.scope import process_mode
+from gupkg.system.port import Mode
 
 URL = "https://example.org/data"
 
@@ -82,11 +84,11 @@ def test_the_github_token_comes_from_an_explicit_mapping_and_is_dropped_in_an_el
     monkeypatch.delenv("GUPKG_ELEVATED", raising=False)
     environ = {"GITHUB_TOKEN": "t0ken", "OTHER": "x"}
 
-    assert github_environment(system, environ) == {"GITHUB_TOKEN": "t0ken"}
-    assert github_environment(FakeSystem(tmp_path / "admin", elevated=True), environ) == {}
+    assert github_environment(process_mode(system), environ) == {"GITHUB_TOKEN": "t0ken"}
+    assert github_environment(Mode.SYSTEM, environ) == {}
     monkeypatch.setenv("GUPKG_ELEVATED", "1")
-    assert github_environment(system, environ) == {}
-    assert github_environment(system, {}) == {}
+    assert github_environment(process_mode(system), environ) == {}
+    assert github_environment(process_mode(system), {}) == {}
 
 
 def test_a_client_never_reads_the_process_environment_for_the_token(system: FakeSystem, monkeypatch: pytest.MonkeyPatch) -> None:

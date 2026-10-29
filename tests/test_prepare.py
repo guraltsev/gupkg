@@ -26,6 +26,7 @@ from gupkg.services.http import HttpClient
 from gupkg.services.populate import prepare_app
 from gupkg.services.prepare import PrepareError, run_prepare
 from gupkg.system.fake import FakeSystem
+from tests.scope_support import scope_of
 
 
 @pytest.fixture(autouse=True)
@@ -182,7 +183,7 @@ def test_a_module_step_runs_the_package_hook_with_the_staged_app(app: Path, syst
         "PKG_MODULE_API = 2\n\ndef prepare(ctx):\n    (ctx.paths.app / 'fixed.txt').write_text(ctx.package, encoding='utf-8')\n",
         encoding="utf-8",
     )
-    context = HookContext("tool", "1.0", system, HttpClient(system, env={}), HookPaths(tmp_path, version, app=app))
+    context = HookContext("tool", "1.0", system, scope_of(system), HttpClient(system, env={}), HookPaths(tmp_path, version, app=app))
 
     run_prepare([PrepareModule("pkg.local/fix.py")], app, context)
 

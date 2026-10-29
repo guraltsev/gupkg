@@ -39,6 +39,11 @@ NOT_ADMIN_ONLY_REFUSAL = (
 )
 
 
+def process_mode(system: System) -> Mode:
+    """Return the mode of this process: ``Mode.SYSTEM`` when its token is elevated, else ``Mode.USER`` (the only place that asks)."""
+    return Mode.SYSTEM if is_elevated_run(system) else Mode.USER
+
+
 def default_folders(system: System, mode: Mode) -> DefaultFolders | None:
     """Return the machine's own default Start Menu ``opt`` folder and ``bin`` folder for *mode*, or ``None``.
 
@@ -109,7 +114,7 @@ def build_scope_and_layers(
     gupkg.model.settings.SettingsError
         If a layer or ``--root`` is invalid, or ``--settings`` is given in system mode.
     """
-    mode = Mode.SYSTEM if is_elevated_run(system) else Mode.USER
+    mode = process_mode(system)
     if mode is Mode.SYSTEM:
         _require_admin_only_tree(location, system)
     installed_root = location.root if location.kind == "installed" else None
@@ -123,7 +128,7 @@ def build_scope_and_layers(
     loaded = load_mode_settings(
         mode, choice.path, app_dir=location.app_dir, settings_path=settings_path, system=system, env=env, read_text=read_text,
     )
-    scope = make_scope(mode, choice.path, choice.source, loaded.settings, env, defaults=default_folders(system, mode))
+    scope = make_scope(mode, choice.path, choice.source, loaded.settings, env, defaults=default_folders(system, mode), system=system)
     return scope, loaded.layers
 
 

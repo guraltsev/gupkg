@@ -27,6 +27,7 @@ from gupkg.services.gitenv import GitUnavailable, git_command, git_environment, 
 from gupkg.system.port import Mode, trusted_path_entries
 from gupkg.system.fake import FakeSystem
 from tests.engine_support import World, pin_no_ambient_elevation, pkg_text  # noqa: F401
+from gupkg.scope import process_mode
 
 ENV = '[[env]]\nname = "TOOL_HOME"\nvalue = "$App"\n'
 SHIM = '[[shim]]\nname = "tool"\ntarget = "$App\\\\app.exe"\n' + ENV
@@ -208,9 +209,9 @@ def test_an_elevated_run_resolves_git_only_from_admin_only_folders_of_path(tmp_p
     folders = path_with(tmp_path, monkeypatch, ("user-bin", True), ("tools", True))
     system = FakeSystem(tmp_path / "machine", elevated=True, untrusted_dirs={folders[0]})
 
-    assert git_executable(system) == str(folders[1] / "git.exe")
-    assert git_command("status", system=system)[0] == str(folders[1] / "git.exe")
-    assert git_environment(system)["PATH"] == str(folders[1])
+    assert git_executable(system, process_mode(system)) == str(folders[1] / "git.exe")
+    assert git_command("status", system=system, mode=process_mode(system))[0] == str(folders[1] / "git.exe")
+    assert git_environment(system, process_mode(system))["PATH"] == str(folders[1])
 
 
 def test_an_elevated_run_with_no_trusted_git_refuses_instead_of_using_the_users(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -219,7 +220,7 @@ def test_an_elevated_run_with_no_trusted_git_refuses_instead_of_using_the_users(
     system = FakeSystem(tmp_path / "machine", elevated=True, untrusted_dirs={folders[0]})
 
     with pytest.raises(GitUnavailable, match="administrators"):
-        git_executable(system)
+        git_executable(system, process_mode(system))
 
 
 def test_a_normal_run_uses_the_bare_git_name_and_keeps_its_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -227,7 +228,7 @@ def test_a_normal_run_uses_the_bare_git_name_and_keeps_its_path(tmp_path: Path, 
     folders = path_with(tmp_path, monkeypatch, ("user-bin", True))
     system = FakeSystem(tmp_path / "machine", elevated=False, untrusted_dirs={folders[0]})
 
-    assert git_executable(system) == "git" and git_environment(system)["PATH"] == str(folders[0])
+    assert git_executable(system, process_mode(system)) == "git" and git_environment(system, process_mode(system))["PATH"] == str(folders[0])
 
 
 def test_the_trusted_path_keeps_only_existing_absolute_local_admin_only_folders_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -256,12 +257,12 @@ def test_an_elevated_child_gets_no_comspec_pathext_or_windows_folder_from_the_pr
     system = FakeSystem(tmp_path / "machine", elevated=True, untrusted_dirs={evil})
     work = tmp_path / "work"
 
-    env = git_environment(system, work)
+    env = git_environment(system, process_mode(system), work)
 
     assert env["COMSPEC"] == str(windows / "System32" / "cmd.exe") and env["SYSTEMROOT"] == env["WINDIR"] == str(windows)
     assert env["PATHEXT"] == ".COM;.EXE;.BAT;.CMD" and env["TEMP"] == env["TMP"] == str(work) and "PROGRAMDATA" not in env
     assert str(evil) not in " ".join(env.values())
-    assert "TEMP" not in git_environment(system)
+    assert "TEMP" not in git_environment(system, process_mode(system))
 
 
 def test_with_no_trusted_windows_folder_an_elevated_child_gets_no_windows_variables(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -273,7 +274,7 @@ def test_with_no_trusted_windows_folder_an_elevated_child_gets_no_windows_variab
     monkeypatch.setenv("COMSPEC", str(evil / "cmd.exe"))
     system = FakeSystem(tmp_path / "machine", elevated=True, untrusted_dirs={evil})
 
-    env = git_environment(system)
+    env = git_environment(system, process_mode(system))
 
     assert not {"COMSPEC", "SYSTEMROOT", "WINDIR"} & set(env)
 
@@ -283,4 +284,4 @@ def test_a_normal_run_keeps_the_process_values(tmp_path: Path, monkeypatch: pyte
     monkeypatch.setenv("COMSPEC", "C:\\mine\\cmd.exe")
     system = FakeSystem(tmp_path / "machine", elevated=False)
 
-    assert git_environment(system)["COMSPEC"] == "C:\\mine\\cmd.exe"
+    assert git_environment(system, process_mode(system))["COMSPEC"] == "C:\\mine\\cmd.exe"

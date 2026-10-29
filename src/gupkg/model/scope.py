@@ -31,10 +31,11 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..system.port import Mode
+from ..selfmgmt.elevation import UntrustedLocationError, untrusted_message
+from ..system.port import Mode, System
 from .manifest import PORTABLE
 from .settings import LAYER_DEFAULTS, Settings, expand_env
 
@@ -100,6 +101,9 @@ class Scope:
         ``full`` or ``none`` (``[integration] integrate``); a property of the scope in both modes.
     settings : Settings
         The effective settings of this run, each value with the layer that set it.
+    system : System, optional
+        The machine boundary that ``require_trusted`` asks; not part of the scope's identity. A system-mode scope without
+        one refuses every location, because it cannot judge it.
     """
 
     mode: Mode
@@ -110,11 +114,34 @@ class Scope:
     env_target: str | None
     integrate: str
     settings: Settings
+    system: System | None = field(default=None, compare=False, repr=False)
 
-    @property
-    def requires_elevation(self) -> bool:
-        """Return whether the mode needs an administrator token (system mode)."""
-        return self.mode is Mode.SYSTEM
+    def require_trusted(self, path: Path, what: str) -> None:
+        """Refuse, in system mode, a *path* that standard users can change: the one trust check of an elevated run (T1, D19).
+
+        In user mode this does nothing. In system mode an elevated process must not run code, read a cache or keep a lock
+        in a place a standard user could have changed, so the location is judged before it is used.
+
+        Parameters
+        ----------
+        path : Path
+            The folder (or file) about to be trusted.
+        what : str
+            What it is, for the message (``"the work folder"``, ``"the hook folder"``).
+
+        Raises
+        ------
+        gupkg.selfmgmt.elevation.UntrustedLocationError
+            If the mode is ``system`` and *path* or one of its parents can be changed by anyone but administrators, or its
+            permissions cannot be read.
+        """
+        if self.mode is not Mode.SYSTEM:
+            return
+        if self.system is None:
+            raise UntrustedLocationError(f"{what}: {path} cannot be judged, because this scope has no machine boundary")
+        reason = self.system.directory_untrusted_reason(Path(path))
+        if reason is not None:
+            raise UntrustedLocationError(f"{what}: {untrusted_message(Path(path), reason)}")
 
     @property
     def data_dir(self) -> Path:
@@ -215,6 +242,7 @@ def make_scope(
     env: Mapping[str, str],
     *,
     defaults: DefaultFolders | None = None,
+    system: System | None = None,
 ) -> Scope:
     """Build the ``Scope`` of *mode* on *root* from the effective settings (design 6.1).
 
@@ -232,6 +260,8 @@ def make_scope(
         The environment used to expand ``%NAME%`` in configured paths.
     defaults : DefaultFolders, optional
         The machine's own default folders for *mode*; used where no settings layer set the bin or Start Menu folder.
+    system : System, optional
+        The machine boundary the scope's ``require_trusted`` asks.
 
     Returns
     -------
@@ -247,10 +277,10 @@ def make_scope(
     integrate = settings["integration.integrate"]
     if integrate == "none":
         # Shims live in ``<root>\bin``; neither the Start Menu nor the environment is touched.
-        return Scope(mode, root, root_source, root / "bin", None, None, integrate, settings)
+        return Scope(mode, root, root_source, root / "bin", None, None, integrate, settings, system)
     return Scope(
         mode, root, root_source,
         _folder(settings, "integration.bin", env, defaults.bin_dir if defaults else None),
         _folder(settings, "integration.start_menu", env, defaults.start_menu if defaults else None),
-        ENV_MACHINE if mode is Mode.SYSTEM else ENV_USER, integrate, settings,
+        ENV_MACHINE if mode is Mode.SYSTEM else ENV_USER, integrate, settings, system,
     )

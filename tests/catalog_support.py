@@ -121,7 +121,7 @@ def make_settings(registries: tuple[str, ...] = ("main",), mode: str = "user"):
 
 def catalog_over(system, root: Path, *, mode: str = "user", registries: tuple[str, ...] = ("main",), verify: bool = False) -> Catalog:
     """Return the catalog of a scope whose root is the folder *root*."""
-    scope = make_scope(Mode(mode), root, "test", make_settings(registries, mode), {})
+    scope = make_scope(Mode(mode), root, "test", make_settings(registries, mode), {}, system=system)
     return Catalog(scope, system, verify)
 
 

@@ -3,7 +3,7 @@
 An ``Engine`` is built once per call by the front end. It carries the ``System`` boundary, the
 environment used to expand variables, the ``Scope`` of the run (its mode, root and settings), and the optional hooks a front
 end plugs in: how to ask a question (``confirm``), how to learn that the user asked to stop (``cancel``), where
-a package's log file is (``log_path``), and the facts about the running gupkg that elevation needs. Nothing
+a package's log file is (``log_path``). Nothing
 here prints or reads input: a question is a callable that the front end provides, and an engine without one
 treats every question as unanswerable (exit code 5).
 
@@ -16,7 +16,7 @@ Implementation Approach
 -----------------------
 The engine is a plain mutable dataclass so tests can adjust one field. It decides nothing itself: the
 admin-only checks of an elevated run live in ``require_work_folder`` and ``Engine.http_client``, which create
-the cache and work folders first and then refuse them unless only administrators can change them.
+the cache and work folders first and then refuse them through ``Scope.require_trusted`` unless only administrators can change them.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ from ..extractors import find_7z
 from ..model.scope import Scope
 from ..services.http import HttpClient, github_environment
 from ..services.unpack import Limits
-from ..system.port import Mode, System, require_admin_only
+from ..system.port import Mode, System
 
 
 # The largest App whose files are listed one by one in a receipt (about 150 bytes each, under the receipt size limit).
@@ -71,14 +71,6 @@ class Engine:
         Returns true once the user asked to stop; checked between packages.
     log_path : callable
         ``log_path(package_path)`` returns the package's log file of this run (or ``None``); stored in receipts.
-    relaunched : bool
-        This process is the elevated child of a non-elevated call.
-    argv, gupkg_dir, gupkg_root : optional
-        The command line for an elevated child and the running gupkg's version directory and root.
-    relaunch_note : str
-        Added to the message when the wait for the elevated child is given up (its stop marker and events file).
-    request_stop : callable, optional
-        Asks the elevated child to stop (creates the child's stop marker); called when the user interrupts the wait for it.
     seven_zip : Path, optional
         The 7-Zip executable (the bundled one by default).
     limits : Limits
@@ -108,12 +100,6 @@ class Engine:
     allow_other_broken_versions: bool = False
     cancel: Callable[[], bool] = lambda: False
     log_path: Callable[[Path], str | None] = lambda path: None
-    relaunched: bool = False
-    argv: tuple[str, ...] = ()
-    gupkg_dir: Path | None = None
-    gupkg_root: Path | None = None
-    request_stop: Callable[[], None] | None = None
-    relaunch_note: str = ""
     seven_zip: Path | None = None
     limits: Limits = field(default_factory=Limits)
     sleep: Callable[[float], None] = time.sleep
@@ -128,11 +114,6 @@ class Engine:
         return self.clock() if self.clock is not None else datetime.now(timezone.utc)
 
     @property
-    def elevated(self) -> bool:
-        """Return whether this run is elevated: whether its scope is the system's (unknown counts as elevated)."""
-        return self.scope.mode is Mode.SYSTEM
-
-    @property
     def version(self) -> str:
         """Return the running gupkg's version."""
         return __version__
@@ -144,7 +125,7 @@ class Engine:
         An elevated run ignores the user's environment (decision D19): only the machine-level variables of
         ``MACHINE_VARIABLES`` are visible to a package then. A normal run sees everything it was given.
         """
-        if not self.elevated:
+        if self.scope.mode is not Mode.SYSTEM:
             return self.env
         return {name: value for name, value in self.env.items() if name.casefold() in MACHINE_VARIABLES}
 
@@ -170,11 +151,10 @@ class Engine:
         """
         cache = context.data_dir / "cache"
         cache.mkdir(parents=True, exist_ok=True)
-        if self.elevated:
-            require_admin_only(self.system, cache)
+        context.require_trusted(cache, "the download cache")
         options = {} if self.retries is None else {"retries": self.retries}
         return HttpClient(
-            self.system, headers=dict(headers or {}), cache_dir=cache, env=github_environment(self.system, self.env),
+            self.system, headers=dict(headers or {}), cache_dir=cache, env=github_environment(context.mode, self.env),
             sleep=self.sleep, **options,
         )
 
@@ -190,11 +170,9 @@ def require_trusted_tools(engine: Engine, *tools: Path | None) -> None:
     gupkg.selfmgmt.elevation.UntrustedLocationError
         If the run is elevated and the folder of a tool is not admin-only (or cannot be judged).
     """
-    if not engine.elevated:
-        return
     for tool in tools:
         if tool is not None:
-            require_admin_only(engine.system, Path(tool).parent)
+            engine.scope.require_trusted(Path(tool).parent, "the tool folder")
 
 
 def tracker_tools() -> tuple[Path, ...]:
@@ -227,6 +205,5 @@ def require_work_folder(engine: Engine, folder: Path) -> Path:
         If the run is elevated and standard users can change *folder*.
     """
     folder.mkdir(parents=True, exist_ok=True)
-    if engine.elevated:
-        require_admin_only(engine.system, folder)
+    engine.scope.require_trusted(folder, "the work folder")
     return folder

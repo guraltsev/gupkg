@@ -18,6 +18,7 @@ from gupkg.model.manifest import Manifest, ManifestKind, parse_manifest
 from gupkg.services.http import HttpClient
 from gupkg.services.track import TrackEnvironment
 from gupkg.system.fake import FakeHttp, FakeSystem
+from tests.scope_support import scope_of
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 HTTP_CASES = FIXTURES / "http"
@@ -43,7 +44,7 @@ def serve(system: FakeSystem, *cases: str) -> FakeSystem:
 def environment(system: FakeSystem, tmp_path: Path, *, directory: Path | None = None, package: str = "pkg") -> TrackEnvironment:
     """Return a ``TrackEnvironment`` over *system* with a client that never sleeps and ignores the process environment."""
     client = HttpClient(system, env={}, sleep=lambda seconds: None, cache_dir=tmp_path / "cache")
-    return TrackEnvironment(system, client, work_dir=tmp_path / "work", directory=directory, package=package)
+    return TrackEnvironment(system, scope_of(system), client, work_dir=tmp_path / "work", directory=directory, package=package)
 
 
 def tracker_manifest(package: str) -> Manifest:

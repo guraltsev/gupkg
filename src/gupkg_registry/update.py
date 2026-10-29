@@ -57,6 +57,9 @@ from gupkg.services.http import HttpClient, github_environment
 from gupkg.services.populate import populate_app, populate_git
 from gupkg.services.safepath import is_reparse_point, remove_tree
 from gupkg.services.track import TrackEnvironment, run_tracker
+from gupkg.model.scope import Scope, make_scope
+from gupkg.model.settings import LAYER_APP, Layer, default_layer, merge_layers
+from gupkg.scope import process_mode
 from gupkg.system.port import System
 from gupkg.launchers import write_launchers
 
@@ -109,11 +112,19 @@ class _Run:
     sandbox: Path
     client: HttpClient
     settings: dict = field(default_factory=dict)
+    scope: Scope | None = None
 
 
-def _client(system: System, sandbox: Path, environ: Mapping[str, str] | None) -> HttpClient:
+def _scope(system: System, root: Path) -> Scope:
+    """Return the scope of the tool run: the mode of its own token on the registry checkout (it installs nothing)."""
+    mode = process_mode(system)
+    layer = Layer(LAYER_APP, {"schema": 4, "integration": {"integrate": "none"}})
+    return make_scope(mode, root, "gupkg-registry", merge_layers([default_layer(mode.value), layer]), {}, system=system)
+
+
+def _client(scope: Scope, sandbox: Path, environ: Mapping[str, str] | None) -> HttpClient:
     """Return the shared client: its cache is in the sandbox, its only credential is ``GITHUB_TOKEN``."""
-    return HttpClient(system, cache_dir=sandbox / "cache", env=github_environment(system, environ or {}))
+    return HttpClient(scope.system, cache_dir=sandbox / "cache", env=github_environment(scope.mode, environ or {}))
 
 
 def update_registry(
@@ -183,7 +194,8 @@ def registry_lock(root: Path, system: System, operation: str) -> Iterator[None]:
 
 def _update_all(root, system, sandbox, names, environ, on_start, on_outcome, settings) -> UpdateReport:
     """Run the trackers of *names* while the caller holds the lock (see ``update_registry``)."""
-    run = _Run(root, system, sandbox, _client(system, sandbox, environ), settings)
+    scope = _scope(system, root)
+    run = _Run(root, system, sandbox, _client(scope, sandbox, environ), settings, scope)
     available = {p.name: p for p in package_dirs(root)}
     _remove_stale_staging(available.values())
     wanted = list(dict.fromkeys(names)) if names else sorted(available)
@@ -274,7 +286,8 @@ def _pin_version(
         if manifest.source.sha256 is not None:
             raise ValueError("the version already has a sha256; the registry never replaces one")
         sandbox.mkdir(parents=True, exist_ok=True)
-        run = _Run(root, system, sandbox, _client(system, sandbox, environ), settings)
+        scope = _scope(system, root)
+        run = _Run(root, system, sandbox, _client(scope, sandbox, environ), settings, scope)
         digest = _fetch_and_prove(run, name, version, manifest, None)
         pinned = dataclasses.replace(
             manifest, source=dataclasses.replace(manifest.source, sha256=digest, sha256_from=REGISTRY_SHA256_FROM)
@@ -303,13 +316,13 @@ def _fetch_and_prove(run: _Run, name: str, version: str, manifest, expected: str
     stage.mkdir(parents=True)
     try:
         context = HookContext(
-            package=name, version=version, system=run.system, http=run.client,
+            package=name, version=version, system=run.system, scope=run.scope, http=run.client,
             paths=HookPaths(run.root / name, run.root / name / version, stage / "App", None, stage / "work", run.sandbox / "cache"),
             options={}, captures={}, reporter=HookReporter(),
         )
         source = manifest.source
         if source.git is not None:
-            populate_git(run.system, manifest, stage / "App", context=context)
+            populate_git(run.scope, manifest, stage / "App", context=context)
             return None
         fetched = fetch_artifact(
             run.client, source.download_url, expected_sha256=expected,
@@ -337,7 +350,7 @@ def _update_package(run: _Run, package: Path) -> Outcome:
         return Outcome(name, "failed", message="the tracker does not validate: " + "; ".join((*report.errors, *report.warnings)))
     manifest = parse_manifest((tracker / MANIFEST_NAME).read_text(encoding="utf-8-sig"), ManifestKind.TRACKER)
     environment = TrackEnvironment(
-        run.system, run.client, work_dir=run.sandbox / "track" / name, directory=tracker, package=name
+        run.system, run.scope, run.client, work_dir=run.sandbox / "track" / name, directory=tracker, package=name
     )
     result = run_tracker(manifest, environment)
     key = f"{name}/{result.version}"

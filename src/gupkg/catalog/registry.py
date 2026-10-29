@@ -10,9 +10,9 @@ survives updates of gupkg. A tree whose
 
 Usage and API
 -------------
-``sync_registry(cache_dir, system, name=..., source=...)`` refreshes one cache and returns a
+``sync_registry(cache_dir, scope, name=..., source=...)`` refreshes one cache and returns a
 ``SyncResult``; it is the only function here that writes, and it writes only below
-*cache_dir*. ``load_registry(name, cache_dir, system)`` returns the ``RegistrySnapshot`` of
+*cache_dir*. ``load_registry(name, cache_dir, scope)`` returns the ``RegistrySnapshot`` of
 the active revision, which the catalog joins with local packages. ``registry_cache_dir(root,
 name)`` names a cache folder, and ``search_snapshot(snapshot, query)`` filters entries.
 
@@ -58,7 +58,7 @@ from ..services.registrysource import (
     require_trusted_cache,
     trusted_git,
 )
-from ..system.port import System
+from ..model.scope import Scope
 from ..tomlio import read_toml, write_toml
 from .local import DATA_DIR_NAME, manifest_text_hash, is_reparse_point, tree_hash
 
@@ -121,15 +121,15 @@ def registry_cache_dir(root: Path, name: str) -> Path:
     return Path(root) / DATA_DIR_NAME / "registry" / name
 
 
-def cache_state(cache_dir: Path, system: System) -> CacheState:
+def cache_state(cache_dir: Path, scope: Scope) -> CacheState:
     """Read a cache's state without contacting Git or creating folders.
 
     Parameters
     ----------
     cache_dir : Path
         The registry's cache folder.
-    system : System
-        Boundary for the admin-only check of an elevated run.
+    scope : Scope
+        The run's scope: in system mode the cache must be admin-only.
 
     Returns
     -------
@@ -139,9 +139,9 @@ def cache_state(cache_dir: Path, system: System) -> CacheState:
     Raises
     ------
     ConfigValidationError
-        If the run is elevated and the cache is not in an admin-only folder.
+        If the run is in system mode and the cache is not in an admin-only folder.
     """
-    require_trusted_cache(cache_dir, system)
+    require_trusted_cache(cache_dir, scope)
     state_path = Path(cache_dir) / "state.toml"
     if not state_path.is_file() or is_reparse_point(state_path):
         return CacheState(Path(cache_dir))
@@ -168,7 +168,7 @@ def cache_state(cache_dir: Path, system: System) -> CacheState:
 # ---------------------------------------------------------------------------
 
 
-def load_registry(name: str, cache_dir: Path, system: System) -> RegistrySnapshot:
+def load_registry(name: str, cache_dir: Path, scope: Scope) -> RegistrySnapshot:
     """Return the snapshot of the active revision of a registry cache.
 
     Parameters
@@ -177,8 +177,8 @@ def load_registry(name: str, cache_dir: Path, system: System) -> RegistrySnapsho
         The registry's name in the settings.
     cache_dir : Path
         The registry's cache folder.
-    system : System
-        Boundary for the admin-only check of an elevated run.
+    scope : Scope
+        The run's scope: in system mode the cache must be admin-only.
 
     Returns
     -------
@@ -188,7 +188,7 @@ def load_registry(name: str, cache_dir: Path, system: System) -> RegistrySnapsho
         validated in memory (nothing is written).
     """
     try:
-        state = cache_state(cache_dir, system)
+        state = cache_state(cache_dir, scope)
     except ConfigValidationError as exc:
         return RegistrySnapshot(name, None, {}, (str(exc),))
     tree = state.tree_dir
@@ -417,7 +417,7 @@ def _read_index(name: str, tree: Path, revision: str | None) -> RegistrySnapshot
 
 def sync_registry(
     cache_dir: Path,
-    system: System,
+    scope: Scope,
     *,
     name: str,
     source: str,
@@ -429,8 +429,8 @@ def sync_registry(
     ----------
     cache_dir : Path
         The registry's cache folder, ``<root>\\.gupkg\\registry\\<name>`` (see ``registry_cache_dir``).
-    system : System
-        Boundary for downloads, Git and the admin-only checks.
+    scope : Scope
+        The run's scope: its machine boundary does the downloads and Git, and in system mode the cache must be admin-only.
     name : str
         The registry's name in the settings.
     source : str
@@ -446,8 +446,9 @@ def sync_registry(
         On failure the previous validated tree stays active and ``error`` says why.
     """
     cache_dir = Path(cache_dir)
+    system = scope.system
     try:
-        current = cache_state(cache_dir, system)
+        current = cache_state(cache_dir, scope)
     except ConfigValidationError as exc:
         return SyncResult(False, error=str(exc))
     if offline:
@@ -465,12 +466,12 @@ def sync_registry(
             # A trusted Git can name the remote revision without transferring it.
             git = trusted_git(system) if is_git_source(source) else None
             if git is not None and current.tree_dir is not None:
-                remote = git_remote_revision(system, git, source)
+                remote = git_remote_revision(scope, git, source)
                 if remote is not None and remote == current.revision:
                     _write_state(cache_dir, current, source=source, last_failure=None)
                     return SyncResult(True, "current", current.revision)
 
-            registry, revision = _obtain(source, git, work, system)
+            registry, revision = _obtain(source, git, work, scope)
             if current.revision == revision and current.tree_dir is not None:
                 _write_state(cache_dir, current, source=source, last_failure=None)
                 return SyncResult(True, "current", revision)
@@ -512,8 +513,9 @@ def sync_registry(
         shutil.rmtree(work_parent, ignore_errors=True)
 
 
-def _obtain(source: str, git: str | None, work: Path, system: System) -> tuple[Path, str]:
+def _obtain(source: str, git: str | None, work: Path, scope: Scope) -> tuple[Path, str]:
     """Fetch the registry into *work* and return its root folder and 40-hex revision."""
+    system = scope.system
     if git is not None and is_git_source(source):
         destination = work / "clone"
         command = [
@@ -521,11 +523,11 @@ def _obtain(source: str, git: str | None, work: Path, system: System) -> tuple[P
             "-c", "core.symlinks=false", "-c", f"core.hooksPath={os.devnull}",
             "clone", "--depth", "1", "--single-branch", "--no-tags", "--quiet", source, str(destination),
         ]
-        result = system.run(command, env=git_environment(system), timeout=600, on_line=subprocess_lines(command))
+        result = system.run(command, env=git_environment(scope), timeout=600, on_line=subprocess_lines(command))
         if result.returncode != 0:
             raise ConfigValidationError(f"git clone failed: {result.stderr.strip()}")
         head = system.run(
-            [git, "-C", str(destination), "rev-parse", "HEAD"], env=git_environment(system), on_line=subprocess_lines([git]),
+            [git, "-C", str(destination), "rev-parse", "HEAD"], env=git_environment(scope), on_line=subprocess_lines([git]),
         )
         revision = head.stdout.strip().lower()
         if not re.fullmatch(r"[0-9a-f]{40}", revision):

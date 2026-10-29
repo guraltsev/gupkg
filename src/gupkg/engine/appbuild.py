@@ -152,7 +152,7 @@ def populate_version(
             checksum = _checkout(engine, client, manifest, paths, name, version, skip)
             sections["source"]["url"] = redact_url(source.download_url)
         else:
-            hook = HookContext(name, version, engine.system, client, paths)
+            hook = HookContext(name, version, engine.system, engine.scope, client, paths)
             with phase("Unpack"):
                 emit(Step(f"Running the populate script {source.script}"))
                 staged.mkdir()
@@ -220,7 +220,7 @@ def _download_and_unpack(
         # The cached file is hashed again right before it is used (it could have been replaced since).
         reverify(fetched)
         hook = HookContext(
-            name, version, engine.system, client,
+            name, version, engine.system, engine.scope, client,
             HookPaths(paths.package_root, paths.version_root, paths.app, fetched.download.path, paths.work, paths.cache),
         )
         if source.installer is None:
@@ -249,9 +249,9 @@ def _checkout(
         if verification.skipped:
             emit(Warning(f"{source.download_url} pins no commit and is not verified: continuing because the call allowed it ({verification.decision})."))
     with phase("Unpack"):
-        hook = HookContext(name, version, engine.system, client, paths)
+        hook = HookContext(name, version, engine.system, engine.scope, client, paths)
         try:
-            report = populate_git(engine.system, manifest, paths.app, context=hook, limits=engine.limits)
+            report = populate_git(engine.scope, manifest, paths.app, context=hook, limits=engine.limits)
         except CommitMismatch as error:
             raise ChecksumMismatch(str(error), source.download_url, expected=error.expected, observed=error.observed) from error
     return git_record(verification, report.commit or "", url=source.download_url)

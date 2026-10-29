@@ -23,6 +23,7 @@ from gupkg.catalog.registry import load_registry, registry_cache_dir, search_sna
 from gupkg.model.manifest import ManifestKind, TrackResult, manifest_to_toml, parse_manifest, render_pinned
 from gupkg.tomlio import dumps
 from tests.catalog_support import build_registry, make_catalog, tracker_text, version_text
+from tests.scope_support import scope_of
 
 SOURCE = "https://example.org/main.zip"
 
@@ -42,7 +43,7 @@ def registry_zip(files: dict[str, str], *, registry: dict | None = None, top: st
 def sync(system, root: Path, archive: bytes, **options):
     """Serve *archive* at ``SOURCE`` and sync registry ``main`` into the data directory of *root*."""
     system.add_url(SOURCE, archive)
-    return sync_registry(registry_cache_dir(root, "main"), system, name="main", source=SOURCE, **options)
+    return sync_registry(registry_cache_dir(root, "main"), scope_of(system), name="main", source=SOURCE, **options)
 
 
 GOOD = {
@@ -56,7 +57,7 @@ GOOD = {
 def test_sync_publishes_a_validated_tree_in_the_root_data_directory(system, tmp_path: Path) -> None:
     """A sync writes the cache to ``<root>\\.gupkg\\registry\\main`` and the catalog reads its entries, versions and trackers."""
     result = sync(system, tmp_path, registry_zip(GOOD))
-    snapshot = load_registry("main", registry_cache_dir(tmp_path, "main"), system)
+    snapshot = load_registry("main", registry_cache_dir(tmp_path, "main"), scope_of(system))
 
     assert result.ok and result.status == "synced" and result.problems == ()
     assert (tmp_path / ".gupkg" / "registry" / "main" / "state.toml").is_file()
@@ -89,7 +90,7 @@ def test_one_invalid_package_version_or_tracker_is_reported_and_skipped(system, 
     }
 
     result = sync(system, tmp_path, registry_zip(files))
-    snapshot = load_registry("main", registry_cache_dir(tmp_path, "main"), system)
+    snapshot = load_registry("main", registry_cache_dir(tmp_path, "main"), scope_of(system))
 
     assert result.ok
     assert sorted(snapshot.entries) == ["bar", "foo", "halfbad"]
@@ -115,10 +116,10 @@ def test_registry_that_is_not_format_2_is_refused_and_the_previous_tree_stays(
 ) -> None:
     """A tree with no usable ``_registry.toml`` fails the sync; the earlier validated revision remains active."""
     assert sync(system, tmp_path, registry_zip(GOOD)).ok
-    before = load_registry("main", registry_cache_dir(tmp_path, "main"), system)
+    before = load_registry("main", registry_cache_dir(tmp_path, "main"), scope_of(system))
 
     result = sync(system, tmp_path, registry_zip({**GOOD, "foo/1.2/pkg.toml": version_text("1.2")}, registry=registry))
-    after = load_registry("main", registry_cache_dir(tmp_path, "main"), system)
+    after = load_registry("main", registry_cache_dir(tmp_path, "main"), scope_of(system))
 
     assert not result.ok and reason in result.error
     assert after.revision == before.revision and [v.name for v in after.entry("foo").versions] == ["1.0", "1.1"]
@@ -126,11 +127,11 @@ def test_registry_that_is_not_format_2_is_refused_and_the_previous_tree_stays(
 
 def test_offline_sync_reports_the_cache_without_any_request(system, tmp_path: Path) -> None:
     """``offline`` validates nothing new and fetches nothing; with no cache it fails."""
-    assert not sync_registry(registry_cache_dir(tmp_path, "main"), system, name="main", source=SOURCE, offline=True).ok
+    assert not sync_registry(registry_cache_dir(tmp_path, "main"), scope_of(system), name="main", source=SOURCE, offline=True).ok
     sync(system, tmp_path, registry_zip(GOOD))
     system.fetch_log.clear()
 
-    result = sync_registry(registry_cache_dir(tmp_path, "main"), system, name="main", source=SOURCE, offline=True)
+    result = sync_registry(registry_cache_dir(tmp_path, "main"), scope_of(system), name="main", source=SOURCE, offline=True)
 
     assert result.ok and result.status == "offline" and system.fetch_log == []
 
@@ -139,19 +140,19 @@ def test_validated_index_is_used_for_its_revision_and_a_stale_one_is_rebuilt(sys
     """Reading a revision uses the index written by the sync; an index of another revision is ignored and rebuilt in memory."""
     sync(system, tmp_path, registry_zip(GOOD))
     cache = registry_cache_dir(tmp_path, "main")
-    revision = load_registry("main", cache, system).revision
+    revision = load_registry("main", cache, scope_of(system)).revision
     tree = cache / "trees" / revision
     victim = tree / "pkgs" / "foo" / "1.1" / "pkg.toml"
 
     # The tree changes behind the index: the index still describes the validated revision.
     victim.write_text("format = 2\n", encoding="utf-8")
-    indexed = load_registry("main", cache, system)
+    indexed = load_registry("main", cache, scope_of(system))
     assert [version.name for version in indexed.entry("foo").versions] == ["1.0", "1.1"]
 
     # Without a usable index the tree is validated again, and the reader writes nothing.
     index = tree / "index.toml"
     index.write_text(index.read_text(encoding="utf-8").replace(revision, "f" * 40), encoding="utf-8")
-    rebuilt = load_registry("main", cache, system)
+    rebuilt = load_registry("main", cache, scope_of(system))
     assert [version.name for version in rebuilt.entry("foo").versions] == ["1.0"]
     assert "f" * 40 in index.read_text(encoding="utf-8")
 

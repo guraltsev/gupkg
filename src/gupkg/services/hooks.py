@@ -12,8 +12,8 @@ like any other invalid hook.
 
 Usage and API
 -------------
-``load_hook(root, "pkg.local/name.py", system)`` imports a hook and checks its API version; in an
-elevated run it first refuses a folder that is not admin-only (``require_trusted_code``).
+``load_hook(root, "pkg.local/name.py", scope)`` imports a hook and checks its API version; in system
+mode it first refuses a folder that is not admin-only (``require_trusted_code``).
 ``call_track``, ``call_unpack``, ``call_prepare`` and ``call_populate`` run an entry point
 and check what it returns. ``HookContext.to_json()`` is the document a non-Python populate
 script receives on standard input. ``gupkg.hooklib`` re-exports the helpers hooks use.
@@ -42,7 +42,9 @@ from typing import Any
 from ..extractors import find_7z
 from ..model.manifest import LOCAL_DIR, TrackResult
 from ..report.events import Step, Warning, emit, subprocess_lines
-from ..system.port import System, is_elevated_run, run_checked
+from ..model.scope import Scope
+from ..selfmgmt.elevation import UntrustedLocationError
+from ..system.port import System, run_checked
 from .http import HttpClient
 from .safepath import UnsafePath, confine
 
@@ -105,6 +107,8 @@ class HookContext:
         The version being processed; ``None`` in a tracker.
     system : System
         The side-effect boundary; run child processes through ``run`` or ``system.run``.
+    scope : Scope
+        The run's scope: in system mode a hook is loaded only from an admin-only folder.
     http : HttpClient
         The shared HTTP client: gupkg's User-Agent, timeout, retry and token policy.
     paths : HookPaths
@@ -120,6 +124,7 @@ class HookContext:
     package: str
     version: str | None
     system: System
+    scope: Scope
     http: HttpClient
     paths: HookPaths
     options: Mapping[str, Any] = field(default_factory=dict)
@@ -154,35 +159,32 @@ class HookContext:
         )
 
 
-def require_trusted_code(system: System, root: Path, script: Path | None = None) -> None:
-    """Refuse to run package code from *root* in an elevated run unless only administrators can change it.
+def require_trusted_code(scope: Scope, root: Path, script: Path | None = None) -> None:
+    """Refuse to run package code from *root* in system mode unless only administrators can change it.
 
     An elevated gupkg runs no code that a standard user can modify (decision D19). The check
     fails closed: when the run is elevated (or marked so), nothing is imported or started unless
     *root*, its ``pkg.local`` folder and, when *script* is given, every folder between the script
     and *root* and the script file itself are admin-only (a file moved into an admin-only folder
-    keeps its own user-writable permissions, so the file is judged too). A normal run is not
+    keeps its own user-writable permissions, so the file is judged too). A user-mode run is not
     restricted: the code is the user's own. Call it once with the version directory before any
     file is read, and again with *script* once its path is known.
 
     Raises
     ------
     HookError
-        In an elevated run, if any of those paths is not admin-only or cannot be judged.
+        In system mode, if any of those paths is not admin-only or cannot be judged.
     """
-    if not is_elevated_run(system):
-        return
     places = [Path(root), Path(root) / LOCAL_DIR]
     if script is not None:
         script = Path(script)
         folders = [parent for parent in script.parents if _is_below(parent, Path(root))]
         places += [*reversed(folders), script]
     for place in places:
-        reason = system.directory_untrusted_reason(place)
-        if reason is not None:
-            raise HookError(
-                f"Refusing to run code from {place} in an elevated run: it is not admin-only ({reason})"
-            )
+        try:
+            scope.require_trusted(place, "package code")
+        except UntrustedLocationError as error:
+            raise HookError(f"Refusing to run code from {place} in an elevated run: {error}") from error
 
 
 def _is_below(path: Path, root: Path) -> bool:
@@ -194,7 +196,7 @@ def _is_below(path: Path, root: Path) -> bool:
     return True
 
 
-def load_hook(root: Path, reference: str, system: System, *, forbid_track: bool = False) -> ModuleType:
+def load_hook(root: Path, reference: str, scope: Scope, *, forbid_track: bool = False) -> ModuleType:
     """Import the hook module *reference* (``pkg.local/name.py``) found below *root*.
 
     Parameters
@@ -203,9 +205,8 @@ def load_hook(root: Path, reference: str, system: System, *, forbid_track: bool 
         The version directory or tracker directory that owns ``pkg.local``.
     reference : str
         The module path relative to *root*; it must be a ``.py`` file below ``pkg.local``.
-    system : System
-        The boundary that answers whether the run is elevated and whether *root* is admin-only;
-        in an elevated run an untrusted folder is refused before anything is imported.
+    scope : Scope
+        The run's scope; in system mode an untrusted folder is refused before anything is imported.
     forbid_track : bool, default=False
         Refuse a module that exposes a name ``track`` once it is loaded. A version directory's hooks have no
         update discovery (design 9.3); the static scan of ``gupkg.pkgcheck`` cannot see a name that is built at
@@ -219,11 +220,11 @@ def load_hook(root: Path, reference: str, system: System, *, forbid_track: bool 
     Raises
     ------
     HookError
-        If the folder is untrusted in an elevated run, the path leaves ``pkg.local`` or crosses a
+        If the folder is untrusted in system mode, the path leaves ``pkg.local`` or crosses a
         link, the file is missing, its top-level code raises anything, or it declares another API
         version.
     """
-    require_trusted_code(system, Path(root))
+    require_trusted_code(scope, Path(root))
     normal = reference.replace("\\", "/")
     if not normal.startswith(f"{LOCAL_DIR}/") or not normal.lower().endswith(".py"):
         raise HookError(f"{reference} must be a .py file below {LOCAL_DIR}/")
@@ -239,7 +240,7 @@ def load_hook(root: Path, reference: str, system: System, *, forbid_track: bool 
         inside = False
     if not path.is_file() or not inside:
         raise HookError(f"{reference} does not exist inside {LOCAL_DIR}")
-    require_trusted_code(system, Path(root), path)
+    require_trusted_code(scope, Path(root), path)
 
     # A unique name per file revision keeps unrelated hooks from sharing import state.
     name = "_gupkg_hook_" + hashlib.sha256(f"{real}{real.stat().st_mtime_ns}".encode()).hexdigest()[:16]

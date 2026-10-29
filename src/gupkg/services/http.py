@@ -51,7 +51,7 @@ from .._version import __version__
 from ..report.events import Progress, Step, emit
 from ..model.checksum import is_https_url
 from ..model.trackspec import check_header_map
-from ..system.port import HttpResponse, ResponseTooLarge, System, is_elevated_run
+from ..system.port import HttpResponse, Mode, ResponseTooLarge, System
 from .safepath import safe_file_name
 from .values import file_name_from_url
 
@@ -138,13 +138,13 @@ def parse_content_disposition(value: str | None) -> str | None:
     return name or None
 
 
-def github_environment(system: System, environ: Mapping[str, str]) -> dict[str, str]:
-    """Return the part of *environ* that the HTTP client may use: ``GITHUB_TOKEN``, unless the run is elevated.
+def github_environment(mode: Mode, environ: Mapping[str, str]) -> dict[str, str]:
+    """Return the part of *environ* that the HTTP client may use: ``GITHUB_TOKEN``, unless the run is in system mode.
 
     An elevated gupkg ignores the user's environment (decision D19), so the token is dropped there.
     The caller passes the mapping explicitly; the services never read ``os.environ`` themselves.
     """
-    if is_elevated_run(system) or not environ.get("GITHUB_TOKEN"):
+    if mode is Mode.SYSTEM or not environ.get("GITHUB_TOKEN"):
         return {}
     return {"GITHUB_TOKEN": environ["GITHUB_TOKEN"]}
 

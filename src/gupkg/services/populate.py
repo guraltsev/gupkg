@@ -27,6 +27,7 @@ from pathlib import Path
 
 from ..model.manifest import Manifest
 from ..report.events import subprocess_lines
+from ..model.scope import Scope
 from ..system.port import System
 from .hooks import HookContext, HookError, call_populate, load_hook, require_trusted_code
 from .prepare import run_prepare
@@ -87,7 +88,7 @@ def populate_app(
 
 
 def populate_git(
-    system: System, manifest: Manifest, destination: Path, *,
+    scope: Scope, manifest: Manifest, destination: Path, *,
     context: HookContext | None = None, limits: Limits = Limits(),
 ) -> UnpackReport:
     """Check out a ``git`` source into *destination* and run ``manifest.prepare``.
@@ -102,7 +103,7 @@ def populate_git(
     source = manifest.source
     git = source.git
     report = unpack_git(
-        system, source.download_url or "", git.ref if git else None, git.commit if git else None,
+        scope.system, scope.mode, source.download_url or "", git.ref if git else None, git.commit if git else None,
         destination, plan_from_source(source), limits=limits,
     )
     prepare_app(manifest, destination, context)
@@ -135,16 +136,16 @@ def run_custom_populate(context: HookContext, script: str, timeout: float | None
     """
     root = context.paths.version_root
     if script.lower().endswith(".py"):
-        call_populate(load_hook(root, script, context.system, forbid_track=True), context)
+        call_populate(load_hook(root, script, context.scope, forbid_track=True), context)
         return
-    require_trusted_code(context.system, root)
+    require_trusted_code(context.scope, root)
     try:
         path = confine(root, script)
     except UnsafePath as error:
         raise HookError(f"{script}: {error}") from error
     if not path.is_file():
         raise HookError(f"{script} does not exist")
-    require_trusted_code(context.system, root, path)
+    require_trusted_code(context.scope, root, path)
     command = [str(path)]
     result = context.system.run(
         command, cwd=root, input_text=context.to_json(), on_line=subprocess_lines(command), timeout=timeout
