@@ -23,11 +23,11 @@ Not recorded yet. Before T00, the controller records:
 | T04 | Settings schema 4 and root fallback chain | T02 | merged | i035/T04 | 6ab01f8 | 3720 passed, 0 failed, 11 skipped | none | |
 | T05 | Scope object; mode from the token | T04 | merged | i035/T05 | fc47455 | 3649 passed, 0 failed, 11 skipped (87 tests removed, 63 added; reasons in 09-logs/T05.md) | 035-T05-1..4 (tests/manual_smoke.md) |
 | T06 | Catalog over one root | T05 | merged | i035/T06 | 955b8f0 | 3630 passed, 0 failed, 11 skipped (99 tests removed or merged, 9 added; reasons in 09-logs/T06.md); catalog.py 1042 -> 840 lines | 035-T06-1, 035-T06-2 (tests/manual_smoke.md) |
-| T07 | Remove the elevated relaunch | T06 | in review | i035/T07 | | | |
-| T08 | Run-as-administrator shortcut | T07 | waiting | | | | |
-| T09 | Manager: one scope per run | T07 | waiting | | | | |
+| T07 | Remove the elevated relaunch | T06 | merged | i035/T07 | 0f266d0 | 3518 passed, 0 failed, 11 skipped (net 119 cases fewer than T06 before follow-ups: relaunch tests; log lists them) | 035-T07-1, 035-T07-2 (tests/manual_smoke.md) |
+| T08 | Run-as-administrator shortcut | T07 | in progress | i035/T08 | | | |
+| T09 | Manager: one scope per run | T07 | ready | | | | |
 | T10 | Manager: shared reader, visible failures | T09 | waiting | | | | |
-| T11 | Launchers: bundled, gupkg-location, PATH | T07 | waiting | | | | |
+| T11 | Launchers: bundled, gupkg-location, PATH | T07 | ready | | | | |
 | T12 | Docs and consistency sweep | T01–T11 | waiting | | | | |
 | T13 | Acceptance | T12 | waiting | | | | |
 
@@ -80,6 +80,8 @@ Owner commit not pushed yet (goes to GitHub together with T03): `9fba5c5 volta: 
 - Owner question, from T06 (non-blocking, decided as stated unless the owner says otherwise): a package root or `current` outside the run's root used to become an ad-hoc root and be copied in; now only a *version directory* with a `pkg.toml` outside the root is copied in (design §21.4 wording), anything else is `not inside this scope's root`. The refusal text is misleading for someone installing from a download folder. One sentence for T12 docs.
 - Non-blocking, from T06 review, handed on: for T07: the catalog's kept elevated trust gate (`catalog.py` ~292-297, ~350, ~780-785, `_untrusted_reason`, `_resolve_path`) must go through `Scope.require_trusted` (the T07 grep for `is_elevated_run` will not find it, since it tests `scope.mode is SYSTEM`); merge `UntrustedLocation` (catalog.py:108) and `UntrustedLocationError` (selfmgmt/elevation.py), both mapped to `untrusted-location`; delete `health.diagnose(elevated=...)`, `Engine.elevated`; re-record `tests/fixtures/ui/list.json` and `info_alpha.json` (hand-edited in T06, still `"api": 1`) with `record.py` and make `record.py` produce a valid world (it writes a stale `[roots]` table, its Apps have no install records so they are `broken`); delete the unreachable executor "Refusing to purge" guard or test it. For T10: `gupkg_ui.plans.read_packages` returns an empty list silently when the document has no `mode` (must become a visible error). Minor test gaps: `test_catalog_one_root.py` matches only part of the "not inside this scope's root" text; no human-output test for the `(system only)` / `reason:` rows. A record with no `mode` key is accepted as not moved (schema allows it; real installs always write it); `catalog_support.activate` writes records without a mode.
 
+- Non-blocking, from T07 (for T09/T10/T12): API 2 document changes (full list in 09-logs/T07.md): `"api": 2` everywhere; removed `relaunched`, `child_exit_code`, `child_raw_exit_code`, the `child-no-result` error, the per-target `mixed-modes` code, the `not-run` status, plan `requires_elevation`, the check-updates plan's `writes`, check-updates `details.written`, the UI batch document's `relaunched`; kept per-target `mode` and `root_cleanup`; T06 added document-level `mode`/`root` to `list`, `list --names`, `info`, `search`. A system-mode package whose locks folder is not admin-only now fails with `untrusted-location` (exit 2) instead of `package-busy`; a root-wide `cleanup` reports it failed instead of "locked / left alone". With `elevated` removed from `verify_each`, a system-mode run reports a user-scope effect unverified (guard restored with a test). `safe_process_environment` needs `system` and `mode` (no default). The UI still describes "one administrator prompt" (`gupkg_ui/{flows,steps,session,settings,startup,plans}.py`, `gupkg_manager/cli.py`, `gupkg_tui/cli.py`): T09. `plans.py` still reads `requires_elevation`: T09. `model/scope.py` imports `selfmgmt.elevation` for `UntrustedLocationError` (layering, minor). A user-mode `Scope` with `system=None` would crash in `registrysource.git_remote_revision` and `catalog/registry.py` (only tests can build one). No test compares the recorded UI fixtures with fresh CLI output (they can drift). `manual_smoke.md` entry 035-T06-2 has a stray CR. Design §9.6/§10.4 still mention `ensure_elevation` and `requires_elevation`: T12.
+
 ## Log
 
 - 2026-10-26: job prepared from issue 035; not started.
@@ -103,3 +105,4 @@ Owner commit not pushed yet (goes to GitHub together with T03): `9fba5c5 volta: 
 - 2026-10-29: T06 worker reported (3b622b7, e7a3eac, e9d4ef8; 3630 passed/11 skipped); review round 1 started.
 - 2026-10-29: T06 reviewed (0 blocking, several minor), merged as 955b8f0; suite 3630 passed, 11 skipped. T07 dispatched.
 - 2026-10-29: T07 worker reported (7 commits, 3511 passed/11 skipped); review round 1 started.
+- 2026-10-29: T07 reviewed (0 blocking, 12 minor; round 1 follow-ups M1 M2 M4 M6 M7 M8 fixed), merged as 0f266d0; suite 3518 passed, 11 skipped. T08 dispatched.
