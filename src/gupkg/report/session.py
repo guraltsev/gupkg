@@ -116,14 +116,6 @@ class RunSession:
         if self.log is not None and base is not None:
             self.log.bind(Path(base), package_label)
 
-    def discard_log(self) -> None:
-        """Stop writing log files for this run, because it handed its work to another process that logs it itself.
-
-        The run's own events still reach the other reporters; no log or events file is created afterwards.
-        """
-        if self.log is not None:
-            self.log.close()
-
     def finish(self, summary: str, exit_code: int, result: dict[str, Any] | None = None) -> None:
         """Emit the closing summary, with the log paths appended and the result document attached; later calls are ignored."""
         if self._finished:

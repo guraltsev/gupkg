@@ -95,14 +95,6 @@ def test_the_old_commands_are_unknown(world: CliWorld, word: str) -> None:
     assert result.code == 2 and "invalid choice" in result.err and word in result.err
 
 
-@pytest.mark.parametrize("argv", [("registry", "sync"), ("list",), ("settings", "show"), ("pkg", "check", ".")], ids=" ".join)
-def test_only_engine_commands_can_be_started_as_a_relaunch(world: CliWorld, argv: tuple[str, ...]) -> None:
-    """The hidden `--relaunched` marker exists on the engine commands only: elsewhere it is a usage error (exit 2)."""
-    result = world.cli(*argv, "--relaunched")
-
-    assert result.code == 2 and "--relaunched" in result.err
-
-
 @pytest.mark.parametrize(
     "option", ["--all", "--check", "--check-only", "--scope", "--no-checksum", "--refresh-app", "--shim-linkage", "--format", "--pause", "--download-only"]
 )

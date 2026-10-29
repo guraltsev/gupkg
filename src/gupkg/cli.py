@@ -11,25 +11,21 @@ Usage and API
 -------------
 Call ``main(argv)`` from the console script or ``python -m gupkg``; it returns the exit code: 0 success, 2 user or
 configuration error, 3 the operation failed, 4 internal error, 5 declined or input needed, 6 the package needs a newer gupkg.
-``--json`` prints one result document on standard output (``"api": 1``) and sends human output to standard error;
+``--json`` prints one result document on standard output (``"api": 2``) and sends human output to standard error;
 ``--plan`` plans without changing anything; ``--events-file NAME`` writes the event stream as JSON lines into the log
 directories; ``--no-input`` never asks (a needed answer is exit code 5); ``--yes`` answers the consequential questions.
 
 Implementation Approach
 -----------------------
 Argparse owns the grammar and nothing else: a parsed command is turned into ``Request`` objects, run through one session
-(console and log reporters, the stop marker of the run, the engine) and rendered from the typed result. A call that needs an
-elevated token hands the whole command line, rebuilt from the parsed options and never copied from the parent's input, to
-one elevated child, which validates it again (``--relaunched``): the child accepts package names and paths inside the
-system root and a fixed set of options, and refuses everything else.
+(console and log reporters, the stop marker of the run, the engine) and rendered from the typed result. The mode of a run is
+the mode of its own token (``gupkg.scope.build_scope``): gupkg never starts an elevated process (decision D49).
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import os
-import re
 import sys
 import uuid
 from collections.abc import Callable, Mapping, Sequence
@@ -59,12 +55,11 @@ from .report.logfile import list_run_logs, running_gupkg_logs_base, validate_log
 from .report.session import RunSession
 from .selfmgmt.location import RunningGupkg, locate_running_gupkg
 from .selfmgmt.status import self_status
-from .system.port import ElevatedRun, unsafe_relaunch_argument
-from .scope import build_scope, build_scope_and_layers
+from .scope import build_scope, build_scope_and_layers, process_mode
 from .settingsload import LayerReport, settings_file
 from .system.fake import FakeSystem
-from .system.port import Mode, System, is_elevated_run
-from .system.windows import WindowsSystem, wait_for_keypress
+from .system.port import Mode, System
+from .system.windows import WindowsSystem
 from .tls import enable_partial_chain_verification
 from .viewdata import info_data, package_data
 
@@ -188,18 +183,6 @@ def _needs_scope(args: argparse.Namespace) -> bool:
 
 def _run(args: argparse.Namespace, tokens: list[str], machine: System, env: Mapping[str, str], where: RunningGupkg) -> int:
     """Run a parsed command on the real or sandboxed machine and turn what goes wrong into an exit code."""
-    # The elevated child accepts a fixed set of options only: a standard user cannot steer it through the root options.
-    if getattr(args, "relaunched", False) and (args.settings is not None or args.sandbox is not None or args.root is not None):
-        return _usage_error(tokens, "--settings, --root and --sandbox are not accepted by the elevated child of a relaunch")
-    if getattr(args, "relaunched", False):
-        named = list(getattr(args, "targets", None) or ([args.target] if getattr(args, "target", None) else []))
-        for target in named:
-            if target.startswith("-"):
-                return _usage_error(tokens, f"the elevated child refuses the target {target!r}: a target never starts with '-'")
-        for token in tokens:
-            reason = unsafe_relaunch_argument(token)
-            if reason is not None:
-                return _usage_error(tokens, f"the elevated child refuses {reason}: none of & | < > ^ \" % ! ` or control characters is accepted")
     try:
         parse_skip_flag(getattr(args, "skip_checksum", None))
     except ChecksumInvalid as error:
@@ -229,12 +212,6 @@ def _run(args: argparse.Namespace, tokens: list[str], machine: System, env: Mapp
         code = handler(run)
     except Exception as error:  # noqa: BLE001 - the process boundary: nothing may escape as a traceback
         code = _fail(run, args.command, error)
-    if (
-        getattr(args, "relaunched", False) and not getattr(args, "no_input", False) and not getattr(args, "yes", False)
-        and sys.stdin is not None and sys.stdin.isatty()
-    ):
-        print("Press any key to continue...", file=sys.stderr)
-        wait_for_keypress()
     return code
 
 
@@ -317,9 +294,9 @@ def _lifecycle(run: _Run, command: str, targets: list[str], make: Callable[[str]
     session = _session(run, command, stop_path)
     try:
         with session:
-            # A plan changes nothing: it needs no question and no elevation.
+            # A plan changes nothing: it needs no question.
             if getattr(args, "plan", False):
-                engine = _engine(run, session, command, targets, stop_path, batch_confirmed=False)
+                engine = _engine(run, session, stop_path)
                 plans = lifecycle.plan(engine, [replace(make(item), skip=skip) for item in targets])
                 document = results.plan_document(command, plans, targets)
                 # The plan is the answer, so it is shown before the closing line (a step of the run, so the log keeps it).
@@ -342,53 +319,21 @@ def _execute(
     args = run.args
 
     # Consequential: a plan with several targets is confirmed once (decision D25); --yes answers, --no-input is exit code 5.
-    confirmed = bool(args.yes or getattr(args, "batch_confirmed", False))
     changes = command != "check" or getattr(args, "fix", False)
-    if changes and len(targets) > 1:
-        if not confirmed:
-            question = f"{command} {len(targets)} packages ({', '.join(targets[:5])}{', ...' if len(targets) > 5 else ''})?"
-            if args.no_input:
-                return _declined(command, f"{question} Pass --yes to confirm. Nothing was changed.")
-            emit(Prompt(question))
-            if not _ask(question):
-                return _declined(command, "Declined. Nothing was changed.")
-            confirmed = True
+    if changes and len(targets) > 1 and not args.yes:
+        question = f"{command} {len(targets)} packages ({', '.join(targets[:5])}{', ...' if len(targets) > 5 else ''})?"
+        if args.no_input:
+            return _declined(command, f"{question} Pass --yes to confirm. Nothing was changed.")
+        emit(Prompt(question))
+        if not _ask(question):
+            return _declined(command, "Declined. Nothing was changed.")
 
-    # Targets whose mode is known to need the elevated token are run apart from the rest (one elevation per call).
-    merged: list[Any] = []
-    children: list[BatchResult] = []
-    # An elevated child always writes an events file, so that this process can show how it ended (a name the caller chose, or its own).
-    relaunch_events = args.events_file or f"gupkg-relaunch-{uuid.uuid4().hex}.jsonl"
-    relaunched = False
-    for group in [targets]:
-        engine = _engine(run, session, command, group, stop_path, batch_confirmed=confirmed and not args.yes, events_name=relaunch_events)
-        batch = lifecycle.run_batch(engine, [replace(make(item), skip=skip) for item in group])
-        merged.extend(batch.results)
-        relaunched = relaunched or batch.relaunched
-        children.append(batch)
-        if batch.relaunched:
-            session.discard_log()
-    child_code = next((item.child_exit_code for item in reversed(children) if item.child_exit_code is not None), None)
-    raw_code = next((item.child_raw_exit_code for item in reversed(children) if item.child_raw_exit_code is not None), None)
-    combined = BatchResult(tuple(merged), relaunched=relaunched, child_exit_code=child_code, child_raw_exit_code=raw_code)
-    text = combined.summary()
-    extra: dict[str, Any] = {}
-    if relaunched:
-        text += f"\nThe elevated gupkg ended with exit code {child_code} for the system targets."
-        ended = _child_run_end(run, relaunch_events)
-        if ended is not None and str(ended.get("summary", "")).strip():
-            text += "\nThe elevated run reported:\n" + "\n".join(f"    {line}" for line in str(ended["summary"]).splitlines())
-        problem = _missing_run_end(run, args.events_file) if args.events_file else None
-        if problem is not None:
-            text += f"\nerror: {problem}"
-            extra["errors"] = [{"code": "child-no-result", "message": problem, "hint": "The elevated run may have been killed; check the system root's logs."}]
+    engine = _engine(run, session, stop_path)
+    batch = lifecycle.run_batch(engine, [replace(make(item), skip=skip) for item in targets])
+    document = results.result_document(command, batch)
     if sweep:
-        extra["root_cleanup"] = _prune_roots(run, session, command=command)
-    document = results.result_document(command, combined)
-    document.update(extra)
-    if "errors" in extra:
-        document["ok"], document["exit_code"] = False, max(document["exit_code"], EXIT_FAILED)
-    return document["exit_code"], document, text.strip()
+        document["root_cleanup"] = _prune_roots(run, session, command=command)
+    return document["exit_code"], document, batch.summary().strip()
 
 
 def _declined(command: str, message: str) -> tuple[int, dict[str, Any], str]:
@@ -434,16 +379,13 @@ def _is_sweep(args: argparse.Namespace) -> bool:
 
 def _prune_roots(run: _Run, session: RunSession, *, command: str) -> dict[str, Any]:
     """Prune the logs and old registry trees of the run's root after a root-wide ``cleanup``; keyed by the run's mode."""
-    engine = _engine(run, session, command, [], None, batch_confirmed=False)
+    engine = _engine(run, session, None)
     return {run.scope.mode.value: lifecycle.cleanup_root(engine, run.scope, run.scope.settings)}
 
 
 # ---------------------------------------------------------------------------
-# Session, engine and the elevated child
+# Session and engine
 # ---------------------------------------------------------------------------
-
-
-_STOP_NAME = re.compile(r"gupkg-stop-[0-9a-f]{32}")
 
 
 def _stop_path(run: _Run) -> Path | None:
@@ -456,42 +398,7 @@ def _stop_path(run: _Run) -> Path | None:
     folder = run.env.get("TEMP") or run.env.get("TMP")
     if not folder or not Path(folder).is_dir():
         return None
-    given = getattr(run.args, "stop_file", None)
-    if given and getattr(run.args, "relaunched", False):
-        # The parent's marker is accepted only as a fresh name inside this process's own temporary folder.
-        path = Path(given)
-        if _STOP_NAME.fullmatch(path.name) and os.path.normcase(os.path.abspath(path.parent)) == os.path.normcase(os.path.abspath(folder)):
-            return path
     return Path(folder) / f"gupkg-stop-{uuid.uuid4().hex}"
-
-
-def _child_run_end(run: _Run, events_name: str) -> dict[str, Any] | None:
-    """Return the ``run_end`` record that the elevated child wrote as the last line of its events file, else ``None``."""
-    try:
-        lines = (run.scope.log_dir / events_name).read_text(encoding="utf-8").splitlines()
-        last = json.loads(next((line for line in reversed(lines) if line.strip()), ""))
-    except (OSError, ModeRefused, SettingsError, ValueError):
-        return None
-    return last if isinstance(last, dict) and last.get("event") == "run_end" else None
-
-
-def _missing_run_end(run: _Run, events_name: str | None) -> str | None:
-    """Return a message when the elevated child left no ``run_end`` line in its events file, else ``None``.
-
-    Only a call that named ``--events-file`` can be checked: the child writes that file into the system root's log folder.
-    """
-    if not events_name:
-        return None
-    try:
-        lines = (run.scope.log_dir / events_name).read_text(encoding="utf-8").splitlines()
-    except (OSError, ModeRefused, SettingsError, ValueError):
-        return f"The elevated run ended but its events file {events_name} could not be read, so how it ended is not known."
-    last = next((line for line in reversed(lines) if line.strip()), "")
-    try:
-        ended = json.loads(last).get("event") == "run_end"
-    except ValueError:
-        ended = False
-    return None if ended else f"The elevated run ended without a run_end line in its events file {events_name}: treat the run as failed."
 
 
 def _remove_marker(path: Path | None) -> None:
@@ -532,11 +439,8 @@ def _argv_text(run: _Run) -> list[str]:
     return [args.command, *named]
 
 
-def _engine(
-    run: _Run, session: RunSession, command: str, targets: Sequence[str], stop_path: Path | None, *, batch_confirmed: bool,
-    events_name: str | None = None,
-) -> Engine:
-    """Build the engine of one call: the machine, the questions it may ask, the stop marker and the elevated child's command line."""
+def _engine(run: _Run, session: RunSession, stop_path: Path | None) -> Engine:
+    """Build the engine of one call: the machine, the questions it may ask and the stop marker."""
     args = run.args
     log = session.log
 
@@ -550,71 +454,7 @@ def _engine(
         allow_downgrade=bool(getattr(args, "allow_downgrade", False)),
         allow_other_broken_versions=bool(getattr(args, "allow_other_broken_versions", False)),
         cancel=stop_marker(stop_path) if stop_path is not None else (lambda: False), log_path=log_path,
-        relaunched=bool(getattr(args, "relaunched", False)),
-        argv=_child_argv(run, command, targets, batch_confirmed=batch_confirmed, stop_path=stop_path, events_name=events_name),
-        gupkg_dir=run.location.version_dir, gupkg_root=run.location.root,
-        request_stop=(lambda: stop_path.touch()) if stop_path is not None else None,
-        relaunch_note=_relaunch_note(stop_path, events_name),
     )
-
-
-def _relaunch_note(stop_path: Path | None, events_name: str | None) -> str:
-    """Return where to look when the wait for the elevated child is given up: its stop marker and its events file."""
-    parts = []
-    if stop_path is not None:
-        parts.append(f"the stop marker it was asked to watch is {stop_path}")
-    if events_name:
-        parts.append(f"its events file is {events_name} in the system root's .gupkg\\logs folder")
-    return ("To follow it: " + "; ".join(parts) + ".") if parts else ""
-
-
-def _child_argv(
-    run: _Run, command: str, targets: Sequence[str], *, batch_confirmed: bool, stop_path: Path | None = None,
-    events_name: str | None = None,
-) -> tuple[str, ...]:
-    """Return the command line of the elevated child, rebuilt from the parsed options (never copied from the input).
-
-    Only the command, its targets and a fixed set of options travel: ``--settings`` and ``--sandbox`` never do, and the
-    child validates all of it again. ``--yes`` travels only when the user gave it: a question the parent answered
-    ("run this on three packages?") does not answer the ones the child asks ("delete the data folder?"). The options come
-    first and the targets last, after ``--``, so that a package folder named ``--yes`` or ``-x`` can never be read as an option.
-    """
-    args = run.args
-    argv: list[str] = [command]
-    positional: list[str] = []
-    if command == "switch":
-        positional = [targets[0], args.version]
-    elif command == "link":
-        positional = [targets[0], *([args.entry] if args.entry else [])]
-    elif command == "cleanup" and _is_sweep(args):
-        # A root-wide cleanup keeps its meaning across the relaunch: the child gets no targets, so it sweeps the system root
-        # itself (an elevated catalog lists only that root), leaves a busy package alone and prunes the root's logs and trees.
-        pass
-    else:
-        positional = list(targets)
-    for flag, option in (
-        ("no_download", "--no-download"), ("refresh", "--refresh"), ("purge", "--purge"),
-        ("bundled", "--bundled"), ("fix", "--fix"), ("unlink", "--unlink"), ("plan", "--plan"), ("yes", "--yes"),
-        ("no_input", "--no-input"), ("allow_downgrade", "--allow-downgrade"),
-        ("allow_other_broken_versions", "--allow-other-broken-versions"),
-    ):
-        if getattr(args, flag, False):
-            argv.append(option)
-    if command == "cleanup":
-        argv += ["--keep", str(args.keep)]
-    skip = getattr(args, "skip_checksum", None)
-    if skip is not None:
-        argv.append("--skip-checksum" if skip == "" else f"--skip-checksum={skip}")
-    if events_name or getattr(args, "events_file", None):
-        argv += ["--events-file", events_name or args.events_file]
-    if stop_path is not None and unsafe_relaunch_argument(str(stop_path)) is None:
-        argv += ["--stop-file", str(stop_path)]
-    argv.append("--relaunched")
-    if batch_confirmed:
-        argv.append("--batch-confirmed")
-    if positional:
-        argv += ["--", *positional]
-    return tuple(argv)
 
 
 # ---------------------------------------------------------------------------
@@ -704,11 +544,11 @@ def _sync_missing(run: _Run, settings: Settings, context: Scope) -> None:
     for registry in settings.registries:
         cache = registry_cache_dir(context.root, registry.name)
         try:
-            known = cache_state(cache, run.system).tree_dir is not None
+            known = cache_state(cache, run.scope).tree_dir is not None
         except Exception:  # noqa: BLE001 - an untrusted cache is reported by the sync below
             known = False
         if not known:
-            outcome = sync_registry(cache, run.system, name=registry.name, source=registry.source)
+            outcome = sync_registry(cache, run.scope, name=registry.name, source=registry.source)
             if not outcome.ok:
                 print(f"warning: registry {registry.name} could not be refreshed: {outcome.error}", file=sys.stderr)
 
@@ -771,8 +611,8 @@ def _cmd_registry(run: _Run) -> int:
     rows = []
     for registry in settings.registries:
         cache = registry_cache_dir(context.root, registry.name)
-        state = cache_state(cache, run.system)
-        snapshot = load_registry(registry.name, cache, run.system) if action == "status" else None
+        state = cache_state(cache, run.scope)
+        snapshot = load_registry(registry.name, cache, run.scope) if action == "status" else None
         row = {"name": registry.name, "source": registry.source}
         if snapshot is not None:
             row.update({
@@ -810,7 +650,7 @@ def _registry_sync(run: _Run, settings: Settings, context: Scope) -> int:
         session.bind(context.root)
         for registry in wanted:
             outcome = sync_registry(
-                registry_cache_dir(context.root, registry.name), run.system, name=registry.name, source=registry.source,
+                registry_cache_dir(context.root, registry.name), run.scope, name=registry.name, source=registry.source,
                 offline=args.offline,
             )
             rows.append({
@@ -1119,7 +959,7 @@ def _forward(program: str, rest: list[str], root_options: list[str], system: Sys
         return EXIT_USER
     # The UI programs ask for administrator rights themselves, through `gupkg`, so `tui` and `manager` refuse an elevated
     # shell (D44, D45). They start through their own launcher, which runs bootstrap's trust check before importing anything.
-    if is_elevated_run(system):
+    if process_mode(system) is Mode.SYSTEM:
         print(
             f"gupkg: error: gupkg {program} is not started from an elevated shell: the programs call `gupkg` and ask for "
             "administrator rights once themselves. Run it from a normal shell.", file=sys.stderr,
@@ -1179,17 +1019,15 @@ def _events_file_name(text: str) -> str:
 
 def _options(
     parser: argparse.ArgumentParser, *, mutating: bool = False, plan: bool = False, skip: bool = False,
-    events: bool = False, relaunch: bool = False,
+    events: bool = False,
 ) -> None:
     """Add the options a command shares: ``--json``, ``--no-input``, ``--yes``, ``--plan``, ``--skip-checksum``.
 
-    ``relaunch`` adds the two hidden markers of the elevated child (``--relaunched``, ``--batch-confirmed``) to the commands that
-    run through the engine; no other command can be started as a relaunch.
     """
     parser.add_argument("--json", action="store_true", help="print one JSON result document on standard output; human text goes to standard error")
     parser.add_argument("--no-input", action="store_true", help="never ask: a question that would be asked is exit code 5")
     if mutating:
-        parser.add_argument("--yes", action="store_true", help="answer the confirmations (several targets, --purge, elevation) with yes")
+        parser.add_argument("--yes", action="store_true", help="answer the confirmations (several targets, --purge) with yes")
     else:
         parser.set_defaults(yes=False)
     if plan:
@@ -1205,10 +1043,6 @@ def _options(
             "--events-file", metavar="NAME", type=_events_file_name,
             help="also write the run's events as JSON lines to the plain file NAME (not a path) in the run's log directories",
         )
-    if relaunch:
-        parser.add_argument("--relaunched", action="store_true", help=argparse.SUPPRESS)
-        parser.add_argument("--stop-file", default=None, help=argparse.SUPPRESS)
-        parser.add_argument("--batch-confirmed", action="store_true", help=argparse.SUPPRESS)
 
 
 HELP_EPILOG = """\
@@ -1276,38 +1110,38 @@ def _build_parser() -> argparse.ArgumentParser:
               "gupkg check-updates firefox --no-download")
     sub.add_argument("targets", nargs="+", metavar="TARGET")
     sub.add_argument("--no-download", action="store_true", help="write the version directory only; download nothing")
-    _options(sub, mutating=True, plan=True, skip=True, events=True, relaunch=True)
+    _options(sub, mutating=True, plan=True, skip=True, events=True)
 
     sub = add("install", "Install (or repair) packages: download App if missing, then create shortcuts, PATH entries and shims.",
               "gupkg install firefox")
     sub.add_argument("targets", nargs="+", metavar="TARGET")
     sub.add_argument("--refresh", action="store_true", help="rebuild an App that can be rebuilt")
     _version_questions(sub)
-    _options(sub, mutating=True, plan=True, skip=True, events=True, relaunch=True)
+    _options(sub, mutating=True, plan=True, skip=True, events=True)
 
     sub = add("update", "Activate the newest known version of each installed package; never runs a tracker.",
               "gupkg update firefox")
     sub.add_argument("targets", nargs="+", metavar="TARGET")
     _version_questions(sub)
-    _options(sub, mutating=True, plan=True, skip=True, events=True, relaunch=True)
+    _options(sub, mutating=True, plan=True, skip=True, events=True)
 
     sub = add("switch", "Activate another local version of an installed package (the way back).",
               "gupkg switch firefox 134.0")
     sub.add_argument("targets", nargs=1, metavar="TARGET")
     sub.add_argument("version")
-    _options(sub, mutating=True, plan=True, events=True, relaunch=True)
+    _options(sub, mutating=True, plan=True, events=True)
 
     sub = add("uninstall", "Remove the integration of packages; --purge also deletes the package folder and its data.",
               "gupkg uninstall firefox --purge")
     sub.add_argument("targets", nargs="+", metavar="TARGET")
     sub.add_argument("--purge", action="store_true", help="also delete the package folder, including its data")
-    _options(sub, mutating=True, plan=True, events=True, relaunch=True)
+    _options(sub, mutating=True, plan=True, events=True)
 
     sub = add("check", "Health check: drift, App and registry fingerprints, unverified installs. Changes nothing without --fix.",
               "gupkg check firefox --fix")
     sub.add_argument("targets", nargs="*", metavar="TARGET", help="packages to check (default: every package)")
     sub.add_argument("--fix", action="store_true", help="re-apply the integration and rebuild a missing App")
-    _options(sub, mutating=True, events=True, relaunch=True)
+    _options(sub, mutating=True, events=True)
 
     sub = add("list", "List the packages of the roots with their status; nothing is checked over the network.",
               "gupkg list --outdated --names")
@@ -1336,14 +1170,14 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_argument("targets", nargs="*", metavar="TARGET", help="packages to clean (default: every package of the roots)")
     sub.add_argument("--keep", type=int, default=1, metavar="N", help="older Apps to keep (default: 1)")
     sub.add_argument("--bundled", action="store_true", help="also drop bundled gupkg copies where a root forwarder exists")
-    _options(sub, mutating=True, plan=True, events=True, relaunch=True)
+    _options(sub, mutating=True, plan=True, events=True)
 
     sub = add("link", "Follow another registry entry (registry/name), the entry of the same name, or none (--unlink).",
               "gupkg link firefox main/firefox-esr")
     sub.add_argument("target", metavar="TARGET")
     sub.add_argument("entry", nargs="?", metavar="REGISTRY/NAME")
     sub.add_argument("--unlink", action="store_true", help="follow no registry entry")
-    _options(sub, mutating=True, plan=True, events=True, relaunch=True)
+    _options(sub, mutating=True, plan=True, events=True)
 
     sub = add("logs", "List the run logs of a package (or of the root); --path prints the newest, --open opens it.",
               "gupkg logs firefox --path")
@@ -1416,7 +1250,7 @@ def _build_parser() -> argparse.ArgumentParser:
         leaf = actions.add_parser(name, description=text.capitalize() + ".", epilog=f"example:\n  gupkg self {name}")
         if name == "check-updates":
             leaf.add_argument("--no-download", action="store_true", help="write the version directory only")
-        _options(leaf, mutating=True, plan=True, skip=name != "repair", events=True, relaunch=True)
+        _options(leaf, mutating=True, plan=True, skip=name != "repair", events=True)
         if name != "check-updates":
             leaf.set_defaults(no_download=False)
         leaf.set_defaults(targets=None)

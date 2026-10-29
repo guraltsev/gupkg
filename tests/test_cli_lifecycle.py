@@ -11,7 +11,7 @@ and ``--no-input`` turns into exit code 5; ``switch`` goes back; ``cleanup`` rem
 Real: the argument parser, the engine, the catalog, the run session and log files, real folders and junctions below a
 temporary directory. Mocked: ``FakeSystem`` (registry, Start Menu, ``PATH``, URL fixtures, elevation) and the environment
 mapping, which is built by the test.
-Out of scope: the document shapes (``test_cli_machine_interface.py``), the elevated relaunch (``test_cli_elevation.py``) and
+Out of scope: the document shapes (``test_cli_machine_interface.py``) and
 the reading commands (``test_cli_reading.py``).
 """
 

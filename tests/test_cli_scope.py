@@ -4,14 +4,13 @@ Behavior covered: a normal process installs into the user root and an elevated o
 flag; ``--mode`` in any position and ``system:`` / ``user:`` target prefixes are usage errors (exit code 2) and change nothing; an
 elevated run whose gupkg tree standard users can change fails at start with exit code 2, before any root is read or written;
 ``--root`` names the root and is reported as the source; the Resolve phase, the run log and the package log name the mode, the
-root and the source (``<mode> root <path> (<source>)``); a root-wide ``cleanup`` prunes the run's root only; the elevated child of a
-relaunch (still present until issue 035 T07) takes no root option, refuses a folder outside the system root and writes its
-events file into the system root; a gupkg installed in another root than the run's is refused by ``self update`` with a clear
+root and the source (``<mode> root <path> (<source>)``); a root-wide ``cleanup`` prunes the run's root only; an elevated run writes its
+events file into the system root and may copy a distribution folder in; a gupkg installed in another root than the run's is refused by ``self update`` with a clear
 message.
 
 Real: the argument parser, ``build_scope``, the engine, the run session and log files, real folders. Mocked: ``FakeSystem``
 (elevation flag and the admin-only judgement) and the environment mapping built by the test.
-Out of scope: the relaunch itself (``tests/test_cli_relaunch.py``) and building a scope from files (``tests/test_scope.py``).
+Out of scope: building a scope from files (``tests/test_scope.py``).
 """
 
 from __future__ import annotations
@@ -23,6 +22,7 @@ from pathlib import Path
 import pytest
 
 from gupkg.engine.locks import Holder, lock_path, render_lock
+from gupkg.model.scope import SYSTEM_ONLY_REFUSAL
 from tests.cli_support import CliWorld
 from tests.engine_support import zip_bytes
 from tests.mode_support import pin_no_ambient_elevation, tree_snapshot  # noqa: F401
@@ -161,7 +161,7 @@ def test_self_update_in_a_run_whose_root_is_not_the_gupkgs_own_is_refused_with_a
 
 
 # ---------------------------------------------------------------------------
-# The elevated run and the elevated child of a relaunch (the child goes with issue 035 T07)
+# The elevated run
 # ---------------------------------------------------------------------------
 
 
@@ -179,49 +179,20 @@ def test_an_elevated_install_writes_the_events_file_into_the_system_root(tmp_pat
     assert run_events.is_file() and package_events.is_file()
     records = [json.loads(line) for line in run_events.read_text(encoding="utf-8").splitlines()]
     assert records[-1]["event"] == "run_end" and records[-1]["exit_code"] == 0
-    assert records[-1]["result"]["api"] == 1 and records[-1]["result"]["results"][0]["package"] == "tool"
+    assert records[-1]["result"]["api"] == 2 and records[-1]["result"]["results"][0]["package"] == "tool"
     assert any(record["event"] == "log_link" for record in records)
 
 
-def test_the_elevated_child_refuses_a_folder_outside_the_system_root(tmp_path: Path) -> None:
-    """A distribution folder is data from a user-writable place: the relaunched child refuses it, whatever the parent said."""
-    world = CliWorld(tmp_path, elevated=True)
-    folder = world.machine.distribution("tool2", "1.0.0")
-
-    result = world.cli("install", str(folder), "--relaunched", "--yes", "--json")
-
-    assert result.code == 2
-    assert "accepts only package names and paths inside the system root" in result.document()["results"][0]["error"]["message"]
-    assert not (world.system_root / "tool2").exists()
-
-
-def test_a_direct_administrator_shell_may_copy_a_distribution_in_but_the_relaunched_child_may_not(tmp_path: Path) -> None:
-    """The same folder is accepted by an administrator's own shell (it is copied into the system root) and refused as a relaunch."""
+def test_an_administrator_shell_may_copy_a_distribution_folder_into_the_system_root(tmp_path: Path) -> None:
+    """A distribution folder outside the root is accepted by an administrator's own shell: it is copied into the system root."""
     world = CliWorld(tmp_path, elevated=True)
     folder = world.machine.distribution("tool2", "1.0.0")
     world.fake.add_url("https://example.org/tool-1.0.0.zip", zip_bytes({"app.exe": "tool2 1.0.0"}))
 
-    refused = world.cli("install", str(folder), "--relaunched", "--yes", "--skip-checksum")
     accepted = world.cli("install", str(folder), "--yes", "--skip-checksum")
 
-    assert refused.code == 2 and accepted.code == 0, accepted.err
+    assert accepted.code == 0, accepted.err
     assert (world.system_root / "tool2" / "1.0.0" / "pkg.toml").is_file()
-
-
-def test_the_elevated_child_refuses_the_root_options(tmp_path: Path) -> None:
-    """``--settings``, ``--root`` and ``--sandbox`` could steer an elevated child: they are refused before anything is done."""
-    world = CliWorld(tmp_path, elevated=True)
-    world.publish("tool", "1.0.0", mode="system")
-    settings = tmp_path / "x.toml"
-    settings.write_text("schema = 4\n", encoding="utf-8")
-
-    steered = world.cli("--settings", str(settings), "install", "tool", "--relaunched", "--yes")
-    rooted = world.cli("--root", str(tmp_path / "other"), "install", "tool", "--relaunched", "--yes")
-    sandboxed = world.cli("--sandbox", str(tmp_path / "sb"), "install", "tool", "--relaunched", "--yes")
-
-    for refused in (steered, rooted, sandboxed):
-        assert refused.code == 2 and "not accepted" in refused.err
-    assert not (world.system_root / "tool" / "current").exists()
 
 
 def test_the_elevated_sweep_leaves_a_busy_system_package_alone(tmp_path: Path) -> None:
@@ -241,3 +212,18 @@ def test_the_elevated_sweep_leaves_a_busy_system_package_alone(tmp_path: Path) -
     assert result.code == 0, result.err
     assert {item["package"]: item["status"] for item in document["results"]} == {"other": "cleaned", "tool": "locked"}
     assert "system" in document["root_cleanup"]
+
+
+def test_a_normal_run_cannot_install_a_system_only_package_and_starts_no_process(tmp_path: Path) -> None:
+    """No elevated copy of gupkg exists: the refusal names the Start Menu entry and the command, nothing runs, nothing is written."""
+    world = CliWorld(tmp_path)
+    world.publish("tool", "1.0.0", top='modes = ["system"]')
+    before = (tree_snapshot(world.user), tree_snapshot(world.system_root))
+
+    result = world.cli("install", "tool", "--json")
+
+    assert result.code == 2, result.out + result.err
+    assert result.document()["results"][0]["error"]["message"] == SYSTEM_ONLY_REFUSAL.replace("<command> <name>", "install tool")
+    assert world.fake.process_log == [] and world.fake.foreground_log == []
+    assert not (world.user / "tool" / "current").exists() and not (world.system_root / "tool" / "current").exists()
+    assert (tree_snapshot(world.user), tree_snapshot(world.system_root)) == before

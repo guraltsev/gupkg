@@ -182,10 +182,8 @@ prompt and the broadcast to running programs.
    `gupkg self repair` and confirm no error mentions the broadcast. Why manual:
    `WM_SETTINGCHANGE` reaches every open window, so the tests only exercise it through a
    mocked `user32`.
-3. **Elevated relaunch through the launcher.** From a non-elevated shell, start a
-   `gupkg-manager update --all` that includes a system package and accept UAC. Confirm the
-   elevated window runs `gupkg.cmd` from the installed version folder. Decline UAC and
-   confirm nothing changes. Why manual: UAC cannot be automated.
+3. **Elevated relaunch through the launcher.** (Retired by issue 035 T07: gupkg starts no elevated process; the manager is
+   started elevated by its own Start Menu shortcut, see `035-T07-1`.)
 4. **Administrator detection.** In an elevated and a non-elevated shell run
    `gupkg self status` and `gupkg install <package>`; confirm
    the elevated shell selects system mode and the other user mode. Why manual: needs
@@ -380,19 +378,11 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
    `gupkg update <name> --plan`, `gupkg list --details` and `gupkg info <name>`. On the terminal the phases are coloured and the
    download has a live bar; redirected, the output is plain (`==> Phase`, no colour, one final progress line) and `--json` leaves
    standard output a single document. Why manual: only a real console shows colour and the bar.
-2. **The real UAC relaunch (needs the system gupkg).** From a normal shell with the system gupkg on `PATH`, run
-   `gupkg install system:<name> --yes --events-file run.jsonl --json`. Expect exactly one UAC prompt, an elevated window that runs
-   the install and waits for a key, the calling shell waits for it and ends with the child's exit code (`echo %ERRORLEVEL%`),
-   and `C:\opt\.gupkg\logs\run.jsonl` (and `C:\opt\<name>\.gupkg\logs\run.jsonl`) that a normal
-   shell can read and that ends with `run_end` carrying the result document. Read `stop_file` from the first line, create that
-   file during a run of three packages: the elevated run stops after the package it is working on and exits 5. Why manual: needs
-   UAC and the real admin-only `C:\opt`.
-3. **A user-writable gupkg never elevates.** Run `gupkg install system:<name>` with a user-mode gupkg (under
-   `%USERPROFILE%\opt`): expect exit 2 and "System installs need the system gupkg". Why manual: the real ACL check.
-4. **The elevated child refuses a user folder.** From an elevated prompt run the system gupkg with `--relaunched`:
-   `gupkg install %USERPROFILE%\Downloads\<dist>\<name>\<version> --relaunched --yes` and expect exit 2 ("accepts
-   only package names and paths inside the system root"); without `--relaunched` the same folder is copied into `C:\opt`. Why
-   manual: the real elevated token and ACLs.
+2. **The real UAC relaunch (needs the system gupkg).** (Retired by issue 035 T07: no relaunch, no `--stop-file`; the stop marker named in
+   `run_start` still stops a run, see `035-T07-2`.)
+3. **A user-writable gupkg never elevates.** (Retired by issue 035 T07; see `035-T05-2`.)
+4. **The elevated child refuses a user folder.** (Retired by issue 035 T07: there is no child; an administrator shell copies a distribution
+   folder into `C:\opt` and a normal shell refuses a path outside its root.)
 5. **The forwarders.** `gupkg tui <folder>` opens the package view of that folder and `gupkg manager` opens the browser (both from a normal
    shell; from an elevated shell they refuse with exit 2). Check that the exit code of each program is the exit code of `gupkg`. Why
    manual: needs the real bundle layout and a real console.
@@ -407,18 +397,8 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
 10. **`uninstall --purge` on a real machine.** After a purge the package folder is gone including this run's own package log (it
     cannot stay open), and the root's run log under `<root>\.gupkg\logs` records the deletion. Why manual: only real file locking
     shows whether the log files were released.
-11. **A hostile target under real UAC.** With the system gupkg, make a folder `C:\opt\a&calc` (or any system package whose name
-    holds `&`, `%`, `!` or `^`) and run `gupkg install "system:a&calc" --yes` from a normal shell: expect exit 2, "not allowed in a
-    command that runs with administrator rights", **no UAC prompt** and no Calculator. Then, from an elevated prompt, run
-    `gupkg install "system:a&calc" --relaunched --yes`: expect exit 2 ("the elevated child refuses"). Finally run an ordinary
-    `gupkg install system:<name> --yes` and check in Task Manager's details tab (command line column) that the elevated process
-    is the bundled `python.exe -I -s -B -S ...\bootstrap.py ...` and that no `cmd.exe` was started for it. Why manual: needs the
-    real UAC prompt, the real elevated token and a real process list.
-12. **The parent waits for the elevated child.** From a normal shell run `gupkg install system:<name> --yes` (a package that
-    installs) and then one that fails (for example a corrupt `pkg.toml` in `C:\opt`): the command line stays busy until the
-    elevated window closes, and `%ERRORLEVEL%` is 0 and then the failing code. Press Ctrl-C during a long install: the stop marker
-    is created, the child finishes its package and the call ends with exit code 5 (or 5 after 30 seconds when the child does not
-    end). Decline the UAC prompt: exit code 5. Why manual: needs UAC and a real second process.
+11. **A hostile target under real UAC.** (Retired by issue 035 T07: no command line is built for an elevated child.)
+12. **The parent waits for the elevated child.** (Retired by issue 035 T07: there is no elevated child.)
 13. **Redirected output with non-ASCII names.** Make a package folder `жук` in the user root, then run `gupkg list > out.txt`,
     `gupkg list --json > out.json` and `gupkg list | more` in `cmd`: exit code 0, `out.txt` is UTF-8 (open it in an editor that
     shows the encoding), `out.json` is pure ASCII with `\u` escapes that parse back to `жук`. In a console set to a legacy code
@@ -544,3 +524,13 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
    `["user"]` or portable as `user only` with the reason, and from a normal shell a `["system"]` package as `system only`. A path
    into the other root (`gupkg info C:\opt\<name>` from a normal shell) says `... is not inside this scope's root (...)`. Why manual:
    needs both real roots.
+
+## No elevated relaunch (issue 035, task T07)
+
+1. **`035-T07-1` Nothing starts an elevated process.** From a normal shell run `gupkg install <system-only package>`: expect exit code 2 and
+   the message that names the Start Menu entry "gupkg manager (administrator)" and the administrator-shell command, **no UAC prompt**
+   and no new window. Then start the Start Menu entry "gupkg manager (administrator)" (if the system gupkg is installed), accept UAC and
+   confirm the manager runs in system mode. Why manual: needs a real UAC prompt and a real process list.
+2. **`035-T07-2` The stop marker still stops a run.** From an administrator shell run `gupkg update <a> <b> <c> --yes --events-file run.jsonl`;
+   read `stop_file` from the first line of `C:\opt\.gupkg\logs\run.jsonl` and create that file while the first package runs: the run
+   finishes that package, skips the rest and exits with code 5. Why manual: needs real packages and timing.
