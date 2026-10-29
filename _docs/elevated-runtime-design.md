@@ -12,9 +12,13 @@ section 9.
 > release build installs it (the build machine's pip installs the wheels; pip is not in the bundle and not in
 > the lock), a build probe checks the staged tree, and `gupkg self status` checks the installed files against
 > `MANIFEST.sha256`. The elevated trust rules below (bundled interpreter only, isolated mode, admin-only
-> directories) still apply unchanged, and 1.0 extends them to package launchers (design 21.3) and to the
-> elevated relaunch (`gupkg.relaunch`, design 9.6). Sections 3.4 to 3.6, 4 to 7 and the `manager`/`pip`
-> commands they mention are kept as the record of the original design; section 9 says what is true now.
+> directories) still apply unchanged, and 1.0 extends them to package launchers (design 21.3). Sections 3.4 to
+> 3.6, 4 to 7 and the `manager`/`pip` commands they mention are kept as the record of the original design;
+> section 9 says what is true now.
+>
+> **Amended by issue 035 (D47–D55, owner-confirmed 2026-10-28).** gupkg never relaunches itself elevated: an
+> elevated process is in system mode. It runs only an admin-only gupkg tree and acts only on the admin-only system
+> root. Section 10 says what that means, and gives the launcher `PATH` rule.
 
 ## 1. Problem
 
@@ -297,7 +301,7 @@ Following `_docs/tests.md`:
 ## 9. Implementation notes and deviations
 
 - Modules: `gupkg.selfmgmt.elevation` (detection and ACL policy). The dependency modules of the first
-  implementation are gone (issue 016); `gupkg.relaunch` owns the elevated relaunch (design 9.6).
+  implementation are gone (issue 016), and so is the elevated relaunch (issue 035, D49).
 - **Launcher detection.** Since issue 018, `gupkg.cmd` no longer probes for
   elevation (no `fltmc.exe`, no `--elevated`, no `GUPKG_FORCE_ELEVATED`).
   `bootstrap.py` checks the process token (`GUPKG_ELEVATED=1` can only make a run
@@ -318,10 +322,10 @@ Following `_docs/tests.md`:
   `python\Lib\site-packages` (with `--require-hashes`, cross-targeted at the bundled CPython by the build
   machine's pip) and writes the `._pth` file, so an elevated first run needs no installation. The bundle has
   no pip, setuptools or ensurepip (issue 019), and nothing is installed at run time.
-- **Elevated relaunch.** `gupkg.relaunch` starts the elevated copy through the package's `gupkg.cmd`
-  (never `python -m gupkg`, which put the caller's current directory on the import path), builds the
-  command line from arguments it has checked for shell-significant characters, waits for the child and
-  returns its exit code. System tools (`powershell`, `cmd`) are resolved under `%SystemRoot%`; an elevated
+- **No relaunch.** gupkg contains no code that starts an elevated copy of itself (issue 035, D49): no
+  `gupkg.relaunch`, no elevated child, no `--relaunched`, `--batch-confirmed` or `--stop-file`. An elevated run is a
+  process that was started elevated (a shell run as administrator, or the Start Menu shortcut "gupkg manager
+  (administrator)"). System tools (`powershell`, `cmd`) are resolved under `%SystemRoot%`; an elevated
   run never searches `PATH` for them.
 - **Package hooks** run as trusted package-local code. Since 1.0 (design 8.6, D19) an elevated run refuses a
   version directory or `pkg.local` that is not admin-only before importing or starting anything; install
@@ -332,10 +336,41 @@ Following `_docs/tests.md`:
 - **Lockfile provenance.** The shipped `gupkg-deps.lock` was resolved from PyPI
   for CPython 3.12 on Windows (amd64). Review it as you would any dependency
   change.
-- **Settings.** The 0.17 `gupkg-config.toml` is replaced by the layered `settings.toml` (design section 11), every
-  layer of which is a file inside a root; an elevated run ignores the user layer and a `--settings` file outside
-  the admin-only system root, and refuses a layer whose folder is not admin-only.
+- **Settings.** The layered `settings.toml` (design section 11, schema 4) has the layers defaults, `$App`, the
+  run's root and `--settings`. An elevated run is in system mode: it has no user layer to ignore, it refuses
+  `--settings`, and it refuses a root layer whose folder is not admin-only.
 - **Registry source.** The package registry is its own repository (`gupkg-registry`). It is cloned only with a
   trusted `git` from an admin-only folder (user-writable copies on `PATH` are skipped, never run), with HTTPS only,
   no hooks and user Git settings ignored; otherwise the repository archive is downloaded. Each registry is
   cached in `<root>\.gupkg\registry\<registry name>`, and a system run uses only the system root's cache.
+
+## 10. One scope per run (issue 035)
+
+This section is the elevated side of design sections 6.1, 9.4, 9.6 and 21.3 (decisions D47 to D52, confirmed by the
+owner on 2026-10-28).
+
+- **There is no relaunch.** An elevated process is in system mode, and the mode comes from the process token
+  alone. gupkg never starts an elevated copy of itself. To act in system mode, start gupkg or the manager
+  elevated: in an administrator shell, or through the Start Menu shortcut "gupkg manager (administrator)", whose
+  link carries the "run as administrator" flag. Windows asks for UAC, and gupkg contains no elevation code.
+- **An elevated process runs only an admin-only gupkg tree** (`enforce_bundled_runtime`, unchanged). A
+  user-installed, bundled-in-Downloads or source gupkg started elevated refuses to start, with exit code 2.
+- **An elevated process acts only on the admin-only system root.** The root comes from the system column of the
+  fallback chain in design section 6.1: `--root DIR` (which must be admin-only, else exit code 2), the root of the
+  installed system gupkg that runs, `[roots].system` of `$App\settings.toml`, then the built-in `C:\opt`. The
+  system mode names no user location: `Scope` has no field that could hold a user root, user settings or a user
+  cache, and the system mode refuses `--settings`.
+- **Checks inside the system root stay** (D30, spike S1): the admin-only checks on hooks, locks, the work folder,
+  the HTTP cache and trusted `git`. The engine reaches them through `scope.require_trusted(path)`, which does
+  nothing in user mode.
+- **The launcher `PATH` rule** (issue 035 §4.9, owner's answer Q7 (b)). A package launcher tries the bundled gupkg,
+  then the gupkg named by `<root>\.gupkg\gupkg-location`, then `PATH`. When elevated, step 3 is limited:
+  - the process `PATH` is scanned in order, and an entry is used only if its folder passes the admin-only check; a
+    user-writable entry is skipped and named in the output;
+  - the launcher never reads the machine `PATH` from the registry, so the registry rule (D18) stays whole;
+  - what must be admin-only is the whole chain of what will run: the shim, its `.config.toml`, the target it names,
+    and that target's gupkg tree, recursively, with the existing ACL check (D30). It fails closed;
+  - accepted consequence: an entry from an administrator's own user `PATH` is used when its folder happens to be
+    admin-only. Only an administrator can change such a folder, so threat model T1 is unaffected.
+- **The elevated launcher's ACL check** covers the root, the package and version directories, `.gupkg\` with the
+  `gupkg-location` file, and the tree of whichever gupkg the order selects (design section 21.3).
