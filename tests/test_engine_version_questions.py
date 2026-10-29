@@ -132,7 +132,7 @@ def test_yes_and_the_option_answer_the_broken_versions_question(world: World, fl
 def test_a_package_that_does_not_support_the_mode_in_another_version_counts_as_unsupported(world: World) -> None:
     """A valid version directory whose `modes` leaves out this mode is listed among the versions that are not supported."""
     world.publish("tool", "1.0.0")
-    world.publish("tool", "2.0.0", top='modes = ["portable"]\n')
+    world.publish("tool", "2.0.0", top='modes = ["system"]\n')
     asked = answering(world, True)
 
     result = world.one("install", "tool@1.0.0")

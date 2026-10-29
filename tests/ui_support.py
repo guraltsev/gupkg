@@ -288,7 +288,7 @@ def make_env(base: Path, fake: FakeGupkg, *, can_elevate: bool = True, settings:
     roots = base / "roots"
     file = base / "ui-settings.toml"
     file.write_text(
-        f"schema = 3\n[roots]\nsystem = '{roots / 'sys'}'\nuser = '{roots / 'user'}'\nportable = '{roots / 'port'}'\n"
+        f"schema = 3\n[roots]\nsystem = '{roots / 'sys'}'\nuser = '{roots / 'user'}'\n"
         f"[integration.user]\nbin = '{roots / 'ubin'}'\nstart_menu = '{roots / 'usm'}'\n[integration.system]\nbin = '{roots / 'sbin'}'\nstart_menu = '{roots / 'ssm'}'\n{settings}\n",
         encoding="utf-8",
     )
@@ -327,7 +327,7 @@ class RealWorld:
         (base / "temp").mkdir()
         self.settings = base / "settings.toml"
         self.settings.write_text(
-            f"schema = 3\n[roots]\nsystem = '{self.system}'\nuser = '{self.user}'\nportable = '{base / 'home' / 'opt-portable'}'\n"
+            f"schema = 3\n[roots]\nsystem = '{self.system}'\nuser = '{self.user}'\n"
             f"[integration.user]\nbin = '{base / 'home' / 'bin'}'\nstart_menu = '{base / 'home' / 'sm'}'\n"
             f"[integration.system]\nbin = '{base / 'sys' / 'bin'}'\nstart_menu = '{base / 'sys' / 'sm'}'\n{settings}\n",
             encoding="utf-8",

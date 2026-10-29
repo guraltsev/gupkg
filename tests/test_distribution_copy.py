@@ -317,7 +317,7 @@ def test_the_packages_modes_are_checked_on_the_staged_copy_before_anything_reach
     (source / "pkg.toml").write_text(manifest, encoding="utf-8")
     root = tmp_path / "opt"
 
-    with pytest.raises(ModeRefused, match="does not support system mode"):
+    with pytest.raises(ModeRefused, match="installs only for a single user"):
         copy_distribution(source, root, required=ModeChoice("system", "--mode"))
     assert not root.exists()
 

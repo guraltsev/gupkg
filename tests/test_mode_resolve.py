@@ -1,14 +1,13 @@
-"""Cover how one target resolves to an install mode and context (design 6.2, 6.3, 9.6, D4, D31, D42).
+"""Cover how one target resolves to an install mode and context (design 6.2, 9.6, D4, D31, D55).
 
-Behavior covered: ``default_mode = "auto"`` resolves system for an elevated process and user otherwise, never
-portable, with the printed reason; an install record wins over ``auto`` and a path inside a configured root keeps
-that root's mode; an elevated process refuses user and portable work (an existing user package, a path inside a
+Behavior covered: ``default_mode = "auto"`` resolves system for an elevated process and user otherwise, with the
+printed reason; an install record wins over ``auto`` and a path inside a configured root keeps
+that root's mode; an elevated process refuses user work (an existing user package, a path inside a
 user root however it is spelled or linked, ``--mode user``, ``user:name``, an untrusted record) and changes nothing
 under the user root; the elevated run ignores user settings and a ``--settings`` file outside the system root;
 the elevated child accepts only names and paths inside the system root, while a direct administrator shell may
-name a distribution folder to copy in; a package's ``modes`` list is enforced before any work; ``--mode portable``
-installs a ``<name>\\<version>`` folder in place, otherwise uses the configured portable root, or asks (exit 5
-under ``--no-input``), and never uses the system root; a same-name package in two modes is reported as shadowing.
+name a distribution folder to copy in; a package's ``modes`` list is enforced before any work (a portable package is user only);
+a same-name package in two modes is reported as shadowing.
 
 Real: ``resolve_mode``, the catalog, settings layering and install records on real folders and real junctions
 below pytest's temporary folder. Fake: ``FakeSystem`` for elevation, the admin-only check and the machine's
@@ -24,12 +23,10 @@ from pathlib import Path
 import pytest
 
 from gupkg.catalog.catalog import CatalogError
-from gupkg.model.mode import InputNeeded, ModeRefused
+from gupkg.model.mode import PORTABLE_REFUSAL, SYSTEM_ONLY_REFUSAL, USER_ONLY_REFUSAL, ModeRefused
 from gupkg.modes import ModeRequest, resolve_mode
 from tests.catalog_support import build_registry, version_text
 from tests.mode_support import Machine, pin_no_ambient_elevation, tree_snapshot  # noqa: F401
-
-DEFAULT_MODES_WITH_PORTABLE = '["system", "user", "portable"]'
 
 
 def resolve(machine: Machine, selector: str, **options):
@@ -45,7 +42,10 @@ def registry_package(machine: Machine, name: str = "tool", modes: str | None = N
     cache = build_registry(machine.system_root, {name: {"versions": ["1.0.0"]}})
     if modes is not None:
         manifest = next(cache.rglob("1.0.0")) / "pkg.toml"
-        manifest.write_text(version_text("1.0.0").replace("format = 2\n", f"format = 2\nmodes = {modes}\n", 1), encoding="utf-8")
+        text = version_text("1.0.0").replace("format = 2\n", f"format = 2\nmodes = {modes}\n", 1)
+        if "portable" in modes:
+            text += '\n[portable]\npersist = ["config"]\n'
+        manifest.write_text(text, encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -76,22 +76,29 @@ def test_auto_in_a_normal_process_resolves_user(tmp_path: Path) -> None:
     assert (result.context.root, result.context.env_target, result.context.requires_elevation) == (machine.user_root, "HKCU", False)
 
 
-def test_auto_never_resolves_portable_even_when_the_package_only_supports_it(tmp_path: Path) -> None:
-    """A portable-only package is not installed portable by ``auto``: it is refused for user mode instead."""
+def test_a_portable_package_resolves_user_in_a_normal_process_and_is_refused_in_an_elevated_one(tmp_path: Path) -> None:
+    """A portable package installs for a single user: ``auto`` gives user in a normal run; an elevated (system) run is refused."""
     machine = Machine(tmp_path)
     registry_package(machine, modes='["portable"]')
+    assert resolve(machine, "tool").choice.mode == "user"
 
-    with pytest.raises(ModeRefused, match="does not support user mode"):
-        resolve(machine, "tool")
+    elevated = Machine(tmp_path / "elevated", elevated=True)
+    registry_package(elevated, modes='["portable"]')
+    with pytest.raises(ModeRefused) as raised:
+        resolve(elevated, "tool")
+
+    assert str(raised.value) == PORTABLE_REFUSAL
 
 
-def test_an_elevated_process_refuses_a_package_without_system_and_names_the_normal_shell(tmp_path: Path) -> None:
-    """With ``auto`` an elevated run needs system; a user-only package is refused and told to use a normal shell."""
+def test_an_elevated_process_refuses_a_user_only_package_and_says_to_run_without_administrator_rights(tmp_path: Path) -> None:
+    """With ``auto`` an elevated run needs system; a user-only package is refused with the single-user message."""
     machine = Machine(tmp_path, elevated=True)
     registry_package(machine, modes='["user"]')
 
-    with pytest.raises(ModeRefused, match="normal \\(non-elevated\\) shell"):
+    with pytest.raises(ModeRefused) as raised:
         resolve(machine, "tool")
+
+    assert str(raised.value) == USER_ONLY_REFUSAL
 
 
 def test_default_mode_from_settings_decides_when_nothing_earlier_does(tmp_path: Path) -> None:
@@ -128,12 +135,12 @@ def test_an_existing_system_package_keeps_system_for_a_normal_process_and_needs_
     assert (result.choice.mode, result.context.requires_elevation) == ("system", True)
 
 
-@pytest.mark.parametrize("mode", ["system", "user", "portable"])
+@pytest.mark.parametrize("mode", ["system", "user"])
 def test_a_path_inside_a_configured_root_keeps_that_roots_mode(tmp_path: Path, mode: str) -> None:
     """A path target in a configured root resolves that root's mode, whatever ``auto`` would say."""
     machine = Machine(tmp_path)
-    root = {"system": machine.system_root, "user": machine.user_root, "portable": machine.portable_root}[mode]
-    package = machine.package(root, "tool", modes=DEFAULT_MODES_WITH_PORTABLE)
+    root = {"system": machine.system_root, "user": machine.user_root}[mode]
+    package = machine.package(root, "tool")
 
     result = resolve(machine, str(package / "1.0.0"))
 
@@ -237,11 +244,10 @@ def test_an_elevated_process_refuses_a_junction_that_leaves_the_system_root_for_
     [
         pytest.param("tool", {"explicit_mode": "user"}, id="mode-user-flag"),
         pytest.param("user:tool", {}, id="qualified-selector"),
-        pytest.param("tool", {"explicit_mode": "portable"}, id="mode-portable-flag"),
     ],
 )
-def test_an_elevated_process_refuses_an_explicit_user_or_portable_mode(tmp_path: Path, selector: str, options: dict) -> None:
-    """``--mode user``, ``user:name`` and ``--mode portable`` are refused in an elevated process, before any lookup."""
+def test_an_elevated_process_refuses_an_explicit_user_mode(tmp_path: Path, selector: str, options: dict) -> None:
+    """``--mode user`` and ``user:name`` are refused in an elevated process, before any lookup."""
     machine = Machine(tmp_path, elevated=True)
     _user_package(machine)
     before = tree_snapshot(machine.user_root)
@@ -384,144 +390,11 @@ def test_an_unsupported_mode_is_refused_before_any_change(tmp_path: Path) -> Non
     package = machine.package(machine.user_root, "tool", modes='["system"]')
     before = tree_snapshot(tmp_path)
 
-    with pytest.raises(ModeRefused, match="does not support user mode"):
+    with pytest.raises(ModeRefused) as raised:
         resolve(machine, str(package))
 
+    assert str(raised.value) == SYSTEM_ONLY_REFUSAL
     assert tree_snapshot(tmp_path) == before
-
-
-def test_portable_requires_the_package_to_declare_it(tmp_path: Path) -> None:
-    """``--mode portable`` on a package with the default ``modes`` is refused: portable is opt-in."""
-    machine = Machine(tmp_path)
-    registry_package(machine)
-
-    with pytest.raises(ModeRefused, match="does not support portable mode"):
-        resolve(machine, "tool", explicit_mode="portable")
-
-
-# ---------------------------------------------------------------------------
-# D42: the portable target
-# ---------------------------------------------------------------------------
-
-
-def test_portable_on_a_name_version_folder_installs_it_in_place_and_copies_nothing(tmp_path: Path) -> None:
-    """``--mode portable`` on ``<name>\\<version>\\pkg.toml`` makes the folder above ``<name>`` the portable root."""
-    machine = Machine(tmp_path)
-    folder = machine.distribution("tool", "2.0.0", modes=DEFAULT_MODES_WITH_PORTABLE)
-    before = tree_snapshot(tmp_path)
-
-    result = resolve(machine, str(folder), explicit_mode="portable")
-
-    assert result.context.root == folder.parent.parent
-    assert result.context.in_place and result.source is None
-    assert result.context.bin_dir == folder.parent.parent / "bin"
-    assert tree_snapshot(tmp_path) == before
-
-
-def test_portable_on_any_other_target_uses_the_configured_portable_root(tmp_path: Path) -> None:
-    """A name (not a folder shaped like a version directory) goes to the configured ``[roots].portable``."""
-    machine = Machine(tmp_path)
-    registry_package(machine, modes=DEFAULT_MODES_WITH_PORTABLE)
-
-    result = resolve(machine, "tool", explicit_mode="portable")
-
-    assert (result.context.mode, result.context.root, result.context.in_place) == ("portable", machine.portable_root, False)
-
-
-def test_portable_with_no_configured_root_asks_for_one(tmp_path: Path) -> None:
-    """With no portable root configured, gupkg asks, and uses the answer."""
-    machine = Machine(tmp_path, portable_configured=False)
-    registry_package(machine, modes=DEFAULT_MODES_WITH_PORTABLE)
-    stick = tmp_path / "stick"
-
-    result = resolve(machine, "tool", explicit_mode="portable", ask_portable_root=lambda: stick)
-
-    assert result.context.root == stick
-
-
-@pytest.mark.parametrize(
-    "options",
-    [
-        pytest.param({"no_input": True, "ask_portable_root": lambda: Path("unused")}, id="no-input-never-asks"),
-        pytest.param({}, id="nobody-can-be-asked"),
-        pytest.param({"ask_portable_root": lambda: None}, id="the-question-is-declined"),
-    ],
-)
-def test_portable_with_no_root_and_no_answer_fails_with_exit_5_and_changes_nothing(tmp_path: Path, options: dict) -> None:
-    """Without a configured root, ``--no-input`` (or a declined question) is exit code 5 with no change."""
-    machine = Machine(tmp_path, portable_configured=False)
-    registry_package(machine, modes=DEFAULT_MODES_WITH_PORTABLE)
-    before = tree_snapshot(tmp_path)
-
-    with pytest.raises(InputNeeded) as raised:
-        resolve(machine, "tool", explicit_mode="portable", **options)
-
-    assert raised.value.exit_code == 5
-    assert tree_snapshot(tmp_path) == before
-
-
-def test_without_the_portable_flag_a_name_version_folder_is_not_installed_in_place(tmp_path: Path) -> None:
-    """The in-place rule needs ``--mode portable``; ``auto`` treats the folder as a distribution for user mode."""
-    machine = Machine(tmp_path)
-    folder = machine.distribution("tool", "2.0.0", modes=DEFAULT_MODES_WITH_PORTABLE)
-
-    result = resolve(machine, str(folder))
-
-    assert (result.context.mode, result.context.in_place, result.source) == ("user", False, folder)
-
-
-@pytest.mark.parametrize(
-    ("relation", "message"),
-    [
-        pytest.param("system-is", "is the system root", id="portable-is-the-system-root"),
-        pytest.param("system-inside", "lies inside the system root", id="portable-inside-the-system-root"),
-        pytest.param("system-contains", "contains the system root", id="portable-contains-the-system-root"),
-        pytest.param("user-is", "is the user root", id="portable-is-the-user-root"),
-        pytest.param("user-inside", "lies inside the user root", id="portable-inside-the-user-root"),
-    ],
-)
-def test_a_portable_root_that_is_machine_wide_or_ambiguous_is_refused_with_the_rule_that_fired(
-    tmp_path: Path, relation: str, message: str
-) -> None:
-    """A portable root that is, lies in, or contains the system root, or is or lies in the user root, is refused."""
-    machine = Machine(tmp_path, portable_configured=False)
-    registry_package(machine, modes=DEFAULT_MODES_WITH_PORTABLE)
-    answers = {
-        "system-is": machine.system_root, "system-inside": machine.system_root / "port",
-        "system-contains": machine.system_root.parent, "user-is": machine.user_root,
-        "user-inside": machine.user_root / "port",
-    }
-
-    with pytest.raises(ModeRefused, match=message):
-        resolve(machine, "tool", explicit_mode="portable", ask_portable_root=lambda: answers[relation])
-
-
-def test_a_portable_root_that_merely_contains_the_user_root_is_allowed(tmp_path: Path) -> None:
-    """A portable root that contains the user root (the profile folder) is allowed, as for an in-place folder there."""
-    machine = Machine(tmp_path)
-    folder = machine.distribution("tool", "1.0.0", modes=DEFAULT_MODES_WITH_PORTABLE)
-    home_folder = tmp_path / "home" / "tool" / "1.0.0"
-    home_folder.parent.mkdir(parents=True)
-    folder.rename(home_folder)
-
-    result = resolve(machine, str(home_folder), explicit_mode="portable")
-
-    assert result.context.root == tmp_path / "home" and result.context.in_place
-
-
-def test_a_portable_run_reads_the_settings_of_its_portable_root(tmp_path: Path) -> None:
-    """``integrate = "none"`` in the portable root's own settings reaches the context (a USB-stick root)."""
-    machine = Machine(tmp_path)
-    folder = machine.distribution("tool", "2.0.0", modes=DEFAULT_MODES_WITH_PORTABLE)
-    stick = folder.parent.parent
-    settings = stick / ".gupkg" / "settings.toml"
-    settings.parent.mkdir(parents=True)
-    settings.write_text("schema = 3\n[integration.portable]\nintegrate = 'none'\n", encoding="utf-8")
-
-    result = resolve(machine, str(folder), explicit_mode="portable")
-
-    assert (result.context.integrate, result.context.start_menu, result.context.env_target) == ("none", None, None)
-    assert result.context.path_line() is not None
 
 
 # ---------------------------------------------------------------------------
@@ -566,8 +439,7 @@ def test_a_user_layer_that_moves_the_system_root_cannot_steer_a_system_run(tmp_p
     user_settings = machine.user_root / ".gupkg" / "settings.toml"
     user_settings.parent.mkdir(parents=True)
     user_settings.write_text(
-        f"schema = 3\n[roots]\nsystem = '{tmp_path / 'other-system'}'\nuser = '{machine.user_root}'\n"
-        f"portable = '{machine.portable_root}'\n", encoding="utf-8",
+        f"schema = 3\n[roots]\nsystem = '{tmp_path / 'other-system'}'\nuser = '{machine.user_root}'\n", encoding="utf-8",
     )
 
     with pytest.raises(ModeRefused, match="roots differ"):

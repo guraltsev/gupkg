@@ -202,7 +202,7 @@ def test_ad_hoc_roots_from_state_toml_are_listed_with_their_mode(system, tmp_pat
     write_toml(
         roots["user"] / ".gupkg" / "state.toml",
         {"adhoc": [
-            {"path": str(elsewhere / "inplace"), "mode": "portable"},
+            {"path": str(elsewhere / "inplace"), "mode": "system"},
             {"path": str(elsewhere / "pool"), "mode": "user"},
         ]},
     )
@@ -210,7 +210,7 @@ def test_ad_hoc_roots_from_state_toml_are_listed_with_their_mode(system, tmp_pat
     listing = make_catalog(system, tmp_path)[0].list()
 
     assert {(view.name, view.mode, view.root.adhoc) for view in listing.views} == {
-        ("inplace", "portable", True), ("tool", "user", True),
+        ("inplace", "system", True), ("tool", "user", True),
     }
 
 
@@ -247,14 +247,14 @@ def test_list_filters_by_status_mode_name_and_registry(system, tmp_path: Path) -
     build_registry(roots["user"], {"alpha": {"versions": ["1.0"]}, "zeta": {"versions": ["2.0"]}})
     write_version(roots["user"] / "alpha", "1.0", populated=True)
     activate(system, roots["user"] / "alpha", "1.0")
-    write_version(roots["portable"] / "beta", "1.0")
+    write_version(roots["system"] / "beta", "1.0")
     catalog = make_catalog(system, tmp_path)[0]
 
     everything = catalog.list(ListFilter(include_available=True)).views
 
     assert [(view.name, view.status) for view in everything] == [("alpha", "installed"), ("beta", "local"), ("zeta", "available")]
     assert [view.name for view in catalog.list(ListFilter(statuses=frozenset({"local"}))).views] == ["beta"]
-    assert [view.name for view in catalog.list(ListFilter(modes=frozenset({"portable"}))).views] == ["beta"]
+    assert [view.name for view in catalog.list(ListFilter(modes=frozenset({"system"}))).views] == ["beta"]
     assert [view.name for view in catalog.list(ListFilter(query="LPH")).views] == ["alpha"]
     assert [view.name for view in catalog.list(ListFilter(registry="main", include_available=True)).views] == ["alpha", "zeta"]
 
@@ -392,7 +392,7 @@ def test_roots_that_do_not_exist_hold_no_packages_and_cause_no_warning(system, t
     """A configured root that has never been used (no folder yet) lists as empty without a warning."""
     roots = make_catalog(system, tmp_path)[1]
     write_version(roots["user"] / "foo", "1.0")
-    roots["portable"].rmdir()
+    roots["system"].rmdir()
 
     listing = make_catalog(system, tmp_path)[0].list()
 

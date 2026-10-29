@@ -1,6 +1,6 @@
 """Build a pretend machine with published packages for the engine tests.
 
-``World`` wraps the temporary machine of ``tests.mode_support`` (three roots, a settings loader, a ``FakeSystem``) and an
+``World`` wraps the temporary machine of ``tests.mode_support`` (two roots, a settings loader, a ``FakeSystem``) and an
 ``Engine`` over it. ``World.publish`` writes a pinned version directory into a root and serves its zip artifact from the
 fake's URL map, with the digest in ``pkg.toml`` when asked, so install, update, check-updates and repair run end to end on
 real folders, real ``current`` junctions and the fake registry, shortcuts and ``PATH``.
@@ -91,12 +91,10 @@ class World:
         The temporary folder everything lives under.
     elevated : bool
         Whether the fake machine reports an elevated process.
-    portable_configured : bool
-        Whether the settings configure a portable root.
     """
 
-    def __init__(self, base: Path, *, elevated: bool = False, portable_configured: bool = True, untrusted: set[Path] | None = None) -> None:
-        self.machine = Machine(base, elevated=elevated, portable_configured=portable_configured, untrusted=untrusted)
+    def __init__(self, base: Path, *, elevated: bool = False, untrusted: set[Path] | None = None) -> None:
+        self.machine = Machine(base, elevated=elevated, untrusted=untrusted)
         self.fake: FakeSystem = self.machine.fake
         self.base = base
         self.engine = Engine(
@@ -115,14 +113,9 @@ class World:
         """The system root."""
         return self.machine.system_root
 
-    @property
-    def portable(self) -> Path:
-        """The portable root."""
-        return self.machine.portable_root
-
     def root(self, mode: str) -> Path:
         """Return the root of *mode*."""
-        return {"user": self.user, "system": self.system_root, "portable": self.portable}[mode]
+        return {"user": self.user, "system": self.system_root}[mode]
 
     def mode_context(self, mode: str = "user") -> ModeContext:
         """Return the resolved install-mode context of *mode* on this machine (for tests that call the services directly)."""

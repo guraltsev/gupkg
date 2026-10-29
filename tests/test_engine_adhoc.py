@@ -98,9 +98,9 @@ def test_an_unreadable_state_file_is_a_warning_not_a_failed_purge(tmp_path: Path
     assert any("could not be removed" in text for text in result.warnings) and state.read_bytes() == b"adhoc = [oops"
 
 
-@pytest.mark.parametrize("mode", ["user", "portable"])
-def test_the_guard_never_lets_an_elevated_run_touch_a_user_or_portable_state_file(tmp_path: Path, mode: str) -> None:
+def test_the_guard_never_lets_an_elevated_run_touch_a_user_state_file(tmp_path: Path) -> None:
     """`_forget_adhoc` itself, with an elevated engine and a non-system mode (a path the lifecycle does not normally reach): fail closed."""
+    mode = "user"
     world = World(tmp_path, elevated=True)
     package = tmp_path / "elsewhere" / "tool"
     state = world.root(mode) / ".gupkg" / "state.toml"

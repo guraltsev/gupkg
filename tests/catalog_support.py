@@ -98,13 +98,13 @@ def build_registry(
     return cache
 
 
-def make_settings(system_root: Path, user_root: Path, portable_root: Path, registries: tuple[str, ...] = ("main",)):
-    """Return merged settings whose three roots are the given folders and whose registries are *registries*."""
+def make_settings(system_root: Path, user_root: Path, registries: tuple[str, ...] = ("main",)):
+    """Return merged settings whose two roots are the given folders and whose registries are *registries*."""
     layer = Layer(
         LAYER_SYSTEM,
         {
             "schema": 3,
-            "roots": {"system": str(system_root), "user": str(user_root), "portable": str(portable_root)},
+            "roots": {"system": str(system_root), "user": str(user_root)},
             "registry": [{"name": item, "source": f"https://example.org/{item}.zip"} for item in registries],
         },
     )
@@ -112,11 +112,11 @@ def make_settings(system_root: Path, user_root: Path, portable_root: Path, regis
 
 
 def make_catalog(system, tmp_path: Path, *, registries: tuple[str, ...] = ("main",), elevated: bool | None = None, verify: bool = False):
-    """Return ``(catalog, roots)`` for roots below ``tmp_path`` (``system``, ``user``, ``portable``)."""
-    roots = {mode: tmp_path / mode for mode in ("system", "user", "portable")}
+    """Return ``(catalog, roots)`` for roots below ``tmp_path`` (``system``, ``user``)."""
+    roots = {mode: tmp_path / mode for mode in ("system", "user")}
     for path in roots.values():
         path.mkdir(exist_ok=True)
-    settings = make_settings(roots["system"], roots["user"], roots["portable"], registries)
+    settings = make_settings(roots["system"], roots["user"], registries)
     catalog = Catalog.from_settings(settings, system, {}, elevated=elevated, verify_effects=verify)
     return catalog, roots
 

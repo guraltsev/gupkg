@@ -305,7 +305,7 @@ def test_a_folder_that_is_a_file_in_data_stops_the_merge_before_it_writes(tmp_pa
 def settings_for(tmp_path: Path):
     """Return settings whose roots are below *tmp_path*."""
     layer = Layer("system", {"schema": 3, "roots": {
-        "system": str(tmp_path / "sys"), "user": str(tmp_path / "user"), "portable": str(tmp_path / "portable")}})
+        "system": str(tmp_path / "sys"), "user": str(tmp_path / "user")}})
     return merge_layers([default_layer(), layer])
 
 

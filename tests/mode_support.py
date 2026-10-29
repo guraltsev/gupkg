@@ -1,4 +1,4 @@
-"""Build a pretend machine for the install-mode tests: three roots, an app settings file and a settings loader.
+"""Build a pretend machine for the install-mode tests: two roots, an app settings file and a settings loader.
 
 Everything lives below one temporary folder. The builders write real format 2 version directories, real
 ``current`` junctions (through the ``FakeSystem`` they are given) and real install records, so the mode code is
@@ -31,16 +31,12 @@ def pin_no_ambient_elevation(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class Machine:
-    """A temporary machine: ``system``, ``user`` and ``portable`` roots, an environment and an app settings file."""
+    """A temporary machine: ``system`` and ``user`` roots, an environment and an app settings file."""
 
-    def __init__(
-        self, base: Path, *, elevated: bool = False, untrusted: set[Path] | None = None, portable_configured: bool = True
-    ) -> None:
+    def __init__(self, base: Path, *, elevated: bool = False, untrusted: set[Path] | None = None) -> None:
         self.base = base
-        self.portable_configured = portable_configured
         self.system_root = base / "sys" / "opt"
         self.user_root = base / "home" / "opt"
-        self.portable_root = base / "home" / "opt-portable"
         self.app = base / "app"
         self.env = {
             "USERPROFILE": str(base / "home"),
@@ -52,14 +48,12 @@ class Machine:
         self.write_app_settings()
 
     def write_app_settings(self, top: str = "", tables: str = "") -> None:
-        """Write ``settings.toml`` of the app folder: it places the three roots inside the temporary folder.
+        """Write ``settings.toml`` of the app folder: it places the two roots inside the temporary folder.
 
         *top* holds extra top-level keys (such as ``default_mode``), *tables* extra tables after ``[roots]``.
         """
         self.app.mkdir(parents=True, exist_ok=True)
         roots = f"[roots]\nsystem = '{self.system_root}'\nuser = '{self.user_root}'\n"
-        if self.portable_configured:
-            roots += f"portable = '{self.portable_root}'\n"
         text = "schema = 3\n" + top + roots + tables
         (self.app / "settings.toml").write_text(text, encoding="utf-8")
 

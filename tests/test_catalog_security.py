@@ -247,12 +247,11 @@ def test_real_junctions_are_read_the_same_way(tmp_path: Path) -> None:
 
 
 def test_elevated_run_reads_only_the_system_root(tmp_path: Path) -> None:
-    """An elevated run lists only the system root (decision D31) and never touches the user or portable roots."""
+    """An elevated run lists only the system root (decision D31) and never touches the user root."""
     system = FakeSystem(tmp_path / "machine", elevated=True)
     roots = make_catalog(system, tmp_path, elevated=True)[1]
     write_version(roots["system"] / "sysapp", "1.0")
     write_version(roots["user"] / "userapp", "1.0")
-    write_version(roots["portable"] / "portapp", "1.0")
 
     catalog = make_catalog(system, tmp_path)[0]
 

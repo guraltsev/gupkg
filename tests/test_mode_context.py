@@ -1,11 +1,10 @@
 """Cover the immutable ``ModeContext`` of design 6.1: roots, bin and Start Menu folders, environment target, layers, logs.
 
-Behavior covered: for ``system``, ``user`` and ``portable`` the context takes root, bin, Start Menu and
+Behavior covered: for ``system`` and ``user`` the context takes root, bin, Start Menu and
 environment target from ``[roots]`` and ``[integration.*]`` (the built-in values and non-default ones from a
 settings layer); a bin or Start Menu folder that no layer set follows the machine's own default folder;
-portable mode keeps shims in ``<root>\\bin`` and, with ``integrate = "none"``, touches neither the Start Menu nor the
-environment and offers the ``PATH`` line; the log folders follow D26; a portable run reads the portable root's
-settings instead of the user's.
+a user root with ``[integration.user] integrate = "none"`` keeps shims in ``<root>\\bin``, touches neither the Start Menu
+nor the environment and offers the ``PATH`` line; the log folders follow D26.
 
 Real: ``build_mode_context`` and ``load_settings`` on settings files below pytest's temporary folder. Fake: ``FakeSystem`` for the machine's default folders. Out of scope: selecting the mode
 (``test_mode_selection.py``) and resolving a target (``test_mode_resolve.py``).
@@ -18,9 +17,8 @@ from pathlib import Path
 import pytest
 
 from gupkg.model.mode import ModeChoice, ModeContext, build_mode_context
-from gupkg.model.settings import SettingsError, default_layer, merge_layers
+from gupkg.model.settings import default_layer, merge_layers
 from gupkg.modes import default_folders
-from gupkg.settingsload import settings_file
 from gupkg.system.port import Scope
 from tests.mode_support import Machine, pin_no_ambient_elevation  # noqa: F401
 
@@ -42,11 +40,6 @@ def builtin(mode: str, **kwargs) -> ModeContext:
         pytest.param(
             "user", "C:\\Users\\pat\\opt", "C:\\Users\\pat\\bin",
             "C:\\Users\\pat\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\opt", "HKCU", False, id="user-row-of-the-table",
-        ),
-        pytest.param(
-            "portable", "C:\\Users\\pat\\opt-portable", "C:\\Users\\pat\\opt-portable\\bin",
-            "C:\\Users\\pat\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\opt", "HKCU", False,
-            id="portable-row-of-the-table",
         ),
     ],
 )
@@ -93,56 +86,31 @@ def test_a_folder_no_layer_set_follows_the_machines_default_and_a_configured_one
     assert system.bin_dir == machine.fake.scope_folders(Scope.MACHINE).bin_dir
 
 
-def test_portable_integrate_none_touches_no_start_menu_or_environment_and_offers_the_path_line(tmp_path: Path) -> None:
-    """A portable root with ``integrate = "none"`` keeps shims in ``<root>\\bin`` and prints the ``PATH`` line to use."""
+def test_user_integrate_none_touches_no_start_menu_or_environment_and_offers_the_path_line(tmp_path: Path) -> None:
+    """A user root with ``integrate = "none"`` keeps shims in ``<root>\\bin`` and prints the ``PATH`` line to use."""
     machine = Machine(tmp_path)
-    stick = tmp_path / "stick"
-    machine.write_app_settings()
-    (stick / ".gupkg").mkdir(parents=True)
-    settings_file(stick).write_text("schema = 3\n[integration.portable]\nintegrate = 'none'\n", encoding="utf-8")
+    machine.write_app_settings(tables="[integration.user]\nintegrate = 'none'\n")
+    settings = machine.loader()().settings
 
-    loaded = machine.loader()(portable_root=stick)
-    context = build_mode_context(ModeChoice("portable", "t"), loaded.settings, machine.env, root=stick)
+    context = build_mode_context(ModeChoice("user", "t"), settings, machine.env)
 
-    assert (context.root, context.bin_dir, context.start_menu, context.env_target) == (stick, stick / "bin", None, None)
-    assert context.integrate == "none"
-    assert context.path_line() == f'set "PATH={stick / "bin"};%PATH%"'
+    assert (context.root, context.bin_dir, context.start_menu, context.env_target) == (
+        machine.user_root, machine.user_root / "bin", None, None
+    )
+    assert context.integrate == "none" and not context.requires_elevation
+    assert context.path_line() == f'set "PATH={machine.user_root / "bin"};%PATH%"'
 
 
-def test_portable_integrate_user_uses_the_user_profile_and_has_no_path_line(tmp_path: Path) -> None:
-    """The default portable integration goes to the user's Start Menu and ``HKCU``; nothing needs a ``PATH`` line."""
+def test_user_integrate_full_uses_the_user_profile_and_has_no_path_line(tmp_path: Path) -> None:
+    """The default user integration goes to the user's Start Menu and ``HKCU``; nothing needs a ``PATH`` line."""
     machine = Machine(tmp_path)
     settings = machine.loader()().settings
 
-    context = build_mode_context(ModeChoice("portable", "t"), settings, machine.env)
+    context = build_mode_context(ModeChoice("user", "t"), settings, machine.env)
 
-    assert (context.env_target, context.integrate) == ("HKCU", "user")
+    assert (context.env_target, context.integrate) == ("HKCU", "full")
     assert context.start_menu is not None
     assert context.path_line() is None
-
-
-def test_a_portable_run_reads_the_portable_roots_settings_not_the_users(tmp_path: Path) -> None:
-    """The layers are the system root's plus the portable root's; the user root's file is never read (design 6.1)."""
-    machine = Machine(tmp_path)
-    for root in (machine.user_root, machine.portable_root):
-        (root / ".gupkg").mkdir(parents=True)
-    settings_file(machine.user_root).write_text("schema = 3\n[integration.user]\nbin = 'C:\\userfile'\n", encoding="utf-8")
-    settings_file(machine.portable_root).write_text("schema = 3\n[integration.portable]\nintegrate = 'none'\n", encoding="utf-8")
-
-    loaded = machine.loader()(portable_root=machine.portable_root)
-
-    assert settings_file(machine.user_root) not in machine.reads
-    assert settings_file(machine.portable_root) in machine.reads
-    assert loaded.settings["integration.portable.integrate"] == "none"
-    assert loaded.settings["integration.user.bin"] != "C:\\userfile"
-
-
-def test_an_elevated_or_system_run_never_reads_a_portable_root(tmp_path: Path) -> None:
-    """Handing a portable root to an elevated run is an error: portable state is never machine-wide."""
-    machine = Machine(tmp_path, elevated=True)
-
-    with pytest.raises(SettingsError, match="portable root is never read"):
-        machine.loader()(portable_root=machine.portable_root)
 
 
 @pytest.mark.parametrize(
@@ -150,11 +118,10 @@ def test_an_elevated_or_system_run_never_reads_a_portable_root(tmp_path: Path) -
     [
         pytest.param("system", ("defaults", "app", "system", "cli"), id="system-reads-the-system-root-only"),
         pytest.param("user", ("defaults", "app", "system", "user", "cli"), id="user-adds-the-user-root"),
-        pytest.param("portable", ("defaults", "app", "system", "portable", "cli"), id="portable-adds-the-portable-root"),
     ],
 )
 def test_the_context_names_the_settings_layers_of_its_mode(mode: str, layers: tuple[str, ...]) -> None:
-    """Design 6.1 row 'Settings layers read': system root's only; plus the user's; plus the portable root's."""
+    """Design 6.1 row 'Settings layers read': system root's only; plus the user's."""
     assert builtin(mode).layers == layers
 
 
