@@ -16,7 +16,6 @@ from pathlib import Path
 
 import pytest
 
-from gupkg.catalog.catalog import resolve_package_path
 from gupkg.model.version import (
     compare_versions,
     is_tracker_dir,
@@ -25,6 +24,7 @@ from gupkg.model.version import (
     newest_version,
     sort_versions,
 )
+from tests.catalog_support import catalog_over
 
 
 @pytest.mark.parametrize(
@@ -64,7 +64,7 @@ def test_the_catalog_lists_only_real_versions(tmp_path: Path, system) -> None:
         (tmp_path / "tool" / name).mkdir(parents=True)
         (tmp_path / "tool" / name / "pkg.toml").write_text("format = 2\n", encoding="utf-8")
 
-    view = resolve_package_path(tmp_path / "tool", system).view
+    view = catalog_over(system, tmp_path).resolve(str(tmp_path / "tool")).view
 
     assert view.name == "tool"
     assert [state.name for state in view.local.versions] == ["1.2.0", "1.10.0"]

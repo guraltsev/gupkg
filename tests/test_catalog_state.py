@@ -5,9 +5,7 @@ valid version, never ``_check_updates``; an invalid tracker or version invalidat
 leaves the other candidates; a local package follows the same-name registry entry automatically,
 opts out with ``unlink`` and follows another entry when linked (decision D2); every pinned registry
 version is a candidate (D36); a registry tracker is copied, refreshed or kept by the recorded hash;
-a package with only a tracker reports "no version known yet" without any network request; ad-hoc
-roots recorded in ``state.toml`` are listed with their mode; a name in both the system and the user
-root draws a shadowing warning; ``compare`` decides whether a tracker result is newer than every
+a package with only a tracker reports "no version known yet" without any network request; ``compare`` decides whether a tracker result is newer than every
 known version; install-record effects are compared with the system only on request.
 
 Real: package roots, junctions (``FakeSystem`` links are real), registry caches and the catalog.
@@ -27,7 +25,6 @@ from gupkg.model.manifest import TrackResult
 from gupkg.model.state import Effect, InstallRecord, Link
 from gupkg.system.port import Mode, ShortcutSpec
 from gupkg.system.windows import WindowsSystem
-from gupkg.tomlio import write_toml
 from tests.catalog_support import (
     activate,
     build_registry,
@@ -193,68 +190,19 @@ def test_package_with_only_a_tracker_reports_no_version_known_and_makes_no_reque
     assert system.fetch_log == [] and system.process_log == []
 
 
-def test_ad_hoc_roots_from_state_toml_are_listed_with_their_mode(system, tmp_path: Path) -> None:
-    """A package root recorded in ``state.toml`` (and a root of packages recorded there) appears in ``list`` with its mode."""
-    elsewhere = tmp_path / "elsewhere"
-    write_version(elsewhere / "inplace", "3.0", populated=True)
-    write_version(elsewhere / "pool" / "tool", "1.0")
-    _, roots = make_catalog(system, tmp_path)
-    write_toml(
-        roots["user"] / ".gupkg" / "state.toml",
-        {"adhoc": [
-            {"path": str(elsewhere / "inplace"), "mode": "system"},
-            {"path": str(elsewhere / "pool"), "mode": "user"},
-        ]},
-    )
-
-    listing = make_catalog(system, tmp_path)[0].list()
-
-    assert {(view.name, view.mode, view.root.adhoc) for view in listing.views} == {
-        ("inplace", "system", True), ("tool", "user", True),
-    }
-
-
-def test_invalid_state_toml_is_a_warning_not_a_failure(system, tmp_path: Path) -> None:
-    """A malformed ``adhoc`` list is reported as a warning and the configured roots still list."""
-    _, roots = make_catalog(system, tmp_path)
-    write_version(roots["user"] / "foo", "1.0")
-    write_toml(roots["user"] / ".gupkg" / "state.toml", {"adhoc": [{"path": "relative", "mode": "user"}]})
-
-    listing = make_catalog(system, tmp_path)[0].list()
-
-    assert [view.name for view in listing.views] == ["foo"]
-    assert any("state.toml" in warning for warning in listing.warnings)
-
-
-def test_same_name_in_system_and_user_roots_warns_about_shadowing(system, tmp_path: Path) -> None:
-    """A package in both the system and the user root is listed twice with one shadowing warning (decision D21)."""
-    roots = make_catalog(system, tmp_path)[1]
-    write_version(roots["system"] / "foo", "1.0")
-    write_version(roots["user"] / "foo", "1.0")
-    write_version(roots["user"] / "solo", "1.0")
-
-    listing = make_catalog(system, tmp_path)[0].list()
-
-    assert [(view.name, view.mode) for view in listing.views] == [("foo", "system"), ("foo", "user"), ("solo", "user")]
-    assert [warning for warning in listing.warnings if "shadowing" in warning] == [
-        "shadowing: 'foo' exists in both the system and the user root; their shims on PATH shadow each other"
-    ]
-
-
-def test_list_filters_by_status_mode_name_and_registry(system, tmp_path: Path) -> None:
-    """``list`` filters by status, mode, name fragment and followed registry, and adds available entries on request."""
+def test_list_filters_by_status_name_and_registry(system, tmp_path: Path) -> None:
+    """``list`` filters by status, name fragment and followed registry, and adds available entries on request."""
     catalog, roots = make_catalog(system, tmp_path)
     build_registry(roots["user"], {"alpha": {"versions": ["1.0"]}, "zeta": {"versions": ["2.0"]}})
     write_version(roots["user"] / "alpha", "1.0", populated=True)
     activate(system, roots["user"] / "alpha", "1.0")
-    write_version(roots["system"] / "beta", "1.0")
+    write_version(roots["user"] / "beta", "1.0")
     catalog = make_catalog(system, tmp_path)[0]
 
     everything = catalog.list(ListFilter(include_available=True)).views
 
     assert [(view.name, view.status) for view in everything] == [("alpha", "installed"), ("beta", "local"), ("zeta", "available")]
     assert [view.name for view in catalog.list(ListFilter(statuses=frozenset({"local"}))).views] == ["beta"]
-    assert [view.name for view in catalog.list(ListFilter(modes=frozenset({"system"}))).views] == ["beta"]
     assert [view.name for view in catalog.list(ListFilter(query="LPH")).views] == ["alpha"]
     assert [view.name for view in catalog.list(ListFilter(registry="main", include_available=True)).views] == ["alpha", "zeta"]
 
@@ -288,8 +236,8 @@ def test_compare_decides_whether_a_tracker_result_is_newer_than_every_known_vers
     assert verdict.newest_known == newest
 
 
-def test_record_mode_that_disagrees_with_the_root_breaks_the_package(system, tmp_path: Path) -> None:
-    """An install record that says another mode than the root it lies in makes the package ``broken`` with the reason."""
+def test_record_mode_that_disagrees_with_the_scope_breaks_the_package(system, tmp_path: Path) -> None:
+    """An install record that says another mode than the run's makes the package ``broken`` with the reason."""
     catalog, roots = make_catalog(system, tmp_path)
     package = roots["user"] / "foo"
     write_version(package, "1.0", populated=True)
@@ -299,7 +247,7 @@ def test_record_mode_that_disagrees_with_the_root_breaks_the_package(system, tmp
     view = make_catalog(system, tmp_path)[0].describe("foo")
 
     assert view.status == "broken"
-    assert any("install record says mode system" in reason for reason in view.broken_reasons)
+    assert any("the install record says system; this package was moved between scopes" in reason for reason in view.broken_reasons)
 
 
 def test_unreadable_install_record_breaks_the_package(system, tmp_path: Path) -> None:
@@ -370,31 +318,30 @@ def test_link_to_an_entry_the_registry_does_not_have_is_a_warning(system, tmp_pa
 def test_catalog_on_real_windows_junctions_derives_installed_and_outdated(tmp_path: Path) -> None:
     """With ``WindowsSystem`` junctions an installed package is ``installed``, ``outdated`` with a newer directory, and ``broken`` when its version vanishes."""
     real = WindowsSystem()
-    roots = make_catalog(real, tmp_path, elevated=False)[1]
+    roots = make_catalog(real, tmp_path)[1]
     package = roots["user"] / "foo"
     write_version(package, "1.0", populated=True)
     activate(real, package, "1.0")
-    statuses = [make_catalog(real, tmp_path, elevated=False)[0].describe("foo").status]
+    statuses = [make_catalog(real, tmp_path)[0].describe("foo").status]
 
     write_version(package, "1.1")
-    statuses.append(make_catalog(real, tmp_path, elevated=False)[0].describe("foo").status)
+    statuses.append(make_catalog(real, tmp_path)[0].describe("foo").status)
     (package / "1.0" / "pkg.toml").unlink()
     for child in (package / "1.0" / "App").iterdir():
         child.unlink()
     (package / "1.0" / "App").rmdir()
     (package / "1.0").rmdir()
-    statuses.append(make_catalog(real, tmp_path, elevated=False)[0].describe("foo").status)
+    statuses.append(make_catalog(real, tmp_path)[0].describe("foo").status)
 
     assert statuses == ["installed", "outdated", "broken"]
 
 
-def test_roots_that_do_not_exist_hold_no_packages_and_cause_no_warning(system, tmp_path: Path) -> None:
-    """A configured root that has never been used (no folder yet) lists as empty without a warning."""
-    roots = make_catalog(system, tmp_path)[1]
-    write_version(roots["user"] / "foo", "1.0")
-    roots["system"].rmdir()
+def test_a_root_that_does_not_exist_holds_no_packages_and_causes_no_warning(system, tmp_path: Path) -> None:
+    """The root of a scope that has never been used (no folder yet) lists as empty without a warning."""
+    catalog, roots = make_catalog(system, tmp_path)
+    roots["user"].rmdir()
 
-    listing = make_catalog(system, tmp_path)[0].list()
+    listing = catalog.list()
 
-    assert [view.name for view in listing.views] == ["foo"]
+    assert listing.views == ()
     assert listing.warnings == ()

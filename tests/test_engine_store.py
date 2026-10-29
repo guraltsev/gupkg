@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from gupkg.catalog.catalog import AmbiguousSelector, NotFound, NotInstalled
+from gupkg.catalog.catalog import NotFound, NotInstalled
 from gupkg.catalog.record import write_install_record
 from gupkg.engine.errors import describe
 from gupkg.engine.fingerprint import (
@@ -31,14 +31,13 @@ from gupkg.engine.fingerprint import (
 from gupkg.engine.planner import PlanError
 from gupkg.engine.portable import PortableError, hand_back, hand_over
 from gupkg.engine.receipts import MAX_RECEIPT_BYTES, list_receipts, read_receipt, receipt_checksum, update_receipt
-from gupkg.engine.stateio import read_track_state, register_adhoc, unregister_adhoc, write_track_state
+from gupkg.engine.stateio import read_track_state, write_track_state
 from gupkg.model.checksum import ChecksumMismatch, ChecksumMissing
 from gupkg.model.scope import InputNeeded, ModeRefused
 from gupkg.model.state import InstallRecord
-from gupkg.model.settings import Layer, default_layer, merge_layers
 from gupkg.system.fake import FakeSystem
 from gupkg.system.port import ProcessNotAllowed
-from gupkg.tomlio import read_toml, write_toml
+from gupkg.tomlio import write_toml
 
 
 @pytest.fixture
@@ -298,42 +297,8 @@ def test_a_folder_that_is_a_file_in_data_stops_the_merge_before_it_writes(tmp_pa
 
 
 # ---------------------------------------------------------------------------
-# state.toml and track.toml
+# track.toml
 # ---------------------------------------------------------------------------
-
-
-def settings_for(tmp_path: Path):
-    """Return settings whose roots are below *tmp_path*."""
-    layer = Layer("app", {"schema": 4, "roots": {
-        "system": str(tmp_path / "sys"), "user": str(tmp_path / "user")}})
-    return merge_layers([default_layer("user"), layer])
-
-
-def test_adhoc_registration_is_idempotent_and_keeps_the_other_keys(tmp_path: Path) -> None:
-    """Registering a package twice writes one entry; keys of other readers in state.toml stay."""
-    settings = settings_for(tmp_path)
-    state = tmp_path / "user" / ".gupkg" / "state.toml"
-    write_toml(state, {"last_sync": "yesterday"})
-    package = tmp_path / "elsewhere" / "tool"
-
-    register_adhoc(settings, {}, package, "user")
-    register_adhoc(settings, {}, package, "user")
-
-    data = read_toml(state)
-    assert data == {"last_sync": "yesterday", "adhoc": [{"path": str(package), "mode": "user"}]}
-    unregister_adhoc(settings, {}, package, "user")
-    assert read_toml(state) == {"last_sync": "yesterday"}
-
-
-def test_an_unreadable_state_file_is_never_silently_replaced(tmp_path: Path) -> None:
-    """A state.toml that is not valid TOML stops the registration instead of being overwritten."""
-    settings = settings_for(tmp_path)
-    state = write(tmp_path / "user" / ".gupkg" / "state.toml", "adhoc = [oops")
-
-    with pytest.raises(ValueError, match="Cannot read"):
-        register_adhoc(settings, {}, tmp_path / "elsewhere" / "tool", "user")
-
-    assert state.read_text() == "adhoc = [oops"
 
 
 def test_the_track_state_round_trips(tmp_path: Path) -> None:
@@ -358,7 +323,6 @@ def test_the_track_state_round_trips(tmp_path: Path) -> None:
         pytest.param(InputNeeded("ask"), "input-needed", 5, id="input-needed"),
         pytest.param(NotFound("x"), "not-found", 2, id="not-found"),
         pytest.param(NotInstalled("x"), "not-installed", 2, id="not-installed"),
-        pytest.param(AmbiguousSelector("x", ["user:x", "system:x"]), "ambiguous", 2, id="ambiguous"),
         pytest.param(PlanError("x"), "cannot-plan", 2, id="plan-error"),
         pytest.param(ChecksumMismatch("m", "https://x"), "checksum-mismatch", 3, id="checksum-mismatch"),
         pytest.param(ProcessNotAllowed("x"), "needs-real-run", 3, id="needs-a-real-run"),

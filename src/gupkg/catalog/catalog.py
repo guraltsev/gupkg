@@ -282,11 +282,19 @@ class Catalog:
     verify_effects: bool = False
     warnings: list[str] = field(default_factory=list)
     _snapshots: dict[tuple[str, str], RegistrySnapshot] = field(default_factory=dict, repr=False)
+    _untrusted: tuple[str | None] | None = field(default=None, repr=False)
 
     @property
     def root(self) -> Root:
         """Return the one root this catalog reads."""
         return Root(self.scope.root)
+
+    def _untrusted_reason(self) -> str | None:
+        """Return why an elevated run must not read the root (standard users can modify it), or ``None`` (design 9.4, D31)."""
+        if self._untrusted is None:
+            reason = self.system.directory_untrusted_reason(self.scope.root) if self.scope.mode is Mode.SYSTEM else None
+            self._untrusted = (reason,)
+        return self._untrusted[0]
 
     @property
     def registries(self) -> tuple[RegistryConfig, ...]:
@@ -337,6 +345,9 @@ class Catalog:
             Views sorted by name, and warnings: folders that could not be read.
         """
         filters = filters or ListFilter()
+        reason = self._untrusted_reason()
+        if reason is not None:
+            return Listing((), (*self.warnings, f"Skipped {self.scope.root} in an elevated run: {reason}"))
         scan = scan_root(self.root)
         views = [self._view(package, path) for package, path in scan.packages]
 
@@ -601,7 +612,9 @@ class Catalog:
     def _local_path(self, name: str) -> Path | None:
         """Return the package root of the local package called *name* in the root, or ``None``."""
         path = _package_path(self.scope.root, name)
-        return path if path is not None and _is_local_package(path) else None
+        if path is None or self._untrusted_reason() is not None:
+            return None
+        return path if _is_local_package(path) else None
 
     def _local_view(self, name: str) -> PackageView | None:
         """Return the view of *name* in the root, or ``None`` when the root has no such package."""
@@ -654,7 +667,9 @@ class Catalog:
 
     def _snapshots_for(self) -> list[RegistrySnapshot]:
         """Return the registry snapshots of the root's own cache, in configured order (none before the first sync)."""
-        if not any((registry_cache_dir(self.scope.root, config.name) / "state.toml").is_file() for config in self.registries):
+        if self._untrusted_reason() is not None or not any(
+            (registry_cache_dir(self.scope.root, config.name) / "state.toml").is_file() for config in self.registries
+        ):
             return []
         snapshots = []
         for config in self.registries:

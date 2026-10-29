@@ -149,11 +149,12 @@ def test_other_plan_failures_keep_their_code_and_message() -> None:
 
 
 def test_the_package_list_reader_drops_rows_it_cannot_act_on() -> None:
-    """A row without a text name, mode and status is left out; the others keep their facts and qualified target."""
+    """A row without a text name and status is left out, and so is every row of a document that names no mode."""
     document = list_doc([("alpha", "user", "outdated", "1.0", "2.0", "C:\\opt\\alpha")])
-    document["packages"] += [{"name": 3, "mode": "user", "status": "x"}, "junk", {"name": "m", "mode": "", "status": "x"}]
+    document["packages"] += [{"name": 3, "status": "x"}, "junk", {"name": "m"}]
 
     (row,) = read_packages(document)
 
-    assert (row.target, row.status, row.newest_known) == ("alpha", "outdated", "2.0")
+    assert (row.target, row.mode, row.status, row.newest_known) == ("alpha", "user", "outdated", "2.0")
     assert read_packages(head("list")) == []
+    assert read_packages({key: value for key, value in document.items() if key != "mode"}) == []

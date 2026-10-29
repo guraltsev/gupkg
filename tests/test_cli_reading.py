@@ -108,7 +108,10 @@ def test_list_json_document_has_the_packages_of_the_scope_with_the_pinned_keys(w
 
     document = result.document()
     assert [row["name"] for row in document["packages"]] == ["tool", "user-tool"] and document["command"] == "list"
-    assert {"name", "mode", "status", "version", "newest_known", "path", "following", "problems", "warnings"} <= set(document["packages"][0])
+    assert document["mode"] == "user" and document["root"] == str(world.user)
+    assert set(document["packages"][0]) == {
+        "name", "status", "version", "newest_known", "path", "restriction", "restriction_reason", "following", "problems", "warnings",
+    }
 
 
 def test_list_details_show_the_versions_and_how_the_install_was_verified(world: CliWorld) -> None:
@@ -140,9 +143,9 @@ def test_info_shows_everything_known_about_each_target(world: CliWorld) -> None:
     result = world.cli("info", "tool", "alpha")
 
     assert result.code == 0
-    assert "tool  1.0.0  user  outdated" in result.out and "versions: 1.0.0 (populated), 2.0.0 (available)" in result.out
+    assert "tool  1.0.0  outdated" in result.out and "versions: 1.0.0 (populated), 2.0.0 (available)" in result.out
     assert "checksum: verified" in result.out and "receipts: 1.0.0" in result.out and "log:" in result.out
-    assert "alpha  -  -  available" in result.out and "registry versions: 1.0.0" in result.out and "follows: main/alpha" in result.out
+    assert "alpha  -  available" in result.out and "registry versions: 1.0.0" in result.out and "follows: main/alpha" in result.out
 
 
 def test_info_reports_an_unknown_target_and_still_shows_the_others(world: CliWorld) -> None:

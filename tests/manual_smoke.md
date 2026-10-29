@@ -534,3 +534,13 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
    is ...; run it from an administrator shell". The bootstrap script (`gupkg-bootstrap.cmd`) no longer passes `--mode` to
    `install.cmd`; confirm that `-Scope user` from a normal shell and `-Scope system` from an administrator shell still install. Why
    manual: needs real tokens.
+5. **`035-T06-1` An old folder without an install record.** In the real user root, `gupkg list` shows a package folder made by an
+   older gupkg (a `current` junction, no `.gupkg\package.toml`) as `broken`; `gupkg list --details` gives the reason `no install
+   record (made by an older gupkg); reinstall with: gupkg install <name> --force`. Run that command: the package is `installed`
+   again. Nothing in the folder changed before you ran it. Why manual: needs a real 0.17-layout folder.
+6. **`035-T06-2` One root, one registry cache.** From a normal shell with a user root whose registry was never synchronised
+   (`gupkg registry status`), `gupkg list --available` lists nothing, even though `C:\opt\.gupkgegistry` holds a cache; after
+   `gupkg registry sync` it lists the packages. From an administrator shell `gupkg list --available` marks a package that is
+   `["user"]` or portable as `user only` with the reason, and from a normal shell a `["system"]` package as `system only`. A path
+   into the other root (`gupkg info C:\opt\<name>` from a normal shell) says `... is not inside this scope's root (...)`. Why manual:
+   needs both real roots.

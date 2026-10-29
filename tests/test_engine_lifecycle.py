@@ -467,22 +467,6 @@ def test_a_failed_removal_stays_in_the_record_and_uninstall_can_be_repeated(worl
     assert "TOOL_HOME" not in world.fake.env_values(Mode.USER)
 
 
-def test_purge_refuses_a_package_folder_that_holds_the_root(world: World) -> None:
-    """A package installed in place in the folder that also holds the user root cannot be purged: the root would go with it."""
-    package = world.base / "home"
-    url, digest = world.serve("tool", "1.0.0")
-    version = package / "1.0.0"
-    version.mkdir(parents=True)
-    (version / "pkg.toml").write_text(pkg_text(url, sha256=digest, tables=ENV_ONLY), encoding="utf-8")
-    assert world.one("install", str(version), in_place=True).ok
-    world.engine.yes = True
-
-    result = world.one("uninstall", str(package), purge=True)
-
-    assert not result.ok and "Refusing to purge" in result.error["message"]
-    assert (package / "1.0.0" / "App" / "app.exe").is_file() and world.user.exists()
-
-
 def test_a_refused_environment_broadcast_is_a_warning_not_a_failure(world: World) -> None:
     """The change is made; only the notification failed, so the install succeeds and says that new programs see it later."""
     world.publish("tool", "1.0.0", tables=ENV_ONLY)

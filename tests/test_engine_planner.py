@@ -19,7 +19,7 @@ from gupkg.catalog.catalog import Catalog
 from gupkg.engine import lifecycle
 from gupkg.engine.planner import CleanupFacts, diff_effects, plan_cleanup
 from gupkg.model.plan import INSTALL_PHASES, InstallPlan, PackageResult, Request
-from gupkg.model.state import Effect, Root
+from gupkg.model.state import Effect
 from tests.engine_support import World, pin_no_ambient_elevation  # noqa: F401
 from tests.mode_support import tree_snapshot
 
@@ -197,7 +197,7 @@ def test_the_cleanup_plan_is_made_from_the_facts_it_is_given_and_never_looks_at_
     """Which versions hold a bundled gupkg is data (CleanupFacts.bundled): the planner names exactly those, whatever the disk says."""
     world.publish("tool", "1.0.0", tables=ENV)
     world.one("install", "tool")
-    view = Catalog.from_scope(world.scope, world.fake, world.machine.env).describe("tool", Root(world.user, "user"))
+    view = Catalog(world.scope, world.fake).describe("tool")
 
     named = plan_cleanup(Request("cleanup", "tool", bundled=True), view, CleanupFacts(bundled=("1.0.0",)))
     none = plan_cleanup(Request("cleanup", "tool", bundled=True), view, CleanupFacts())

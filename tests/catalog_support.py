@@ -13,8 +13,10 @@ from pathlib import Path
 from gupkg.catalog.catalog import Catalog
 from gupkg.catalog.record import write_install_record
 from gupkg.catalog.registry import registry_cache_dir
+from gupkg.model.scope import make_scope
 from gupkg.model.settings import LAYER_APP, Layer, default_layer, merge_layers
-from gupkg.model.state import InstallRecord, Link, Root
+from gupkg.model.state import InstallRecord, Link
+from gupkg.system.port import Mode
 from gupkg.tomlio import write_toml
 
 REVISION = "a" * 40
@@ -54,8 +56,14 @@ def write_tracker(package: Path, variant: str = "") -> Path:
 
 
 def activate(system, package: Path, version: str) -> None:
-    """Point ``<package>/current`` at the version directory with a real junction."""
+    """Point ``<package>/current`` at the version directory with a real junction.
+
+    A package with ``current`` and no install record is ``broken`` (issue 035 §4.7), so a record with no mode is written
+    unless the package has one; a test that needs another record writes it afterwards.
+    """
     system.create_junction(package / "current", package / version)
+    if not (package / ".gupkg" / "package.toml").exists():
+        write_install_record(package, InstallRecord())
 
 
 def write_record(package: Path, record: InstallRecord) -> None:
@@ -98,29 +106,31 @@ def build_registry(
     return cache
 
 
-def make_settings(system_root: Path, user_root: Path, registries: tuple[str, ...] = ("main",)):
-    """Return merged settings whose two roots are the given folders and whose registries are *registries*."""
+def make_settings(registries: tuple[str, ...] = ("main",), mode: str = "user"):
+    """Return merged settings whose registries are *registries*."""
     layer = Layer(
         LAYER_APP,
         {
             "schema": 4,
-            "roots": {"system": str(system_root), "user": str(user_root)},
+            "integration": {"integrate": "none"},
             "registry": [{"name": item, "source": f"https://example.org/{item}.zip"} for item in registries],
         },
     )
-    return merge_layers([default_layer("user"), layer])
+    return merge_layers([default_layer(mode), layer])
 
 
-def make_catalog(system, tmp_path: Path, *, registries: tuple[str, ...] = ("main",), elevated: bool | None = None, verify: bool = False):
-    """Return ``(catalog, roots)`` for roots below ``tmp_path`` (``system``, ``user``)."""
-    roots = {mode: tmp_path / mode for mode in ("system", "user")}
+def catalog_over(system, root: Path, *, mode: str = "user", registries: tuple[str, ...] = ("main",), verify: bool = False) -> Catalog:
+    """Return the catalog of a scope whose root is the folder *root*."""
+    scope = make_scope(Mode(mode), root, "test", make_settings(registries, mode), {})
+    return Catalog(scope, system, verify)
+
+
+def make_catalog(system, tmp_path: Path, *, mode: str = "user", registries: tuple[str, ...] = ("main",), verify: bool = False):
+    """Return ``(catalog, roots)``: the catalog of the *mode* root below ``tmp_path``, and both root folders (``system``, ``user``).
+
+    A second call with the other *mode* gives the catalog of the other root of the same machine.
+    """
+    roots = {item: tmp_path / item for item in ("system", "user")}
     for path in roots.values():
         path.mkdir(exist_ok=True)
-    settings = make_settings(roots["system"], roots["user"], registries)
-    catalog = Catalog.from_settings(settings, system, {}, elevated=elevated, verify_effects=verify)
-    return catalog, roots
-
-
-def root_of(path: Path, mode: str) -> Root:
-    """Return a ``Root`` for tests that describe a package of a custom root."""
-    return Root(path, mode)
+    return catalog_over(system, roots[mode], mode=mode, registries=registries, verify=verify), roots

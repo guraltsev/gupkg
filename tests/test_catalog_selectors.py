@@ -2,8 +2,7 @@
 
 Behavior covered: ``name``, ``name@version``, ``registry/name`` and paths (a version
 directory, a package root, ``current``, ``_check_updates``) select the right package and version; a bare
-name that exists in several roots is ambiguous for a mutating command and names the qualified selectors,
-but resolves for a reading command; a package in a grouping folder (``gupkg-dir.toml``) is selected by its
+name is unique inside the one root; a package in a grouping folder (``gupkg-dir.toml``) is selected by its
 folder path; a registry-only name resolves to an ``available`` view; unknown names and non-package paths
 fail with a clear error; a version directory without ``pkg.toml`` beside others never wins.
 
@@ -18,9 +17,8 @@ from pathlib import Path
 
 import pytest
 
-from gupkg.catalog.catalog import AmbiguousSelector, CatalogError, NotFound, parse_selector
-from gupkg.model.state import InstallRecord
-from tests.catalog_support import activate, build_registry, make_catalog, write_record, write_tracker, write_version
+from gupkg.catalog.catalog import CatalogError, NotFound, parse_selector
+from tests.catalog_support import activate, build_registry, make_catalog, write_tracker, write_version
 
 
 @pytest.mark.parametrize(
@@ -50,21 +48,6 @@ def test_malformed_selectors_are_refused(text: str) -> None:
         parse_selector(text)
 
 
-def test_bare_name_in_two_roots_is_ambiguous_only_for_mutating_commands(system, tmp_path: Path) -> None:
-    """A name in the system and user roots needs ``mode:name`` for a mutation and lists the choices; reading picks the first root."""
-    roots = make_catalog(system, tmp_path)[1]
-    write_version(roots["system"] / "foo", "1.0")
-    write_version(roots["user"] / "foo", "2.0")
-    catalog = make_catalog(system, tmp_path)[0]
-
-    with pytest.raises(AmbiguousSelector) as raised:
-        catalog.resolve("foo", for_mutation=True)
-
-    assert raised.value.matches == ("system:foo", "user:foo")
-    assert "system:foo, user:foo" in str(raised.value)
-    assert catalog.resolve("foo").view.mode == "system"
-
-
 def test_name_and_version_selector_names_the_version(system, tmp_path: Path) -> None:
     """``name@version`` returns the named version, and ``pick_version`` finds it among local and registry versions."""
     roots = make_catalog(system, tmp_path)[1]
@@ -72,7 +55,7 @@ def test_name_and_version_selector_names_the_version(system, tmp_path: Path) -> 
     write_version(roots["user"] / "foo", "1.2")
     catalog = make_catalog(system, tmp_path)[0]
 
-    resolved = catalog.resolve("foo@1.5", for_mutation=True)
+    resolved = catalog.resolve("foo@1.5")
     picked = catalog.pick_version(resolved.view, resolved.version)
 
     assert resolved.version == "1.5" and resolved.named_version
@@ -82,8 +65,8 @@ def test_name_and_version_selector_names_the_version(system, tmp_path: Path) -> 
         catalog.pick_version(resolved.view, "9.9")
 
 
-def test_registry_only_name_resolves_to_an_available_view_in_the_requested_root(system, tmp_path: Path) -> None:
-    """A name that only the registry has is ``available``; with a mode the view carries that mode's root for the install."""
+def test_registry_only_name_resolves_to_an_available_view(system, tmp_path: Path) -> None:
+    """A name that only the registry has is ``available`` and has no local root."""
     roots = make_catalog(system, tmp_path)[1]
     build_registry(roots["user"], {"foo": {"versions": ["1.0"]}})
     catalog = make_catalog(system, tmp_path)[0]
@@ -100,7 +83,7 @@ def test_registry_name_selector_follows_that_entry_for_an_existing_local_package
     write_version(roots["user"] / "foo", "1.0")
     catalog = make_catalog(system, tmp_path)[0]
 
-    resolved = catalog.resolve("main/foo", for_mutation=True)
+    resolved = catalog.resolve("main/foo")
 
     assert resolved.view.status == "local" and resolved.view.following == "main/foo"
     with pytest.raises(NotFound, match="registry entry 'main/nope'"):
@@ -110,7 +93,7 @@ def test_registry_name_selector_follows_that_entry_for_an_existing_local_package
 def test_unknown_name_and_non_package_paths_fail_clearly(system, tmp_path: Path) -> None:
     """A name that nothing has, a missing path and an ordinary folder are ``NotFound`` with a message that says what failed."""
     roots = make_catalog(system, tmp_path)[1]
-    (tmp_path / "plain").mkdir()
+    (roots["user"] / "plain").mkdir()
     catalog = make_catalog(system, tmp_path)[0]
 
     with pytest.raises(NotFound, match="package 'ghost' was not found"):
@@ -118,7 +101,7 @@ def test_unknown_name_and_non_package_paths_fail_clearly(system, tmp_path: Path)
     with pytest.raises(NotFound, match="does not exist"):
         catalog.resolve(str(roots["user"] / "missing"))
     with pytest.raises(NotFound, match="Not a package root"):
-        catalog.resolve(str(tmp_path / "plain"))
+        catalog.resolve(str(roots["user"] / "plain"))
 
 
 def test_paths_select_the_package_and_version(system, tmp_path: Path) -> None:
@@ -143,21 +126,6 @@ def test_paths_select_the_package_and_version(system, tmp_path: Path) -> None:
     assert (installed.version, installed.via_current) == ("1.0", True)
     assert (via_current.version, via_current.via_current) == ("1.0", True)
     assert {item.view.name for item in (not_installed, version_dir, tracker, installed, via_current)} == {"foo"}
-    assert not_installed.view.mode == "user"
-
-
-def test_path_outside_every_root_is_an_ad_hoc_root_with_the_recorded_mode(system, tmp_path: Path) -> None:
-    """A package outside the configured roots resolves as ad hoc; its mode comes from its install record, else stays undecided."""
-    catalog = make_catalog(system, tmp_path)[0]
-    plain = tmp_path / "elsewhere" / "plain"
-    write_version(plain, "1.0")
-    recorded = tmp_path / "elsewhere" / "recorded"
-    write_version(recorded, "1.0")
-    write_record(recorded, InstallRecord(mode="system"))
-
-    assert catalog.resolve(str(plain)).view.mode is None
-    assert catalog.resolve(str(recorded)).view.mode == "system"
-    assert catalog.resolve(str(plain)).view.root.adhoc
 
 
 def test_package_in_a_grouping_folder_is_selected_by_its_folder_path(system, tmp_path: Path) -> None:
