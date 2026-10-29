@@ -31,7 +31,7 @@ gupkg-bootstrap.cmd -Source \\server\share\gupkg-1.0.0-win-amd64.zip -Sha256 <di
 gupkg-bootstrap.cmd -SkipInstall         :: only verify and unpack
 ```
 
-What it does, in order: choose the root (`%USERPROFILE%\opt` or `C:\opt`, or `-Root`); fetch the ZIP from `-Source` (a URL,
+What it does, in order: choose the root (`%USERPROFILE%\opt` in user scope, `C:\opt` or `-Root` in system scope); fetch the ZIP from `-Source` (a URL,
 a ZIP, or in user scope an extracted folder; default: the newest row of `RELEASES.md` of the official repository) and
 verify it against `-Sha256` (default: the digest in that same row; a `-Source` without `-Sha256` prints a warning);
 refuse a payload without `gupkg\python\python.exe`; check every file against `gupkg\MANIFEST.sha256`; unpack to

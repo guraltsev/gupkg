@@ -323,7 +323,7 @@ Following `_docs/tests.md`:
   machine's pip) and writes the `._pth` file, so an elevated first run needs no installation. The bundle has
   no pip, setuptools or ensurepip (issue 019), and nothing is installed at run time.
 - **No self-elevation.** gupkg contains no code that starts an elevated copy of itself (issue 035, D49): no
-  relaunch module, no elevated child, and none of the hidden options that such a child needed. An elevated run is a
+  module that starts an elevated copy, no elevated child, and none of the hidden options that such a child needed. An elevated run is a
   process that was started elevated (a shell run as administrator, or the Start Menu shortcut "gupkg manager
   (administrator)"). System tools (`powershell`, `cmd`) are resolved under `%SystemRoot%`; an elevated
   run never searches `PATH` for them.
