@@ -146,7 +146,7 @@ admin-only check replaced by a stand-in). These steps need a real administrator 
 1. **Elevated launchers refuse.** Take an installed version directory, open an administrator shell, and run the generated
    `install.cmd` and `gupkg-tui.cmd` in it. Each prints "This launcher does not run
    elevated" and exits 1 without starting any gupkg. Run them from a normal shell and
-   confirm they start the root forwarder or the bundled gupkg. Why manual: the
+   confirm they start the bundled gupkg, else the one named by `<root>\.gupkg\gupkg-location`, else `gupkg` on `PATH`. Why manual: the
    automated launcher tests run in a normal shell, and elevation needs a real token.
 2. **Elevated settings layers.** In an administrator shell, with a `settings.toml` placed
    in `<user root>\.gupkg\` that sets `ui.color = "never"`, run the command that shows the
@@ -437,38 +437,38 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
 ## Bundled mode, package launchers and bootstrap (issue 033)
 
 1. **Elevated launcher refusals and the elevated test run.** From an elevated PowerShell run
-   `scripts\test.cmd tests\test_package_launcher.py -v`: the ten tests marked `needs_admin` (they skip in a standard shell) build an
+   `scripts\test.cmd tests\test_package_launcher.py -v`: the twelve tests marked `needs_admin` (they skip in a standard shell) build an
    admin-only tree under the temporary folder, grant `Users` write on one object at a time (package folder, version folder, root data
-   folder, forwarder, a Python file, the root itself, a file deep in the installed gupkg) and expect the launcher to refuse, and expect
+   folder, `gupkg-location`, a Python file, the root itself, a file deep in the installed gupkg) and expect the launcher to refuse, and expect
    it to proceed in the untouched tree and through `current` only when `current` names a version of the same package. Then right-click
    an `install.cmd` in `Downloads` and choose Run as administrator: expect `Refusing to run elevated` and no Python started. Why manual:
    UAC and the integrity level of a real elevated token (the automated tests simulate "elevated" to run the real access check).
 2. **A bundled install leaves no gupkg behind.** On a machine with no installed gupkg, run `gupkg pkg export` for a small package (or use a
    registry package with `gupkg pkg bundle`), unzip the ZIP into `Downloads` with Explorer and double-click `install.cmd` (click Run on
    the security warning). Expect the program installed under `%USERPROFILE%\opt\<name>\<version>`, its shortcut and shims, and no
-   `<root>\gupkg` package, no `<root>\.gupkg\gupkg.cmd`, no `gupkg` shim and no gupkg `PATH` entry; nothing new under `%LOCALAPPDATA%`,
+   `<root>\gupkg` package, no `<root>\.gupkg\gupkg-location`, no `gupkg` shim and no gupkg `PATH` entry; nothing new under `%LOCALAPPDATA%`,
    `%APPDATA%` or `%ProgramData%` other than the Start Menu entry. Delete the `Downloads` folder: the program still works. Then
    double-click `current\gupkg-tui.cmd`, run check-updates and an update, and confirm the new version directory holds a copy of `gupkg\`
    and that switching back to the old one leaves its launchers working. `uninstall --purge` leaves only `<root>\.gupkg\logs`. Why manual:
    the real registry, Start Menu and a clean machine (clean-VM run; the automated tests use `FakeSystem`).
 3. **Bootstrap, user and system.** On a clean VM run `gupkg-bootstrap.cmd` (user), then in an elevated shell
    `gupkg-bootstrap.cmd -Scope system`. Expect `gupkg\<version>` in `%USERPROFILE%\opt` and `C:\opt`, `App` matching `MANIFEST.sha256`,
-   `current`, the three shims, `PATH`, the Start Menu entry and `<root>\.gupkg\` with the forwarder; `C:\opt` and `C:\opt\.gupkg` are
+   `current`, the three shims, `PATH`, the Start Menu entry and `<root>\.gupkg\gupkg-location`; `C:\opt` and `C:\opt\.gupkg` are
    admin-only (`icacls`); `gupkg check` is healthy. Re-run both: nothing breaks. Why manual: the real ACLs, junction, registry and UAC.
 4. **Squatted system root.** As a standard user create `C:\opt` (`mkdir C:\opt`), then run `gupkg-bootstrap.cmd -Scope system` elevated:
    expect a refusal naming the reason and nothing unpacked; delete the folder and run it again to see it succeed. Why manual: needs a real
    `C:\opt` created by a standard user (the automated test checks the same decision on a temporary folder).
-5. **An installed gupkg takes over, and old gupkg falls back.** With bundled installs from item 2 in the root, run the bootstrap in the
-   same root: their `install.cmd` and `gupkg-tui.cmd` now go through the forwarder (see the newest file in `<root>\.gupkg\logs`), also when
-   their bundled copy is newer, and `--no-system-gupkg=true` uses the bundled copy. Then temporarily set `requires_gupkg = ">=99"` in
-   the version's `pkg.toml`, run `install.cmd`: the installed gupkg exits 6 and the launcher finishes with the bundled copy. A decoy
-   `gupkg.exe` on `PATH` and in the current directory is never run. `gupkg uninstall gupkg` removes the forwarder: launchers fall back
-   to their bundled copies, and a launcher with none prints the bootstrap URL and exits 9009. `gupkg cleanup --bundled` removes no bundled
-   copy while the forwarder is missing (and says why), and removes them once gupkg is installed again. Why manual: real launchers on a real
-   installed gupkg.
-6. **Self-update.** From an installed gupkg run `gupkg self check-updates` then `gupkg self update` against a real second release (build
+5. **The bundled gupkg runs first; the root's gupkg-location and PATH come next (issue 035, T11).** With bundled installs from item 2 in the root,
+   run the bootstrap in the same root: their `install.cmd` and `gupkg-tui.cmd` still run their bundled copy (see the newest file in
+   `<root>\.gupkg\logs`). Rename a bundled `gupkg` folder: the launcher runs the gupkg named by `<root>\.gupkg\gupkg-location` (and prints a
+   `Skipped ...` line instead if that file is missing or wrong). Then temporarily set `requires_gupkg = ">=99"` in the version's
+   `pkg.toml`, run `install.cmd`: the bundled gupkg exits 6 and the launcher goes on to the gupkg named by `gupkg-location`, then to `PATH`.
+   A decoy `gupkg.cmd` or `gupkg.exe` in the current directory is never run. `gupkg uninstall gupkg` removes `gupkg-location` (unless you
+   edited it); a launcher with no bundled copy then prints `Skipped ...gupkg-location: the file does not exist.`, uses a gupkg on `PATH`, and
+   with none prints the bootstrap URL and exits 9009. `gupkg cleanup --bundled` removes no bundled copy while no `gupkg-location` names a
+   gupkg and none is on `PATH` (and says why), and removes them once gupkg is installed again. Why manual: real launchers on a real installed gupkg.6. **Self-update.** From an installed gupkg run `gupkg self check-updates` then `gupkg self update` against a real second release (build
    one with a bumped version and a `RELEASES.md` row, or use the published one): expect a new `<root>\gupkg\<new>` with a verified `App`
-   and `gupkg\` tree, `current` switched, the forwarder byte-identical. Why manual: needs two real releases on GitHub.
+   and `gupkg\` tree, `current` switched, gupkg-location byte-identical. Why manual: needs two real releases on GitHub.
 7. **Mark of the Web, SmartScreen and Smart App Control.** On a clean machine download a distribution ZIP with Edge, extract it with
    Explorer, double-click `install.cmd` (expect the Run/Cancel security warning, then the install) and check that the copies under the
    root have no `Zone.Identifier` stream (`Get-Item -Stream * <file>`) and that the receipt (`<package>\.gupkg\receipts\<version>.toml`)
@@ -552,3 +552,14 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
 
 ## The manager reads in-process and shows what it cannot read (issue 035, task T10)
 . **`035-T10-1` A read that fails is visible.** In a normal terminal start `gupkg-manager`. Make the registry cache unreadable (rename `<root>\.gupkg\registry\main\state.toml` to a folder, or lock it), press `r`: the status line shows `ERROR: registry unreadable: ...` (or `package list unreadable`) and a red notification gives the full text; the list stays usable. Restore the file and press `r`: the error goes away. Why manual: needs a real root and a real file lock.
+
+## Launchers: bundled, then gupkg-location, then PATH (issue 035, task T11)
+
+1. **`035-T11-1` The elevated launcher tests and the elevated PATH step.** From an elevated PowerShell run `scripts\test.cmd tests\test_package_launcher.py -v`: the
+   tests marked `needs_admin` (they skip in a standard shell) must pass, in particular `test_an_elevated_launcher_skips_a_user_writable_path_entry_and_names_it`
+   (a `gupkg.cmd` in a user-writable `PATH` folder is skipped with the line `Skipped PATH entry <folder>` and the next admin-only entry runs) and
+   `test_an_elevated_launcher_refuses_a_gupkg_exe_shim_whose_config_a_user_can_write`. Then, by hand with a real system install in `C:\opt`: from an
+   administrator shell run `C:\opt\<package>\<version>\install.cmd` of a registry package that has no bundled copy: it runs the gupkg named by
+   `C:\opt\.gupkg\gupkg-location`; grant `Users` write on `C:\opt\.gupkg\gupkg-location` (`icacls`) and run it again: it refuses (`Refusing to run
+   elevated`). Put a `gupkg.exe` shim of a user-mode install first on the administrator's `PATH` and delete `gupkg-location`: the line `Skipped PATH
+   entry ...` names that folder and the launcher exits 9009 or uses a later admin-only entry. Why manual: needs a real elevated token and real ACLs.

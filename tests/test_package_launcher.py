@@ -99,10 +99,10 @@ def test_all_launchers_come_from_one_template_with_different_commands() -> None:
 
 
 def test_the_launcher_template_has_no_root_forwarder_and_no_system_gupkg_option() -> None:
-    """The root forwarder files and `--no-system-gupkg` are gone from the launcher (issue 035, D52)."""
+    """The root forwarder files and the option that skipped them are gone from the launcher (issue 035, D52)."""
     text = launcher_text("install").lower()
 
-    assert "forwarder" not in text and "no-system-gupkg" not in text
+    assert "forwarder" not in text and "system-gupkg" not in text
     assert "gupkg-manager.cmd" not in text and "\\.gupkg\\gupkg.cmd" not in text
 
 
