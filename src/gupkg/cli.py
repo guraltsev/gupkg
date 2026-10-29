@@ -55,7 +55,7 @@ from .report.logfile import list_run_logs, running_gupkg_logs_base, validate_log
 from .report.session import RunSession
 from .selfmgmt.location import RunningGupkg, locate_running_gupkg
 from .selfmgmt.status import self_status
-from .scope import build_scope, build_scope_and_layers, process_mode
+from .scope import build_scope, build_scope_and_layers
 from .settingsload import LayerReport, settings_file
 from .system.fake import FakeSystem
 from .system.port import Mode, System
@@ -957,14 +957,7 @@ def _forward(program: str, rest: list[str], root_options: list[str], system: Sys
     if root_options:
         print(f"gupkg: error: --settings, --root and --sandbox are not passed on to gupkg-{program}", file=sys.stderr)
         return EXIT_USER
-    # The UI programs ask for administrator rights themselves, through `gupkg`, so `tui` and `manager` refuse an elevated
-    # shell (D44, D45). They start through their own launcher, which runs bootstrap's trust check before importing anything.
-    if process_mode(system) is Mode.SYSTEM:
-        print(
-            f"gupkg: error: gupkg {program} is not started from an elevated shell: the programs call `gupkg` and ask for "
-            "administrator rights once themselves. Run it from a normal shell.", file=sys.stderr,
-        )
-        return EXIT_USER
+    # The programs start through their own launcher, which runs bootstrap's trust check before importing anything.
     launcher = location.launcher(FORWARDERS[program])
     if launcher is None:
         print(
