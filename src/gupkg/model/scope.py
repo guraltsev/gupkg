@@ -192,7 +192,13 @@ class Scope:
 
 
 def check_supported(
-    scope: Scope, supported: Sequence[str], *, command: str | None = None, name: str | None = None
+    scope: Scope,
+    supported: Sequence[str],
+    *,
+    command: str | None = None,
+    name: str | None = None,
+    version: str | None = None,
+    installed: str | None = None,
 ) -> None:
     """Refuse a package whose ``modes`` list does not allow the scope's mode, before any work (design 6.2, D55).
 
@@ -206,6 +212,9 @@ def check_supported(
     command, name : str, optional
         The command word and the package name, put into the hint of the system-only refusal in place of
         ``<command> <name>``.
+    version, installed : str, optional
+        The version that was refused and the version that is installed in this root. An ``update`` of an installed package that
+        the mode cannot take says so and that the installed version keeps working, instead of advising an administrator shell.
 
     Raises
     ------
@@ -220,6 +229,11 @@ def check_supported(
     if mode.value in supported:
         return
     if mode is Mode.USER:
+        if command == "update" and name is not None and version is not None and installed is not None:
+            raise ModeRefused(
+                f"{name} {version} installs only system-wide, so it cannot be installed in this user root. "
+                f"The installed version {installed} keeps working."
+            )
         text = SYSTEM_ONLY_REFUSAL
         if command is not None and name is not None:
             text = text.replace("<command> <name>", f"{command} {name}")

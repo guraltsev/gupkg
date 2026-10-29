@@ -263,7 +263,7 @@ to `<root>\bin`, and `gupkg shell` prints the line that puts `<root>\bin` on `PA
 (`--root E:\opt`).
 
 A package says which modes it allows with `modes`. A package that does not allow the run's mode is refused before any work, and
-the message says "This package installs only for a single user. Run gupkg without administrator rights." or "This package installs only system-wide. Run gupkg as administrator: use the Start Menu entry "gupkg manager (administrator)", or run in an administrator shell: gupkg <command> <name>" and names nothing of the other mode. `uninstall`, `check` and `cleanup` are never refused this way. `list --available`
+the message says "This package installs only for a single user. Run gupkg without administrator rights." or "This package installs only system-wide. Run gupkg as administrator: use the Start Menu entry "gupkg manager (administrator)", or run in an administrator shell: gupkg <command> <name>" and names nothing of the other mode. An `update` of a package that is already installed in the user root, to a version that allows only the system, says "<name> <version> installs only system-wide, so it cannot be installed in this user root. The installed version <installed> keeps working." and gives no administrator advice. `uninstall`, `check` and `cleanup` are never refused this way. `list --available`
 also shows packages the mode cannot install, marked `system only` or `user only`. A package folder whose install record names the
 other mode is `broken` ("moved between scopes") and is repaired by reinstalling it.
 

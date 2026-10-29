@@ -352,7 +352,10 @@ def _require_supported_mode(target: _Target) -> None:
     except (CatalogError, PlanError, _UpToDate, OSError, ValueError):
         return
     if manifest is not None:
-        check_supported(resolved.scope, manifest.modes, command=request.operation, name=view.name)
+        check_supported(
+            resolved.scope, manifest.modes, command=request.operation, name=view.name, version=candidate.version,
+            installed=view.installed.version if view.installed is not None else None,
+        )
 
 
 def _run_one(engine: Engine, target: _Target, sole: bool) -> PackageResult:

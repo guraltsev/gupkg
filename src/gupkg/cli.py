@@ -37,6 +37,7 @@ from . import authoring, settingsedit
 from ._version import __version__
 from .authoring import AuthoringError
 from .catalog.catalog import Catalog, CatalogError, ListFilter, parse_selector
+from .catalog.local import canonical_path
 from .catalog.registry import cache_state, registry_cache_dir, sync_registry
 from .engine import lifecycle
 from .engine.context import Engine, stop_marker
@@ -898,8 +899,13 @@ def _cmd_self(run: _Run) -> int:
     # The aliases are exactly the lifecycle commands on the package ``gupkg``, in the scope of this run.
     command = {"repair": "repair", "check-updates": "check-updates", "update": "update"}[action]
     root, scope = run.location.root, run.scope
-    if run.location.kind == "installed" and root is not None and os.path.normcase(os.path.normpath(root)) != os.path.normcase(os.path.normpath(scope.root)):
-        hint = "an administrator shell" if scope.mode is Mode.USER else "the gupkg that is installed in that root"
+    if run.location.kind == "installed" and root is not None and canonical_path(root) != canonical_path(scope.root):
+        if scope.mode is Mode.SYSTEM:
+            hint = "the gupkg that is installed in that root"
+        elif scope.system.directory_untrusted_reason(root) is None:
+            hint = "an administrator shell"
+        else:
+            hint = f"`--root {root}` (or without `--root`, from a shell that starts this gupkg)"
         return _fail(run, f"self {action}", ModeRefused(
             f"This gupkg is installed in {root}, but the {scope.mode} root of this run is {scope.root}, so `gupkg {command} gupkg` "
             f"would look for it there. Run it from {hint}."))
