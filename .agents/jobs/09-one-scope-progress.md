@@ -29,7 +29,7 @@ Not recorded yet. Before T00, the controller records:
 | T10 | Manager: shared reader, visible failures | T09 | merged | i035/T10 | b38a87c | 3558 passed, 0 failed, 11 skipped | 035-T10-1 (tests/manual_smoke.md) |
 | T11 | Launchers: bundled, gupkg-location, PATH | T07 | merged | i035/T11 | bd8f48e | 3572 passed, 0 failed, 13 skipped (12 needs_admin tests skip in a normal shell) | 035-T11-1 (tests/manual_smoke.md; elevated shell, owner) |
 | T12 | Docs and consistency sweep | T01â€“T11 | waiting | | | | |
-| T13 | Acceptance | T12 | in review | i035/T13 | | | |
+| T13 | Acceptance | T12 | merged (owner checks owed) | i035/T13 | 6f0f7fd | 3613 passed, 0 failed, 13 skipped | 035-T13-1..8 (tests/manual_smoke.md), plus 035-T08-1, 035-T09-1, 035-T11-1 |
 
 ## Owner actions pending
 
@@ -40,6 +40,9 @@ Not recorded yet. Before T00, the controller records:
 
 - Run `035-T11-1` (tests/manual_smoke.md) from an elevated shell on a test root: it covers the 12 `needs_admin` launcher tests plus: a `gupkg.exe` shim and config that are admin-only in a folder Users can write is refused (entry skipped); a `gupkg-location` naming a tree whose package or root folder is user-writable under an admin-only launcher root is refused. The elevated ACL end-to-end could not be run by any worker or reviewer (no admin shell).
 - The gupkg-registry repo has its own launcher copies and fingerprints made from the OLD template: regenerate them with the registry tool (not done: T03 is closed and the registry is the owner's) before pushing, otherwise the registry's launchers still use the forwarder order. (T11 regenerated only `tests/fixtures/registry_100`.)
+
+- **Registry push: done by the owner** (observed 2026-10-29: the registry's `github/main` equals `main` at `da73597`; the controller never pushed or fetched). Still to do after that push: run `gupkg registry sync` in each mode; regenerate the registry's own launcher copies and fingerprints with the registry tool (they come from the old launcher template; T11 regenerated only the `registry_100` fixture).
+- **Close the job:** run the manual checks above on a VM or test roots (an elevated shell is needed), or tell the controller to close without them.
 
 ## Owner questions
 
@@ -100,6 +103,9 @@ Owner commit not pushed yet (goes to GitHub together with T03): `9fba5c5 volta: 
 
 - Non-blocking, from T12 (left open): `gupkg-manager` and `gupkg-tui` take no `--root` (owner question: should they, for a non-default user root, instead of `--settings PATH`?); `tests/ui_support.py` writes `"mode": "auto"` in its `run_start` events (real values are `system`/`user`); `drop_receipts` in `engine/executor.py` is dead after T01; the T02 wording items (`planner.py:192`, `lifecycle.py:660`) and the T05 leftovers are untouched; `session.py`/`client.py` still parse result documents with their own dict handling while `read_results` has no UI consumer; issue 035 line 451 says "machine PATH only" while §4.9 and the launcher scan the process PATH (issue body left as written); no test compares the recorded UI fixtures with fresh CLI output (T13 may add one); `gupkg-registry/README.md` (~101, `[nonportable] remove`) is stale; the 80x24 status line clips the registry revision (documented in the style guide).
 
+- **T13 findings for the owner** (details in `09-logs/T13.md`, table "Findings for the owner"): pre-existing at d8096b5, not introduced by job 09, and NOT fixed (issue 035 §9 item 9 "each failure reports what happened and how to recover" is therefore not fully met; a separate issue is suggested): `uninstall --purge` with a locked file ends in a raw WinError 32 after the shim and `current` were already removed, with no recovery hint; an `update` that fails after `current` moved leaves `current` on the new version and only says `failed`; `check`/`check --fix` say `ok: not-installed` while a shim remains when `current` is missing; `self status` prints `ok` with `gupkg\current` missing; `--sandbox` changes the root rule (an installed gupkg gets its own root without it, `home\opt` with it); `check --fix` gives no hint to reinstall when the shipped App is missing. `system/windows.py:737` reads `elevated_mode()` a second time (same predicate as the scope, a literal D47 breach, no behavioural difference). Issue §9 item 2's grep expectations for `elevated` and `portable` do not hold literally (comments, the run-start event field `elevated`, `Run.elevated`/locals derived from `scope.mode`; `portable` is the package kind): either relax the issue's wording or leave. gupkg cannot use a local folder as a registry source (`registry add` takes a Git URL or https ZIP), so T13 seeded a test root's registry cache by hand from a read-only copy of the local clone (95 packages validated). The registry has 15 `*-portable` packages (14 new twins plus SumatraPDF-portable) and 17 portable packages (plus sqlitebrowser, tixati), 34 `pkg.toml` files.
+- T13 fixed two job-introduced defects with tests: the `self repair`/`self update` root comparison by canonical path (junction/8.3 spellings accepted; the hint no longer sends a standard user to an administrator shell when the roots are the same) and the narrowed-`modes` `update` refusal (names the version, says the installed version keeps working, no administrator advice); and the `list --json` `command` field on setup errors (the value of `--settings`/`--root` was reported as the command).
+
 ## Log
 
 - 2026-10-26: job prepared from issue 035; not started.
@@ -138,3 +144,4 @@ Owner commit not pushed yet (goes to GitHub together with T03): `9fba5c5 volta: 
 - 2026-10-29: T12 worker reported (15 commits on i035/T12; 3597 passed/13 skipped); review started.
 - 2026-10-29: T12 round 1 (2 documentation errors B1/B2 and minors; fixed in fdf4fab, 44664da) ; merged as 2593919; suite 3597 passed, 13 skipped. T13 dispatched.
 - 2026-10-29: T13 worker reported (branch i035/T13: 3 new test files, manual checks 035-T13-1..8; 3602 passed/13 skipped); review started.
+- 2026-10-29: T13 round 1 (1 blocking: item 9 failure reporting, all four causes pre-existing at d8096b5 and reported to the owner; two job-introduced defects fixed in 38a0ed3, the `command` field in c46b348) ; merged as 6f0f7fd; suite 3613 passed, 13 skipped; source 35555 lines (was 37739, -2184), tests 36138 lines (was 40938, -4800). All tasks T00-T14 merged. Owner checks owed.
