@@ -503,7 +503,7 @@ def _prepare_install(
         and view.installed.version.casefold() == candidate.version.casefold()
     )
     if repairing and execute:
-        rows = verify_each(engine.system, view.record.effects)
+        rows = verify_each(engine.system, view.record.effects, mode=context.mode)
         drifted = frozenset(effect_key(effect) for effect, drift, _ in rows if drift)
     url_from = "pkg.toml"
     if copy_in is not None:
@@ -817,7 +817,7 @@ def _check(engine: Engine, target: _Target) -> PackageResult:
         raise NotFound(f"{request.selector} was not found")
     view = selection.view
     record_manifest = bool(settings["install.record_manifest"])
-    diagnosis = diagnose(engine.system, view, record_manifest=record_manifest)
+    diagnosis = diagnose(engine.system, view, mode=context.mode, record_manifest=record_manifest)
     fixed: list[str] = []
     if request.fix and diagnosis.installed and diagnosis.fixable:
         fixed = [item.message for item in diagnosis.problems if item.fixable]
@@ -825,7 +825,7 @@ def _check(engine: Engine, target: _Target) -> PackageResult:
         if not outcome.ok:
             return outcome
         view = target.catalog.describe(view.name)
-        diagnosis = diagnose(engine.system, view, record_manifest=record_manifest)
+        diagnosis = diagnose(engine.system, view, mode=context.mode, record_manifest=record_manifest)
     return _check_result(view, context, diagnosis, fixed)
 
 
