@@ -29,7 +29,7 @@ Not recorded yet. Before T00, the controller records:
 | T10 | Manager: shared reader, visible failures | T09 | merged | i035/T10 | b38a87c | 3558 passed, 0 failed, 11 skipped | 035-T10-1 (tests/manual_smoke.md) |
 | T11 | Launchers: bundled, gupkg-location, PATH | T07 | merged | i035/T11 | bd8f48e | 3572 passed, 0 failed, 13 skipped (12 needs_admin tests skip in a normal shell) | 035-T11-1 (tests/manual_smoke.md; elevated shell, owner) |
 | T12 | Docs and consistency sweep | T01â€“T11 | waiting | | | | |
-| T13 | Acceptance | T12 | waiting | | | | |
+| T13 | Acceptance | T12 | in progress | i035/T13 | | | |
 
 ## Owner actions pending
 
@@ -98,6 +98,8 @@ Owner commit not pushed yet (goes to GitHub together with T03): `9fba5c5 volta: 
 - Non-blocking, from T14: unowned files in `bin` / shortcuts in no install record are still overwritten silently (rule 7; follow-up options in 09-logs/T14.md: refuse to replace a file with different content, ask first, or warn and adopt via `Effect.adopted`). The two-target message wording was changed from the owner's text ("Install them one at a time only if one of them changes the name") to "Install one of them, or give one of them a package definition with a different name", because installing one at a time is refused anyway. Known limits: a garbled install record of another package owns no names; in an elevated run on an untrusted root the ownership map is empty and the check is skipped; `update --download-only` skips the check; `check-updates` writes the new version, skips its download and reports `name-conflict` (rule 5 is met by the update/check-updates failure message, no new keys in `list`/`info`). Install of 60 packages one by one takes about 1.35x of main (about 11 ms per command), check is faster than main. The registry-pair test uses a synthetic copyq/copyq-portable registry (registry_100 has no pinned versions).
 - **Defect from the issue text (T06/T12):** the broken-package reason `no install record (made by an older gupkg); reinstall with: gupkg install <name> --force` (catalog/catalog.py:653) names a flag that `install` does not have (only `--refresh` and `--skip`). Reviewer reproduced: plain `gupkg install <name>` rebuilds such a folder and writes the record, `install <name> --refresh` then repairs it. T12 changes the text to `reinstall with: gupkg install <name>` and fixes the tests/docs/manual checks that quote `--force` (deviation from issue §4.7 text, made because the quoted command does not exist).
 
+- Non-blocking, from T12 (left open): `gupkg-manager` and `gupkg-tui` take no `--root` (owner question: should they, for a non-default user root, instead of `--settings PATH`?); `tests/ui_support.py` writes `"mode": "auto"` in its `run_start` events (real values are `system`/`user`); `drop_receipts` in `engine/executor.py` is dead after T01; the T02 wording items (`planner.py:192`, `lifecycle.py:660`) and the T05 leftovers are untouched; `session.py`/`client.py` still parse result documents with their own dict handling while `read_results` has no UI consumer; issue 035 line 451 says "machine PATH only" while §4.9 and the launcher scan the process PATH (issue body left as written); no test compares the recorded UI fixtures with fresh CLI output (T13 may add one); `gupkg-registry/README.md` (~101, `[nonportable] remove`) is stale; the 80x24 status line clips the registry revision (documented in the style guide).
+
 ## Log
 
 - 2026-10-26: job prepared from issue 035; not started.
@@ -134,3 +136,4 @@ Owner commit not pushed yet (goes to GitHub together with T03): `9fba5c5 volta: 
 - 2026-10-29: T14 worker reported (afaa229, 0ca4010, 778b7e1; 3590 passed/13 skipped); review started.
 - 2026-10-29: T14 round 1 (1 blocking: quadratic scan of records; fixed in b539f1f) and round 2 clean; merged as f696975; suite 3596 passed, 13 skipped. T12 dispatched.
 - 2026-10-29: T12 worker reported (15 commits on i035/T12; 3597 passed/13 skipped); review started.
+- 2026-10-29: T12 round 1 (2 documentation errors B1/B2 and minors; fixed in fdf4fab, 44664da) ; merged as 2593919; suite 3597 passed, 13 skipped. T13 dispatched.
