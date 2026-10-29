@@ -13,7 +13,8 @@ is `model` <- `catalog`, `services` <- `engine` <- `cli`, and nothing below
   `--plan`, `--events-file`, `--no-input`, the elevated relaunch and the
   forwarders `tui` and `manager`. It turns a parsed command into
   `engine.lifecycle` calls inside one `RunSession` and renders the typed result.
-  `viewdata.py` builds the plain data of `list`, `info` and `--json`,
+  `viewdata.py` builds the typed documents of `list`, `info` and `registry status`
+  (the dataclasses of `report/documents.py`, which is also the one reader of every `--json` document; the manager reads in-process through it),
   `settingsedit.py` writes one settings file, `authoring.py` is `pkg new`, `pkg
   export` and `pkg bundle`, and `report/results.py` builds the result, plan and
   error documents (the public machine contract, `"api": 1`) and the text of

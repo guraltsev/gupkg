@@ -61,7 +61,8 @@ from .system.fake import FakeSystem
 from .system.port import Mode, System
 from .system.windows import WindowsSystem
 from .tls import enable_partial_chain_verification
-from .viewdata import info_data, package_data
+from .report.documents import ListDocument
+from .viewdata import info_document, list_row, list_views, package_data, registry_status
 
 # The commands that are programs of their own: ``gupkg <word> ...`` starts the launcher in the same gupkg tree.
 FORWARDERS = {"tui": "gupkg-tui.cmd", "manager": "gupkg-manager.cmd"}
@@ -471,24 +472,20 @@ def _cmd_list(run: _Run) -> int:
     """List the packages of the run's root, or the names for scripts, filtered by status."""
     args = run.args
     chosen = next((name for name in ("installed", "available", "outdated", "broken", "local") if getattr(args, name)), None)
-    filters = ListFilter(
-        statuses=frozenset({chosen}) if chosen in ("outdated", "broken", "local", "available") else None,
-        include_available=chosen == "available",
-    )
-    listing = _catalog(run).list(filters)
-    views = [view for view in listing.views if chosen != "installed" or view.installed is not None]
+    views, warnings = list_views(_catalog(run), chosen)
     rows = [package_data(view, details=args.details) for view in views]
-    for warning in listing.warnings:
+    for warning in warnings:
         print(f"warning: {warning}", file=sys.stderr)
+    document = ListDocument(str(run.scope.mode), str(run.scope.root), tuple(list_row(view) for view in views), warnings)
     if args.names:
         names = [row["name"] for row in rows]
         if run.json:
-            _document(run, results.envelope("list", ok=True, exit_code=EXIT_OK, **results.scope_fields(run.scope), names=names))
+            _document(run, replace(document, rows=(), warnings=(), names=tuple(names)).to_data())
         else:
             print("\n".join(names))
         return EXIT_OK
     if run.json:
-        _document(run, results.envelope("list", ok=True, exit_code=EXIT_OK, **results.scope_fields(run.scope), packages=rows, warnings=list(listing.warnings)))
+        _document(run, {**document.to_data(), "packages": rows} if args.details else document.to_data())
     else:
         print(results.format_listing(rows, details=args.details))
     return EXIT_OK
@@ -497,23 +494,14 @@ def _cmd_list(run: _Run) -> int:
 def _cmd_info(run: _Run) -> int:
     """Show everything known about each named package: versions, link, tracker, last check, receipts and log."""
     args = run.args
-    catalog = _catalog(run)
-    rows: list[dict[str, Any]] = []
-    errors: list[dict[str, Any]] = []
-    code = EXIT_OK
-    for target in args.targets:
-        try:
-            rows.append(info_data(catalog.resolve(target).view))
-        except Exception as error:  # noqa: BLE001 - one unknown target must not hide the others
-            exit_code, data = describe(error)
-            code = max(code, exit_code)
-            errors.append({"target": target, **data})
-            print(f"error: {target}: {data['message']}", file=sys.stderr)
+    document = info_document(_catalog(run), run.scope, args.targets)
+    for item in document.errors:
+        print(f"error: {item['target']}: {item['message']}", file=sys.stderr)
     if run.json:
-        _document(run, results.envelope("info", ok=code == EXIT_OK, exit_code=code, **results.scope_fields(run.scope), packages=rows, errors=errors))
+        _document(run, document.to_data())
     else:
-        print("\n\n".join(results.format_info(row) for row in rows))
-    return code
+        print("\n\n".join(results.format_info(row.to_data()) for row in document.rows))
+    return document.exit_code
 
 
 def _cmd_search(run: _Run) -> int:
@@ -608,20 +596,14 @@ def _cmd_registry(run: _Run) -> int:
         return _registry_sync(run, settings, context)
     if action == "add" or action == "remove":
         return _registry_edit(run, settings, context)
-    rows = []
-    for registry in settings.registries:
-        cache = registry_cache_dir(context.root, registry.name)
-        state = cache_state(cache, run.scope)
-        snapshot = load_registry(registry.name, cache, run.scope) if action == "status" else None
-        row = {"name": registry.name, "source": registry.source}
-        if snapshot is not None:
-            row.update({
-                "revision": state.revision, "synchronized_at": state.synchronized_at, "last_failure": state.last_failure,
-                "cache": str(cache), "packages": len(snapshot.entries), "problems": list(snapshot.problems),
-            })
-        rows.append(row)
+    if action == "status":
+        status = registry_status(run.scope)
+        rows = [item.to_data() for item in status.registries]
+    else:
+        status = None
+        rows = [{"name": registry.name, "source": registry.source} for registry in settings.registries]
     if run.json:
-        _document(run, results.envelope(f"registry {action}", ok=True, exit_code=EXIT_OK, mode=context.mode, registries=rows))
+        _document(run, status.to_data() if status is not None else results.envelope(f"registry {action}", ok=True, exit_code=EXIT_OK, mode=context.mode, registries=rows))
     else:
         for row in rows:
             print(f"{row['name']}  {row['source']}")
