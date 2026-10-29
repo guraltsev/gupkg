@@ -406,7 +406,7 @@ _SAFE_ENVIRONMENT_NAMES = ("PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC",
 
 
 def safe_process_environment(
-    extra: Mapping[str, str] | None = None, *, system: "System | None" = None, mode: Mode = Mode.USER
+    extra: Mapping[str, str] | None = None, *, system: "System | None", mode: Mode
 ) -> dict[str, str]:
     """Return a minimal environment for a child process: machine-level variables plus *extra*.
 
