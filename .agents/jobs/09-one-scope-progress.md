@@ -21,7 +21,7 @@ Not recorded yet. Before T00, the controller records:
 | T02 | Portable is a package kind; mode restriction | T01 | merged | i035/T02 | 30030c3 | 3720 passed, 0 failed, 11 skipped | 035-T02-1, 035-T02-2 (tests/manual_smoke.md) |
 | T03 | Registry conversion (gupkg-registry) | T02 | merged | i035/T03 (registry) | registry da73597 | registry _tests 212 passed; pkg_check.py --all: 192 directories checked, no error; registry_tool validate: 95 packages, 97 pinned versions, 0 hook files, 1 unpinned: OK | none |
 | T04 | Settings schema 4 and root fallback chain | T02 | merged | i035/T04 | 6ab01f8 | 3720 passed, 0 failed, 11 skipped | none | |
-| T05 | Scope object; mode from the token | T04 | in progress | i035/T05 | | | |
+| T05 | Scope object; mode from the token | T04 | in review | i035/T05 | | | |
 | T06 | Catalog over one root | T05 | waiting | | | | |
 | T07 | Remove the elevated relaunch | T06 | waiting | | | | |
 | T08 | Run-as-administrator shortcut | T07 | waiting | | | | |
@@ -93,3 +93,4 @@ Owner commit not pushed yet (goes to GitHub together with T03): `9fba5c5 volta: 
 - 2026-10-29: T04 dispatched on i035/T04.
 - 2026-10-29: T04 worker reported (37a6c60, 4c5db47; 3722 passed at 37a6c60); review round 1 started.
 - 2026-10-29: T04 reviewed (0 blocking, 8 minor), merged as 6ab01f8; suite 3720 passed, 11 skipped. T05 dispatched.
+- 2026-10-29: T05 worker reported (6497ef2, 8e2752b, 2b5b5c6, 19c12d4; 3645 passed/11 skipped); review round 1 started.
