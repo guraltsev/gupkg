@@ -10,18 +10,18 @@ is `model` <- `catalog`, `services` <- `engine` <- `cli`, and nothing below
 `cli` prints or reads input):
 
 - `cli.py`: the 1.0 grammar (design 10.2), the questions it may ask, `--json`,
-  `--plan`, `--events-file`, `--no-input`, the elevated relaunch and the
-  forwarders `tui` and `manager`. It turns a parsed command into
+  `--plan`, `--events-file`, `--no-input` and the pass-through commands `tui` and
+  `manager`. It turns a parsed command into
   `engine.lifecycle` calls inside one `RunSession` and renders the typed result.
   `viewdata.py` builds the typed documents of `list`, `info` and `registry status`
   (the dataclasses of `report/documents.py`, which is also the one reader of every `--json` document; the manager reads in-process through it),
   `settingsedit.py` writes one settings file, `authoring.py` is `pkg new`, `pkg
   export` and `pkg bundle`, and `report/results.py` builds the result, plan and
-  error documents (the public machine contract, `"api": 1`) and the text of
+  error documents (the public machine contract, `"api": 2`) and the text of
   `list`, `info` and `--plan`.
 - `core.py`: `ConfigValidationError`, `read_toml_file` and the atomic writers.
 - `model/`: pure data, no I/O: version ordering, `pkg.toml` format 2, settings
-  schema and layering, install modes (`mode.py`), package state (`state.py`),
+  schema and layering (schema 4), the run's scope and the mode check (`scope.py`), package state (`state.py`),
   the checksum policy and the plan and result types (`plan.py`).
 - `catalog/`: discovery and joins over the roots and the registry caches; the
   only place package state is derived (`catalog.py`), the install record
@@ -51,9 +51,9 @@ is `model` <- `catalog`, `services` <- `engine` <- `cli`, and nothing below
   `update`, `switch`, `uninstall`, `cleanup`, `check`, `repair`, `check_updates`,
   `link`, `run_batch`, `plan`).
 - `scope.py` builds the one `Scope` of a run (its mode, from the process token, its root and
-  its settings); `targets.py` resolves a target inside it; `relaunch.py` (the one elevation for a
-  call, removed in issue 035 T07) and `distcopy.py` (the copy of a distribution folder into a root).
-- `settingsload.py`: the settings layers a run may read.
+  its settings); `targets.py` resolves a target inside it; `distcopy.py` is the copy of a distribution folder into the root.
+  gupkg never elevates itself: an administrator starts it.
+- `settingsload.py`: the root fallback chain and the settings layers a run may read.
 - `selfmgmt/`: the elevated-run trust checks (`elevation.py`), where the running
   gupkg lives (`location.py`) and what `gupkg self status` reports (`status.py`).
   `bootstrap.py` loads `elevation.py` by file path before the package is

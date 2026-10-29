@@ -63,8 +63,8 @@ package on a Python package index. Pick the route that fits:
 
   ```bat
   gupkg-bootstrap.cmd                  :: auto: all users if elevated, otherwise just you
-  gupkg-bootstrap.cmd -Scope user      :: force per-user, even from an elevated shell
-  gupkg-bootstrap.cmd -Scope system    :: force all users (needs an elevated shell)
+  gupkg-bootstrap.cmd -Scope user      :: just you (refused from an elevated shell: gupkg never acts on your folders as administrator)
+  gupkg-bootstrap.cmd -Scope system    :: all users (needs an elevated shell)
   ```
 
   The script is thin: it downloads the newest release ZIP
@@ -76,8 +76,8 @@ package on a Python package index. Pick the route that fits:
   modified, missing or extra file stops the install), creates `current`, the
   `gupkg`, `gupkg-tui` and `gupkg-manager` commands, their `PATH` entry and the
   Start Menu entry, and writes the root data folder `<root>\.gupkg\` with the
-  root forwarder through which the package launchers of that root find the
-  installed gupkg. In user scope the ZIP is unpacked to a staging folder and the
+  one-line file `gupkg-location` through which the package launchers of that
+  root find the installed gupkg. In user scope the ZIP is unpacked to a staging folder and the
   result is `%USERPROFILE%\opt\gupkg\<version>`. In system scope the script
   creates `C:\opt` owned by Administrators and writable by nobody else (it refuses
   an existing `C:\opt` that is not like that), unpacks straight into it and runs
@@ -130,9 +130,12 @@ application whose files are already there, and `check` finds what drifted.
 ## At a glance
 
 - Windows only. The release ZIP carries its own Python; nothing else needs to be installed.
-- Two **install modes**: `system` (all users, `C:\opt`) and `user` (`%USERPROFILE%\opt`). `default_mode = "auto"` picks
-  `system` in an elevated shell and `user` otherwise. A package says which it allows (`modes`); a **portable** package
-  (`modes = ["portable"]`, settings kept in the package folder) installs for a single user only.
+- **One scope per run.** A run works in one *scope*: a mode and one root. The mode is that of the process: an elevated
+  shell is `system` (all users, `C:\opt`), any other shell is `user` (`%USERPROFILE%\opt`). There is no mode option and no
+  setting that selects one, and gupkg never starts an elevated copy of itself: to manage system packages, start gupkg or
+  `gupkg-manager` from an administrator shell (or the Start Menu entry "gupkg manager (administrator)"). `--root DIR`
+  chooses another root of the same mode. A package says which modes it allows (`modes`); a **portable** package
+  (`modes = ["portable"]`, state kept in the package folder) is its own package and installs for a single user only.
 - **Format 2 `pkg.toml`.** One `[source]` per version, a separate `[track]` table in a tracker folder, built-in services
   instead of scripts (version discovery, unpacking, checksum discovery, post-unpack steps), and `snake_case` everywhere.
 - **Checking and installing are separate.** `check-updates` runs a package's tracker and writes (and by default prepares) a
@@ -141,17 +144,17 @@ application whose files are already there, and `check` finds what drifted.
   refused unless the call carries `--skip-checksum` (https only, never for vendor installers).
 - **One command line, three programs.** `gupkg` (no screens, no `--all`), `gupkg-tui` (one package) and `gupkg-manager`
   (every package, batches, schedules); the last two only ever call `gupkg`.
-- Everything gupkg owns lives in the roots: settings, logs, state, the registry cache and the root forwarder are in
+- Everything gupkg owns lives in the roots: settings, logs, state, the registry cache and `gupkg-location` are in
   `<root>\.gupkg\`; nothing is written to `AppData` or `ProgramData`, and the Windows registry is only ever written to.
 
 ## On-disk layout
 
-Each root (one per install mode) holds package folders. A package folder holds immutable **version directories** and a
+A root (the run's root; each mode has its own) holds package folders. A package folder holds immutable **version directories** and a
 `current` junction that points to the active one:
 
 ```text
 <root>\                                # C:\opt or %USERPROFILE%\opt
-  .gupkg\                              # root data: settings.toml, state.toml, logs\, registry\, gupkg.cmd (root forwarder)
+  .gupkg\                              # root data: settings.toml, state.toml, logs\, registry\, gupkg-location
   <name>\                              # the package folder: its name is the package's identity
     current\                           # NTFS junction to the active version
     _check_updates\                    # optional tracker (never installed): pkg.toml with [track], pkg.local\, support files
@@ -183,28 +186,38 @@ receipt, and `gupkg check` reports modified, missing and extra files.
 You may give `gupkg` a package name, a version directory, a package folder or its `current` junction. A package folder
 without `current` is accepted when it holds exactly one version.
 
+**Package launchers.** Each version directory holds `install.cmd` and `gupkg-tui.cmd` (a tracker folder holds
+`check-updates.cmd`), so that a double-click works without gupkg on `PATH`. A launcher runs the first gupkg it finds, in this
+order: the gupkg bundled in its own version directory (`gupkg\`); the folder named by the one-line file
+`<root>\.gupkg\gupkg-location` (written when the `gupkg` package is installed into the root, removed when it is uninstalled,
+and ignored when it is missing, empty or names a folder without `gupkg.cmd`); `gupkg.cmd` or `gupkg.exe` on the `PATH` of the
+process. Run elevated, a launcher first checks that everything it will run (the version directory, the package folder, the root,
+`.gupkg\gupkg-location`, and the whole gupkg tree it selected) is writable by Administrators and SYSTEM only, takes only
+`PATH` entries whose folder passes that check (it never reads the registry), and otherwise refuses. A gupkg that cannot handle the
+package (exit code 6) makes the launcher try the next one.
+
 ## Commands and options
 
 One grammar serves people, scripts and the UI programs. Options go **after** the command; the only options
-before it are `--version`, `--help`, `--settings PATH` and `--sandbox DIR`. A target is a package name
-(`firefox`, `firefox@135.0`, `user:firefox`, `main/firefox`) or a path (anything with a `\` or `/`, or starting with
-`.`). Several targets in one call run one after another and the run continues past a failure. The command line has
+before it are `--version`, `--help`, `--settings PATH`, `--root DIR` and `--sandbox DIR`. A target is a package name
+(`firefox`, `firefox@135.0`, `main/firefox`) or a path (anything with a `\` or `/`, or starting with
+`.`). A target never names a mode (`user:firefox` is refused): the mode is that of the process. Several targets in one call run one after another and the run continues past a failure. The command line has
 no `--all` and no interactive screen: `gupkg-manager` is the program for batches and interactive use.
 
 ```text
-gupkg check-updates <target>... [--no-download] [--mode M] [--skip-checksum]   run trackers; write and prepare new versions; activate nothing
-gupkg install  <target>... [--mode M] [--skip-checksum] [--refresh] [--in-place] [--yes] [--allow-downgrade] [--allow-other-broken-versions]
-gupkg update   <target>... [--mode M] [--skip-checksum] [--yes] [--allow-downgrade] [--allow-other-broken-versions]   activate the newest KNOWN version; never runs a tracker
+gupkg check-updates <target>... [--no-download] [--skip-checksum]   run trackers; write and prepare new versions; activate nothing
+gupkg install  <target>... [--skip-checksum] [--refresh] [--yes] [--allow-downgrade] [--allow-other-broken-versions]
+gupkg update   <target>... [--skip-checksum] [--yes] [--allow-downgrade] [--allow-other-broken-versions]   activate the newest KNOWN version; never runs a tracker
 gupkg switch   <target> <version>                       activate another local version (rollback)
 gupkg uninstall <target>... [--purge] [--yes]           remove the integration; --purge also deletes the package folder and its data
 gupkg check    [<target>...] [--fix]                    health: drift, App fingerprint, registry fingerprint, unverified installs
-gupkg list     [--mode M] [--installed|--available|--outdated|--broken|--local] [--details] [--names]
+gupkg list     [--installed|--available|--outdated|--broken|--local] [--details] [--names]
 gupkg info     <target>...
 gupkg search   <query> [--registry R] [--offline]
 gupkg cleanup  [<target>...] [--keep N] [--bundled]     old Apps, receipts, work folders, registry trees, logs (only when asked)
 gupkg link     <target> [<registry>/<name>] [--unlink]  follow another registry entry, the same-name entry again, or none
 gupkg logs     [<target>] [--open | --path]
-gupkg shell    [--mode M]                               the PATH line of a root with integrate = "none"
+gupkg shell                                             the PATH line of a root with integrate = "none"
 gupkg registry sync|status|list|add|remove
 gupkg settings show|path|init|set KEY VALUE
 gupkg pkg new|check|pin|bundle|export
@@ -218,32 +231,42 @@ unpacked; it never activates anything. `update` then activates the newest versio
 the followed registry, and prepares its `App` first if it has none. `install` and `update` never run a tracker, so
 `update` of a package with nothing newer says "up to date" and makes no request.
 
-Every command takes `--json`. Every mutating command takes `--yes`. The mode comes from `--mode system|user`,
-else from the package's install record or the root that holds it, else from `default_mode` in the settings (`auto`: an
-elevated shell installs in system mode, any other in user mode). A call that needs administrator rights relaunches
-gupkg **once** elevated, after one question, and only when this gupkg itself lives in an admin-only folder. The call then
-waits for the elevated child and exits with the child's exit code (`relaunched: true` in the document); a target or option
-value holding `& | < > ^ " % ! `` ` ``, a control character or a lone surrogate is refused (exit code 2) before anything is asked,
-because it would travel on the elevated command line. Scheduled callers pass a unique `--events-file NAME` and treat a missing
-`run_end` line as a failure; a call with several targets needs `--yes` under `--no-input` (the question "run this on N
-packages?" is exit code 5 otherwise).
-Redirected output is UTF-8 and the `--json` document is pure ASCII, whatever the code page. The child's exit code is clamped to
-gupkg's codes (`0`-`6`, anything else is `4`; the raw code is `child_raw_exit_code`). If the user elevates through a different
-administrator account, the child's temporary folder differs, so Ctrl-C cannot stop it: the call waits 30 seconds and gives up
-with exit code 5 (the child's own `stop_file` is in its events file).
+Every command takes `--json`. Every mutating command takes `--yes`. The mode comes from the process and from nothing
+else: an elevated process is in `system` mode and works on the system root, any other process is in `user` mode and works on
+the user's root. gupkg never relaunches itself elevated and has no mode option, no `default_mode` setting and no `user:` or
+`system:` prefix on a target. A call that needs the other mode is refused with the exact command to run (a system-only package
+from a normal shell: use the Start Menu entry "gupkg manager (administrator)" or an administrator shell). Scheduled callers pass
+a unique `--events-file NAME` and treat a missing `run_end` line as a failure; a call with several targets needs `--yes` under
+`--no-input` (the question "run this on N packages?" is exit code 5 otherwise). Redirected output is UTF-8 and the `--json`
+document is pure ASCII, whatever the code page.
+### Scopes and install modes
 
-### Install modes
+A run's scope is the mode of its process plus one root. `--root DIR` (before the command) works on another root of the same
+mode; in system mode the folder must be admin-only. The root otherwise comes from a fixed chain, first match wins: in system
+mode the root of the installed system gupkg, `[roots].system` of `$App\settings.toml`, `C:\opt`; in user mode `[roots].user` of
+`--settings PATH`, the root the running gupkg is installed in (when that root is not admin-only), `[roots].user` of
+`$App\settings.toml`, `%USERPROFILE%\opt`. A root's own `settings.toml` never names a root. The Resolve phase prints the root and
+where it came from. A run reads and writes only its own root: nothing under the other mode's root is read, and a path into it
+is refused as "not inside this scope's root".
 
 | Mode | Root (default) | Start Menu | Environment and `PATH` | Shims |
 | --- | --- | --- | --- | --- |
 | `user` | `%USERPROFILE%\opt` | `%APPDATA%\Microsoft\Windows\Start Menu\opt` | `HKCU\Environment` | `%USERPROFILE%\bin` |
 | `system` | `C:\opt` (admin-only) | `%ProgramData%\Microsoft\Windows\Start Menu\opt` | `HKLM` environment | `C:\bin` |
 
-`gupkg install firefox --mode user` and `gupkg install %USERPROFILE%\opt\firefox` put the same shortcuts, shims and
-`PATH` entries in place, because both use the context built from the settings. A folder outside every root (an unzipped
-distribution) is copied into the mode's root first, unless `--in-place`. With `integrate = "none"` in
-`[integration.user]`, an install touches neither the registry nor the Start Menu, its shims go to `<root>\bin`, and
-`gupkg shell` prints the line that puts `<root>\bin` on `PATH`.
+`gupkg install firefox` and `gupkg install %USERPROFILE%\opt\firefox` put the same shortcuts, shims and `PATH` entries in place. A
+version directory outside the root (an unzipped distribution) is copied into the root first, and the install runs from the copy;
+there is no `--in-place` and there are no ad-hoc roots. To keep a folder where it is, make it the root of its own user scope:
+`gupkg install <folder> --root <folder above the package name>`. Any other path outside the root is refused. With
+`integrate = "none"` in the root's `[integration]` table, an install touches neither the registry nor the Start Menu, its shims go
+to `<root>\bin`, and `gupkg shell` prints the line that puts `<root>\bin` on `PATH`; that is how a portable root on a stick works
+(`--root E:\opt`).
+
+A package says which modes it allows with `modes`. A package that does not allow the run's mode is refused before any work, and
+the message names only what this run can know ("only for a single user; run gupkg without administrator rights" or "only
+system-wide; run gupkg as administrator"). `uninstall`, `check` and `cleanup` are never refused this way. `list --available`
+also shows packages the mode cannot install, marked `system only` or `user only`. A package folder whose install record names the
+other mode is `broken` ("moved between scopes") and is repaired by reinstalling it.
 
 `install` and `update` ask before two things, and `--yes` answers both: installing a version **older than the active one**
 (`--allow-downgrade` answers only that), and installing while **other version directories of the package are broken or not
@@ -252,44 +275,45 @@ either question is exit code 5 and nothing is changed. `switch` (the explicit wa
 
 ### The machine interface
 
-The documents and options below are a public, versioned contract (`"api": 1`); `gupkg-manager` and scripts rely on them.
+The documents and options below are a public, versioned contract (`"api": 2`); `gupkg-manager` and scripts rely on them. `list`, `list --names`, `info` and `search` documents carry `mode` and `root` once, at the top.
 
 | Option | Meaning |
 | --- | --- |
 | `--json` | One result document on standard output (`api`, `command`, `ok`, `exit_code`, then `results` with one entry per target: `package`, `operation`, `ok`, `status`, `version`, `previous`, `mode`, `exit_code`, `receipt`, `log`, `warnings`, `details` for what the operation did, and, on failure, `error` with `code`, `message`, `hint` (only when there is one) and what it carries (`invalid-checksum` carries the `version` and the `field`), such as the `url` of `checksum-missing`). Human output goes to standard error. |
-| `--plan` | `check-updates`, `install`, `update`, `uninstall`, `switch`, `cleanup`, `link` and `self ...` resolve and plan without changing anything (except the run's log files). The plan document has one entry per target with the chosen version, the mode, `requires_elevation`, `sha256` (`present` or `missing`; a malformed declared hash makes the version invalid, so that target has no plan: it is a failed entry with the stable error code `invalid-checksum` (plus `version` and `field`), exit code 2, which `--skip-checksum` never overrides), the source `url` and the `effects` to add or remove. |
-| `--events-file NAME` | The run's event stream as JSON lines, flushed per event, under the plain file name `NAME` in the log directories: `<root>\.gupkg\logs\NAME` (global events) and `<root>\<name>\.gupkg\logs\NAME` (one package's events). `run_start` names the run's stop marker; the last line, `run_end`, carries the result document. An elevated child chooses the directory itself, so a normal-shell caller reads the file there. `NAME` with a separator, `..`, a drive or a device name is a usage error. |
-| `--no-input` | Never asks. A question that would be asked (`uninstall --purge`, a call with several targets, the elevation of a relaunch) is exit code 5 with a structured error and nothing changed. `--yes` answers those questions. The command line never asks about checksums. |
+| `--plan` | `check-updates`, `install`, `update`, `uninstall`, `switch`, `cleanup`, `link` and `self ...` resolve and plan without changing anything (except the run's log files). The plan document has one entry per target with the chosen version, the mode, `sha256` (`present` or `missing`; a malformed declared hash makes the version invalid, so that target has no plan: it is a failed entry with the stable error code `invalid-checksum` (plus `version` and `field`), exit code 2, which `--skip-checksum` never overrides), the source `url` and the `effects` to add or remove. |
+| `--events-file NAME` | The run's event stream as JSON lines, flushed per event, under the plain file name `NAME` in the log directories: `<root>\.gupkg\logs\NAME` (global events) and `<root>\<name>\.gupkg\logs\NAME` (one package's events). `run_start` names the run's stop marker; the last line, `run_end`, carries the result document. `NAME` with a separator, `..`, a drive or a device name is a usage error. |
+| `--no-input` | Never asks. A question that would be asked (`uninstall --purge`, a call with several targets) is exit code 5 with a structured error and nothing changed. `--yes` answers those questions. The command line never asks about checksums. |
 | `--skip-checksum[=REASON]` | Installs a download that has no declared SHA-256, over `https://` only. Bare, the receipt records `skipped-cli`; the manager relays `=setting` or `=user-approved`; any other value is a usage error. |
 
 A stop request is a file: `run_start.stop_file` is the path of a marker that is unique to the run; creating a file there
-makes the run finish the package it is working on and skip the rest (exit code 5). An elevated run honours it too, since it
-can only make the run stop.
+makes the run finish the package it is working on and skip the rest (exit code 5).
 
 Exit status: `0` success, `2` user or configuration error (including usage errors), `3` the operation failed,
 `4` internal error, `5` declined or input needed, `6` the package needs a newer gupkg (an unknown `pkg.toml` `format`, or an
 unmet `requires_gupkg`: a package launcher then runs its bundled gupkg).
 
 0.17 spellings are not aliases: `config-check`, `config-fix`, `doctor`, `repair-deps` and `update-deps` are unknown
-commands, and every other 0.17 option is an unrecognized argument. `gupkg tui` and `gupkg manager` are permanent forwarders to
-`gupkg-tui` and `gupkg-manager` of the same gupkg; they pass the exit code through. They refuse an
-elevated shell (they ask for administrator rights themselves, once per batch).
+commands, and every other 0.17 option is an unrecognized argument. `gupkg tui` and `gupkg manager` are pass-through commands: they
+start `gupkg-tui` and `gupkg-manager` of the same gupkg and return their exit code. The programs run in the scope of their own process
+(an administrator shell manages the system root), and they take no root option of their own: `gupkg --root DIR tui` is refused, so use
+`--settings PATH` (with `[roots].user`) or start them from the gupkg that is installed in the root.
 
 ### The UI programs: `gupkg-tui` and `gupkg-manager`
 
 Two separate programs (one Textual application each, sharing the library `gupkg_ui`) sit beside `gupkg` in the same gupkg
 tree. They never change anything themselves: every operation is a call to the `gupkg.cmd` of **their own tree** (never one on
 `PATH`) through the machine interface above (`--json`, `--plan`, `--events-file`, `--no-input`), whose `"api"` they check.
-They are standard-user programs and refuse an elevated shell; the system targets of a batch go to the CLI in **one** call,
-which asks for administrator rights once. A gupkg that is not the system gupkg (a user or bundled copy) never asks: its
-system targets are reported as needing the system gupkg.
+Each runs in one scope, the mode of its own process: started from a normal shell it manages the user root, started from an
+administrator shell (or the Start Menu entry "gupkg manager (administrator)") it manages the system root. There is no key and no
+prompt that switches scope, and the programs never ask for administrator rights. The title shows the mode and the root; the root is
+also at the left of the status line.
 
 ```text
-gupkg-tui PATH|NAME                        the package view of one package (versions, mode, link, data folder, receipt, log)
+gupkg-tui PATH|NAME                        the package view of one package (versions, link, data folder, receipt, log)
 gupkg-manager [tui]                        the browser over every package
-gupkg-manager check-updates --all [--mode M] [--no-download] [--json]
-gupkg-manager update --all [--mode M] [--yes] [--json]
-gupkg-manager check [--mode M] [--fix] [--yes] [--json]
+gupkg-manager check-updates --all [--no-download] [--yes] [--json]
+gupkg-manager update --all [--yes] [--json]
+gupkg-manager check [--fix] [--yes] [--json]
 ```
 
 Every screen has a key-hint line on top and a status line at the bottom. Browser keys: `Enter` open, `/` filter, `c` check
@@ -301,17 +325,16 @@ runs, Escape asks "Cancel after the current package?"; yes asks the CLI to stop 
 and no `--yes`, or with `--json`, it asks nothing and exits 5 with nothing changed). `[manager] checksum_missing` decides a package
 whose download has no checksum: `ask` (default) asks once per package at a terminal and behaves as `refuse` in a schedule, `refuse`
 never runs it, `skip` runs it with `--skip-checksum=setting`; a malformed declared checksum and a plain `http://` URL are never
-skippable; for a system target a value from the user settings layer or from `--settings` is not trusted. With `[cleanup] auto = true`
-an update ends with `gupkg cleanup` for each root it updated. `check-updates --all` needs no confirmation (it activates nothing); a
-system package is only reported from a normal shell (design 9.3). Exit codes follow the CLI: the highest code of a target, where a
+skippable; in a system-mode run `--settings` is refused, so only the system root's settings count. With `[cleanup] auto = true`
+an update ends with `gupkg cleanup` for the root it updated. `check-updates --all` needs no confirmation (it activates nothing). Exit codes follow the CLI: the highest code of a target, where a
 refused package counts 3 and a skipped or declined one 5. `--json` prints one document (the CLI's head, one entry per target and the
 calls made) and sends the text to standard error. When a program closes, the summary of the last run and the log path are printed
 (`[manager] keep_screen`). `--settings PATH` and `--sandbox DIR` (before the command) are relayed to every call.
 
-A scheduled task must run as a **normal user**: a Task Scheduler task with "Run with highest privileges" that starts `gupkg-manager check-updates --all` is
-refused (exit 2, the programs refuse an elevated shell), and a system package is then only reported (design 9.3). If the program is closed, its window
+A scheduled task works on the root of the account it runs as: a task that runs as a normal user manages that user's root; a task with "Run with highest privileges"
+manages the system root, and then needs a gupkg installed in an admin-only folder (an elevated run refuses any other gupkg tree, exit 2). If the program is closed, its window
 is closed or Ctrl-C is pressed while a call runs, the call is first asked to stop after its current package and then its whole process tree is ended, so
-nothing keeps running unseen; an elevated child cannot be killed by a normal process and stops through the same stop marker. A call that does not exit
+nothing keeps running unseen. A call that does not exit
 after it wrote its result is stopped after 15 seconds and its result is still used (with a warning); a cancelled call that does not stop is killed after 30 seconds.
 
 gupkg runs only on its bundled Python: `python -m gupkg` or `bootstrap.py` on any other interpreter, or without `-I`, exits
@@ -323,8 +346,9 @@ release ZIP.
 ### Settings, registries and authoring
 
 `gupkg settings show` lists every effective setting with the layer it came from; `settings path` names the file of each
-layer; `settings init` and `settings set KEY VALUE` write the user layer (`--mode system` writes the system layer from an
-administrator shell) after the schema accepted the value. `gupkg registry add NAME SOURCE` and `remove NAME` edit
+layer; `settings init` and `settings set KEY VALUE` write `<root>\.gupkg\settings.toml` of the run's root (the user's from a
+normal shell, the system root's from an administrator shell) after the schema accepted the value. The settings schema is `schema = 4`:
+a file with `schema = 3` is refused with a message that says what to change. `gupkg registry add NAME SOURCE` and `remove NAME` edit
 `[[registry]]` the same way; `registry sync` downloads the registries into `<root>\.gupkg\registry\<name>`.
 
 `gupkg pkg new NAME[@VERSION] [--track github:OWNER/REPO]` writes a starter; `pkg check PATH [--install]` validates a
@@ -362,7 +386,7 @@ Details that scripts and maintainers may rely on:
 - **Text from packages is cleaned for display.** Escape sequences and control characters in step, warning, error and
   child-process text are removed on the console and in the text log. The JSONL logs keep step, warning and error text verbatim
   (JSON escapes it); child-process lines are cleaned where they are captured.
-- **Event contract.** Each `.jsonl` line is `{"event": <name>, <fields>, "ts": <UTC>}` (`"api": 1` in `run_start`), plus the
+- **Event contract.** Each `.jsonl` line is `{"event": <name>, <fields>, "ts": <UTC>}` (`"api": 2` in `run_start`), plus the
   `log_link` record in run logs. `subprocess_line.stream` is always `"output"` in this release.
 - **Events file names.** `--events-file` accepts ASCII letters, digits and `._+-` only. A name that ends in `.log`, starts with
   `latest.`, or looks like a run's own file is refused, and an existing hard link, link or directory under the name is never
@@ -382,7 +406,7 @@ The version is the folder name and the package name is the package folder's name
 format = 2
 description = "Fast text search"                       # information only
 project_url = "https://github.com/BurntSushi/ripgrep"  # information only, never fetched
-modes = ["system", "user"]                             # system | user (default: both), or ["portable"]
+modes = ["system", "user"]                             # the modes it may be installed in (default: both), or ["portable"]
 requires_gupkg = ">=1.0"                               # minimum gupkg; an older one exits with code 6
 record_manifest = true                                 # false: no App fingerprint (very large trees only)
 
@@ -409,9 +433,9 @@ target = "$App\\rg.exe"
 ```
 
 Top-level keys are exactly: `format`, `description`, `project_url`, `modes`, `requires`, `requires_gupkg`,
-`record_manifest`, `source`, `track`, `prepare`, `portable`, `shortcut`, `env`, `path`, `shim` and
-`root_forwarder` (only gupkg's own package may use the last). There is no `version`, `localVersion`, `name`, `homepage`,
-`only_portable`, `[origin]`, `[update]`, `[[bin]]`, `[[environment]]` or `ignore_checksum`.
+`record_manifest`, `source`, `track`, `prepare`, `portable`, `shortcut`, `env`, `path` and `shim`. There is no `version`, `localVersion`, `name`, `homepage`,
+`only_portable`, `[origin]`, `[update]`, `[[bin]]`, `[[environment]]`, `ignore_checksum`, `root_forwarder`, `[user]` or `[system]` step table,
+and no `$Data` variable.
 
 Three URLs, three names. `project_url` is for people and is never fetched. `[source] download_url` is the artifact of
 *this* version. `[track] check_url` (and `repo`/`repo_url` for `github`, `gitlab` and `git`) is the page that is read to
@@ -469,7 +493,10 @@ module = "pkg.local/fix.py"                                 # escape hatch (hook
 ### Integration tables
 
 - **`[[shortcut]]`**: `name`, `target` (required), `arguments`, `working_dir`, `icon_location`, `description`. A `.lnk`
-  suffix is added to `name`.
+  suffix is added to `name`. `run_as_admin = true` sets the "Run as administrator" flag of the link, so that Windows shows the
+  UAC prompt when the shortcut is opened (gupkg itself contains no elevation code; gupkg's own "gupkg manager (administrator)"
+  entry is made this way). `modes = ["system"]` (a non-empty subset of the package's `modes`, never `portable`) creates the
+  shortcut only in those modes; without it the shortcut belongs to every mode of the package.
 - **`[[env]]`**: `name`, `value` (exact case). Written as expandable registry strings. Reserved system variables (`Path`,
   `SystemRoot`, ...) are refused.
 - **`[[path]]`**: one `value`; added to `PATH` only when not already present. An entry that starts with an environment variable (`%LOCALAPPDATA%\Voltain`) is valid only in a package whose `modes`
@@ -549,8 +576,8 @@ target = "$App\\pandoc.exe"
 
 gupkg never computes a hash after a download and writes it into `pkg.toml`; the hash it observed goes into the receipt only
 (`gupkg pkg pin` copies it into `pkg.toml` on request, after showing where it came from). A later and separate `gupkg
-update NAME` activates the new version. From a normal shell, `check-updates` of a *system* package only reports; an
-administrator runs it from an elevated shell to write into the system root.
+update NAME` activates the new version. `check-updates` writes into the run's own root, so for a system package it runs
+from an administrator shell.
 
 **Providers** (`[track].provider`):
 
