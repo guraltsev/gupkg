@@ -1,7 +1,7 @@
 format = 2
 description = "Disk benchmark utility."
 project_url = "https://crystalmark.info/"
-modes = ["system", "user", "portable"]
+modes = ["system", "user"]
 
 [track]
 provider = "redirect"
@@ -12,10 +12,6 @@ match = '/files/(?P<version>\d+(?:\.\d+)+)/'
 # The publisher provides no checksum for this release asset.
 [source]
 download_url = "${download_url}"
-
-# UNVERIFIED upstream portable mechanism
-[portable]
-persist = ["DiskMark.ini"]
 
 [[shortcut]]
 name = "Tools\\CrystalDiskMark"

@@ -34,7 +34,7 @@ def main() -> None:
         (work / "temp").mkdir()
         settings = work / "settings.toml"
         settings.write_text(
-            f"schema = 3\n[roots]\nsystem = '{work}\\sys\\opt'\nuser = '{work}\\home\\opt'\nportable = '{work}\\home\\opt-portable'\n"
+            f"schema = 3\n[roots]\nsystem = '{work}\\sys\\opt'\nuser = '{work}\\home\\opt'\n"
             f"[integration.user]\nbin = '{work}\\home\\bin'\nstart_menu = '{work}\\home\\sm'\n"
             f"[integration.system]\nbin = '{work}\\sys\\bin'\nstart_menu = '{work}\\sys\\sm'\n",
             encoding="utf-8",

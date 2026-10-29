@@ -20,16 +20,8 @@ replace = true
 
 # The ".portable" marker changes Mogan's runtime behaviour; the package manager
 # already isolates App, so it is removed (the 0.17 hook did the same).
-# UNVERIFIED upstream portable mechanism
-[user]
-prepare = [
-    ["remove", ".portable"],
-]
-
-[system]
-prepare = [
-    ["remove", ".portable"],
-]
+[[prepare]]
+remove = [".portable"]
 
 [[shortcut]]
 name = "Mogan STEM"
