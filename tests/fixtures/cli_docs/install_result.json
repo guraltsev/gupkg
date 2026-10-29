@@ -1,0 +1,26 @@
+{
+  "api": 2,
+  "command": "install",
+  "ok": true,
+  "exit_code": 0,
+  "results": [
+    {
+      "package": "gamma",
+      "operation": "install",
+      "ok": true,
+      "status": "installed",
+      "version": "1.0.0",
+      "previous": null,
+      "mode": "user",
+      "exit_code": 0,
+      "receipt": "@ROOT@\\home\\opt\\gamma\\1.0.0\\App.info",
+      "log": "@ROOT@\\home\\opt\\gamma\\.gupkg\\logs\\20261029T175522Z-install.log",
+      "warnings": [],
+      "details": {
+        "origin": "local",
+        "populated": false
+      }
+    }
+  ],
+  "warnings": []
+}

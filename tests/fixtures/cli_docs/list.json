@@ -1,0 +1,47 @@
+{
+  "api": 2,
+  "command": "list",
+  "ok": true,
+  "exit_code": 0,
+  "mode": "user",
+  "root": "@ROOT@\\home\\opt",
+  "packages": [
+    {
+      "name": "alpha",
+      "status": "outdated",
+      "version": "1.0.0",
+      "newest_known": "2.0.0",
+      "path": "@ROOT@\\home\\opt\\alpha",
+      "restriction": null,
+      "restriction_reason": null,
+      "following": null,
+      "problems": [],
+      "warnings": []
+    },
+    {
+      "name": "beta",
+      "status": "outdated",
+      "version": "1.0.0",
+      "newest_known": "2.0.0",
+      "path": "@ROOT@\\home\\opt\\beta",
+      "restriction": null,
+      "restriction_reason": null,
+      "following": null,
+      "problems": [],
+      "warnings": []
+    },
+    {
+      "name": "gamma",
+      "status": "local",
+      "version": null,
+      "newest_known": "1.0.0",
+      "path": "@ROOT@\\home\\opt\\gamma",
+      "restriction": null,
+      "restriction_reason": null,
+      "following": null,
+      "problems": [],
+      "warnings": []
+    }
+  ],
+  "warnings": []
+}

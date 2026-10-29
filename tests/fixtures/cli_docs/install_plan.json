@@ -1,0 +1,103 @@
+{
+  "api": 2,
+  "command": "install",
+  "ok": true,
+  "exit_code": 0,
+  "plan": true,
+  "plans": [
+    {
+      "target": "copyq",
+      "ok": true,
+      "exit_code": 0,
+      "plan": {
+        "operation": "install",
+        "package": "copyq",
+        "path": "@ROOT@\\home\\opt\\copyq",
+        "mode": "user",
+        "version": "1.0.0",
+        "previous": null,
+        "effects": [],
+        "phases": [
+          {
+            "name": "Resolve",
+            "skipped": false,
+            "steps": [
+              "copyq  1.0.0 (registry main)",
+              "user root @ROOT@\\home\\opt (--root)",
+              "copy @ROOT@\\home\\opt\\.gupkg\\registry\\main\\trees\\aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\pkgs\\copyq\\1.0.0 into the package root (from registry main)"
+            ]
+          },
+          {
+            "name": "Fetch",
+            "skipped": false,
+            "steps": [
+              "download https://example.org/tool-1.0.0.zip"
+            ]
+          },
+          {
+            "name": "Verify",
+            "skipped": false,
+            "steps": [
+              "checksum: missing"
+            ]
+          },
+          {
+            "name": "Unpack",
+            "skipped": false,
+            "steps": [
+              "unpack the download"
+            ]
+          },
+          {
+            "name": "Prepare",
+            "skipped": false,
+            "steps": [
+              "run the prepare steps, rename the finished App into place"
+            ]
+          },
+          {
+            "name": "Activate",
+            "skipped": false,
+            "steps": [
+              "switch current to 1.0.0"
+            ]
+          },
+          {
+            "name": "Integrate",
+            "skipped": true,
+            "steps": [],
+            "reason": "no effect changes"
+          },
+          {
+            "name": "Finish",
+            "skipped": false,
+            "steps": [
+              "write the receipt and the install record"
+            ]
+          }
+        ],
+        "notes": [],
+        "populate": {
+          "kind": "download",
+          "needed": true,
+          "reason": "App is missing",
+          "recoverable": true,
+          "url": "https://example.org/tool-1.0.0.zip",
+          "checksum": {
+            "sha256": "missing",
+            "url": "https://example.org/tool-1.0.0.zip",
+            "url_from": "registry main",
+            "skippable": true
+          }
+        },
+        "sha256": "missing",
+        "url": "https://example.org/tool-1.0.0.zip",
+        "copy_in": {
+          "origin": "registry",
+          "source": "@ROOT@\\home\\opt\\.gupkg\\registry\\main\\trees\\aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\pkgs\\copyq\\1.0.0",
+          "registry": "main"
+        }
+      }
+    }
+  ]
+}

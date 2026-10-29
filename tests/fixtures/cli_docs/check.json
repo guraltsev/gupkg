@@ -1,0 +1,28 @@
+{
+  "api": 2,
+  "command": "check",
+  "ok": true,
+  "exit_code": 0,
+  "results": [
+    {
+      "package": "alpha",
+      "operation": "check",
+      "ok": true,
+      "status": "healthy",
+      "version": "1.0.0",
+      "previous": null,
+      "mode": "user",
+      "exit_code": 0,
+      "receipt": null,
+      "log": null,
+      "warnings": [],
+      "details": {
+        "installed": true,
+        "problems": [],
+        "notes": [],
+        "fixed": []
+      }
+    }
+  ],
+  "warnings": []
+}

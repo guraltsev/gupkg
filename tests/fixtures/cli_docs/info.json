@@ -1,0 +1,50 @@
+{
+  "api": 2,
+  "command": "info",
+  "ok": true,
+  "exit_code": 0,
+  "mode": "user",
+  "root": "@ROOT@\\home\\opt",
+  "packages": [
+    {
+      "name": "alpha",
+      "status": "outdated",
+      "version": "1.0.0",
+      "newest_known": "2.0.0",
+      "path": "@ROOT@\\home\\opt\\alpha",
+      "restriction": null,
+      "restriction_reason": null,
+      "following": null,
+      "problems": [],
+      "warnings": [],
+      "versions": [
+        {
+          "name": "1.0.0",
+          "status": "populated",
+          "problems": [],
+          "label": null
+        },
+        {
+          "name": "2.0.0",
+          "status": "populated",
+          "problems": [],
+          "label": null
+        }
+      ],
+      "registry_versions": [],
+      "tracker": null,
+      "link": null,
+      "not_followed": null,
+      "diverged": [],
+      "notes": [],
+      "checksum": null,
+      "self_reported": false,
+      "log": "@ROOT@\\home\\opt\\alpha\\.gupkg\\logs\\20261029T175519Z-install.log",
+      "receipts": [
+        "1.0.0"
+      ],
+      "last_check": null
+    }
+  ],
+  "errors": []
+}
