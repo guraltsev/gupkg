@@ -218,7 +218,6 @@ def check_directory(path: Path, *, package: str | None = None) -> CheckReport:
     except ManifestError as exc:
         return CheckReport(path, kind, errors=(*errors, *exc.problems))
 
-
     # The files the manifest names must exist and must stay inside this directory.
     named = list(manifest.referenced_hooks())
     if manifest.track is not None and manifest.track.provider == "module":

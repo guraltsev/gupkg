@@ -1,4 +1,4 @@
-"""Run the public ``gupkg`` command line: one grammar, one machine interface and the forwarders to the separate programs.
+"""Run the public ``gupkg`` command line: one grammar, one machine interface and the pass-through commands to the separate programs.
 
 Every command takes explicit targets (names or paths, design section 10.1) and options after the command. The lifecycle
 commands (``check-updates``, ``install``, ``update``, ``switch``, ``uninstall``, ``check``, ``cleanup``, ``link`` and the
@@ -37,7 +37,7 @@ from . import authoring, settingsedit
 from ._version import __version__
 from .authoring import AuthoringError
 from .catalog.catalog import Catalog, CatalogError, ListFilter, parse_selector
-from .catalog.registry import cache_state, load_registry, registry_cache_dir, sync_registry
+from .catalog.registry import cache_state, registry_cache_dir, sync_registry
 from .engine import lifecycle
 from .engine.context import Engine, stop_marker
 from .engine.errors import describe

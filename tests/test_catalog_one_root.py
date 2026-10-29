@@ -100,7 +100,7 @@ def test_a_package_with_current_and_no_install_record_is_broken_and_left_alone(s
 
     assert view.status == "broken" and [item.status for item in listed] == ["broken"]
     assert view.broken_reasons == (
-        "no install record (made by an older gupkg); reinstall with: gupkg install foo --force",
+        "no install record (made by an older gupkg); reinstall with: gupkg install foo",
     )
     assert tree_snapshot(roots["user"]) == before
     assert not (package / ".gupkg").exists()

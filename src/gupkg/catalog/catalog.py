@@ -650,7 +650,7 @@ class Catalog:
         if read.problem:
             problems.append(read.problem)
         elif record is None and local.current.status != "absent":
-            problems.append(f"no install record (made by an older gupkg); reinstall with: gupkg install {name} --force")
+            problems.append(f"no install record (made by an older gupkg); reinstall with: gupkg install {name}")
         if record is not None and record.mode is not None and record.mode != self.scope.mode:
             problems.append(f"the install record says {record.mode}; this package was moved between scopes — reinstall it")
 

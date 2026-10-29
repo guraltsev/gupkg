@@ -210,7 +210,7 @@ def build_bundle(
                 encoding="utf-8",
             )
 
-        # The commands of the tree: what the root forwarder, the shims and the package launchers call (design 21.2).
+        # The commands of the tree: what gupkg-location, the shims and the package launchers call (design 21.2).
         for wrapper_name in ("gupkg.cmd", "gupkg-tui.cmd", "gupkg-manager.cmd"):
             wrapper = source.parent / wrapper_name
             if wrapper.is_file():
