@@ -37,7 +37,7 @@ gupkg self status               :: is gupkg's own installation healthy?
 
 | Message | Code | What it means and what to do |
 | --- | --- | --- |
-| `package 'x' was not found in any root or registry` / `Path does not exist: ...` | `not-found` | Check the name or path. A name searches the roots and the synced registries (`gupkg registry sync`). |
+| `package 'x' was not found in the root or any registry` / `Path does not exist: ...` | `not-found` | Check the name or path. A name searches the roots and the synced registries (`gupkg registry sync`). |
 | `... is not a version directory: its name is reserved or not a safe folder name` | `not-found` | The folder is `current`, starts with `.` or `_`, or has an unsafe name. Give the version folder. |
 | `'x' is not installed; use gupkg install x` | `not-installed` | `switch`, `uninstall` and `update` only act on installed packages; `update` never installs. |
 | `'x' is not a local package, so there is nothing to check; use gupkg install x` | `not-installed` | `check-updates` needs a package folder with a tracker. |
@@ -47,29 +47,29 @@ gupkg self status               :: is gupkg's own installation healthy?
 | `needs repair` | `needs-repair` | The active version's integration or `current` is broken. Run `gupkg install x` or `gupkg check x --fix`. |
 | `registry entry 'x' was not found` | `not-found` | `gupkg link` names an entry that is not in any synced registry. |
 
-### Modes, elevation and trust (`refused`, `untrusted-location`, exit 2 or 5)
+### Scopes, modes and trust (`refused`, `untrusted-location`, `name-conflict`, exit 2 or 5)
+
+A run has one scope: the mode of its process (an elevated process is system mode, any other is user mode) and one root. gupkg
+never starts an elevated copy of itself, so none of these messages can be answered by a prompt; they say which shell to use.
 
 | Message | What it means and what to do |
 | --- | --- |
-| `This call needs administrator rights, and this run does not know where its own gupkg is ...` | gupkg cannot place itself (a source checkout). Install it with the bootstrap. |
-| `System installs need the system gupkg. This gupkg runs from ..., and ... can be changed by standard users` | A user-writable or bundled gupkg never starts an elevated copy of itself. Install gupkg system-wide (`gupkg-bootstrap.cmd -Scope system` from an administrator shell) and run that one. |
-| `System mode needs administrator rights. Relaunch gupkg elevated for this call? ... Pass --yes` (exit 5) | A question under `--no-input`, or declined. `--yes` answers it. `Elevation was declined` and `The elevation prompt was not accepted` mean the UAC prompt was refused; nothing changed. |
-| `The elevated gupkg is not started: ... is not allowed in a command that runs with administrator rights` | A target or option value holds `& \| < > ^ " % !`, a backtick, a control character or starts with `-`. Rename the folder, or run gupkg from an administrator shell. |
-| `Stopped waiting for the elevated gupkg after an interrupt; it may still be running` | Ctrl-C reached the waiting parent. The elevated child stops after its current package (stop marker); read its events file in the system root's `.gupkg\logs`. |
-| `The elevated gupkg was started, but waiting for it failed` (`process-failed`) | Read the system root's logs: the child may still be running or may have finished. |
-| `Refusing mode user in an elevated run: an elevated gupkg acts only on system packages` / `Refusing <folder> in an elevated run: ...` (`untrusted-location`) | An elevated gupkg never acts on a user or portable root and never reads a folder that a standard user can change. Use a normal shell, or an admin-only folder. |
-| `--mode x contradicts the qualifier of 'user:name'` / `Unknown install mode` | Do not combine a `user:` or `system:` prefix with a different `--mode`. Modes are `system`, `user`, `portable`. |
-| `The portable root ... is the system root / lies inside the system root / is the user root` | A portable root is never machine-wide and never the user root. Choose another folder. |
-| `No portable root is configured and none was given ...` (exit 5) | Set `[roots].portable` in `settings.toml`, or give `--mode portable` a folder shaped `<name>\<version>\pkg.toml`. |
-| `The roots differ between the system settings and the settings of a normal run` | A user layer changes a root. Make the system layer alone name the roots. |
-| `... is outside every root and is not a version directory` | A folder you named is not a version folder (no `pkg.toml`). Name the version folder. |
+| `This package installs only system-wide. Run gupkg as administrator: use the Start Menu entry "gupkg manager (administrator)", or run in an administrator shell: gupkg <command> <name>` | The package's `modes` is `["system"]` and this run is a user run. Open an administrator shell (or the Start Menu entry) and run the command there. |
+| `This package installs only for a single user. Run gupkg without administrator rights.` / `This is a portable package: it installs only for a single user. ...` | The package is `["user"]` or portable and this run is elevated. Run the command from a normal shell. `uninstall`, `check` and `cleanup` are never refused this way. |
+| `x cannot be installed: it would provide the shim 'y' (...), which the installed package 'z' already provides. Uninstall 'z' first, or use a package definition with a different name.` (`name-conflict`) | Two packages would put the same shim, shortcut or environment variable on the machine (`copyq` and `copyq-portable` do). Install only one of them, or uninstall the other first. Two targets of one call that clash are both refused. `check` reports a clash that is already on disk and changes nothing. |
+| `<path> is not inside this scope's root (<root>)` | A path names a folder outside the run's root (for example the other mode's root). A run reads and writes only its own root. Run from the right shell, or give `--root`. A version directory outside the root (an unzipped distribution) is copied in; any other path is refused. |
+| `the install record says user; this package was moved between scopes` (`broken`) | The package was installed by the other mode. Reinstall it with `gupkg install <name>` in this run's mode, or run gupkg in the mode that installed it. |
+| `no install record (made by an older gupkg); reinstall with: gupkg install <name>` (`broken`) | A package folder without `.gupkg\package.toml`. gupkg changes nothing in it by itself; `gupkg install <name>` rebuilds it and writes the record, and `install <name> --refresh` rebuilds the App too. |
+| `--root X is not admin-only, so it cannot be the system root: ...` | In an elevated run `--root` must be a folder only Administrators can change. |
+| `--settings is not accepted in system mode: an elevated run reads only admin-only files` | An elevated run takes no `--settings`. Put the setting in the system root's `.gupkg\settings.toml`. |
+| `settings schema 3 is no longer read; change it to schema = 4` | An old settings file. Change `schema` to 4; `[integration.system]` and `[integration.user]` become one `[integration]` table, the mode setting and the portable root setting are gone. |
+| `Refusing <folder> in an elevated run: ...` (`untrusted-location`) | An elevated run never reads or runs a folder that a standard user can change. Use an admin-only folder, or run in a normal shell on a user root. |
+| `an elevated gupkg must be installed in an admin-only root; run the system gupkg ...` | The gupkg tree an administrator started is user-writable (a user install, a bundled copy in Downloads, a source checkout). Run the gupkg installed in `C:\opt` instead, or install it with `gupkg-bootstrap.cmd -Scope system` from an administrator shell. |
+| `This gupkg is installed in <root>, but the user root of this run is <other>, so `gupkg update gupkg` would look for it there. Run it from an administrator shell.` (`self update`, `self repair`, `self check-updates`) | These act on the root of the run. A system gupkg is updated from an administrator shell; a gupkg installed in another root, from a run on that root. |
 | `<name> <version> is older than the active version <active>. Install it anyway?` (exit 5 with `--no-input`) | Answer yes, or pass `--allow-downgrade` (or `--yes`). `gupkg switch <name> <version>` goes back without asking. |
 | `<name> has other version directories that are broken or not supported: ...` (exit 5 with `--no-input`) | Fix or delete those folders, or pass `--allow-other-broken-versions` (or `--yes`) to install anyway. |
-| `--in-place with system mode needs an admin-only folder` | Copy the distribution into a root (the default) or place it in an admin-only folder. |
-| `Refusing to run elevated: ... is not admin-only` | gupkg's own folders can be changed by standard users, so an elevated run refuses. Run the `icacls` command in the message from an elevated prompt, or install gupkg under an admin-only folder. |
 | `The bundled Python is missing: ...` or an `ImportError` in gupkg itself | The install is damaged. `gupkg self status` shows which files differ from `MANIFEST.sha256`; install the release ZIP again with `gupkg-bootstrap.cmd`. gupkg never repairs or downloads its runtime. |
-| `mixed-modes`: `x was not run: this call needs an elevated gupkg for its system targets.` | A call with system and user targets relaunched elevated for the system ones and left the rest out (exit 2 for them). Run the user and portable targets in a separate call, or use `gupkg-manager`, which groups them. |
-
+| A mode prefix such as `user:firefox`: `a target no longer names a mode` | Remove the prefix. The mode of a run is the mode of its shell. |
 ### Checksums (exit 2 or 3)
 
 | Code and message | What it means and what to do |
@@ -109,10 +109,10 @@ gupkg self status               :: is gupkg's own installation healthy?
 | `... exists and differs from <distribution>; it was left alone.` (`DistributionRefused`) | The root already holds a different copy of that version. Compare it; delete it deliberately and install again. |
 | `... is a link or junction; a distribution folder must contain only real files` / `holds more than N files` / `is nested deeper than N folders` | A distribution folder is copied only if it is plain and bounded. Export a clean one with `gupkg pkg export`. |
 | `... changed while it was being copied; nothing was installed` | The source changed during the copy; run again. |
-| `[gupkg] gupkg is not installed, and none is bundled with this package.` (exit 9009) | The root has no `.gupkg\gupkg.cmd` and the folder carries no `gupkg\`. Run `gupkg-bootstrap.cmd` once. |
+| `[gupkg] gupkg is not installed, and none is bundled with this package.` (exit 9009) | The folder carries no `gupkg\`, the root has no usable `.gupkg\gupkg-location` (the launcher prints `Skipped ...` and why) and no `gupkg.cmd` or `gupkg.exe` is on `PATH`. Run `gupkg-bootstrap.cmd` once. |
 | `[gupkg] Cannot tell whether this run is elevated, so it is refused.` | The launcher could not read the integrity level (`whoami`); run it from a normal or an elevated shell with `%SystemRoot%\System32` intact. |
-| `[gupkg] Refusing to run elevated: something this launcher would run can be changed by a standard user ...` | An elevated launcher found a folder a standard user can change. Install from the installed system gupkg instead: `gupkg install <folder> --mode system` in an administrator shell. |
-| `The installed gupkg cannot handle this package; using the gupkg bundled with it.` | Exit code 6 from the installed gupkg: the launcher finished with the bundled copy. Update gupkg (`self check-updates`, `self update`). |
+| `[gupkg] Refusing to run elevated: something this launcher would run can be changed by a standard user ...` | An elevated launcher found a folder a standard user can change. Install from the installed system gupkg instead: `gupkg install <folder>` in an administrator shell. An elevated launcher also skips a `PATH` entry or `gupkg-location` folder that a standard user can change (`Skipped PATH entry ...`). |
+| `[gupkg] The gupkg ... cannot handle this package; trying the next one.` | Exit code 6 from the gupkg the launcher tried first: it went on to the next one (bundled copy, `gupkg-location`, `PATH`). Update gupkg (`self check-updates`, `self update`). |
 | `gupkg-bootstrap`: `No version directory ... was found` / `refusing an existing C:\opt that is not admin-only` | The ZIP or folder is not a gupkg distribution, or `C:\opt` was created by someone else. Fix its permissions or use the right ZIP. |
 | A package launcher misbehaves with `%`, `^` or `"` in an argument | The launchers forward arguments through `cmd.exe`, which expands `%` and treats `^` and quotes specially. Run `gupkg ...` directly for such arguments, and avoid these characters in launcher arguments. |
 
@@ -130,13 +130,12 @@ gupkg self status               :: is gupkg's own installation healthy?
 
 | Message | What it means and what to do |
 | --- | --- |
-| A UI program exits with `refuse an elevated shell` | `gupkg-tui` and `gupkg-manager` are standard-user programs. Start them from a normal shell; they ask for administrator rights themselves, once per batch. A scheduled task with "highest privileges" is refused too. |
-| `the system gupkg is needed` for system targets | This gupkg is a user or bundled copy and never asks for administrator rights. Use the installed system gupkg. |
+| The manager shows no system packages, or the title says `user` | `gupkg-manager` manages the scope of its own process. Start it from an administrator shell, or from the Start Menu entry "gupkg manager (administrator)", for the system root; a normal shell shows the user root. There is no key that switches. |
+| `gupkg: error: --settings, --root and --sandbox are not passed on to gupkg-manager` | `gupkg --root DIR manager` is refused. The programs take no root option: start them from the gupkg installed in that root, or give `gupkg-manager --settings PATH` a file with `[roots].user`. |
 | `update --all` exits 5 with nothing changed | There is no terminal and no `--yes`, or `--json` was given. Add `--yes`. |
 | A package is refused with `checksum-missing` in a schedule | `ask` behaves as `refuse` without a terminal. Pin a hash, or set `[manager] checksum_missing = "skip"` knowingly. |
-| `child-no-result` / a run ends without `run_end` | The elevated or child call died without a result; check the system root's `.gupkg\logs`. |
+| A run ends without `run_end` | The call died without a result; read the log of the run (`gupkg logs <name> --path`, or `<root>\.gupkg\logs`). |
 | A call that does not exit after its result | It is stopped after 15 seconds and its result is used with a warning; a cancelled call that does not stop is killed after 30 seconds. |
-
 ## A security warning when running install.cmd, or SmartScreen and Smart App Control
 
 A distribution that you downloaded with a browser has the Mark of the Web on the ZIP. Extracting it with Explorer
