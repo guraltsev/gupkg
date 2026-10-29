@@ -305,8 +305,8 @@ tree. They never change anything themselves: every operation is a call to the `g
 `PATH`) through the machine interface above (`--json`, `--plan`, `--events-file`, `--no-input`), whose `"api"` they check.
 Each runs in one scope, the mode of its own process: started from a normal shell it manages the user root, started from an
 administrator shell (or the Start Menu entry "gupkg manager (administrator)") it manages the system root. There is no key and no
-prompt that switches scope, and the programs never ask for administrator rights. The title shows the mode and the root; the root is
-also at the left of the status line.
+prompt that switches scope, and the programs never ask for administrator rights. The left of the status line shows the mode and the root
+(`user · C:\…\opt`).
 
 ```text
 gupkg-tui PATH|NAME                        the package view of one package (versions, link, data folder, receipt, log)
@@ -318,7 +318,7 @@ gupkg-manager check [--fix] [--yes] [--json]
 
 Every screen has a key-hint line on top and a status line at the bottom. Browser keys: `Enter` open, `/` filter, `c` check
 for updates (`C` all), `u` update (`U` all outdated), `i` install or repair, `x` uninstall, `h` health check, `l` log, `a` registry
-packages, `r` reload, `?` help. The package view has `c u r s x h l` (`s` switches version, `X` purges, `H` fixes). While something
+packages (those this mode cannot install are marked `system only` or `user only`), `s` synchronise the registry, `r` reload, `?` help. The package view has `c u r s x h l` (`s` switches version, `X` purges, `H` fixes, `g` reloads). The hint line names the main keys only; `?` lists them all. While something
 runs, Escape asks "Cancel after the current package?"; yes asks the CLI to stop after the package it is working on and skips the rest.
 
 `update --all` plans with `gupkg update <targets> --plan --json`, shows the plan and asks **once** (`--yes` answers; with no terminal
