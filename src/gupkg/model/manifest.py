@@ -50,7 +50,9 @@ from .trackspec import TrackSpecError, check_header_map, parse_spec
 from .version import TRACKER_DIR_NAME, compare_versions, is_version_name
 
 FORMAT = 2
-MODES = ("system", "user", "portable")
+MODES = ("system", "user")
+# A package is portable when its ``modes`` is exactly ``["portable"]``: it installs in the user root only (issue 035 4.6).
+PORTABLE = "portable"
 DEFAULT_MODES = ("system", "user")
 SOURCE_KINDS = ("zip", "7z", "tar", "sfx", "nsis", "msi", "exe", "file", "git")
 SHA256_FROM = ("github-digest", "vendor-sums", "registry", "manual")
@@ -164,7 +166,7 @@ def is_reserved_env_name(name: str) -> bool:
 
 _TOP_KEYS = (
     "format", "description", "project_url", "modes", "requires", "requires_gupkg", "record_manifest",
-    "source", "track", "prepare", "portable", "user", "system", "shortcut", "env", "path", "shim", "root_forwarder",
+    "source", "track", "prepare", "portable", "shortcut", "env", "path", "shim", "root_forwarder",
 )
 _SOURCE_KEYS = (
     "download_url", "script", "shipped", "sha256", "sha256_from", "kind", "strip", "subdir",
@@ -451,20 +453,10 @@ class Marker:
 
 @dataclass(frozen=True)
 class Portable:
-    """What a portable install keeps and passes, and the steps it runs (``[portable]``)."""
+    """What a portable package keeps and creates (``[portable]``): the persisted items and the marker files."""
 
     persist: tuple[str, ...] = ()
     markers: tuple[Marker, ...] = ()
-    args: tuple[str, ...] = ()
-    env: Mapping[str, str] = field(default_factory=dict)
-    prepare: tuple[PrepareStep, ...] = ()
-
-
-@dataclass(frozen=True)
-class ModeSteps:
-    """The install-time steps of one mode (``[user]`` or ``[system]``): ``prepare = [["remove", "a"], ["create", "b"], ...]``."""
-
-    prepare: tuple[PrepareStep, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -527,17 +519,20 @@ class Manifest:
     track: Track | None = None
     prepare: tuple[PrepareStep, ...] = ()
     portable: Portable | None = None
-    user: ModeSteps | None = None
-    system: ModeSteps | None = None
     shortcuts: tuple[Shortcut, ...] = ()
     envs: tuple[EnvVar, ...] = ()
     paths: tuple[str, ...] = ()
     shims: tuple[Shim, ...] = ()
     root_forwarder: RootForwarder | None = None
 
+    @property
+    def is_portable(self) -> bool:
+        """Return whether the package is portable (``modes = ["portable"]``): it installs in the user root only."""
+        return self.modes == (PORTABLE,)
+
     def supports(self, mode: str) -> bool:
-        """Return whether the package declares *mode* in ``modes``."""
-        return mode in self.modes
+        """Return whether the package may be installed in *mode*: it is in ``modes``, or the package is portable and the mode is ``user``."""
+        return mode == "user" if self.is_portable else mode in self.modes
 
     def referenced_hooks(self) -> tuple[str, ...]:
         """Return the ``pkg.local`` files that ``[source]`` and ``[[prepare]]`` reference.
@@ -757,13 +752,10 @@ def _local_script(collector: _Collector, value: str, where: str, *, suffixes: tu
     return normal
 
 
-def _check_variables(collector: _Collector, text: str, where: str, modes: tuple[str, ...], *,
-                     installer: bool = False) -> None:
+def _check_variables(collector: _Collector, text: str, where: str, *, installer: bool = False) -> None:
     """Check the ``$Name`` path variables of one expanded string."""
     for name in path_variables(text):
         if name in PATH_VARIABLES:
-            if name == "Data" and "portable" not in modes:
-                collector.error(where, "$Data is valid only when 'portable' is in modes")
             continue
         if installer and name in INSTALLER_VARIABLES:
             continue
@@ -856,20 +848,18 @@ def parse_manifest_data(data: Mapping[str, Any], kind: ManifestKind = ManifestKi
         requires_gupkg = None
     record_manifest = collector.boolean(data, "record_manifest", "")
 
-    source = _parse_source(collector, data.get("source"), modes)
+    source = _parse_source(collector, data.get("source"))
     track = _parse_track(collector, data.get("track"))
     prepare = _parse_prepare(collector, data.get("prepare"))
     portable = _parse_portable(collector, data.get("portable"), modes)
-    user = _parse_mode_steps(collector, data.get("user"), "user", modes)
-    system = _parse_mode_steps(collector, data.get("system"), "system", modes)
-    shortcuts = _parse_shortcuts(collector, data.get("shortcut"), modes)
-    envs = _parse_envs(collector, data.get("env"), modes)
+    shortcuts = _parse_shortcuts(collector, data.get("shortcut"))
+    envs = _parse_envs(collector, data.get("env"))
     paths = _parse_paths(collector, data.get("path"), modes)
-    shims = _parse_shims(collector, data.get("shim"), modes)
+    shims = _parse_shims(collector, data.get("shim"))
     root_forwarder = _parse_root_forwarder(collector, data.get("root_forwarder"))
 
     # Templates: nothing in a version directory, anything well-formed in a tracker.
-    for key in ("description", "project_url", "prepare", "portable", "user", "system", "shortcut", "env", "path", "shim"):
+    for key in ("description", "project_url", "prepare", "portable", "shortcut", "env", "path", "shim"):
         if key in data:
             _check_templates(collector, data[key], key, source_table=False)
     if "source" in data:
@@ -899,8 +889,6 @@ def parse_manifest_data(data: Mapping[str, Any], kind: ManifestKind = ManifestKi
         track=track,
         prepare=prepare,
         portable=portable,
-        user=user,
-        system=system,
         shortcuts=shortcuts,
         envs=envs,
         paths=paths,
@@ -910,22 +898,25 @@ def parse_manifest_data(data: Mapping[str, Any], kind: ManifestKind = ManifestKi
 
 
 def _parse_modes(collector: _Collector, data: Mapping[str, Any]) -> tuple[str, ...]:
-    """Parse ``modes``: a non-empty list of distinct known modes, default system and user."""
+    """Parse ``modes``: ``system`` and/or ``user`` (default both), or ``["portable"]`` alone (a portable package, user only)."""
     if "modes" not in data:
         return DEFAULT_MODES
     value = data["modes"]
+    known = (*MODES, PORTABLE)
     if not isinstance(value, list) or not value or any(not isinstance(item, str) for item in value):
-        collector.error("modes", f"must be a non-empty array of {', '.join(MODES)}")
+        collector.error("modes", f"must be a non-empty array of {', '.join(known)}")
         return DEFAULT_MODES
-    bad = [item for item in value if item not in MODES]
+    bad = [item for item in value if item not in known]
     for item in bad:
-        collector.error("modes", f"unknown mode '{item}'{_hint(item, MODES)}")
+        collector.error("modes", f"unknown mode '{item}'{_hint(item, known)}")
     if len(set(value)) != len(value):
         collector.error("modes", "lists a mode twice")
+    if PORTABLE in value and len(set(value)) > 1 and not bad:
+        collector.error("modes", 'a package is portable or not; publish a separate "<name>-portable" package')
     return tuple(value) if not bad else DEFAULT_MODES
 
 
-def _parse_source(collector: _Collector, raw: Any, modes: tuple[str, ...]) -> Source:
+def _parse_source(collector: _Collector, raw: Any) -> Source:
     """Parse ``[source]``: one table that says how ``App`` is populated."""
     if raw is None:
         return Source()
@@ -998,7 +989,7 @@ def _parse_source(collector: _Collector, raw: Any, modes: tuple[str, ...]) -> So
 
     # Sub-tables and arrays of tables are parsed by their own functions.
     checksum = _parse_checksum(collector, table.get("checksum"))
-    installer = _parse_installer(collector, table.get("installer"), modes)
+    installer = _parse_installer(collector, table.get("installer"))
     git = _parse_git(collector, table.get("git"), kind)
     nested = _parse_nested(collector, table.get("nested"))
     extract = _parse_extract(collector, table.get("extract"))
@@ -1076,7 +1067,7 @@ def _parse_checksum(collector: _Collector, raw: Any) -> Checksum | None:
     return Checksum(**values, optional=optional)
 
 
-def _parse_installer(collector: _Collector, raw: Any, modes: tuple[str, ...]) -> Installer | None:
+def _parse_installer(collector: _Collector, raw: Any) -> Installer | None:
     """Parse ``[source.installer]``: the arguments of a vendor installer."""
     if raw is None:
         return None
@@ -1088,7 +1079,7 @@ def _parse_installer(collector: _Collector, raw: Any, modes: tuple[str, ...]) ->
     if "run" not in table:
         collector.error("source.installer.run", "is required")
     for text in run:
-        _check_variables(collector, text, "source.installer.run", modes, installer=True)
+        _check_variables(collector, text, "source.installer.run", installer=True)
     return Installer(run)
 
 
@@ -1260,15 +1251,18 @@ def _parse_prepare_step(collector: _Collector, name: str, value: Any, where: str
 
 
 def _parse_portable(collector: _Collector, raw: Any, modes: tuple[str, ...]) -> Portable | None:
-    """Parse ``[portable]``; it needs ``portable`` in ``modes``."""
+    """Parse ``[portable]``: ``persist`` and ``markers``. It is required when ``modes = ["portable"]`` and allowed only then."""
+    is_portable = modes == (PORTABLE,)
     if raw is None:
+        if is_portable:
+            collector.error("portable", 'is required when modes is ["portable"]')
         return None
     table = collector.table(raw, "portable")
     if table is None:
         return None
-    collector.keys(table, ("persist", "markers", "args", "env", "prepare"), "portable")
-    if "portable" not in modes:
-        collector.error("portable", "needs 'portable' in modes")
+    collector.keys(table, ("persist", "markers"), "portable")
+    if not is_portable:
+        collector.error("portable", 'needs modes = ["portable"]')
     persist = tuple(
         item for item in (_relative_path(collector, value, "portable.persist")
                           for value in collector.strings(table, "persist", "portable")) if item is not None
@@ -1291,100 +1285,7 @@ def _parse_portable(collector: _Collector, raw: Any, modes: tuple[str, ...]) -> 
             continue
         if path is not None and _relative_path(collector, path, where) is not None:
             markers.append(Marker(path, content))
-    args = collector.strings(table, "args", "portable")
-    env: dict[str, str] = {}
-    raw_env = table.get("env", {})
-    if not isinstance(raw_env, dict) or any(not isinstance(v, str) for v in raw_env.values()):
-        collector.error("portable.env", "must be a table of strings")
-    else:
-        env = dict(raw_env)
-        for name in env:
-            if (problem := env_name_problem(name)) is not None:
-                collector.error("portable.env", f"{name!r} is not a usable variable name: it {problem}")
-    for text in (*args, *env.values()):
-        _check_variables(collector, text, "portable", modes)
-    return Portable(persist, tuple(markers), args, env, _parse_step_lists(collector, table.get("prepare"), "portable.prepare"))
-
-
-def _parse_mode_steps(collector: _Collector, raw: Any, name: str, modes: tuple[str, ...]) -> ModeSteps | None:
-    """Parse ``[user]`` or ``[system]``: its ``prepare`` list; the table needs the mode in ``modes``."""
-    if raw is None:
-        return None
-    table = collector.table(raw, name)
-    if table is None:
-        return None
-    collector.keys(table, ("prepare",), name)
-    if name not in modes:
-        collector.error(name, f"needs '{name}' in modes")
-    return ModeSteps(_parse_step_lists(collector, table.get("prepare"), f"{name}.prepare"))
-
-
-_STEP_VERBS = ("remove", "create", "rename", "copy", "run")
-
-
-def _parse_step_lists(collector: _Collector, raw: Any, where: str) -> tuple[PrepareStep, ...]:
-    """Parse a ``prepare`` list of one mode: each item is ``[verb, argument...]``, run in order.
-
-    ``["remove", "a", "b"]`` deletes paths, ``["create", "path"]`` (or ``["create", "path", "content"]``) writes a file,
-    ``["rename", "from", "to"]`` moves the one match, ``["copy", "from", "to"...]`` copies a file and
-    ``["run", "pkg.local/x.py"]`` runs a bundled script.
-    """
-    if raw is None:
-        return ()
-    if not isinstance(raw, list):
-        collector.error(where, 'must be an array of steps such as ["remove", "file"]')
-        return ()
-    steps: list[PrepareStep] = []
-    for index, item in enumerate(raw):
-        at = f"{where}[{index}]"
-        if not isinstance(item, list) or not item or any(not isinstance(part, str) for part in item):
-            collector.error(at, 'must be an array of strings, a verb and its arguments: ["remove", "file"]')
-            continue
-        verb, args = item[0], item[1:]
-        if verb not in _STEP_VERBS:
-            collector.error(at, f"unknown step {verb!r}; the steps are {', '.join(_STEP_VERBS)}")
-            continue
-        step = _step_from_list(collector, verb, args, at)
-        if step is not None:
-            steps.append(step)
-    return tuple(steps)
-
-
-def _step_from_list(collector: _Collector, verb: str, args: list[str], where: str) -> PrepareStep | None:
-    """Build the step ``[verb, *args]`` names, checking the number and shape of its arguments."""
-    def relative(value: str, what: str) -> str | None:
-        return _relative_path(collector, value, f"{where}.{what}")
-
-    if verb == "remove":
-        if not args:
-            collector.error(where, '"remove" needs at least one path')
-            return None
-        paths = [relative(value, "path") for value in args]
-        return PrepareRemove(tuple(paths)) if None not in paths else None
-    if verb == "create":
-        if len(args) not in (1, 2):
-            collector.error(where, '"create" takes a path and optionally the content of the file')
-            return None
-        path = relative(args[0], "path")
-        return PrepareWrite(path, args[1] if len(args) == 2 else "") if path is not None else None
-    if verb == "rename":
-        if len(args) != 2:
-            collector.error(where, '"rename" takes the path to move and the new path')
-            return None
-        source, target = relative(args[0], "from"), relative(args[1], "to")
-        return PrepareRename(source, target) if source is not None and target is not None else None
-    if verb == "copy":
-        if len(args) < 2:
-            collector.error(where, '"copy" takes a file and at least one path to copy it to')
-            return None
-        source = relative(args[0], "from")
-        targets = [relative(value, "to") for value in args[1:]]
-        return PrepareCopy(source, tuple(targets)) if source is not None and None not in targets else None
-    if len(args) != 1:
-        collector.error(where, '"run" takes the one bundled script to run, such as "pkg.local/fix.py"')
-        return None
-    module = _local_script(collector, args[0], where, suffixes=(".py",))
-    return PrepareModule(module) if module is not None else None
+    return Portable(persist, tuple(markers))
 
 
 def _parse_root_forwarder(collector: _Collector, raw: Any) -> RootForwarder | None:
@@ -1405,7 +1306,7 @@ def _parse_root_forwarder(collector: _Collector, raw: Any) -> RootForwarder | No
     return RootForwarder(target)
 
 
-def _parse_shortcuts(collector: _Collector, raw: Any, modes: tuple[str, ...]) -> tuple[Shortcut, ...]:
+def _parse_shortcuts(collector: _Collector, raw: Any) -> tuple[Shortcut, ...]:
     """Parse ``[[shortcut]]``."""
     rows = []
     for index, row in collector.rows(raw, "shortcut"):
@@ -1417,7 +1318,7 @@ def _parse_shortcuts(collector: _Collector, raw: Any, modes: tuple[str, ...]) ->
         for key in ("target", "arguments", "working_dir", "icon_location"):
             text = target if key == "target" else optional[key]
             if text:
-                _check_variables(collector, text, f"{where}.{key}", modes)
+                _check_variables(collector, text, f"{where}.{key}")
         if name is not None and any(len(part) > MAX_NAME_PART for part in re.split(r"[\\/]", name)):
             collector.error(f"{where}.name", f"has a part longer than {MAX_NAME_PART} characters")
             name = None
@@ -1426,7 +1327,7 @@ def _parse_shortcuts(collector: _Collector, raw: Any, modes: tuple[str, ...]) ->
     return tuple(rows)
 
 
-def _parse_envs(collector: _Collector, raw: Any, modes: tuple[str, ...]) -> tuple[EnvVar, ...]:
+def _parse_envs(collector: _Collector, raw: Any) -> tuple[EnvVar, ...]:
     """Parse ``[[env]]``."""
     rows = []
     for index, row in collector.rows(raw, "env"):
@@ -1435,7 +1336,7 @@ def _parse_envs(collector: _Collector, raw: Any, modes: tuple[str, ...]) -> tupl
         name = collector.string(row, "name", where, required=True)
         value = collector.string(row, "value", where, required=True)
         if value is not None:
-            _check_variables(collector, value, f"{where}.value", modes)
+            _check_variables(collector, value, f"{where}.value")
         if name is not None and (problem := env_name_problem(name)) is not None:
             collector.error(f"{where}.name", f"{name!r} is not a valid environment variable name: it {problem}")
             name = None
@@ -1455,7 +1356,7 @@ def _parse_paths(collector: _Collector, raw: Any, modes: tuple[str, ...]) -> tup
         collector.keys(row, ("value",), where)
         value = collector.string(row, "value", where, required=True)
         if value is not None:
-            _check_variables(collector, value, f"{where}.value", modes)
+            _check_variables(collector, value, f"{where}.value")
             if (problem := path_entry_shape_problem(value, template=True)) is not None:
                 collector.error(f"{where}.value", f"{value!r} {problem}")
                 continue
@@ -1472,7 +1373,7 @@ def _parse_paths(collector: _Collector, raw: Any, modes: tuple[str, ...]) -> tup
     return tuple(values)
 
 
-def _parse_shims(collector: _Collector, raw: Any, modes: tuple[str, ...]) -> tuple[Shim, ...]:
+def _parse_shims(collector: _Collector, raw: Any) -> tuple[Shim, ...]:
     """Parse ``[[shim]]``: a launcher with a target, or a raw script."""
     rows = []
     for index, row in collector.rows(raw, "shim"):
@@ -1505,7 +1406,7 @@ def _parse_shims(collector: _Collector, raw: Any, modes: tuple[str, ...]) -> tup
         working_dir = collector.string(row, "working_dir", where)
         for key, text in (("target", target), ("working_dir", working_dir), *(("arguments", a) for a in arguments)):
             if text:
-                _check_variables(collector, text, f"{where}.{key}", modes)
+                _check_variables(collector, text, f"{where}.{key}")
         if name is not None and target is not None:
             rows.append(Shim(
                 name=name, target=target, type=shim_type or "console", arguments=arguments,
@@ -1566,27 +1467,6 @@ def _prepare_to_data(step: PrepareStep) -> dict[str, Any]:
     return {"module": step.module}
 
 
-def step_to_list(step: PrepareStep) -> list[str]:
-    """Return the ``[verb, argument...]`` list of one mode step."""
-    if isinstance(step, PrepareRemove):
-        return ["remove", *step.paths]
-    if isinstance(step, PrepareRename):
-        return ["rename", step.source, step.target]
-    if isinstance(step, PrepareCopy):
-        return ["copy", step.source, *step.targets]
-    if isinstance(step, PrepareWrite):
-        return ["create", step.path, *([step.content] if step.content else [])]
-    return ["run", step.module]
-
-
-def mode_steps(manifest: Manifest, mode: str) -> tuple[PrepareStep, ...]:
-    """Return the steps that an App prepared for *mode* runs after the ones every mode runs."""
-    if mode == "portable":
-        return manifest.portable.prepare if manifest.portable is not None else ()
-    table = manifest.user if mode == "user" else manifest.system if mode == "system" else None
-    return table.prepare if table is not None else ()
-
-
 def manifest_to_data(manifest: Manifest, *, explicit_modes: bool = False) -> dict[str, Any]:
     """Return *manifest* as plain TOML-ready data in the documented key order.
 
@@ -1622,12 +1502,7 @@ def manifest_to_data(manifest: Manifest, *, explicit_modes: bool = False) -> dic
         data["portable"] = _drop_empty({
             "persist": list(portable.persist),
             "markers": [m.path if m.content is None else {"path": m.path, "content": m.content} for m in portable.markers],
-            "args": list(portable.args), "env": dict(portable.env),
-            "prepare": [step_to_list(step) for step in portable.prepare],
         })
-    for name, table in (("user", manifest.user), ("system", manifest.system)):
-        if table is not None:
-            data[name] = _drop_empty({"prepare": [step_to_list(step) for step in table.prepare]})
     data["shortcut"] = [
         _drop_empty({"name": s.name, "target": s.target, "arguments": s.arguments or None,
                      "working_dir": s.working_dir or None, "icon_location": s.icon_location or None,

@@ -32,7 +32,7 @@ class TemplateError(ValueError):
 
 
 # The variables of design section 7.5 that expand to a path.
-PATH_VARIABLES = frozenset({"App", "VersionRoot", "PackageRoot", "Data", "Bin"})
+PATH_VARIABLES = frozenset({"App", "VersionRoot", "PackageRoot", "Bin"})
 # ``$Stage`` is the staging directory of a vendor installer and is valid only there.
 INSTALLER_VARIABLES = frozenset({"Stage"})
 
