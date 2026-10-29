@@ -480,6 +480,9 @@ module = "pkg.local/fix.py"                                 # escape hatch (hook
   `<name>.config.toml` in the mode's `bin` folder and starts the target directly, without a shell. For shell behaviour
   write a content shim instead, `content = "@echo off\r\n..."` with a name such as `tool.cmd`; `content` cannot be combined
   with the other shim options. Names may not be device names, streams or end in a dot or space.
+- **Names belong to one package.** A shim, wrapper, shortcut or environment variable that another installed package of the
+  root already provides is refused (`name-conflict`) before anything is changed: uninstall the other package, or use a
+  definition with a different name.
 - **`modes`** says where the package may be installed: `["system", "user"]` (the default), `["system"]` or `["user"]`, or
   `["portable"]` for a portable package, which installs for a single user only. A list that mixes `portable` with `system` or
   `user` is invalid: publish a separate `<name>-portable` package. A package whose `modes` lack the mode of the run is

@@ -25,6 +25,11 @@ from tests.engine_support import ScriptDouble, World, pin_no_ambient_elevation  
 ENV = '[[env]]\nname = "TOOL_HOME"\nvalue = "$App"\n'
 
 
+def env_of(package: str) -> str:
+    """Return an environment table of its own for *package* (a name belongs to one package, so packages of one batch cannot share one)."""
+    return ENV.replace("TOOL_HOME", f"{package.upper()}_HOME")
+
+
 class MarkerDouble(ScriptDouble):
     """A populate script that, like a user pressing Esc, asks the run to stop while it works."""
 
@@ -46,9 +51,9 @@ def world(tmp_path: Path) -> World:
 
 def test_a_failing_package_does_not_stop_the_batch_and_the_summary_and_log_name_it(world: World) -> None:
     """Package 2 fails (a missing file after unpacking); package 3 is still installed; the summary and the log both name the failure."""
-    world.publish("one", "1.0.0", tables=ENV)
-    world.publish("two", "1.0.0", tables=ENV, source='require = ["missing.exe"]\n')
-    world.publish("three", "1.0.0", tables=ENV)
+    world.publish("one", "1.0.0", tables=env_of("one"))
+    world.publish("two", "1.0.0", tables=env_of("two"), source='require = ["missing.exe"]\n')
+    world.publish("three", "1.0.0", tables=env_of("three"))
     root = world.user
 
     with RunSession(command="install", argv=["install"], mode="user", elevated=False, version="test", reporters=[]) as run:
@@ -67,7 +72,7 @@ def test_a_failing_package_does_not_stop_the_batch_and_the_summary_and_log_name_
 
 def test_the_receipt_stores_the_log_path_of_the_package(world: World) -> None:
     """The receipt of an install made inside a run session names that package's log file."""
-    world.publish("one", "1.0.0", tables=ENV)
+    world.publish("one", "1.0.0", tables=env_of("one"))
     with RunSession(command="install", argv=["install"], mode="user", elevated=False, version="test", reporters=[]) as run:
         run.bind(world.user)
         world.engine.log_path = lambda path: str(run.log.package_log(path)) if run.log.package_log(path) else None
@@ -82,10 +87,10 @@ def test_cancel_while_package_one_runs_finishes_it_and_skips_the_rest(world: Wor
     """Cancelling during package 1: it finishes cleanly, packages 2 and 3 are skipped and unchanged."""
     marker = world.base / "stop.marker"
     world.fake.processes["populate.cmd"] = MarkerDouble({"app.exe": "one"}, marker)
-    world.publish_script("one", "1.0.0", tables=ENV)
+    world.publish_script("one", "1.0.0", tables=env_of("one"))
     world.fake.processes["populate.cmd"] = MarkerDouble({"app.exe": "one"}, marker)
-    world.publish("two", "1.0.0", tables=ENV)
-    world.publish("three", "1.0.0", tables=ENV)
+    world.publish("two", "1.0.0", tables=env_of("two"))
+    world.publish("three", "1.0.0", tables=env_of("three"))
     world.engine.cancel = stop_marker(marker)
 
     batch = lifecycle.install(world.engine, ["one", "two", "three"])
@@ -101,9 +106,9 @@ def test_a_stop_marker_given_to_an_elevated_batch_has_the_same_effect(tmp_path: 
     """In an elevated run the same user-writable marker stops the batch after the current package, and can do nothing else."""
     world = World(tmp_path, elevated=True)
     marker = tmp_path / "stop.marker"
-    world.publish_script("one", "1.0.0", mode="system", tables=ENV)
+    world.publish_script("one", "1.0.0", mode="system", tables=env_of("one"))
     world.fake.processes["populate.cmd"] = MarkerDouble({"app.exe": "one"}, marker)
-    world.publish("two", "1.0.0", mode="system", tables=ENV)
+    world.publish("two", "1.0.0", mode="system", tables=env_of("two"))
     world.engine.cancel = stop_marker(marker)
 
     batch = lifecycle.install(world.engine, ["one", "two"])
