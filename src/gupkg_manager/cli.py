@@ -31,9 +31,9 @@ from typing import TextIO
 from gupkg.report.results import dumps
 from gupkg.selfmgmt.location import RunningGupkg
 from gupkg.system.port import System
-from gupkg_ui.client import ClientError
 from gupkg_ui.interaction import Interaction
 from gupkg_ui.console import ConsoleSink, closing_text, configure_streams, console_ask_checksum, console_confirm, outcome_document
+from gupkg_ui.reads import Reads
 from gupkg_ui.session import EXIT_FAILED, EXIT_INPUT, BatchOutcome, BatchSession
 from gupkg_ui.startup import StartupError, UiEnvironment, add_root_options, build_environment
 
@@ -53,6 +53,7 @@ def main(
     stdin: TextIO | None = None,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
+    reads: Reads | None = None,
 ) -> int:
     """Run one ``gupkg-manager`` command line and return its exit code.
 
@@ -66,6 +67,8 @@ def main(
         The program that stands for ``gupkg``; the sibling ``gupkg.cmd`` by default. Tests pass a double.
     stdin, stdout, stderr : TextIO, optional
         The standard streams; the process's by default.
+    reads : Reads, optional
+        A replacement for the in-process reads (tests pass a double that serves recorded documents).
 
     Returns
     -------
@@ -82,7 +85,7 @@ def main(
 
     # Start: find the sibling gupkg, build the run's scope and read its settings.
     try:
-        environment = build_environment(args, location=location, system=system, env=env, command=command)
+        environment = build_environment(args, location=location, system=system, env=env, command=command, reads=reads)
     except StartupError as error:
         print(f"{PROGRAM}: error: {error}", file=err)
         return error.code
@@ -116,10 +119,10 @@ async def _batch_command(args: argparse.Namespace, environment: UiEnvironment, s
     else:
         interaction = Interaction(ask_checksum=console_ask_checksum(stdin, stream) if can_ask else None, interactive=can_ask)
 
-    # Inventory: one read-only call; without it nothing can be planned.
+    # Inventory: one read-only read, in-process; without it nothing can be planned.
     try:
         rows = pick(await load_inventory(environment), command)
-    except ClientError as error:
+    except Exception as error:  # noqa: BLE001 - any failure of the read is shown, never dropped
         print(f"{PROGRAM}: error: the package list could not be read: {error}", file=stderr)
         return EXIT_FAILED
     if not rows:

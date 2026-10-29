@@ -28,6 +28,8 @@ from rich.text import Text
 
 from gupkg.model.checksum import INVALID, MISSING, SKIPPED_SETTING, USER_APPROVED, ChecksumPlan
 from gupkg.model.manager_policy import TargetDecision, skip_argument
+from gupkg.report.documents import DocumentError
+
 from .client import ClientError, targets_after_options
 from .interaction import Interaction
 from .plans import PackageRow, PlannedTarget, decide_targets, read_plan
@@ -72,7 +74,7 @@ async def run_update(
     try:
         document = await env.client.query(targets_after_options("update", ["--plan"], [item.target for item in subjects]))
         planned = read_plan(document, [item.target for item in subjects])
-    except ClientError as error:
+    except (ClientError, DocumentError) as error:
         entries = [synthetic_entry(item.target, "update", "failed", 3, f"the plan could not be made: {error}") for item in subjects]
         return await session.run([], extra_entries=[*unsafe, *entries])
 

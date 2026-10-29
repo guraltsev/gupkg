@@ -1,6 +1,6 @@
 """The manager's own batch logic: the inventory of every package, which packages an ``--all`` batch acts on, and the batch commands.
 
-``gupkg-manager`` reads the inventory with ``gupkg list --json`` and selects the packages an ``--all`` batch acts on (``update``: those with a newer known
+``gupkg-manager`` reads the inventory in-process (the core functions behind ``gupkg list --json``) and selects the packages an ``--all`` batch acts on (``update``: those with a newer known
 version; ``check-updates``: those that are installed or local; ``check``: every package of the root). The plan, the confirmation, the checksum policy and the
 execution (one call of the CLI, in the run's scope) are the shared flows of ``gupkg_ui.flows``, which the batch functions here start with the selection.
 
@@ -20,26 +20,25 @@ from collections.abc import Sequence
 
 from gupkg_ui.flows import run_check_updates, run_operation, run_update
 from gupkg_ui.interaction import Interaction
-from gupkg_ui.plans import PackageRow, read_packages
+from gupkg_ui.plans import PackageRow
 from gupkg_ui.session import BatchOutcome, BatchSession, Sink
 from gupkg_ui.startup import UiEnvironment
 
 
 async def load_inventory(env: UiEnvironment, *, available: bool = False) -> list[PackageRow]:
-    """Return the packages of the run's root (``gupkg list --json``), plus the registry's not-yet-installed ones when *available* is true.
+    """Return the packages of the run's root, plus the registry's not-yet-installed ones when *available* is true.
+
+    The read is in-process: it calls the core functions that ``gupkg list --json`` and ``gupkg list --available --json`` use, in the run's scope; no
+    subprocess is started (decision D53).
 
     Raises
     ------
-    ClientError
-        If ``gupkg`` cannot be run or does not return a valid document.
+    DocumentError
+        If the listing cannot be read.
+    Exception
+        Whatever the core raises (an unreadable root, say); the caller shows it.
     """
-    document = await env.client.query(["list"])
-    rows = read_packages(document)
-    if available:
-        known = {row.name for row in rows}
-        extra = read_packages(await env.client.query(["list", "--available"]))
-        rows.extend(row for row in extra if row.name not in known)
-    return rows
+    return await env.source.inventory(available=available)
 
 
 def pick(rows: Sequence[PackageRow], command: str) -> list[PackageRow]:

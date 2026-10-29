@@ -2,8 +2,8 @@
 
 Behaviour covered: the policy matrix of design 9.1 (ask, refuse, skip, each interactive and not, for a missing hash, a malformed hash and a plain ``http://`` URL), asked at most
 once per package and never for a package that needs no question; a malformed declared hash (the ``invalid-checksum`` error of the plan) is never asked and never relayed; a
-non-https URL is never skippable; the relayed argument is ``--skip-checksum=setting`` for the setting and ``=user-approved`` for a yes; plan entries that cannot be understood are failed
-targets, never ready ones; the package list reader drops rows it cannot act on.
+non-https URL is never skippable; the relayed argument is ``--skip-checksum=setting`` for the setting and ``=user-approved`` for a yes; a plan document that cannot be understood
+raises ``DocumentError`` (nothing in it is ready); a target the plan does not answer for has failed.
 
 Real: the plan reader and ``gupkg.model.manager_policy`` (which this module feeds). Mocked: the question (a function that records that it was asked).
 Out of scope: calling the CLI (``test_ui_flows.py``).
@@ -15,8 +15,9 @@ import asyncio
 
 import pytest
 
-from gupkg_ui.plans import PlannedTarget, decide_targets, read_packages, read_plan
-from tests.ui_support import entry, head, list_doc, plan_doc, plan_entry, plan_failure
+from gupkg.report.documents import DocumentError
+from gupkg_ui.plans import PlannedTarget, decide_targets, read_plan
+from tests.ui_support import entry, plan_doc, plan_entry, plan_failure
 
 
 def decide(items: list[PlannedTarget], policy: str, *, interactive: bool, answer: bool = True):
@@ -123,15 +124,13 @@ def test_each_package_is_asked_once_and_an_answer_does_not_leak_to_the_next() ->
         pytest.param("missing", id="not-an-object"),
     ],
 )
-def test_a_plan_entry_that_cannot_be_understood_is_a_failed_target(bad) -> None:
-    """An unreadable checksum marker never means 'present': the target is failed and never decided to run."""
+def test_a_plan_document_that_cannot_be_understood_is_an_error_and_nothing_is_ready(bad) -> None:
+    """An unreadable checksum marker never means 'present': the document is refused with the field named, so no target of it is decided to run."""
     good = plan_entry("p", "p", sha256="missing")
     good["plan"]["populate"]["checksum"] = bad
 
-    (item,) = read_plan(plan_doc([good]), ["p"])
-
-    assert item.state == "failed" and item.code == "unreadable-plan"
-    assert asyncio.run(decide_targets([item], lambda _x: "skip", interactive=False, ask=None)) == {}
+    with pytest.raises(DocumentError, match=r"plans\[0\]\.plan\.populate\.checksum"):
+        read_plan(plan_doc([good]), ["p"])
 
 
 def test_a_target_the_plan_does_not_answer_for_has_failed() -> None:
@@ -146,15 +145,3 @@ def test_other_plan_failures_keep_their_code_and_message() -> None:
     (item,) = read_plan(plan_doc([plan_failure("p", "not-installed", "'p' is not installed", exit_code=2)]), ["p"])
 
     assert (item.state, item.code, item.message, item.exit_code) == ("failed", "not-installed", "'p' is not installed", 2)
-
-
-def test_the_package_list_reader_drops_rows_it_cannot_act_on() -> None:
-    """A row without a text name and status is left out, and so is every row of a document that names no mode."""
-    document = list_doc([("alpha", "user", "outdated", "1.0", "2.0", "C:\\opt\\alpha")])
-    document["packages"] += [{"name": 3, "status": "x"}, "junk", {"name": "m"}]
-
-    (row,) = read_packages(document)
-
-    assert (row.target, row.status, row.newest_known) == ("alpha", "outdated", "2.0")
-    assert read_packages(head("list")) == []
-    assert read_packages({key: value for key, value in document.items() if key != "mode"}) == []
