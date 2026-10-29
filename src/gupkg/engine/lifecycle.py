@@ -83,7 +83,18 @@ from .executor import (
 )
 from .health import Diagnosis, diagnose
 from .locks import PackageBusy, package_lock
-from .planner import Chosen, CleanupFacts, CleanupPlan, InvalidVersion, PlanError, plan_cleanup, plan_install, plan_uninstall
+from .planner import (
+    Chosen,
+    CleanupFacts,
+    CleanupPlan,
+    InvalidVersion,
+    PlanError,
+    check_names_between,
+    name_owners,
+    plan_cleanup,
+    plan_install,
+    plan_uninstall,
+)
 from .receipts import list_receipts, read_receipt
 
 # A work entry younger than this is never removed by ``cleanup`` (it may belong to a run that is still going).
@@ -194,6 +205,7 @@ def run_batch(engine: Engine, requests: Sequence[Request]) -> BatchResult:
         One ``PackageResult`` per request, in order.
     """
     resolved: list[_Target | PackageResult] = [_resolve(engine, request) for request in requests]
+    _refuse_shared_names(engine, resolved)
 
     # One package after another; a stop request is honoured between packages (decision D37).
     results: list[PackageResult] = []
@@ -213,8 +225,9 @@ def run_batch(engine: Engine, requests: Sequence[Request]) -> BatchResult:
 def plan(engine: Engine, requests: Sequence[Request]) -> list[InstallPlan | PackageResult]:
     """Resolve and plan every request without changing anything; a request that cannot be planned is its failure result."""
     found: list[InstallPlan | PackageResult] = []
-    for request in requests:
-        target = _resolve(engine, request)
+    targets = [_resolve(engine, request) for request in requests]
+    _refuse_shared_names(engine, targets)
+    for request, target in zip(requests, targets):
         if isinstance(target, PackageResult):
             found.append(target)
             continue
@@ -243,6 +256,36 @@ def _resolve(engine: Engine, request: Request) -> _Target | PackageResult:
         data = result.error or {}
         emit(Error(f"{request.selector}: {data.get('message', error)}", data.get("hint")))
         return result
+
+
+def _refuse_shared_names(engine: Engine, targets: list[_Target | PackageResult]) -> None:
+    """Refuse, before anything is created, the targets of one command that would provide the same name.
+
+    Two install-like targets (``install``, ``update``, ``switch``, ``repair``) that put the same shim, wrapper, shortcut or
+    environment variable on the machine are both replaced by their failed result, naming both. A target that cannot be planned is
+    left to its own run, which reports why.
+    """
+    installing = [
+        index for index, item in enumerate(targets)
+        if isinstance(item, _Target) and item.request.operation in ("install", "update", "switch", "repair")
+    ]
+    if len(installing) < 2:
+        return
+    wanted: dict[str, tuple[int, Sequence]] = {}
+    for index in installing:
+        item = targets[index]
+        try:
+            planned = _prepare_install(engine, item, execute=False).plan
+        except Exception:  # noqa: BLE001 - the real run of this target reports whatever stops it
+            continue
+        wanted.setdefault(planned.package, (index, tuple(change.effect for change in planned.effects if change.action != "remove")))
+    refused = check_names_between({name: effects for name, (_, effects) in wanted.items()})
+    for name, error in refused.items():
+        index = wanted[name][0]
+        request = targets[index].request
+        result = failure(request.selector, request.operation, error)
+        emit(Error(f"{request.selector}: {error}", None))
+        targets[index] = result
 
 
 def _require_supported_mode(target: _Target) -> None:
@@ -512,6 +555,7 @@ def _prepare_install(
     install_plan = plan_install(
         request, view, context, chosen, desired, notes=notes, copy_in=copy_in, package_path=package_path,
         url_from=url_from, drifted=drifted, allow_installer=bool(resolved.settings["hooks.allow_vendor_installers"]),
+        owners=name_owners(catalog.installed_effects(), exclude=view.name),
     )
     tracker = catalog.tracker_sync(view) if view.registry is not None else None
     return ExecutionInput(
@@ -822,7 +866,8 @@ def _check(engine: Engine, target: _Target) -> PackageResult:
         raise NotFound(f"{request.selector} was not found")
     view = selection.view
     record_manifest = bool(settings["install.record_manifest"])
-    diagnosis = diagnose(engine.system, view, mode=context.mode, record_manifest=record_manifest)
+    owners = name_owners(target.catalog.installed_effects(), exclude=view.name)
+    diagnosis = diagnose(engine.system, view, mode=context.mode, record_manifest=record_manifest, owners=owners)
     fixed: list[str] = []
     if request.fix and diagnosis.installed and diagnosis.fixable:
         fixed = [item.message for item in diagnosis.problems if item.fixable]
@@ -830,7 +875,7 @@ def _check(engine: Engine, target: _Target) -> PackageResult:
         if not outcome.ok:
             return outcome
         view = target.catalog.describe(view.name)
-        diagnosis = diagnose(engine.system, view, mode=context.mode, record_manifest=record_manifest)
+        diagnosis = diagnose(engine.system, view, mode=context.mode, record_manifest=record_manifest, owners=owners)
     return _check_result(view, context, diagnosis, fixed)
 
 

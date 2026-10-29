@@ -23,7 +23,7 @@ is read, except the machine state that the install record names.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -34,6 +34,7 @@ from ..system.port import Mode, System
 from .effects import verify_each
 from ..services.fingerprint import verify_directory
 from .fingerprint import aggregate_digest, app_files, diff_app
+from .planner import provided_names
 from .receipts import read_receipt, receipt_checksum
 
 
@@ -83,7 +84,8 @@ class Diagnosis:
 
 
 def diagnose(
-    system: System, view: PackageView, *, mode: Mode, record_manifest: bool
+    system: System, view: PackageView, *, mode: Mode, record_manifest: bool,
+    owners: Mapping[tuple[str, str], str] | None = None,
 ) -> Diagnosis:
     """Diagnose one package.
 
@@ -97,6 +99,9 @@ def diagnose(
         The run's mode (a system-mode run does not read the user's environment).
     record_manifest : bool
         The global ``install.record_manifest`` setting; when off, ``App`` files are not compared.
+    owners : mapping, optional
+        Which other installed package provides each name (``planner.name_owners``); a name the package's record shares with
+        another package is reported as a ``name-conflict`` problem. Nothing is changed.
 
     Returns
     -------
@@ -134,6 +139,16 @@ def diagnose(
             problems.append(Problem("drift", drift, True))
         if unverified:
             notes.append(Problem("unverified-effect", f"not verified: {unverified}"))
+
+    # A name that another installed package of the root also claims (two install records on disk): a problem of both packages.
+    for key, item in provided_names(view.installed.effects).items():
+        other = (owners or {}).get(key)
+        if other is not None:
+            problems.append(Problem(
+                "name-conflict",
+                f"{view.name} and {other} both provide the {item.word} '{item.name}' ({item.where}). Uninstall one of them, "
+                "or use a package definition with a different name.",
+            ))
 
     # What the receipt says, and what can be checked again.
     receipt = read_receipt(view.local.path, version)

@@ -56,10 +56,10 @@ from ..services.safepath import remove_tree
 from ..services.track import TrackEnvironment, run_tracker
 from .appbuild import populate_version
 from .context import Engine, require_trusted_tools, require_work_folder, tracker_tools
-from .effects import LOCATION_FILE
+from .effects import LOCATION_FILE, EffectError, desired_effects, effect_context
 from .errors import describe
 from .executor import carry_forward, emit_skipped, sync_registry_tracker
-from .planner import PlanError, plan_check_updates
+from .planner import NameConflict, PlanError, check_names, name_owners, plan_check_updates
 from .portable import scratch_name
 from .receipts import update_receipt
 from .stateio import write_track_state
@@ -168,6 +168,12 @@ def check_updates_one(
             "the version was written without its App."
         ))
         download = False
+    refusal = _name_conflict(engine, context, catalog, view, package_path, pinned) if download else None
+    if refusal is not None:
+        # Like a refused checksum: the version stays written (the package is `outdated`) and its App is not downloaded.
+        exit_code, error = describe(refusal)
+        emit(Warning(f"{view.name} {result.version} was written without its App: {refusal}"))
+        download = False
     if download:
         try:
             populated = populate_version(
@@ -199,6 +205,20 @@ def check_updates_one(
         view.name, "check-updates", error is None, "new-version", result.version, None, context.mode, exit_code, error,
         str(receipt) if receipt is not None else None, engine.log_path(package_path), notes, details,
     )
+
+
+def _name_conflict(
+    engine: Engine, context: Scope, catalog: Catalog, view: PackageView, package_path: Path, pinned: Manifest
+) -> NameConflict | None:
+    """Return the refusal when the new version would provide a name that another installed package provides, else ``None``."""
+    try:
+        desired, _ = desired_effects(pinned, effect_context(context, package_path, engine.effect_env))
+        check_names(view.name, desired, name_owners(catalog.installed_effects(), exclude=view.name))
+    except NameConflict as conflict:
+        return conflict
+    except EffectError:
+        return None  # a declaration that cannot be expanded is the install's to report
+    return None
 
 
 # ---------------------------------------------------------------------------

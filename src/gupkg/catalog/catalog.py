@@ -41,6 +41,7 @@ from ..model.manifest import ManifestError, TrackResult, invalid_checksum_proble
 from ..model.settings import RegistryEntry as RegistryConfig
 from ..model.state import (
     Candidate,
+    Effect,
     InstalledState,
     Link,
     PackageView,
@@ -369,6 +370,14 @@ class Catalog:
         views = [view for view in views if _matches(view, filters)]
         views.sort(key=lambda view: view.name.casefold())
         return Listing(tuple(views), (*self.warnings, *scan.diagnostics))
+
+    def installed_effects(self) -> dict[str, tuple[Effect, ...]]:
+        """Return the recorded effects of every package of the root that has any, by package name.
+
+        This is who provides which shim, wrapper, shortcut and environment variable (name ownership): nothing outside the
+        run's root is read.
+        """
+        return {view.name: view.record.effects for view in self.list().views if view.record is not None and view.record.effects}
 
     # -- selecting ----------------------------------------------------------
 
