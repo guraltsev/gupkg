@@ -34,10 +34,13 @@ def main() -> None:
         (work / "temp").mkdir()
         settings = work / "settings.toml"
         settings.write_text(
-            f"schema = 3\n[roots]\nsystem = '{work}\\sys\\opt'\nuser = '{work}\\home\\opt'\n"
-            f"[integration.user]\nbin = '{work}\\home\\bin'\nstart_menu = '{work}\\home\\sm'\n"
-            f"[integration.system]\nbin = '{work}\\sys\\bin'\nstart_menu = '{work}\\sys\\sm'\n",
+            f"schema = 4\n[roots]\nsystem = '{work}\\sys\\opt'\nuser = '{work}\\home\\opt'\n"
+            f"[integration]\nbin = '{work}\\home\\bin'\nstart_menu = '{work}\\home\\sm'\n",
             encoding="utf-8",
+        )
+        (work / "sys" / "opt" / ".gupkg").mkdir(parents=True)
+        (work / "sys" / "opt" / ".gupkg" / "settings.toml").write_text(
+            f"schema = 4\n[integration]\nbin = '{work}\\sys\\bin'\nstart_menu = '{work}\\sys\\sm'\n", encoding="utf-8"
         )
         env = {**os.environ, "USERPROFILE": str(work / "home"), "APPDATA": str(work / "appdata"), "TEMP": str(work / "temp")}
         root = ["--settings", str(settings), "--sandbox", str(work / "sb")]

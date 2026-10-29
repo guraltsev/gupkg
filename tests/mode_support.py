@@ -54,7 +54,7 @@ class Machine:
         """
         self.app.mkdir(parents=True, exist_ok=True)
         roots = f"[roots]\nsystem = '{self.system_root}'\nuser = '{self.user_root}'\n"
-        text = "schema = 3\n" + top + roots + tables
+        text = "schema = 4\n" + top + roots + tables
         (self.app / "settings.toml").write_text(text, encoding="utf-8")
 
     def read_text(self, path: Path) -> str | None:

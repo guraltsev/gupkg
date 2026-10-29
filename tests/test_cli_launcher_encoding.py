@@ -32,7 +32,7 @@ def root(tmp_path: Path) -> Path:
         version = packages / name / "1.0.0"
         version.mkdir(parents=True)
         (version / "pkg.toml").write_text('format = 2\ndescription = "x"\n', encoding="utf-8")
-    (tmp_path / "settings.toml").write_text(f'schema = 3\n[roots]\nuser = "{packages.as_posix()}"\n', encoding="utf-8")
+    (tmp_path / "settings.toml").write_text(f'schema = 4\n[roots]\nuser = "{packages.as_posix()}"\n', encoding="utf-8")
     return tmp_path
 
 

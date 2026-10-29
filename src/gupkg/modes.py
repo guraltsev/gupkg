@@ -2,7 +2,7 @@
 
 Given a target (a name, ``mode:name``, ``registry/name`` or a path), the ``--mode`` flag and the settings
 of the run, ``resolve_mode`` finds the install record and the containing root, applies the order of design
-6.2 (flag, record, root, ``default_mode`` with its single meaning of ``auto``), checks the package's
+6.2 (flag, record, root, then the process token: system when elevated, else user), checks the package's
 ``modes`` before any work, and returns the context every other subsystem reads. It also decides what an
 elevated run may be given: package names and paths inside the admin-only system root; in a direct
 administrator shell also a distribution folder outside every root, to be copied into the system root;
@@ -215,7 +215,7 @@ def resolve_mode(
     # Step 4 and the rules after it.
     choice = select_mode(
         explicit=explicit, explicit_source=source, record=record, record_trusted=record_trusted,
-        container=container, default_mode=settings["default_mode"], elevated=is_elevated, supported=supported,
+        container=container, elevated=is_elevated, supported=supported,
     )
 
     # Where the package goes, and the settings layers of the final run.

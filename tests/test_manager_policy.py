@@ -35,8 +35,7 @@ from gupkg.model.manager_policy import (
 from gupkg.model.settings import (
     LAYER_APP,
     LAYER_CLI,
-    LAYER_SYSTEM,
-    LAYER_USER,
+    LAYER_ROOT,
     Layer,
     default_layer,
     merge_layers,
@@ -51,9 +50,9 @@ INVALID = plan_checksum(HTTPS, "not-a-digest", url_from="pkg.toml")
 
 def settings_with(layer: str | None, value: object = None):
     """Return merged settings whose `manager.checksum_missing` is *value* from *layer* (defaults when None)."""
-    layers = [default_layer()]
+    layers = [default_layer("user")]
     if layer is not None:
-        layers.append(Layer(layer, {"schema": 3, "manager": {"checksum_missing": value}}))
+        layers.append(Layer(layer, {"schema": 4, "manager": {"checksum_missing": value}}))
     return merge_layers(layers)
 
 
@@ -62,31 +61,11 @@ def test_the_default_policy_is_ask() -> None:
     assert manager_checksum_policy(settings_with(None)) == "ask"
 
 
-@pytest.mark.parametrize("layer", [LAYER_APP, LAYER_SYSTEM, LAYER_USER, LAYER_CLI])
+@pytest.mark.parametrize("layer", [LAYER_APP, LAYER_ROOT, LAYER_CLI])
 @pytest.mark.parametrize("value", ["ask", "refuse", "skip"])
-def test_a_normal_run_honours_the_setting_from_any_layer(layer: str, value: str) -> None:
-    """The three values are read from every layer when the run is not elevated."""
-    assert manager_checksum_policy(settings_with(layer, value), elevated=False) == value
-
-
-@pytest.mark.parametrize(
-    ("layer", "honoured"),
-    [
-        pytest.param(LAYER_APP, True, id="app-layer"),
-        pytest.param(LAYER_SYSTEM, True, id="system-layer"),
-        pytest.param(LAYER_CLI, True, id="settings-file-in-the-system-root"),
-        pytest.param(LAYER_USER, False, id="user-layer"),
-    ],
-)
-def test_an_elevated_run_reads_the_policy_only_from_admin_only_layers(layer: str, honoured: bool) -> None:
-    """A skip that a user layer supplied is not honoured under elevation; the answer is `refuse`."""
-    assert manager_checksum_policy(settings_with(layer, "skip"), elevated=True) == ("skip" if honoured else "refuse")
-
-
-def test_an_elevated_run_with_a_user_value_of_refuse_stays_refuse_and_the_default_stays_ask() -> None:
-    """Only a weakening value matters, but a user layer never changes the answer under elevation."""
-    assert manager_checksum_policy(settings_with(LAYER_USER, "ask"), elevated=True) == "refuse"
-    assert manager_checksum_policy(settings_with(None), elevated=True) == "ask"
+def test_the_setting_is_honoured_from_every_layer(layer: str, value: str) -> None:
+    """The three values are read from every layer of the run's one scope."""
+    assert manager_checksum_policy(settings_with(layer, value)) == value
 
 
 def test_an_unknown_policy_value_is_a_refusal_for_a_target() -> None:

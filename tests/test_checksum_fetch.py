@@ -39,7 +39,7 @@ from gupkg.model.checksum import (
     git_record,
     verify_observed,
 )
-from gupkg.model.settings import LAYER_SYSTEM, LAYER_USER, Layer, default_layer, merge_layers
+from gupkg.model.settings import LAYER_APP, LAYER_ROOT, Layer, default_layer, merge_layers
 from gupkg.report.events import Warning, use_reporter
 from gupkg.services.artifact import FetchedArtifact, fetch_artifact, fetch_git, reverify
 from gupkg.services.http import Download, DownloadMismatch as HttpMismatch, HttpClient, HttpError
@@ -468,12 +468,12 @@ def test_a_missing_hash_over_plain_http_never_connects(loopback: tuple[str, list
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("layer", [LAYER_USER, LAYER_SYSTEM], ids=["user-layer", "system-layer"])
+@pytest.mark.parametrize("layer", [LAYER_ROOT, LAYER_APP], ids=["root-layer", "app-layer"])
 def test_a_checksum_missing_skip_setting_has_no_effect_on_the_download_rule(
     system: FakeSystem, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, layer: str
 ) -> None:
     """`[manager] checksum_missing = "skip"` in a settings layer, and an environment variable, change nothing."""
-    settings = merge_layers([default_layer(), Layer(layer, {"schema": 3, "manager": {"checksum_missing": "skip"}})])
+    settings = merge_layers([default_layer("user"), Layer(layer, {"schema": 4, "manager": {"checksum_missing": "skip"}})])
     assert settings["manager.checksum_missing"] == "skip"
     for name in ("GUPKG_SKIP_CHECKSUM", "GUPKG_CHECKSUM_MISSING", "SKIP_CHECKSUM"):
         monkeypatch.setenv(name, "skip")

@@ -216,9 +216,9 @@ def test_logs_without_a_target_lists_the_roots_logs_and_a_package_without_logs_i
 
 
 def test_shell_prints_the_path_line_of_an_integrate_none_root(tmp_path: Path) -> None:
-    """With ``[integration.user] integrate = "none"`` the root's bin folder is not on PATH, so `gupkg shell` prints the line that adds it."""
+    """With ``[integration] integrate = "none"`` the root's bin folder is not on PATH, so `gupkg shell` prints the line that adds it."""
     world = CliWorld(tmp_path)
-    world.machine.write_app_settings(tables='[integration.user]\nintegrate = "none"\n')
+    world.machine.write_app_settings(tables='[integration]\nintegrate = "none"\n')
 
     result = world.cli("shell")
 

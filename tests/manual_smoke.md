@@ -410,7 +410,7 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
    directory and expect exit 3 naming it. Why manual: needs a real install.
 8. **`gupkg pkg check --install` with real downloads.** On a package from the registry (a version directory with its pinned hash)
    expect exit 0 with the real network, and the real user root and registry unchanged. Why manual: real downloads.
-9. **`gupkg shell`.** With `[integration.user] integrate = "none"`, `for /f "delims=" %i in ('gupkg
+9. **`gupkg shell`.** With `[integration] integrate = "none"`, `for /f "delims=" %i in ('gupkg
    shell') do %i` puts `<root>\bin` on that console's `PATH`. Why manual: `cmd` interprets the line.
 10. **`uninstall --purge` on a real machine.** After a purge the package folder is gone including this run's own package log (it
     cannot stay open), and the root's run log under `<root>\.gupkg\logs` records the deletion. Why manual: only real file locking

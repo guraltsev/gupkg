@@ -2,7 +2,7 @@
 
 An install mode (``system`` or ``user``) fixes where a package lives and which parts of the
 machine gupkg touches for it. ``select_mode`` picks the mode of one operation by the order of design 6.2
-(an explicit flag or qualified selector, the install record, the containing root, ``default_mode``) and
+(an explicit flag or qualified selector, the install record, the containing root, the process token) and
 enforces the rules that no later step may weaken: an elevated gupkg never acts on a user root
 (D31), and a package is only installed in a mode its ``modes`` list supports (a portable package: user only). ``build_mode_context`` turns the
 choice and the effective settings into a ``ModeContext``, which every other subsystem reads: root, bin and
@@ -27,7 +27,7 @@ is equal to expanding the built-in ``%VAR%`` default on a real one.
 See Also
 --------
 gupkg.modes : resolves a target to a mode and a context using the catalog and the system boundary.
-gupkg.model.settings : the ``[roots]`` and ``[integration.*]`` tables the context reads.
+gupkg.model.settings : the ``[roots]`` and ``[integration]`` tables the context reads.
 """
 
 from __future__ import annotations
@@ -42,8 +42,7 @@ from .settings import (
     LAYER_APP,
     LAYER_CLI,
     LAYER_DEFAULTS,
-    LAYER_SYSTEM,
-    LAYER_USER,
+    LAYER_ROOT,
     Settings,
     expand_env,
 )
@@ -122,7 +121,7 @@ class ModeContext:
     requires_elevation : bool
         Whether the mode needs an administrator token.
     integrate : str
-        ``full`` or ``none``; ``none`` (``[integration.user] integrate``) is possible only in user mode.
+        ``full`` or ``none``; ``none`` (``[integration] integrate``) is possible only in user mode.
     layers : tuple of str
         The settings layers the run reads, lowest priority first (design 6.1).
     reason : str
@@ -201,7 +200,6 @@ def select_mode(
     record: str | None = None,
     record_trusted: bool = True,
     container: str | None = None,
-    default_mode: str = "auto",
     elevated: bool = False,
     supported: Sequence[str] | None = None,
 ) -> ModeChoice:
@@ -219,8 +217,6 @@ def select_mode(
         ``False`` when the record was read from a folder users can modify in an elevated run.
     container : str, optional
         The mode of the configured root that contains a path target.
-    default_mode : str, default="auto"
-        ``default_mode`` from the settings: ``auto``, ``system`` or ``user``.
     elevated : bool, default=False
         Whether the process is elevated (unknown counts as elevated).
     supported : sequence of str, optional
@@ -238,8 +234,7 @@ def select_mode(
         run is asked to act on a user root (D31); if a record from an untrusted place
         would decide an elevated run; or if the package does not support the chosen mode.
     """
-    for label, value in (("--mode", explicit), ("install record", record), ("containing root", container),
-                         ("default_mode", None if default_mode == "auto" else default_mode)):
+    for label, value in (("--mode", explicit), ("install record", record), ("containing root", container)):
         if value is not None and value not in MODES:
             raise ModeRefused(f"Unknown install mode '{value}' ({label}); use one of {_supported_text(MODES)}.")
 
@@ -278,19 +273,10 @@ def select_mode(
         chosen, reason = record, "install record"
     elif container is not None:
         chosen, reason = container, f"inside the {container} root"
-    elif default_mode != "auto":
-        chosen, reason = default_mode, "default_mode"
     elif elevated:
         chosen, reason = MODE_SYSTEM, AUTO_ELEVATED
     else:
         chosen, reason = MODE_USER, "auto: not elevated"
-
-    # An elevated run can only have reached a non-system mode through default_mode.
-    if elevated and chosen != MODE_SYSTEM:
-        raise ModeRefused(
-            f"Refusing {chosen} mode in an elevated shell: an elevated gupkg never acts on a {chosen} root. "
-            + NORMAL_SHELL_HINT
-        )
 
     choice = ModeChoice(chosen, reason)
     if supported is not None:
@@ -332,8 +318,9 @@ def _folder(settings: Settings, key: str, env: Mapping[str, str], known: Path | 
 
 def layers_of(mode: str) -> tuple[str, ...]:
     """Return the settings layers a run in *mode* reads, lowest priority first (design 6.1)."""
-    middle = {MODE_SYSTEM: (), MODE_USER: (LAYER_USER,)}[mode]
-    return (LAYER_DEFAULTS, LAYER_APP, LAYER_SYSTEM, *middle, LAYER_CLI)
+    if mode == MODE_SYSTEM:
+        return (LAYER_DEFAULTS, LAYER_APP, LAYER_ROOT)
+    return (LAYER_DEFAULTS, LAYER_APP, LAYER_ROOT, LAYER_CLI)
 
 
 def build_mode_context(
@@ -351,7 +338,7 @@ def build_mode_context(
     choice : ModeChoice
         The selected mode and reason.
     settings : Settings
-        The merged settings of the run (``[roots]`` and ``[integration.*]``).
+        The merged settings of the run (``[roots]`` and ``[integration]``).
     env : mapping of str to str
         The environment used to expand ``%NAME%`` in configured paths.
     defaults : mapping, optional
@@ -376,8 +363,8 @@ def build_mode_context(
         sys_defaults = known.get(MODE_SYSTEM)
         return ModeContext(
             mode, Path(root) if root is not None else Path(expand_env(settings["roots.system"], env)),
-            _folder(settings, "integration.system.bin", env, sys_defaults.bin_dir if sys_defaults else None),
-            _folder(settings, "integration.system.start_menu", env, sys_defaults.start_menu if sys_defaults else None),
+            _folder(settings, "integration.bin", env, sys_defaults.bin_dir if sys_defaults else None),
+            _folder(settings, "integration.start_menu", env, sys_defaults.start_menu if sys_defaults else None),
             ENV_MACHINE, True, "full", layers_of(mode), choice.reason,
         )
     user_defaults = known.get(MODE_USER)
@@ -385,16 +372,16 @@ def build_mode_context(
     def user_start_menu() -> Path:
         """Return the user's Start Menu ``opt`` folder."""
         return _folder(
-            settings, "integration.user.start_menu", env, user_defaults.start_menu if user_defaults else None
+            settings, "integration.start_menu", env, user_defaults.start_menu if user_defaults else None
         )
 
     # User: shims live in the user's bin folder and the user's profile is touched, unless integrate = "none":
     # then shims live in ``<root>\\bin`` and neither the Start Menu nor the environment is touched.
     user_root = Path(root) if root is not None else Path(expand_env(settings["roots.user"], env))
-    integrate = settings["integration.user.integrate"]
+    integrate = settings["integration.integrate"]
     if integrate == "none":
         return ModeContext(mode, user_root, user_root / "bin", None, None, False, integrate, layers_of(mode), choice.reason)
     return ModeContext(
-        mode, user_root, _folder(settings, "integration.user.bin", env, user_defaults.bin_dir if user_defaults else None),
+        mode, user_root, _folder(settings, "integration.bin", env, user_defaults.bin_dir if user_defaults else None),
         user_start_menu(), ENV_USER, False, integrate, layers_of(mode), choice.reason,
     )

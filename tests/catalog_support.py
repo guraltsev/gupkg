@@ -13,7 +13,7 @@ from pathlib import Path
 from gupkg.catalog.catalog import Catalog
 from gupkg.catalog.record import write_install_record
 from gupkg.catalog.registry import registry_cache_dir
-from gupkg.model.settings import LAYER_SYSTEM, Layer, default_layer, merge_layers
+from gupkg.model.settings import LAYER_APP, Layer, default_layer, merge_layers
 from gupkg.model.state import InstallRecord, Link, Root
 from gupkg.tomlio import write_toml
 
@@ -101,14 +101,14 @@ def build_registry(
 def make_settings(system_root: Path, user_root: Path, registries: tuple[str, ...] = ("main",)):
     """Return merged settings whose two roots are the given folders and whose registries are *registries*."""
     layer = Layer(
-        LAYER_SYSTEM,
+        LAYER_APP,
         {
-            "schema": 3,
+            "schema": 4,
             "roots": {"system": str(system_root), "user": str(user_root)},
             "registry": [{"name": item, "source": f"https://example.org/{item}.zip"} for item in registries],
         },
     )
-    return merge_layers([default_layer(), layer])
+    return merge_layers([default_layer("user"), layer])
 
 
 def make_catalog(system, tmp_path: Path, *, registries: tuple[str, ...] = ("main",), elevated: bool | None = None, verify: bool = False):

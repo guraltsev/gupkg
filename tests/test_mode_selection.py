@@ -1,7 +1,7 @@
 """Cover the order and the rules of install-mode selection (design 6.2, D4, D31).
 
 Behavior covered: an explicit mode wins over the install record, the record over the containing root, the
-root over ``default_mode``; ``auto`` selects ``system`` when elevated and ``user`` otherwise; the chosen
+root over the process token; ``auto`` selects ``system`` when elevated and ``user`` otherwise; the chosen
 mode and its reason read ``system (auto: elevated)``; an elevated run refuses a user mode however it was chosen, and a
 record from an untrusted place; a mode that the package's ``modes`` list lacks (a portable package: system) is refused
 with the message of the case (D55); contradictory inputs are refused instead of overridden.
@@ -23,21 +23,17 @@ from tests.mode_support import pin_no_ambient_elevation  # noqa: F401
     [
         pytest.param({"elevated": True}, "system", "auto: elevated", id="auto-elevated-selects-system"),
         pytest.param({"elevated": False}, "user", "auto: not elevated", id="auto-normal-selects-user"),
-        pytest.param({"default_mode": "system"}, "system", "default_mode", id="default-mode-system-when-not-auto"),
-        pytest.param({"default_mode": "user"}, "user", "default_mode", id="default-mode-user"),
         pytest.param({"container": "user"}, "user", "inside the user root", id="root-beats-auto"),
-        pytest.param({"container": "system", "default_mode": "user"}, "system", "inside the system root",
-                     id="root-beats-default-mode"),
-        pytest.param({"record": "system", "container": "system", "default_mode": "user"}, "system",
-                     "install record", id="record-beats-default-mode"),
-        pytest.param({"explicit": "system", "default_mode": "user"}, "system", "--mode", id="flag-beats-default-mode"),
+        pytest.param({"container": "system"}, "system", "inside the system root", id="root-beats-auto-system"),
+        pytest.param({"record": "system", "container": "system"}, "system", "install record", id="record-beats-root"),
+        pytest.param({"explicit": "system"}, "system", "--mode", id="flag-beats-auto"),
         pytest.param({"explicit": "user", "explicit_source": "selector"}, "user", "selector",
                      id="qualified-selector-is-a-flag"),
         pytest.param({"record": "user", "elevated": False}, "user", "install record", id="record-beats-auto-normal"),
     ],
 )
 def test_selection_follows_the_order_of_the_design(kwargs: dict, mode: str, reason: str) -> None:
-    """The first of flag, install record, containing root and ``default_mode`` that decides names the mode and the reason.
+    """The first of flag, install record, containing root and the process token that decides names the mode and the reason.
 
     ``auto`` is used only when none of the earlier steps decides.
     """
@@ -61,7 +57,6 @@ def test_auto_resolves_to_system_or_user_and_the_reason_is_printable() -> None:
         pytest.param({"explicit": "user"}, id="explicit-user"),
         pytest.param({"record": "user"}, id="user-install-record"),
         pytest.param({"container": "user"}, id="path-inside-a-user-root"),
-        pytest.param({"default_mode": "user"}, id="default-mode-user"),
     ],
 )
 def test_an_elevated_run_never_acts_on_a_user_root(kwargs: dict) -> None:

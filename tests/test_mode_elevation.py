@@ -30,7 +30,7 @@ ARGV = ["install", "tool", "--mode", "system"]
 
 def context(mode: str):
     """Return the context of *mode* built from the built-in settings."""
-    return build_mode_context(ModeChoice(mode, "test"), merge_layers([default_layer()]), ENV)
+    return build_mode_context(ModeChoice(mode, "test"), merge_layers([default_layer("user")]), ENV)
 
 
 def call(system: FakeSystem, contexts, tmp_path: Path, **options):

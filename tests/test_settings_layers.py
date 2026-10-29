@@ -1,16 +1,15 @@
-"""Cover the schema 3 settings file, its layers and the elevated-run filtering.
+"""Cover the schema 4 settings file, the root fallback chain and the layers of one run (issue 035, D48, D50).
 
-Behavior covered: every effective value reports the layer it came from; later layers
-override earlier ones; the user layer is ignored in elevated and system-mode runs; a
-`--settings` file outside the system root is ignored in an elevated run; elevated and
-system-mode runs refuse a settings file in a folder that is not admin-only; nothing is
-ever read from AppData or ProgramData; invalid files are reported with every problem
-and a hint.
+Behavior covered: each mode finds its root by a fixed chain of fallbacks (4 rows in system mode, 5 in user mode) and reports
+the source of the root it chose; every effective value reports the layer it came from; later layers override earlier
+ones; ``[roots]`` is refused in a root's own ``settings.toml``; ``--settings`` is refused in system mode; a system-mode run
+refuses a settings file in a folder that is not admin-only; a user run never reads anything under the system root; a
+``schema = 3`` file is refused with the migration message; nothing is ever read from AppData or ProgramData; invalid files
+are reported with every problem and a hint.
 
-Real: ``gupkg.settingsload.load_settings`` and the model, on settings files written
-under pytest's temporary folder, and (one ``windows_integration`` test) the real
-administrator-only folder check. Fake: ``FakeSystem`` answers that check in the other tests,
-which would otherwise need an administrator-owned folder. Out of scope: the
+Real: ``gupkg.settingsload.resolve_root``, ``load_mode_settings`` and the model, on settings files written under pytest's
+temporary folder, and (one ``windows_integration`` test) the real administrator-only folder check. Fake: ``FakeSystem``
+answers that check in the other tests, which would otherwise need an administrator-owned folder. Out of scope: the
 ``gupkg settings show`` command itself.
 """
 
@@ -22,7 +21,7 @@ from pathlib import Path
 import pytest
 
 from gupkg.model.settings import SettingsError, default_layer, merge_layers
-from gupkg.settingsload import load_settings, settings_file
+from gupkg.settingsload import load_mode_settings, load_settings, resolve_root, settings_file
 from gupkg.system.fake import FakeSystem
 from gupkg.system.windows import WindowsSystem
 
@@ -42,13 +41,15 @@ class World:
             "ProgramData": str(base / "programdata"),
         }
         self.reads: list[Path] = []
-        self.write(self.app / "settings.toml", self.app_text())
 
-    def app_text(self, extra: str = "") -> str:
-        """Return the app layer text: it places the two roots inside the temporary folder."""
-        return (
-            f"schema = 3\n[roots]\nsystem = '{self.system}'\nuser = '{self.user}'\n" + extra
-        )
+    def fake(self, *, untrusted: bool = False) -> FakeSystem:
+        """Return a machine on which every folder is admin-only, or (with *untrusted*) none below the test folder is."""
+        # FakeSystem treats every folder as admin-only unless it is listed as untrusted.
+        return FakeSystem(self.base / "fake", untrusted_dirs={self.base} if untrusted else set())
+
+    def app_file(self, extra: str = "") -> Path:
+        """Write ``$App\\settings.toml``."""
+        return self.write(self.app / "settings.toml", "schema = 4\n" + extra)
 
     @staticmethod
     def write(path: Path, text: str) -> Path:
@@ -73,15 +74,13 @@ class World:
         except FileNotFoundError:
             return None
 
-    def load(self, *, elevated: bool = False, system_mode: bool = False, settings_path: Path | None = None,
-             untrusted: bool = False, system: FakeSystem | None = None):
-        """Load settings for a run on this machine (on *system* when one is given)."""
-        # FakeSystem treats every folder as admin-only unless it is listed as untrusted.
-        system = system or FakeSystem(self.base / "fake", untrusted_dirs={self.base} if untrusted else set())
-        return load_settings(
-            system=system,
-            env=self.env, elevated=elevated, system_mode=system_mode, app_dir=self.app,
-            settings_path=settings_path, read_text=self.read_text,
+    def load(self, mode: str = "user", *, root: Path | None = None, settings_path: Path | None = None,
+             untrusted: bool = False, system: FakeSystem | None = None, app: bool = True):
+        """Load the settings of a run in *mode* on its default test root (on *system* when one is given)."""
+        return load_mode_settings(
+            mode, root or (self.system if mode == "system" else self.user),
+            app_dir=self.app if app else None, settings_path=settings_path,
+            system=system or self.fake(untrusted=untrusted), env=self.env, read_text=self.read_text,
         )
 
 
@@ -96,123 +95,243 @@ def sources(loaded) -> dict[str, str]:
     return {row.key: row.layer for row in loaded.settings.effective()}
 
 
+# ---------------------------------------------------------------------------
+# The root fallback chain (issue 035 section 4.1, D48)
+# ---------------------------------------------------------------------------
+
+
+def roots_data(**roots: Path | str) -> dict:
+    """Return the parsed ``[roots]`` table of a layer."""
+    return {"roots": {name: str(value) for name, value in roots.items()}}
+
+
+def choose(world: World, mode: str, *, option: Path | None = None, installed: Path | None = None,
+           app: dict | None = None, cli: dict | None = None, untrusted: bool = False):
+    """Call ``resolve_root`` with what the test sets; the rest is absent."""
+    return resolve_root(
+        mode, root_option=option, installed_root=installed, app_layer=app, cli_layer=cli,
+        env=world.env, system=world.fake(untrusted=untrusted),
+    )
+
+
+def test_system_row_1_root_option_wins(world: World) -> None:
+    """``--root`` beats the installed system gupkg's root, ``$App`` and the built-in default."""
+    chosen = choose(world, "system", option=world.base / "r1", installed=world.base / "r2",
+                    app=roots_data(system=world.base / "r3"))
+
+    assert (chosen.path, chosen.source) == (world.base / "r1", "--root")
+
+
+def test_system_row_2_installed_system_root_wins(world: World) -> None:
+    """The root of the installed system gupkg beats ``$App\\settings.toml`` and the built-in default."""
+    chosen = choose(world, "system", installed=world.base / "r2", app=roots_data(system=world.base / "r3"))
+
+    assert (chosen.path, chosen.source) == (world.base / "r2", "the installed system gupkg")
+
+
+def test_system_row_3_app_settings_win(world: World) -> None:
+    """``[roots].system`` of ``$App\\settings.toml`` beats the built-in default."""
+    chosen = choose(world, "system", app=roots_data(system=world.base / "r3"))
+
+    assert (chosen.path, chosen.source) == (world.base / "r3", "$App\\settings.toml")
+
+
+def test_system_row_4_built_in_default(world: World) -> None:
+    """With nothing else the system root is ``C:\\opt``."""
+    chosen = choose(world, "system")
+
+    assert (chosen.path, chosen.source) == (Path("C:\\opt"), "built-in default")
+
+
+def test_user_row_1_root_option_wins(world: World) -> None:
+    """``--root`` beats every other source of the user root."""
+    chosen = choose(world, "user", option=world.base / "r1", cli=roots_data(user=world.base / "r2"),
+                    installed=world.base / "r3", app=roots_data(user=world.base / "r4"), untrusted=True)
+
+    assert (chosen.path, chosen.source) == (world.base / "r1", "--root")
+
+
+def test_user_row_2_settings_option_wins(world: World) -> None:
+    """``[roots].user`` of ``--settings`` beats the installed root, ``$App`` and the built-in default."""
+    chosen = choose(world, "user", cli=roots_data(user=world.base / "r2"), installed=world.base / "r3",
+                    app=roots_data(user=world.base / "r4"), untrusted=True)
+
+    assert (chosen.path, chosen.source) == (world.base / "r2", "--settings")
+
+
+def test_user_row_3_installed_root_wins_when_it_is_not_admin_only(world: World) -> None:
+    """A gupkg installed in a root that users can write manages that root, before ``$App`` and the built-in default."""
+    chosen = choose(world, "user", installed=world.base / "r3", app=roots_data(user=world.base / "r4"), untrusted=True)
+
+    assert (chosen.path, chosen.source) == (world.base / "r3", "the root this gupkg is installed in")
+
+
+def test_user_row_3_is_skipped_for_an_admin_only_installed_root(world: World) -> None:
+    """The system gupkg run by a standard user does not hand its admin-only root to the user mode (no system data is read)."""
+    chosen = choose(world, "user", installed=world.base / "r3", app=roots_data(user=world.base / "r4"), untrusted=False)
+
+    assert (chosen.path, chosen.source) == (world.base / "r4", "$App\\settings.toml")
+
+
+def test_user_row_4_app_settings_win(world: World) -> None:
+    """``[roots].user`` of ``$App\\settings.toml`` beats the built-in default (a source tree has no installed root)."""
+    chosen = choose(world, "user", app=roots_data(user=world.base / "r4"))
+
+    assert (chosen.path, chosen.source) == (world.base / "r4", "$App\\settings.toml")
+
+
+def test_user_row_5_built_in_default(world: World) -> None:
+    """With nothing else the user root is ``%USERPROFILE%\\opt``."""
+    chosen = choose(world, "user")
+
+    assert (chosen.path, chosen.source) == (world.base / "home" / "opt", "built-in default")
+
+
+def test_a_mode_reads_only_its_own_roots_key(world: World) -> None:
+    """The system mode ignores ``[roots].user`` and the user mode ignores ``[roots].system``."""
+    both = roots_data(system=world.base / "s", user=world.base / "u")
+
+    assert choose(world, "system", app=both).path == world.base / "s"
+    assert choose(world, "user", app=both).path == world.base / "u"
+
+
+def test_root_option_in_system_mode_must_be_admin_only(world: World) -> None:
+    """``--root`` for the system mode in a folder that users can write is refused, with the reason."""
+    with pytest.raises(SettingsError, match="--root .* is not admin-only"):
+        choose(world, "system", option=world.base / "open", untrusted=True)
+
+
+def test_a_relative_root_is_refused(world: World) -> None:
+    """A root must be an absolute path with a drive."""
+    with pytest.raises(SettingsError, match="absolute path with a drive"):
+        choose(world, "user", app=roots_data(user="relative\\opt"))
+
+
+def test_an_undefined_variable_in_a_root_is_reported(world: World) -> None:
+    """A ``%VARIABLE%`` that the environment lacks is named in the error."""
+    with pytest.raises(SettingsError, match="NOT_DEFINED"):
+        choose(world, "user", app=roots_data(user="%NOT_DEFINED%\\x"))
+
+
+# ---------------------------------------------------------------------------
+# The rules of the layers
+# ---------------------------------------------------------------------------
+
+
 def test_defaults_alone_give_the_documented_values_and_say_so() -> None:
     """With only the built-in defaults the documented defaults apply and every value is attributed to `defaults`."""
-    settings = merge_layers([default_layer()])
+    user = merge_layers([default_layer("user")])
+    system = merge_layers([default_layer("system")])
 
-    assert settings["default_mode"] == "auto"
-    assert settings["roots.system"] == "C:\\opt"
-    assert settings["integration.user.integrate"] == "full"
-    assert settings["manager.checksum_missing"] == "ask"
-    assert [(r.name, r.source) for r in settings.registries] == [("main", "https://github.com/guraltsev/gupkg-registry.git")]
-    assert {row.layer for row in settings.effective()} == {"defaults"}
+    assert user["roots.system"] == "C:\\opt"
+    assert (user["integration.integrate"], user["integration.bin"]) == ("full", "%USERPROFILE%\\bin")
+    assert system["integration.bin"] == "C:\\bin"
+    assert user["manager.checksum_missing"] == "ask"
+    assert [(r.name, r.source) for r in user.registries] == [("main", "https://github.com/guraltsev/gupkg-registry.git")]
+    assert {row.layer for row in user.effective()} == {"defaults"}
 
 
 def test_each_effective_value_reports_the_layer_it_came_from(world: World) -> None:
-    """Values set by the app, system, user and command-line layers are attributed to exactly those layers."""
-    world.system_file('schema = 3\ndefault_mode = "user"\n[logs]\nkeep_runs = 7\n')
-    world.user_file('schema = 3\n[logs]\nkeep_runs = 9\n[ui]\ncolor = "never"\n')
-    cli = world.write(world.base / "cli.toml", 'schema = 3\n[cleanup]\nauto = true\n')
+    """Values set by the app, root and command-line layers are attributed to exactly those layers."""
+    world.app_file('[logs]\nkeep_runs = 7\nkeep_days = 5\n')
+    world.user_file('schema = 4\n[logs]\nkeep_runs = 9\n[ui]\ncolor = "never"\n')
+    cli = world.write(world.base / "cli.toml", 'schema = 4\n[cleanup]\nauto = true\n')
 
     loaded = world.load(settings_path=cli)
     origin = sources(loaded)
 
-    assert loaded.settings["logs.keep_runs"] == 9          # user beats system
-    assert (origin["logs.keep_runs"], origin["default_mode"]) == ("user", "system")
-    assert (origin["ui.color"], origin["cleanup.auto"]) == ("user", "cli")
-    assert origin["roots.system"] == "app"
-    assert origin["logs.keep_days"] == "defaults"
+    assert loaded.settings["logs.keep_runs"] == 9          # the root beats $App
+    assert (origin["logs.keep_runs"], origin["logs.keep_days"]) == ("root", "app")
+    assert (origin["ui.color"], origin["cleanup.auto"]) == ("root", "cli")
+    assert origin["manager.keep_screen"] == "defaults"
     assert [(r.name, r.status) for r in loaded.layers] == [
-        ("defaults", "applied"), ("app", "applied"), ("system", "applied"), ("user", "applied"), ("cli", "applied"),
+        ("defaults", "applied"), ("app", "applied"), ("root", "applied"), ("cli", "applied"),
     ]
-
-
-def test_system_layer_can_move_the_user_root_and_the_user_layer_follows_it(world: World) -> None:
-    """The user layer is read from the user root that the system layer names, not from the default one."""
-    moved = world.base / "moved" / "opt"
-    world.system_file(f"schema = 3\n[roots]\nuser = '{moved}'\n")
-    world.user_file('schema = 3\n[ui]\ncolor = "always"\n')
-    world.write(settings_file(moved), 'schema = 3\n[ui]\ncolor = "never"\n')
-
-    loaded = world.load()
-
-    assert loaded.settings["ui.color"] == "never"
-    assert loaded.settings["roots.user"] == str(moved)
 
 
 def test_registry_array_is_replaced_by_the_highest_layer_that_sets_it(world: World) -> None:
     """A `[[registry]]` array in a later layer replaces the earlier one entirely."""
-    world.user_file('schema = 3\n[[registry]]\nname = "team"\nsource = "https://example.org/team.git"\n')
+    world.user_file('schema = 4\n[[registry]]\nname = "team"\nsource = "https://example.org/team.git"\n')
 
     loaded = world.load()
 
     assert [(r.name, r.source) for r in loaded.settings.registries] == [("team", "https://example.org/team.git")]
-    assert sources(loaded)["registry"] == "user"
+    assert sources(loaded)["registry"] == "root"
 
 
-@pytest.mark.parametrize("flags", [{"elevated": True}, {"system_mode": True}], ids=["elevated", "system-mode"])
-def test_user_layer_is_ignored_in_elevated_and_system_mode_runs(world: World, flags: dict) -> None:
-    """The user layer's values are not applied, the layer is reported as ignored, and its file is never read."""
-    world.user_file('schema = 3\n[ui]\ncolor = "never"\n')
+def test_roots_in_a_root_layer_is_refused_and_names_the_file(world: World) -> None:
+    """``[roots]`` in ``<root>\\.gupkg\\settings.toml`` is an error that names the file and says where to set it."""
+    path = world.user_file(f"schema = 4\n[roots]\nuser = '{world.base / 'elsewhere'}'\n")
 
-    loaded = world.load(**flags)
+    with pytest.raises(SettingsError) as caught:
+        world.load()
 
-    assert loaded.settings["ui.color"] == "auto"
-    user = next(r for r in loaded.layers if r.name == "user")
-    assert user.status == "ignored"
-    assert settings_file(world.user) not in world.reads
-
-
-def test_user_layer_is_applied_in_a_normal_run(world: World) -> None:
-    """The same file is applied when the run is neither elevated nor in system mode."""
-    world.user_file('schema = 3\n[ui]\ncolor = "never"\n')
-
-    assert world.load().settings["ui.color"] == "never"
+    assert str(caught.value) == (
+        f"[roots] cannot be set in a root's own settings.toml ({path}); set it in $App\\settings.toml or with --root"
+    )
 
 
-def test_settings_file_outside_the_system_root_is_ignored_in_an_elevated_run(world: World) -> None:
-    """In an elevated run `--settings` is ignored unless the file is inside the system root."""
-    outside = world.write(world.base / "downloads" / "evil.toml", 'schema = 3\n[ui]\ncolor = "never"\n')
+def test_roots_in_the_app_and_settings_layers_are_accepted(world: World) -> None:
+    """``$App\\settings.toml`` and ``--settings`` may carry ``[roots]``."""
+    world.app_file(f"[roots]\nsystem = '{world.system}'\n")
+    cli = world.write(world.base / "cli.toml", f"schema = 4\n[roots]\nuser = '{world.user}'\n")
 
-    loaded = world.load(elevated=True, settings_path=outside)
+    loaded = world.load(settings_path=cli)
 
-    assert loaded.settings["ui.color"] == "auto"
-    cli = next(r for r in loaded.layers if r.name == "cli")
-    assert cli.status == "ignored"
-    assert outside not in world.reads
+    assert (loaded.settings["roots.system"], loaded.settings["roots.user"]) == (str(world.system), str(world.user))
 
 
-def test_settings_file_inside_the_system_root_is_used_in_an_elevated_run(world: World) -> None:
-    """An elevated run accepts `--settings` from inside the system root (its folder passing the admin-only check)."""
-    inside = world.write(world.system / "extra.toml", 'schema = 3\n[ui]\ncolor = "never"\n')
+def test_the_settings_option_is_refused_in_system_mode(world: World) -> None:
+    """The system mode takes no ``--settings`` file."""
+    extra = world.write(world.system / "extra.toml", "schema = 4\n")
 
-    loaded = world.load(elevated=True, settings_path=inside)
-
-    assert loaded.settings["ui.color"] == "never"
-    assert sources(loaded)["ui.color"] == "cli"
+    with pytest.raises(SettingsError, match="--settings is not accepted in system mode"):
+        world.load("system", settings_path=extra)
 
 
-def test_settings_file_anywhere_is_used_in_a_normal_run_and_must_exist(world: World) -> None:
-    """A normal run takes `--settings` from any folder, and a missing file is an error rather than silence."""
-    elsewhere = world.write(world.base / "elsewhere.toml", 'schema = 3\n[ui]\ncolor = "never"\n')
+def test_settings_file_anywhere_is_used_in_user_mode_and_must_exist(world: World) -> None:
+    """User mode takes `--settings` from any folder, and a missing file is an error rather than silence."""
+    elsewhere = world.write(world.base / "elsewhere.toml", 'schema = 4\n[ui]\ncolor = "never"\n')
 
-    assert world.load(settings_path=elsewhere).settings["ui.color"] == "never"
+    assert world.load(settings_path=elsewhere, untrusted=True).settings["ui.color"] == "never"
     with pytest.raises(SettingsError, match="does not exist"):
         world.load(settings_path=world.base / "absent.toml")
 
 
-@pytest.mark.parametrize("flags", [{"elevated": True}, {"system_mode": True}], ids=["elevated", "system-mode"])
-def test_elevated_and_system_runs_refuse_a_layer_in_a_folder_that_is_not_admin_only(world: World, flags: dict) -> None:
-    """A settings file in a folder a standard user can change stops the run instead of being trusted."""
-    world.system_file('schema = 3\n[ui]\ncolor = "never"\n')
+def test_a_user_run_never_reads_the_system_root(world: World) -> None:
+    """Nothing under the system root is read or even asked for when the user mode loads its settings."""
+    world.system_file('schema = 4\n[ui]\ncolor = "never"\n')
+    world.app_file(f"[roots]\nsystem = '{world.system}'\nuser = '{world.user}'\n")
+    cli = world.write(world.base / "cli.toml", "schema = 4\n")
+    choice = choose(world, "user", app=roots_data(system=world.system, user=world.user), cli=roots_data())
+
+    loaded = world.load(root=choice.path, settings_path=cli)
+
+    assert loaded.settings["ui.color"] == "auto"
+    assert world.reads and not [path for path in world.reads if world.system in path.parents or path == world.system]
+
+
+def test_a_system_run_refuses_a_layer_in_a_folder_that_is_not_admin_only(world: World) -> None:
+    """A settings file in a folder a standard user can change stops the system mode instead of being trusted."""
+    world.system_file('schema = 4\n[ui]\ncolor = "never"\n')
 
     with pytest.raises(SettingsError, match="Refusing the"):
-        world.load(untrusted=True, **flags)
+        world.load("system", untrusted=True)
 
 
-def test_normal_run_does_not_need_admin_only_folders(world: World) -> None:
-    """A non-elevated user-mode run reads layers from any folder without the admin-only check."""
-    world.system_file('schema = 3\n[ui]\ncolor = "never"\n')
+def test_a_system_run_refuses_an_app_layer_that_is_not_admin_only(world: World) -> None:
+    """``$App\\settings.toml`` is checked like the root's file."""
+    world.app_file()
+    trusted_root = world.base.parent / "other-root"
+    system = FakeSystem(world.base / "fake", untrusted_dirs={world.app})
+
+    with pytest.raises(SettingsError, match="Refusing the app settings"):
+        world.load("system", root=trusted_root, system=system)
+
+
+def test_a_user_run_does_not_need_admin_only_folders(world: World) -> None:
+    """A user-mode run reads layers from any folder without the admin-only check."""
+    world.user_file('schema = 4\n[ui]\ncolor = "never"\n')
 
     assert world.load(untrusted=True).settings["ui.color"] == "never"
 
@@ -221,7 +340,7 @@ def test_nothing_is_read_from_appdata_or_programdata(world: World) -> None:
     """Settings files planted in AppData, LocalAppData and ProgramData are never read and never applied."""
     for variable in ("APPDATA", "LOCALAPPDATA", "ProgramData"):
         for relative in ("settings.toml", "gupkg/settings.toml", ".gupkg/settings.toml"):
-            world.write(Path(world.env[variable]) / relative, 'schema = 3\n[ui]\ncolor = "never"\n')
+            world.write(Path(world.env[variable]) / relative, 'schema = 4\n[ui]\ncolor = "never"\n')
 
     loaded = world.load()
 
@@ -231,18 +350,18 @@ def test_nothing_is_read_from_appdata_or_programdata(world: World) -> None:
 
 
 def test_missing_layers_are_skipped_and_reported(world: World) -> None:
-    """Absent system and user files are reported as missing and change nothing."""
+    """Absent app and root files are reported as missing and change nothing."""
     loaded = world.load()
 
     statuses = {r.name: r.status for r in loaded.layers}
-    assert statuses["system"] == "missing" and statuses["user"] == "missing"
-    assert loaded.settings["roots.system"] == str(world.system)
+    assert statuses["app"] == "missing" and statuses["root"] == "missing"
+    assert loaded.settings["roots.system"] == "C:\\opt"
 
 
 def test_invalid_layer_lists_every_problem_with_hints(world: World) -> None:
     """An invalid file reports all its problems at once and names the file and the likely key."""
     world.user_file(
-        'schema = 3\ndefault_mod = "user"\n[ui]\ncolor = "purple"\n[logs]\nkeep_runs = 0\n[[registry]]\nname = "a"\n'
+        'schema = 4\nrotos = "user"\n[ui]\ncolor = "purple"\n[logs]\nkeep_runs = 0\n[[registry]]\nname = "a"\n'
     )
 
     with pytest.raises(SettingsError) as caught:
@@ -250,9 +369,17 @@ def test_invalid_layer_lists_every_problem_with_hints(world: World) -> None:
 
     text = str(caught.value)
     assert len(caught.value.problems) >= 4
-    assert "did you mean 'default_mode'" in text
+    assert "did you mean 'roots'" in text
     assert "settings.toml" in text
     assert "'ui.color' must be one of auto, always, never" in text
+
+
+def test_a_schema_3_file_is_refused_with_the_migration_message(world: World) -> None:
+    """A schema 3 file is not converted; the error says what to change."""
+    world.user_file('schema = 3\ndefault_mode = "user"\n')
+
+    with pytest.raises(SettingsError, match=r"settings schema 3 is no longer read; change it to schema = 4 \(see _docs/rehaul_design.md §11\)"):
+        world.load()
 
 
 @pytest.mark.parametrize(
@@ -261,51 +388,37 @@ def test_invalid_layer_lists_every_problem_with_hints(world: World) -> None:
         pytest.param("[ui]\ncolor = 'auto'\n", id="no-schema"),
         pytest.param("schema = 2\n", id="schema-2"),
         pytest.param('mode = "manager"\nschema_version = 2\n', id="manager-config"),
+        pytest.param("schema = 4\n[integration.user]\nbin = 'C:\\\\x'\n", id="old-integration-tables"),
+        pytest.param('schema = 4\ndefault_mode = "user"\n', id="default-mode"),
     ],
 )
-def test_files_that_are_not_schema_3_are_refused(world: World, text: str) -> None:
-    """A settings file must say `schema = 3`; anything else is refused with no special handling."""
+def test_files_that_are_not_schema_4_are_refused(world: World, text: str) -> None:
+    """A settings file must say `schema = 4` and use only the schema 4 keys."""
     world.user_file(text)
 
     with pytest.raises(SettingsError, match="schema|unknown key"):
         world.load()
 
 
-def test_roots_must_be_absolute_distinct_and_not_nested(world: World) -> None:
-    """Relative, equal or nested roots are rejected, and an undefined %VARIABLE% is reported."""
-    nested = world.user / "inner"
-    for text in (
-        "schema = 3\n[roots]\nuser = 'relative\\opt'\n",
-        f"schema = 3\n[roots]\nsystem = '{world.user}'\n",
-        f"schema = 3\n[roots]\nsystem = '{nested}'\n",
-        "schema = 3\n[roots]\nsystem = '%NOT_DEFINED%\\x'\n",
-    ):
-        world.user_file(text)
-        with pytest.raises(SettingsError):
-            world.load()
-
-
-@pytest.mark.parametrize("flags", [{"elevated": True}, {"system_mode": True}], ids=["elevated", "system-mode"])
-def test_the_folder_is_checked_before_the_file_is_read(world: World, flags: dict) -> None:
-    """In elevated and system-mode runs a file in an untrusted folder is refused without having been read."""
-    system_file = world.system_file('schema = 3\n[ui]\ncolor = "never"\n')
+def test_the_folder_is_checked_before_the_file_is_read(world: World) -> None:
+    """In system mode a file in an untrusted folder is refused without having been read."""
+    system_file = world.system_file('schema = 4\n[ui]\ncolor = "never"\n')
 
     with pytest.raises(SettingsError, match="Refusing"):
-        world.load(untrusted=True, **flags)
+        world.load("system", untrusted=True)
 
     assert system_file not in world.reads
 
 
-def test_a_missing_layer_in_an_untrusted_folder_is_still_refused_in_strict_runs(world: World) -> None:
+def test_a_missing_layer_in_an_untrusted_folder_is_still_refused_in_system_mode(world: World) -> None:
     """The folder check covers a settings file that does not exist yet, judged by its nearest existing parent."""
     with pytest.raises(SettingsError, match="Refusing"):
-        world.load(untrusted=True, system_mode=True)
+        world.load("system", untrusted=True)
 
 
-@pytest.mark.parametrize("flags", [{"elevated": True}, {"system_mode": True}], ids=["elevated", "system-mode"])
-def test_a_folder_that_cannot_be_judged_stops_a_strict_run_with_a_settings_error(world: World, flags: dict) -> None:
+def test_a_folder_that_cannot_be_judged_stops_a_system_run_with_a_settings_error(world: World) -> None:
     """When the boundary cannot say whether a folder is admin-only (it raises), the run is refused, not crashed or trusted."""
-    world.system_file('schema = 3\n[ui]\ncolor = "never"\n')
+    world.system_file('schema = 4\n[ui]\ncolor = "never"\n')
 
     class Unjudgeable(FakeSystem):
         """A machine whose permission check fails."""
@@ -314,12 +427,12 @@ def test_a_folder_that_cannot_be_judged_stops_a_strict_run_with_a_settings_error
             raise PermissionError("access denied")
 
     with pytest.raises(SettingsError, match="could not be judged admin-only: access denied"):
-        world.load(system=Unjudgeable(world.base / "fake2"), **flags)
+        world.load("system", system=Unjudgeable(world.base / "fake2"))
 
 
-def test_a_normal_run_does_not_ask_whether_folders_are_admin_only(world: World) -> None:
-    """Outside elevated and system-mode runs the permission check is never made (a failing boundary changes nothing)."""
-    world.user_file('schema = 3\n[ui]\ncolor = "never"\n')
+def test_a_user_run_does_not_ask_whether_folders_are_admin_only(world: World) -> None:
+    """In user mode the permission check is never made (a failing boundary changes nothing)."""
+    world.user_file('schema = 4\n[ui]\ncolor = "never"\n')
 
     class Unjudgeable(FakeSystem):
         """A machine whose permission check fails."""
@@ -332,19 +445,18 @@ def test_a_normal_run_does_not_ask_whether_folders_are_admin_only(world: World) 
 
 def test_unreadable_and_undecodable_files_are_errors_not_skipped_layers(world: World) -> None:
     """An OS error other than 'not found' and a file that is not UTF-8 both stop the run with a named error."""
-    world.user_file("schema = 3\n")
-    settings_file(world.user).write_bytes(b"schema = 3\n# \xff\xfe\n")
+    world.user_file("schema = 4\n")
+    settings_file(world.user).write_bytes(b"schema = 4\n# \xff\xfe\n")
 
-    with pytest.raises(SettingsError, match="cannot read the user settings"):
-        world.load()
+    with pytest.raises(SettingsError, match="cannot read the root settings"):
+        load_mode_settings("user", world.user, app_dir=None, settings_path=None, system=world.fake(), env=world.env)
 
     def broken(path: Path) -> str | None:
         raise PermissionError("denied")
 
     with pytest.raises(SettingsError, match="cannot read the app settings"):
-        load_settings(
-            system=FakeSystem(world.base / "fake"), env=world.env, elevated=False, system_mode=False, app_dir=world.app,
-            read_text=broken,
+        load_mode_settings(
+            "user", world.user, app_dir=world.app, settings_path=None, system=world.fake(), env=world.env, read_text=broken,
         )
 
 
@@ -356,13 +468,30 @@ def test_invalid_toml_names_the_file(world: World) -> None:
         world.load()
 
 
+# ---------------------------------------------------------------------------
+# The adapter that the callers of the old design use until T05
+# ---------------------------------------------------------------------------
+
+
+def test_the_adapter_loads_the_system_mode_for_an_elevated_run_and_the_user_mode_otherwise(world: World) -> None:
+    """``load_settings`` picks the mode from ``elevated`` / ``system_mode`` and reads only that mode's root."""
+    world.app_file(f"[roots]\nsystem = '{world.system}'\nuser = '{world.user}'\n")
+    world.system_file('schema = 4\n[logs]\nkeep_runs = 7\n')
+    world.user_file('schema = 4\n[logs]\nkeep_runs = 9\n')
+
+    def adapter(**flags):
+        return load_settings(system=world.fake(), env=world.env, app_dir=world.app, read_text=world.read_text, **flags)
+
+    assert adapter(elevated=False, system_mode=False).settings["logs.keep_runs"] == 9
+    assert adapter(elevated=True, system_mode=False).settings["logs.keep_runs"] == 7
+    assert adapter(elevated=False, system_mode=True).settings["integration.bin"] == "C:\\bin"
+
+
 @pytest.mark.windows_integration
 @pytest.mark.skipif(os.name != "nt", reason="reads Windows access-control lists")
 def test_real_admin_only_check_refuses_a_user_writable_system_layer(world: World) -> None:
-    """With the real folder check, a system-mode run refuses a system layer in a folder the current user can write."""
-    world.system_file('schema = 3\n[ui]\ncolor = "never"\n')
+    """With the real folder check, a system-mode run refuses a root layer in a folder the current user can write."""
+    world.system_file('schema = 4\n[ui]\ncolor = "never"\n')
 
-    with pytest.raises(SettingsError, match="Refusing the system settings"):
-        load_settings(
-            system=WindowsSystem(), env=world.env, elevated=False, system_mode=True, app_dir=None, installed_system_root=world.system,
-        )
+    with pytest.raises(SettingsError, match="Refusing the root settings"):
+        load_mode_settings("system", world.system, app_dir=None, settings_path=None, system=WindowsSystem(), env=world.env)

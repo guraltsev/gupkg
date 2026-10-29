@@ -52,7 +52,7 @@ def _validate(layer: str, data: dict[str, Any], path: Path) -> None:
 
 
 def init_settings(path: Path, layer: str, *, force: bool = False) -> dict[str, Any]:
-    """Write a new settings file holding only ``schema = 3``, and return its data.
+    """Write a new settings file holding only ``schema = 4``, and return its data.
 
     Parameters
     ----------

@@ -288,14 +288,14 @@ def make_env(base: Path, fake: FakeGupkg, *, can_elevate: bool = True, settings:
     roots = base / "roots"
     file = base / "ui-settings.toml"
     file.write_text(
-        f"schema = 3\n[roots]\nsystem = '{roots / 'sys'}'\nuser = '{roots / 'user'}'\n"
-        f"[integration.user]\nbin = '{roots / 'ubin'}'\nstart_menu = '{roots / 'usm'}'\n[integration.system]\nbin = '{roots / 'sbin'}'\nstart_menu = '{roots / 'ssm'}'\n{settings}\n",
+        f"schema = 4\n[roots]\nsystem = '{roots / 'sys'}'\nuser = '{roots / 'user'}'\n"
+        f"[integration]\nbin = '{roots / 'ubin'}'\nstart_menu = '{roots / 'usm'}'\n{settings}\n",
         encoding="utf-8",
     )
     if user_layer:
-        # The user layer is read from the default user root (the file named by --settings cannot move it), ``%USERPROFILE%\opt``.
-        (base / "home" / "opt" / ".gupkg").mkdir(parents=True, exist_ok=True)
-        (base / "home" / "opt" / ".gupkg" / "settings.toml").write_text("schema = 3\n" + user_layer, encoding="utf-8")
+        # The root layer is read from the user root that ``[roots].user`` of --settings names.
+        (roots / "user" / ".gupkg").mkdir(parents=True, exist_ok=True)
+        (roots / "user" / ".gupkg" / "settings.toml").write_text("schema = 4\n" + user_layer, encoding="utf-8")
     package = base / "tree" / "gupkg"
     package.mkdir(parents=True, exist_ok=True)
     where = RunningGupkg("source", package, (package,))
@@ -327,10 +327,14 @@ class RealWorld:
         (base / "temp").mkdir()
         self.settings = base / "settings.toml"
         self.settings.write_text(
-            f"schema = 3\n[roots]\nsystem = '{self.system}'\nuser = '{self.user}'\n"
-            f"[integration.user]\nbin = '{base / 'home' / 'bin'}'\nstart_menu = '{base / 'home' / 'sm'}'\n"
-            f"[integration.system]\nbin = '{base / 'sys' / 'bin'}'\nstart_menu = '{base / 'sys' / 'sm'}'\n{settings}\n",
+            f"schema = 4\n[roots]\nsystem = '{self.system}'\nuser = '{self.user}'\n"
+            f"[integration]\nbin = '{base / 'home' / 'bin'}'\nstart_menu = '{base / 'home' / 'sm'}'\n{settings}\n",
             encoding="utf-8",
+        )
+        # The system mode reads no --settings file: its folders come from its own root's settings.
+        (self.system / ".gupkg").mkdir(parents=True)
+        (self.system / ".gupkg" / "settings.toml").write_text(
+            f"schema = 4\n[integration]\nbin = '{base / 'sys' / 'bin'}'\nstart_menu = '{base / 'sys' / 'sm'}'\n", encoding="utf-8"
         )
         self.env = {
             "USERPROFILE": str(base / "home"), "APPDATA": str(base / "appdata"), "TEMP": str(base / "temp"), "TMP": str(base / "temp"),

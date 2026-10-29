@@ -1,10 +1,10 @@
-"""The settings schema (version 3) and the layering of its sources (design section 11).
+"""The settings schema (version 4) and the layering of its sources (design section 11).
 
 Usage and API
 -------------
 Wrap each parsed settings file in a ``Layer`` and call ``merge_layers(layers)``
 with the layers in priority order, lowest first, starting with
-``default_layer()``. The result is a ``Settings`` that answers ``settings[key]``
+``default_layer(mode)``. The result is a ``Settings`` that answers ``settings[key]``
 (``"roots.system"``), lists every effective value with the layer it came from
 (``settings.effective()``, for ``gupkg settings show``), and exposes the
 registries. ``expand_env(text, env)`` expands ``%NAME%`` references in a path.
@@ -28,14 +28,17 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-SCHEMA = 3
+SCHEMA = 4
 
 LAYER_DEFAULTS = "defaults"
 LAYER_APP = "app"
-LAYER_SYSTEM = "system"
-LAYER_USER = "user"
+LAYER_ROOT = "root"
 LAYER_CLI = "cli"
-LAYER_NAMES = (LAYER_DEFAULTS, LAYER_APP, LAYER_SYSTEM, LAYER_USER, LAYER_CLI)
+LAYER_NAMES = (LAYER_DEFAULTS, LAYER_APP, LAYER_ROOT, LAYER_CLI)
+
+MODE_SYSTEM = "system"
+MODE_USER = "user"
+SCHEMA_3_REFUSAL = "settings schema 3 is no longer read; change it to schema = 4 (see _docs/rehaul_design.md §11)"
 
 OFFICIAL_REGISTRY_SOURCE = "https://github.com/guraltsev/gupkg-registry.git"
 _REGISTRY_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -87,12 +90,8 @@ def _count(value: Any) -> int:
 # The settings, as nested tables whose leaves are validators. ``schema`` and the
 # ``[[registry]]`` array are handled separately.
 _SCHEMA: dict[str, Any] = {
-    "default_mode": _choice("auto", "system", "user"),
     "roots": {"system": _text, "user": _text},
-    "integration": {
-        "system": {"bin": _text, "start_menu": _text},
-        "user": {"bin": _text, "start_menu": _text, "integrate": _choice("full", "none")},
-    },
+    "integration": {"bin": _text, "start_menu": _text, "integrate": _choice("full", "none")},
     "manager": {"checksum_missing": _choice("ask", "refuse", "skip"), "keep_screen": _boolean},
     "logs": {"keep_runs": _count, "keep_days": _count},
     "cleanup": {"auto": _boolean},
@@ -241,7 +240,14 @@ def validate_layer(layer: Layer) -> tuple[dict[str, Any], tuple[RegistryEntry, .
     """
     problems: list[str] = []
     data = layer.data
-    if (layer.name != LAYER_DEFAULTS or "schema" in data) and data.get("schema") != SCHEMA:
+    if layer.name == LAYER_ROOT and "roots" in data:
+        raise SettingsError(
+            f"[roots] cannot be set in a root's own settings.toml ({layer.origin}); "
+            "set it in $App\\settings.toml or with --root"
+        )
+    if data.get("schema") == 3:
+        problems.append(SCHEMA_3_REFUSAL)
+    elif (layer.name != LAYER_DEFAULTS or "schema" in data) and data.get("schema") != SCHEMA:
         shown = data.get("schema", "missing")
         problems.append(f"unsupported settings schema ({shown!r}); this gupkg reads schema {SCHEMA}")
     body = {key: value for key, value in data.items() if key not in ("schema", "registry")}
@@ -256,28 +262,34 @@ def validate_layer(layer: Layer) -> tuple[dict[str, Any], tuple[RegistryEntry, .
     return values, registries
 
 
-def default_layer() -> Layer:
-    """Return the built-in defaults of design section 11 as the lowest layer."""
+def default_layer(mode: str) -> Layer:
+    """Return the built-in defaults of *mode* (``system`` or ``user``) as the lowest layer.
+
+    The two modes differ only in the ``[integration]`` folders.
+    """
+    if mode == MODE_SYSTEM:
+        integration = {
+            "bin": "C:\\bin",
+            "start_menu": "%ProgramData%\\Microsoft\\Windows\\Start Menu\\opt",
+            "integrate": "full",
+        }
+    elif mode == MODE_USER:
+        integration = {
+            "bin": "%USERPROFILE%\\bin",
+            "start_menu": "%APPDATA%\\Microsoft\\Windows\\Start Menu\\opt",
+            "integrate": "full",
+        }
+    else:
+        raise ValueError(f"unknown mode {mode!r}; use 'system' or 'user'")
     return Layer(
         LAYER_DEFAULTS,
         {
             "schema": SCHEMA,
-            "default_mode": "auto",
             "roots": {
                 "system": "C:\\opt",
                 "user": "%USERPROFILE%\\opt",
             },
-            "integration": {
-                "system": {
-                    "bin": "C:\\bin",
-                    "start_menu": "%ProgramData%\\Microsoft\\Windows\\Start Menu\\opt",
-                },
-                "user": {
-                    "bin": "%USERPROFILE%\\bin",
-                    "start_menu": "%APPDATA%\\Microsoft\\Windows\\Start Menu\\opt",
-                    "integrate": "full",
-                },
-            },
+            "integration": integration,
             "manager": {"checksum_missing": "ask", "keep_screen": True},
             "registry": [{"name": "main", "source": OFFICIAL_REGISTRY_SOURCE}],
             "logs": {"keep_runs": 50, "keep_days": 90},

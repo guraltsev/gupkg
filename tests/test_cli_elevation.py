@@ -60,7 +60,7 @@ def test_system_targets_start_one_elevated_child_with_a_rebuilt_command_line(wor
 def test_the_child_command_line_never_carries_settings_sandbox_or_json(world: CliWorld, tmp_path: Path) -> None:
     """--settings and --sandbox are root options a standard user could use to steer the child; --json is the parent's alone."""
     settings = tmp_path / "evil.toml"
-    settings.write_text("schema = 3\n", encoding="utf-8")
+    settings.write_text("schema = 4\n", encoding="utf-8")
 
     result = world.cli("--settings", str(settings), "install", "system:tool", "--json", "--yes")
 
@@ -192,7 +192,7 @@ def test_the_child_refuses_a_user_root_and_the_root_options(world: CliWorld, tmp
     world.publish("mine", "1.0.0", mode="user")
     world.fake.elevated = True
     settings = tmp_path / "x.toml"
-    settings.write_text("schema = 3\n", encoding="utf-8")
+    settings.write_text("schema = 4\n", encoding="utf-8")
 
     user = world.cli("install", "user:mine", "--relaunched", "--yes", "--json")
     steered = world.cli("--settings", str(settings), "install", "system:tool", "--relaunched", "--yes")

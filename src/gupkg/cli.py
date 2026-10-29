@@ -49,7 +49,7 @@ from .engine.receipts import read_receipt, receipt_checksum
 from .model.checksum import ChecksumInvalid, parse_skip_flag
 from .model.mode import ModeContext, ModeRefused, build_mode_context, select_mode
 from .model.plan import EXIT_FAILED, EXIT_INPUT, EXIT_OK, EXIT_USER, BatchResult, Request
-from .model.settings import LAYER_SYSTEM, LAYER_USER, Settings, SettingsError, expand_env
+from .model.settings import LAYER_ROOT, Settings, SettingsError, expand_env
 from .modes import SettingsLoader, default_folders, settings_loader
 from .pinning import PinError, pin_hash
 from .pkgcheck import check_directory
@@ -789,7 +789,7 @@ def _cmd_shell(run: _Run) -> int:
 
 
 def _context(run: _Run, mode: str | None) -> tuple[Settings, ModeContext]:
-    """Return the effective settings and the ``ModeContext`` of *mode* (``--mode``, else ``default_mode``) without a package.
+    """Return the effective settings and the ``ModeContext`` of *mode* (``--mode``, else the process token) without a package.
 
     Raises
     ------
@@ -797,7 +797,7 @@ def _context(run: _Run, mode: str | None) -> tuple[Settings, ModeContext]:
         If the mode is refused (an elevated run never uses a user root).
     """
     settings = run.loader().settings
-    choice = select_mode(explicit=mode, elevated=run.elevated, default_mode=settings["default_mode"])
+    choice = select_mode(explicit=mode, elevated=run.elevated)
     if choice.mode == "system" and not run.elevated:
         settings = run.loader(system_mode=True).settings
     return settings, build_mode_context(choice, settings, run.env, defaults=default_folders(run.system))
@@ -900,8 +900,7 @@ def _registry_edit(run: _Run, settings: Settings, context: ModeContext) -> int:
 
 def _layer_file(context: ModeContext) -> tuple[str, Path]:
     """Return the settings layer and file that a write for *context*'s mode goes to (``<root>\\.gupkg\\settings.toml``)."""
-    layer = {"system": LAYER_SYSTEM, "user": LAYER_USER}[context.mode]
-    return layer, settings_file(context.root)
+    return LAYER_ROOT, settings_file(context.root)
 
 
 def _cmd_settings(run: _Run) -> int:
@@ -1022,9 +1021,9 @@ def _sandbox_install(run: _Run, version_dir: Path) -> dict[str, Any]:
         scratch = Path(scratch)
         roots = {name: scratch / name for name in ("system", "user")}
         text = (
-            'schema = 3\ndefault_mode = "user"\nregistry = []\n'
+            'schema = 4\nregistry = []\n'
             f"[roots]\nsystem = '{roots['system']}'\nuser = '{roots['user']}'\n"
-            f"[integration.user]\nbin = '{scratch / 'bin'}'\nstart_menu = '{scratch / 'menu'}'\n"
+            f"[integration]\nbin = '{scratch / 'bin'}'\nstart_menu = '{scratch / 'menu'}'\n"
         )
         settings_path = scratch / "settings.toml"
         settings_path.write_text(text, encoding="utf-8")
@@ -1249,7 +1248,7 @@ def _options(
     run through the engine; no other command can be started as a relaunch.
     """
     if mode:
-        parser.add_argument("--mode", choices=("system", "user"), help="the install mode (default: default_mode, auto)")
+        parser.add_argument("--mode", choices=("system", "user"), help="the install mode (default: system when elevated, else user)")
     parser.add_argument("--json", action="store_true", help="print one JSON result document on standard output; human text goes to standard error")
     parser.add_argument("--no-input", action="store_true", help="never ask: a question that would be asked is exit code 5")
     if mutating:
