@@ -141,7 +141,22 @@ def test_an_elevated_run_in_a_user_writable_gupkg_is_refused_and_reads_nothing(t
         machine.scope()
 
     assert NOT_ADMIN_ONLY_REFUSAL in str(raised.value) and raised.value.exit_code == 2
+    assert "every process is elevated" in str(raised.value) and "only system mode" in str(raised.value)
     assert machine.reads == []
+
+
+def test_an_elevated_run_refuses_a_user_writable_runtime_inside_an_admin_only_version_directory(tmp_path: Path) -> None:
+    """The folder check judges a folder and its ancestors, so the entries an elevated process loads first are named one by one."""
+    machine = Machine(tmp_path, elevated=True)
+    runtime = machine.location.package_dir / "python"
+    runtime.mkdir(parents=True)
+    machine.fake.untrusted_dirs.add(runtime)
+    machine.app_settings()
+
+    with pytest.raises(ModeRefused, match="admin-only root") as raised:
+        machine.scope()
+
+    assert str(runtime) in str(raised.value) and machine.reads == []
 
 
 def test_an_elevated_run_that_cannot_judge_its_gupkg_tree_is_refused(tmp_path: Path) -> None:

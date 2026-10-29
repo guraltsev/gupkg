@@ -33,7 +33,10 @@ from .selfmgmt.location import RunningGupkg
 from .settingsload import LayerReport, load_mode_settings, read_root_layers, read_text_file, resolve_root
 from .system.port import Mode, System, is_elevated_run
 
-NOT_ADMIN_ONLY_REFUSAL = "an elevated gupkg must be installed in an admin-only root; run the system gupkg"
+NOT_ADMIN_ONLY_REFUSAL = (
+    "an elevated gupkg must be installed in an admin-only root; run the system gupkg. On a machine where every process is "
+    "elevated (UAC off, a CI runner) gupkg has only system mode, so it must be the admin-only system gupkg there too"
+)
 
 
 def default_folders(system: System, mode: Mode) -> DefaultFolders | None:
@@ -50,8 +53,15 @@ def default_folders(system: System, mode: Mode) -> DefaultFolders | None:
 
 
 def _require_admin_only_tree(location: RunningGupkg, system: System) -> None:
-    """Refuse an elevated run whose gupkg tree (version directory, root, or the package folder) is not admin-only."""
-    folders = [folder for folder in (location.version_dir, location.root) if folder is not None] or [location.package_dir]
+    """Refuse an elevated run whose gupkg tree is not admin-only.
+
+    ``System.directory_untrusted_reason`` judges a folder and its ancestors, not what lies below it, so the entries an
+    elevated process loads first are named one by one: the version directory, the root, the package folder, its ``python``
+    runtime and the bundled ``site-packages``.
+    """
+    package = location.package_dir
+    folders = [folder for folder in (location.version_dir, location.root) if folder is not None] + [package]
+    folders += [folder for folder in (package / "python", package / "python" / "Lib" / "site-packages") if folder.exists()]
     for folder in folders:
         try:
             reason = system.directory_untrusted_reason(folder)

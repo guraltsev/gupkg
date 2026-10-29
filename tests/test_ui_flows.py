@@ -263,6 +263,22 @@ def test_cancelling_during_the_first_call_starts_no_second_call_and_skips_its_ta
     assert by_name == {"a": "updated", "b": "skipped", "c": "skipped"} and outcome.cancelled and outcome.exit_code == 5
 
 
+@pytest.mark.parametrize("where", ["settings-option", "user-layer"])
+def test_the_system_policy_ignores_a_value_an_elevated_run_would_not_trust(fake: FakeGupkg, tmp_path: Path, where: str) -> None:
+    """A ``skip`` from ``--settings`` or from the user's own settings file never lets an administrator-run system install skip a missing checksum; a user target still follows it."""
+    skip = '[manager]\nchecksum_missing = "skip"'
+    env = make_env(tmp_path, fake, settings=skip if where == "settings-option" else "", user_layer=skip if where == "user-layer" else "")
+    rows = rows_for(tmp_path, ("c", "system"), ("u", "user"))
+    fake.respond("update:plan", doc=plan_doc([plan_entry("c", "c", mode="system", sha256="missing"), plan_entry("u", "u", sha256="missing")]))
+    schedule_run(fake, tmp_path, "user", ["u"])
+
+    outcome, _ = run_flow(update(env, rows, Interaction()), env)
+
+    (call,) = update_calls(fake)
+    assert call["targets"] == ["u"] and "--skip-checksum=setting" in call["options"]
+    assert {item["package"]: item["status"] for item in outcome.entries} == {"c": "refused", "u": "updated"}
+
+
 def test_cleanup_ends_an_update_only_when_the_setting_asks_for_it(fake: FakeGupkg, tmp_path: Path) -> None:
     """With ``[cleanup] auto = true`` the update ends with a cleanup of the user root; without it nothing is cleaned and old versions stay."""
     for auto, expected in ((True, 1), (False, 0)):

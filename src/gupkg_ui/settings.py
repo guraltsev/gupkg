@@ -24,9 +24,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from gupkg.model.manager_policy import manager_checksum_policy
+from gupkg.model.manager_policy import POLICY_KEY, manager_checksum_policy
 from gupkg.model.scope import Scope
-from gupkg.model.settings import Settings, SettingsError
+from gupkg.model.settings import LAYER_CLI, LAYER_ROOT, Settings, SettingsError
 from gupkg.scope import build_scope
 from gupkg.selfmgmt.location import RunningGupkg, locate_running_gupkg
 from gupkg.system.port import System
@@ -52,8 +52,15 @@ class UiSettings:
     scope: Scope | None = None
 
     def checksum_policy(self, mode: str | None = None) -> str:
-        """Return ``ask``, ``refuse`` or ``skip``: ``[manager] checksum_missing`` as the run's own layers set it (*mode* is ignored: a run has one scope)."""
-        return manager_checksum_policy(self.settings)
+        """Return ``ask``, ``refuse`` or ``skip``: ``[manager] checksum_missing`` as the run's own layers set it.
+
+        A system target is run by an elevated child (design 9.6), which never honours a value from the user's root file or from
+        ``--settings``: for it such a ``skip`` is a ``refuse``.
+        """
+        policy = manager_checksum_policy(self.settings)
+        if mode == "system" and policy == "skip" and self.settings.source_of(POLICY_KEY) in (LAYER_ROOT, LAYER_CLI):  # Removed in issue 035 T09.
+            return "refuse"
+        return policy
 
     @property
     def colour(self) -> bool:

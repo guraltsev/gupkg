@@ -88,13 +88,13 @@ class _Run:
     system: System
     env: Mapping[str, str]
     location: RunningGupkg
-    scope: Scope
+    scope: Scope | None
     layers: tuple[LayerReport, ...]
 
     @property
     def elevated(self) -> bool:
         """Return whether this run is elevated: whether its scope is the system's."""
-        return self.scope.mode is Mode.SYSTEM
+        return self.scope is not None and self.scope.mode is Mode.SYSTEM
 
     @property
     def json(self) -> bool:
@@ -179,6 +179,13 @@ def _configure_streams() -> None:
             pass
 
 
+def _needs_scope(args: argparse.Namespace) -> bool:
+    """Return whether the command works on a root: ``pkg new|check|export|bundle`` and ``self status`` need none, so they build no scope."""
+    if args.command == "pkg":
+        return args.pkg_command == "pin" or bool(getattr(args, "install", False))
+    return not (args.command == "self" and args.self_command == "status")
+
+
 def _run(args: argparse.Namespace, tokens: list[str], machine: System, env: Mapping[str, str], where: RunningGupkg) -> int:
     """Run a parsed command on the real or sandboxed machine and turn what goes wrong into an exit code."""
     # The elevated child accepts a fixed set of options only: a standard user cannot steer it through the root options.
@@ -207,9 +214,11 @@ def _run(args: argparse.Namespace, tokens: list[str], machine: System, env: Mapp
         if args.sandbox is not None:
             args.sandbox.mkdir(parents=True, exist_ok=True)
             machine = FakeSystem.sandbox(args.sandbox, machine)
-        scope, layers = build_scope_and_layers(
-            system=machine, env=env, location=where, root_option=args.root, settings_path=args.settings,
-        )
+        scope, layers = None, ()
+        if _needs_scope(args):
+            scope, layers = build_scope_and_layers(
+                system=machine, env=env, location=where, root_option=args.root, settings_path=args.settings,
+            )
     except (OSError, ValueError) as error:
         return _usage_error(tokens, f"cannot set up the run{f' in --sandbox {args.sandbox}' if args.sandbox is not None else ''}: {error}")
     run = _Run(args, machine, env, where, scope, layers)

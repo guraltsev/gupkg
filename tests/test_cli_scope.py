@@ -81,6 +81,21 @@ def test_an_elevated_run_in_a_user_writable_gupkg_fails_at_start_with_exit_2_and
     assert tree_snapshot(tmp_path) == before
 
 
+def test_commands_that_need_no_root_build_no_scope(tmp_path: Path) -> None:
+    """``pkg new`` works with a broken ``--settings`` file and from an elevated run in a user-writable gupkg (main does too)."""
+    bad = tmp_path / "bad.toml"
+    bad.write_text("schema = [", encoding="utf-8")
+    world = CliWorld(tmp_path / "a")
+    elevated = CliWorld(tmp_path / "b", elevated=True, untrusted={tmp_path / "b" / "gupkg-tree"})
+
+    broken = world.cli("--settings", str(bad), "pkg", "new", "mypk", "--dir", str(tmp_path / "out1"))
+    unsafe = elevated.cli("pkg", "new", "mypk", "--dir", str(tmp_path / "out2"))
+
+    assert broken.code == 0, broken.err
+    assert unsafe.code == 0, unsafe.err
+    assert world.cli("--settings", str(bad), "list").code == 2
+
+
 def test_root_names_the_root_and_is_the_reported_source(tmp_path: Path) -> None:
     """``--root DIR`` is a root option: the run works there, and the Resolve line says the root came from ``--root``."""
     world = CliWorld(tmp_path)

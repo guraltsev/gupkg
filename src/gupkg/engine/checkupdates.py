@@ -69,10 +69,10 @@ from .stateio import write_track_state
 
 
 def writes_root(engine: Engine, context: Scope) -> bool:
-    """Return whether this run may write the package's root: an administrator for system, a normal shell for user.
+    """Return whether this run writes the package's root: always, since a run has one scope and its own token.
 
-    A system package checked from a normal shell is only reported (decision D22); the resolution of the mode already
-    refused an elevated run on a user root (decision D31).
+    A system scope exists only in an elevated run, so there is no longer a normal shell that only reports a system package
+    (decision D22 is gone). The flag still feeds ``details["written"]`` of the result document and the plan; issue 035 T07 removes it.
     """
     return engine.elevated if context.mode == "system" else True
 
@@ -136,7 +136,7 @@ def check_updates_one(
         return PackageResult(view.name, "check-updates", True, "no-new-version", view.installed.version if view.installed else None,
                              None, context.mode, details={"reason": "nothing to check: the package has no tracker"})
 
-    # Who writes: an administrator in an admin shell for the system root, a normal shell for everything else.
+    # Who writes: always the run itself (see ``writes_root``).
     writes = writes_root(engine, context)
     download = writes and not request.no_download
     package_path = view.local.path
