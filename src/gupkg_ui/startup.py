@@ -27,7 +27,8 @@ from pathlib import Path
 from gupkg.model.settings import SettingsError
 from gupkg.selfmgmt.location import RunningGupkg, locate_running_gupkg
 from gupkg.system.fake import FakeSystem
-from gupkg.system.port import System, is_elevated_run
+from gupkg.scope import process_mode
+from gupkg.system.port import Mode, System
 from gupkg.system.windows import WindowsSystem
 
 from .client import Client, ClientError, sibling_launcher
@@ -115,7 +116,7 @@ def build_environment(
         machine = FakeSystem.sandbox(sandbox, machine)
 
     # The programs call the elevated CLI themselves and ask for administrator rights once; running them elevated is refused.
-    if is_elevated_run(machine):
+    if process_mode(machine) is Mode.SYSTEM:
         raise StartupError("this program is not started from an elevated shell: it calls gupkg and asks for administrator rights itself. Run it from a normal shell.")
 
     # The command is always the launcher of this gupkg tree; the root options travel to every call.

@@ -1,12 +1,12 @@
 {
-  "api": 1,
+  "api": 2,
   "command": "update",
   "ok": true,
   "exit_code": 0,
   "plan": true,
   "plans": [
     {
-      "target": "user:alpha",
+      "target": "alpha",
       "ok": true,
       "exit_code": 0,
       "plan": {
@@ -14,7 +14,6 @@
         "package": "alpha",
         "path": "@ROOT@\\home\\opt\\alpha",
         "mode": "user",
-        "requires_elevation": false,
         "version": "2.0.0",
         "previous": "1.0.0",
         "effects": [],
@@ -24,7 +23,7 @@
             "skipped": false,
             "steps": [
               "alpha  1.0.0  ->  2.0.0 (local version directory)",
-              "mode: user (selector)"
+              "user root @ROOT@\\home\\opt (--root)"
             ]
           },
           {
@@ -84,7 +83,7 @@
       }
     },
     {
-      "target": "user:beta",
+      "target": "beta",
       "ok": true,
       "exit_code": 0,
       "plan": {
@@ -92,7 +91,6 @@
         "package": "beta",
         "path": "@ROOT@\\home\\opt\\beta",
         "mode": "user",
-        "requires_elevation": false,
         "version": "2.0.0",
         "previous": "1.0.0",
         "effects": [],
@@ -102,7 +100,7 @@
             "skipped": false,
             "steps": [
               "beta  1.0.0  ->  2.0.0 (local version directory)",
-              "mode: user (selector)"
+              "user root @ROOT@\\home\\opt (--root)"
             ]
           },
           {

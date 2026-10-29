@@ -35,18 +35,18 @@ class _Collector:
 
 # One example of every event type and the exact JSON record it must produce.
 # A field or event name changing here is a break of the machine contract
-# (``"api": 1``): UI programs and scripts read these records.
+# (``"api": 2``): UI programs and scripts read these records.
 CONTRACT = [
     pytest.param(
         RunStart("update", ("update", "firefox"), "user", False, "1.0.0", ("user",)),
         {"event": "run_start", "command": "update", "argv": ["update", "firefox"], "mode": "user",
-         "elevated": False, "version": "1.0.0", "settings_layers": ["user"], "api": 1, "stop_file": None},
+         "elevated": False, "version": "1.0.0", "settings_layers": ["user"], "api": 2, "stop_file": None},
         id="run_start",
     ),
     pytest.param(
         RunStart("update", ("update", "firefox"), "user", False, "1.0.0", (), stop_file="C:\\Temp\\gupkg-stop-1"),
         {"event": "run_start", "command": "update", "argv": ["update", "firefox"], "mode": "user",
-         "elevated": False, "version": "1.0.0", "settings_layers": [], "api": 1, "stop_file": "C:\\Temp\\gupkg-stop-1"},
+         "elevated": False, "version": "1.0.0", "settings_layers": [], "api": 2, "stop_file": "C:\\Temp\\gupkg-stop-1"},
         id="run_start-with-the-stop-marker",
     ),
     pytest.param(
@@ -103,9 +103,9 @@ CONTRACT = [
         id="run_end",
     ),
     pytest.param(
-        RunEnd("install: changed", 0, {"api": 1, "command": "install", "ok": True}),
+        RunEnd("install: changed", 0, {"api": 2, "command": "install", "ok": True}),
         {"event": "run_end", "summary": "install: changed", "exit_code": 0,
-         "result": {"api": 1, "command": "install", "ok": True}},
+         "result": {"api": 2, "command": "install", "ok": True}},
         id="run_end-with-the-result-document",
     ),
 ]
@@ -225,8 +225,8 @@ def test_a_real_cli_run_writes_only_contract_records_to_its_event_file(tmp_path:
         record = json.loads(line)
         assert record["event"] in wire_names
         assert record["ts"].endswith("+00:00")
-    assert json.loads(run_events[0])["event"] == "run_start" and json.loads(run_events[0])["api"] == 1
-    assert json.loads(run_events[-1])["event"] == "run_end" and json.loads(run_events[-1])["result"]["api"] == 1
+    assert json.loads(run_events[0])["event"] == "run_start" and json.loads(run_events[0])["api"] == 2
+    assert json.loads(run_events[-1])["event"] == "run_end" and json.loads(run_events[-1])["result"]["api"] == 2
     [link] = [json.loads(line) for line in run_events if json.loads(line)["event"] == "log_link"]
     assert set(link) == {"event", "package", "log", "events", "events_file", "ts"}
     assert link["package"] == "example"

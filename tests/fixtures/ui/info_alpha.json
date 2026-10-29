@@ -1,5 +1,5 @@
 {
-  "api": 1,
+  "api": 2,
   "command": "info",
   "ok": true,
   "exit_code": 0,
@@ -11,9 +11,9 @@
       "status": "outdated",
       "version": "1.0.0",
       "newest_known": "2.0.0",
+      "path": "@ROOT@\\home\\opt\\alpha",
       "restriction": null,
       "restriction_reason": null,
-      "path": "@ROOT@\\home\\opt\\alpha",
       "following": null,
       "problems": [],
       "warnings": [],
@@ -39,7 +39,7 @@
       "notes": [],
       "checksum": null,
       "self_reported": false,
-      "log": "@ROOT@\\home\\opt\\alpha\\.gupkg\\logs\\20261024T194508Z-install.log",
+      "log": "@ROOT@\\home\\opt\\alpha\\.gupkg\\logs\\20261029T142428Z-install.log",
       "receipts": [
         "1.0.0"
       ],

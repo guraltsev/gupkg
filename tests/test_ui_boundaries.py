@@ -21,7 +21,7 @@ FILES = sorted(path for package in PACKAGES for path in (SOURCE / package).rglob
 
 # Core modules that perform operations (or ask for rights); the programs may import the rest of core for reading and reference.
 FORBIDDEN_IMPORTS = (
-    "gupkg.engine", "gupkg.services", "gupkg.relaunch", "gupkg.distcopy", "gupkg.authoring", "gupkg.pinning", "gupkg.settingsedit", "gupkg.cli",
+    "gupkg.engine", "gupkg.services", "gupkg.distcopy", "gupkg.authoring", "gupkg.pinning", "gupkg.settingsedit", "gupkg.cli",
     "gupkg.catalog.registry",
 )
 # Names that mean the registry, native calls, the network, a shell or starting a program, found in code (not in docstrings or comments).

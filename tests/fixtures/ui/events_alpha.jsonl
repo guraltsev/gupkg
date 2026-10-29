@@ -1,22 +1,22 @@
-{"event": "run_start", "command": "update", "argv": ["update", "user:alpha", "user:beta"], "mode": "auto", "elevated": false, "version": "0.18.0", "settings_layers": ["defaults", "cli"], "api": 1, "stop_file": "@ROOT@\\temp\\gupkg-stop-49b8cc887bb94868a221d29287e65d9b", "ts": "2026-10-24T19:45:10.473528+00:00"}
-{"event": "package_start", "view": {"name": "alpha", "path": "@ROOT@\\home\\opt\\alpha", "root": "@ROOT@\\home\\opt", "sole": false}, "ts": "2026-10-24T19:45:10.480464+00:00"}
-{"event": "phase_start", "phase": "Resolve", "ts": "2026-10-24T19:45:10.487222+00:00"}
-{"event": "step", "text": "alpha  1.0.0  ->  2.0.0 (local version directory)", "kind": "info", "ts": "2026-10-24T19:45:10.487222+00:00"}
-{"event": "step", "text": "mode: user (selector)", "kind": "info", "ts": "2026-10-24T19:45:10.487222+00:00"}
-{"event": "phase_end", "phase": "Resolve", "status": "ok", "elapsed": 0.0, "ts": "2026-10-24T19:45:10.487222+00:00"}
-{"event": "phase_start", "phase": "Fetch", "ts": "2026-10-24T19:45:10.487222+00:00"}
-{"event": "phase_end", "phase": "Fetch", "status": "skipped", "elapsed": 0.0, "ts": "2026-10-24T19:45:10.487222+00:00"}
-{"event": "phase_start", "phase": "Verify", "ts": "2026-10-24T19:45:10.487222+00:00"}
-{"event": "phase_end", "phase": "Verify", "status": "skipped", "elapsed": 0.0, "ts": "2026-10-24T19:45:10.487222+00:00"}
-{"event": "phase_start", "phase": "Unpack", "ts": "2026-10-24T19:45:10.487728+00:00"}
-{"event": "phase_end", "phase": "Unpack", "status": "skipped", "elapsed": 0.0, "ts": "2026-10-24T19:45:10.487728+00:00"}
-{"event": "phase_start", "phase": "Prepare", "ts": "2026-10-24T19:45:10.487728+00:00"}
-{"event": "phase_end", "phase": "Prepare", "status": "skipped", "elapsed": 0.0, "ts": "2026-10-24T19:45:10.487728+00:00"}
-{"event": "phase_start", "phase": "Activate", "ts": "2026-10-24T19:45:10.487728+00:00"}
-{"event": "step", "text": "current -> 2.0.0", "kind": "add", "ts": "2026-10-24T19:45:10.487728+00:00"}
-{"event": "phase_end", "phase": "Activate", "status": "ok", "elapsed": 0.0, "ts": "2026-10-24T19:45:10.488782+00:00"}
-{"event": "phase_start", "phase": "Integrate", "ts": "2026-10-24T19:45:10.489296+00:00"}
-{"event": "phase_end", "phase": "Integrate", "status": "skipped", "elapsed": 0.0, "ts": "2026-10-24T19:45:10.489296+00:00"}
-{"event": "phase_start", "phase": "Finish", "ts": "2026-10-24T19:45:10.489296+00:00"}
-{"event": "phase_end", "phase": "Finish", "status": "ok", "elapsed": 0.01600000000325963, "ts": "2026-10-24T19:45:10.495625+00:00"}
-{"event": "package_end", "result": {"name": "alpha", "ok": true, "status": "updated", "version": "2.0.0"}, "ts": "2026-10-24T19:45:10.501639+00:00"}
+{"event": "run_start", "command": "update", "argv": ["update", "alpha", "beta"], "mode": "user", "elevated": false, "version": "1.0.8", "settings_layers": ["defaults", "cli"], "api": 2, "stop_file": "@ROOT@\\temp\\gupkg-stop-c761eb4f44154f70aa3a023c4f2854e8", "ts": "2026-10-29T14:24:30.043623+00:00"}
+{"event": "package_start", "view": {"name": "alpha", "path": "@ROOT@\\home\\opt\\alpha", "root": "@ROOT@\\home\\opt", "sole": false}, "ts": "2026-10-29T14:24:30.048160+00:00"}
+{"event": "phase_start", "phase": "Resolve", "ts": "2026-10-29T14:24:30.053675+00:00"}
+{"event": "step", "text": "alpha  1.0.0  ->  2.0.0 (local version directory)", "kind": "info", "ts": "2026-10-29T14:24:30.053675+00:00"}
+{"event": "step", "text": "user root @ROOT@\\home\\opt (--root)", "kind": "info", "ts": "2026-10-29T14:24:30.053675+00:00"}
+{"event": "phase_end", "phase": "Resolve", "status": "ok", "elapsed": 0.0, "ts": "2026-10-29T14:24:30.053675+00:00"}
+{"event": "phase_start", "phase": "Fetch", "ts": "2026-10-29T14:24:30.053675+00:00"}
+{"event": "phase_end", "phase": "Fetch", "status": "skipped", "elapsed": 0.0, "ts": "2026-10-29T14:24:30.053675+00:00"}
+{"event": "phase_start", "phase": "Verify", "ts": "2026-10-29T14:24:30.053675+00:00"}
+{"event": "phase_end", "phase": "Verify", "status": "skipped", "elapsed": 0.0, "ts": "2026-10-29T14:24:30.053675+00:00"}
+{"event": "phase_start", "phase": "Unpack", "ts": "2026-10-29T14:24:30.053675+00:00"}
+{"event": "phase_end", "phase": "Unpack", "status": "skipped", "elapsed": 0.0, "ts": "2026-10-29T14:24:30.053675+00:00"}
+{"event": "phase_start", "phase": "Prepare", "ts": "2026-10-29T14:24:30.053675+00:00"}
+{"event": "phase_end", "phase": "Prepare", "status": "skipped", "elapsed": 0.0, "ts": "2026-10-29T14:24:30.053675+00:00"}
+{"event": "phase_start", "phase": "Activate", "ts": "2026-10-29T14:24:30.053675+00:00"}
+{"event": "step", "text": "current -> 2.0.0", "kind": "add", "ts": "2026-10-29T14:24:30.053675+00:00"}
+{"event": "phase_end", "phase": "Activate", "status": "ok", "elapsed": 0.0, "ts": "2026-10-29T14:24:30.054676+00:00"}
+{"event": "phase_start", "phase": "Integrate", "ts": "2026-10-29T14:24:30.054676+00:00"}
+{"event": "phase_end", "phase": "Integrate", "status": "skipped", "elapsed": 0.0, "ts": "2026-10-29T14:24:30.054676+00:00"}
+{"event": "phase_start", "phase": "Finish", "ts": "2026-10-29T14:24:30.054676+00:00"}
+{"event": "phase_end", "phase": "Finish", "status": "ok", "elapsed": 0.0, "ts": "2026-10-29T14:24:30.058763+00:00"}
+{"event": "package_end", "result": {"name": "alpha", "ok": true, "status": "updated", "version": "2.0.0"}, "ts": "2026-10-29T14:24:30.064784+00:00"}

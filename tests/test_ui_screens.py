@@ -547,7 +547,7 @@ def test_the_package_program_runs_check_update_repair_uninstall_and_health_as_cl
 
 def test_cli_error_text_with_markup_is_shown_literally_everywhere(tmp_path: Path, fake: FakeGupkg) -> None:
     """A ``[red]x`` inside what the CLI says (an api value, an error message, a log lookup failure) reaches the status line, the package view, the run log and the toast as typed."""
-    fake.respond("info", doc=head("info", packages=[], api=1))
+    fake.respond("info", doc=head("info", packages=[], api=2))
     fake.scenario["info"].pop(0)
     fake.scenario["info"].insert(0, {"doc": {"api": "[red]x", "command": "info", "ok": True, "exit_code": 0}})
     fake.respond("update:plan", doc=plan_doc([plan_entry("alpha", "alpha")]))

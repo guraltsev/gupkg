@@ -135,7 +135,7 @@ def outcome_document(command: str, outcome: BatchOutcome) -> dict[str, Any]:
     """
     document: dict[str, Any] = {
         "api": API_VERSION, "command": command, "ok": outcome.ok, "exit_code": outcome.exit_code,
-        "relaunched": any(call.relaunched for call in outcome.calls), "cancelled": outcome.cancelled,
+        "cancelled": outcome.cancelled,
         "results": list(outcome.entries),
         "calls": [{"argv": list(call.argv), "exit_code": call.exit_code, "problems": list(call.problems)} for call in outcome.calls],
     }

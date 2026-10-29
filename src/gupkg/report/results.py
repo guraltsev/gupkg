@@ -50,19 +50,11 @@ def error_document(
 
 
 def result_document(command: str, batch: BatchResult, *, warnings: Sequence[str] = ()) -> dict[str, Any]:
-    """Return the ``--json`` document of a lifecycle call: one entry per target, in the order they were given.
-
-    ``relaunched`` is true when this process started an elevated child for the system targets; the child writes its own result
-    to the events file named with ``--events-file``.
-    """
-    document = envelope(
-        command, ok=batch.ok, exit_code=batch.exit_code, relaunched=batch.relaunched,
+    """Return the ``--json`` document of a lifecycle call: one entry per target, in the order they were given."""
+    return envelope(
+        command, ok=batch.ok, exit_code=batch.exit_code,
         results=[item.to_data() for item in batch.results], warnings=[redact_text(item) for item in warnings],
     )
-    if batch.relaunched and batch.child_raw_exit_code is not None:
-        # The process exit code of the elevated child as Windows reported it (``exit_code`` is clamped to gupkg's 0 to 6).
-        document["child_raw_exit_code"] = batch.child_raw_exit_code
-    return document
 
 
 def plan_document(command: str, plans: Sequence[InstallPlan | PackageResult], targets: Sequence[str]) -> dict[str, Any]:
@@ -179,8 +171,7 @@ def format_plan(entry: Mapping[str, Any]) -> str:
         reason = (result.get("error") or {}).get("message") or result.get("status")
         return f"{entry['target']}: {reason}"
     plan = entry["plan"]
-    lines = [f"Plan: {plan['operation']} {plan['package']} ({plan['mode']}"
-             + (", needs administrator rights" if plan["requires_elevation"] else "") + ")"]
+    lines = [f"Plan: {plan['operation']} {plan['package']} ({plan['mode']})"]
     for phase in plan["phases"]:
         marker = "skipped" if phase["skipped"] else ""
         lines.append(f"  {phase['name']}{' (' + marker + ')' if marker else ''}")

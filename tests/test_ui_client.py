@@ -2,8 +2,7 @@
 
 Behaviour covered: the command is the ``gupkg.cmd`` of the program's own gupkg tree, never one found on ``PATH`` and never one that resolves outside the tree; an argument with a
 character that could be misread (``& | < > ^ " % !``, a control character) is refused before anything starts; options go before ``--`` and targets after it; a result is believed only
-when it is one JSON object with ``"api": 1``, an exit code that matches the process and (when an events file was written) a ``run_end``; a relaunched call needs the child's
-``run_end``; output beyond the cap and a program that cannot start are failures; the stop request creates the announced marker only inside the program's temporary folder, also when the
+when it is one JSON object with ``"api": 2``, an exit code that matches the process and (when an events file was written) a ``run_end``; output beyond the cap and a program that cannot start are failures; the stop request creates the announced marker only inside the program's temporary folder, also when the
 marker is announced after the request was made.
 
 Real: the client, real subprocesses (the double of ``tests/ui_support.py`` run by the test interpreter) and real files. Mocked: the ``gupkg`` executable itself.
@@ -131,10 +130,11 @@ def test_a_result_that_is_not_json_is_a_failure(fake: FakeGupkg) -> None:
 @pytest.mark.parametrize(
     ("document", "message"),
     [
-        pytest.param({"api": 2, "command": "x", "ok": True, "exit_code": 0}, "api 2", id="newer-api"),
+        pytest.param({"api": 3, "command": "x", "ok": True, "exit_code": 0}, "api 3", id="newer-api"),
+        pytest.param({"api": 1, "command": "x", "ok": True, "exit_code": 0}, "api 1", id="older-api"),
         pytest.param({"command": "x", "ok": True, "exit_code": 0}, "api None", id="no-api"),
-        pytest.param({"api": 1, "command": "x", "ok": "yes", "exit_code": 0}, "lacks command, ok or exit_code", id="ok-not-boolean"),
-        pytest.param({"api": 1, "command": "x", "ok": True, "exit_code": True}, "lacks command, ok or exit_code", id="exit-code-boolean"),
+        pytest.param({"api": 2, "command": "x", "ok": "yes", "exit_code": 0}, "lacks command, ok or exit_code", id="ok-not-boolean"),
+        pytest.param({"api": 2, "command": "x", "ok": True, "exit_code": True}, "lacks command, ok or exit_code", id="exit-code-boolean"),
     ],
 )
 def test_a_document_of_another_interface_version_or_shape_is_refused(document, message) -> None:
@@ -161,26 +161,6 @@ def test_an_events_file_without_run_end_is_a_failure(fake: FakeGupkg, tmp_path: 
     outcome = call(fake.client(), ("update", "--", "user:p"), tmp_path / "root" / ".gupkg" / "logs")
 
     assert not outcome.ok and "no run_end" in outcome.problems[0]
-
-
-def test_a_relaunched_call_takes_its_entries_from_the_childs_run_end(fake: FakeGupkg, tmp_path: Path) -> None:
-    """The parent of an elevated child lists no results of its own; the child's document (the ``run_end`` of its events file) holds them."""
-    child = result("update", [entry("sys", mode="system")])
-    parent = result("update", [], relaunched=True)
-    fake.respond("update", doc=parent, events=one_package(tmp_path, result=child, elevated=True))
-
-    outcome = call(fake.client(), ("update", "--", "system:sys"), tmp_path / "root" / ".gupkg" / "logs")
-
-    assert outcome.ok and outcome.relaunched and [item["package"] for item in outcome.entries()] == ["sys"]
-
-
-def test_a_relaunched_call_without_the_childs_run_end_is_a_failure(fake: FakeGupkg, tmp_path: Path) -> None:
-    """If the elevated child left no ``run_end`` the call is failed (a killed child must not look like success)."""
-    fake.respond("update", doc=result("update", [], relaunched=True), events=one_package(tmp_path, run_end=False))
-
-    outcome = call(fake.client(), ("update", "--", "system:sys"), tmp_path / "root" / ".gupkg" / "logs")
-
-    assert not outcome.ok and "elevated run left no run_end" in outcome.problems[0]
 
 
 def test_output_beyond_the_cap_is_a_failure(fake: FakeGupkg, monkeypatch: pytest.MonkeyPatch) -> None:

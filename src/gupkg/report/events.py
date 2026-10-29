@@ -44,7 +44,7 @@ from typing import Any, Callable, Iterator, Protocol, Sequence
 from ..redact import redact_text
 
 # Version of the event JSON contract, reported by ``RunStart``.
-API_VERSION = 1
+API_VERSION = 2
 
 
 # ---------------------------------------------------------------------------

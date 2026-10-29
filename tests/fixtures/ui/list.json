@@ -1,5 +1,5 @@
 {
-  "api": 1,
+  "api": 2,
   "command": "list",
   "ok": true,
   "exit_code": 0,
@@ -11,9 +11,9 @@
       "status": "outdated",
       "version": "1.0.0",
       "newest_known": "2.0.0",
+      "path": "@ROOT@\\home\\opt\\alpha",
       "restriction": null,
       "restriction_reason": null,
-      "path": "@ROOT@\\home\\opt\\alpha",
       "following": null,
       "problems": [],
       "warnings": []
@@ -23,9 +23,9 @@
       "status": "outdated",
       "version": "1.0.0",
       "newest_known": "2.0.0",
+      "path": "@ROOT@\\home\\opt\\beta",
       "restriction": null,
       "restriction_reason": null,
-      "path": "@ROOT@\\home\\opt\\beta",
       "following": null,
       "problems": [],
       "warnings": []

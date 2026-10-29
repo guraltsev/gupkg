@@ -72,4 +72,4 @@ def test_machine_documents_round_trip_hostile_text() -> None:
 
     parsed = json.loads(results.dumps(document))
 
-    assert parsed["api"] == 1 and parsed["errors"][0]["message"] == HOSTILE and parsed["errors"][0]["hint"] == HOSTILE
+    assert parsed["api"] == 2 and parsed["errors"][0]["message"] == HOSTILE and parsed["errors"][0]["hint"] == HOSTILE

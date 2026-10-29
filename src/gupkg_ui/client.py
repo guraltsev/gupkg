@@ -40,7 +40,7 @@ from typing import Any
 
 from gupkg.report.events import API_VERSION
 from gupkg.selfmgmt.location import RunningGupkg, locate_running_gupkg
-from gupkg.system.port import unsafe_relaunch_argument
+from gupkg.system.port import unsafe_launcher_argument
 
 from .follow import EventStream, read_run_end
 
@@ -108,7 +108,7 @@ def sibling_launcher(location: RunningGupkg | None = None) -> Path:
 def refuse_unsafe(arguments: Sequence[str]) -> None:
     """Raise ``ClientError`` when an argument holds a character that must not reach a command line (``& | < > ^ " % ! ```, controls)."""
     for item in arguments:
-        reason = unsafe_relaunch_argument(item)
+        reason = unsafe_launcher_argument(item)
         if reason is not None:
             raise ClientError(f"refused: {reason} cannot be passed to gupkg safely; use a name without it")
 
@@ -142,8 +142,6 @@ class CallResult:
         The process exit code; ``None`` when the program could not be started.
     document : dict or None
         The ``--json`` result document of standard output (``api`` and head checked), else ``None``.
-    child : dict or None
-        The result document of the elevated child (the ``run_end`` of the events file) when the call relaunched.
     stderr_tail : str
         The end of standard error, for the report of a failure.
     problems : tuple of str
@@ -159,7 +157,6 @@ class CallResult:
     argv: tuple[str, ...]
     exit_code: int | None
     document: dict[str, Any] | None
-    child: dict[str, Any] | None = None
     stderr_tail: str = ""
     problems: tuple[str, ...] = ()
     events_path: Path | None = None
@@ -171,34 +168,19 @@ class CallResult:
         """Whether the call succeeded: nothing to distrust, exit code 0 and a document that says ``ok``."""
         return not self.problems and self.exit_code == 0 and bool(self.document and self.document.get("ok"))
 
-    @property
-    def relaunched(self) -> bool:
-        """Whether the call started an elevated child for its system targets."""
-        return bool(self.document and self.document.get("relaunched"))
-
     def entries(self) -> list[dict[str, Any]]:
-        """Return the per-target entries: those of the call itself, then those of its elevated child."""
-        found: list[dict[str, Any]] = []
-        for document in (self.document, self.child):
-            for entry in (document or {}).get("results", ()):
-                if isinstance(entry, dict):
-                    found.append(entry)
-        return found
+        """Return the per-target entries of the call's document."""
+        return [entry for entry in (self.document or {}).get("results", ()) if isinstance(entry, dict)]
 
     def errors(self) -> list[dict[str, Any]]:
-        """Return the call-level errors (a usage error, a question that was not answered) of the call and its child."""
-        found: list[dict[str, Any]] = []
-        for document in (self.document, self.child):
-            for error in (document or {}).get("errors", ()):
-                if isinstance(error, dict):
-                    found.append(error)
-        return found
+        """Return the call-level errors (a usage error, a question that was not answered) of the call's document."""
+        return [error for error in (self.document or {}).get("errors", ()) if isinstance(error, dict)]
 
 
 def check_document(value: Any) -> dict[str, Any]:
     """Return *value* when it is a result document of this interface version, else raise ``ClientError``.
 
-    A document is a JSON object with ``"api": 1``, a text ``command``, a boolean ``ok`` and an integer ``exit_code``; any other
+    A document is a JSON object with ``"api": 2``, a text ``command``, a boolean ``ok`` and an integer ``exit_code``; any other
     shape (or a newer ``api``) is refused, never guessed at.
     """
     if not isinstance(value, dict):
@@ -570,18 +552,8 @@ def _judge(
     if document is not None and code is not None and document["exit_code"] != code:
         problems.append(f"the exit code {code} disagrees with the result document ({document['exit_code']})")
 
-    # The events file: when it exists it must end with ``run_end``; an elevated child's file is the only record of its work.
-    child: dict[str, Any] | None = None
-    if document is not None and document.get("relaunched"):
-        result = end.get("result") if end is not None else None
-        if end is None or not isinstance(result, dict):
-            problems.append("the elevated run left no run_end line in its events file: treat it as failed")
-        else:
-            try:
-                child = check_document(result)
-            except ClientError as error:
-                problems.append(f"the elevated run's result is not usable: {error}")
-    elif path is not None and end is None and (os.path.lexists(path) or expect_events):
+    # The events file: when it exists it must end with ``run_end``.
+    if path is not None and end is None and (os.path.lexists(path) or expect_events):
         # The UI always asks for an events file, so a result without its ``run_end`` is not believed when it claims success. A failure document is kept
         # (its entries say why it failed: a call whose every target failed to resolve writes no file), with a warning.
         note = f"the events file has no run_end line (exit code {code}): the run did not finish" if os.path.lexists(path) else f"no events file was written (exit code {code})"
@@ -590,5 +562,5 @@ def _judge(
         else:
             warnings.append(note)
     return CallResult(
-        tuple(argv), code, document, child, stderr, tuple(problems), path, events.stop_file if events is not None else None, tuple(warnings),
+        tuple(argv), code, document, stderr, tuple(problems), path, events.stop_file if events is not None else None, tuple(warnings),
     )

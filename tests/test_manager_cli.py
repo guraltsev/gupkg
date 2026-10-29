@@ -106,7 +106,7 @@ def test_json_prints_one_document_and_the_human_text_goes_to_standard_error(fake
     code, out, err = manager(tmp_path, fake, "update", "--all", "--yes", "--json")
 
     document = json.loads(out)
-    assert code == 0 and (document["api"], document["command"], document["ok"], document["exit_code"]) == (1, "update", True, 0)
+    assert code == 0 and (document["api"], document["command"], document["ok"], document["exit_code"]) == (2, "update", True, 0)
     assert [item["package"] for item in document["results"]] == ["a", "b"] and len(document["calls"]) == 1
     assert "Plan" in err and "━━ Done" in err
 
