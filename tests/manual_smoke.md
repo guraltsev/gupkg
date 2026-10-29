@@ -563,3 +563,12 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
    `C:\opt\.gupkg\gupkg-location`; grant `Users` write on `C:\opt\.gupkg\gupkg-location` (`icacls`) and run it again: it refuses (`Refusing to run
    elevated`). Put a `gupkg.exe` shim of a user-mode install first on the administrator's `PATH` and delete `gupkg-location`: the line `Skipped PATH
    entry ...` names that folder and the launcher exits 9009 or uses a later admin-only entry. Also, in an admin-only root: (a) a `gupkg.exe` shim and config that are admin-only but sit in a folder `Users` can write (grant `Users` modify on the folder only) is refused, i.e. the entry is skipped with `Skipped PATH entry <folder>`; (b) a `gupkg-location` that names a tree whose package or root folder (the parent two or three levels above `App`) is user-writable under an admin-only launcher root is refused (`Refusing to run elevated`). Why manual: needs a real elevated token and real ACLs (the automated tests see the spec the launcher hands to the check, and the checker itself in a normal shell, but cannot judge real elevated ACLs).
+## A package cannot take over another package's names (task T14, not part of issue 035)
+
+1. **`035-T14-1` The second package with the same shim is refused and the root is unchanged.** On a test root (`--root <empty folder>`, never `C:\opt`), create two
+   local packages `one` and `two`, each with a version directory whose `pkg.toml` declares `[[shim]] name = "tool"` (a `download_url` of a small zip or
+   `source.populate = "none"` with a shipped `App`). Run `gupkg --root <test root> install one`, then `gupkg --root <test root> install two`: the second command
+   stops with `two cannot be installed: it would provide the shim 'tool.exe' (...), which the installed package 'one' already provides. Uninstall 'one' first, or
+   use a package definition with a different name.` and exit code 2; `<root>\two\current` does not exist and `<root>\bin` holds only the files of `one`. Then
+   `gupkg --root <test root> uninstall one` and `install two` succeed. Also `install one two` in a fresh root names both packages and installs neither. Why manual:
+   shows the real message and the real folders once.

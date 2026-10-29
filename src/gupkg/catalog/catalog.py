@@ -41,6 +41,7 @@ from ..model.manifest import ManifestError, TrackResult, invalid_checksum_proble
 from ..model.settings import RegistryEntry as RegistryConfig
 from ..model.state import (
     Candidate,
+    Effect,
     InstalledState,
     Link,
     PackageView,
@@ -55,6 +56,7 @@ from ..selfmgmt.elevation import UntrustedLocationError
 from ..system.port import Mode, System
 from .local import (
     is_inside,
+    is_link_info,
     is_reparse_point,
     looks_like_package,
     real_path,
@@ -62,7 +64,7 @@ from .local import (
     scan_root,
     strip_extended_prefix,
 )
-from .record import read_install_record
+from .record import read_install_record, record_path
 from .registry import RegistrySnapshot, load_registry, registry_cache_dir
 
 
@@ -369,6 +371,22 @@ class Catalog:
         views = [view for view in views if _matches(view, filters)]
         views.sort(key=lambda view: view.name.casefold())
         return Listing(tuple(views), (*self.warnings, *scan.diagnostics))
+
+    def installed_effects(self) -> dict[str, tuple[Effect, ...]]:
+        """Return the recorded effects of every package of the root that has any, by package name.
+
+        This is who provides which shim, wrapper, shortcut and environment variable (name ownership): nothing outside the
+        run's root is read. Only the folder names and the install records are read (no version scan, no registry join), and a
+        record that cannot be read provides nothing here (``check`` and ``list`` report it).
+        """
+        if self._untrusted_reason() is not None:
+            return {}
+        found: dict[str, tuple[Effect, ...]] = {}
+        for name, path in scan_root(self.root).packages:
+            effects = _record_effects(path)
+            if effects:
+                found[name] = effects
+        return found
 
     # -- selecting ----------------------------------------------------------
 
@@ -817,6 +835,31 @@ def _is_local_package(path: Path, *, allow_link: bool = False) -> bool:
         return path.is_dir() and (allow_link or not is_reparse_point(path)) and looks_like_package(path)
     except OSError:
         return False
+
+
+# Parsed install records by file, valid while the file's identity, size and modification time are the same: a process that runs many
+# commands (a library caller, the tests) does not parse every record again for each one. The file is still looked at, and never
+# followed through a link, every time.
+_RECORD_EFFECTS: dict[str, tuple[tuple[int, int, int], tuple[Effect, ...]]] = {}
+
+
+def _record_effects(package_path: Path) -> tuple[Effect, ...]:
+    """Return the effects of the install record of *package_path*; none when it has no usable record (``describe`` reports why)."""
+    file = record_path(package_path)
+    try:
+        folder_info, info = os.lstat(file.parent), os.lstat(file)
+    except OSError:
+        return ()
+    if is_link_info(folder_info) or is_link_info(info):
+        return ()
+    stamp = (info.st_ino, info.st_size, info.st_mtime_ns)
+    known = _RECORD_EFFECTS.get(str(file))
+    if known is not None and known[0] == stamp:
+        return known[1]
+    record = read_install_record(package_path).record
+    effects = record.effects if record is not None else ()
+    _RECORD_EFFECTS[str(file)] = (stamp, effects)
+    return effects
 
 
 def manifest_modes(manifest_path: Path) -> tuple[str, ...] | None:

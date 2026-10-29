@@ -132,6 +132,11 @@ def is_reparse_point(path: Path) -> bool:
         info = os.lstat(path)
     except OSError:
         return False
+    return is_link_info(info)
+
+
+def is_link_info(info: os.stat_result) -> bool:
+    """Return whether the ``lstat`` result *info* describes a link or junction."""
     return stat.S_ISLNK(info.st_mode) or bool(getattr(info, "st_file_attributes", 0) & _REPARSE_POINT)
 
 
@@ -234,7 +239,8 @@ def scan_root(root: Root, *, max_depth: int = 8) -> RootScan:
                 continue
             try:
                 marker = (child / GROUP_MARKER).is_file()
-                if looks_like_package(child):
+                # An install record alone makes a package root (looks_like_package says so too); one stat spares listing the folder.
+                if (child / DATA_DIR_NAME / "package.toml").is_file() or looks_like_package(child):
                     if marker:
                         diagnostics.append(f"Layout conflict: package root {child} also contains {GROUP_MARKER}")
                     packages.append((name, child))

@@ -25,6 +25,7 @@ passed in as ``CleanupFacts``.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import cmp_to_key
@@ -56,6 +57,178 @@ class PlanError(ValueError):
     """Report a request that cannot be planned; the message says what to do instead."""
 
     exit_code = EXIT_PLAN
+
+
+class NameConflict(PlanError):
+    """Refuse a package that would provide a name another installed package already provides; the stable code is ``name-conflict``."""
+
+    error_code = "name-conflict"
+
+    def __init__(self, message: str, *, name: str, packages: "Sequence[str]") -> None:
+        """Build the message; *name* and *packages* (the packages that claim it) are the details of the failure document."""
+        super().__init__(message)
+        self.error_details = {"name": name, "packages": list(packages)}
+
+
+# What a package puts on the machine under a name of its own: a shim or wrapper in ``bin`` (identified by its path), a Start Menu
+# shortcut (its path) and an environment variable (scope and name). A ``PATH`` entry is shared by design and is not a name.
+_NAME_WORDS = {"shim": "shim", "file": "wrapper", "shortcut": "shortcut", "env": "environment variable"}
+
+
+@dataclass(frozen=True)
+class ProvidedName:
+    """One name that an effect provides: its comparison ``key``, its words for a message and where it lives."""
+
+    key: tuple[str, str]
+    word: str
+    name: str
+    where: str
+    primary: tuple[str, str] | None = None  # for a shim's configuration file: the key of the shim itself
+
+
+def provided_names(effects: Sequence[Effect]) -> dict[tuple[str, str], ProvidedName]:
+    """Return the names *effects* provide, by comparison key (letter case ignored).
+
+    A shim and a wrapper file share one namespace, the path in ``bin``; a shortcut is its ``.lnk`` path; an environment
+    variable is its scope and name. ``path`` effects and everything else provide no name.
+    """
+    found: dict[tuple[str, str], ProvidedName] = {}
+    for effect in effects:
+        word = _NAME_WORDS.get(effect.kind)
+        if word is None:
+            continue
+        fields = effect.fields
+        if effect.kind == "env":
+            scope, name = str(fields.get("scope", "")), str(fields.get("name", ""))
+            key = ("env", f"{scope}:{name}".casefold())
+            found.setdefault(key, ProvidedName(key, word, name, f"{scope} environment"))
+            continue
+        path = str(fields.get("path", ""))
+        group = "shortcut" if effect.kind == "shortcut" else "file"
+        key = (group, os.path.normcase(os.path.normpath(path)).casefold())
+        found.setdefault(key, ProvidedName(key, word, path.rsplit("\\", 1)[-1], path))
+        shim_key = key
+
+        # A launcher shim also writes ``<name>.config.toml`` into ``bin``: the same namespace as a wrapper file.
+        config = str(fields.get("config", "")) if effect.kind == "shim" else ""
+        if config:
+            key = ("file", os.path.normcase(os.path.normpath(config)).casefold())
+            found.setdefault(key, ProvidedName(key, "shim configuration file", config.rsplit("\\", 1)[-1], config, shim_key))
+    return found
+
+
+class NameIndex:
+    """Which installed packages provide each name, built once from the install records and updated one package at a time.
+
+    ``owners(exclude)`` is the read-only view the checks use: the first package (by name, letter case ignored) that provides a
+    name and is not *exclude*. Replacing or dropping one package costs only that package's names, so a batch never rescans.
+    """
+
+    def __init__(self, installed: Mapping[str, Sequence[Effect]] | None = None) -> None:
+        """Index *installed*, a map from package name to the effects of its install record."""
+        self._by_key: dict[tuple[str, str], list[str]] = {}
+        self._keys: dict[str, tuple[tuple[str, str], ...]] = {}
+        for package, effects in (installed or {}).items():
+            self.set(package, effects)
+
+    def set(self, package: str, effects: Sequence[Effect]) -> None:
+        """Record that *package* provides the names of *effects* (replacing what it provided before)."""
+        self.drop(package)
+        keys = tuple(provided_names(effects))
+        self._keys[package] = keys
+        for key in keys:
+            owners = self._by_key.setdefault(key, [])
+            owners.append(package)
+            owners.sort(key=str.casefold)
+
+    def drop(self, package: str) -> None:
+        """Forget the names of *package* (it was uninstalled or has no record)."""
+        for key in self._keys.pop(package, ()):
+            owners = self._by_key[key]
+            owners.remove(package)
+            if not owners:
+                del self._by_key[key]
+
+    def owners(self, exclude: str) -> "_Owners":
+        """Return the owners of every name for a package named *exclude*, which never owns a name against itself."""
+        return _Owners(self._by_key, exclude.casefold())
+
+
+class _Owners(Mapping):
+    """Read-only map from a name key to the package that owns it, leaving out one package."""
+
+    def __init__(self, by_key: Mapping[tuple[str, str], list[str]], exclude: str) -> None:
+        self._by_key, self._exclude = by_key, exclude
+
+    def __getitem__(self, key: tuple[str, str]) -> str:
+        for package in self._by_key.get(key, ()):
+            if package.casefold() != self._exclude:
+                return package
+        raise KeyError(key)
+
+    def __iter__(self):
+        return (key for key in self._by_key if key in self)
+
+    def __len__(self) -> int:
+        return sum(1 for _ in self)
+
+    def __bool__(self) -> bool:
+        """Return whether any package provides a name (cheap; a name of *exclude* alone still counts and is skipped on lookup)."""
+        return bool(self._by_key)
+
+
+def name_owners(installed: Mapping[str, Sequence[Effect]], *, exclude: str) -> dict[tuple[str, str], str]:
+    """Return which installed package provides each name: the recorded effects of every package but *exclude* (letter case ignored).
+
+    *installed* maps a package name to the effects of its install record; the first package (by name) that claims a name owns it.
+    """
+    return dict(NameIndex(installed).owners(exclude))
+
+
+def _refusal(package: str, other: str, item: ProvidedName) -> NameConflict:
+    """Return the refusal of *package* for the name *item* that the installed package *other* already provides."""
+    return NameConflict(
+        f"{package} cannot be installed: it would provide the {item.word} '{item.name}' ({item.where}), which the installed "
+        f"package '{other}' already provides. Uninstall '{other}' first, or use a package definition with a different name.",
+        name=item.name, packages=(package, other),
+    )
+
+
+def check_names(package: str, desired: Sequence[Effect], owners: Mapping[tuple[str, str], str]) -> None:
+    """Refuse *desired* when it provides a name that an installed package listed in *owners* provides.
+
+    Raises
+    ------
+    NameConflict
+        Naming both packages, the name and what to do; nothing has been changed.
+    """
+    for key, item in provided_names(desired).items():
+        other = owners.get(key)
+        if other is not None and other.casefold() != package.casefold():
+            raise _refusal(package, other, item)
+
+
+def check_names_between(wanted: Mapping[str, Sequence[Effect]]) -> dict[str, NameConflict]:
+    """Find the packages of one command that provide the same name; return the refusal of each package involved.
+
+    *wanted* maps a package name to the effects its operation would apply. The refusal names both packages of the first
+    clash found for each.
+    """
+    claimed: dict[tuple[str, str], str] = {}
+    refused: dict[str, NameConflict] = {}
+    for package, effects in wanted.items():
+        for key, item in provided_names(effects).items():
+            other = claimed.setdefault(key, package)
+            if other.casefold() == package.casefold():
+                continue
+            error = NameConflict(
+                f"{other} and {package} both provide the {item.word} '{item.name}' ({item.where}). Install one of them, or "
+                "give one of them a package definition with a different name.",
+                name=item.name, packages=(other, package),
+            )
+            refused.setdefault(other, error)
+            refused.setdefault(package, error)
+    return refused
 
 
 class InvalidVersion(PlanError):
@@ -148,6 +321,7 @@ def plan_install(
     url_from: str = "pkg.toml",
     drifted: Collection[tuple[str, ...]] = frozenset(),
     allow_installer: bool = True,
+    owners: Mapping[tuple[str, str], str] | None = None,
 ) -> InstallPlan:
     """Plan an install-like operation: ``install``, ``update``, ``switch`` or a repair.
 
@@ -175,6 +349,9 @@ def plan_install(
         The ``effect_key`` of recorded effects that a repair found missing or changed on the machine.
     allow_installer : bool
         The ``hooks.allow_vendor_installers`` setting: whether a version that runs a vendor installer may be populated.
+    owners : mapping, optional
+        Which other installed package provides each name (``name_owners``); a name the version would provide that another
+        package already provides is refused. A download-only update integrates nothing and is not checked.
 
     Returns
     -------
@@ -188,10 +365,14 @@ def plan_install(
         manifest does not support the mode.
     ModeRefused
         If the manifest's ``modes`` lack the scope's mode (the refusal of ``check_supported``).
+    NameConflict
+        If the version would provide a shim, wrapper, shortcut or environment variable that another installed package provides.
     """
     manifest = chosen.manifest
     version = chosen.candidate.version
     check_supported(context, manifest.modes, command=request.operation, name=view.name)
+    if owners and not request.download_only:
+        check_names(view.name, desired, owners)
     path = package_path or view.path or context.package_dir(view.name)
     previous = view.installed.version if view.installed is not None else None
     record_effects = view.record.effects if view.record is not None else ()

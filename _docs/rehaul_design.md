@@ -491,6 +491,23 @@ A local package root needs no registry and no settings entry:
 - **`gupkg pkg new <name>` scaffolds a local package.** It creates a version
   directory, or a tracker with `--track github:owner/repo`.
 
+### 5.5 Name ownership
+
+A name a package puts on the machine belongs to one installed package: a `[[shim]]` or wrapper file in `bin` (by its
+path), a `[[shortcut]]` link (its `.lnk` path) and an `[[env]]` variable (its scope and name), all compared without regard
+to letter case. A `[[path]]` entry is not a name; several packages may add the same folder. The owners are the recorded
+effects of the install records in the run's root, and nothing outside the root is read (D50).
+
+`install`, `update`, `switch`, `repair` and `check-updates` (with download) refuse, in the planner and before any download or
+file change, a version that would provide a name that a different installed package already provides. The refusal
+names both packages, the name and the way out (uninstall the other package, or use a definition with another name); the
+code is `name-conflict` (exit code 2). Two targets of one command that provide the same name are both refused. A package
+always owns its own names, so a new version, `switch` and a repeated `install` of the same package are never a conflict. A
+new version that takes another package's name is refused like an install: the installed version keeps working and the
+package is `outdated` (`check-updates` leaves the version written without its `App`). `uninstall`, `cleanup` and `check` are
+never refused; `check` reports a clash that is already on disk as a problem of both packages and changes nothing. A file in
+`bin` or a shortcut that is in no install record is not owned and behaves as before.
+
 ## 6. Scopes and package kinds
 
 This section is the model of issue 035. The owner confirmed D47–D55 on 2026-10-28 (§6.1 of the issue, with the amendments of its Q10–Q15). It replaces the 1.0 sections "Install modes: system, user, portable".
@@ -1448,7 +1465,9 @@ target with `target`, `ok`, `exit_code` and either `plan` (`operation`,
 `effects`, `phases`, `notes`, `sha256`, `url`, and `populate` or `copy_in` when
 the plan has them) or `result` (the failure, or "up to date"). A call that
 failed before any target was handled (a usage error, a question that was not
-answered) has `errors` with `code`, `message` and, when there is one, `hint`. The events file ends
+answered) has `errors` with `code`, `message` and, when there is one, `hint`. A package that would take a name another
+installed package provides fails with the error code `name-conflict` (exit code 2, with `name` and `packages`); it appears
+only in failure documents (section 5.5). The events file ends
 with `run_end`, whose `result` is the same document. Contract tests pin all of
 this.
 
