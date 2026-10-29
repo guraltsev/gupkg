@@ -22,8 +22,8 @@ Not recorded yet. Before T00, the controller records:
 | T03 | Registry conversion (gupkg-registry) | T02 | merged | i035/T03 (registry) | registry da73597 | registry _tests 212 passed; pkg_check.py --all: 192 directories checked, no error; registry_tool validate: 95 packages, 97 pinned versions, 0 hook files, 1 unpinned: OK | none |
 | T04 | Settings schema 4 and root fallback chain | T02 | merged | i035/T04 | 6ab01f8 | 3720 passed, 0 failed, 11 skipped | none | |
 | T05 | Scope object; mode from the token | T04 | merged | i035/T05 | fc47455 | 3649 passed, 0 failed, 11 skipped (87 tests removed, 63 added; reasons in 09-logs/T05.md) | 035-T05-1..4 (tests/manual_smoke.md) |
-| T06 | Catalog over one root | T05 | in review | i035/T06 | | | |
-| T07 | Remove the elevated relaunch | T06 | waiting | | | | |
+| T06 | Catalog over one root | T05 | merged | i035/T06 | 955b8f0 | 3630 passed, 0 failed, 11 skipped (99 tests removed or merged, 9 added; reasons in 09-logs/T06.md); catalog.py 1042 -> 840 lines | 035-T06-1, 035-T06-2 (tests/manual_smoke.md) |
+| T07 | Remove the elevated relaunch | T06 | in progress | i035/T07 | | | |
 | T08 | Run-as-administrator shortcut | T07 | waiting | | | | |
 | T09 | Manager: one scope per run | T07 | waiting | | | | |
 | T10 | Manager: shared reader, visible failures | T09 | waiting | | | | |
@@ -77,6 +77,9 @@ Owner commit not pushed yet (goes to GitHub together with T03): `9fba5c5 volta: 
 
 - Non-blocking, from T05 (for T06/T07/T09/T12): `gupkg-bootstrap.ps1` lost `--mode $Scope` on its install lines (consequence of removing `--mode`; T11 reviews the script). `Scope.requires_elevation`, the one-element group loop and the mixed-modes text in `cli.py`/`lifecycle.py`, `engine/checkupdates.py` `writes_root` are dead until T07. `gupkg_manager/cli.py` still has its own `--mode` filter (T09). The UI two-group logic and `can_elevate` are untouched (T09); the UI `checksum_policy` guard for system targets is kept and marked `# Removed in issue 035 T09.` (it only turns a user-layer `skip` into `refuse`; main also turned an explicit `ask`). `self update` from a system gupkg in a normal shell is now refused (T09 must handle the manager's `U` key). `execute`/plan documents still carry per-package `mode` and `root_cleanup` keyed by mode (T06/T07). `selfmgmt/elevation.py` `untrusted_reason` does not recurse; `build_scope` names version dir, root, package folder, `python` and `python\Lib\site-packages` one by one; file-level ACL checks are not done (open, non-blocking). The `self update` same-root comparison uses `normpath` only (no realpath). `pkg new|check|export|bundle` and `self status` build no scope.
 
+- Owner question, from T06 (non-blocking, decided as stated unless the owner says otherwise): a package root or `current` outside the run's root used to become an ad-hoc root and be copied in; now only a *version directory* with a `pkg.toml` outside the root is copied in (design §21.4 wording), anything else is `not inside this scope's root`. The refusal text is misleading for someone installing from a download folder. One sentence for T12 docs.
+- Non-blocking, from T06 review, handed on: for T07: the catalog's kept elevated trust gate (`catalog.py` ~292-297, ~350, ~780-785, `_untrusted_reason`, `_resolve_path`) must go through `Scope.require_trusted` (the T07 grep for `is_elevated_run` will not find it, since it tests `scope.mode is SYSTEM`); merge `UntrustedLocation` (catalog.py:108) and `UntrustedLocationError` (selfmgmt/elevation.py), both mapped to `untrusted-location`; delete `health.diagnose(elevated=...)`, `Engine.elevated`; re-record `tests/fixtures/ui/list.json` and `info_alpha.json` (hand-edited in T06, still `"api": 1`) with `record.py` and make `record.py` produce a valid world (it writes a stale `[roots]` table, its Apps have no install records so they are `broken`); delete the unreachable executor "Refusing to purge" guard or test it. For T10: `gupkg_ui.plans.read_packages` returns an empty list silently when the document has no `mode` (must become a visible error). Minor test gaps: `test_catalog_one_root.py` matches only part of the "not inside this scope's root" text; no human-output test for the `(system only)` / `reason:` rows. A record with no `mode` key is accepted as not moved (schema allows it; real installs always write it); `catalog_support.activate` writes records without a mode.
+
 ## Log
 
 - 2026-10-26: job prepared from issue 035; not started.
@@ -98,3 +101,4 @@ Owner commit not pushed yet (goes to GitHub together with T03): `9fba5c5 volta: 
 - 2026-10-29: T05 worker reported (6497ef2, 8e2752b, 2b5b5c6, 19c12d4; 3645 passed/11 skipped); review round 1 started.
 - 2026-10-29: T05 review round 1 (1 blocking: UI checksum guard; fixed in 3d9e9ab), round 2 clean; merged as fc47455; suite 3649 passed, 11 skipped. T06 dispatched.
 - 2026-10-29: T06 worker reported (3b622b7, e7a3eac, e9d4ef8; 3630 passed/11 skipped); review round 1 started.
+- 2026-10-29: T06 reviewed (0 blocking, several minor), merged as 955b8f0; suite 3630 passed, 11 skipped. T07 dispatched.
