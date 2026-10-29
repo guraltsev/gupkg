@@ -280,3 +280,31 @@ def test_an_update_to_a_version_that_narrows_modes_names_the_version_and_keeps_t
     assert result.code == 2
     assert message == "tool 2.0.0 installs only system-wide, so it cannot be installed in this user root. The installed version 1.0.0 keeps working."
     assert (world.user / "tool" / "current").resolve().name == "1.0.0"
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        pytest.param(("--settings", "{bad}"), id="settings"),
+        pytest.param(("--root", "{root}"), id="root"),
+        pytest.param(("--settings", "{bad}", "--root", "{root}"), id="settings-and-root"),
+        pytest.param(("--sandbox", "{sandbox}", "--settings", "{bad}"), id="sandbox"),
+    ],
+)
+def test_a_setup_error_document_names_the_command_not_the_value_of_a_root_option(tmp_path: Path, prefix: tuple[str, ...]) -> None:
+    """``command`` of the failure document is ``list`` whatever root options come first."""
+    bad = tmp_path / "bad.toml"
+    bad.write_text("schema = [\n", encoding="utf-8")
+    (tmp_path / "r" / ".gupkg").mkdir(parents=True)
+    (tmp_path / "r" / ".gupkg" / "settings.toml").write_text("schema = [\n", encoding="utf-8")
+    values = {"bad": str(bad), "root": str(tmp_path / "r"), "sandbox": str(tmp_path / "sb")}
+    world = CliWorld(tmp_path / "w")
+
+    result = world.cli(*(item.format(**values) for item in prefix), "list", "--json")
+
+    assert result.code == 2 and result.document()["command"] == "list", result.out
+
+def test_a_root_option_after_the_command_still_reports_the_command(tmp_path: Path) -> None:
+    """``list --root X --json`` is a usage error (the option is global), and its document names ``list``."""
+    result = CliWorld(tmp_path).cli("list", "--root", str(tmp_path / "r"), "--json")
+
+    assert result.code == 2 and result.document()["command"] == "list", result.out

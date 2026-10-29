@@ -244,11 +244,27 @@ def _fail(run: _Run, command: str, error: BaseException) -> int:
     return exit_code
 
 
+_ROOT_OPTIONS = ("--settings", "--root", "--sandbox")  # the options before the command that take a value
+
+
+def _command_word(tokens: Sequence[str]) -> str:
+    """Return the first word of *tokens* that is neither an option nor the value of a root option (``gupkg`` when there is none)."""
+    skip = False
+    for token in tokens:
+        if skip:
+            skip = False
+        elif token in _ROOT_OPTIONS:
+            skip = True
+        elif not token.startswith("-"):
+            return token
+    return "gupkg"
+
+
 def _usage_error(tokens: Sequence[str], message: str) -> int:
     """Report a usage error (exit code 2): the message on standard error and, when ``--json`` is among the arguments, a document."""
     print(f"gupkg: error: {message}", file=sys.stderr)
     if "--json" in tokens:
-        command = next((item for item in tokens if not item.startswith("-")), "gupkg")
+        command = _command_word(tokens)
         sys.stdout.write(results.dumps(results.error_document(command, "usage", message, EXIT_USER)))
     return EXIT_USER
 
@@ -927,7 +943,7 @@ def _pass_through(tokens: Sequence[str]) -> tuple[str, list[str], list[str]] | N
     index, root_options = 0, []
     while index < len(tokens):
         token = tokens[index]
-        if token in ("--settings", "--root", "--sandbox"):
+        if token in _ROOT_OPTIONS:
             root_options += tokens[index:index + 2]
             index += 2
         elif token.startswith(("--settings=", "--root=", "--sandbox=")):

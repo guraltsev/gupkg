@@ -177,3 +177,17 @@ def test_a_mere_exists_of_the_other_root_is_recorded(tmp_path: Path, monkeypatch
 
     touches.active = False
     assert len(touches.paths) >= 2, touches.paths
+
+def test_the_program_root_carve_out_covers_that_folder_and_nothing_below_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The user run may look at the folder its gupkg is installed in; a read of its ``.gupkg\\settings.toml`` is still a violation."""
+    world = CliWorld(tmp_path)
+    program = world.location.root
+    (program / ".gupkg").mkdir(parents=True, exist_ok=True)
+    (program / ".gupkg" / "settings.toml").write_text("schema = 4\n", encoding="utf-8")
+    touches = Touches(program, monkeypatch, program_root=program)
+
+    program.exists()
+    (program / ".gupkg" / "settings.toml").read_text(encoding="utf-8")
+
+    touches.active = False
+    assert touches.paths and all("settings.toml" in path for path in touches.paths), touches.paths
