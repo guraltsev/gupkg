@@ -1764,7 +1764,7 @@ These readings settle what sections 13.1 to 13.3 leave open. They are what `gupk
 
 **Effects and the install record.** An effect is one of five kinds, each with the fields that
 apply, remove and verify it: `shortcut` (`path`, `target`, `arguments`, `working_dir`,
-`icon_location`, `description`), `shim` (`path`, `config`, `type`, `linkage`, `target`,
+`icon_location`, `description`, and `run_as_admin` when true), `shim` (`path`, `config`, `type`, `linkage`, `target`,
 `arguments`, `forward_args`, `elevate`, `working_dir`, `config_sha256`), `file` (a content
 wrapper: `path`, `content`, `sha256`), `env` (`scope`, `name`, `value`) and `path` (`scope`,
 `entry`, `added`, `shared`). `$App`, `$VersionRoot` and the other variables expand against

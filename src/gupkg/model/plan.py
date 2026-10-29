@@ -24,7 +24,8 @@ through TOML unchanged. The module does no input or output.
 Effect kinds and their fields (all paths absolute):
 
 ``shortcut``
-    ``path`` (the ``.lnk``), ``target``, ``arguments``, ``working_dir``, ``icon_location``, ``description``.
+    ``path`` (the ``.lnk``), ``target``, ``arguments``, ``working_dir``, ``icon_location``, ``description``, and
+    ``run_as_admin`` (present, as ``true``, only for a shortcut that asks for the UAC prompt).
 ``shim``
     ``path`` (the launcher ``.exe``), ``config`` (its ``.config.toml``), ``type``, ``linkage``, ``target``,
     ``arguments``, ``forward_args``, ``elevate``, ``working_dir`` and ``config_sha256``.
