@@ -158,10 +158,13 @@ def desired_effects(manifest: Manifest, context: EffectContext) -> tuple[tuple[E
     if manifest.shortcuts and context.start_menu is None:
         notes.append("this root does not create shortcuts (integrate = \"none\"): shortcuts were left out")
     for row in manifest.shortcuts if context.start_menu is not None else ():
+        if row.modes is not None and context.mode not in row.modes:
+            continue
         label = f"shortcut '{row.name}'"
         name = _expand(row.name, values, context.env, f"{label} name").strip()
         link = _confined(context.start_menu, name if name.lower().endswith(".lnk") else name + ".lnk", label)
         arguments = _expand(row.arguments, values, context.env, f"{label} arguments")
+        # run_as_admin is recorded only when true, so records written before it existed still match.
         effects.append(Effect("shortcut", {
             "path": str(link),
             "target": _expand(row.target, values, context.env, f"{label} target"),
@@ -169,6 +172,7 @@ def desired_effects(manifest: Manifest, context: EffectContext) -> tuple[tuple[E
             "working_dir": _expand(row.working_dir, values, context.env, f"{label} working_dir"),
             "icon_location": _expand(row.icon_location, values, context.env, f"{label} icon_location"),
             "description": _expand(row.description, values, context.env, f"{label} description"),
+            **({"run_as_admin": True} if row.run_as_admin else {}),
         }))
 
     # Shims live in the mode's bin folder; a launcher is an .exe with a config file, a content shim is one file.
@@ -476,7 +480,7 @@ def apply_effect(system: System, effect: Effect, context: EffectContext, previou
         system.write_shortcut(path, ShortcutSpec(
             target_path=str(fields["target"]), arguments=str(fields.get("arguments", "")),
             working_directory=str(fields.get("working_dir", "")), icon_location=str(fields.get("icon_location", "")),
-            description=str(fields.get("description", "")),
+            description=str(fields.get("description", "")), run_as_admin=bool(fields.get("run_as_admin", False)),
         ))
         return effect
     if effect.kind == "shim":
@@ -596,8 +600,9 @@ def verify_each(system: System, effects: Sequence[Effect], *, mode: Mode) -> lis
                 except OSError:
                     drift = f"shortcut missing: {fields['path']}"
                 else:
-                    wanted = (str(fields["target"]), str(fields.get("arguments", "")), str(fields.get("working_dir", "")))
-                    if (stored.target_path, stored.arguments, stored.working_directory) != wanted:
+                    wanted = (str(fields["target"]), str(fields.get("arguments", "")), str(fields.get("working_dir", "")),
+                              bool(fields.get("run_as_admin", False)))
+                    if (stored.target_path, stored.arguments, stored.working_directory, stored.run_as_admin) != wanted:
                         drift = f"shortcut differs: {fields['path']}"
             elif effect.kind == "shim":
                 if not Path(str(fields["path"])).is_file():

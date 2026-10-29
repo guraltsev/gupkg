@@ -534,3 +534,10 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
 2. **`035-T07-2` The stop marker still stops a run.** From an administrator shell run `gupkg update <a> <b> <c> --yes --events-file run.jsonl`;
    read `stop_file` from the first line of `C:\opt\.gupkg\logs\run.jsonl` and create that file while the first package runs: the run
    finishes that package, skips the rest and exits with code 5. Why manual: needs real packages and timing.
+
+## A "run as administrator" shortcut (issue 035, task T08)
+
+1. **`035-T08-1` The administrator shortcut asks for UAC.** On a VM or test root with gupkg installed in system mode, open the Start Menu
+   folder `opt` and double-click "gupkg manager (administrator)": expect the UAC prompt, then the manager with the title
+   `system · <root>` (after T09). In the link's properties (Advanced), "Run as administrator" is ticked. A user-mode install has only
+   "gupkg manager". Why manual: needs a real UAC prompt and a real Start Menu.
