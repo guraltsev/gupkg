@@ -604,10 +604,10 @@ in `$T\sys\.gupkg\settings.toml`, pointing at the `*bin` and `*menu` folders. Us
    release published (a test release ZIP, or the real next release), run `gupkg self update` in the mode's own shell. Expect `current` to name
    the new version and `gupkg self status` to say `ok`. Then repeat with a failure part-way: (a) disconnect the network before the download: exit code 3,
    `current` unchanged, the message says nothing was changed; (b) hold a file of the new version open (`[IO.File]::Open(path,'Open','Read','None')`
-   in another PowerShell) so the finish step fails: expect exit code 3, and read `gupkg self status`, `<root>\gupkg\current` and the message: `current`
-   must still be a working junction (to the old or the new version, never missing) and the message must say which. (In the 2026-10-29 trial with an
-   ordinary package, the update reported `failed` after `current` had already moved to the new version, and the message did not say so; see the T13
-   report.) After each failure run `gupkg self repair` and then a launcher (`<bin>\gupkg.exe list`): it starts. Why manual: a real self update needs a
+   in another PowerShell) so the finish step fails. Expected today: exit code 3 and a raw `[Errno 13] Permission denied: <file>`; `<root>\gupkg\current` is a
+   working junction, and it may already name the NEW version although the result says `failed` (the 2026-10-29 trial with an ordinary package did exactly
+   that). Known defect (separate issue, pre-existing at d8096b5): the message should say whether `current` moved and what state the package is in. Check
+   `gupkg self status` and `<root>\gupkg\current`: the junction must exist and work in either case. After each failure run `gupkg self repair` and then a launcher (`<bin>\gupkg.exe list`): it starts. Why manual: a real self update needs a
    release download and the real running interpreter behind the junction (AGENTS rule 6).
 4. **`035-T13-4` First manager run with an empty registry, in each mode, with a real sync (item 5).** Start from a root without `.gupkg\registry`. Start
    `gupkg-manager` (normal shell for the user root, the administrator shortcut for the system root). Expect the hint line
@@ -637,8 +637,9 @@ in `$T\sys\.gupkg\settings.toml`, pointing at the `*bin` and `*menu` folders. Us
 8. **`035-T13-8` Failures in the system mode, and the elevated start of a user-installed gupkg (item 9).** (a) From an administrator shell start a gupkg
    that is installed in a user-writable root: exit code 2, "an elevated gupkg must be installed in an admin-only root; run the system gupkg" (see
    `035-T05-2`), nothing read or written under the test roots. (b) Elevated, offline: `gupkg registry sync` exits 3, names the registry and says the
-   previous tree stays; the roots are unchanged. (c) Elevated, with a file of `<sysroot>\<pkg>\current\App` held open: `uninstall --purge` exits 3; read the
-   message, then close the program and repeat: it succeeds (the user-mode trial showed that the first attempt had already removed the shim and `current`;
-   the message must say that). (d) Elevated, with `<sysroot>\<pkg>\current` removed (`cmd /c rmdir`): `gupkg list`, `check` and `check --fix` must say the
-   package is broken or not installed and how to recover (the user-mode trial printed `ok: not-installed`; see the T13 report). Why manual: needs an
+   previous tree stays; the roots are unchanged. (c) Elevated, with a file of `<sysroot>\<pkg>\current\App` held open: `uninstall --purge`. Expected today: exit 3 with a raw `[WinError 32]`; the shim and
+   `current` are already removed and the package folder is left; closing the program and repeating succeeds. Known defect (separate issue, pre-existing at d8096b5):
+   the message should say that the integration is already gone and what to do. (d) Elevated, with `<sysroot>\<pkg>\current` removed (`cmd /c rmdir`):
+   Expected today: `gupkg list` shows `local`, `check` and `check --fix` print `ok: not-installed` and change nothing, the shim stays. Known defect (separate issue,
+   pre-existing at d8096b5): they should say the package is broken and how to recover. Why manual: needs an
    elevated token.
