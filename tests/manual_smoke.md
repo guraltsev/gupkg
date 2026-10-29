@@ -383,8 +383,8 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
 3. **A user-writable gupkg never elevates.** (Retired by issue 035 T07; see `035-T05-2`.)
 4. **The elevated child refuses a user folder.** (Retired by issue 035 T07: there is no child; an administrator shell copies a distribution
    folder into `C:\opt` and a normal shell refuses a path outside its root.)
-5. **The forwarders.** `gupkg tui <folder>` opens the package view of that folder and `gupkg manager` opens the browser (both from a normal
-   shell; from an elevated shell they refuse with exit 2). Check that the exit code of each program is the exit code of `gupkg`. Why
+5. **The pass-through commands.** `gupkg tui <folder>` opens the package view of that folder and `gupkg manager` opens the browser (from a normal
+   shell the user root, from an elevated shell the system root; neither refuses). Check that the exit code of each program is the exit code of `gupkg`. Why
    manual: needs the real bundle layout and a real console.
 6. **`gupkg logs`.** `gupkg logs <name> --open` opens the newest log in the program Windows associates with `.log`; `--path` prints
    its path. Why manual: needs the Windows shell association.
@@ -477,7 +477,7 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
    and a machine with Smart App Control (spike S2; it could not be run during the rehaul, so it stays owed before 1.0 is published).
 8. **System install of a distribution.** In an elevated shell with the system gupkg installed, run
    `gupkg install <folder in Downloads>`: the folder is copied into `C:\opt\<name>\<v>` and installed from there, nothing
-   starts from `Downloads`, and `--in-place` installs where the folder is. Why manual: real elevation and a real `C:\opt`.
+   starts from `Downloads`. Why manual: real elevation and a real `C:\opt`.
 9. **The registry after the launcher change.** In the registry checkout run `python -m gupkg_registry launchers --registry .`, review the
    diff (every tracker gets `check-updates.cmd`, every pinned version gets the new `install.cmd` and `gupkg-tui.cmd`, `_registry.toml`
    gets the new fingerprints), run `validate`, then commit. Why manual: the registry is a separate repository.
@@ -516,10 +516,10 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
    manual: needs real tokens.
 5. **`035-T06-1` An old folder without an install record.** In the real user root, `gupkg list` shows a package folder made by an
    older gupkg (a `current` junction, no `.gupkg\package.toml`) as `broken`; `gupkg list --details` gives the reason `no install
-   record (made by an older gupkg); reinstall with: gupkg install <name> --force`. Run that command: the package is `installed`
+   record (made by an older gupkg); reinstall with: gupkg install <name>`. Run that command: the package is `installed`
    again. Nothing in the folder changed before you ran it. Why manual: needs a real 0.17-layout folder.
 6. **`035-T06-2` One root, one registry cache.** From a normal shell with a user root whose registry was never synchronised
-   (`gupkg registry status`), `gupkg list --available` lists nothing, even though `C:\opt\.gupkgegistry` holds a cache; after
+   (`gupkg registry status`), `gupkg list --available` lists nothing, even though `C:\opt\.gupkg\registry` holds a cache; after
    `gupkg registry sync` it lists the packages. From an administrator shell `gupkg list --available` marks a package that is
    `["user"]` or portable as `user only` with the reason, and from a normal shell a `["system"]` package as `system only`. A path
    into the other root (`gupkg info C:\opt\<name>` from a normal shell) says `... is not inside this scope's root (...)`. Why manual:
@@ -551,7 +551,8 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
    it, the status line gives the CLI's reason. Why manual: needs a real terminal title and a real UAC prompt.
 
 ## The manager reads in-process and shows what it cannot read (issue 035, task T10)
-. **`035-T10-1` A read that fails is visible.** In a normal terminal start `gupkg-manager`. Make the registry cache unreadable (rename `<root>\.gupkg\registry\main\state.toml` to a folder, or lock it), press `r`: the status line shows `ERROR: registry unreadable: ...` (or `package list unreadable`) and a red notification gives the full text; the list stays usable. Restore the file and press `r`: the error goes away. Why manual: needs a real root and a real file lock.
+
+1. **`035-T10-1` A read that fails is visible.** In a normal terminal start `gupkg-manager`. Make the registry cache unreadable (rename `<root>\.gupkg\registry\main\state.toml` to a folder, or lock it), press `r`: the status line shows `ERROR: registry unreadable: ...` (or `package list unreadable`) and a red notification gives the full text; the list stays usable. Restore the file and press `r`: the error goes away. Why manual: needs a real root and a real file lock.
 
 ## Launchers: bundled, then gupkg-location, then PATH (issue 035, task T11)
 

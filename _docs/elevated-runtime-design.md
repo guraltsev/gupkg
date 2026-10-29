@@ -16,7 +16,7 @@ section 9.
 > 3.6, 4 to 7 and the `manager`/`pip` commands they mention are kept as the record of the original design;
 > section 9 says what is true now.
 >
-> **Amended by issue 035 (D47–D55, owner-confirmed 2026-10-28).** gupkg never relaunches itself elevated: an
+> **Amended by issue 035 (D47–D55, owner-confirmed 2026-10-28).** gupkg never starts an elevated copy of itself: an
 > elevated process is in system mode. It runs only an admin-only gupkg tree and acts only on the admin-only system
 > root. Section 10 says what that means, and gives the launcher `PATH` rule.
 
@@ -301,7 +301,7 @@ Following `_docs/tests.md`:
 ## 9. Implementation notes and deviations
 
 - Modules: `gupkg.selfmgmt.elevation` (detection and ACL policy). The dependency modules of the first
-  implementation are gone (issue 016), and so is the elevated relaunch (issue 035, D49).
+  implementation are gone (issue 016), and so is the elevated copy of gupkg that earlier versions started (issue 035, D49).
 - **Launcher detection.** Since issue 018, `gupkg.cmd` no longer probes for
   elevation (no `fltmc.exe`, no `--elevated`, no `GUPKG_FORCE_ELEVATED`).
   `bootstrap.py` checks the process token (`GUPKG_ELEVATED=1` can only make a run
@@ -322,8 +322,8 @@ Following `_docs/tests.md`:
   `python\Lib\site-packages` (with `--require-hashes`, cross-targeted at the bundled CPython by the build
   machine's pip) and writes the `._pth` file, so an elevated first run needs no installation. The bundle has
   no pip, setuptools or ensurepip (issue 019), and nothing is installed at run time.
-- **No relaunch.** gupkg contains no code that starts an elevated copy of itself (issue 035, D49): no
-  `gupkg.relaunch`, no elevated child, no `--relaunched`, `--batch-confirmed` or `--stop-file`. An elevated run is a
+- **No self-elevation.** gupkg contains no code that starts an elevated copy of itself (issue 035, D49): no
+  module that starts an elevated copy, no elevated child, and none of the hidden options that such a child needed. An elevated run is a
   process that was started elevated (a shell run as administrator, or the Start Menu shortcut "gupkg manager
   (administrator)"). System tools (`powershell`, `cmd`) are resolved under `%SystemRoot%`; an elevated
   run never searches `PATH` for them.
@@ -349,7 +349,7 @@ Following `_docs/tests.md`:
 This section is the elevated side of design sections 6.1, 9.4, 9.6 and 21.3 (decisions D47 to D52, confirmed by the
 owner on 2026-10-28).
 
-- **There is no relaunch.** An elevated process is in system mode, and the mode comes from the process token
+- **gupkg never elevates itself.** An elevated process is in system mode, and the mode comes from the process token
   alone. gupkg never starts an elevated copy of itself. To act in system mode, start gupkg or the manager
   elevated: in an administrator shell, or through the Start Menu shortcut "gupkg manager (administrator)", whose
   link carries the "run as administrator" flag. Windows asks for UAC, and gupkg contains no elevation code.

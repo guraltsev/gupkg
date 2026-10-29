@@ -22,7 +22,7 @@ from tests.ui_support import LAUNCHERS, RealWorld
 
 
 def run_plain(world: RealWorld, launcher: str, *args: str) -> subprocess.CompletedProcess:
-    """Run a real launcher without root options (the forwarders refuse them, which is how ``gupkg manager`` and ``gupkg tui`` are started)."""
+    """Run a real launcher without root options (the pass-through commands refuse them, which is how ``gupkg manager`` and ``gupkg tui`` are started)."""
     return subprocess.run(
         [str(LAUNCHERS / f"{launcher}.cmd"), *args], capture_output=True, text=True, encoding="utf-8", env=world.env, stdin=subprocess.DEVNULL, timeout=60, check=False,
     )

@@ -34,11 +34,11 @@ between a line that says which keys work and a line that says what is going on.
 ## The fixed frame (required on every screen)
 
 ```text
- ↑↓ Enter open  / filter  c check  u update  U all  x remove  ? help  q quit    <- key-hint line (1 line, always)
- Name   Version  Mode  Status            Registry                                <- the content: frameless
- alpha  1.0.0    user  outdated → 2.0.0  main
+ Enter open  / find  a avail  c check  u update  U all  s sync  ? help  q quit    <- key-hint line (1 line, always)
+ Name   Version  Status            Registry                                      <- the content: frameless
+ alpha  1.0.0    outdated → 2.0.0  main
  …
- 2 packages · 1 outdated · 0 broken · registry main @ 4f2a9c1 (synced 2h ago)    <- status line (1 line, always)
+ user · C:\…\opt · 2 packages · 1 outdated · 0 broken · registry main @ 4f2a9c1    <- status line (1 line, always)
 ```
 
 - **The key-hint line is the top line.** It lists the keys that work *on this
@@ -46,11 +46,13 @@ between a line that says which keys work and a line that says what is going on.
   and a finished run view. It fits in 78 columns, so at 80x24 it is never
   clipped; `? help` and a way out (`q quit` or `Esc back`) are always on it. A
   key that exists but does not fit is explained by the help screen (`?`).
-- **The status line is the bottom line.** It says what the program knows and is
+- **The status line is the bottom line.** It starts with the scope of the run
+  (`user · <root>` or `system · <root>`, the root shortened in the middle so that the last folders stay), because a run has one scope
+  and the person must always see which root is managed. It then says what the program knows and is
   doing: counts (outdated, broken), the registry revision and how long ago it
   was synchronised, the state of a run (`Running`, `Finished`, `Failed (exit
   code N)`), and the path of the latest log. The most important parts come
-  first, because a narrow terminal clips the tail with an ellipsis.
+  first, because a narrow terminal clips the tail with an ellipsis: at 80 columns the status line shows the scope first and clips the rest.
 - **Both lines are plain text on a quiet background.** They are not buttons,
   menus, banners or a title: no product name, no logo.
 - **Dialogs carry the frame too.** A prompt is a full-screen dialog with its own
@@ -90,7 +92,7 @@ Use one line per useful piece of information. Add a line only when it changes
 the user's decision: object identity, installed version, warning, action,
 setting, or command result.
 
-Prefer words to status glyphs: use `on` and `off`, `User` and `System`, or
+Prefer words to status glyphs: use `on` and `off`, `user` and `system`, or
 `unavailable`, rather than checkbox art. Color may reinforce meaning, but it
 must never be the only signal: write `Warning:` and `Error:` even when the line
 is colored, and end a failed phase with the word `failed`.
@@ -113,7 +115,7 @@ When a screen operates on a package, show its identity before the rest:
 
 ```text
 <name> <version>  Installed: <active version or not installed>
-mode: user   status: outdated → 2.0.0
+status: outdated → 2.0.0
 Warning: metadata conflicts with the directory name.
 ```
 
@@ -214,15 +216,15 @@ The programs are another way to invoke the application's behavior, not a second 
 `--events-file`, `--no-input`; decision D44): the programs may import gupkg core to *read*
 (package state, settings, the event vocabulary), but they never import the engine or run
 anything in-process. They call the `gupkg.cmd` of their own gupkg tree (never one on `PATH`)
-with an argument list and never through a shell, refuse a result whose `"api"` is not 1, and
+with an argument list and never through a shell, refuse a result whose `"api"` is not the one they were built for (2), and
 treat an unreadable result, a missing `run_end` or a crash as a failure.
 
 Keep framework code at the presentation edge:
 
 ```text
 gupkg CLI
-    validates inputs and performs operations (one call per group: user targets, then ONE
-    elevated call for all system targets)
+    validates inputs and performs operations (one call per group of targets; the run's one scope
+    is the mode of the program's own process, and nothing in the screens switches it)
 
 gupkg_ui.client / flows / session
     build the calls, follow the events files, apply the checksum policy

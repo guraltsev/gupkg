@@ -24,7 +24,9 @@ from gupkg.catalog.record import read_install_record
 from gupkg.engine import lifecycle
 from gupkg.engine.receipts import read_receipt
 from gupkg.model.plan import INSTALL_PHASES, Request
+from gupkg.report.documents import read_plan, read_results
 from gupkg.report.events import Error, PackageEnd, PhaseEnd, use_reporter
+from gupkg.report.results import plan_document, result_document
 from gupkg.system.port import Mode
 from tests.engine_support import BASE_URL, World, pin_no_ambient_elevation, pkg_text  # noqa: F401
 
@@ -539,6 +541,32 @@ def test_every_result_and_plan_is_json_ready(world: World) -> None:
     documents += [item.to_data() for item in plans]
 
     assert all(json.loads(json.dumps(document)) == document for document in documents)
+
+
+def test_the_typed_readers_accept_what_the_engine_makes(world: World) -> None:
+    """``read_results`` and ``read_plan`` read the live documents of every operation, so the readers cannot drift from the writers."""
+    world.publish("tool", "1.0.0", tables=FULL)
+    world.tracker("tool")
+    world.announce("tool", "1.1.0")
+    for operation, options in (
+        ("install", {}), ("check", {}), ("check-updates", {}), ("update", {}), ("cleanup", {"keep": 0}), ("switch", {"version": "1.0.0"}),
+        ("uninstall", {}),
+    ):
+        batch = world.run(operation, "tool", **options)
+        document = json.loads(json.dumps(result_document(operation, batch)))
+
+        read = read_results(document)
+
+        assert (read.ok, read.exit_code) == (batch.ok, batch.exit_code), operation
+        assert [(entry.package, entry.ok, entry.exit_code) for entry in read.results] == [(item.package, item.ok, item.exit_code) for item in batch.results], operation
+    requests = [Request("install", "tool"), Request("update", "tool"), Request("cleanup", "tool")]
+    plans = lifecycle.plan(world.engine, requests)
+    document = json.loads(json.dumps(plan_document("install", plans, ["tool"] * len(plans))))
+
+    planned = read_plan(document)
+
+    assert len(planned.items) == len(plans)
+    assert all(item.plan is not None or item.result is not None for item in planned.items)
 
 
 def test_requests_refuse_an_unknown_operation_and_a_negative_keep() -> None:

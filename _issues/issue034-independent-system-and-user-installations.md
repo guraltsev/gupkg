@@ -1,5 +1,15 @@
 # Issue 034: System and user installations must be completely independent
 
+> **Status (2026-10-29):** Superseded by issue 035 (one scope per run), implemented by job 09. Where each required item landed:
+> two independent catalogs, per-side registry, settings, state and logs, and no cross-side warnings: T04 (settings schema 4 and the root fallback chain), T05 (one `Scope`; the mode comes from the token) and T06 (the catalog over one root);
+> the elevated run names no user location (structural, `Scope.require_trusted`): T05, T06 and T07 (the elevated relaunch is removed);
+> the manager has one scope per run, no elevation prompt and no refusal to start when elevated: T07 and T09;
+> `--mode` and `default_mode` stop choosing the side: T05;
+> the shared typed reader and visible failures instead of silent ones: T10 (`gupkg.report.documents`; `read_results` is not yet used by the UI session, see the T12 log);
+> the root forwarder is replaced by `<root>\.gupkg\gupkg-location`: T11;
+> portable became a package kind: T02 and T03; open questions of this issue are answered in issue 035 section 6.
+> Not part of issue 035: the self-update junction defect was fixed before job 09 (commit 3270152); the speed item (cost of each `gupkg` call) was not worked on.
+
 Date: 2026-10-25
 Priority: High
 Design touched: `_docs/rehaul_design.md` §6 (install modes), §9.4 (elevated runs), §9.6 (threat model), §13.2 (batches), §15 (UI programs), §21.3 (launchers and the root forwarder); decisions D4, D16, D20, D30, D31, D32, D44

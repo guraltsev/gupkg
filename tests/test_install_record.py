@@ -3,7 +3,7 @@
 Behavior covered: a record written and read back keeps its mode, its link (registry, name, revision, tracker hash),
 the ``unlinked`` opt-out and its effects (including "adopted" ones); a package with no record reads as no record;
 every kind of invalid record is reported with its problems and never raises out of the reader; the record is neither
-read nor written through a linked ``.gupkg`` folder; ``state.toml`` ad-hoc entries need an absolute path and a known mode.
+read nor written through a linked ``.gupkg`` folder; ``state.toml`` root entries need an absolute path and a known mode.
 
 Real: files under pytest's temporary folder and junctions through ``FakeSystem`` (real links); the TOML writer of
 ``gupkg.tomlio``. Mocked: nothing. Out of scope: which effects exist and applying them (issue 028).

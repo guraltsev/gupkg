@@ -4,7 +4,7 @@ Behaviour covered: the ``App`` fingerprint never follows a link and compares fil
 persisted portable state is skipped by the comparison; the version fingerprint covers pkg.toml, scripts and shipped files
 (not a downloaded ``App``, not ``.gupkg``) and names the differing files; receipts merge sections, refuse to be written through a
 link and refuse a schema they do not know; portable hand-over refuses paths that leave ``App`` or ``data`` and never writes
-through a link; the ad-hoc list keeps the other keys of ``state.toml`` and is never silently replaced; every exception an operation
+through a link; the list of recorded roots keeps the other keys of ``state.toml`` and is never silently replaced; every exception an operation
 can raise has a stable code and exit status.
 
 Real: the engine's own modules and real folders and junctions. Mocked: ``FakeSystem`` for the junctions.

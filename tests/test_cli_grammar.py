@@ -1,4 +1,4 @@
-"""Cover the grammar of the 1.0 command line: the commands, the options after them, help and the forwarders.
+"""Cover the grammar of the 1.0 command line: the commands, the options after them, help and the pass-through commands.
 
 Behaviour covered: every command and subcommand of design 10.2 parses and has an example in its help; the help lists the commands
 in task order; ``config-check``, ``config-fix``, ``doctor``, ``repair-deps`` and ``update-deps`` are unknown commands, and
@@ -8,9 +8,9 @@ and accepts only the reasons ``setting`` and ``user-approved``; ``gupkg tui`` an
 launchers of the same gupkg tree with the rest of the command line and return the program's exit code (an elevated shell starts them too),
 and fail with a clear message when the program is not there.
 
-Real: the argument parser and (for the forwarders) a real child process running fake ``.cmd`` launchers. Mocked: ``FakeSystem``
+Real: the argument parser and (for the pass-through commands) a real child process running fake ``.cmd`` launchers. Mocked: ``FakeSystem``
 for everything else.
-Out of scope: what each command does (the other ``test_cli_*`` modules) and the programs behind the forwarders (issue 030).
+Out of scope: what each command does (the other ``test_cli_*`` modules) and the programs behind the pass-through commands (issue 030).
 """
 
 from __future__ import annotations
@@ -176,7 +176,7 @@ def test_a_missing_checksum_is_refused_with_a_structured_error_and_never_asked_a
 
 
 # ---------------------------------------------------------------------------
-# The forwarders
+# The pass-through commands
 # ---------------------------------------------------------------------------
 
 
@@ -200,7 +200,7 @@ def stand_in(tmp_path: Path, **launchers: str) -> tuple[RunningGupkg, Path]:
         pytest.param(("manager", "--help"), "gupkg-manager --help", 0, id="help-goes-to-the-program"),
     ],
 )
-def test_the_forwarders_start_the_launcher_with_the_arguments_and_pass_the_exit_code(
+def test_the_pass_through_commands_start_the_launcher_with_the_arguments_and_pass_the_exit_code(
     tmp_path: Path, argv: tuple[str, ...], recorded: str, code: int
 ) -> None:
     """gupkg <program> <args> runs <program>.cmd of the same tree with those arguments and returns its exit code."""
@@ -212,7 +212,7 @@ def test_the_forwarders_start_the_launcher_with_the_arguments_and_pass_the_exit_
     assert record.read_text(encoding="ascii").strip() == recorded
 
 
-def test_a_forwarder_records_the_launcher_and_passes_the_exit_code_on_the_fake_machine(tmp_path: Path) -> None:
+def test_a_pass_through_command_records_the_launcher_and_passes_the_exit_code_on_the_fake_machine(tmp_path: Path) -> None:
     """On the fake machine the launcher path and arguments are recorded and a double's exit status is returned."""
     location, _ = stand_in(tmp_path, **{"gupkg-tui": 0})
     system = FakeSystem(tmp_path / "machine", processes={"gupkg-tui.cmd": lambda call: ProcessResult(9)})
@@ -247,8 +247,8 @@ def test_a_sandbox_that_is_an_existing_file_is_a_usage_error_not_a_traceback(wor
 
 
 @pytest.mark.parametrize("word", ["tui", "manager"])
-def test_each_ui_forwarder_starts_from_an_elevated_shell_and_does_not_refuse(tmp_path: Path, capsys: pytest.CaptureFixture[str], word: str) -> None:
-    """An elevated shell runs the program in system mode (issue 035): the forwarder starts the launcher and passes its exit code on."""
+def test_each_ui_pass_through_command_starts_from_an_elevated_shell_and_does_not_refuse(tmp_path: Path, capsys: pytest.CaptureFixture[str], word: str) -> None:
+    """An elevated shell runs the program in system mode (issue 035): the pass-through command starts the launcher and passes its exit code on."""
     location, _ = stand_in(tmp_path, **{f"gupkg-{word}": 0})
     system = FakeSystem(tmp_path / "machine", elevated=True, processes={f"gupkg-{word}.cmd": lambda call: ProcessResult(7)})
 
@@ -259,7 +259,7 @@ def test_each_ui_forwarder_starts_from_an_elevated_shell_and_does_not_refuse(tmp
 
 
 def test_root_options_are_not_passed_to_a_forwarded_program(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """--settings and --sandbox before a forwarder would silently not reach the program, so they are refused."""
+    """--settings and --sandbox before a pass-through command would silently not reach the program, so they are refused."""
     location, _ = stand_in(tmp_path, **{"gupkg-manager": 0})
     system = FakeSystem(tmp_path / "machine")
 

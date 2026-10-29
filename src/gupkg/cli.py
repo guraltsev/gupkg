@@ -1,4 +1,4 @@
-"""Run the public ``gupkg`` command line: one grammar, one machine interface and the forwarders to the separate programs.
+"""Run the public ``gupkg`` command line: one grammar, one machine interface and the pass-through commands to the separate programs.
 
 Every command takes explicit targets (names or paths, design section 10.1) and options after the command. The lifecycle
 commands (``check-updates``, ``install``, ``update``, ``switch``, ``uninstall``, ``check``, ``cleanup``, ``link`` and the
@@ -37,7 +37,7 @@ from . import authoring, settingsedit
 from ._version import __version__
 from .authoring import AuthoringError
 from .catalog.catalog import Catalog, CatalogError, ListFilter, parse_selector
-from .catalog.registry import cache_state, load_registry, registry_cache_dir, sync_registry
+from .catalog.registry import cache_state, registry_cache_dir, sync_registry
 from .engine import lifecycle
 from .engine.context import Engine, stop_marker
 from .engine.errors import describe
@@ -65,7 +65,7 @@ from .report.documents import ListDocument
 from .viewdata import info_document, list_row, list_views, package_data, registry_status
 
 # The commands that are programs of their own: ``gupkg <word> ...`` starts the launcher in the same gupkg tree.
-FORWARDERS = {"tui": "gupkg-tui.cmd", "manager": "gupkg-manager.cmd"}
+PASS_THROUGH = {"tui": "gupkg-tui.cmd", "manager": "gupkg-manager.cmd"}
 
 # The lifecycle commands, which run through ``gupkg.engine.lifecycle`` inside one session.
 _ENGINE_COMMANDS = ("check-updates", "install", "update", "switch", "uninstall", "check", "cleanup", "link")
@@ -137,9 +137,9 @@ def main(
     environment = dict(os.environ) if env is None else dict(env)
 
     # The programs of their own take the rest of the command line untouched, so they are found before argparse sees it.
-    forwarded = _forwarder(tokens)
-    if forwarded is not None:
-        return _forward(forwarded[0], forwarded[1], forwarded[2], machine, where)
+    passed = _pass_through(tokens)
+    if passed is not None:
+        return _forward(passed[0], passed[1], passed[2], machine, where)
 
     # Parse once; a usage error is exit code 2, with a JSON document when the caller asked for one.
     parser = _build_parser()
@@ -912,7 +912,7 @@ def _cmd_self(run: _Run) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _forwarder(tokens: Sequence[str]) -> tuple[str, list[str], list[str]] | None:
+def _pass_through(tokens: Sequence[str]) -> tuple[str, list[str], list[str]] | None:
     """Return ``(program, arguments, root options)`` when the command is ``tui`` or ``manager``, else ``None``.
 
     The root options (``--settings PATH``, ``--root DIR``, ``--sandbox DIR``) may come first; everything after the command word belongs to
@@ -929,7 +929,7 @@ def _forwarder(tokens: Sequence[str]) -> tuple[str, list[str], list[str]] | None
             index += 1
         else:
             break
-    if index < len(tokens) and tokens[index] in FORWARDERS:
+    if index < len(tokens) and tokens[index] in PASS_THROUGH:
         return tokens[index], list(tokens[index + 1:]), root_options
     return None
 
@@ -940,10 +940,10 @@ def _forward(program: str, rest: list[str], root_options: list[str], system: Sys
         print(f"gupkg: error: --settings, --root and --sandbox are not passed on to gupkg-{program}", file=sys.stderr)
         return EXIT_USER
     # The programs start through their own launcher, which runs bootstrap's trust check before importing anything.
-    launcher = location.launcher(FORWARDERS[program])
+    launcher = location.launcher(PASS_THROUGH[program])
     if launcher is None:
         print(
-            f"gupkg: error: gupkg-{program} is not part of this gupkg ({FORWARDERS[program]} was not found beside "
+            f"gupkg: error: gupkg-{program} is not part of this gupkg ({PASS_THROUGH[program]} was not found beside "
             f"{location.package_dir}).", file=sys.stderr,
         )
         return EXIT_USER
@@ -1118,7 +1118,7 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_argument("--fix", action="store_true", help="re-apply the integration and rebuild a missing App")
     _options(sub, mutating=True, events=True)
 
-    sub = add("list", "List the packages of the roots with their status; nothing is checked over the network.",
+    sub = add("list", "List the packages of the run's root with their status; nothing is checked over the network.",
               "gupkg list --outdated --names")
     kinds = sub.add_mutually_exclusive_group()
     for name, text in (("installed", "installed packages"), ("available", "registry packages that are not installed"),
@@ -1142,7 +1142,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sub = add("cleanup", "Remove old Apps, receipts, work folders, registry trees and logs; never runs by itself.",
               "gupkg cleanup --keep 1")
-    sub.add_argument("targets", nargs="*", metavar="TARGET", help="packages to clean (default: every package of the roots)")
+    sub.add_argument("targets", nargs="*", metavar="TARGET", help="packages to clean (default: every package of the root)")
     sub.add_argument("--keep", type=int, default=1, metavar="N", help="older Apps to keep (default: 1)")
     sub.add_argument("--bundled", action="store_true", help="also drop bundled gupkg copies where a launcher would find another gupkg (gupkg-location or PATH)")
     _options(sub, mutating=True, plan=True, events=True)
@@ -1231,7 +1231,7 @@ def _build_parser() -> argparse.ArgumentParser:
         leaf.set_defaults(targets=None)
 
     # The separate programs appear in the help and are started before argparse sees their arguments.
-    for word, program in FORWARDERS.items():
+    for word, program in PASS_THROUGH.items():
         commands.add_parser(word, description=f"Start {program.removesuffix('.cmd')} of this gupkg with the same arguments.",
                             epilog=f"example:\n  gupkg {word} ...", add_help=False)
     return parser
