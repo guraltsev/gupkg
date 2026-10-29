@@ -16,8 +16,8 @@ Not recorded yet. Before T00, the controller records:
 
 | Task | Title | Depends on | Status | Branch | Merge commit | Tests | Manual checks pending |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| T00 | Design note | — | in review | i035/T00 | | | |
-| T01 | Remove migration code | T00 | waiting | | | | |
+| T00 | Design note | — | merged | i035/T00 | 7c62967 | 3915 passed, 0 failed, 11 skipped | none |
+| T01 | Remove migration code | T00 | ready | | | | |
 | T02 | Portable is a package kind; mode restriction | T01 | waiting | | | | |
 | T03 | Registry conversion (gupkg-registry) | T02 | waiting | | | | |
 | T04 | Settings schema 4 and root fallback chain | T02 | waiting | | | | |
@@ -37,7 +37,18 @@ Not recorded yet. Before T00, the controller records:
 
 ## Owner questions
 
-- None yet.
+- Non-blocking, from the T00 review (rulings needed by the task that touches them):
+  1. Machine-interface `--json` results and `--plan` documents still carry a per-target `mode` and `requires_elevation`
+     (design §10.4). Issue 035 §4.3 only says `list --json` carries `mode`/`root` once. Needed by T07 (api 2). Suggest: drop
+     per-target `mode` and `requires_elevation`; put `mode` and `root` once at document level.
+  2. Bootstrap `-Scope` to `--mode` mapping (design §21.5, `gupkg-bootstrap.ps1`) has no replacement in the issue. Design says
+     "the mode is that of the process". Needed by T11/T12.
+  3. T00 chose `scope.py` as the module name, and mapped D17 to D47, D22 to D53, D37 to D49 as superseding decisions; the issue
+     names none of these. Treated as working choices, not owner decisions.
+  4. Design §21.3 says only installing the `gupkg` package writes `gupkg-location` and bundled installs never do; the issue
+     says only the first half.
+  5. Leftover stale text in the design (worker's list of 9 plus design line ~1130, D19 row "relaunching itself", §7.3, §7.5,
+     §9.1, §9.3, §13.1, §13.4, §17, §20, §21.5). Sweep in T12.
 
 ## Log
 
@@ -45,3 +56,4 @@ Not recorded yet. Before T00, the controller records:
 
 - 2026-10-28: baseline recorded (3915 passed, 11 skipped; src 37739, tests 40938 lines). T00 dispatched on `i035/T00`.
 - 2026-10-29: T00 worker reported (1df03dc on i035/T00); review started.
+- 2026-10-29: T00 reviewed (0 blocking, 8 minor), merged as 7c62967; suite 3915 passed, 11 skipped. T01 ready.
