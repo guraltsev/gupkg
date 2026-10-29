@@ -1,5 +1,8 @@
 # Issue 035: One scope per run. Separate system and user modes, portable packages as their own kind, no migration code
 
+> **Status (2026-10-29):** Implemented by job 09, tasks T00–T12 and T14 (added by the owner: name conflicts). Acceptance: T13.
+> §4.7 text says `--force`; the shipped message says `gupkg install <name>` (the flag does not exist).
+
 Date: 2026-10-26
 Priority: High
 Builds on: issue 034 (keep it open as background; this issue carries its required behaviour and replaces its open questions)
