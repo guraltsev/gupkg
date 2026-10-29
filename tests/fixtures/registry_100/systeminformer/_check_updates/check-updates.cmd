@@ -165,7 +165,7 @@ if not defined GUPKG_BASE_CHECKED call :check_base
 if defined GUPKG_REFUSE exit /b 0
 set "GUPKG_CAND_DIR=%~dp1"
 if "%GUPKG_CAND_DIR:~-1%"=="\" set "GUPKG_CAND_DIR=%GUPKG_CAND_DIR:~0,-1%"
-if "%GUPKG_CAND_KIND%"=="exe" (set "GUPKG_SPEC=s:%GUPKG_CAND%") else call :spec_tree "%GUPKG_CAND_DIR%"
+if "%GUPKG_CAND_KIND%"=="exe" (call :spec_shim "%GUPKG_CAND%") else call :spec_tree "%GUPKG_CAND_DIR%"
 call :acl_check
 if errorlevel 1 goto :path_candidate_skipped
 set "GUPKG_RUN=%GUPKG_CAND%"
@@ -205,7 +205,17 @@ exit /b 0
 
 rem The gupkg tree in folder %~1 (a folder that holds gupkg.cmd): its parent (a version folder, or the current junction) and the whole tree.
 :spec_tree
-for %%I in ("%~1\..") do set "GUPKG_SPEC=v:%%~fI|r:%~1"
+for %%I in ("%~1\..") do set "GUPKG_UP1=%%~fI"
+for %%I in ("%~1\..\..") do set "GUPKG_UP2=%%~fI"
+for %%I in ("%~1\..\..\..") do set "GUPKG_UP3=%%~fI"
+set "GUPKG_SPEC=v:%GUPKG_UP1%|n:%GUPKG_UP2%|n:%GUPKG_UP3%|r:%~1"
+exit /b 0
+
+rem The shim folder of a gupkg.exe %~1 and its parent (whoever can change them can swap the shim), then the shim, its config and its target.
+:spec_shim
+for %%I in ("%~dp1.") do set "GUPKG_UP1=%%~fI"
+for %%I in ("%~dp1..") do set "GUPKG_UP2=%%~fI"
+set "GUPKG_SPEC=n:%GUPKG_UP1%|n:%GUPKG_UP2%|s:%~1"
 exit /b 0
 
 rem The bundled gupkg: the launcher's own places and the whole bundled tree.
@@ -277,7 +287,7 @@ for ($n = 0; $n -lt $specs.Count; $n++) {
     $path = $spec.Substring(2)
     if ($kind -eq 's') {
         # A gupkg.exe shim: the shim, its <name>.config.toml, the target the config names, and that target's gupkg tree.
-        $config = [System.IO.Path]::ChangeExtension($path, '.config.toml')
+        $config = $path -replace '\.exe$', '.config.toml'
         $specs += "n:$path"
         $specs += "n:$config"
         try { $text = Get-Content -Raw -LiteralPath $config } catch { $failures += "${config}: the shim's config cannot be read"; continue }
@@ -286,10 +296,17 @@ for ($n = 0; $n -lt $specs.Count; $n++) {
         } elseif ($text -match "(?m)^\s*target\s*=\s*'([^']*)'\s*$") {
             $named = $Matches[1]
         } else { $failures += "${config}: names no target"; continue }
+        if ($named -notmatch '^(?:[A-Za-z]:\\|\\\\)') { $failures += "${config}: its target $named is not an absolute path"; continue }
         if (-not (Test-Path -LiteralPath $named -PathType Leaf)) { $failures += "${config}: its target $named is not a file"; continue }
+        # The target's gupkg tree, the version folder above it and the package and root folders above that, as for a bundled gupkg.
         $tree = Split-Path -Parent $named
-        $specs += "v:$(Split-Path -Parent $tree)"
+        $up1 = Split-Path -Parent $tree
         $specs += "r:$tree"
+        if ($up1) {
+            $specs += "v:$up1"
+            $up2 = Split-Path -Parent $up1
+            if ($up2) { $specs += "n:$up2"; $up3 = Split-Path -Parent $up2; if ($up3) { $specs += "n:$up3" } }
+        }
         continue
     }
     try { $item = Get-Item -LiteralPath $path -Force } catch { $failures += "${path}: missing or unreadable"; continue }
