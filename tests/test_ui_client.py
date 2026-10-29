@@ -262,3 +262,12 @@ def test_a_stop_marker_outside_the_temporary_folder_is_never_created(tmp_path: P
         assert "outside this program's temporary folder" in stop.request()
         assert not Path(hostile).exists()
     assert list(folder.iterdir()) == []
+
+
+@pytest.mark.parametrize("value", ["my tool", "C:\\opt\\tool", "name@1.0.0", "registry/tool", "жук"])
+def test_plain_values_pass_the_launcher_argument_check_and_only_shell_significant_ones_are_refused(value: str) -> None:
+    """Spaces, drive colons, backslashes and non-ASCII letters are plain; ``&`` and a control character are not."""
+    from gupkg.system.port import unsafe_launcher_argument
+
+    assert unsafe_launcher_argument(value) is None
+    assert unsafe_launcher_argument(value + "&calc") is not None and unsafe_launcher_argument(value + "\x07") is not None
