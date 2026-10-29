@@ -28,7 +28,7 @@ from gupkg.engine.effects import (
 from gupkg.model.manifest import EnvVar, Shim, Shortcut, parse_manifest
 from gupkg.model.state import Effect
 from gupkg.system.fake import FakeSystem
-from gupkg.system.port import Scope
+from gupkg.system.port import Mode
 
 
 @pytest.fixture
@@ -37,7 +37,7 @@ def system(tmp_path: Path) -> FakeSystem:
     return FakeSystem(tmp_path / "machine")
 
 
-def context(tmp_path: Path, *, mode: str = "user", start_menu: bool = True, scope: Scope | None = Scope.USER, env=None) -> EffectContext:
+def context(tmp_path: Path, *, mode: str = "user", start_menu: bool = True, scope: Mode | None = Mode.USER, env=None) -> EffectContext:
     """Return an effect context below *tmp_path*."""
     package = tmp_path / "opt" / "tool"
     return EffectContext(
@@ -123,7 +123,7 @@ def test_every_kind_is_applied_verified_and_removed(tmp_path: Path, system: Fake
     removed = {(effect.kind, bool(effect.fields.get("shared"))): remove_effect(system, effect, ctx) for effect in applied}
     assert all(done for (kind, shared), done in removed.items() if not shared) and removed[("path", True)] is False
     assert not (tmp_path / "bin" / "t.exe").exists() and not (tmp_path / "menu" / "Group").exists()
-    assert system.get_path(Scope.USER) == [str(tmp_path / "bin")] and "A" not in system.env_values(Scope.USER)
+    assert system.get_path(Mode.USER) == [str(tmp_path / "bin")] and "A" not in system.env_values(Mode.USER)
     assert [item[0].kind for item in verify_each(system, applied, elevated=False) if item[1]] == ["shortcut", "shim", "file", "env", "path"]
 
 
@@ -131,13 +131,13 @@ def test_a_path_entry_that_was_already_there_is_never_removed(tmp_path: Path, sy
     """Only an entry this install added is removed; one that was on PATH before stays when the package goes."""
     ctx = context(tmp_path)
     entry = str(tmp_path / "opt" / "tool" / "current" / "App")
-    system.set_path(Scope.USER, [entry])
+    system.set_path(Mode.USER, [entry])
     [effect], _ = desired_effects(manifest('[[path]]\nvalue = "$App"\n'), ctx)
 
     applied = apply_effect(system, effect, ctx)
 
     assert applied.fields["added"] is False
-    assert remove_effect(system, applied, ctx) is False and system.get_path(Scope.USER) == [entry]
+    assert remove_effect(system, applied, ctx) is False and system.get_path(Mode.USER) == [entry]
 
 
 def test_the_shared_bin_entry_is_never_removed_by_one_package(tmp_path: Path, system: FakeSystem) -> None:
@@ -148,7 +148,7 @@ def test_the_shared_bin_entry_is_never_removed_by_one_package(tmp_path: Path, sy
     entry = next(item for item in applied if item.kind == "path")
     assert entry.fields["added"] is True and entry.fields["shared"] is True
 
-    assert remove_effect(system, entry, ctx) is False and str(tmp_path / "bin") in system.get_path(Scope.USER)
+    assert remove_effect(system, entry, ctx) is False and str(tmp_path / "bin") in system.get_path(Mode.USER)
 
 
 @pytest.mark.parametrize(
@@ -200,7 +200,7 @@ def test_verification_reads_the_machine_environment_only_for_what_gupkg_wrote(tm
 def test_a_reserved_variable_is_never_set_or_deleted_by_an_effect(tmp_path: Path, system: FakeSystem, name: str) -> None:
     """Defence in depth: a recorded `env` effect named like a system variable is refused on apply and on removal, and PATH is untouched."""
     ctx = context(tmp_path)
-    system.set_path(Scope.USER, ["C:\\A", "C:\\B"])
+    system.set_path(Mode.USER, ["C:\\A", "C:\\B"])
     effect = Effect("env", {"scope": "user", "name": name, "value": "C:\\only"})
 
     with pytest.raises(EffectError, match="reserved"):
@@ -208,7 +208,7 @@ def test_a_reserved_variable_is_never_set_or_deleted_by_an_effect(tmp_path: Path
     with pytest.raises(EffectError, match="reserved"):
         remove_effect(system, effect, ctx)
 
-    assert system.get_path(Scope.USER) == ["C:\\A", "C:\\B"]
+    assert system.get_path(Mode.USER) == ["C:\\A", "C:\\B"]
 
 
 def test_a_manifest_with_a_reserved_variable_cannot_become_effects(tmp_path: Path) -> None:

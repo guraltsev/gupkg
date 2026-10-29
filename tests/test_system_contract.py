@@ -26,7 +26,7 @@ from typing import Iterator
 import pytest
 
 from gupkg.system.fake import FakeSystem
-from gupkg.system.port import EnvValue, ProcessAborted, ProcessResult, Scope, ShortcutSpec, System, WorkerDidNotStart
+from gupkg.system.port import EnvValue, ProcessAborted, ProcessResult, Mode, ShortcutSpec, System, WorkerDidNotStart
 from gupkg.system.windows import WindowsSystem, _ProcessJob
 
 windows_only = pytest.mark.skipif(os.name != "nt", reason="needs Windows")
@@ -105,8 +105,8 @@ def served(machine: System, tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("scope", [Scope.USER, Scope.MACHINE], ids=["user", "machine"])
-def test_environment_value_round_trips_and_names_are_case_insensitive(machine: System, scope: Scope) -> None:
+@pytest.mark.parametrize("scope", [Mode.USER, Mode.SYSTEM], ids=["user", "machine"])
+def test_environment_value_round_trips_and_names_are_case_insensitive(machine: System, scope: Mode) -> None:
     """A stored value reads back unchanged under any spelling of its name, and a re-set replaces it.
 
     The expandable flag survives, a second write with different capitalisation
@@ -126,10 +126,10 @@ def test_environment_value_round_trips_and_names_are_case_insensitive(machine: S
 
 def test_user_and_machine_environments_are_independent(machine: System) -> None:
     """A value set for one scope is invisible to the other."""
-    machine.set_env(Scope.USER, "GUPKG_SCOPE_TEST", "user", False)
+    machine.set_env(Mode.USER, "GUPKG_SCOPE_TEST", "user", False)
 
-    assert machine.get_env(Scope.MACHINE, "GUPKG_SCOPE_TEST") is None
-    assert machine.get_env(Scope.USER, "GUPKG_SCOPE_TEST") == EnvValue("user", False)
+    assert machine.get_env(Mode.SYSTEM, "GUPKG_SCOPE_TEST") is None
+    assert machine.get_env(Mode.USER, "GUPKG_SCOPE_TEST") == EnvValue("user", False)
 
 
 def test_path_round_trip_is_idempotent_and_stored_as_expandable_path(machine: System) -> None:
@@ -137,18 +137,18 @@ def test_path_round_trip_is_idempotent_and_stored_as_expandable_path(machine: Sy
 
     A scope with no PATH value reads as an empty list, and empty entries are dropped.
     """
-    assert machine.get_path(Scope.USER) == []
+    assert machine.get_path(Mode.USER) == []
     entries = [r"C:\Tools\One", r"%USERPROFILE%\bin", r"c:\tools\ONE2"]
 
-    machine.set_path(Scope.USER, entries)
-    machine.set_path(Scope.USER, machine.get_path(Scope.USER))
+    machine.set_path(Mode.USER, entries)
+    machine.set_path(Mode.USER, machine.get_path(Mode.USER))
 
-    assert machine.get_path(Scope.USER) == entries
-    assert machine.get_env(Scope.USER, "PATH") == EnvValue(";".join(entries), True)
-    assert machine.get_env(Scope.USER, "path") == EnvValue(";".join(entries), True)
+    assert machine.get_path(Mode.USER) == entries
+    assert machine.get_env(Mode.USER, "PATH") == EnvValue(";".join(entries), True)
+    assert machine.get_env(Mode.USER, "path") == EnvValue(";".join(entries), True)
 
-    machine.set_env(Scope.USER, "Path", r"C:\a;;  ;C:\b", True)
-    assert machine.get_path(Scope.USER) == [r"C:\a", r"C:\b"]
+    machine.set_env(Mode.USER, "Path", r"C:\a;;  ;C:\b", True)
+    assert machine.get_path(Mode.USER) == [r"C:\a", r"C:\b"]
 
 
 # ---------------------------------------------------------------------------
@@ -357,7 +357,7 @@ def test_windows_judges_a_single_file_by_its_own_permissions(tmp_path: Path) -> 
 
 def test_machine_and_user_scopes_have_different_shortcut_and_bin_folders(machine: System) -> None:
     """Each scope has its own Start Menu ``opt`` folder and its own ``bin`` folder."""
-    user, machine_scope = machine.scope_folders(Scope.USER), machine.scope_folders(Scope.MACHINE)
+    user, machine_scope = machine.scope_folders(Mode.USER), machine.scope_folders(Mode.SYSTEM)
 
     assert user.shortcut_root != machine_scope.shortcut_root
     assert user.bin_dir != machine_scope.bin_dir

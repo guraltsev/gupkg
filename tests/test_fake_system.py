@@ -32,7 +32,7 @@ from gupkg.system.fake import FakeSystem, RegistryAccess, UnexpectedCall
 from gupkg.system.port import (
     ProcessFailed,
     ProcessResult,
-    Scope,
+    Mode,
     ShortcutSpec,
     is_elevated_run,
     require_admin_only,
@@ -49,11 +49,11 @@ from tests.mode_support import Machine, pin_no_ambient_elevation  # noqa: F401
 
 def test_registry_access_log_lists_each_read_write_and_delete_in_order(system: FakeSystem) -> None:
     """Every registry operation is logged once, in the order it happened, with the value written."""
-    system.set_env(Scope.USER, "TOOL_HOME", r"C:\Tools", True)
-    system.get_path(Scope.USER)
-    system.set_path(Scope.USER, [r"C:\Tools\bin"])
-    system.delete_env(Scope.MACHINE, "OLD_VALUE")
-    system.get_env(Scope.USER, "tool_home")
+    system.set_env(Mode.USER, "TOOL_HOME", r"C:\Tools", True)
+    system.get_path(Mode.USER)
+    system.set_path(Mode.USER, [r"C:\Tools\bin"])
+    system.delete_env(Mode.SYSTEM, "OLD_VALUE")
+    system.get_env(Mode.USER, "tool_home")
 
     assert system.registry_log == [
         RegistryAccess("write", "user", "TOOL_HOME", r"C:\Tools"),
@@ -72,7 +72,7 @@ def test_registry_access_log_lists_each_read_write_and_delete_in_order(system: F
 def test_shortcut_records_are_lnk_json_files_inside_the_fake_tree(tmp_path: Path) -> None:
     """A shortcut becomes a visible ``.lnk.json`` record, and a path outside the fake's root is redirected below it."""
     system = FakeSystem(tmp_path / "machine")
-    inside = system.scope_folders(Scope.USER).shortcut_root / "Group" / "Tool.lnk"
+    inside = system.scope_folders(Mode.USER).shortcut_root / "Group" / "Tool.lnk"
     outside = tmp_path / "elsewhere" / "Other.lnk"
     spec = ShortcutSpec(r"C:\Tools\tool.exe", "--go", r"C:\Tools", r"C:\Tools\tool.ico,2", "A tool")
 
@@ -148,17 +148,17 @@ def test_sandbox_state_persists_in_system_json_across_runs(tmp_path: Path) -> No
     sandbox = tmp_path / "sandbox"
     sandbox.mkdir()
     first = FakeSystem.sandbox(sandbox, FakeSystem(tmp_path / "delegate"))
-    first.set_env(Scope.USER, "TOOL_HOME", "home", True)
-    first.set_path(Scope.USER, [r"C:\a", r"C:\b"])
+    first.set_env(Mode.USER, "TOOL_HOME", "home", True)
+    first.set_path(Mode.USER, [r"C:\a", r"C:\b"])
     first.broadcast_environment_change()
     first.relaunch_elevated(["manager", "update"])
 
     second = FakeSystem.sandbox(sandbox, FakeSystem(tmp_path / "delegate"))
 
     assert second.registry_log == first.registry_log
-    assert second.env_values(Scope.USER)["TOOL_HOME"].value == "home"
+    assert second.env_values(Mode.USER)["TOOL_HOME"].value == "home"
     assert second.broadcasts == 1 and second.relaunches == [["manager", "update"]]
-    assert second.get_path(Scope.USER) == [r"C:\a", r"C:\b"]
+    assert second.get_path(Mode.USER) == [r"C:\a", r"C:\b"]
     assert json.loads((sandbox / "system.json").read_text(encoding="utf-8"))["env"]["user"]["Path"]["expandable"] is True
 
 
@@ -178,7 +178,7 @@ def real_machine_trap() -> WindowsSystem:
         setattr(Trap, name, trapped)
     trap = Trap()
     with pytest.raises(AssertionError, match="reached the real machine"):
-        trap.get_path(Scope.USER)  # the trap is armed
+        trap.get_path(Mode.USER)  # the trap is armed
     return trap
 
 

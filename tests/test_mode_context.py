@@ -19,7 +19,7 @@ import pytest
 from gupkg.model.mode import ModeChoice, ModeContext, build_mode_context
 from gupkg.model.settings import default_layer, merge_layers
 from gupkg.modes import default_folders
-from gupkg.system.port import Scope
+from gupkg.system.port import Mode
 from tests.mode_support import Machine, pin_no_ambient_elevation  # noqa: F401
 
 ENV = {"USERPROFILE": "C:\\Users\\pat", "APPDATA": "C:\\Users\\pat\\AppData\\Roaming", "ProgramData": "C:\\ProgramData"}
@@ -85,8 +85,8 @@ def test_a_folder_no_layer_set_follows_the_machines_default_and_a_configured_one
     system = build_mode_context(ModeChoice("system", "t"), machine.loader()(system_mode=True).settings, machine.env, defaults=defaults)
 
     assert user.bin_dir == tmp_path / "chosen"
-    assert user.start_menu == machine.fake.scope_folders(Scope.USER).shortcut_root
-    assert system.bin_dir == machine.fake.scope_folders(Scope.MACHINE).bin_dir
+    assert user.start_menu == machine.fake.scope_folders(Mode.USER).shortcut_root
+    assert system.bin_dir == machine.fake.scope_folders(Mode.SYSTEM).bin_dir
 
 
 def test_user_integrate_none_touches_no_start_menu_or_environment_and_offers_the_path_line(tmp_path: Path) -> None:

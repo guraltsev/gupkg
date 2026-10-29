@@ -25,7 +25,7 @@ from gupkg.engine import lifecycle
 from gupkg.engine.receipts import read_receipt
 from gupkg.model.plan import INSTALL_PHASES, Request
 from gupkg.report.events import Error, PackageEnd, PhaseEnd, use_reporter
-from gupkg.system.port import Scope
+from gupkg.system.port import Mode
 from tests.engine_support import BASE_URL, World, pin_no_ambient_elevation, pkg_text  # noqa: F401
 
 FULL = """
@@ -54,7 +54,7 @@ value = "$App"
 
 def bin_dir(world: World) -> Path:
     """Return the fake machine's user ``bin`` folder."""
-    return world.fake.scope_folders(Scope.USER).bin_dir
+    return world.fake.scope_folders(Mode.USER).bin_dir
 
 
 def shims(world: World) -> list[str]:
@@ -76,7 +76,7 @@ def current_version(package: Path) -> str:
 
 def user_path(world: World) -> list[str]:
     """Return the user ``PATH`` entries of the fake machine."""
-    return [item for item in world.fake.env_values(Scope.USER).get("Path").value.split(";") if item]
+    return [item for item in world.fake.env_values(Mode.USER).get("Path").value.split(";") if item]
 
 
 @pytest.fixture
@@ -96,7 +96,7 @@ def test_install_creates_the_whole_machine_state(world: World) -> None:
     assert current_version(package) == "1.0.0" and (package / "current" / "App" / "app.exe").is_file()
     assert [path.stem for path in world.fake.shortcuts()] == ["Tool"]
     assert launchers(world) == ["tool.exe"] and (bin_dir(world) / "tool.config.toml").is_file()
-    assert world.fake.env_values(Scope.USER)["TOOL_HOME"].value == str(package / "current" / "App")
+    assert world.fake.env_values(Mode.USER)["TOOL_HOME"].value == str(package / "current" / "App")
     assert str(bin_dir(world)) in user_path(world) and str(package / "current" / "App") in user_path(world)
     assert world.fake.broadcasts == 1
 
@@ -127,7 +127,7 @@ def test_check_updates_prepares_a_version_and_activates_nothing(world: World) ->
     world.publish("tool", "1.0.0", tables=FULL)
     world.tracker("tool", tables=FULL)
     world.one("install", "tool")
-    shortcuts, env, path = dict(world.fake.shortcuts()), dict(world.fake.env_values(Scope.USER)), user_path(world)
+    shortcuts, env, path = dict(world.fake.shortcuts()), dict(world.fake.env_values(Mode.USER)), user_path(world)
     world.announce("tool", "1.1.0")
 
     result = world.one("check-updates", "tool")
@@ -136,7 +136,7 @@ def test_check_updates_prepares_a_version_and_activates_nothing(world: World) ->
     assert result.ok and result.status == "new-version" and result.version == "1.1.0"
     assert (package / "1.1.0" / "pkg.toml").is_file() and (package / "1.1.0" / "App" / "app.exe").is_file()
     assert current_version(package) == "1.0.0"
-    assert (dict(world.fake.shortcuts()), dict(world.fake.env_values(Scope.USER)), user_path(world)) == (shortcuts, env, path)
+    assert (dict(world.fake.shortcuts()), dict(world.fake.env_values(Mode.USER)), user_path(world)) == (shortcuts, env, path)
     assert read_receipt(package, "1.1.0").data["checksum"]["decision"] == "verified"
 
 
@@ -214,7 +214,7 @@ def test_uninstall_removes_every_effect_and_keeps_the_version_directories(world:
     assert result.ok and result.status == "uninstalled"
     assert not (package / "current").exists() and (package / "1.0.0" / "App" / "app.exe").is_file()
     assert world.fake.shortcuts() == {} and launchers(world) == []
-    assert "TOOL_HOME" not in world.fake.env_values(Scope.USER)
+    assert "TOOL_HOME" not in world.fake.env_values(Mode.USER)
     assert str(package / "current" / "App") not in user_path(world)
     assert read_install_record(package).record.effects == ()
 
@@ -361,7 +361,7 @@ def test_a_failed_population_leaves_the_previous_version_and_the_machine_unchang
     world.publish("tool", "1.1.0", tables=ENV_ONLY, source='require = ["missing.exe"]\n')
     package = world.user / "tool"
     before = (
-        dict(world.fake.shortcuts()), dict(world.fake.env_values(Scope.USER)), launchers(world), world.fake.broadcasts,
+        dict(world.fake.shortcuts()), dict(world.fake.env_values(Mode.USER)), launchers(world), world.fake.broadcasts,
         (package / ".gupkg" / "package.toml").read_text(),
     )
 
@@ -370,7 +370,7 @@ def test_a_failed_population_leaves_the_previous_version_and_the_machine_unchang
     assert not result.ok and result.exit_code == 3 and result.error["code"] == "unpack-failed"
     assert current_version(package) == "1.0.0" and not (package / "1.1.0" / "App").exists()
     assert before == (
-        dict(world.fake.shortcuts()), dict(world.fake.env_values(Scope.USER)), launchers(world), world.fake.broadcasts,
+        dict(world.fake.shortcuts()), dict(world.fake.env_values(Mode.USER)), launchers(world), world.fake.broadcasts,
         (package / ".gupkg" / "package.toml").read_text(),
     )
     assert not (package / ".gupkg" / "work").exists() or list((package / ".gupkg" / "work").iterdir()) == []
@@ -476,7 +476,7 @@ def test_a_failed_removal_stays_in_the_record_and_uninstall_can_be_repeated(worl
     assert not failed.ok and "TOOL_HOME" in failed.error["message"]
     assert [effect.kind for effect in read_install_record(package).record.effects] == ["env"]
     assert world.one("uninstall", "tool").ok and read_install_record(package).record.effects == ()
-    assert "TOOL_HOME" not in world.fake.env_values(Scope.USER)
+    assert "TOOL_HOME" not in world.fake.env_values(Mode.USER)
 
 
 def test_purge_refuses_a_package_folder_that_holds_the_root(world: World) -> None:
@@ -503,7 +503,7 @@ def test_a_refused_environment_broadcast_is_a_warning_not_a_failure(world: World
     result = world.one("install", "tool")
 
     assert result.ok and any("could not be broadcast" in warning for warning in result.warnings)
-    assert world.fake.env_values(Scope.USER)["TOOL_HOME"].value.endswith("App")
+    assert world.fake.env_values(Mode.USER)["TOOL_HOME"].value.endswith("App")
 
 
 class Collect:

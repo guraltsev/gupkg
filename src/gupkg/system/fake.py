@@ -54,7 +54,7 @@ from .port import (
     ProcessNotAllowed,
     ProcessResult,
     ResponseTooLarge,
-    Scope,
+    Mode,
     ScopeFolders,
     ShortcutSpec,
     System,
@@ -248,7 +248,7 @@ class FakeSystem(WindowsLinks):
 
     # -- inspection helpers for tests ---------------------------------------
 
-    def env_values(self, scope: Scope) -> dict[str, EnvValue]:
+    def env_values(self, scope: Mode) -> dict[str, EnvValue]:
         """Return the stored environment values of *scope* by name, without logging an access."""
         return {name: value for name, value in self._env[scope.value].values()}
 
@@ -285,35 +285,35 @@ class FakeSystem(WindowsLinks):
 
     # -- environment ---------------------------------------------------------
 
-    def get_env(self, scope: Scope, name: str) -> EnvValue | None:
+    def get_env(self, scope: Mode, name: str) -> EnvValue | None:
         """Return one stored value (logged as a registry read)."""
         self._maybe_fail("get_env")
         self._log("read", scope, name)
         entry = self._env[self._scope_key(scope)].get(name.casefold())
         return entry[1] if entry else None
 
-    def set_env(self, scope: Scope, name: str, value: str, expandable: bool) -> None:
+    def set_env(self, scope: Mode, name: str, value: str, expandable: bool) -> None:
         """Store one value (logged as a registry write)."""
         self._maybe_fail("set_env")
         self._log("write", scope, name, value)
         self._env[self._scope_key(scope)][name.casefold()] = (name, EnvValue(value, expandable))
         self._save()
 
-    def delete_env(self, scope: Scope, name: str) -> None:
+    def delete_env(self, scope: Mode, name: str) -> None:
         """Remove one value (logged as a registry delete)."""
         self._maybe_fail("delete_env")
         self._log("delete", scope, name)
         self._env[self._scope_key(scope)].pop(name.casefold(), None)
         self._save()
 
-    def get_path(self, scope: Scope) -> list[str]:
+    def get_path(self, scope: Mode) -> list[str]:
         """Return the non-empty ``PATH`` entries (logged as one registry read of ``Path``)."""
         stored = self.get_env(scope, "Path")
         if stored is None:
             return []
         return [item.strip() for item in stored.value.split(";") if item.strip()]
 
-    def set_path(self, scope: Scope, entries: Sequence[str]) -> None:
+    def set_path(self, scope: Mode, entries: Sequence[str]) -> None:
         """Store *entries* as the expandable ``Path`` (logged as one registry write)."""
         self._maybe_fail("set_path")
         self.set_env(scope, "Path", ";".join(entries), True)
@@ -418,7 +418,7 @@ class FakeSystem(WindowsLinks):
                 return f"Users can modify it (fake: {untrusted} is untrusted)"
         return None
 
-    def scope_folders(self, scope: Scope) -> ScopeFolders:
+    def scope_folders(self, scope: Mode) -> ScopeFolders:
         """Return fake Start Menu and ``bin`` folders below the root."""
         key = self._scope_key(scope)
         return ScopeFolders(self.root / "StartMenu" / key / "opt", self.root / "bin" / key)
@@ -684,13 +684,13 @@ class FakeSystem(WindowsLinks):
             raise failure
 
     @staticmethod
-    def _scope_key(scope: Scope) -> str:
+    def _scope_key(scope: Mode) -> str:
         """Return ``"user"`` or ``"system"``; ``auto`` has no environment of its own."""
-        if scope not in (Scope.USER, Scope.MACHINE):
+        if scope not in (Mode.USER, Mode.SYSTEM):
             raise ValueError(f"Environment scope must be user or system, not {scope.value}")
         return scope.value
 
-    def _log(self, operation: str, scope: Scope, name: str, value: str | None = None) -> None:
+    def _log(self, operation: str, scope: Mode, name: str, value: str | None = None) -> None:
         """Append one registry access to the ordered log."""
         self.registry_log.append(RegistryAccess(operation, self._scope_key(scope), name, value))
 

@@ -25,7 +25,7 @@ from gupkg.catalog.catalog import ListFilter, NoVersionKnown
 from gupkg.catalog.local import tree_hash
 from gupkg.model.manifest import TrackResult
 from gupkg.model.state import Effect, InstallRecord, Link
-from gupkg.system.port import Scope, ShortcutSpec
+from gupkg.system.port import Mode, ShortcutSpec
 from gupkg.system.windows import WindowsSystem
 from gupkg.tomlio import write_toml
 from tests.catalog_support import (
@@ -324,8 +324,8 @@ def test_effects_are_compared_with_the_system_only_when_asked(system, tmp_path: 
     activate(system, package, "1.0")
     shortcut = tmp_path / "menu" / "Foo.lnk"
     system.write_shortcut(shortcut, ShortcutSpec(target_path=str(package / "current" / "App" / "foo.exe")))
-    system.set_env(Scope.USER, "FOO_HOME", "C:\\foo", False)
-    system.set_path(Scope.USER, ["C:\\bin"])
+    system.set_env(Mode.USER, "FOO_HOME", "C:\\foo", False)
+    system.set_path(Mode.USER, ["C:\\bin"])
     (tmp_path / "bin").mkdir()
     effects = (
         Effect("shortcut", {"path": str(shortcut)}),
@@ -346,7 +346,7 @@ def test_effects_are_compared_with_the_system_only_when_asked(system, tmp_path: 
     assert verified.installed.unverified == ("something-new",)
 
     (tmp_path / "bin" / "foo.exe").write_text("x", encoding="utf-8")
-    system.set_env(Scope.USER, "FOO_HOME", "C:\\elsewhere", False)
+    system.set_env(Mode.USER, "FOO_HOME", "C:\\elsewhere", False)
     again = make_catalog(system, tmp_path, verify=True)[0].describe("foo")
     assert again.installed.drift == ("environment variable FOO_HOME differs",)
 

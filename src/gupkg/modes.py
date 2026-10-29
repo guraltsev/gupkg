@@ -55,7 +55,7 @@ from .model.mode import (
 from .model.settings import Settings, expand_env
 from .model.version import MANIFEST_NAME
 from .settingsload import LoadedSettings, load_settings, read_text_file
-from .system.port import Scope, System, is_elevated_run
+from .system.port import Mode, System, is_elevated_run
 
 SettingsLoader = Callable[..., LoadedSettings]
 
@@ -269,7 +269,7 @@ def default_folders(system: System) -> dict[str, DefaultFolders]:
     then apply and fail with a message that names the missing variable.
     """
     folders: dict[str, DefaultFolders] = {}
-    for mode, scope in ((MODE_SYSTEM, Scope.MACHINE), (MODE_USER, Scope.USER)):
+    for mode, scope in ((MODE_SYSTEM, Mode.SYSTEM), (MODE_USER, Mode.USER)):
         try:
             found = system.scope_folders(scope)
         except ValueError:

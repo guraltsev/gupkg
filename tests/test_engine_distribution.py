@@ -24,7 +24,7 @@ from gupkg.catalog.local import read_adhoc_roots
 from gupkg.catalog.record import read_install_record
 from gupkg.engine.receipts import read_receipt
 from gupkg.services.fingerprint import fingerprint_directory
-from gupkg.system.port import Scope
+from gupkg.system.port import Mode
 from tests.engine_support import World, pin_no_ambient_elevation  # noqa: F401
 from tests.mode_support import tree_snapshot
 
@@ -386,7 +386,7 @@ def test_a_source_that_changes_between_the_plan_and_the_copy_is_refused_and_the_
     result = world.one("install", str(folder))
 
     assert not result.ok and "changed while it was being copied" in result.error["message"]
-    assert not (world.user / "tool" / "1.0.0").exists() and "SNEAKY" not in world.fake.env_values(Scope.USER)
+    assert not (world.user / "tool" / "1.0.0").exists() and "SNEAKY" not in world.fake.env_values(Mode.USER)
 
 
 def test_a_hostile_distribution_is_refused_before_anything_is_installed(world: World) -> None:

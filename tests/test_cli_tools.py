@@ -28,7 +28,7 @@ import pytest
 from gupkg.engine.receipts import read_receipt
 from gupkg.launchers import launcher_text
 from gupkg.selfmgmt.location import RunningGupkg
-from gupkg.system.port import Scope
+from gupkg.system.port import Mode
 from gupkg.tomlio import dumps, read_toml
 from tests.cli_support import CliWorld
 from tests.engine_support import pkg_text, zip_bytes
@@ -468,7 +468,7 @@ def test_self_repair_check_updates_and_update_are_the_lifecycle_on_the_package_g
     world.announce("gupkg", "1.0.0")
     world.publish("gupkg", "1.0.0", mode="system", tables=FULL)
     assert world.cli("install", "gupkg", "--mode", "system").code == 0
-    shim = world.fake.scope_folders(Scope.MACHINE).bin_dir / "tool.exe"
+    shim = world.fake.scope_folders(Mode.SYSTEM).bin_dir / "tool.exe"
     shim.unlink()
     world.announce("gupkg", "1.1.0")
 

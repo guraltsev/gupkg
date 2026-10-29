@@ -20,7 +20,7 @@ import pytest
 
 from gupkg.catalog.record import read_install_record, write_install_record
 from gupkg.model.state import InstallRecord, Link
-from gupkg.system.port import Scope
+from gupkg.system.port import Mode
 from tests.engine_support import BASE_URL, World, pin_no_ambient_elevation  # noqa: F401
 
 ENV = '[[env]]\nname = "TOOL_HOME"\nvalue = "$App"\n'
@@ -209,7 +209,7 @@ def test_case_diverged_local_directory_is_kept_and_never_overwritten(world: Worl
     result = world.one("install", "tool")
 
     assert result.ok and (world.user / "tool" / "1.0.0" / "pkg.toml").read_text() == before
-    assert "OTHER" not in world.fake.env_values(Scope.USER)
+    assert "OTHER" not in world.fake.env_values(Mode.USER)
 
 
 # ---------------------------------------------------------------------------

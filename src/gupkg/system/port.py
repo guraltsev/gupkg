@@ -8,7 +8,7 @@ service code receive a ``System`` explicitly, so the real implementation
 
 Usage and API
 -------------
-Annotate parameters with ``System`` and call its methods. Use ``Scope`` to name
+Annotate parameters with ``System`` and call its methods. Use ``Mode`` to name
 the user or machine target of an environment or shortcut operation. Use
 ``is_elevated_run(system)``, ``require_admin_only(system, directory)`` and
 ``run_checked(system, argv, ...)`` for the three patterns that every caller
@@ -52,18 +52,15 @@ from typing import Callable, Mapping, Protocol, Sequence
 from ..selfmgmt.elevation import UntrustedLocationError, untrusted_message
 
 
-class Scope(Enum):
-    """Installation scope supported by ``gupkg``.
+class Mode(Enum):
+    """Install mode of a gupkg run: where its environment, ``PATH`` and shortcuts go.
 
-    ``AUTO`` selects machine scope for administrators when the package permits
-    it and user scope otherwise. ``USER`` targets per-user configuration
-    locations. ``MACHINE`` targets machine-wide configuration locations and
-    therefore usually requires Administrator privileges.
+    ``USER`` targets per-user configuration locations. ``SYSTEM`` targets machine-wide
+    configuration locations and therefore requires Administrator privileges.
     """
 
-    AUTO = "auto"
     USER = "user"
-    MACHINE = "system"
+    SYSTEM = "system"
 
 
 @dataclass(frozen=True)
@@ -254,19 +251,19 @@ class System(Protocol):
 
     # -- environment -------------------------------------------------------
 
-    def get_env(self, scope: Scope, name: str) -> EnvValue | None:
+    def get_env(self, scope: Mode, name: str) -> EnvValue | None:
         """Return one stored environment value, or ``None`` when it is not set (names are case-insensitive)."""
 
-    def set_env(self, scope: Scope, name: str, value: str, expandable: bool) -> None:
+    def set_env(self, scope: Mode, name: str, value: str, expandable: bool) -> None:
         """Store one environment value, replacing any value with the same (case-insensitive) name."""
 
-    def delete_env(self, scope: Scope, name: str) -> None:
+    def delete_env(self, scope: Mode, name: str) -> None:
         """Remove one environment value; removing an absent value is not an error."""
 
-    def get_path(self, scope: Scope) -> list[str]:
+    def get_path(self, scope: Mode) -> list[str]:
         """Return the non-empty ``PATH`` entries of *scope* in stored order; a missing value is empty."""
 
-    def set_path(self, scope: Scope, entries: Sequence[str]) -> None:
+    def set_path(self, scope: Mode, entries: Sequence[str]) -> None:
         """Store *entries* as the expandable ``PATH`` of *scope*."""
 
     def broadcast_environment_change(self) -> None:
@@ -319,7 +316,7 @@ class System(Protocol):
 
     # -- locations ---------------------------------------------------------
 
-    def scope_folders(self, scope: Scope) -> ScopeFolders:
+    def scope_folders(self, scope: Mode) -> ScopeFolders:
         """Return the default shortcut and wrapper folders of *scope*.
 
         Raises ``ValueError`` when the machine does not identify them.

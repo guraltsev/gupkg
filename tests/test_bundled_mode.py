@@ -28,7 +28,7 @@ from gupkg.catalog.record import read_install_record
 from gupkg.engine.effects import forwarder_target
 from gupkg.launchers import launcher_text
 from gupkg.pkgcheck import check_directory
-from gupkg.system.port import ProcessResult, Scope
+from gupkg.system.port import ProcessResult, Mode
 from tests.engine_support import World, pin_no_ambient_elevation  # noqa: F401
 
 FORWARDER = "[root_forwarder]\ntarget = '$PackageRoot\\current\\App'\n"
@@ -149,7 +149,7 @@ def test_a_bundled_install_leaves_no_gupkg_behind_and_touches_nothing_else(world
     assert not (world.user / ".gupkg" / "gupkg.cmd").exists() and not (world.user / "gupkg").exists()
     bin_names = {item.name for item in world.mode_context("user").bin_dir.iterdir()}
     assert not any(name.startswith("gupkg") for name in bin_names)
-    assert not any("gupkg" in entry.lower() for entry in world.fake.get_path(Scope.USER))
+    assert not any("gupkg" in entry.lower() for entry in world.fake.get_path(Mode.USER))
     assert {access.name for access in world.fake.registry_log if access.operation == "read"} <= {"Path"}
 
     # Nothing is created in the per-user or machine-wide application folders.

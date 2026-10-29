@@ -53,7 +53,7 @@ from ..model.state import (
     known_candidates,
 )
 from ..model.version import MANIFEST_NAME, TRACKER_DIR_NAME, compare_versions, is_version_name
-from ..system.port import Scope, System, is_elevated_run
+from ..system.port import Mode, System, is_elevated_run
 from .local import (
     DATA_DIR_NAME,
     canonical_path,
@@ -846,7 +846,7 @@ class Catalog:
         unverified: list[str] = []
         for effect in effects:
             fields = effect.fields
-            scope = {"system": Scope.MACHINE, "user": Scope.USER}.get(fields.get("scope", ""))
+            scope = {"system": Mode.SYSTEM, "user": Mode.USER}.get(fields.get("scope", ""))
             try:
                 if effect.kind in ("shim", "file"):
                     if not os.path.exists(str(fields["path"])):
@@ -856,11 +856,11 @@ class Catalog:
                         self.system.read_shortcut(Path(str(fields["path"])))
                     except OSError:
                         drift.append(f"shortcut missing: {fields['path']}")
-                elif effect.kind == "env" and scope is not None and not (self.elevated and scope is Scope.USER):
+                elif effect.kind == "env" and scope is not None and not (self.elevated and scope is Mode.USER):
                     stored = self.system.get_env(scope, str(fields["name"]))
                     if stored is None or stored.value != str(fields["value"]):
                         drift.append(f"environment variable {fields['name']} differs")
-                elif effect.kind == "path" and scope is not None and not (self.elevated and scope is Scope.USER):
+                elif effect.kind == "path" and scope is not None and not (self.elevated and scope is Mode.USER):
                     entries = [item.casefold().rstrip("\\") for item in self.system.get_path(scope)]
                     if str(fields["entry"]).casefold().rstrip("\\") not in entries:
                         drift.append(f"PATH entry missing: {fields['entry']}")

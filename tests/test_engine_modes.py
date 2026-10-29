@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 from gupkg.model.mode import PORTABLE_REFUSAL, SYSTEM_ONLY_REFUSAL, USER_ONLY_REFUSAL
-from gupkg.system.port import Scope
+from gupkg.system.port import Mode
 from tests.engine_support import World, pin_no_ambient_elevation, pkg_text  # noqa: F401
 
 PORTABLE_TOP = 'modes = ["portable"]\n'
@@ -141,7 +141,7 @@ def publish_in_registry(world: World, base: Path, *, top: str, tables: str = "",
 def assert_nothing_was_created(world: World, mode: str) -> None:
     """Assert that the package folder, the bin folder, the receipt and the install record of ``tool`` do not exist, and nothing was fetched."""
     package = world.root(mode) / "tool"
-    scope = Scope.MACHINE if mode == "system" else Scope.USER
+    scope = Mode.SYSTEM if mode == "system" else Mode.USER
     assert not package.exists(), "the package folder was created"
     assert not (package / "1.0.0" / "App.info").exists(), "a receipt was written"
     assert not world.fake.scope_folders(scope).bin_dir.exists(), "the bin folder was created"
@@ -228,8 +228,8 @@ def test_integrate_none_touches_no_registry_start_menu_or_path(world: World) -> 
     assert result.ok, result.error
     assert (world.user / "bin" / "tool.exe").is_file() and (world.user / "bin" / "tool.config.toml").is_file()
     assert world.fake.registry_log == [] and world.fake.broadcasts == 0 and world.fake.shortcuts() == {}
-    assert not (world.fake.scope_folders(Scope.USER).shortcut_root).exists()
-    assert not (world.fake.scope_folders(Scope.USER).bin_dir).exists()
+    assert not (world.fake.scope_folders(Mode.USER).shortcut_root).exists()
+    assert not (world.fake.scope_folders(Mode.USER).bin_dir).exists()
 
 
 def test_user_mode_is_refused_in_an_elevated_run(tmp_path: Path) -> None:
@@ -251,5 +251,5 @@ def test_a_portable_package_integrates_like_any_user_package(world: World) -> No
     result = world.one("install", "tool")
 
     assert result.ok and result.mode == "user", result.error
-    shim_folder = world.fake.scope_folders(Scope.USER).bin_dir
-    assert (shim_folder / "tool.exe").is_file() and str(shim_folder) in world.fake.get_path(Scope.USER)
+    shim_folder = world.fake.scope_folders(Mode.USER).bin_dir
+    assert (shim_folder / "tool.exe").is_file() and str(shim_folder) in world.fake.get_path(Mode.USER)

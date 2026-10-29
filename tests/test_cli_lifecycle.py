@@ -26,7 +26,7 @@ import pytest
 
 from gupkg.catalog.record import read_install_record
 from gupkg.engine.locks import Holder, lock_path, render_lock
-from gupkg.system.port import Scope
+from gupkg.system.port import Mode
 from tests.cli_support import CliWorld
 from tests.engine_support import World
 from tests.mode_support import pin_no_ambient_elevation  # noqa: F401
@@ -65,7 +65,7 @@ def test_a_name_and_a_path_install_to_identical_destinations(world: CliWorld) ->
 
     def destinations() -> tuple[list[str], list[str], set[tuple[str, str]]]:
         """Return where the install put its shortcuts and shims, and the effects its install record lists."""
-        bin_dir = world.fake.scope_folders(Scope.USER).bin_dir
+        bin_dir = world.fake.scope_folders(Mode.USER).bin_dir
         recorded = {
             (effect.kind, str(effect.fields.get("path") or effect.fields.get("entry")))
             for effect in read_install_record(package).record.effects
@@ -121,7 +121,7 @@ def test_check_updates_writes_a_prepared_version_and_changes_nothing_else(world:
     assert world.cli("install", "tool").code == 0
     package = world.user / "tool"
     record_before = (package / ".gupkg" / "package.toml").read_text(encoding="utf-8")
-    state_before = (sorted(path.name for path in world.fake.shortcuts()), dict(world.fake.env_values(Scope.USER)), len(world.fake.registry_log))
+    state_before = (sorted(path.name for path in world.fake.shortcuts()), dict(world.fake.env_values(Mode.USER)), len(world.fake.registry_log))
     world.announce("tool", "1.1.0")
 
     result = world.cli("check-updates", "tool")
@@ -130,7 +130,7 @@ def test_check_updates_writes_a_prepared_version_and_changes_nothing_else(world:
     assert (package / "1.1.0" / "App" / "app.exe").is_file() and (package / "1.1.0" / "pkg.toml").is_file()
     assert current(package) == "1.0.0"
     assert (package / ".gupkg" / "package.toml").read_text(encoding="utf-8") == record_before
-    assert (sorted(path.name for path in world.fake.shortcuts()), dict(world.fake.env_values(Scope.USER)), len(world.fake.registry_log)) == state_before
+    assert (sorted(path.name for path in world.fake.shortcuts()), dict(world.fake.env_values(Mode.USER)), len(world.fake.registry_log)) == state_before
 
 
 def test_check_updates_no_download_writes_no_app_and_asks_only_the_tracker(world: CliWorld) -> None:
@@ -232,7 +232,7 @@ def test_check_reports_a_deleted_shim_as_drift_and_fix_restores_it(world: CliWor
     """check names the deleted shim and changes nothing; check --fix puts it back and then reports healthy."""
     world.publish("tool", "1.0.0", tables=FULL)
     assert world.cli("install", "tool").code == 0
-    shim = world.fake.scope_folders(Scope.USER).bin_dir / "tool.exe"
+    shim = world.fake.scope_folders(Mode.USER).bin_dir / "tool.exe"
     shim.unlink()
 
     report = world.cli("check", "tool")
