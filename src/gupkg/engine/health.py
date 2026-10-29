@@ -15,7 +15,7 @@ applies again.
 
 Implementation Approach
 -----------------------
-A receipt is a self-report: in user and portable mode the user can edit it, so a stored ``verified`` is shown as a record
+A receipt is a self-report: in user mode the user can edit it, so a stored ``verified`` is shown as a record
 and never as proof. What can be checked again is checked again: the files of ``App`` against the recorded hashes and the
 version directory against the registry's fingerprint. Nothing is followed through a link and nothing outside the package
 is read, except the machine state that the install record names.
@@ -154,8 +154,8 @@ def diagnose(
 def install_notes(view: PackageView) -> tuple[list[Problem], dict | None]:
     """Return the notes about how the active version of *view* was verified, and its receipt data (``None`` without one).
 
-    This is what ``list --details`` and ``info`` show: a skipped checksum, an origin that was not verified, and, in user and
-    portable mode, the reminder that a stored ``verified`` is the install's own report and not proof.
+    This is what ``list --details`` and ``info`` show: a skipped checksum, an origin that was not verified, and, in user
+    mode, the reminder that a stored ``verified`` is the install's own report and not proof.
     """
     if view.local is None or view.installed is None:
         return [], None
@@ -186,7 +186,7 @@ def _receipt_notes(data: dict, view: PackageView) -> list[Problem]:
                 "verified (App not covered): the shipped App is not covered by the registry fingerprint (version 1 of the "
                 "fingerprint ignores App); its files are compared only with the install-time record",
             ))
-    if note is None and view.mode in ("user", "portable"):
+    if note is None and view.mode == "user":
         notes.append(Problem(
             "self-reported",
             f"recorded as {record.decision} in the receipt; in {view.mode} mode the receipt can be edited by the user, so this is "
@@ -201,7 +201,7 @@ def _app_problems(data: dict, view: PackageView, state, manifest) -> list[Proble
     if not isinstance(app_record, dict) or not app_record.get("recorded"):
         return []
     skip: tuple[str, ...] = ()
-    if view.mode == "portable" and manifest is not None and manifest.portable is not None:
+    if manifest is not None and manifest.portable is not None:
         skip = manifest.portable.persist
     app = Path(view.installed.path) / "App"
     if not isinstance(app_record.get("files"), dict):

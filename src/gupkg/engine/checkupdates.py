@@ -19,7 +19,7 @@ version directory still written; ``details`` says what was written and populated
 Implementation Approach
 -----------------------
 Whether the root is written is decided first from the mode and the elevation of the run: system packages need an
-elevated run, user and portable packages a normal one (the resolution of the mode already refused the other
+elevated run, user packages a normal one (the resolution of the mode already refused the other
 combinations, decision D31). A report-only run builds its HTTP client without a download cache and its scratch folder
 in the system's temporary folder, so it creates nothing below the root. The new version directory is validated like any
 other version directory before it is moved into place, and an existing directory is never overwritten.
@@ -69,10 +69,10 @@ from .stateio import write_track_state
 
 
 def writes_root(engine: Engine, context: ModeContext) -> bool:
-    """Return whether this run may write the package's root: an administrator for system, a normal shell for user and portable.
+    """Return whether this run may write the package's root: an administrator for system, a normal shell for user.
 
     A system package checked from a normal shell is only reported (decision D22); the resolution of the mode already
-    refused an elevated run on a user or portable root (decision D31).
+    refused an elevated run on a user root (decision D31).
     """
     return engine.elevated if context.mode == "system" else True
 

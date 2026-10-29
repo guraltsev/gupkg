@@ -491,7 +491,7 @@ def _activate(engine: Engine, run: ExecutionInput, version_dir: Path) -> bool:
         return False
     with phase("Activate"):
         system, package_path = engine.system, plan.package_path
-        if context.mode == "portable":
+        if run.chosen.manifest.portable is not None:
             _hand_over_data(engine, run, version_dir)
         emit(Step(f"current -> {plan.version}", "add"))
         current = package_path / "current"
@@ -746,7 +746,7 @@ def _forget_adhoc(engine: Engine, run: ExecutionInput, package_path: Path) -> No
     """Drop an ad-hoc package from the state of its own root before its folder is deleted; a problem is only a warning.
 
     Only the ``state.toml`` of the root of the package's mode is touched, and only when the package is ad hoc. An elevated
-    run touches the system root's state only: it never reads or writes a user's or a portable folder (decision D19).
+    run touches the system root's state only: it never reads or writes a user's folder (decision D19).
     """
     if not run.adhoc:
         return

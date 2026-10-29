@@ -87,7 +87,6 @@ from .executor import (
 )
 from .health import Diagnosis, diagnose
 from .locks import PackageBusy, package_lock
-from .portable import mode_signature
 from .planner import Chosen, CleanupFacts, CleanupPlan, InvalidVersion, PlanError, plan_cleanup, plan_install, plan_uninstall
 from .receipts import list_receipts, read_receipt
 
@@ -228,7 +227,7 @@ def run_batch(engine: Engine, requests: Sequence[Request]) -> BatchResult:
                 error={
                     "code": "mixed-modes",
                     "message": f"{item.request.selector} was not run: this call needs an elevated gupkg for its system targets.",
-                    "hint": "Run the user and portable targets in a separate call.",
+                    "hint": "Run the user targets in a separate call.",
                 },
             )
             for item in resolved if isinstance(item, PackageResult) or not _needs_token(item)
@@ -546,7 +545,6 @@ def _prepare_install(
 
     # A package for a newer gupkg is refused with exit code 6, before any effect is planned (design 21.3).
     require_gupkg_version(manifest.requires_gupkg, engine.version, f"{view.name} {candidate.version}")
-    request = _guard_the_app(engine, request, view, chosen, context.mode, execute)
     if execute:
         _ask_about_other_versions(engine, request, view, candidate.version, context.mode)
 
@@ -635,35 +633,6 @@ def _choose(engine: Engine | None, target: _Target, view: PackageView, execute: 
     if candidate.source == "registry":
         return candidate, CopyIn("registry", candidate.path, candidate.registry, candidate.fingerprint)
     return candidate, None
-
-
-def _guard_the_app(engine: Engine, request: Request, view: PackageView, chosen: Chosen, mode: str, execute: bool) -> Request:
-    """Keep an ``App`` that was prepared for one mode from being used, or changed further, for another.
-
-    A package whose steps differ by mode (``[user]``, ``[system]``, ``[portable]``) prepares its ``App`` once, when it is built, and the
-    receipt records for which mode. Installing the same populated version in another mode would reuse files prepared for the wrong
-    one, and running more steps on top could damage them beyond repair. So the ``App`` is rebuilt from its verified download (after
-    asking: ``--yes`` answers), and an ``App`` that cannot be rebuilt (a shipped one, or one with no download or script) is refused
-    with nothing changed. An ``App`` with no record (built before it was recorded) is trusted as it was.
-    """
-    state, manifest = chosen.state, chosen.manifest
-    if state is None or not state.populated or manifest.source.shipped:
-        return request
-    wanted = mode_signature(manifest, mode)
-    if wanted is None:
-        return request
-    prepared = (read_receipt(state.path.parent, chosen.candidate.version).data or {}).get("app", {}).get("prepared_for")
-    if not isinstance(prepared, dict) or not prepared.get("signature") or prepared["signature"] == wanted:
-        return request
-    was, version = str(prepared.get("mode", "another mode")), chosen.candidate.version
-    if not manifest.source.recoverable:
-        raise PlanError(
-            f"The App of {view.name} {version} was prepared for {was} mode and cannot be rebuilt (it has no download or script), "
-            f"so it is not used in {mode} mode. Install it in {was} mode, or install a fresh copy of the version."
-        )
-    if execute:
-        _confirm(engine, f"The App of {view.name} {version} was prepared for {was} mode. Rebuild it for {mode} mode?")
-    return replace(request, refresh=True)
 
 
 def _ask_about_other_versions(engine: Engine, request: Request, view: PackageView, version: str, mode: str) -> None:

@@ -6,7 +6,7 @@ a version carries the record of how its ``App`` was built wherever it is copied.
 the checksum facts (decision, observed SHA-256, final URL, size), the fingerprint of the populated ``App`` (the SHA-256 of
 every file), the log file of the run and the times. There is one receipt per version, so no code picks one
 by modification time. Receipts are data for ``check``, ``info`` and ``gupkg pkg pin``; they are never trusted
-as proof, because in user and portable mode the user can edit them.
+as proof, because in user mode the user can edit them.
 
 Usage and API
 -------------

@@ -60,7 +60,7 @@ class Engine:
     env : mapping
         The environment for ``${NAME}`` expansion and the HTTP client's token; never read from ``os.environ`` here.
     load : callable
-        ``load(system_mode=False, portable_root=None)`` returns the loaded settings (``gupkg.modes.settings_loader``).
+        ``load(system_mode=False)`` returns the loaded settings (``gupkg.modes.settings_loader``).
     confirm : callable, optional
         Asks a yes-or-no question and returns the answer; ``None`` when nobody can be asked.
     yes, no_input : bool
