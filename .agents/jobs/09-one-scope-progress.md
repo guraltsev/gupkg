@@ -23,7 +23,7 @@ Not recorded yet. Before T00, the controller records:
 | T04 | Settings schema 4 and root fallback chain | T02 | merged | i035/T04 | 6ab01f8 | 3720 passed, 0 failed, 11 skipped | none | |
 | T05 | Scope object; mode from the token | T04 | merged | i035/T05 | fc47455 | 3649 passed, 0 failed, 11 skipped (87 tests removed, 63 added; reasons in 09-logs/T05.md) | 035-T05-1..4 (tests/manual_smoke.md) |
 | T06 | Catalog over one root | T05 | merged | i035/T06 | 955b8f0 | 3630 passed, 0 failed, 11 skipped (99 tests removed or merged, 9 added; reasons in 09-logs/T06.md); catalog.py 1042 -> 840 lines | 035-T06-1, 035-T06-2 (tests/manual_smoke.md) |
-| T07 | Remove the elevated relaunch | T06 | in progress | i035/T07 | | | |
+| T07 | Remove the elevated relaunch | T06 | in review | i035/T07 | | | |
 | T08 | Run-as-administrator shortcut | T07 | waiting | | | | |
 | T09 | Manager: one scope per run | T07 | waiting | | | | |
 | T10 | Manager: shared reader, visible failures | T09 | waiting | | | | |
@@ -102,3 +102,4 @@ Owner commit not pushed yet (goes to GitHub together with T03): `9fba5c5 volta: 
 - 2026-10-29: T05 review round 1 (1 blocking: UI checksum guard; fixed in 3d9e9ab), round 2 clean; merged as fc47455; suite 3649 passed, 11 skipped. T06 dispatched.
 - 2026-10-29: T06 worker reported (3b622b7, e7a3eac, e9d4ef8; 3630 passed/11 skipped); review round 1 started.
 - 2026-10-29: T06 reviewed (0 blocking, several minor), merged as 955b8f0; suite 3630 passed, 11 skipped. T07 dispatched.
+- 2026-10-29: T07 worker reported (7 commits, 3511 passed/11 skipped); review round 1 started.
