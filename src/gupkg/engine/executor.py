@@ -53,7 +53,6 @@ from .fingerprint import app_files
 from .planner import Chosen, CleanupPlan, PlanError
 from .portable import hand_back, hand_over, scratch_name
 from .receipts import read_receipt, update_receipt
-from .stateio import register_adhoc, unregister_adhoc
 
 
 class FingerprintMismatch(ChecksumMismatch):
@@ -86,8 +85,6 @@ class ExecutionInput:
         A distribution folder to copy into the root first.
     registry_fingerprint, registry_name, registry_path : optional
         What the followed registry publishes for this version: its fingerprint, its name and the version folder.
-    adhoc : bool
-        The package lies outside every configured root and is recorded in ``state.toml``.
     precopied : CopyResult, optional
         The result of a distribution copy that the caller already made (an elevated run copies the folder before it
         can read the manifest it plans from); ``distribution`` names the source folder.
@@ -104,7 +101,6 @@ class ExecutionInput:
     registry_fingerprint: str | None = None
     registry_name: str | None = None
     registry_path: Path | None = None
-    adhoc: bool = False
     precopied: CopyResult | None = None
     warnings: list[str] = field(default_factory=list)
 
@@ -193,8 +189,6 @@ def execute_install(engine: Engine, run: ExecutionInput) -> PackageResult:
             record = InstallRecord(context.mode, _link_after(run), tuple(applied))
             write_install_record(package_path, record)
         receipt = _write_receipt(engine, run, populated, origin)
-        if run.adhoc:
-            register_adhoc(run.settings, engine.env, package_path, context.mode)
         if failures:
             finishing.fail()
     warnings = [*run.warnings, *([broadcast_warning] if broadcast_warning else [])]
@@ -719,7 +713,6 @@ def execute_uninstall(engine: Engine, run: ExecutionInput) -> PackageResult:
     # Finish: the record keeps the mode and link; a purge deletes the package root.
     with phase("Finish"):
         if run.request.purge and not failures:
-            _forget_adhoc(engine, run, package_path)
             emit(Step(f"Deleting {package_path} (including data\\)", "remove"))
             release_package_log(package_path)
             remove_tree(package_path)
@@ -740,25 +733,6 @@ def execute_uninstall(engine: Engine, run: ExecutionInput) -> PackageResult:
         plan.package, "uninstall", True, "uninstalled", plan.previous, plan.previous, context.mode, 0, None, None,
         engine.log_path(package_path), tuple(run.warnings), {"kept_versions": [item.name for item in run.view.local.versions]},
     )
-
-
-def _forget_adhoc(engine: Engine, run: ExecutionInput, package_path: Path) -> None:
-    """Drop an ad-hoc package from the state of its own root before its folder is deleted; a problem is only a warning.
-
-    Only the ``state.toml`` of the root of the package's mode is touched, and only when the package is ad hoc. An elevated
-    run touches the system root's state only: it never reads or writes a user's folder (decision D19).
-    """
-    if not run.adhoc:
-        return
-    mode = run.context.mode
-    if engine.elevated and mode != "system":
-        return
-    try:
-        unregister_adhoc(run.settings, engine.env, package_path, mode)
-    except (OSError, ValueError) as error:
-        message = f"The ad-hoc entry of {package_path} could not be removed from the {mode} state file: {error}"
-        run.warnings.append(message)
-        emit(Warning(message))
 
 
 # ---------------------------------------------------------------------------

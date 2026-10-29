@@ -30,9 +30,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from .catalog.catalog import Catalog, Resolved, UntrustedLocation, parse_selector
+from .catalog.catalog import Catalog, Resolved, UntrustedLocation, manifest_modes, parse_selector
 from .catalog.local import DATA_DIR_NAME, canonical_path, is_inside, strip_extended_prefix
-from .model.manifest import ManifestError, parse_manifest
 from .model.scope import ModeRefused, Scope, check_supported
 from .model.version import MANIFEST_NAME
 from .system.port import Mode, System
@@ -48,8 +47,6 @@ class TargetRequest:
         ``name``, ``name@version``, ``registry/name`` or a path.
     operation : str, optional
         The command word (``install``, ``update`` ...), put into the refusal of a package that needs another mode.
-    in_place : bool
-        ``--in-place``: keep a distribution folder where it is instead of copying it into the root.
     relaunched : bool
         This process is the elevated child that a non-elevated gupkg started; it accepts only package
         names and paths inside the system root (design 9.6 rule 2).
@@ -59,7 +56,6 @@ class TargetRequest:
 
     selector: str
     operation: str | None = None
-    in_place: bool = False
     relaunched: bool = False
     no_input: bool = False
 
@@ -106,13 +102,12 @@ def resolve_target(request: TargetRequest, *, scope: Scope, system: System, env:
     Raises
     ------
     ModeRefused
-        If the package does not support the scope's mode, an elevated run is given a target it must not trust, or
-        ``--in-place`` is asked of a folder that system mode cannot keep.
+        If the package does not support the scope's mode, or an elevated run is given a target it must not trust.
     gupkg.catalog.catalog.CatalogError
-        If the target is not found or is ambiguous.
+        If the target is not found, or a path is outside the root and is not a distribution folder.
     """
     elevated = scope.mode is Mode.SYSTEM
-    catalog = Catalog.from_scope(scope, system, env)
+    catalog = Catalog(scope, system)
     parsed = parse_selector(request.selector, (entry.name for entry in scope.settings.registries))
 
     # A path is inside the scope's root, or a distribution folder outside it.
@@ -120,7 +115,7 @@ def resolve_target(request: TargetRequest, *, scope: Scope, system: System, env:
     target_folder: Path | None = None
     if parsed.kind == "path":
         target_folder = _normalize(parsed.path)
-        outside = not _inside_scope(target_folder, scope, catalog)
+        outside = not _inside_scope(target_folder, scope)
 
     resolved: Resolved | None = None
     if outside and elevated:
@@ -134,7 +129,7 @@ def resolve_target(request: TargetRequest, *, scope: Scope, system: System, env:
             )
     else:
         try:
-            resolved = catalog.resolve(request.selector, for_mutation=True)
+            resolved = catalog.resolve_distribution(target_folder) if outside else catalog.resolve(request.selector)
         except UntrustedLocation as exc:
             raise ModeRefused(f"{exc}. An elevated gupkg only acts on package names and paths inside the system root.") from exc
         view = resolved.view
@@ -157,7 +152,7 @@ def resolve_target(request: TargetRequest, *, scope: Scope, system: System, env:
         name = resolved.view.name if resolved is not None else (target_folder.parent.name if target_folder is not None else None)
         check_supported(scope, supported, command=request.operation, name=name)
 
-    folder = _copy_source(request, target_folder, resolved, scope, system) if outside else None
+    folder = _copy_source(target_folder) if outside else None
     return ResolvedTarget(scope, resolved, (), folder)
 
 
@@ -166,28 +161,9 @@ def _normalize(path: Path) -> Path:
     return Path(os.path.abspath(strip_extended_prefix(os.fspath(Path(path).expanduser()))))
 
 
-def _inside_scope(path: Path, scope: Scope, catalog: Catalog) -> bool:
-    """Return whether *path* is the scope's root or inside it by identity (a normal run also counts its ad-hoc roots)."""
-    if canonical_path(path) == canonical_path(scope.root) or is_inside(path, scope.root):
-        return True
-    if scope.mode is Mode.SYSTEM:
-        return False
-    for root in catalog.roots:
-        if not root.adhoc:
-            continue
-        if root.single and canonical_path(root.path) == canonical_path(path):
-            return True
-        if not root.single and (canonical_path(path) == canonical_path(root.path) or is_inside(path, root.path)):
-            return True
-    return False
-
-
-def _manifest_modes(manifest_path: Path) -> tuple[str, ...] | None:
-    """Return the ``modes`` of the ``pkg.toml`` at *manifest_path*, or ``None`` when it cannot be read."""
-    try:
-        return parse_manifest(manifest_path.read_text(encoding="utf-8-sig")).modes
-    except (OSError, UnicodeDecodeError, ManifestError, ValueError):
-        return None
+def _inside_scope(path: Path, scope: Scope) -> bool:
+    """Return whether *path* is the scope's root or inside it by identity."""
+    return canonical_path(path) == canonical_path(scope.root) or is_inside(path, scope.root)
 
 
 def _supported_modes(resolved: Resolved | None, folder: Path | None, elevated: bool) -> tuple[str, ...] | None:
@@ -203,31 +179,17 @@ def _supported_modes(resolved: Resolved | None, folder: Path | None, elevated: b
                 return version.manifest.modes
             return None
         if view.local is None and view.registry is not None and view.registry.versions:
-            return _manifest_modes(view.registry.versions[-1].path / MANIFEST_NAME)
+            return manifest_modes(view.registry.versions[-1].path / MANIFEST_NAME)
         return None
     if folder is not None and not elevated:
-        return _manifest_modes(folder / MANIFEST_NAME)
+        return manifest_modes(folder / MANIFEST_NAME)
     return None
 
 
-def _copy_source(
-    request: TargetRequest, folder: Path | None, resolved: Resolved | None, scope: Scope, system: System
-) -> Path | None:
-    """Return the folder to copy into the root, or ``None`` for ``--in-place`` (design 21.4).
-
-    A system install never keeps a user-writable folder in place, so ``--in-place`` in system mode needs a folder that
-    is admin-only.
-    """
+def _copy_source(folder: Path | None) -> Path | None:
+    """Return the distribution folder to copy into the root (design 21.4); it must be a version directory."""
     if folder is None:
-        return None
-    if request.in_place:
-        if scope.mode is Mode.SYSTEM:
-            reason = system.directory_untrusted_reason(folder)
-            if reason is not None:
-                raise ModeRefused(f"--in-place with system mode needs an admin-only folder, and {folder} is not: {reason}")
         return None
     if (folder / MANIFEST_NAME).is_file():
         return folder
-    if resolved is not None and resolved.version_path is not None:
-        return resolved.version_path
     raise ModeRefused(f"{folder} is outside every root and is not a version directory (no {MANIFEST_NAME}); name the version folder.")

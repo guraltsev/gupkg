@@ -24,7 +24,6 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..catalog.catalog import (
-    AmbiguousSelector,
     CatalogError,
     NeedsRepair,
     NoValidVersion,
@@ -66,7 +65,6 @@ _TABLE: tuple[tuple[type[BaseException], str, int | None], ...] = (
     (NoValidVersion, "no-valid-version", EXIT_USER),
     (NotInstalled, "not-installed", EXIT_USER),
     (NeedsRepair, "needs-repair", EXIT_USER),
-    (AmbiguousSelector, "ambiguous", EXIT_USER),
     (UntrustedLocation, "untrusted-location", EXIT_USER),
     (NotFound, "not-found", EXIT_USER),
     (CatalogError, "catalog", EXIT_USER),

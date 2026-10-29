@@ -1,7 +1,7 @@
 """Derive the state of packages: the only place that joins roots, install records and registries.
 
 ``Catalog.describe`` builds one immutable ``PackageView``; ``Catalog.list`` lists every
-package of every trusted root (and, on request, the registry entries that are not local);
+package of the scope's one root (and, on request, the registry entries that are not local);
 ``Catalog.resolve`` turns a selector of design 10.1 (``name``, ``name@version``,
 ``registry/name`` or a path) into a view; ``candidates``,
 ``install_candidate``, ``update_candidate``, ``tracker_sync`` and ``compare`` are the pure
@@ -11,17 +11,16 @@ versions already on disk or already in the linked registry are known (decision D
 
 Usage and API
 -------------
-Build a catalog with ``Catalog.from_scope(scope, system, env)`` and call ``describe``,
-``list`` and ``resolve``. ``resolve_package_path(path, system)`` resolves a path with no
-settings, for callers that have only a ``System``. Errors are ``CatalogError`` subclasses
-(``NotFound``, ``AmbiguousSelector``, ``NoVersionKnown``, ``NotInstalled``, ``NeedsRepair``,
+Build a catalog with ``Catalog(scope, system)`` and call ``describe``, ``list`` and ``resolve``.
+``resolve_distribution(path)`` reads a distribution folder outside the root, to be copied in. Errors are
+``CatalogError`` subclasses (``NotFound``, ``NoVersionKnown``, ``NotInstalled``, ``NeedsRepair``,
 ``NoValidVersion``, ``UntrustedLocation``).
 
 Implementation Approach
 -----------------------
-Roots come from the settings (the system root only, and only when admin-only, for an elevated
-run, decision D31) plus the ad-hoc roots recorded in each root's ``state.toml``. Every package
-is scanned by ``gupkg.catalog.local``, its install record is read by ``gupkg.catalog.record``,
+The catalog reads one root, ``scope.root``, and joins one registry cache, ``<root>\\.gupkg\\registry``.
+A package in any other folder is not seen, and a path outside the root is refused unless it is a distribution
+folder to be copied in. Every package is scanned by ``gupkg.catalog.local``, its install record is read by ``gupkg.catalog.record``,
 and the registry entry it follows is joined from the cached registry snapshots: the entry with
 its own name by default (decision D2), the entry of its explicit link, or none after an opt-out.
 Status and candidates are then pure functions of the view (``gupkg.model.state``). Effects of
@@ -34,15 +33,13 @@ from __future__ import annotations
 import ntpath
 import os
 import re
-from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..model.manifest import TrackResult, invalid_checksum_problem
+from ..model.manifest import ManifestError, TrackResult, invalid_checksum_problem, parse_manifest
 from ..model.settings import RegistryEntry as RegistryConfig
-from ..model.settings import Settings, expand_env
 from ..model.state import (
-    MODES,
     Candidate,
     InstalledState,
     Link,
@@ -53,16 +50,13 @@ from ..model.state import (
     known_candidates,
 )
 from ..model.version import MANIFEST_NAME, TRACKER_DIR_NAME, compare_versions, is_version_name
-from ..model.scope import Scope
-from ..system.port import Mode, System, is_elevated_run
+from ..model.scope import ModeRefused, Scope, check_supported
+from ..system.port import Mode, System
 from .local import (
-    DATA_DIR_NAME,
-    canonical_path,
     is_inside,
     is_reparse_point,
     looks_like_package,
     real_path,
-    read_adhoc_roots,
     scan_package,
     scan_root,
     strip_extended_prefix,
@@ -77,16 +71,6 @@ class CatalogError(ValueError):
 
 class NotFound(CatalogError):
     """Report that no package, registry entry or version matches."""
-
-
-class AmbiguousSelector(CatalogError):
-    """Report that a bare name exists in several roots and a mutating command needs it qualified."""
-
-    def __init__(self, name: str, matches: Sequence[str]) -> None:
-        """Name the package and the qualified selectors that would be unambiguous."""
-        self.name = name
-        self.matches = tuple(matches)
-        super().__init__(f"'{name}' exists in several roots; qualify it: {', '.join(self.matches)}")
 
 
 class NoVersionKnown(CatalogError):
@@ -171,7 +155,6 @@ class ListFilter:
     """Filters of ``Catalog.list``; an empty filter lists every local package."""
 
     statuses: frozenset[str] | None = None
-    modes: frozenset[str] | None = None
     query: str | None = None
     registry: str | None = None
     include_available: bool = False
@@ -179,7 +162,7 @@ class ListFilter:
 
 @dataclass(frozen=True)
 class Listing:
-    """The views of ``Catalog.list`` and the warnings found on the way (shadowing, unreadable folders)."""
+    """The views of ``Catalog.list`` and the warnings found on the way (unreadable folders)."""
 
     views: tuple[PackageView, ...]
     warnings: tuple[str, ...] = ()
@@ -280,228 +263,110 @@ def parse_selector(text: str, registry_names: Iterable[str] = ()) -> Selector:
 
 @dataclass
 class Catalog:
-    """Read-only access to the packages of a set of roots and their registries.
+    """Read-only access to the packages of one root and its registry cache.
 
     Parameters
     ----------
+    scope : Scope
+        The scope of the run: its mode, its root (the only folder scanned) and its settings (the registries, in
+        priority order). The registry cache is ``<root>\\.gupkg\\registry``.
     system : System
-        Boundary used to read ``current`` junctions, to ask whether the run is elevated,
-        whether a folder is admin-only, and to verify effects.
-    roots : sequence of Root
-        The roots to scan (configured and ad-hoc).
-    registries : sequence of RegistryConfig
-        The configured registries, in priority order.
-    data_roots : mapping
-        Mode to the root whose data directory holds that mode's registry cache.
-    elevated : bool, optional
-        Whether the run is elevated; by default the system boundary decides.
+        Boundary used to read ``current`` junctions, to ask whether a folder is admin-only, and to verify effects.
     verify_effects : bool, default=False
         Whether ``describe`` compares the install record's effects with the system (it reads
         the environment and shortcuts; ``check`` turns it on, ``list`` leaves it off).
     """
 
+    scope: Scope
     system: System
-    roots: tuple[Root, ...] = ()
-    registries: tuple[RegistryConfig, ...] = ()
-    data_roots: Mapping[str, Path] = field(default_factory=dict)
-    elevated: bool | None = None
     verify_effects: bool = False
     warnings: list[str] = field(default_factory=list)
     _snapshots: dict[tuple[str, str], RegistrySnapshot] = field(default_factory=dict, repr=False)
-    _trusted: tuple[Root, ...] | None = field(default=None, repr=False)
 
-    def __post_init__(self) -> None:
-        """Fix the elevation of the run once."""
-        if self.elevated is None:
-            self.elevated = is_elevated_run(self.system)
+    @property
+    def root(self) -> Root:
+        """Return the one root this catalog reads."""
+        return Root(self.scope.root)
 
-    @classmethod
-    def from_settings(
-        cls, settings: Settings, system: System, env: Mapping[str, str], *, elevated: bool | None = None,
-        verify_effects: bool = False,
-    ) -> "Catalog":
-        """Build the catalog of a run from its effective settings.
-
-        Parameters
-        ----------
-        settings : Settings
-            The merged settings (roots and registries).
-        system : System
-            The machine boundary.
-        env : mapping
-            Environment used to expand ``%NAME%`` in the configured roots.
-        elevated : bool, optional
-            Overrides the elevation reported by *system*.
-        verify_effects : bool, default=False
-            See the class.
-
-        Returns
-        -------
-        Catalog
-            A catalog whose roots are the configured ones (only the system root when
-            elevated, decision D31) and the ad-hoc roots recorded in their ``state.toml``.
-        """
-        is_elevated = is_elevated_run(system) if elevated is None else elevated
-        configured = {mode: Path(expand_env(settings[f"roots.{mode}"], env)) for mode in MODES}
-        return cls._from_roots(configured, settings, system, is_elevated, verify_effects)
-
-    @classmethod
-    def from_scope(cls, scope: Scope, system: System, env: Mapping[str, str], *, verify_effects: bool = False) -> "Catalog":
-        """Build the catalog of a run from its scope: the scope's root only, in the scope's mode.
-
-        Parameters
-        ----------
-        scope : Scope
-            The scope of the run: its mode, root and settings (registries).
-        system : System
-            The machine boundary.
-        env : mapping
-            Unused; kept so that both constructors take the same arguments.
-        verify_effects : bool, default=False
-            See the class.
-
-        Returns
-        -------
-        Catalog
-            A catalog whose root is ``scope.root`` (and the ad-hoc roots recorded in its ``state.toml``). A system scope is
-            elevated by definition (decision D31).
-        """
-        return cls._from_roots({scope.mode.value: scope.root}, scope.settings, system, scope.mode is Mode.SYSTEM, verify_effects)
-
-    @classmethod
-    def _from_roots(
-        cls, configured: Mapping[str, Path], settings: Settings, system: System, is_elevated: bool, verify_effects: bool
-    ) -> "Catalog":
-        """Build a catalog over the configured roots (``{mode: path}``) and the registries of *settings*."""
-        warnings: list[str] = []
-        roots: list[Root] = []
-        for mode, path in configured.items():
-            if is_elevated and mode != "system":
-                continue
-            roots.append(Root(path, mode))
-
-            # Ad-hoc roots recorded in this root's data directory (design 5.4). An elevated run
-            # reads that file only when the data directory is admin-only.
-            reason = system.directory_untrusted_reason(path / DATA_DIR_NAME) if is_elevated else None
-            if reason is not None:
-                warnings.append(f"Did not read {path / DATA_DIR_NAME / 'state.toml'} in an elevated run: {reason}")
-                continue
-            adhoc, problem = read_adhoc_roots(path / DATA_DIR_NAME)
-            if problem:
-                warnings.append(problem)
-            for entry in adhoc:
-                if is_elevated and entry.mode != "system":
-                    continue
-                target = Path(entry.path)
-                roots.append(Root(target, entry.mode, adhoc=True, single=looks_like_package(target)))
-        catalog = cls(system, tuple(roots), tuple(settings.registries), configured, is_elevated, verify_effects)
-        catalog.warnings.extend(warnings)
-        return catalog
+    @property
+    def registries(self) -> tuple[RegistryConfig, ...]:
+        """Return the configured registries, in priority order."""
+        return tuple(self.scope.settings.registries)
 
     # -- describing ---------------------------------------------------------
 
-    def describe(self, name: str, root: Root | None = None) -> PackageView:
+    def describe(self, name: str) -> PackageView:
         """Build the view of one package.
 
         Parameters
         ----------
         name : str
             The package name (``group/name`` for a package inside grouping folders).
-        root : Root, optional
-            The root to look in. Without one, every trusted root is searched and the first
-            match wins; with no local package at all, a registry entry gives an ``available`` view.
 
         Returns
         -------
         PackageView
-            The immutable view.
+            The immutable view of the package in the root; with no local package, a registry entry gives an
+            ``available`` view.
 
         Raises
         ------
         NotFound
             If neither a local package nor a registry entry has that name.
         """
-        if root is not None:
-            local_view = self._local_view(root, name)
-            if local_view is not None:
-                return local_view
-        else:
-            for candidate_root in self._trusted_roots():
-                local_view = self._local_view(candidate_root, name)
-                if local_view is not None:
-                    return local_view
-        entry = self._first_entry(name, root.mode if root is not None else None)
+        local_view = self._local_view(name)
+        if local_view is not None:
+            return local_view
+        entry = self._first_entry(name)
         if entry is None:
-            raise NotFound(f"package '{name}' was not found in any root or registry")
-        return PackageView(name, root, None, registry=entry)
+            raise NotFound(f"package '{name}' was not found in the root or any registry")
+        return PackageView(name, None, None, registry=entry)
 
     def list(self, filters: ListFilter | None = None) -> Listing:
-        """List the packages of every trusted root, with warnings.
+        """List the packages of the root, with warnings.
 
         Parameters
         ----------
         filters : ListFilter, optional
-            Status, mode, name and registry filters; ``include_available`` adds registry
-            entries that are not local in any root (``root`` is ``None`` for those).
+            Status, name and registry filters; ``include_available`` adds registry entries that are not local
+            (``root`` is ``None`` for those; one the run's mode cannot install carries a ``restriction``).
 
         Returns
         -------
         Listing
-            Views sorted by name and mode, and warnings: folders that could not be read,
-            and a "shadowing" warning for a name that exists in both the system and the
-            user root (their shims shadow each other on ``PATH``, decision D21).
+            Views sorted by name, and warnings: folders that could not be read.
         """
         filters = filters or ListFilter()
-        views: list[PackageView] = []
-        roots = self._trusted_roots()
-        warnings = list(self.warnings)
-        seen: set[str] = set()
-        for root in roots:
-            scan = scan_root(root)
-            warnings.extend(scan.diagnostics)
-            for package, path in scan.packages:
-                # A package that an ad-hoc entry names again inside a configured root is listed once.
-                if canonical_path(path) not in seen:
-                    seen.add(canonical_path(path))
-                    views.append(self._view(root, package, path))
+        scan = scan_root(self.root)
+        views = [self._view(package, path) for package, path in scan.packages]
 
-        # The same name in the system and the user root is reported once.
-        by_name: dict[str, set[str]] = {}
-        for view in views:
-            by_name.setdefault(view.name.casefold(), set()).add(view.mode or "")
-        for key, modes in sorted(by_name.items()):
-            if {"system", "user"} <= modes:
-                name = next(view.name for view in views if view.name.casefold() == key)
-                warnings.append(
-                    f"shadowing: '{name}' exists in both the system and the user root; "
-                    "their shims on PATH shadow each other"
-                )
-
-        # Registry entries with no local package anywhere are ``available``.
+        # Registry entries with no local package are ``available``.
         if filters.include_available:
-            local_names = set(by_name)
-            for snapshot in self._snapshots_for(None):
+            local_names = {view.name.casefold() for view in views}
+            for snapshot in self._snapshots_for():
                 for entry in snapshot.entries.values():
                     if entry.name.casefold() not in local_names:
                         local_names.add(entry.name.casefold())
-                        views.append(PackageView(entry.name, None, None, registry=entry))
+                        restriction = self._restriction(entry)
+                        views.append(PackageView(
+                            entry.name, None, None, registry=entry,
+                            restriction=restriction[0] if restriction else None,
+                            restriction_reason=restriction[1] if restriction else None,
+                        ))
 
         views = [view for view in views if _matches(view, filters)]
-        views.sort(key=lambda view: (view.name.casefold(), MODES.index(view.mode) if view.mode in MODES else len(MODES)))
-        return Listing(tuple(views), tuple(warnings))
+        views.sort(key=lambda view: view.name.casefold())
+        return Listing(tuple(views), (*self.warnings, *scan.diagnostics))
 
     # -- selecting ----------------------------------------------------------
 
-    def resolve(self, selector: str, for_mutation: bool = False) -> Resolved:
+    def resolve(self, selector: str) -> Resolved:
         """Resolve a selector of design 10.1 to a package.
 
         Parameters
         ----------
         selector : str
-            ``name``, ``name@version``, ``registry/name`` or a path.
-        for_mutation : bool, default=False
-            Whether the caller changes the package. A bare name that exists in several roots
-            is then ambiguous and must be qualified with its mode.
+            ``name``, ``name@version``, ``registry/name`` or a path inside the root.
 
         Returns
         -------
@@ -511,9 +376,7 @@ class Catalog:
         Raises
         ------
         NotFound
-            If nothing matches, or a path is not a package.
-        AmbiguousSelector
-            If a bare name exists in several roots and *for_mutation* is set.
+            If nothing matches, a path is not a package, or a path is not inside the root.
         UntrustedLocation
             If an elevated run is given a path in a folder that standard users can modify.
         """
@@ -523,39 +386,45 @@ class Catalog:
 
         # ``registry/name`` selects that registry's entry, whether or not a local package exists.
         if parsed.kind == "registry":
-            snapshot = next((item for item in self._snapshots_for(None) if item.name.casefold() == parsed.registry.casefold()), None)
+            snapshot = next((item for item in self._snapshots_for() if item.name.casefold() == parsed.registry.casefold()), None)
             entry = snapshot.entry(parsed.name) if snapshot is not None else None
             if entry is None:
                 raise NotFound(f"registry entry '{parsed.registry}/{parsed.name}' was not found")
-            matches = self._matches_for(parsed.name, None)
-            if len(matches) > 1 and for_mutation:
-                raise AmbiguousSelector(parsed.name, _qualified(parsed.name, matches))
-            if matches:
-                view = self._view(matches[0][0], matches[0][1], matches[0][2], follow=(entry.registry, entry.name))
+            path = self._local_path(parsed.name)
+            if path is not None:
+                view = self._view(parsed.name, path, follow=(entry.registry, entry.name))
             else:
-                view = PackageView(entry.name, self._root_for_mode(None), None, registry=entry)
+                view = PackageView(entry.name, None, None, registry=entry)
             return Resolved(view, parsed.version, named_version=parsed.version is not None)
 
-        # A bare name: the roots decide, then the registries.
-        matches = self._matches_for(parsed.name, None)
-        if len(matches) > 1 and for_mutation:
-            raise AmbiguousSelector(parsed.name, _qualified(parsed.name, matches))
-        if matches:
-            view = self._view(*matches[0])
+        # A bare name: the root decides, then the registries.
+        path = self._local_path(parsed.name)
+        if path is not None:
+            view = self._view(parsed.name, path)
         else:
-            entry = self._first_entry(parsed.name, None)
+            entry = self._first_entry(parsed.name)
             if entry is None:
-                raise NotFound(f"package '{parsed.name}' was not found in any root or registry")
-            view = PackageView(entry.name, self._root_for_mode(None), None, registry=entry)
+                raise NotFound(f"package '{parsed.name}' was not found in the root or any registry")
+            view = PackageView(entry.name, None, None, registry=entry)
         return Resolved(view, parsed.version, named_version=parsed.version is not None)
 
-    def registry_entry(self, name: str, mode: str | None) -> RegistryEntry | None:
-        """Return the entry called *name* in the first registry that has it for packages of *mode*, or ``None``.
+    def resolve_distribution(self, folder: Path) -> Resolved:
+        """Read a distribution folder outside the root (a version directory with a ``pkg.toml``), to be copied in.
 
-        Used for a distribution folder that is not a package of any root yet: the registry may publish the
+        Raises
+        ------
+        NotFound
+            If *folder* is not such a folder (design 21.4).
+        """
+        return self._resolve_path(Selector(str(folder), "path", path=Path(folder)), distribution=True)
+
+    def registry_entry(self, name: str) -> RegistryEntry | None:
+        """Return the entry called *name* in the first registry that has it, or ``None``.
+
+        Used for a distribution folder that is not a package of the root yet: the registry may publish the
         fingerprint that verifies it (design 9.2).
         """
-        return self._first_entry(name, mode)
+        return self._first_entry(name)
 
     # -- decisions ------------------------------------------------------------
 
@@ -729,53 +598,17 @@ class Catalog:
 
     # -- internals ------------------------------------------------------------
 
-    def _trusted_roots(self) -> tuple[Root, ...]:
-        """Return the roots that may be read; an elevated run reads only admin-only system roots."""
-        if self._trusted is not None:
-            return self._trusted
-        configured_first = tuple(sorted(self.roots, key=lambda root: root.adhoc))
-        if not self.elevated:
-            self._trusted = configured_first
-            return self._trusted
+    def _local_path(self, name: str) -> Path | None:
+        """Return the package root of the local package called *name* in the root, or ``None``."""
+        path = _package_path(self.scope.root, name)
+        return path if path is not None and _is_local_package(path) else None
 
-        # An elevated run never reads a folder that standard users can modify (design 9.4, D31).
-        usable: list[Root] = []
-        for root in configured_first:
-            reason = self.system.directory_untrusted_reason(root.path)
-            if reason is None and root.mode == "system":
-                usable.append(root)
-            else:
-                self.warnings.append(f"Skipped {root.path} in an elevated run: " + (reason or "not the system root"))
-        self._trusted = tuple(usable)
-        return self._trusted
+    def _local_view(self, name: str) -> PackageView | None:
+        """Return the view of *name* in the root, or ``None`` when the root has no such package."""
+        path = self._local_path(name)
+        return self._view(name, path) if path is not None else None
 
-    def _root_for_mode(self, mode: str | None) -> Root | None:
-        """Return the trusted root of *mode*, or ``None`` when no mode is named or no root has it."""
-        return next((root for root in self._trusted_roots() if root.mode == mode and not root.adhoc), None)
-
-    def _matches_for(self, name: str, mode: str | None) -> list[tuple[Root, str, Path]]:
-        """Return ``(root, name, path)`` for every trusted root that holds a local package called *name*."""
-        found: list[tuple[Root, str, Path]] = []
-        seen: set[str] = set()
-        for root in self._trusted_roots():
-            if mode is not None and root.mode != mode:
-                continue
-            path = _package_path(root, name)
-            if path is not None and _is_local_package(path) and canonical_path(path) not in seen:
-                seen.add(canonical_path(path))
-                found.append((root, name, path))
-        return found
-
-    def _local_view(self, root: Root, name: str) -> PackageView | None:
-        """Return the view of *name* in *root*, or ``None`` when the root has no such package."""
-        if self.elevated and root.path not in [item.path for item in self._trusted_roots()]:
-            return None
-        path = _package_path(root, name)
-        if path is None or not _is_local_package(path):
-            return None
-        return self._view(root, name, path)
-
-    def _view(self, root: Root, name: str, path: Path, follow: tuple[str, str] | None = None) -> PackageView:
+    def _view(self, name: str, path: Path, follow: tuple[str, str] | None = None) -> PackageView:
         """Build the view of the package root *path*; *follow* overrides which registry entry it follows."""
         local = scan_package(path, self.system)
         read = read_install_record(path)
@@ -784,14 +617,14 @@ class Catalog:
         warnings: list[str] = []
         if read.problem:
             problems.append(read.problem)
-        if self.elevated and record is not None and record.mode not in (None, "system"):
-            problems.append(f"the install record says mode {record.mode}; an elevated run acts only on system packages")
-        if record is not None and record.mode is not None and root.mode is not None and record.mode != root.mode:
-            problems.append(f"the install record says mode {record.mode}, but the package lies in a {root.mode} root")
+        elif record is None and local.current.status != "absent":
+            problems.append(f"no install record (made by an older gupkg); reinstall with: gupkg install {name} --force")
+        if record is not None and record.mode is not None and record.mode != self.scope.mode:
+            problems.append(f"the install record says {record.mode}; this package was moved between scopes — reinstall it")
 
         # Join the registry entry the package follows (decision D2).
         link = record.link if record is not None else None
-        entry, unfollowed, link_warning = self._follow(name, record.mode if record and record.mode else root.mode, link, follow)
+        entry, unfollowed, link_warning = self._follow(name, link, follow)
         if link_warning:
             warnings.append(link_warning)
 
@@ -816,55 +649,54 @@ class Catalog:
                 if (pinned := entry.version(item.name)) is not None and pinned.pkg_toml_sha256 != item.pkg_toml_sha256
             )
         return PackageView(
-            name, root, local, entry, unfollowed, link, installed, diverged, tuple(problems), tuple(warnings), record
+            name, self.root, local, entry, unfollowed, link, installed, diverged, tuple(problems), tuple(warnings), record
         )
 
-    def _snapshots_for(self, mode: str | None) -> list[RegistrySnapshot]:
-        """Return the registry snapshots to join for packages of *mode*, in configured order.
-
-        A system run (or package) uses only the system root's cache; other modes use the
-        first of their own, the user and the system root's cache that has been synchronised.
-        """
-        preference = {"system": ("system",), "user": ("user", "system"), None: ("user", "system")}
-        order = ("system",) if self.elevated else preference.get(mode, ("user", "system"))
-        base = next(
-            (self.data_roots[item] for item in order if item in self.data_roots and any(
-                (registry_cache_dir(self.data_roots[item], config.name) / "state.toml").is_file() for config in self.registries
-            )),
-            None,
-        )
-        if base is None:
+    def _snapshots_for(self) -> list[RegistrySnapshot]:
+        """Return the registry snapshots of the root's own cache, in configured order (none before the first sync)."""
+        if not any((registry_cache_dir(self.scope.root, config.name) / "state.toml").is_file() for config in self.registries):
             return []
         snapshots = []
         for config in self.registries:
-            cache = registry_cache_dir(base, config.name)
+            cache = registry_cache_dir(self.scope.root, config.name)
             key = (str(cache), config.name)
             if key not in self._snapshots:
                 self._snapshots[key] = load_registry(config.name, cache, self.system)
             snapshots.append(self._snapshots[key])
         return snapshots
 
-    def _first_entry(self, name: str, mode: str | None) -> RegistryEntry | None:
+    def _first_entry(self, name: str) -> RegistryEntry | None:
         """Return the entry called *name* in the first registry that has it (design 17), or ``None``."""
-        for snapshot in self._snapshots_for(mode):
+        for snapshot in self._snapshots_for():
             entry = snapshot.entry(name)
             if entry is not None:
                 return entry
         return None
 
+    def _restriction(self, entry: RegistryEntry) -> tuple[str, str] | None:
+        """Return ``(label, refusal text)`` when the newest pinned version of *entry* cannot be installed in this mode (Q14)."""
+        modes = manifest_modes(entry.versions[-1].path / MANIFEST_NAME) if entry.versions else None
+        if modes is None:
+            return None
+        try:
+            check_supported(self.scope, modes, command="install", name=entry.name)
+        except ModeRefused as refusal:
+            return ("system only" if self.scope.mode is Mode.USER else "user only"), str(refusal)
+        return None
+
     def _follow(
-        self, name: str, mode: str | None, link: Link | None, override: tuple[str, str] | None
+        self, name: str, link: Link | None, override: tuple[str, str] | None
     ) -> tuple[RegistryEntry | None, RegistryEntry | None, str | None]:
         """Return ``(followed entry, entry not followed, warning)`` for a local package."""
         if override is None and link is not None and link.unlinked:
-            return None, self._first_entry(name, mode), None
+            return None, self._first_entry(name), None
 
         # An explicit link (or the override of ``registry/name``) names a registry and an entry.
         registry, target = override if override is not None else (link.registry if link else None, link.name if link else None)
         target = target or name
         if registry is None:
-            return self._first_entry(target, mode), None, None
-        snapshot = next((item for item in self._snapshots_for(mode) if item.name.casefold() == registry.casefold()), None)
+            return self._first_entry(target), None, None
+        snapshot = next((item for item in self._snapshots_for() if item.name.casefold() == registry.casefold()), None)
         entry = snapshot.entry(target) if snapshot is not None else None
         if entry is None:
             return None, None, f"the link to {registry}/{target} cannot be followed: the entry is not in the registry cache"
@@ -876,7 +708,6 @@ class Catalog:
         unverified: list[str] = []
         for effect in effects:
             fields = effect.fields
-            scope = {"system": Mode.SYSTEM, "user": Mode.USER}.get(fields.get("scope", ""))
             try:
                 if effect.kind in ("shim", "file"):
                     if not os.path.exists(str(fields["path"])):
@@ -886,12 +717,12 @@ class Catalog:
                         self.system.read_shortcut(Path(str(fields["path"])))
                     except OSError:
                         drift.append(f"shortcut missing: {fields['path']}")
-                elif effect.kind == "env" and scope is not None and not (self.elevated and scope is Mode.USER):
-                    stored = self.system.get_env(scope, str(fields["name"]))
+                elif effect.kind == "env":
+                    stored = self.system.get_env(self.scope.mode, str(fields["name"]))
                     if stored is None or stored.value != str(fields["value"]):
                         drift.append(f"environment variable {fields['name']} differs")
-                elif effect.kind == "path" and scope is not None and not (self.elevated and scope is Mode.USER):
-                    entries = [item.casefold().rstrip("\\") for item in self.system.get_path(scope)]
+                elif effect.kind == "path":
+                    entries = [item.casefold().rstrip("\\") for item in self.system.get_path(self.scope.mode)]
                     if str(fields["entry"]).casefold().rstrip("\\") not in entries:
                         drift.append(f"PATH entry missing: {fields['entry']}")
                 else:
@@ -900,8 +731,12 @@ class Catalog:
                 drift.append(f"malformed {effect.kind} effect: no {exc.args[0]}")
         return tuple(drift), tuple(unverified)
 
-    def _resolve_path(self, parsed: Selector) -> Resolved:
-        """Resolve a path selector: a package root, a version directory, ``_check_updates`` or ``current``."""
+    def _resolve_path(self, parsed: Selector, distribution: bool = False) -> Resolved:
+        """Resolve a path selector: a package root, a version directory, ``_check_updates`` or ``current``.
+
+        The path must lie inside the root. A version directory outside it is accepted only with *distribution* (it is
+        copied in); any other path outside is ``NotFound``.
+        """
         # Normalise lexically so a trailing ``current`` is not followed before it is classified.
         candidate = Path(os.path.abspath(strip_extended_prefix(os.fspath(parsed.path.expanduser()))))
         version: str | None = None
@@ -924,14 +759,19 @@ class Catalog:
             package_root = candidate
         else:
             raise NotFound(f"Path does not exist: {candidate}")
-        if self.elevated:
-            self._require_system_path(package_root, None)
-        if not _is_local_package(package_root, allow_link=not self.elevated):
+        inside = is_inside(package_root, self.scope.root)
+        if not inside and not (distribution and version is not None):
+            raise NotFound(f"{candidate} is not inside this scope's root ({self.scope.root})")
+        elevated = self.scope.mode is Mode.SYSTEM
+        if elevated:
+            reason = self.system.directory_untrusted_reason(package_root)
+            if reason is not None:
+                raise UntrustedLocation(f"Refusing {package_root} in an elevated run: {reason}")
+        if not _is_local_package(package_root, allow_link=not elevated):
             raise NotFound(f"Not a package root, version directory or current: {candidate}")
 
-        # The root decides the mode: the configured root that contains the path, else the record, else auto.
-        root, name = self._root_of(package_root, None)
-        view = self._view(root, name, package_root)
+        name = ntpath.relpath(real_path(package_root), real_path(self.scope.root)).replace("\\", "/") if inside else package_root.name
+        view = self._view(name, package_root)
         if via_current:
             if view.local.current.status != "valid":
                 raise NotFound(view.local.current.problem or f'"current" path does not exist: {candidate}')
@@ -944,76 +784,18 @@ class Catalog:
                 version = valid[-1].name if valid else None
         return Resolved(view, version, via_current, is_tracker, named_version=named)
 
-    def _require_system_path(self, package_root: Path, mode: str | None) -> None:
-        """Refuse, in an elevated run, a path that is not in the system root or a trusted ad-hoc root (D31).
-
-        A catalog with no roots (``resolve_package_path``) can only ask whether the folder is admin-only.
-        """
-        if mode not in (None, "system"):
-            raise UntrustedLocation(f"Refusing mode {mode} in an elevated run: an elevated gupkg acts only on system packages")
-        reason = self.system.directory_untrusted_reason(package_root)
-        if reason is not None:
-            raise UntrustedLocation(f"Refusing {package_root} in an elevated run: {reason}")
-        if self.roots and not any(
-            (root.single and canonical_path(root.path) == canonical_path(package_root))
-            or (not root.single and is_inside(package_root, root.path))
-            for root in self._trusted_roots()
-        ):
-            raise UntrustedLocation(f"Refusing {package_root} in an elevated run: it is not in the system root")
-
-    def _root_of(self, package_root: Path, mode: str | None) -> tuple[Root, str]:
-        """Return the root that holds *package_root* and the package's name in it."""
-        for root in self._trusted_roots():
-            if root.single and canonical_path(root.path) == canonical_path(package_root):
-                return replace(root, mode=mode or root.mode), package_root.name
-            if not root.single and is_inside(package_root, root.path):
-                relative = ntpath.relpath(real_path(package_root), real_path(root.path))
-                return replace(root, mode=mode or root.mode), relative.replace("\\", "/")
-
-        # No configured root contains it: an ad-hoc root, whose mode the install record may decide.
-        read = read_install_record(package_root)
-        recorded = read.record.mode if read.record is not None else None
-        return Root(package_root.parent, mode or recorded, adhoc=True), package_root.name
-
-
-def resolve_package_path(path: Path | str, system: System) -> Resolved:
-    """Resolve a path to a package with no settings, for callers that have only a ``System``.
-
-    Parameters
-    ----------
-    path : Path or str
-        A package root, a version directory, ``_check_updates`` or ``current``.
-    system : System
-        Boundary used to read ``current`` and to refuse untrusted locations in an elevated run.
-
-    Returns
-    -------
-    Resolved
-        The package view (with no registry) and the selected version.
-
-    Raises
-    ------
-    NotFound
-        If the path is not a package.
-    UntrustedLocation
-        If an elevated run is given a folder that standard users can modify.
-    """
-    return Catalog(system)._resolve_path(Selector(str(path), "path", path=Path(path)))
-
 
 # ---------------------------------------------------------------------------
 # Small helpers
 # ---------------------------------------------------------------------------
 
 
-def _package_path(root: Root, name: str) -> Path | None:
+def _package_path(root: Path, name: str) -> Path | None:
     """Return the package root of *name* in *root*, or ``None`` for a name that could leave the root."""
-    if root.single:
-        return root.path if root.path.name.casefold() == name.casefold() else None
     parts = name.split("/")
     if any(not part or part in (".", "..") or part.startswith(".") or ":" in part or "\\" in part for part in parts):
         return None
-    return root.path.joinpath(*parts)
+    return root.joinpath(*parts)
 
 
 def _is_local_package(path: Path, *, allow_link: bool = False) -> bool:
@@ -1024,16 +806,17 @@ def _is_local_package(path: Path, *, allow_link: bool = False) -> bool:
         return False
 
 
-def _qualified(name: str, matches: Sequence[tuple[Root, str, Path]]) -> list[str]:
-    """Return the ``mode:name`` selectors that tell the matches apart."""
-    return [f"{root.mode or 'path'}:{name}" for root, _, _ in matches]
+def manifest_modes(manifest_path: Path) -> tuple[str, ...] | None:
+    """Return the ``modes`` of the ``pkg.toml`` at *manifest_path*, or ``None`` when it cannot be read."""
+    try:
+        return parse_manifest(manifest_path.read_text(encoding="utf-8-sig")).modes
+    except (OSError, UnicodeDecodeError, ManifestError, ValueError):
+        return None
 
 
 def _matches(view: PackageView, filters: ListFilter) -> bool:
     """Return whether *view* passes *filters*."""
     if filters.statuses is not None and view.status not in filters.statuses:
-        return False
-    if filters.modes is not None and view.mode not in filters.modes:
         return False
     if filters.query is not None and filters.query.casefold() not in view.name.casefold():
         return False

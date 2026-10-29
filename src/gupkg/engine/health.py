@@ -4,12 +4,12 @@
 non-empty, whether every effect of the install record is on the machine (a deleted shim, a missing ``PATH`` entry, a changed
 shortcut), whether the files of ``App`` still match the fingerprint recorded at install time (decision D41), whether the
 version directory still matches the fingerprint that the followed registry publishes (decision D29), and what is
-unverified about the install (skipped checksums, an origin that was not verified, shadowing across modes). It reads and
+unverified about the install (skipped checksums, an origin that was not verified). It reads and
 reports; it never repairs. ``gupkg.engine.lifecycle.check`` repairs with ``--fix`` by running the install repair plan.
 
 Usage and API
 -------------
-Call ``diagnose(system, view, elevated=..., record_manifest=..., shadowing=...)``; the ``Diagnosis`` lists problems (what
+Call ``diagnose(system, view, elevated=..., record_manifest=...)``; the ``Diagnosis`` lists problems (what
 makes the package unhealthy), notes (what is only worth knowing) and the keys of drifted effects, which the repair plan
 applies again.
 
@@ -61,7 +61,7 @@ class Diagnosis:
     problems : tuple of Problem
         What makes the package unhealthy.
     notes : tuple of Problem
-        What is only worth knowing: unverified installs, shadowing, effects that could not be verified.
+        What is only worth knowing: unverified installs, effects that could not be verified.
     drifted : frozenset
         The ``effect_key`` of recorded effects that are missing or changed, for the repair plan.
     """
@@ -83,7 +83,7 @@ class Diagnosis:
 
 
 def diagnose(
-    system: System, view: PackageView, *, elevated: bool, record_manifest: bool, shadowing: Sequence[str] = ()
+    system: System, view: PackageView, *, elevated: bool, record_manifest: bool
 ) -> Diagnosis:
     """Diagnose one package.
 
@@ -97,8 +97,6 @@ def diagnose(
         Whether the run is elevated (the user's environment is then not read).
     record_manifest : bool
         The global ``install.record_manifest`` setting; when off, ``App`` files are not compared.
-    shadowing : sequence of str
-        The shadowing warnings of the listing, filtered here to this package.
 
     Returns
     -------
@@ -116,7 +114,7 @@ def diagnose(
         problems.append(Problem("current", current.problem or f"current is {current.status}"))
     problems.extend(Problem("record", text) for text in view.problems)
     if view.installed is None:
-        return Diagnosis(False, tuple(problems), tuple(_shadow_notes(view, shadowing)))
+        return Diagnosis(False, tuple(problems), ())
 
     # The active App must exist and be non-empty; a missing one is repaired when its source can rebuild it.
     version = view.installed.version
@@ -147,7 +145,6 @@ def diagnose(
             problems.extend(_app_problems(receipt.data, view, state, manifest))
     if state is not None and manifest is not None:
         problems.extend(_registry_problems(view, version, state.path, manifest))
-    notes.extend(_shadow_notes(view, shadowing))
     return Diagnosis(True, tuple(problems), tuple(notes), frozenset(drifted))
 
 
@@ -186,10 +183,11 @@ def _receipt_notes(data: dict, view: PackageView) -> list[Problem]:
                 "verified (App not covered): the shipped App is not covered by the registry fingerprint (version 1 of the "
                 "fingerprint ignores App); its files are compared only with the install-time record",
             ))
-    if note is None and view.mode == "user":
+    mode = view.record.mode if view.record is not None else None
+    if note is None and mode == "user":
         notes.append(Problem(
             "self-reported",
-            f"recorded as {record.decision} in the receipt; in {view.mode} mode the receipt can be edited by the user, so this is "
+            f"recorded as {record.decision} in the receipt; in {mode} mode the receipt can be edited by the user, so this is "
             "the install's own report, not proof",
         ))
     return notes
@@ -251,9 +249,3 @@ def _registry_problems(view: PackageView, version: str, directory: Path, manifes
         "registry-fingerprint",
         f"{view.name} {version} does not match the fingerprint of registry {view.registry.registry}: " + "; ".join(problems[:21]),
     )]
-
-
-def _shadow_notes(view: PackageView, shadowing: Sequence[str]) -> list[Problem]:
-    """Return the shadowing warnings of the listing that name this package."""
-    mine = f"'{view.name}'"
-    return [Problem("shadowing", text) for text in shadowing if mine in text]
