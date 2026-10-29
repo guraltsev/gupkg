@@ -60,7 +60,7 @@ def build_tree(root: Path, *, location: str | None = None, bundled: bool = False
 
 def run(
     launcher: Path, *args: str, bundled_exit: int = 0, location_exit: int = 0, path_exit: int = 0, path: str = "",
-    cwd: Path | None = None, inherit: bool = False, pause: bool = False,
+    cwd: Path | None = None, inherit: bool = False, pause: bool = False, extra_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run a launcher with cmd.exe and return its output and exit code.
 
@@ -76,6 +76,7 @@ def run(
         environment = {**os.environ, **environment}
     if pause:
         environment.pop("GUPKG_NO_PAUSE")
+    environment.update(extra_env or {})
     return subprocess.run(
         [os.environ["ComSpec"], "/d", "/c", str(launcher), *args],
         capture_output=True, text=True, env=environment, check=False, cwd=str(cwd or launcher.parent),
@@ -430,6 +431,118 @@ def test_a_standard_run_never_starts_powershell(tmp_path: Path) -> None:
     result = run(version / "install.cmd")
 
     assert result.returncode == 0 and marker.exists()
+
+
+def fake_powershell(folder: Path) -> tuple[Path, Path]:
+    """Create a stand-in for PowerShell that logs the list of paths the elevated check was asked about and says all is well.
+
+    The ACL judge itself is the real one only in an elevated shell; this stand-in lets a normal shell see exactly which paths an
+    elevated launcher hands to the check (the spec string it builds). Returns the stand-in and the log file it appends to.
+    """
+    log = folder / "spec-log.txt"
+    script = folder / "fakeps.cmd"
+    script.write_text('@echo off\r\nsetlocal EnableDelayedExpansion\r\n>> "%FAKEPS_LOG%" echo !GUPKG_ACL_PATHS!\r\necho GUPKG-ACL-OK\r\n', encoding="ascii")
+    return script, log
+
+
+def spec_lines(log: Path) -> list[list[str]]:
+    """Return each logged spec as its list of ``kind:path`` entries."""
+    return [line.strip().split("|") for line in log.read_text(encoding="ascii").splitlines() if line.strip()]
+
+
+def test_an_elevated_check_of_a_gupkg_cmd_on_path_covers_its_whole_chain(tmp_path: Path) -> None:
+    """For a gupkg.cmd on PATH the check is given the tree (recursive), its version folder, and the package and root folders above."""
+    version, _marker = marker_tree(tmp_path / "root", location=False)
+    (version / "gupkg" / "gupkg.cmd").unlink()
+    app = tmp_path / "tools" / "root2" / "gupkg" / "current" / "App"
+    write_fake(app, "PATHGUPKG", "PATH_EXIT")
+    fake, log = fake_powershell(tmp_path)
+    as_elevated(version, powershell=str(fake))
+
+    result = run(version / "install.cmd", inherit=True, path=on_path(app), extra_env={"FAKEPS_LOG": str(log)})
+
+    assert result.returncode == 0, result.stderr
+    candidate = spec_lines(log)[-1]
+    assert candidate == [f"v:{app.parent}", f"n:{app.parent.parent}", f"n:{app.parent.parent.parent}", f"r:{app}"]
+
+
+def test_an_elevated_check_of_a_gupkg_exe_shim_covers_the_folder_that_holds_it_and_its_parent(tmp_path: Path) -> None:
+    """A shim in a folder (and parent) that a user can change can be swapped whatever its own ACL says: both folders are checked."""
+    version, _marker = marker_tree(tmp_path / "root", location=False)
+    (version / "gupkg" / "gupkg.cmd").unlink()
+    folder = tmp_path / "tools" / "bin"
+    folder.mkdir(parents=True)
+    shim = folder / "gupkg.exe"
+    shim.write_bytes(Path(SYSTEM32, "whoami.exe").read_bytes())
+    fake, log = fake_powershell(tmp_path)
+    as_elevated(version, powershell=str(fake))
+
+    run(version / "install.cmd", inherit=True, path=on_path(folder), extra_env={"FAKEPS_LOG": str(log)})
+
+    assert spec_lines(log)[-1] == [f"n:{folder}", f"n:{folder.parent}", f"s:{shim}"]
+
+
+def test_an_elevated_check_of_the_location_gupkg_covers_its_version_package_and_root_folders(tmp_path: Path) -> None:
+    """A gupkg-location that names a tree under a user-writable parent is checked up the chain, as a bundled gupkg is."""
+    version, _marker = marker_tree(tmp_path / "root", location=True)
+    fake, log = fake_powershell(tmp_path)
+    as_elevated(version, powershell=str(fake))
+
+    result = run(version / "install.cmd", inherit=True, extra_env={"FAKEPS_LOG": str(log)})
+
+    app = tmp_path / "root" / "gupkg" / "current" / "App"
+    assert result.returncode == 0, result.stderr
+    spec = spec_lines(log)[-1]
+    assert spec[-4:] == [f"v:{app.parent}", f"n:{app.parent.parent}", f"n:{app.parent.parent.parent}", f"r:{app}"]
+    assert f"n:{tmp_path / 'root' / '.gupkg' / 'gupkg-location'}" in spec
+
+
+def run_checker(specs: str, *, constrained: bool = False) -> subprocess.CompletedProcess[str]:
+    """Run the launcher's fixed PowerShell check directly, on *specs*, optionally in Constrained Language Mode."""
+    text = launcher_text("install")
+    script = text[text.rindex("#GUPKG-PS-BEGIN"):]
+    prefix = "$ExecutionContext.SessionState.LanguageMode = 'ConstrainedLanguage'\n" if constrained else ""
+    command = prefix + "Invoke-Expression $env:GUPKG_TEST_SCRIPT"
+    return subprocess.run(
+        [SYSTEM32 + "\\WindowsPowerShell\\v1.0\\powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command],
+        capture_output=True, text=True, check=False, env={**os.environ, "GUPKG_ACL_PATHS": specs, "GUPKG_TEST_SCRIPT": script},
+    )
+
+
+def make_shim(folder: Path, target_line: str) -> Path:
+    """Create `<folder>/gupkg.exe` with a config whose `target` line is *target_line*; return the shim."""
+    folder.mkdir(parents=True)
+    shim = folder / "gupkg.exe"
+    shim.write_bytes(b"MZ")
+    (folder / "gupkg.config.toml").write_text(target_line + "\nforward_arguments = true\n", encoding="utf-8")
+    return shim
+
+
+def test_the_checker_refuses_a_shim_whose_target_is_not_an_absolute_path(tmp_path: Path) -> None:
+    """A relative target would be resolved against the checker's own current directory: it is refused with a clear line."""
+    shim = make_shim(tmp_path / "bin", 'target = "gupkg.cmd"')
+    (tmp_path / "bin" / "gupkg.cmd").write_text("@echo off\r\n", encoding="ascii")
+
+    result = run_checker(f"s:{shim}")
+
+    assert result.returncode == 1
+    assert "its target gupkg.cmd is not an absolute path" in result.stdout
+
+
+@pytest.mark.parametrize("constrained", [False, True], ids=["full-language", "constrained-language"])
+def test_the_checker_reads_a_shim_config_and_follows_its_target_even_in_constrained_language_mode(tmp_path: Path, constrained: bool) -> None:
+    """The `s:` kind makes no .NET method call, so it works under Constrained Language Mode (design 21.3): the target is reached and judged."""
+    target = tmp_path / "tree" / "App" / "gupkg.cmd"
+    target.parent.mkdir(parents=True)
+    target.write_text("@echo off\r\n", encoding="ascii")
+    shim = make_shim(tmp_path / "bin", 'target = "' + str(target).replace("\\", "\\\\") + '"')
+
+    result = run_checker(f"s:{shim}", constrained=constrained)
+
+    # A temporary folder is user-writable, so the verdict is a refusal, but it is a verdict on the ACLs, not a crash on the config.
+    assert result.returncode == 1 and "GUPKG-ACL-FAIL" in result.stdout
+    assert "not an absolute path" not in result.stdout and "cannot be read" not in result.stdout and "Cannot invoke" not in result.stdout + result.stderr
+    assert "is not a file" not in result.stdout
 
 
 def _elevated() -> bool:
