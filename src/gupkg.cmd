@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
-rem gupkg of this tree: the command that the root forwarder, the shims and the package launchers call.
+rem gupkg of this tree: the command that the shims and the package launchers (through gupkg-location) call.
 rem It starts only the gupkg beside this file (gupkg\gupkg.cmd). PATH, the registry, AppData, ProgramData and the
 rem current directory are never searched (design 21.3).
 

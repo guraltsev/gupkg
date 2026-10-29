@@ -1,9 +1,9 @@
 """Cover gupkg's own package: installing it from its distribution and updating it from a release (design 21.5, 21.6; D14, D27, D28).
 
 Behavior covered: installing the `gupkg` package runs its populate script, which copies the bundled tree into `App` after
-checking it against its `MANIFEST.sha256`, and writes the root forwarder, the shims and the shortcut; `gupkg self check-updates`
+checking it against its `MANIFEST.sha256`, and writes the root's gupkg-location, the shims and the shortcut; `gupkg self check-updates`
 reads RELEASES.md, writes the new version directory and populates it from the downloaded release; `self update` activates it;
-the forwarder (through `current`) needs no change; and every refusal leaves the active version unchanged: a release ZIP whose
+gupkg-location (through `current`) needs no change; and every refusal leaves the active version unchanged: a release ZIP whose
 digest differs from its RELEASES.md row is refused before anything is unpacked, a row without a digest is refused, an unpacked
 tree must match its own manifest exactly (a modified, missing or extra file), `RELEASE.txt` must name the commit of the row, the
 declared version must be the one asked for, a release of a higher major version installs nothing and names the bootstrap, the
@@ -141,8 +141,8 @@ def selfworld(tmp_path: Path) -> SelfWorld:
     return selfworld
 
 
-def test_installing_gupkg_copies_the_verified_tree_into_app_and_writes_forwarder_and_shims(tmp_path: Path) -> None:
-    """The populate script fills App from the bundled tree; the forwarder, the three shims and the Start Menu entry exist; the tree stays."""
+def test_installing_gupkg_copies_the_verified_tree_into_app_and_writes_gupkg_location_and_shims(tmp_path: Path) -> None:
+    """The populate script fills App from the bundled tree; gupkg-location, the three shims and the Start Menu entry exist; the tree stays."""
     selfworld = SelfWorld(tmp_path)
 
     result = selfworld.install()
@@ -151,27 +151,27 @@ def test_installing_gupkg_copies_the_verified_tree_into_app_and_writes_forwarder
     assert result.ok, result.error
     assert (version / "App" / "gupkg" / "_version.py").read_text(encoding="utf-8") == f'__version__ = "{OLD}"\n'
     assert (version / "gupkg" / "MANIFEST.sha256").is_file() and (version / "App" / "gupkg.cmd").is_file()
-    assert (selfworld.root_data / "gupkg.cmd").is_file() and (selfworld.root_data / "gupkg-manager.cmd").is_file()
+    assert (selfworld.root_data / "gupkg-location").read_text(encoding="ascii").splitlines() == ["gupkg\\current\\App"]
     bin_dir = selfworld.world.mode_context("user").bin_dir
     assert {"gupkg.exe", "gupkg-tui.exe", "gupkg-manager.exe"} <= {item.name for item in bin_dir.iterdir()}
     assert [path.name for path in selfworld.fake.shortcuts()] == ["gupkg manager.lnk"]
 
 
 def test_a_tree_that_does_not_match_its_manifest_is_never_installed(tmp_path: Path) -> None:
-    """An edited bundled file refuses the install: no App, no forwarder."""
+    """An edited bundled file refuses the install: no App, no gupkg-location."""
     selfworld = SelfWorld(tmp_path)
     (selfworld.distribution / "gupkg" / "gupkg" / "__init__.py").write_bytes(b"# planted\n")
 
     result = selfworld.install()
 
     assert not result.ok and "MANIFEST.sha256" in str(result.error)
-    assert not (selfworld.package / OLD / "App").exists() and not (selfworld.root_data / "gupkg.cmd").exists()
+    assert not (selfworld.package / OLD / "App").exists() and not (selfworld.root_data / "gupkg-location").exists()
 
 
 def test_self_check_updates_fetches_verifies_and_populates_the_new_version_and_update_switches(selfworld: SelfWorld) -> None:
-    """check-updates writes and populates the new version (no activation); update switches `current`; the forwarder is untouched and nothing of the old runtime is carried over."""
+    """check-updates writes and populates the new version (no activation); update switches `current`; gupkg-location is untouched and nothing of the old runtime is carried over."""
     selfworld.publish(NEW)
-    forwarder = (selfworld.root_data / "gupkg.cmd").read_bytes()
+    location = (selfworld.root_data / "gupkg-location").read_bytes()
 
     checked = selfworld.check_updates()
 
@@ -185,7 +185,7 @@ def test_self_check_updates_fetches_verifies_and_populates_the_new_version_and_u
 
     assert updated.ok, updated.error
     assert (selfworld.package / "current").resolve() == new.resolve()
-    assert (selfworld.root_data / "gupkg.cmd").read_bytes() == forwarder
+    assert (selfworld.root_data / "gupkg-location").read_bytes() == location
     assert (selfworld.package / OLD / "App" / "old_only.txt").is_file() and not (new / "App" / "old_only.txt").exists()
 
 

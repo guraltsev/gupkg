@@ -40,9 +40,3 @@ target = "$App\\gupkg-tui.cmd"
 [[shim]]
 name = "gupkg-manager"
 target = "$App\\gupkg-manager.cmd"
-
-# Only the gupkg package may declare this: it writes <root>\.gupkg\gupkg.cmd and gupkg-manager.cmd, the root forwarder
-# that the package launchers of this root use to find the installed gupkg. It points through `current`, so a new
-# version needs no change of the forwarder.
-[root_forwarder]
-target = '$PackageRoot\current\App'

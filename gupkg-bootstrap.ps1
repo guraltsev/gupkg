@@ -7,7 +7,7 @@
     SHA-256, unpacks it, and runs the install.cmd of the version directory it holds. That launcher starts the gupkg that
     the ZIP carries, which installs the package like any other: it copies the bundled gupkg into App, checks it against
     MANIFEST.sha256, creates the 'current' junction, the gupkg / gupkg-tui / gupkg-manager commands, the PATH entry and
-    the Start Menu entry, and writes the root data folder <root>\.gupkg with the forwarder that the package launchers of
+    the Start Menu entry, and writes the root data folder <root>\.gupkg with the gupkg-location file that the package launchers of
     that root use to find the installed gupkg.
 
     User scope: the ZIP is unpacked to a staging folder and its install.cmd runs from there, not elevated; gupkg copies the
@@ -278,15 +278,15 @@ try {
         return
     }
 
-    # 4. Run its install.cmd: it finds the gupkg that the distribution carries (a system root's forwarder, when there is one,
-    #    otherwise the bundled copy) and installs the package. The elevated launcher verifies everything it runs first.
+    # 4. Run its install.cmd: it finds the gupkg that the distribution carries (the bundled copy, else the gupkg named by the root's
+    #    gupkg-location file, else one on PATH) and installs the package. The elevated launcher verifies everything it runs first.
     Step 'Running install.cmd'
     $env:GUPKG_NO_PAUSE = '1'
     # Called directly: wrapping it in `cmd /c "<path>"` breaks when the path has an ampersand (cmd strips the quotes).
     & "$versionDir\install.cmd"
     if ($LASTEXITCODE -ne 0) { throw "install.cmd failed (exit $LASTEXITCODE)." }
     Step 'Done. Open a NEW terminal, then try:  gupkg --help'
-    if ($Scope -eq 'system') { Step "The root forwarder is $Root\.gupkg\gupkg.cmd; package launchers of this root now find the installed gupkg through it." }
+    if ($Scope -eq 'system') { Step "The root setting is $Root\.gupkg\gupkg-location; package launchers of this root now find the installed gupkg through it." }
 }
 catch {
     [Console]::Error.WriteLine("[gupkg] ERROR: $($_.Exception.Message)")

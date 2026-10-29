@@ -1,7 +1,7 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
-rem gupkg-manager of this tree: the general manager program (the `gupkg manager` command, the gupkg-manager shim and the
-rem root forwarder's gupkg-manager.cmd start it). It starts only the program beside this file; nothing is searched.
+rem gupkg-manager of this tree: the general manager program (the `gupkg manager` command, and the gupkg-manager shim
+rem start it). It starts only the program beside this file; nothing is searched.
 
 set "GUPKG_TARGET=%~dp0gupkg\gupkg-manager.cmd"
 if not exist "%GUPKG_TARGET%" goto :missing
