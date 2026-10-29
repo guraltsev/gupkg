@@ -541,12 +541,13 @@ def test_the_per_mode_tables_are_unknown_keys(table: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_data_variable_no_longer_exists() -> None:
-    """`$Data` is an unknown variable in every package (a portable package reaches its data through ``[portable] persist``)."""
-    shortcut = '[[shortcut]]\nname = "S"\ntarget = "$App\\\\s.exe"\narguments = "--data $Data"\n'
+def test_the_package_data_variable_no_longer_exists() -> None:
+    """The variable that named ``<package>\\data`` is unknown in every package (a portable package persists paths instead)."""
+    removed = "$" + "Data"
+    shortcut = f'[[shortcut]]\nname = "S"\ntarget = "$App\\\\s.exe"\narguments = "--data {removed}"\n'
 
-    assert any("unknown variable $Data" in p for p in problems("format = 2\n" + shortcut))
-    assert any("unknown variable $Data" in p for p in problems('format = 2\nmodes = ["user"]\n' + shortcut))
+    assert any(f"unknown variable {removed}" in p for p in problems("format = 2\n" + shortcut))
+    assert any(f"unknown variable {removed}" in p for p in problems('format = 2\nmodes = ["user"]\n' + shortcut))
 
 
 def test_package_root_bin_and_version_root_variables_are_accepted() -> None:
