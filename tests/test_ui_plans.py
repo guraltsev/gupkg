@@ -155,6 +155,6 @@ def test_the_package_list_reader_drops_rows_it_cannot_act_on() -> None:
 
     (row,) = read_packages(document)
 
-    assert (row.target, row.mode, row.status, row.newest_known) == ("alpha", "user", "outdated", "2.0")
+    assert (row.target, row.status, row.newest_known) == ("alpha", "outdated", "2.0")
     assert read_packages(head("list")) == []
     assert read_packages({key: value for key, value in document.items() if key != "mode"}) == []

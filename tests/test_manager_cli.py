@@ -3,7 +3,7 @@
 Behaviour covered: ``update --all --yes`` plans, runs and exits 0; ``update --all`` with nobody to ask (no terminal, no ``--yes``, or ``--json``) changes nothing and exits 5; at a terminal
 the one question is asked and a no changes nothing (5); a checksum-less package under the default ``ask`` policy in a ``--yes`` run is refused (exit 3) while the others run;
 ``--json`` prints exactly one document with the CLI's head and the human text goes to standard error; a failing target gives the CLI's code; ``check-updates --all`` and ``check`` run as one
-call each; ``--all`` is required; an elevated shell, an unreadable package list and a missing terminal for the browser are refused with their own exit codes.
+call each; ``--all`` is required; an elevated run from a gupkg tree that standard users can change, an unreadable package list and a missing terminal for the browser are refused with their own exit codes.
 
 Real: the command line of ``gupkg-manager``, the batch flows and real subprocesses. Mocked: the ``gupkg`` executable (a scripted double), the machine (``FakeSystem``) and the console streams.
 Out of scope: the real CLI behind the real launcher (``test_manager_real_cli.py``) and the screens.
@@ -54,7 +54,7 @@ def schedule_update_all(fake: FakeGupkg, tmp_path: Path, *, missing: bool = Fals
     """Schedule an inventory with two outdated user packages (one without a checksum when *missing*), its plan and its run."""
     fake.respond("list", doc=list_doc([(name, "user", "outdated", "1.0.0", "2.0.0", str(tmp_path / "roots" / "user" / name)) for name in ("a", "b")]))
     fake.respond("update:plan", doc=plan_doc([plan_entry("a", "a", sha256="present"), plan_entry("b", "b", sha256="missing" if missing else "present")]))
-    schedule_run(fake, tmp_path, "user", ["a"] if missing else ["a", "b"])
+    schedule_run(fake, tmp_path, ["a"] if missing else ["a", "b"])
 
 
 def test_update_all_with_yes_runs_and_exits_zero(fake: FakeGupkg, tmp_path: Path) -> None:
@@ -124,7 +124,7 @@ def test_a_failed_target_gives_the_cli_exit_code(fake: FakeGupkg, tmp_path: Path
     """The highest failure code of the targets is the exit code."""
     schedule_update_all(fake, tmp_path)
     fake.scenario["update"].clear()
-    schedule_run(fake, tmp_path, "user", ["a", "b"], doc_entries=[entry("a"), entry("b", ok=False, status="failed", code=3, error={"code": "x", "message": "disk full"})])
+    schedule_run(fake, tmp_path, ["a", "b"], doc_entries=[entry("a"), entry("b", ok=False, status="failed", code=3, error={"code": "x", "message": "disk full"})])
 
     code, out, _ = manager(tmp_path, fake, "update", "--all", "--yes")
 
@@ -144,7 +144,7 @@ def test_check_updates_all_is_one_call_without_questions(fake: FakeGupkg, tmp_pa
     """``check-updates --all`` needs neither ``--yes`` nor a terminal: one call carries every installed or local package and activates nothing."""
     fake.respond("list", doc=list_doc([("a", "user", "installed", "1.0.0", None, str(tmp_path / "roots" / "user" / "a")), ("b", "user", "local", None, "1.0.0", str(tmp_path / "roots" / "user" / "b"))]))
     doc = result("check-updates", [entry("a", "check-updates", status="written"), entry("b", "check-updates", status="written")])
-    fake.respond("check-updates", doc=doc, events={"dir": logs_of(tmp_path, "user"), "result": doc, "packages": [{"name": "a", "path": str(tmp_path / "roots" / "user" / "a"), "records": []}]})
+    fake.respond("check-updates", doc=doc, events={"dir": logs_of(tmp_path), "result": doc, "packages": [{"name": "a", "path": str(tmp_path / "roots" / "user" / "a"), "records": []}]})
 
     code, out, _ = manager(tmp_path, fake, "check-updates", "--all")
 
@@ -156,7 +156,7 @@ def test_check_is_one_read_only_call(fake: FakeGupkg, tmp_path: Path) -> None:
     """The health check lists every package and asks the CLI once; without ``--fix`` it changes nothing and needs no confirmation."""
     fake.respond("list", doc=list_doc([("a", "user", "installed", "1.0.0", None, str(tmp_path / "roots" / "user" / "a"))]))
     doc = result("check", [entry("a", "check", status="healthy")])
-    fake.respond("check", doc=doc, events={"dir": logs_of(tmp_path, "user"), "result": doc, "packages": [{"name": "a", "path": str(tmp_path / "roots" / "user" / "a"), "records": []}]})
+    fake.respond("check", doc=doc, events={"dir": logs_of(tmp_path), "result": doc, "packages": [{"name": "a", "path": str(tmp_path / "roots" / "user" / "a"), "records": []}]})
 
     code, out, _ = manager(tmp_path, fake, "check")
 
@@ -181,11 +181,11 @@ def test_all_is_required(fake: FakeGupkg, tmp_path: Path, command: str) -> None:
     assert code == 2 and "needs --all" in err and fake.calls() == []
 
 
-def test_an_elevated_shell_is_refused(fake: FakeGupkg, tmp_path: Path) -> None:
-    """The programs are standard-user programs that call the elevated CLI; started elevated they refuse (exit 2) before calling anything."""
+def test_an_elevated_run_from_a_gupkg_tree_that_standard_users_can_change_is_refused(fake: FakeGupkg, tmp_path: Path) -> None:
+    """The one refusal left: an elevated run trusts only an admin-only gupkg tree (exit 2, before any call); the elevated shell itself is no reason."""
     code, _, err = manager(tmp_path, fake, "update", "--all", "--yes", elevated=True)
 
-    assert code == 2 and "not started from an elevated shell" in err and fake.calls() == []
+    assert code == 2 and "admin-only" in err and fake.calls() == []
 
 
 def test_an_unreadable_package_list_is_a_failure(fake: FakeGupkg, tmp_path: Path) -> None:

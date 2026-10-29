@@ -122,7 +122,7 @@ class PackageActions:
         async def job(session: BatchSession, sink: Sink, interaction: Interaction) -> BatchOutcome:
             """Run ``registry sync`` for the default root; it names no package."""
             logs = env.settings.root / ".gupkg" / "logs"
-            return await session.run([Step("registry sync", ("registry", "sync"), (), logs, False)])
+            return await session.run([Step("registry sync", ("registry", "sync"), (), logs)])
 
         self._start("Synchronise the registry", job)
 
@@ -132,7 +132,7 @@ class PackageActions:
 
         async def job(session: BatchSession, sink: Sink, interaction: Interaction) -> BatchOutcome:
             """Run ``check`` for the rows."""
-            return await run_operation(env, "check", rows, session=session, options=["--fix", "--yes"] if fix else [], fix=fix)
+            return await run_operation(env, "check", rows, session=session, options=["--fix", "--yes"] if fix else [])
 
         async def before() -> bool:
             """Ask once before anything is changed."""

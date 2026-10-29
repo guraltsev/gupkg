@@ -1,9 +1,9 @@
 """The command line of ``gupkg-manager``: the browser, and the batch commands that schedules and scripts run.
 
 ``gupkg-manager`` (or ``gupkg-manager tui``) opens the browser over every package. ``gupkg-manager check-updates --all`` writes and populates the
-new versions of every package and activates nothing. ``gupkg-manager update --all [--mode M] [--yes]`` plans an update of every package that has
-a newer known version, asks once (``--yes`` answers), applies the ``[manager] checksum_missing`` policy per package and runs it grouped by mode:
-one non-elevated call and one call for all system targets, which the CLI runs in a single elevated child. ``gupkg-manager check [--fix]`` is the
+new versions of every package and activates nothing. ``gupkg-manager update --all [--yes]`` plans an update of every package that has
+a newer known version, asks once (``--yes`` answers), applies the ``[manager] checksum_missing`` policy per package and runs it in one call. The
+program manages the scope of its own process: an administrator's shell the system root, any other shell the user's. ``gupkg-manager check [--fix]`` is the
 health check. All of them take ``--json`` for one result document on standard output (human text then goes to standard error). Everything the
 manager does to a package is a call to the ``gupkg`` of the same gupkg tree.
 
@@ -80,7 +80,7 @@ def main(
     except SystemExit as stop:
         return int(stop.code or 0)
 
-    # Start: refuse an elevated shell, find the sibling gupkg, read the settings.
+    # Start: find the sibling gupkg, build the run's scope and read its settings.
     try:
         environment = build_environment(args, location=location, system=system, env=env, command=command)
     except StartupError as error:
@@ -118,7 +118,7 @@ async def _batch_command(args: argparse.Namespace, environment: UiEnvironment, s
 
     # Inventory: one read-only call; without it nothing can be planned.
     try:
-        rows = pick(await load_inventory(environment), command, mode=args.mode)
+        rows = pick(await load_inventory(environment), command)
     except ClientError as error:
         print(f"{PROGRAM}: error: the package list could not be read: {error}", file=stderr)
         return EXIT_FAILED
@@ -199,12 +199,11 @@ def _parser() -> argparse.ArgumentParser:
         leaf = commands.add_parser(name, help=text, description=text)
         if name != "check":
             leaf.add_argument("--all", action="store_true", help="act on every package (required)")
-        leaf.add_argument("--mode", choices=("system", "user", "portable"), help="only the packages of this install mode")
         leaf.add_argument("--json", action="store_true", help="print one JSON result document on standard output; human text goes to standard error")
         leaf.add_argument("--yes", action="store_true", help="answer the confirmation (and run without any question)")
         if name == "check-updates":
             leaf.add_argument("--no-download", action="store_true", help="write the version directories only; download nothing")
         if name == "check":
             leaf.add_argument("--fix", action="store_true", help="re-apply the integration and rebuild a missing App")
-    parser.set_defaults(all=False, json=False, yes=False, mode=None, no_download=False, fix=False)
+    parser.set_defaults(all=False, json=False, yes=False, no_download=False, fix=False)
     return parser

@@ -42,18 +42,19 @@ class PackageRow:
 
     Attributes
     ----------
-    name, mode, status : str
+    name, status : str
         Identity and derived status (``installed``, ``outdated``, ``broken``, ``local``, ``available`` ...).
     version, newest_known, path, following : str or None
         The active version, the newest version an update would activate, the package folder and the followed registry entry.
     warnings : tuple of str
         What the catalog warns about for this package.
     target_text : str, optional
-        A target to use instead of ``mode:name``, such as a folder the person named (an unmanaged version directory has no mode yet).
+        A target to use instead of the name, such as a folder the person named.
+    restriction, restriction_reason : str or None
+        For a registry package the run's mode cannot install, ``system only`` or ``user only`` and the refusal text that goes with it.
     """
 
     name: str
-    mode: str
     status: str
     version: str | None
     newest_known: str | None
@@ -61,6 +62,8 @@ class PackageRow:
     following: str | None
     warnings: tuple[str, ...] = ()
     target_text: str | None = None
+    restriction: str | None = None
+    restriction_reason: str | None = None
 
     @property
     def target(self) -> str:
@@ -80,10 +83,8 @@ class PlannedTarget:
         The target as it was given to ``--plan``.
     state : str
         ``ready`` (a plan exists), ``up-to-date`` (nothing to do) or ``failed`` (no plan; see ``code`` and ``message``).
-    package, mode, version, previous : str or None
+    package, version, previous : str or None
         What the plan reports.
-    requires_elevation : bool
-        Whether running it needs the administrator token.
     checksum : ChecksumPlan or None
         The download's checksum status, ``None`` when the plan downloads nothing.
     code, message : str or None
@@ -97,10 +98,8 @@ class PlannedTarget:
     target: str
     state: str
     package: str | None = None
-    mode: str | None = None
     version: str | None = None
     previous: str | None = None
-    requires_elevation: bool = False
     checksum: ChecksumPlan | None = None
     code: str | None = None
     message: str | None = None
@@ -116,7 +115,7 @@ def _text(value: Any) -> str | None:
 def read_packages(document: Mapping[str, Any]) -> list[PackageRow]:
     """Return the rows of a ``list`` (or ``info``) document; a row without a text name and status, or a document without a text mode, is left out (it cannot be acted on).
 
-    The mode is the run's: the document carries it once, and every row takes it.
+    The document carries the run's mode once; the rows carry none.
     """
     rows: list[PackageRow] = []
     mode = _text(document.get("mode"))
@@ -130,8 +129,8 @@ def read_packages(document: Mapping[str, Any]) -> list[PackageRow]:
             continue
         warnings = tuple(literal(text) for text in item.get("warnings", ()) if isinstance(text, str))
         rows.append(PackageRow(
-            name, mode, status, _text(item.get("version")), _text(item.get("newest_known")), _text(item.get("path")),
-            _text(item.get("following")), warnings,
+            name, status, _text(item.get("version")), _text(item.get("newest_known")), _text(item.get("path")),
+            _text(item.get("following")), warnings, None, _text(item.get("restriction")), _text(item.get("restriction_reason")),
         ))
     return rows
 
@@ -242,8 +241,8 @@ def read_plan(document: Mapping[str, Any], targets: Sequence[str]) -> list[Plann
                 planned.append(PlannedTarget(target, "failed", package=_text(plan.get("package")), code="unreadable-plan", message=str(error), exit_code=4))
                 continue
             planned.append(PlannedTarget(
-                target, "ready", _text(plan.get("package")), _text(plan.get("mode")), _text(plan.get("version")),
-                _text(plan.get("previous")), plan.get("requires_elevation") is True, checksum, None, None, 0,
+                target, "ready", _text(plan.get("package")), _text(plan.get("version")),
+                _text(plan.get("previous")), checksum, None, None, 0,
                 tuple(literal(note) for note in plan.get("notes", ()) if isinstance(note, str)),
             ))
             continue
@@ -253,15 +252,15 @@ def read_plan(document: Mapping[str, Any], targets: Sequence[str]) -> list[Plann
         error = result.get("error") if isinstance(result.get("error"), Mapping) else {}
         package = _text(result.get("package"))
         if entry.get("ok") is True and result.get("status") == "up-to-date":
-            planned.append(PlannedTarget(target, "up-to-date", package, _text(result.get("mode")), _text(result.get("version"))))
+            planned.append(PlannedTarget(target, "up-to-date", package, _text(result.get("version"))))
         elif error.get("code") == INVALID_CHECKSUM_CODE:
             planned.append(PlannedTarget(
-                target, "failed", package, _text(result.get("mode")), checksum=ChecksumPlan(INVALID, "", "", False),
+                target, "failed", package, checksum=ChecksumPlan(INVALID, "", "", False),
                 code=INVALID_CHECKSUM_CODE, message=_text(error.get("message")), exit_code=exit_code or 2,
             ))
         else:
             planned.append(PlannedTarget(
-                target, "failed", package, _text(result.get("mode")), code=_text(error.get("code")) or "failed",
+                target, "failed", package, code=_text(error.get("code")) or "failed",
                 message=_text(error.get("message")) or "the plan failed", exit_code=exit_code or 3,
             ))
     return planned
@@ -281,7 +280,7 @@ async def decide_targets(
     planned : sequence of PlannedTarget
         The targets from ``read_plan``.
     policy_of : callable
-        Returns ``ask``, ``refuse`` or ``skip`` for a target (it may differ between user and system targets).
+        Returns ``ask``, ``refuse`` or ``skip`` for a target.
     interactive : bool
         Whether someone can answer. ``False`` makes ``ask`` behave as ``refuse`` (a schedule, ``--yes``, no terminal).
     ask : callable, optional
