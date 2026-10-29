@@ -2,7 +2,7 @@
 
 ``gupkg-manager`` and ``gupkg-tui`` are each a single ``UiApp``. Opening a package, running an operation and going back push and pop screens
 of this one application (the screen below keeps its filter, selection and scroll position); nothing restarts. The app keeps what the status line shows
-(the program's own counts, the state of the run, the path of the log) and refreshes the line on every screen when it changes. A terminal that is too narrow
+(the run's scope, the program's own counts, the state of the run, the path of the log) and refreshes the line on every screen when it changes. A terminal that is too narrow
 or short loses only the tail of a clipped line, never an action.
 
 Usage and API
@@ -37,7 +37,7 @@ class UiApp(App[int]):
     Parameters
     ----------
     env : UiEnvironment
-        The client, settings and elevation ability of the program.
+        The client, the settings and the scope of the program; the title and the status line say which scope it manages.
     """
 
     CSS = FRAME_CSS
@@ -47,6 +47,7 @@ class UiApp(App[int]):
     def __init__(self, env: UiEnvironment) -> None:
         super().__init__()
         self.env = env
+        self.sub_title = env.scope_label
         self.last_outcome: BatchOutcome | None = None
         self.log_path: str | None = None
 
@@ -56,9 +57,14 @@ class UiApp(App[int]):
         """Return the program's own pieces of the status line (counts, registry); the subclass overrides this."""
         return []
 
-    def status_line(self) -> str:
-        """Return the status line: the program's counts and registry, then where the latest log is."""
-        parts = [*self.status_parts()]
+    def status_line(self, own: str = "") -> str:
+        """Return the status line: the run's scope, the program's counts and registry, then where the latest log is.
+
+        The scope comes first as ``user · <root>`` or ``system · <root>`` (the root shortened: ``~`` for the home folder, the middle of a long path as ``…``),
+        so it is visible at 80 columns; a narrow terminal then clips the tail (the registry state), never the scope. The window title (``sub_title``)
+        carries the full root. *own* is what a screen adds about itself (the package view: the package and its status), right after the scope.
+        """
+        parts = [literal(self.env.scope_text, limit=80), own, *self.status_parts()]
         if self.last_outcome is not None and self.last_outcome.logs():
             parts.append(f"log: {literal(self.last_outcome.logs()[-1], limit=300)}")
         return " · ".join(part for part in parts if part)

@@ -1,8 +1,8 @@
 """The browser: a table of every package with filter, selection and the operations on keys.
 
-The browser lists every package of every root (name, version, mode, status, registry). Up and Down move, Enter opens the package view, ``/`` filters by text,
+The browser lists every package of the run's root (name, version, status, registry). Up and Down move, Enter opens the package view, ``/`` filters by text,
 and the operations are keys: check for updates (``c``, all with ``C``), update (``u``, all outdated with ``U``), install or repair (``i``), uninstall
-(``x``), health check (``h``), logs (``l``), toggle the registry's packages that are not installed (``a``), synchronise the registry (``s``), reload (``r``). Opening a package, running an operation
+(``x``), health check (``h``), logs (``l``), toggle the registry's packages that are not installed (``a``; one this mode cannot install is marked ``system only`` or ``user only``), synchronise the registry (``s``), reload (``r``). Opening a package, running an operation
 and coming back never restarts the program: the browser stays below, so its filter and selection are kept, and it reloads the inventory after a run.
 
 Usage and API
@@ -69,14 +69,16 @@ class BrowserScreen(PackageActions, FrameScreen):
         return f"Enter open  / find  {shown}  c check  u update  U all  s sync  ? help  q quit"
 
     def status_text(self) -> str:
-        """Return the program's counts and registry state."""
-        return str(getattr(self.app, "status_line", lambda: "")())
+        """Return the program's scope, counts and registry state; on a package this mode cannot install, its restriction and the reason follow the scope."""
+        row = self.selected_row() if self.loaded else None
+        own = f"{literal(row.name, limit=60)} is {literal(row.restriction, limit=20)}: {literal(row.restriction_reason or '', limit=300)}" if row is not None and row.restriction else ""
+        return str(getattr(self.app, "status_line", lambda own="": own)(own))
 
     def compose_body(self) -> ComposeResult:
         """Yield the filter line (hidden until ``/``) and the table."""
-        yield Input(placeholder="filter by name, mode or status (Enter keeps it, Esc clears it)", id="filter", compact=True)
+        yield Input(placeholder="filter by name or status (Enter keeps it, Esc clears it)", id="filter", compact=True)
         table = DataTable(cursor_type="row", zebra_stripes=False)
-        table.add_columns("Name", "Version", "Mode", "Status", "Registry")
+        table.add_columns("Name", "Version", "Status", "Registry")
         yield table
 
     def on_mount(self) -> None:
@@ -109,9 +111,9 @@ class BrowserScreen(PackageActions, FrameScreen):
             )
 
     def _visible(self) -> list[PackageRow]:
-        """Return the rows that match the filter text (name, mode, status or registry entry, any case)."""
+        """Return the rows that match the filter text (name, status or registry entry, any case)."""
         needle = self.filter_text.casefold()
-        return [row for row in self.rows if not needle or needle in " ".join((row.name, row.mode, row.status, row.following or "")).casefold()]
+        return [row for row in self.rows if not needle or needle in " ".join((row.name, row.status, row.restriction or "", row.following or "")).casefold()]
 
     def _fill(self) -> None:
         """Rebuild the table from the visible rows and put the cursor back on the row that was selected."""
@@ -121,8 +123,8 @@ class BrowserScreen(PackageActions, FrameScreen):
         for row in self._visible():
             newer = f" → {row.newest_known}" if row.status == "outdated" and row.newest_known else ""
             table.add_row(
-                Text(literal(row.name, limit=60)), Text(literal(row.version or "-", limit=30)), Text(literal(row.mode, limit=12)),
-                Text(literal(row.status + newer, limit=60)), Text(literal(row.following or "-", limit=60)), key=row.target,
+                Text(literal(row.name, limit=60)), Text(literal(row.version or "-", limit=30)),
+                Text(literal(row.status + newer + (f" ({row.restriction})" if row.restriction else ""), limit=60)), Text(literal(row.following or "-", limit=60)), key=row.target,
             )
         if keep is not None and keep in [item.target for item in self._visible()]:
             table.move_cursor(row=table.get_row_index(keep))
@@ -141,6 +143,10 @@ class BrowserScreen(PackageActions, FrameScreen):
         return next((row for row in self.rows if row.target == target), None)
 
     # -- keys ----------------------------------------------------------------------
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        """Moving the cursor refreshes the status line (it names the restriction of a package this mode cannot install)."""
+        self.refresh_frame()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """Enter opens the package view of the selected package (the browser stays below)."""

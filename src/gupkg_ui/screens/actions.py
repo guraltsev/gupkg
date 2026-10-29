@@ -1,6 +1,6 @@
 """The operations a person starts from a package list or a package view, as one shared set of actions.
 
-Each action asks the questions it needs in a dialog (uninstall, purge, repair of system packages), then pushes a run screen whose job is one of the shared
+Each action asks the questions it needs in a dialog (uninstall, purge, repair, switching a version), then pushes a run screen whose job is one of the shared
 flows of ``gupkg_ui.flows``: every operation is a ``gupkg`` call (decision D44), with ``--yes`` only for the confirmations already given. Check for updates and
 update are separate operations (D11, D23). When the run screen closes, the screen that started it is told to reload what it shows.
 
@@ -122,7 +122,7 @@ class PackageActions:
         async def job(session: BatchSession, sink: Sink, interaction: Interaction) -> BatchOutcome:
             """Run ``registry sync`` for the default root; it names no package."""
             logs = env.settings.root / ".gupkg" / "logs"
-            return await session.run([Step("registry sync", ("registry", "sync"), (), logs, False)])
+            return await session.run([Step("registry sync", ("registry", "sync"), (), logs)])
 
         self._start("Synchronise the registry", job)
 
@@ -132,7 +132,7 @@ class PackageActions:
 
         async def job(session: BatchSession, sink: Sink, interaction: Interaction) -> BatchOutcome:
             """Run ``check`` for the rows."""
-            return await run_operation(env, "check", rows, session=session, options=["--fix", "--yes"] if fix else [], fix=fix)
+            return await run_operation(env, "check", rows, session=session, options=["--fix", "--yes"] if fix else [])
 
         async def before() -> bool:
             """Ask once before anything is changed."""

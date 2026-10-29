@@ -1,0 +1,79 @@
+--- manager, user, normal
+ Enter open  / find  a avail  c check  u update  U all  s sync  ? help  q quit
+ Name   Version  Status            Registry
+ alpha  1.0.0    outdated → 2.0.0  -
+ beta   1.0.0    outdated → 2.0.0  -
+ user · C:\…\tmpehww0by6\user\normal\roots\user · 2 packages · 2 outdated · 0 …
+
+--- manager, user, registry not downloaded
+ s DOWNLOAD THE REGISTRY  a avail  c check  u update  ? help  q quit
+ Name   Version  Status            Registry
+ alpha  1.0.0    outdated → 2.0.0  -
+ beta   1.0.0    outdated → 2.0.0  -
+ user · C:\…\registry_not_downloaded\roots\user · 2 packages · 2 outdated · 0 …
+
+--- manager, user, a view, restricted row highlighted
+ Enter open  / find  a hide  c check  u update  U all  s sync  ? help  q quit
+ Name   Version  Status                   Registry
+ drv    -        available (system only)  main/drv
+ alpha  1.0.0    outdated → 2.0.0         -
+ beta   1.0.0    outdated → 2.0.0         -
+ user · C:\…\roots\user · drv is system only: this package installs a driver: …
+
+--- tui, user
+ Esc quit  c check  u update  r repair  s switch  x remove  l logs  ? help
+ alpha 1.0.0  Installed: 1.0.0
+ status: outdated → 2.0.0
+ folder:
+ C:\Users\GURALT~1\AppData\Local\Temp\tmpehww0by6\user\tui\home\opt\alpha
+ Versions in the package folder
+   1.0.0          populated  (active)
+   2.0.0          populated
+ Registry versions: none
+ Tracker: none
+ Data folder: none
+ Last receipt: 1.0.0
+ Log:
+ C:\Users\GURALT~1\AppData\Local\Temp\tmpehww0by6\user\tui\home\opt\alpha\.gupk
+ g\logs\20261029T142428Z-install.log
+ user · C:\…\tmpehww0by6\user\tui\roots\user · alpha outdated
+
+--- manager, system, normal
+ Enter open  / find  a avail  c check  u update  U all  s sync  ? help  q quit
+ Name   Version  Status            Registry
+ alpha  1.0.0    outdated → 2.0.0  -
+ beta   1.0.0    outdated → 2.0.0  -
+ system · C:\…\tmpehww0by6\system\normal\sys\opt · 2 packages · 2 outdated · 0…
+
+--- manager, system, registry not downloaded
+ s DOWNLOAD THE REGISTRY  a avail  c check  u update  ? help  q quit
+ Name   Version  Status            Registry
+ alpha  1.0.0    outdated → 2.0.0  -
+ beta   1.0.0    outdated → 2.0.0  -
+ system · C:\…\registry_not_downloaded\sys\opt · 2 packages · 2 outdated · 0 b…
+
+--- manager, system, a view, restricted row highlighted
+ Enter open  / find  a hide  c check  u update  U all  s sync  ? help  q quit
+ Name   Version  Status                 Registry
+ drv    -        available (user only)  main/drv
+ alpha  1.0.0    outdated → 2.0.0       -
+ beta   1.0.0    outdated → 2.0.0       -
+ system · C:\…\sys\opt · drv is user only: this package installs a driver: run…
+
+--- tui, system
+ Esc quit  c check  u update  r repair  s switch  x remove  l logs  ? help
+ alpha 1.0.0  Installed: 1.0.0
+ status: outdated → 2.0.0
+ folder:
+ C:\Users\GURALT~1\AppData\Local\Temp\tmpehww0by6\system\tui\home\opt\alpha
+ Versions in the package folder
+   1.0.0          populated  (active)
+   2.0.0          populated
+ Registry versions: none
+ Tracker: none
+ Data folder: none
+ Last receipt: 1.0.0
+ Log:
+ C:\Users\GURALT~1\AppData\Local\Temp\tmpehww0by6\system\tui\home\opt\alpha\.gu
+ pkg\logs\20261029T142428Z-install.log
+ system · C:\…\Temp\tmpehww0by6\system\tui\sys\opt · alpha outdated

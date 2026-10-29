@@ -1,4 +1,4 @@
-"""The package view: one package's versions, mode, link, data folder, last receipt and log, with its operations on keys.
+"""The package view: one package's versions, link, data folder, last receipt and log, with its operations on keys.
 
 The view answers "what is this package and what can I do with it": its identity and active version first (taken from the directory identity, not from
 metadata), then warnings and problems, then the versions in the package root, the registry's versions, the tracker, the link, the data folder and the last receipt and
@@ -7,7 +7,7 @@ logs (``l``). Every operation is a ``gupkg`` call through the shared flows; afte
 
 Usage and API
 -------------
-Push ``PackageScreen(target, row=None, root=False)`` in either program. ``target`` is a name, a ``mode:name`` or a folder; the view reads ``gupkg info <target> --json``.
+Push ``PackageScreen(target, row=None, root=False)`` in either program. ``target`` is a name or a folder; the view reads ``gupkg info <target> --json``.
 With ``root=True`` (``gupkg-tui``) Escape and ``q`` leave the program; otherwise Escape returns to the screen below.
 
 Implementation Approach
@@ -18,6 +18,7 @@ worker; a failed read is shown as an error line in the view and the operations t
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 from rich.text import Text
@@ -42,7 +43,9 @@ def info_lines(info: PackageInfo) -> list[Text]:
     installed = literal(row.version) if row.version else "not installed"
     newer = f" → {literal(row.newest_known)}" if row.newest_known and row.newest_known != row.version else ""
     lines = [Text(f"{literal(row.name)} {literal(row.version or '')}  Installed: {installed}", style="bold")]
-    lines.append(Text(f"mode: {literal(row.mode)}   status: {literal(row.status)}{newer}"))
+    lines.append(Text(f"status: {literal(row.status)}{newer}"))
+    if row.restriction:
+        lines.append(Text(f"{literal(row.restriction)}: {literal(row.restriction_reason or '', limit=400)}", style="yellow"))
 
     # Problems and warnings first: they change what the person decides.
     for reason in info.problems:
@@ -88,7 +91,7 @@ class PackageScreen(PackageActions, FrameScreen):
     Parameters
     ----------
     target : str
-        A package name, ``mode:name`` or a folder.
+        A package name or a folder.
     row : PackageRow, optional
         The inventory row the view was opened from (shown at once, before the details arrive).
     root : bool, default=False
@@ -122,9 +125,8 @@ class PackageScreen(PackageActions, FrameScreen):
     def status_text(self) -> str:
         """Return the package's status and the program's status line."""
         row = self.info.row if self.info is not None else self._row
-        base = str(getattr(self.app, "status_line", lambda: "")())
-        own = f"{literal(row.name)} {literal(row.status)} ({literal(row.mode)})" if row is not None else literal(self._target, limit=120)
-        return f"{own} · {base}" if base else own
+        own = f"{literal(row.name)} {literal(row.status)}" if row is not None else literal(self._target, limit=120)
+        return str(getattr(self.app, "status_line", lambda own="": own)(own))
 
     def compose_body(self) -> ComposeResult:
         """Yield the scrolling text of the view."""
@@ -151,10 +153,7 @@ class PackageScreen(PackageActions, FrameScreen):
             info, self._error = None, str(error)
         self.info = info if info is not None else self.info
         if info is not None:
-            self._row = PackageRow(
-                info.row.name, info.row.mode, info.row.status, info.row.version, info.row.newest_known, info.row.path, info.row.following, info.row.warnings,
-                self._target if Path(self._target).is_absolute() else None,
-            )
+            self._row = replace(info.row, target_text=self._target if Path(self._target).is_absolute() else None)
         lines = info_lines(self.info) if self.info is not None else []
         if self._error:
             lines.insert(0, Text(f"Error: {literal(self._error)}", style="bold red"))

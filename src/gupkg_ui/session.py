@@ -1,7 +1,6 @@
 """Run the CLI calls of one batch in order, show their events as they arrive, and combine what they report.
 
-A batch is a list of ``Step`` objects, each one ``gupkg`` call (for example one non-elevated ``update`` call for the user targets and
-one call for the system targets, which the CLI runs in a single elevated child). ``BatchSession.run`` starts them one after another,
+A batch is a list of ``Step`` objects, each one ``gupkg`` call (usually one call that carries every target). ``BatchSession.run`` starts them one after another,
 follows each call's events file, hands the styled lines to a ``Sink`` while the call runs, and returns a ``BatchOutcome`` with one result
 entry per target. The outcome fails closed: a call that could not be started, whose result cannot be read, whose events file lacks
 ``run_end`` or that returns no entry for a target makes that target a failed one, never an ``ok`` one. Cancelling (decision D37) asks
@@ -57,22 +56,19 @@ class Step:
     Attributes
     ----------
     label : str
-        What the call is for, shown above its output (``user targets``).
+        What the call is for, shown above its output (``update``).
     args : tuple of str
         The command word, its options and, after ``--``, its targets.
     targets : tuple of str
         The targets the call acts on (qualified names); the call must answer for each of them. Empty for a call without targets.
     events_dir : Path or None
         The ``.gupkg\\logs`` folder where the call writes its events file.
-    elevated : bool
-        Whether the CLI will run this call in an elevated child.
     """
 
     label: str
     args: tuple[str, ...]
     targets: tuple[str, ...] = ()
     events_dir: Path | None = None
-    elevated: bool = False
 
 
 @dataclass(frozen=True)
@@ -130,16 +126,10 @@ class BatchOutcome:
         return list(seen)
 
 
-def unqualified(target: str) -> str:
-    """Return the package name of a target (a bare name stays as it is; a leftover ``mode:`` prefix is dropped)."""
-    mode, colon, rest = target.partition(":")
-    return rest if colon and rest and mode in ("system", "user", "portable") else target
-
-
-def synthetic_entry(package: str, operation: str, status: str, code: int, message: str, *, ok: bool = False, mode: str | None = None) -> dict[str, Any]:
+def synthetic_entry(package: str, operation: str, status: str, code: int, message: str, *, ok: bool = False) -> dict[str, Any]:
     """Return a result entry for a target the UI itself decided (``refused``, ``skipped``, ``failed`` with no result)."""
     return {
-        "package": unqualified(package), "operation": operation, "ok": ok, "status": status, "version": None, "previous": None, "mode": mode,
+        "package": package, "operation": operation, "ok": ok, "status": status, "version": None, "previous": None,
         "exit_code": code, "receipt": None, "log": None, "warnings": [],
         "error": {"code": status, "message": message},
     }
@@ -264,7 +254,7 @@ class BatchSession:
 
     async def _run_step(self, step: Step, renderer: EventRenderer, outcome: BatchOutcome) -> None:
         """Run one call, stream its events to the sink and add its trusted entries (or its failures) to *outcome*."""
-        self._sink.lines([Text(f"▶ {literal(step.label, limit=200)}" + ("  (administrator rights, one prompt)" if step.elevated else ""), style="bold")])
+        self._sink.lines([Text(f"▶ {literal(step.label, limit=200)}", style="bold")])
         self._sink.status(f"Running: {literal(step.label, limit=100)}")
         self._stop = StopRequest(self._temp_dir)
 
@@ -305,7 +295,7 @@ class BatchSession:
         )
         code = result.exit_code if type(result.exit_code) is int and result.exit_code else EXIT_INTERNAL
         for target in step.targets:
-            if unqualified(target) not in answered:
+            if target not in answered:
                 outcome.entries.append(synthetic_entry(target, operation, "failed", code, reason))
         if not step.targets and not entries and not result.ok:
             outcome.entries.append(synthetic_entry("(no target)", operation, "failed", code, reason))

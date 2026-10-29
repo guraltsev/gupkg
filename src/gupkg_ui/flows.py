@@ -2,9 +2,8 @@
 
 Neither UI program changes anything itself. An update is planned with ``gupkg update <targets> --plan --json``, the plan is shown and confirmed **once**,
 and the ``[manager] checksum_missing`` policy is applied per package (``ask`` asks once per package, ``refuse`` and a non-interactive ``ask`` do not run
-the package, ``skip`` relays ``--skip-checksum=setting``, a malformed declared hash is never skippable). The targets then run grouped by mode: one
-non-elevated call for the user targets and one call for all system targets, which the CLI runs in a single elevated child (one administrator prompt).
-The combined result is the end of the log. With ``[cleanup] auto = true`` an update ends with a cleanup (decision D43). Check and update stay separate
+the package, ``skip`` relays ``--skip-checksum=setting``, a malformed declared hash is never skippable). The targets then run in one call of the CLI,
+which acts in the run's own scope (``gupkg_ui.steps``). The combined result is the end of the log. With ``[cleanup] auto = true`` an update ends with a cleanup (decision D43). Check and update stay separate
 operations (D11, D23). One package is a batch of one, so ``gupkg-tui`` and ``gupkg-manager`` share these flows.
 
 Usage and API
@@ -33,7 +32,7 @@ from .client import ClientError, targets_after_options
 from .interaction import Interaction
 from .plans import PackageRow, PlannedTarget, decide_targets, read_plan
 from .render import literal
-from .session import EXIT_INPUT, BatchOutcome, BatchSession, FollowUp, Sink, Step, synthetic_entry, unqualified
+from .session import EXIT_INPUT, BatchOutcome, BatchSession, FollowUp, Sink, Step, synthetic_entry
 from .startup import UiEnvironment
 from .steps import Subject, events_dir_for, make_steps, safe_subjects, subject_of
 
@@ -45,12 +44,12 @@ from .steps import Subject, events_dir_for, make_steps, safe_subjects, subject_o
 async def run_update(
     env: UiEnvironment, rows: Sequence[PackageRow], *, session: BatchSession, sink: Sink, interaction: Interaction, auto_cleanup: bool | None = None,
 ) -> BatchOutcome:
-    """Plan an update of *rows*, confirm it once, apply the checksum policy and run it grouped by mode.
+    """Plan an update of *rows*, confirm it once, apply the checksum policy and run it in one call.
 
     Parameters
     ----------
     env : UiEnvironment
-        The client, settings and whether this gupkg may ask for administrator rights.
+        The client, the settings and the scope of the run.
     rows : sequence of PackageRow
         The packages to update.
     session : BatchSession
@@ -69,7 +68,7 @@ async def run_update(
     """
     subjects, unsafe = safe_subjects("update", [subject_of(row) for row in rows])
 
-    # Plan: one non-elevated, read-only call that needs no question and no administrator rights.
+    # Plan: one read-only call that needs no question.
     try:
         document = await env.client.query(targets_after_options("update", ["--plan"], [item.target for item in subjects]))
         planned = read_plan(document, [item.target for item in subjects])
@@ -78,7 +77,7 @@ async def run_update(
         return await session.run([], extra_entries=[*unsafe, *entries])
 
     # Preview what the policy would do, without answering any question: the targets it would ask about are noted, so the plan can say so.
-    policy_of = lambda item: env.settings.checksum_policy(item.mode)  # noqa: E731 - one short rule, used twice below
+    policy_of = lambda item: env.settings.checksum_policy  # noqa: E731 - one short rule, used twice below
     would_ask: set[str] = set()
     preview = await decide_targets(
         planned, policy_of, interactive=interaction.interactive, ask=lambda item: would_ask.add(item.target) and False,
@@ -86,7 +85,7 @@ async def run_update(
 
     # Show the plan, then ask once for the whole of it (before any per-package question, so a no costs the person nothing).
     entries = [*unsafe, *refused_entries(planned, {key: value for key, value in preview.items() if key not in would_ask})]
-    lines, question = plan_lines(planned, preview, can_elevate=env.can_elevate, would_ask=would_ask)
+    lines, question = plan_lines(planned, preview, would_ask=would_ask)
     sink.lines(lines)
     pending = [item for item in planned if item.state == "ready" and (preview.get(item.target, TargetDecision(False)).run or item.target in would_ask)]
     if pending and interaction.confirm is not None:
@@ -102,15 +101,13 @@ async def run_update(
     entries = [*unsafe, *refused_entries(planned, decisions)]
     runnable = [item for item in planned if item.state == "ready" and decisions.get(item.target, TargetDecision(False)).run]
 
-    # Run: the user group first, then the one elevated call; the confirmation answers the CLI's own question (--yes).
+    # Run: one call for every target; the confirmation answers the CLI's own question (--yes).
     by_target = {subject.target: subject for subject in subjects}
     skips = {item.target: decisions[item.target].arguments for item in runnable}
-    steps, unrunnable = make_steps(
-        "update", [by_target[item.target] for item in runnable], settings=env.settings, can_elevate=env.can_elevate, options=["--yes"], skips=skips,
-    )
+    steps = make_steps("update", [by_target[item.target] for item in runnable], settings=env.settings, options=["--yes"], skips=skips)
     cleanup = env.settings.cleanup_auto if auto_cleanup is None else auto_cleanup
     follow = cleanup_follow_up(env, subjects) if cleanup else None
-    return await session.run(steps, extra_entries=[*entries, *unrunnable], follow_up=follow)
+    return await session.run(steps, extra_entries=entries, follow_up=follow)
 
 
 def refused_entries(planned: Sequence[PlannedTarget], decisions: dict[str, TargetDecision]) -> list[dict[str, Any]]:
@@ -119,52 +116,41 @@ def refused_entries(planned: Sequence[PlannedTarget], decisions: dict[str, Targe
     for item in planned:
         decision = decisions.get(item.target)
         if item.state == "up-to-date":
-            entries.append({**synthetic_entry(item.target, "update", "up-to-date", 0, "", ok=True, mode=item.mode), "version": item.version, "error": None})
+            entries.append({**synthetic_entry(item.target, "update", "up-to-date", 0, "", ok=True), "version": item.version, "error": None})
         elif decision is not None and not decision.run:
-            entries.append(synthetic_entry(item.target, "update", decision.status, EXIT_INPUT, decision.message, ok=True, mode=item.mode))
+            entries.append(synthetic_entry(item.target, "update", decision.status, EXIT_INPUT, decision.message, ok=True))
         elif item.state == "failed":
-            entries.append(synthetic_entry(item.target, "update", "failed", item.exit_code or 3, item.message or "the plan failed", mode=item.mode))
+            entries.append(synthetic_entry(item.target, "update", "failed", item.exit_code or 3, item.message or "the plan failed"))
     return entries
 
 
 def plan_lines(
-    planned: Sequence[PlannedTarget], decisions: dict[str, TargetDecision], *, can_elevate: bool, would_ask: set[str] = frozenset(),
+    planned: Sequence[PlannedTarget], decisions: dict[str, TargetDecision], *, would_ask: set[str] = frozenset(),
 ) -> tuple[list[Text], str]:
     """Return the plan table (one line per target, saying what happens to it) and the one question that confirms it.
 
     *would_ask* names the targets whose missing checksum the person will be asked about after confirming the plan.
     """
     lines = [Text("Plan", style="bold")]
-    user = system = 0
+    count = 0
     for item in planned:
         decision = decisions.get(item.target)
-        name = literal(item.package or unqualified(item.target), limit=60)
+        name = literal(item.package or item.target, limit=60)
         change = f"{literal(item.previous or '-', limit=40)} -> {literal(item.version or '?', limit=40)}"
-        mode = literal(item.mode or "?", limit=12)
         if item.state == "up-to-date":
             note, style = "up to date", "dim"
         elif item.target in would_ask:
             note, style = "no checksum: you will be asked", "yellow"
-            if item.mode == "system":
-                system += 1
-            else:
-                user += 1
+            count += 1
         elif decision is not None and not decision.run:
             note, style = decision.message or decision.status, "yellow"
         elif item.state == "failed":
             note, style = f"cannot be planned: {literal(item.message or item.code or '?', limit=200)}", "red"
-        elif item.mode == "system" and not can_elevate:
-            note, style = "needs the system gupkg (not run from here)", "yellow"
         else:
             note, style = _checksum_note(item.checksum, decision), ""
-            if item.mode == "system":
-                system += 1
-            else:
-                user += 1
-        lines.append(Text(f"  {name:<16} {change:<18} {mode:<7} {note}", style=style))
-    parts = [f"{count} {label}" for count, label in ((user, "user"), (system, "system")) if count]
-    prompt = " (one administrator prompt)" if system and can_elevate else ""
-    return lines, f"Update {' and '.join(parts) or 'no'} package{'s' if user + system != 1 else ''}{prompt}?"
+            count += 1
+        lines.append(Text(f"  {name:<16} {change:<18} {note}", style=style))
+    return lines, f"Update {count or 'no'} package{'s' if count != 1 else ''}?"
 
 
 def _checksum_note(checksum: ChecksumPlan | None, decision: TargetDecision | None) -> str:
@@ -184,19 +170,17 @@ async def run_check_updates(
 ) -> BatchOutcome:
     """Run ``gupkg check-updates`` for *rows*: it writes and populates new versions and activates nothing.
 
-    The CLI never elevates for ``check-updates`` (design 9.3: an administrator checks a system package from an admin shell; from a normal shell a
-    system package is only reported), so the whole batch is one non-elevated call. The checksum policy ``skip`` relays ``--skip-checksum=setting``;
+    The whole batch is one call, in the run's scope. The checksum policy ``skip`` relays ``--skip-checksum=setting``;
     a version the tracker found but whose download has no checksum is reported as refused, and when someone can answer (policy ``ask``) each such
     package is offered once and re-run with ``--skip-checksum=user-approved`` when the answer is yes.
     """
     subjects, unsafe = safe_subjects("check-updates", [subject_of(row) for row in rows])
-    skips = {item.target: (skip_argument(SKIPPED_SETTING),) for item in subjects if env.settings.checksum_policy(item.mode) == "skip"}
+    skips = {item.target: (skip_argument(SKIPPED_SETTING),) for item in subjects if env.settings.checksum_policy == "skip"}
 
-    # One call carries the whole batch: the CLI itself reports system packages it may not write instead of elevating.
+    # One call carries the whole batch.
     def whole(members: Sequence[Subject], extra: dict[str, tuple[str, ...]]) -> list[Step]:
-        """Group *members* for ``check-updates`` (never elevated) with the skip arguments of *extra*."""
-        steps, _ = make_steps("check-updates", members, settings=env.settings, can_elevate=env.can_elevate, options=["--yes", *options], skips=extra, labels=("check for updates",) * 2)
-        return steps
+        """Group *members* for ``check-updates`` with the skip arguments of *extra*."""
+        return make_steps("check-updates", members, settings=env.settings, options=["--yes", *options], skips=extra)
 
     offered: set[str] = set()
 
@@ -205,15 +189,15 @@ async def run_check_updates(
         approved: list[Subject] = []
         for entry in outcome.entries:
             error = entry.get("error") if isinstance(entry.get("error"), dict) else {}
-            subject = next((item for item in subjects if unqualified(item.target) == entry.get("package")), None)
+            subject = next((item for item in subjects if item.target == entry.get("package")), None)
             if error.get("code") != "checksum-missing" or subject is None or subject.target in offered or interaction.ask_checksum is None:
                 continue
             offered.add(subject.target)
             candidate = PlannedTarget(
-                subject.target, "failed", subject.name, subject.mode, checksum=ChecksumPlan(MISSING, str(error.get("url") or ""), "tracker", error.get("skippable") is True),
+                subject.target, "failed", subject.name, checksum=ChecksumPlan(MISSING, str(error.get("url") or ""), "tracker", error.get("skippable") is True),
                 code="checksum-missing",
             )
-            decision = (await decide_targets([candidate], lambda item: env.settings.checksum_policy(item.mode), interactive=True, ask=interaction.ask_checksum)).get(subject.target)
+            decision = (await decide_targets([candidate], lambda item: env.settings.checksum_policy, interactive=True, ask=interaction.ask_checksum)).get(subject.target)
             if decision is not None and decision.run and decision.arguments:
                 approved.append(subject)
         if not approved:
@@ -230,16 +214,16 @@ async def run_check_updates(
 
 
 async def run_operation(
-    env: UiEnvironment, command: str, rows: Sequence[PackageRow], *, session: BatchSession, options: Sequence[str] = (), fix: bool = False,
+    env: UiEnvironment, command: str, rows: Sequence[PackageRow], *, session: BatchSession, options: Sequence[str] = (),
     trailing: Sequence[str] = (),
 ) -> BatchOutcome:
-    """Run one more command (``check``, ``install``, ``uninstall``, ``cleanup``, ``switch`` ...) on *rows*, grouped by mode.
+    """Run one more command (``check``, ``install``, ``uninstall``, ``cleanup``, ``switch`` ...) on *rows* in one call.
 
     The caller has already asked the questions the command needs (the options carry ``--yes``), because the CLI is always called with ``--no-input``.
     """
     subjects, unsafe = safe_subjects(command, [subject_of(row) for row in rows])
-    steps, refused = make_steps(command, subjects, settings=env.settings, can_elevate=env.can_elevate, options=options, fix=fix, trailing=trailing)
-    return await session.run(steps, extra_entries=[*unsafe, *refused])
+    steps = make_steps(command, subjects, settings=env.settings, options=options, trailing=trailing)
+    return await session.run(steps, extra_entries=unsafe)
 
 
 def cleanup_follow_up(env: UiEnvironment, subjects: Sequence[Subject]) -> Callable[[BatchOutcome], Awaitable[FollowUp | None]]:
@@ -254,13 +238,8 @@ def cleanup_follow_up(env: UiEnvironment, subjects: Sequence[Subject]) -> Callab
         if made:
             return None
         made.append(True)
-        modes = {entry.get("mode") for entry in outcome.entries if entry.get("ok") is True and entry.get("status") == "updated"}
-        present = [mode for mode in ("user", "system") if mode in modes and (mode == "user" or env.can_elevate)]
-        if not present:
+        if not subjects or not any(entry.get("ok") is True and entry.get("status") == "updated" for entry in outcome.entries):
             return None
-        anchor = next(item for item in subjects if item.mode == present[0])
-        step = Step(
-            "cleanup of the root", targets_after_options("cleanup", ["--yes"], []), (), events_dir_for(anchor, env.settings), present[0] == "system",
-        )
+        step = Step("cleanup of the root", targets_after_options("cleanup", ["--yes"], []), (), events_dir_for(subjects[0], env.settings))
         return FollowUp((step,))
     return follow

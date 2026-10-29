@@ -24,7 +24,6 @@ from typing import Any
 from gupkg.selfmgmt.location import RunningGupkg
 from gupkg.system.fake import FakeSystem
 from gupkg_ui.client import Client
-from gupkg_ui.plans import PackageRow
 from gupkg_ui.settings import load_ui_settings
 from gupkg_ui.startup import UiEnvironment
 
@@ -235,15 +234,6 @@ def plan_doc(entries: list[dict[str, Any]]) -> dict[str, Any]:
     return head("update", ok=not failed, code=max(failed, default=0), plan=True, plans=entries)
 
 
-def package_rows(packages: list[tuple[str, str, str, str | None, str | None, str | None]]) -> list[PackageRow]:
-    """Return inventory rows from ``(name, mode, status, version, newest_known, path)`` with a mode of their own.
-
-    A ``list`` document has one mode now, but the manager's flows still group rows by mode until its own task removes that, so
-    the flow tests build the rows directly.
-    """
-    return [PackageRow(name, mode, status, version, newest, path, None) for name, mode, status, version, newest, path in packages]
-
-
 def list_doc(packages: list[tuple[str, str, str, str | None, str | None, str | None]]) -> dict[str, Any]:
     """Return a ``list --json`` document from ``(name, mode, status, version, newest_known, path)`` rows.
 
@@ -296,7 +286,7 @@ class ListSink:
         self.states.append(text)
 
 
-def make_env(base: Path, fake: FakeGupkg, *, can_elevate: bool = True, settings: str = "", user_layer: str = "", root_options: tuple[str, ...] = ()) -> UiEnvironment:
+def make_env(base: Path, fake: FakeGupkg, *, settings: str = "", user_layer: str = "", root_options: tuple[str, ...] = ()) -> UiEnvironment:
     """Return a ``UiEnvironment`` whose client runs *fake* and whose settings come from a temporary file with roots under *base* (and *user_layer* as the settings file of the default user root)."""
     roots = base / "roots"
     file = base / "ui-settings.toml"
@@ -315,7 +305,7 @@ def make_env(base: Path, fake: FakeGupkg, *, can_elevate: bool = True, settings:
     env = {"USERPROFILE": str(base / "home"), "APPDATA": str(base / "appdata")}
     system = FakeSystem(base / "machine")
     loaded = load_ui_settings(settings_path=file, env=env, location=where, system=system)
-    return UiEnvironment(fake.client(*root_options), loaded, can_elevate, where, system, env)
+    return UiEnvironment(fake.client(*root_options), loaded, where, system, env)
 
 
 # ---------------------------------------------------------------------------

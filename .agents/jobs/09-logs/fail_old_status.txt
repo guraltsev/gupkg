@@ -1,0 +1,12 @@
+
+E       AssertionError: assert (False)
+E       AssertionError: assert (False)
+E       AssertionError: assert (False)
+E       AssertionError: assert (False)
+FAILED tests/test_ui_screens.py::test_the_browser_shows_the_scope_on_the_status_line_at_80x24_and_has_no_mode_column
+FAILED tests/test_ui_screens.py::test_the_package_program_shows_the_scope_first_on_its_status_line_at_80x24
+FAILED
+tests/test_ui_screens.py::test_the_a_key_marks_a_package_this_mode_cannot_install_and_the_status_line_gives_the_reason
+FAILED
+tests/test_ui_screens.py::test_a_registry_that_was_never_downloaded_is_announced_in_the_hint_line_and_the_status_line
+4 failed, 30 deselected in 4.07s

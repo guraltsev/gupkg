@@ -5,7 +5,7 @@ in task order; ``config-check``, ``config-fix``, ``doctor``, ``repair-deps`` and
 ``--all``, ``--check``, ``--check-only``, ``--scope`` and ``--no-checksum`` are unrecognized arguments (exit 2);
 options go after the command and are never abbreviated; ``--skip-checksum`` takes no target as its reason
 and accepts only the reasons ``setting`` and ``user-approved``; ``gupkg tui`` and ``gupkg manager`` start the
-launchers of the same gupkg tree with the rest of the command line and return the program's exit code, refuse an elevated shell,
+launchers of the same gupkg tree with the rest of the command line and return the program's exit code (an elevated shell starts them too),
 and fail with a clear message when the program is not there.
 
 Real: the argument parser and (for the forwarders) a real child process running fake ``.cmd`` launchers. Mocked: ``FakeSystem``
@@ -196,7 +196,7 @@ def stand_in(tmp_path: Path, **launchers: str) -> tuple[RunningGupkg, Path]:
     [
         pytest.param(("tui", "C:\\opt\\tool\\1.0"), "gupkg-tui C:\\opt\\tool\\1.0", 7, id="tui"),
         pytest.param(("manager", "tui"), "gupkg-manager tui", 3, id="manager-tui"),
-        pytest.param(("manager", "update", "--all", "--mode", "user", "--yes"), "gupkg-manager update --all --mode user --yes", 0, id="manager-update"),
+        pytest.param(("manager", "update", "--all", "--yes"), "gupkg-manager update --all --yes", 0, id="manager-update"),
         pytest.param(("manager", "--help"), "gupkg-manager --help", 0, id="help-goes-to-the-program"),
     ],
 )
@@ -234,17 +234,6 @@ def test_a_missing_program_is_a_clear_message_and_exit_2(tmp_path: Path, word: s
     assert system.foreground_log == []
 
 
-def test_a_forwarder_is_not_started_from_an_elevated_shell(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """The programs ask for administrator rights themselves, once per batch: an elevated shell does not start them."""
-    location, _ = stand_in(tmp_path, **{"gupkg-manager": 0})
-    system = FakeSystem(tmp_path / "machine", elevated=True)
-
-    code = cli.main(["manager", "tui"], system=system, env={}, location=location)
-
-    assert code == 2 and "not started from an elevated shell" in capsys.readouterr().err
-    assert system.foreground_log == []
-
-
 def test_a_sandbox_that_is_an_existing_file_is_a_usage_error_not_a_traceback(world: CliWorld, tmp_path: Path) -> None:
     """--sandbox naming a file cannot be made a folder: exit code 2 with a message (and a document under --json), never exit 1."""
     sandbox = tmp_path / "a-file"
@@ -258,14 +247,15 @@ def test_a_sandbox_that_is_an_existing_file_is_a_usage_error_not_a_traceback(wor
 
 
 @pytest.mark.parametrize("word", ["tui", "manager"])
-def test_each_ui_forwarder_refuses_an_elevated_shell(tmp_path: Path, capsys: pytest.CaptureFixture[str], word: str) -> None:
-    """Both UI programs refuse an elevated shell."""
+def test_each_ui_forwarder_starts_from_an_elevated_shell_and_does_not_refuse(tmp_path: Path, capsys: pytest.CaptureFixture[str], word: str) -> None:
+    """An elevated shell runs the program in system mode (issue 035): the forwarder starts the launcher and passes its exit code on."""
     location, _ = stand_in(tmp_path, **{f"gupkg-{word}": 0})
-    system = FakeSystem(tmp_path / "machine", elevated=True)
+    system = FakeSystem(tmp_path / "machine", elevated=True, processes={f"gupkg-{word}.cmd": lambda call: ProcessResult(7)})
 
     code = cli.main([word, "x"], system=system, env={}, location=location)
 
-    assert code == 2 and "not started from an elevated shell" in capsys.readouterr().err and system.foreground_log == []
+    assert code == 7 and capsys.readouterr().err == ""
+    assert system.foreground_log == [[str(location.launcher_dirs[0] / f"gupkg-{word}.cmd"), "x"]]
 
 
 def test_root_options_are_not_passed_to_a_forwarded_program(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

@@ -1,7 +1,7 @@
-"""The ``gupkg-manager`` application: the browser over every package, with the counts and the registry state in the status line.
+"""The ``gupkg-manager`` application: the browser over the packages of the run's scope, with the scope, the counts and the registry state in the status line.
 
 One application, many screens (design section 15): the browser is the first screen, the package view and the run view are pushed on top of it and popped
-back, and the program never exits and restarts to switch. The status line shows the counts (outdated, broken), the registry revision and how long ago it was
+back, and the program never exits and restarts to switch. The status line shows the scope (``system · <root>`` or ``user · <root>``, also the window title), the counts (outdated, broken), the registry revision and how long ago it was
 synchronised, and the path of the latest log.
 
 Usage and API
@@ -27,9 +27,10 @@ from .browser import BrowserScreen
 
 HELP = [
     "Browser",
-    "  Up/Down move, Enter opens the package, / filters, a shows registry packages that are not installed, s synchronises the registry (download it first), r reloads.",
+    "  The status line starts with the scope this program manages: system when it runs in an administrator shell, user otherwise.",
+    "  Up/Down move, Enter opens the package, / filters, a shows registry packages that are not installed (marked system only or user only when this scope cannot install them), s synchronises the registry (download it first), r reloads.",
     "  c checks the selected package for updates (writes and populates new versions, activates nothing); C checks every listed package.",
-    "  u updates the selected package; U updates every outdated package (one plan, one confirmation, one administrator prompt for system packages).",
+    "  u updates the selected package; U updates every outdated package (one plan, one confirmation).",
     "  i installs or repairs, x uninstalls, h runs the health check, l shows the log.",
     "Package view",
     "  c check, u update, r repair, s switch version, x uninstall (X also deletes the data), h health check (H also fixes), l logs, g reload.",

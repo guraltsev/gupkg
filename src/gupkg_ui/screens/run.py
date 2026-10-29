@@ -118,8 +118,7 @@ class RunScreen(FrameScreen):
 
     def status_text(self) -> str:
         """Return the program status with this run's state and title."""
-        base = str(getattr(self.app, "status_line", lambda: "")())
-        return f"{self._title}: {self.state}" + (f" · {base}" if base else "")
+        return str(getattr(self.app, "status_line", lambda own="": own)(f"{self._title}: {self.state}"))
 
     def compose_body(self) -> ComposeResult:
         """Yield the log and the live progress line."""

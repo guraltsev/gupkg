@@ -139,7 +139,7 @@ def test_every_screen_of_the_manager_has_a_hint_line_and_a_status_line(tmp_path:
         assert_frame(app, width), seen.append("version picker")
         await pilot.press("escape")
         await pilot.press("u")
-        await wait_for(pilot, lambda: has(app, "Update 1 user package"), "the plan confirmation")
+        await wait_for(pilot, lambda: has(app, "Update 1 package"), "the plan confirmation")
         assert_frame(app, width), seen.append("plan confirmation")
         await pilot.press("y")
         await wait_for(pilot, lambda: isinstance(app.screen, RunScreen), "the run view")
@@ -163,7 +163,7 @@ def test_the_checksum_question_and_the_cancel_question_have_the_frame(tmp_path: 
         """Reach the checksum question, answer yes, then open the cancel question during the run."""
         await open_browser(app, pilot)
         await pilot.press("u")
-        await wait_for(pilot, lambda: has(app, "Update 1 user package"), "the plan")
+        await wait_for(pilot, lambda: has(app, "Update 1 package"), "the plan")
         assert has(app, "you will be asked")
         await pilot.press("y")
         await wait_for(pilot, lambda: has(app, "without a checksum"), "the checksum question")
@@ -203,16 +203,54 @@ def test_the_package_program_has_the_frame_and_escape_leaves_it(tmp_path: Path, 
 
 
 def test_the_browser_lists_the_packages_and_the_status_line_counts_them(tmp_path: Path, fake: FakeGupkg) -> None:
-    """Name, version, mode, status (with the newer version) and registry columns; the status line has the counts and the registry revision."""
+    """Name, version, status (with the newer version) and registry columns; the status line has the scope, the counts and the registry revision."""
     async def scenario(app, pilot) -> None:
         """Read the table and the status line."""
         await open_browser(app, pilot)
-        await wait_for(pilot, lambda: has(app, "registry main @ 4f2a9c1"), "the registry state")
+        await wait_for(pilot, lambda: "registry main @ 4f2a9c1" in app.registry and has(app, "2 packages"), "the registry state")
         rows = screen_text(app)
-        assert any(word in rows[1] for word in ("Name", "Version")) and any("alpha" in row and "outdated → 2.0.0" in row and "user" in row for row in rows)
+        assert any(word in rows[1] for word in ("Name", "Version")) and any("alpha" in row and "outdated → 2.0.0" in row for row in rows)
         assert "2 packages · 2 outdated · 0 broken" in rows[-1]
 
     run_app(tmp_path, fake, scenario)
+
+
+def test_the_browser_shows_the_scope_on_the_status_line_at_80x24_and_has_no_mode_column(tmp_path: Path, fake: FakeGupkg) -> None:
+    """A run has one scope: at 80x24 the status line starts with ``user · <root>`` (the root shortened, its last folders kept) and then the counts of ``list --json``; the window title has the full root; the table has no Mode column."""
+    shown: dict[str, object] = {}
+    listed = fixture_json("list.json", tmp_path)
+
+    async def scenario(app, pilot) -> None:
+        """Wait for the inventory and keep what the screen and the app show."""
+        await open_browser(app, pilot)
+        await wait_for(pilot, lambda: "registry main @ 4f2a9c1" in app.registry and has(app, "2 packages"), "the registry state")
+        shown["rows"], shown["title"], shown["label"] = screen_text(app), app.sub_title, app.env.scope_label
+
+    run_app(tmp_path, fake, scenario)
+
+    rows = shown["rows"]
+    root = tmp_path / "roots" / "user"
+    assert shown["label"] == f"user · {root}" and shown["title"] == f"user · {root}"
+    counts = [sum(item["status"] == status for item in listed["packages"]) for status in ("outdated", "broken")]
+    status = rows[-1].strip()
+    assert status.startswith("user · C:\\…\\") and "\\roots\\user · " in status and len(rows[-1]) <= 80
+    assert f"{len(listed['packages'])} packages · {counts[0]} outdated · {counts[1]} broken" in status
+    assert "Mode" not in rows[1] and rows[1].split() == ["Name", "Version", "Status", "Registry"]
+
+
+def test_the_package_program_shows_the_scope_first_on_its_status_line_at_80x24(tmp_path: Path, fake: FakeGupkg) -> None:
+    """``gupkg-tui`` shares the app: its status line starts with ``user · <root>`` and then names the package; the window title has the full root."""
+    seen: dict[str, object] = {}
+
+    async def scenario(app, pilot) -> None:
+        """Wait for the package view and keep the status line."""
+        await wait_for(pilot, lambda: has(app, "Installed:") and "alpha outdated" in screen_text(app)[-1], "the package view")
+        seen["status"], seen["title"] = screen_text(app)[-1].strip(), app.sub_title
+
+    run_app(tmp_path, fake, scenario, program="tui")
+
+    assert seen["status"].startswith("user · C:\\…\\") and " · alpha outdated" in seen["status"]
+    assert seen["title"] == f"user · {tmp_path / 'roots' / 'user'}"
 
 
 def test_the_a_key_lists_the_registry_packages_that_are_not_installed_and_a_second_press_hides_them(tmp_path: Path, fake: FakeGupkg) -> None:
@@ -233,7 +271,7 @@ def test_the_a_key_lists_the_registry_packages_that_are_not_installed_and_a_seco
         await open_browser(app, pilot)
         await pilot.press("a")
         await wait_for(pilot, lambda: has(app, "copyq") and has(app, "graphviz"), "the available packages")
-        seen["shown"] = (screen_text(app)[0], screen_text(app)[-1], [row for row in screen_text(app) if "copyq" in row])
+        seen["shown"] = (screen_text(app)[0], app.status_line(), [row for row in screen_text(app) if "copyq" in row])
         await pilot.press("a")
         await wait_for(pilot, lambda: not has(app, "copyq"), "the available packages to be hidden")
 
@@ -241,8 +279,36 @@ def test_the_a_key_lists_the_registry_packages_that_are_not_installed_and_a_seco
 
     hint, status, rows = seen["shown"]
     assert "a hide" in hint
-    assert "2 available in the registry" in status and "2 packages" in status
+    assert "2 available in the registry" in status and "2 packages" in status and status.startswith("user · ")
     assert rows and "available" in rows[0]
+
+
+def test_the_a_key_marks_a_package_this_mode_cannot_install_and_the_status_line_gives_the_reason(tmp_path: Path, fake: FakeGupkg) -> None:
+    """Owner answer Q14: a registry package the mode cannot install is listed, marked ``system only`` with the CLI's reason, which the status line shows on the highlighted row."""
+    reason = "this package installs a driver: run `gupkg install drv` from an administrator shell"
+    available = head("list", mode="user", root="C:\\opt", packages=[
+        {"name": "drv", "status": "available", "version": None, "newest_known": "1.0.0", "path": None, "following": "main/drv", "restriction": "system only",
+         "restriction_reason": reason, "problems": [], "warnings": []},
+    ], warnings=[])
+    fake.respond("list", doc=fixture_json("list.json", tmp_path))
+    fake.respond("list", doc=available)
+    fake.respond("list", doc=fixture_json("list.json", tmp_path))
+    seen: dict[str, object] = {}
+
+    async def scenario(app, pilot) -> None:
+        """Press ``a`` (the restricted row is the last of the three), move onto it and read the table and the status line."""
+        await open_browser(app, pilot)
+        await pilot.press("a")
+        await wait_for(pilot, lambda: has(app, "drv"), "the available package")
+        await pilot.press("down", "down")
+        await wait_for(pilot, lambda: has(app, "is system only"), "the restriction on the status line")
+        seen["rows"] = screen_text(app)
+
+    run_app(tmp_path, fake, scenario)
+
+    rows = seen["rows"]
+    assert any("drv" in row and "available (system only)" in row for row in rows)
+    assert rows[-1].strip().startswith("user · C:\\…\\") and " · drv is system only: " in rows[-1]
 
 
 def test_filter_selection_and_the_application_survive_opening_a_package_and_a_run(tmp_path: Path, fake: FakeGupkg) -> None:
@@ -265,7 +331,7 @@ def test_filter_selection_and_the_application_survive_opening_a_package_and_a_ru
         await pilot.press("enter")
         await wait_for(pilot, lambda: has(app, "Installed:"), "the package view")
         await pilot.press("u")
-        await wait_for(pilot, lambda: has(app, "Update 1 user package"), "the plan")
+        await wait_for(pilot, lambda: has(app, "Update 1 package"), "the plan")
         await pilot.press("y")
         await wait_for(pilot, lambda: isinstance(app.screen, RunScreen) and app.screen.outcome is not None, "the run to finish")
         await pilot.press("escape")
@@ -322,7 +388,7 @@ def test_the_run_view_shows_the_phases_in_order_and_the_verdict_last(tmp_path: P
         """Run an update and read the finished log."""
         await open_browser(app, pilot)
         await pilot.press("u")
-        await wait_for(pilot, lambda: has(app, "Update 1 user package"), "the plan")
+        await wait_for(pilot, lambda: has(app, "Update 1 package"), "the plan")
         await pilot.press("y")
         await wait_for(pilot, lambda: isinstance(app.screen, RunScreen) and app.screen.outcome is not None, "the run to finish")
         rows = content(app)
@@ -342,7 +408,7 @@ def test_a_2000_line_events_file_keeps_the_view_on_the_tail_and_the_keys_alive(t
         """Feed the file, check the tail, scroll back, open help."""
         await open_browser(app, pilot)
         await pilot.press("u")
-        await wait_for(pilot, lambda: has(app, "Update 1 user package"), "the plan")
+        await wait_for(pilot, lambda: has(app, "Update 1 package"), "the plan")
         await pilot.press("y")
         await wait_for(pilot, lambda: isinstance(app.screen, RunScreen) and app.screen.outcome is not None, "the run to finish")
         log = app.screen.query_one("RunLog")
@@ -364,7 +430,7 @@ def test_escape_during_a_run_asks_and_a_no_keeps_it_running(tmp_path: Path, fake
         """Press Escape while the double sleeps, answer no, wait for the end."""
         await open_browser(app, pilot)
         await pilot.press("u")
-        await wait_for(pilot, lambda: has(app, "Update 1 user package"), "the plan")
+        await wait_for(pilot, lambda: has(app, "Update 1 package"), "the plan")
         await pilot.press("y")
         await wait_for(pilot, lambda: isinstance(app.screen, RunScreen), "the run view")
         await pilot.press("escape")
@@ -391,7 +457,7 @@ def test_a_yes_to_the_cancel_question_asks_the_call_to_stop_after_the_current_pa
         """Cancel after the first package has ended."""
         await open_browser(app, pilot)
         await pilot.press("U")
-        await wait_for(pilot, lambda: has(app, "Update 2 user packages"), "the plan")
+        await wait_for(pilot, lambda: has(app, "Update 2 packages"), "the plan")
         await pilot.press("y")
         await wait_for(pilot, lambda: isinstance(app.screen, RunScreen) and has(app, "Package alpha: updated"), "package one to end")
         await pilot.press("escape")
@@ -443,14 +509,15 @@ def test_a_registry_that_was_never_downloaded_is_announced_in_the_hint_line_and_
     async def scenario(app, pilot) -> None:
         """Read the two frame lines once the browser has loaded."""
         await open_browser(app, pilot)
-        await wait_for(pilot, lambda: "NOT DOWNLOADED" in screen_text(app)[-1], "the registry state")
+        await wait_for(pilot, lambda: "NOT DOWNLOADED" in app.registry and app.registry_unsynced and has(app, "2 packages"), "the registry state")
         rows = screen_text(app)
-        seen["hint"], seen["status"] = rows[0], rows[-1]
+        seen["hint"], seen["status"], seen["full"] = rows[0], rows[-1], app.status_line()
 
     run_app(tmp_path, fake, scenario)
 
     assert seen["hint"].strip().startswith("s DOWNLOAD THE REGISTRY") and "a avail" in seen["hint"]
-    assert "registry main: NOT DOWNLOADED, press s" in seen["status"]
+    assert seen["status"].strip().startswith("user · C:\\…\\") and "2 packages" in seen["status"]
+    assert "registry main: NOT DOWNLOADED, press s" in seen["full"]
 
 
 def test_a_downloaded_registry_leaves_a_plain_hint_line_that_still_names_s(tmp_path: Path, fake: FakeGupkg) -> None:
@@ -462,7 +529,7 @@ def test_a_downloaded_registry_leaves_a_plain_hint_line_that_still_names_s(tmp_p
     async def scenario(app, pilot) -> None:
         """Read the hint line after the registry state is in the status line."""
         await open_browser(app, pilot)
-        await wait_for(pilot, lambda: "registry main @ abcdef1" in screen_text(app)[-1], "the registry state")
+        await wait_for(pilot, lambda: "registry main @ abcdef1" in app.registry and has(app, "2 packages"), "the registry state")
         seen["hint"] = screen_text(app)[0]
 
     run_app(tmp_path, fake, scenario)
@@ -526,7 +593,7 @@ def test_the_package_program_runs_check_update_repair_uninstall_and_health_as_cl
     async def scenario(app, pilot) -> None:
         """Press each operation key, answer the dialog where there is one, and come back."""
         await wait_for(pilot, lambda: has(app, "Installed:"), "the package view")
-        for key, question in (("c", None), ("r", "Install or repair alpha?"), ("x", "Uninstall alpha?"), ("h", None), ("u", "Update 1 user package")):
+        for key, question in (("c", None), ("r", "Install or repair alpha?"), ("x", "Uninstall alpha?"), ("h", None), ("u", "Update 1 package")):
             await pilot.press(key)
             if question:
                 await wait_for(pilot, lambda: has(app, question), f"the question for {key}")
@@ -560,7 +627,7 @@ def test_cli_error_text_with_markup_is_shown_literally_everywhere(tmp_path: Path
         await pilot.press("l")
         await wait_for(pilot, lambda: has(app, "[red]x"), "the toast with the literal text")
         await pilot.press("u")
-        await wait_for(pilot, lambda: has(app, "Update 1 user package"), "the plan")
+        await wait_for(pilot, lambda: has(app, "Update 1 package"), "the plan")
         await pilot.press("y")
         await wait_for(pilot, lambda: isinstance(app.screen, RunScreen) and app.screen.outcome is not None, "the run to finish")
         assert has(app, "Error: [red]x") and has(app, "[red]boom[/red] [bold]x")
@@ -584,7 +651,7 @@ def test_ctrl_c_on_a_running_run_asks_the_cancel_question_and_never_quits(tmp_pa
         """Press Ctrl-C twice during the call, then answer no."""
         await open_browser(app, pilot)
         await pilot.press("u")
-        await wait_for(pilot, lambda: has(app, "Update 1 user package"), "the plan")
+        await wait_for(pilot, lambda: has(app, "Update 1 package"), "the plan")
         await pilot.press("y")
         await wait_for(pilot, lambda: isinstance(app.screen, RunScreen) and app.screen.session is not None and app.screen.session.running, "the call to be in flight")
         await pilot.press("ctrl+c")
@@ -631,7 +698,7 @@ def test_ctrl_c_quits_when_nothing_is_running(tmp_path: Path, fake: FakeGupkg, w
         await open_browser(app, pilot)
         if where == "plan-confirmation":
             await pilot.press("u")
-            await wait_for(pilot, lambda: has(app, "Update 1 user package"), "the plan")
+            await wait_for(pilot, lambda: has(app, "Update 1 package"), "the plan")
         await pilot.press("ctrl+c")
         await wait_for(pilot, lambda: app.return_code == 1, "the program to quit")
 
@@ -648,7 +715,7 @@ def test_ctrl_c_on_the_checksum_question_before_any_call_quits(tmp_path: Path, f
         """Confirm the plan, then press Ctrl-C on the checksum question."""
         await open_browser(app, pilot)
         await pilot.press("u")
-        await wait_for(pilot, lambda: has(app, "Update 1 user package"), "the plan")
+        await wait_for(pilot, lambda: has(app, "Update 1 package"), "the plan")
         await pilot.press("y")
         await wait_for(pilot, lambda: has(app, "without a checksum"), "the checksum question")
         await pilot.press("ctrl+c")
@@ -672,7 +739,7 @@ def test_a_100000_record_run_keeps_the_keys_responsive_and_the_log_bounded(tmp_p
         """Start the run and press ? while the follower is still reading, timing the answer."""
         await open_browser(app, pilot)
         await pilot.press("u")
-        await wait_for(pilot, lambda: has(app, "Update 1 user package"), "the plan")
+        await wait_for(pilot, lambda: has(app, "Update 1 package"), "the plan")
         await pilot.press("y")
         await wait_for(pilot, lambda: isinstance(app.screen, RunScreen) and has(app, "line "), "ingestion to begin", timeout=60)
         # Three presses while the file is being read; the best one is judged, so one scheduling hiccup of a busy machine cannot fail the test (a blocked loop slows all three).
@@ -727,7 +794,7 @@ def test_with_colour_off_nothing_is_carried_by_colour_alone(tmp_path: Path, fake
         """Run the failing update and read the screen and the log's own styles."""
         await open_browser(app, pilot)
         await pilot.press("u")
-        await wait_for(pilot, lambda: has(app, "Update 1 user package"), "the plan")
+        await wait_for(pilot, lambda: has(app, "Update 1 package"), "the plan")
         await pilot.press("y")
         await wait_for(pilot, lambda: isinstance(app.screen, RunScreen) and app.screen.outcome is not None, "the run to finish")
         text = "\n".join(screen_text(app))
