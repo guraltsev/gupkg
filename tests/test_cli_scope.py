@@ -227,3 +227,18 @@ def test_a_normal_run_cannot_install_a_system_only_package_and_starts_no_process
     assert world.fake.process_log == [] and world.fake.foreground_log == []
     assert not (world.user / "tool" / "current").exists() and not (world.system_root / "tool" / "current").exists()
     assert (tree_snapshot(world.user), tree_snapshot(world.system_root)) == before
+
+
+def test_purging_the_root_its_parent_or_a_drive_is_refused_before_anything_is_deleted(tmp_path: Path) -> None:
+    """The executor's purge guard is gone because the catalog refuses these paths first: nothing is deleted."""
+    world = CliWorld(tmp_path)
+    world.publish("tool", "1.0.0")
+    assert world.cli("install", "tool").code == 0
+    before = tree_snapshot(world.user)
+
+    for target in (world.user, world.user.parent, Path(world.user.anchor)):
+        result = world.cli("uninstall", str(target), "--purge", "--yes", "--json")
+
+        assert result.code != 0, (target, result.out + result.err)
+        assert world.user.is_dir() and (world.user / "tool" / "current").exists(), target
+    assert tree_snapshot(world.user) == before
