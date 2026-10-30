@@ -13,18 +13,10 @@ if not exist "%GUPKG_PY%" (
     exit /b 1
 )
 
-rem cmd.exe /c quoting can leave a leading quote on forwarded arguments when
-rem this launcher is started by the native shim. Normalize every argument
-rem through %%~1 before handing the final list to Python.
-set "GUPKG_FORWARD_ARGS="
-:collect_forward_args
-if "%~1"=="" goto :forward_args_ready
-set "GUPKG_FORWARD_ARGS=%GUPKG_FORWARD_ARGS% "%~1""
-shift
-goto :collect_forward_args
-:forward_args_ready
+rem The arguments are forwarded as %* (the text the caller typed), never rebuilt one by one: a loop over %~1 splits an
+rem argument at =, comma and semicolon, turns an empty argument into nothing, and lets & | > inside quotes run as commands.
 
 rem Run isolated (-I: ignore PYTHON* variables, the script directory and the
 rem current directory; -s: no user site; -B: write no bytecode).
-"%GUPKG_PY%" -I -s -B -S "%GUPKG_SCRIPT_DIR%bootstrap.py" %GUPKG_FORWARD_ARGS%
+"%GUPKG_PY%" -I -s -B -S "%GUPKG_SCRIPT_DIR%bootstrap.py" %*
 exit /b %ERRORLEVEL%

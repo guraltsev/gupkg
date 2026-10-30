@@ -1032,24 +1032,9 @@ class _Parser(argparse.ArgumentParser):
 def _normalise(tokens: Sequence[str]) -> list[str]:
     """Spell a bare ``--skip-checksum`` as ``--skip-checksum=`` so that it never takes the next word (a target) as its reason.
 
-    A bare ``--overwrite`` becomes ``--overwrite=`` the same way, so that its usage error names the valid kinds. ``gupkg.cmd``
-    hands ``--overwrite=a,b`` on as ``--overwrite a b`` (a batch file splits its arguments at ``=`` and ``,``), so the kind names
-    that follow a bare ``--overwrite`` are its value again.
+    A bare ``--overwrite`` becomes ``--overwrite=`` the same way, so that its usage error names the valid kinds.
     """
-    found: list[str] = []
-    index = 0
-    while index < len(tokens):
-        token = tokens[index]
-        index += 1
-        if token != "--overwrite":
-            found.append("--skip-checksum=" if token == "--skip-checksum" else token)
-            continue
-        kinds = []
-        while index < len(tokens) and tokens[index] in OVERWRITE_KINDS:
-            kinds.append(tokens[index])
-            index += 1
-        found.append("--overwrite=" + ",".join(kinds))
-    return found
+    return [{"--skip-checksum": "--skip-checksum=", "--overwrite": "--overwrite="}.get(token, token) for token in tokens]
 
 
 def _events_file_name(text: str) -> str:

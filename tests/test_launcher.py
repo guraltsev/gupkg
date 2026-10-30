@@ -192,3 +192,116 @@ def test_a_module_planted_in_the_package_parent_never_runs_before_the_elevated_c
 
     assert result.returncode == 1, result.stdout
     assert not marker.exists()
+
+
+# ---------------------------------------------------------------------------
+# The arguments reach Python exactly as the caller passed them (issue 035, T18)
+# ---------------------------------------------------------------------------
+
+# (id, the argument text as a person types it after the launcher name, the arguments Python must receive).
+FORWARDED = [
+    ("equals-and-comma", "--overwrite=a,b", ["--overwrite=a,b"]),
+    ("equals", "--skip-checksum=cli", ["--skip-checksum=cli"]),
+    ("equals-in-quotes", '"--root=C:\\a b\\c"', ["--root=C:\\a b\\c"]),
+    ("semicolon", "--x=1;2", ["--x=1;2"]),
+    ("empty-item", "--overwrite=a,,b", ["--overwrite=a,,b"]),
+    ("empty-argument", '""', [""]),
+    ("empty-between", 'a "" b', ["a", "", "b"]),
+    ("spaces", '"a b  c"', ["a b  c"]),
+    ("trailing-backslash", '"C:\\x y\\\\"', ["C:\\x y\\"]),
+    ("non-ascii", '"caf\u00e9 \u0436\u0443\u043a"', ["caf\u00e9 \u0436\u0443\u043a"]),
+    ("long", "x" * 100, ["x" * 100]),
+    ("double-dash", "-- target", ["--", "target"]),
+    ("several", "install tool --yes", ["install", "tool", "--yes"]),
+]
+
+# Hostile text inside quotes: it must arrive as text and never run (the canary file is what a command would create).
+HOSTILE = [
+    ("ampersand", '"a&b"', ["a&b"]),
+    ("ampersand-command", '"a&copy nul %CANARY%"', ["a&copy nul %CANARY%"]),
+    ("pipe", '"a|b"', ["a|b"]),
+    ("pipe-command", '"a|copy nul %CANARY%"', ["a|copy nul %CANARY%"]),
+    ("redirection", '"a>%CANARY%"', ["a>%CANARY%"]),
+    ("quoted-caret", '"a^b"', ["a^b"]),
+    ("expanded-variable", '"%VAR%"', ["EXPANDED"]),
+    ("delayed-expansion", "!VAR!", ["!VAR!"]),
+    ("doubled-quote", '"a""b"', ['a"b']),
+    ("unbalanced-quote", '"a&copy nul %CANARY%', ["a&copy nul %CANARY%"]),
+]
+
+
+def _forwarding_layout(root: Path) -> Path:
+    """Create ``<root>/gupkg.cmd`` (outer) and ``<root>/gupkg`` (inner, with the manager and tui launchers); return ``<root>``."""
+    package, _log = _package(root)
+    for name in ("gupkg-manager.cmd", "gupkg-tui.cmd"):
+        shutil.copy2(SRC / "gupkg" / name, package / name)
+    for name in ("gupkg.cmd", "gupkg-manager.cmd", "gupkg-tui.cmd"):
+        shutil.copy2(SRC / name, root / name)
+    return root
+
+
+def _typed(launcher: Path, raw: str, root: Path, *, canary: Path) -> list[str]:
+    """Run *launcher* with *raw* as the typed argument text through cmd.exe and return the arguments the bundled Python received."""
+    env = os.environ.copy()
+    env.update(VAR="EXPANDED", CANARY=str(canary))
+    log = root / "bundled.log"
+    log.unlink(missing_ok=True)
+    result = subprocess.run(
+        f'"{os.environ["ComSpec"]}" /d /c ""{launcher}" {raw}"', cwd=str(root), env=env, capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    arguments = ast.literal_eval(log.read_text(encoding="utf-8"))
+    assert arguments[:4] == ["-I", "-s", "-B", "-S"] and arguments[4].endswith("bootstrap.py")
+    return arguments[5:]
+
+
+@pytest.mark.parametrize("entry", ["inner", "outer"])
+@pytest.mark.parametrize(("raw", "expected"), [case[1:] for case in FORWARDED], ids=[case[0] for case in FORWARDED])
+def test_gupkg_cmd_hands_python_exactly_the_arguments_it_was_given(tmp_path: Path, entry: str, raw: str, expected: list[str]) -> None:
+    """`=`, `,` and `;` stay inside an argument, an empty argument stays an argument, spaces, quotes, a trailing backslash, non-ASCII and 100 characters survive.
+
+    Both the launcher in the version directory and the `gupkg.cmd` beside it (the target of the shims) are run.
+    """
+    root = _forwarding_layout(tmp_path)
+    launcher = root / "gupkg" / "gupkg.cmd" if entry == "inner" else root / "gupkg.cmd"
+
+    assert _typed(launcher, raw, root, canary=tmp_path / "canary.txt") == expected
+
+
+@pytest.mark.parametrize("entry", ["inner", "outer"])
+@pytest.mark.parametrize(("raw", "expected"), [case[1:] for case in HOSTILE], ids=[case[0] for case in HOSTILE])
+def test_gupkg_cmd_never_runs_what_a_quoted_argument_contains(tmp_path: Path, entry: str, raw: str, expected: list[str]) -> None:
+    """`& | > ^ ! "` and a `copy` command inside quotes arrive as text and no command runs (no canary file appears)."""
+    root = _forwarding_layout(tmp_path)
+    launcher = root / "gupkg" / "gupkg.cmd" if entry == "inner" else root / "gupkg.cmd"
+    canary = tmp_path / "canary.txt"
+
+    received = _typed(launcher, raw, root, canary=canary)
+
+    assert received == [item.replace("%CANARY%", str(canary)) for item in expected]
+    assert not canary.exists()
+
+
+@pytest.mark.parametrize("entry", ["inner", "outer"])
+@pytest.mark.parametrize(("name", "program"), [("gupkg-manager.cmd", "--gupkg-program=manager"), ("gupkg-tui.cmd", "--gupkg-program=tui")])
+def test_the_manager_and_tui_launchers_forward_every_argument_unchanged_after_the_program_name(tmp_path: Path, entry: str, name: str, program: str) -> None:
+    """The program flag comes first, then the caller's arguments exactly as typed (all the cases at once)."""
+    root = _forwarding_layout(tmp_path)
+    launcher = root / "gupkg" / name if entry == "inner" else root / name
+    raw = " ".join(case[1] for case in FORWARDED)
+    expected = [item for case in FORWARDED for item in case[2]]
+
+    assert _typed(launcher, raw, root, canary=tmp_path / "canary.txt") == [program, *expected]
+
+
+def test_the_real_gupkg_reads_equals_and_empty_items_through_gupkg_cmd(tmp_path: Path) -> None:
+    """On the real bundled Python, `--skip-checksum=bogus` and `--overwrite=a,,b` are judged as written (usage errors, exit 2), not as split words."""
+    package, _marker = _real_layout(tmp_path)
+    environment = os.environ.copy()
+    environment.update(USERPROFILE=str(tmp_path), LOCALAPPDATA=str(tmp_path), APPDATA=str(tmp_path))
+
+    checksum = _run(package, "install", "tool", "--skip-checksum=bogus", env=environment)
+    items = _run(package, "install", "tool", "--overwrite=orphaned-bin-files,,orphaned-shortcuts", env=environment)
+
+    assert checksum.returncode == 2 and "--skip-checksum=bogus is not understood" in checksum.stderr, checksum.stderr
+    assert items.returncode == 2 and "empty item" in items.stderr and "orphaned-bin-files,,orphaned-shortcuts" in items.stderr, items.stderr
