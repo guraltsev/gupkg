@@ -54,7 +54,7 @@ section's wording and the code differ, the code and the decision table win.
   `[[shortcut]]` has `run_as_admin` and `modes` (a subset of the package's `modes`); `copyq` writes `unins000.exe` with
   `write`, not `create`; the broken-package reason for a folder without an install record says `reinstall with: gupkg
   install <name>` (issue 035 4.7 quoted `--force`, which `install` does not have); the manager and `gupkg-tui` take
-  `--settings` and `--sandbox` but no `--root`; the scope is shown at the left of the status line, not in a title bar; the
+  `--settings`, `--root` and `--sandbox` (`gupkg --root DIR manager|tui` passes `--root` on; `--settings` and `--sandbox` before them stay refused); the scope is shown at the left of the status line, not in a title bar; the
   plan documents carry no `requires_elevation` and every document is `"api": 2`.
 - **Not verified on real hardware:** Smart App Control (spike S2), and the
   manual checks listed in `tests/manual_smoke.md`.
@@ -1423,8 +1423,9 @@ Readings that the issue 029 implementation settled:
   of the run; they produce the same result document as the long spelling.
   `self status` reports the interpreter and the `MANIFEST.sha256` check and exits 3 when either fails.
 - **The pass-through commands** (`tui`, `manager`) find `gupkg-tui.cmd` and `gupkg-manager.cmd` in the gupkg tree they run from
-  (never on `PATH`), pass the rest of the command line and the exit code, and refuse `--settings`, `--root` and `--sandbox` before
-  the command, which they could not honour (the programs take `--settings` and `--sandbox` themselves, before their own command).
+  (never on `PATH`), pass the rest of the command line and the exit code, pass `--root DIR` on (first in the program's arguments: row 1 of the §6.1
+  chain, with the same admin-only rule in system mode), and refuse `--settings` and `--sandbox` before the command, which they could not
+  honour (the programs take `--settings`, `--root` and `--sandbox` themselves, before their own command; `gupkg --root DIR manager` forwards the one that is the same as theirs).
 - **Settings, registries and logs.** `settings init|set` and `registry add|remove` write the settings file of layer 3 of the
   run's root (section 6.2) after the schema accepted the change; `registry sync|status|list` use the cache in the data
   directory of the run's root; `logs` lists the run logs of a package (or of the root), `--path` prints the newest and

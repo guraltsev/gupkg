@@ -11,8 +11,8 @@ lists every error message.
 | Program | What it is | Start it with |
 | --- | --- | --- |
 | `gupkg` | The command line: every operation, no screens, no `--all`. | `gupkg ...` |
-| `gupkg-tui` | One package's interactive view. A separate program that only calls `gupkg`. | `gupkg-tui NAME` or `gupkg tui NAME` |
-| `gupkg-manager` | The browser over every package, and the batch commands for schedules (`check-updates --all`, `update --all`, `check`). A separate program that only calls `gupkg`. | `gupkg-manager` or `gupkg manager ...` |
+| `gupkg-tui` | One package's interactive view. A separate program that only calls `gupkg`. | `gupkg-tui NAME` or `gupkg tui NAME` (`--root DIR` names the root) |
+| `gupkg-manager` | The browser over every package, and the batch commands for schedules (`check-updates --all`, `update --all`, `check`). A separate program that only calls `gupkg`. | `gupkg-manager` or `gupkg manager ...` (`gupkg-manager --root DIR` opens it on another root) |
 
 All four live in one gupkg tree, and the UI programs call the `gupkg.cmd` of **their own tree**, never one found on
 `PATH`. `gupkg tui` and `gupkg manager` are pass-through commands that start them. Each program runs in one scope, the mode of its own process (an administrator shell manages the system root, any other shell the user's root).

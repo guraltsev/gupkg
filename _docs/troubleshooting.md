@@ -135,7 +135,7 @@ never starts an elevated copy of itself, so none of these messages can be answer
 | Message | What it means and what to do |
 | --- | --- |
 | The manager shows no system packages, or the title says `user` | `gupkg-manager` manages the scope of its own process. Start it from an administrator shell, or from the Start Menu entry "gupkg manager (administrator)", for the system root; a normal shell shows the user root. There is no key that switches. |
-| `gupkg: error: --settings, --root and --sandbox are not passed on to gupkg-manager` | `gupkg --root DIR manager` is refused. The programs take no root option: start them from the gupkg installed in that root, or give `gupkg-manager --settings PATH` (or `gupkg-tui --settings PATH`) a file with `[roots].user`. |
+| `gupkg: error: --settings and --sandbox are not passed on to gupkg-manager` | `--settings` and `--sandbox` before `manager`/`tui` are refused (`--root DIR` is passed on). Start the program itself: `gupkg-manager --settings PATH` (or `gupkg-tui --sandbox DIR`). |
 | `update --all` exits 5 with nothing changed | There is no terminal and no `--yes`, or `--json` was given. Add `--yes`. |
 | A package is refused with `checksum-missing` in a schedule | `ask` behaves as `refuse` without a terminal. Pin a hash, or set `[manager] checksum_missing = "skip"` knowingly. |
 | A run ends without `run_end` | The call died without a result; read the log of the run (`gupkg logs <name> --path`, or `<root>\.gupkg\logs`). |

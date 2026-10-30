@@ -955,7 +955,8 @@ def _pass_through(tokens: Sequence[str]) -> tuple[str, list[str], list[str]] | N
     """Return ``(program, arguments, root options)`` when the command is ``tui`` or ``manager``, else ``None``.
 
     The root options (``--settings PATH``, ``--root DIR``, ``--sandbox DIR``) may come first; everything after the command word belongs to
-    the program and is passed on unchanged, ``--help`` included.
+    the program and is passed on unchanged, ``--help`` included. ``--root`` is passed on (it goes first in the program's arguments);
+    ``--settings`` and ``--sandbox`` are refused by ``_forward``.
     """
     index, root_options = 0, []
     while index < len(tokens):
@@ -974,10 +975,20 @@ def _pass_through(tokens: Sequence[str]) -> tuple[str, list[str], list[str]] | N
 
 
 def _forward(program: str, rest: list[str], root_options: list[str], system: System, location: RunningGupkg) -> int:
-    """Start the program of the same gupkg tree with *rest* and return its exit code."""
-    if root_options:
-        print(f"gupkg: error: --settings, --root and --sandbox are not passed on to gupkg-{program}", file=sys.stderr)
-        return EXIT_USER
+    """Start the program of the same gupkg tree with *root_options*' ``--root`` and *rest*; return its exit code."""
+    forwarded: list[str] = []
+    index = 0
+    while index < len(root_options):
+        token = root_options[index]
+        if token == "--root":
+            forwarded += root_options[index:index + 2]
+            index += 2
+        elif token.startswith("--root="):
+            forwarded += ["--root", token[len("--root="):]]
+            index += 1
+        else:
+            print(f"gupkg: error: --settings and --sandbox are not passed on to gupkg-{program}", file=sys.stderr)
+            return EXIT_USER
     # The programs start through their own launcher, which runs bootstrap's trust check before importing anything.
     launcher = location.launcher(PASS_THROUGH[program])
     if launcher is None:
@@ -987,7 +998,7 @@ def _forward(program: str, rest: list[str], root_options: list[str], system: Sys
         )
         return EXIT_USER
     try:
-        return system.run_foreground([str(launcher), *rest])
+        return system.run_foreground([str(launcher), *forwarded, *rest])
     except OSError as error:
         print(f"gupkg: error: cannot start {launcher}: {error}", file=sys.stderr)
         return EXIT_USER

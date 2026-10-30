@@ -321,7 +321,7 @@ class Client:
     command : sequence of str
         The program and any fixed leading arguments, normally ``(str(sibling_launcher()),)``.
     root_options : sequence of str, optional
-        ``--settings PATH`` and ``--sandbox DIR`` for the CLI, put before the command word of every call.
+        ``--settings PATH``, ``--root DIR`` and ``--sandbox DIR`` for the CLI, put before the command word of every call.
     env : mapping, optional
         The environment of the calls; ``os.environ`` by default.
     """

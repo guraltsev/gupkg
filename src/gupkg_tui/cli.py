@@ -6,7 +6,7 @@ summary of the last run and the log path are printed to the console (``[manager]
 
 Usage and API
 -------------
-Call ``main(argv)`` from Python or run ``gupkg-tui``. ``--settings PATH`` and ``--sandbox DIR`` are relayed to every ``gupkg`` call. Exit code: 0 after a normal
+Call ``main(argv)`` from Python or run ``gupkg-tui``. ``--settings PATH``, ``--root DIR`` and ``--sandbox DIR`` are relayed to every ``gupkg`` call. Exit code: 0 after a normal
 close, 2 for a usage or configuration problem.
 
 Implementation Approach

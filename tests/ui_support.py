@@ -367,8 +367,8 @@ class ListSink:
         self.states.append(text)
 
 
-def make_env(base: Path, fake: FakeGupkg, *, settings: str = "", user_layer: str = "", root_options: tuple[str, ...] = ()) -> UiEnvironment:
-    """Return a ``UiEnvironment`` whose client runs *fake* and whose settings come from a temporary file with roots under *base* (and *user_layer* as the settings file of the default user root)."""
+def make_env(base: Path, fake: FakeGupkg, *, settings: str = "", user_layer: str = "", root_options: tuple[str, ...] = (), root: Path | None = None) -> UiEnvironment:
+    """Return a ``UiEnvironment`` whose client runs *fake* and whose settings come from a temporary file with roots under *base* (and *user_layer* as the settings file of the default user root); *root* is ``--root`` of the run."""
     roots = base / "roots"
     file = base / "ui-settings.toml"
     file.write_text(
@@ -385,7 +385,7 @@ def make_env(base: Path, fake: FakeGupkg, *, settings: str = "", user_layer: str
     where = RunningGupkg("source", package, (package,))
     env = {"USERPROFILE": str(base / "home"), "APPDATA": str(base / "appdata")}
     system = FakeSystem(base / "machine")
-    loaded = load_ui_settings(settings_path=file, env=env, location=where, system=system)
+    loaded = load_ui_settings(settings_path=file, root_option=root, env=env, location=where, system=system)
     return UiEnvironment(fake.client(*root_options), loaded, where, system, env, fake.reads())
 
 

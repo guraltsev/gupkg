@@ -2,12 +2,12 @@
 
 Both programs (``gupkg-tui`` and ``gupkg-manager``) start the same way. A run has one scope, the mode of its token: an elevated process manages
 the system root and any other process the user's, and every call the program makes to the CLI runs in that scope. The root options
-``--settings PATH`` and ``--sandbox DIR`` are the CLI's own (a settings file as the highest layer, a pretend machine kept in a folder); the programs
+``--settings PATH``, ``--root DIR`` and ``--sandbox DIR`` are the CLI's own (a settings file as the highest layer, the root of the run, a pretend machine kept in a folder); the programs
 read the settings with them and relay them to every call, which is how tests and trial runs act on temporary roots.
 
 Usage and API
 -------------
-``add_root_options(parser)`` adds the two options to a program's parser; ``build_environment(args)`` returns the ``UiEnvironment`` (client,
+``add_root_options(parser)`` adds the three options to a program's parser; ``build_environment(args)`` returns the ``UiEnvironment`` (client,
 settings, scope) or raises ``StartupError`` with the message to print and the exit code.
 
 Implementation Approach
@@ -123,8 +123,9 @@ class UiEnvironment:
 
 
 def add_root_options(parser: argparse.ArgumentParser) -> None:
-    """Add ``--settings PATH`` and ``--sandbox DIR`` to *parser*; they are relayed to every ``gupkg`` call."""
+    """Add ``--settings PATH``, ``--root DIR`` and ``--sandbox DIR`` to *parser*; they are relayed to every ``gupkg`` call."""
     parser.add_argument("--settings", type=Path, metavar="PATH", help="read this settings file as the highest layer (relayed to gupkg)")
+    parser.add_argument("--root", type=Path, metavar="DIR", help="the root of this run (the first source of the root chain; system mode needs an admin-only root; relayed to gupkg)")
     parser.add_argument(
         "--sandbox", type=Path, metavar="DIR",
         help="act on a pretend machine kept in DIR instead of the real one (relayed to gupkg; files and downloads stay real)",
@@ -145,7 +146,7 @@ def build_environment(
     Parameters
     ----------
     args : Namespace
-        The parsed options; ``settings`` and ``sandbox`` are read when present.
+        The parsed options; ``settings``, ``root`` and ``sandbox`` are read when present.
     location : RunningGupkg, optional
         Where this gupkg lives; found from the loaded packages by default.
     system : System, optional
@@ -160,12 +161,15 @@ def build_environment(
     Raises
     ------
     StartupError
-        If the sibling ``gupkg`` is missing, the settings cannot be read, or an elevated run's gupkg tree is not admin-only.
+        If ``--root`` names a folder that does not exist or is not a folder, the sibling ``gupkg`` is missing, the settings cannot be read, or an elevated run's gupkg tree is not admin-only.
     """
     where = location or locate_running_gupkg()
     environment = dict(os.environ if env is None else env)
     machine = system or WindowsSystem()
-    sandbox, settings_path = getattr(args, "sandbox", None), getattr(args, "settings", None)
+    sandbox, settings_path, root_option = getattr(args, "sandbox", None), getattr(args, "settings", None), getattr(args, "root", None)
+    if root_option is not None and not root_option.is_dir():
+        # A given ``--root`` must already be a folder (nothing is created); the default and configured roots may be missing on a first run.
+        raise StartupError(f"--root {root_option} is not a folder" if root_option.exists() else f"--root {root_option} does not exist (create the folder first)")
     if sandbox is not None:
         sandbox.mkdir(parents=True, exist_ok=True)
         machine = FakeSystem.sandbox(sandbox, machine)
@@ -175,9 +179,9 @@ def build_environment(
         program = tuple(command) if command is not None else (str(sibling_launcher(where)),)
     except ClientError as error:
         raise StartupError(str(error)) from error
-    options = (*(("--settings", str(settings_path)) if settings_path is not None else ()), *(("--sandbox", str(sandbox)) if sandbox is not None else ()))
+    options = (*(("--settings", str(settings_path)) if settings_path is not None else ()), *(("--root", str(root_option)) if root_option is not None else ()), *(("--sandbox", str(sandbox)) if sandbox is not None else ()))
     try:
-        settings = load_ui_settings(settings_path=settings_path, env=environment, location=where, system=machine)
+        settings = load_ui_settings(settings_path=settings_path, root_option=root_option, env=environment, location=where, system=machine)
     except ModeRefused as error:
         raise StartupError(str(error)) from error
     except (SettingsError, OSError, ValueError) as error:
