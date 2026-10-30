@@ -44,7 +44,7 @@ from .engine.context import Engine, stop_marker
 from .engine.errors import describe
 from .engine.receipts import read_receipt, receipt_checksum
 from .model.checksum import ChecksumInvalid, parse_skip_flag
-from .model.plan import EXIT_FAILED, EXIT_INPUT, EXIT_OK, EXIT_USER, BatchResult, Request
+from .model.plan import EXIT_FAILED, EXIT_INPUT, EXIT_OK, EXIT_USER, OVERWRITE_KINDS, BatchResult, Request, parse_overwrite
 from .model.scope import ModeRefused, Scope
 from .model.settings import LAYER_ROOT, Settings, SettingsError
 from .pinning import PinError, pin_hash
@@ -278,6 +278,23 @@ def _version_questions(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _overwrite_option(parser: argparse.ArgumentParser) -> None:
+    """Add ``--overwrite=KINDS``: the kinds of file that no installed package owns and that this run may replace."""
+    parser.add_argument(
+        "--overwrite", type=_overwrite_kinds, default=(), metavar="KINDS",
+        help="replace files that no installed package owns, instead of stopping; KINDS is a comma-separated list of: "
+             f"{', '.join(OVERWRITE_KINDS)} (a shim, its configuration or a wrapper in bin; a Start Menu shortcut)",
+    )
+
+
+def _overwrite_kinds(text: str) -> tuple[str, ...]:
+    """Parse the value of ``--overwrite``; a bad value is a usage error that lists the valid kinds."""
+    try:
+        return parse_overwrite(text)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
+
+
 def _ask(question: str) -> bool:
     """Ask a yes-or-no question on the terminal (the question itself was already shown as a prompt event); no answer is no."""
     sys.stderr.write("[y/N] ")
@@ -365,11 +382,11 @@ def _requests(args: argparse.Namespace, command: str) -> Callable[[str], Request
     if command == "check-updates":
         return lambda target: Request("check-updates", target, no_download=args.no_download)
     if command == "install":
-        return lambda target: Request("install", target, refresh=args.refresh)
+        return lambda target: Request("install", target, refresh=args.refresh, overwrite=args.overwrite)
     if command == "update":
-        return lambda target: Request("update", target)
+        return lambda target: Request("update", target, overwrite=args.overwrite)
     if command == "switch":
-        return lambda target: Request("switch", target, version=args.version)
+        return lambda target: Request("switch", target, version=args.version, overwrite=args.overwrite)
     if command == "uninstall":
         return lambda target: Request("uninstall", target, purge=args.purge)
     if command == "cleanup":
@@ -377,7 +394,7 @@ def _requests(args: argparse.Namespace, command: str) -> Callable[[str], Request
     if command == "check":
         return lambda target: Request("check", target, fix=args.fix)
     if command == "repair":
-        return lambda target: Request("repair", target)
+        return lambda target: Request("repair", target, overwrite=args.overwrite)
     return lambda target: Request("link", target, link_to=args.entry, unlink=args.unlink)
 
 
@@ -1002,8 +1019,26 @@ class _Parser(argparse.ArgumentParser):
 
 
 def _normalise(tokens: Sequence[str]) -> list[str]:
-    """Spell a bare ``--skip-checksum`` as ``--skip-checksum=`` so that it never takes the next word (a target) as its reason."""
-    return ["--skip-checksum=" if token == "--skip-checksum" else token for token in tokens]
+    """Spell a bare ``--skip-checksum`` as ``--skip-checksum=`` so that it never takes the next word (a target) as its reason.
+
+    A bare ``--overwrite`` becomes ``--overwrite=`` the same way, so that its usage error names the valid kinds. ``gupkg.cmd``
+    hands ``--overwrite=a,b`` on as ``--overwrite a b`` (a batch file splits its arguments at ``=`` and ``,``), so the kind names
+    that follow a bare ``--overwrite`` are its value again.
+    """
+    found: list[str] = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        index += 1
+        if token != "--overwrite":
+            found.append("--skip-checksum=" if token == "--skip-checksum" else token)
+            continue
+        kinds = []
+        while index < len(tokens) and tokens[index] in OVERWRITE_KINDS:
+            kinds.append(tokens[index])
+            index += 1
+        found.append("--overwrite=" + ",".join(kinds))
+    return found
 
 
 def _events_file_name(text: str) -> str:
@@ -1114,18 +1149,21 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_argument("targets", nargs="+", metavar="TARGET")
     sub.add_argument("--refresh", action="store_true", help="rebuild an App that can be rebuilt")
     _version_questions(sub)
+    _overwrite_option(sub)
     _options(sub, mutating=True, plan=True, skip=True, events=True)
 
     sub = add("update", "Activate the newest known version of each installed package; never runs a tracker.",
               "gupkg update firefox")
     sub.add_argument("targets", nargs="+", metavar="TARGET")
     _version_questions(sub)
+    _overwrite_option(sub)
     _options(sub, mutating=True, plan=True, skip=True, events=True)
 
     sub = add("switch", "Activate another local version of an installed package (the way back).",
               "gupkg switch firefox 134.0")
     sub.add_argument("targets", nargs=1, metavar="TARGET")
     sub.add_argument("version")
+    _overwrite_option(sub)
     _options(sub, mutating=True, plan=True, events=True)
 
     sub = add("uninstall", "Remove the integration of packages; --purge also deletes the package folder and its data.",
@@ -1247,6 +1285,8 @@ def _build_parser() -> argparse.ArgumentParser:
         leaf = actions.add_parser(name, description=text.capitalize() + ".", epilog=f"example:\n  gupkg self {name}")
         if name == "check-updates":
             leaf.add_argument("--no-download", action="store_true", help="write the version directory only")
+        if name != "check-updates":
+            _overwrite_option(leaf)
         _options(leaf, mutating=True, plan=True, skip=name != "repair", events=True)
         if name != "check-updates":
             leaf.set_defaults(no_download=False)

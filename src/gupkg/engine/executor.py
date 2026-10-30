@@ -39,7 +39,7 @@ from ..distcopy import COPIED, DIVERGED, CopyResult, DistributionRefused, copy_d
 from ..model.checksum import ORIGIN_NOT_VERIFIED, REGISTRY_FINGERPRINT, ChecksumMismatch, ChecksumRecord
 from ..model.manifest import parse_manifest
 from ..model.scope import Scope
-from ..model.plan import InstallPlan, PackageResult, Request
+from ..model.plan import OVERWRITE_SHORTCUTS, InstallPlan, PackageResult, Request
 from ..model.settings import Settings
 from ..model.state import Effect, InstallRecord, Link, PackageView
 from ..model.version import MANIFEST_NAME
@@ -47,11 +47,11 @@ from ..report.events import Step, Warning, emit, phase, release_package_log
 from ..services.safepath import remove_tree
 from .appbuild import Populated, app_section, populate_version
 from .context import Engine, require_work_folder
-from .effects import LOCATION_FILE, EffectError, apply_effect, changes_environment, effect_context, remove_effect
+from .effects import LOCATION_FILE, EffectError, apply_effect, changes_environment, effect_context, find_unowned, remove_effect
 from ..launchers import VERSION_LAUNCHERS
 from ..services.fingerprint import FingerprintError, differing_files, file_digests, verify_directory
 from .fingerprint import app_files
-from .planner import Chosen, CleanupPlan
+from .planner import Chosen, CleanupPlan, UnownedFile, check_unowned, name_key, provided_names
 from .portable import hand_back, hand_over, scratch_name
 from .receipts import read_receipt, update_receipt
 
@@ -89,6 +89,8 @@ class ExecutionInput:
     precopied : CopyResult, optional
         The result of a distribution copy that the caller already made (an elevated run copies the folder before it
         can read the manifest it plans from); ``distribution`` names the source folder.
+    replacing : tuple of UnownedFile
+        The files that no installed package owned and that ``--overwrite`` lets this run replace; each is reported when written.
     """
 
     plan: InstallPlan
@@ -104,6 +106,7 @@ class ExecutionInput:
     registry_path: Path | None = None
     precopied: CopyResult | None = None
     warnings: list[str] = field(default_factory=list)
+    replacing: tuple[UnownedFile, ...] = ()
 
 
 # The launchers gupkg writes into every new version directory (``check-updates``), from the one template of ``gupkg.launchers``.
@@ -177,6 +180,13 @@ def execute_install(engine: Engine, run: ExecutionInput) -> PackageResult:
         for name in ("Fetch", "Verify", "Unpack", "Prepare"):
             emit_skipped(name)
 
+    # Fetching and unpacking take time: a file that no package owns may have appeared since the plan checked the disk. Look again
+    # before anything is activated, so a refusal leaves ``current`` and the integration as they were.
+    if not run.request.download_only:
+        run = replace(run, replacing=_recheck_unowned(engine, run, [item.effect for item in plan.effects if item.action in ("add", "update")], (
+            f" {plan.package} {version} was unpacked but not activated: `current`, the shims, shortcuts and the install record are unchanged."
+        )))
+
     # Activate: hand the portable data over, then switch current.
     activated = _activate(engine, run, version_dir)
 
@@ -206,6 +216,24 @@ def execute_install(engine: Engine, run: ExecutionInput) -> PackageResult:
         str(receipt), engine.log_path(package_path), tuple(warnings),
         {"origin": origin.kind, "populated": populated is not None, **({"label": origin.record.decision} if origin.record else {})},
     )
+
+
+def _recheck_unowned(engine: Engine, run: ExecutionInput, effects: Sequence[Effect], state: str) -> tuple[UnownedFile, ...]:
+    """Look at the disk again for *effects* about to be written; refuse an unowned file that ``--overwrite`` does not grant.
+
+    The names of the package's own install record are its own. Returns the files that ``run.replacing`` already granted and
+    those that appeared since, which ``--overwrite`` grants too (they are reported as replaced when written).
+
+    Raises
+    ------
+    FileExists
+        With *state* appended, naming the paths and the ``--overwrite`` value that lifts it; nothing has been written.
+    """
+    record = run.view.record.effects if run.view.record is not None else ()
+    own = {key: run.plan.package for key in provided_names(record)}
+    verb = "installed" if run.plan.operation != "repair" else "repaired"
+    now = check_unowned(run.plan.package, find_unowned(engine.system, effects, own), run.request.overwrite, verb=verb, state=state)
+    return tuple({item.path.casefold(): item for item in (*run.replacing, *now)}.values())
 
 
 @contextmanager
@@ -559,6 +587,7 @@ def _integrate(engine: Engine, run: ExecutionInput) -> tuple[list[Effect], list[
         emit_skipped("Integrate")
         return [item.effect for item in plan.effects], [], None
     effect_ctx = effect_context(run.context, plan.package_path, engine.effect_env)
+    replacing = {name_key("shortcut" if item.kind == OVERWRITE_SHORTCUTS else "file", item.path) for item in run.replacing}
     applied: list[Effect] = []
     failures: list[str] = []
     changed_environment = False
@@ -568,6 +597,11 @@ def _integrate(engine: Engine, run: ExecutionInput) -> tuple[list[Effect], list[
                 applied.append(item.effect)
                 continue
             try:
+                # Once more right before the write (``current`` has moved): a file that appeared since is never replaced silently.
+                granted = _recheck_unowned(engine, run, [item.effect], (
+                    f" {plan.package} {plan.version} is already active; this effect was not applied and is not in the install record."
+                ))
+                replacing.update(name_key("shortcut" if found.kind == OVERWRITE_SHORTCUTS else "file", found.path) for found in granted)
                 result = apply_effect(engine.system, item.effect, effect_ctx, item.previous)
             except (OSError, ValueError) as error:
                 failures.append(f"{_label(item.effect)}: {error}")
@@ -578,6 +612,9 @@ def _integrate(engine: Engine, run: ExecutionInput) -> tuple[list[Effect], list[
             applied.append(result)
             changed_environment = changed_environment or changes_environment(result)
             emit(Step(f"{'+' if item.action == 'add' else '~'} {_label(result)}", "add"))
+            for path in (item.effect.fields.get("path"), item.effect.fields.get("config")):
+                if path and name_key("shortcut" if item.effect.kind == "shortcut" else "file", str(path)) in replacing:
+                    emit(Step(f"replaced {path} (no installed package owned it)", "info"))
         for item in (item for item in plan.effects if item.action == "remove"):
             try:
                 removed = remove_effect(engine.system, item.effect, effect_ctx)

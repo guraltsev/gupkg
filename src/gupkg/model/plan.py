@@ -70,6 +70,35 @@ EXIT_INTERNAL = 4
 EXIT_INPUT = 5
 EXIT_NEWER_GUPKG = 6
 
+# What ``--overwrite=KINDS`` may replace: a file in ``bin`` or a Start Menu shortcut that no installed package owns.
+OVERWRITE_BIN_FILES = "orphaned-bin-files"
+OVERWRITE_SHORTCUTS = "orphaned-shortcuts"
+OVERWRITE_KINDS = (OVERWRITE_BIN_FILES, OVERWRITE_SHORTCUTS)
+
+
+def parse_overwrite(text: str) -> tuple[str, ...]:
+    """Return the kinds named by the value of ``--overwrite`` (a comma-separated list).
+
+    Raises
+    ------
+    ValueError
+        If the value is empty, has an empty item, a duplicate or an unknown kind; the message lists the valid kinds.
+    """
+    valid = ", ".join(OVERWRITE_KINDS)
+    if not text.strip():
+        raise ValueError(f"--overwrite needs the kinds of file to replace, a comma-separated list of: {valid}")
+    kinds: list[str] = []
+    for item in text.split(","):
+        item = item.strip()
+        if not item:
+            raise ValueError(f"--overwrite has an empty item in '{text}'; the valid kinds are: {valid}")
+        if item not in OVERWRITE_KINDS:
+            raise ValueError(f"--overwrite does not know the kind '{item}'; the valid kinds are: {valid}")
+        if item in kinds:
+            raise ValueError(f"--overwrite names '{item}' twice; the valid kinds are: {valid}")
+        kinds.append(item)
+    return tuple(kinds)
+
 
 @dataclass(frozen=True)
 class Request:
@@ -107,6 +136,9 @@ class Request:
         its own name again).
     unlink : bool
         ``link --unlink``: the package follows no registry entry.
+    overwrite : tuple of str
+        ``--overwrite=KINDS`` of ``install``, ``update``, ``switch`` and repairs: the kinds of unowned file that may be replaced
+        (``OVERWRITE_KINDS``).
     """
 
     operation: str
@@ -123,6 +155,7 @@ class Request:
     sweep: bool = False
     link_to: str | None = None
     unlink: bool = False
+    overwrite: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         """Refuse an operation the engine does not know."""

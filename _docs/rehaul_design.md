@@ -511,8 +511,20 @@ code is `name-conflict` (exit code 2). Two targets of one command that provide t
 always owns its own names, so a new version, `switch` and a repeated `install` of the same package are never a conflict. A
 new version that takes another package's name is refused like an install: the installed version keeps working and the
 package is `outdated` (`check-updates` leaves the version written without its `App`). `uninstall`, `cleanup` and `check` are
-never refused; `check` reports a clash that is already on disk as a problem of both packages and changes nothing. A file in
-`bin` or a shortcut that is in no install record is not owned and behaves as before.
+never refused; `check` reports a clash that is already on disk as a problem of both packages and changes nothing.
+
+A file in `bin` or a shortcut that exists and is in no install record of the root is *unowned*. `install`, `update`, `switch`
+and `repair` refuse, in the planner right after the name check and before any download or file change, to write a shim
+(`<name>.exe` and its `<name>.config.toml`), a wrapper file or a shortcut over an unowned path. The message names every path
+(five at most, then "and N more"), says that no installed package owns it and what to do (move or delete it, or run the
+command again with `--overwrite=KINDS`); the code is `file-exists` (exit code 2, with `paths` and `overwrite`). A file that
+already holds exactly what would be written (a shim by its bytes, a configuration or wrapper by its content, a shortcut by
+target, arguments, working folder, icon, description and `run_as_admin`) is not a conflict. `--overwrite=KINDS` is a
+comma-separated list and its value is required; the kinds are `orphaned-bin-files` (shim, configuration and wrapper files) and
+`orphaned-shortcuts`; there is no `all`, an unknown, empty or repeated kind is a usage error, and each kind lifts only its own
+refusal. The message names the exact value that lifts it. With it the file is replaced, the run prints `replaced <path> (no
+installed package owned it)`, and the package owns the name from then on. It never lifts a `name-conflict`. `check --fix`
+never replaces an unowned file: it reports the problem and names `gupkg install <name> --overwrite=...`.
 
 ## 6. Scopes and package kinds
 
@@ -1461,7 +1473,10 @@ the plan has them) or `result` (the failure, or "up to date"). A call that
 failed before any target was handled (a usage error, a question that was not
 answered) has `errors` with `code`, `message` and, when there is one, `hint`. A package that would take a name another
 installed package provides fails with the error code `name-conflict` (exit code 2, with `name` and `packages`); it appears
-only in failure documents (section 5.5). The events file ends
+only in failure documents (section 5.5). A package that would write over a file or shortcut that no installed package owns
+fails with `file-exists` (exit code 2, with `paths` and `overwrite`, the `--overwrite=KINDS` value that lifts it); `install`,
+`update`, `switch` and `self repair|update` take `--overwrite=orphaned-bin-files,orphaned-shortcuts` (any of the kinds,
+value required). The events file ends
 with `run_end`, whose `result` is the same document. Contract tests pin all of
 this.
 

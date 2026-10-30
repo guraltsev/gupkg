@@ -508,7 +508,9 @@ module = "pkg.local/fix.py"                                 # escape hatch (hook
   with the other shim options. Names may not be device names, streams or end in a dot or space.
 - **Names belong to one package.** A shim, wrapper, shortcut or environment variable that another installed package of the
   root already provides is refused (`name-conflict`) before anything is changed: uninstall the other package, or use a
-  definition with a different name.
+  definition with a different name. A file or shortcut that already exists where a package would write one, and that no
+  installed package owns, is refused too (`file-exists`): move it away, or run the command again with
+  `--overwrite=orphaned-bin-files` (shims and wrappers in `bin`) or `--overwrite=orphaned-shortcuts`, or both separated by a comma.
 - **`modes`** says where the package may be installed: `["system", "user"]` (the default), `["system"]` or `["user"]`, or
   `["portable"]` for a portable package, which installs for a single user only. A list that mixes `portable` with `system` or
   `user` is invalid: publish a separate `<name>-portable` package. A package whose `modes` lack the mode of the run is

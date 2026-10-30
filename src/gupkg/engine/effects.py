@@ -39,10 +39,11 @@ from ..catalog.local import canonical_path, is_inside, is_reparse_point
 from ..core import write_bytes_atomic
 from ..model.manifest import Manifest, env_name_problem, name_part_problem, path_entry_shape_problem
 from ..model.scope import ENV_MACHINE, Scope
-from ..model.plan import effect_key, normalize_entry
+from ..model.plan import OVERWRITE_BIN_FILES, OVERWRITE_SHORTCUTS, effect_key, normalize_entry
 from ..model.state import Effect
 from ..system.port import Mode, ShortcutSpec, System
 from ..tomlio import dumps
+from .planner import UnownedFile, name_key
 
 # The launcher binaries, the project licenses that sit beside them, and the folder of runtime files a dynamically linked launcher
 # loads its libraries from (``exe-shim-lib`` beside the launcher: the launchers do not look in their own folder, so a stray DLL
@@ -506,6 +507,59 @@ def apply_effect(system: System, effect: Effect, context: EffectContext, previou
     raise EffectError(f"unknown effect kind {effect.kind!r}")
 
 
+def find_unowned(
+    system: System, desired: Sequence[Effect], owners: Mapping[tuple[str, str], str]
+) -> tuple[UnownedFile, ...]:
+    """Return the shims, wrappers and shortcuts of *desired* that would be written over a file no installed package owns.
+
+    *owners* maps each name key to the package that provides it, every package of the root included (this one too), so a name
+    the installing package already owns is never unowned. A path that does not exist, or that already holds exactly what would
+    be written (a shim by its bytes, a configuration or wrapper by its content, a shortcut by every field), is not a conflict.
+    ``env`` and ``path`` effects write no file and are not looked at.
+    """
+    found: list[UnownedFile] = []
+    for effect in desired:
+        fields = effect.fields
+        if effect.kind == "shortcut":
+            path = str(fields["path"])
+            if name_key("shortcut", path) not in owners and _shortcut_conflicts(system, Path(path), fields):
+                found.append(UnownedFile(path, OVERWRITE_SHORTCUTS))
+        elif effect.kind in ("shim", "file"):
+            path = str(fields["path"])
+            if effect.kind == "file":
+                writes = [(path, _wrapper_bytes(Path(path), str(fields["content"])))]
+            else:
+                writes = [(path, _launcher(fields).read_bytes())]
+                if fields.get("config"):
+                    writes.append((str(fields["config"]), shim_config_text(fields).encode("utf-8")))
+            for path, data in writes:
+                if name_key("file", path) not in owners and os.path.lexists(path) and not _file_is(Path(path), data):
+                    found.append(UnownedFile(path, OVERWRITE_BIN_FILES))
+    return tuple(found)
+
+
+def _file_is(path: Path, data: bytes) -> bool:
+    """Return whether *path* is a file holding exactly *data*."""
+    try:
+        return path.is_file() and path.read_bytes() == data
+    except OSError:
+        return False
+
+
+def _shortcut_conflicts(system: System, path: Path, fields: Mapping[str, Any]) -> bool:
+    """Return whether a shortcut exists at *path* and differs from the one *fields* describe (or cannot be read)."""
+    try:
+        stored = system.read_shortcut(path)
+    except (OSError, ValueError):
+        return os.path.lexists(path)
+    wanted = ShortcutSpec(
+        target_path=str(fields["target"]), arguments=str(fields.get("arguments", "")),
+        working_directory=str(fields.get("working_dir", "")), icon_location=str(fields.get("icon_location", "")),
+        description=str(fields.get("description", "")), run_as_admin=bool(fields.get("run_as_admin", False)),
+    )
+    return stored != wanted
+
+
 def changes_environment(effect: Effect) -> bool:
     """Return whether applying or removing *effect* changes the environment (so a broadcast is due)."""
     return effect.kind in ("env", "path")
@@ -697,15 +751,21 @@ def shim_runtime_missing(bin_dir: Path) -> list[str]:
     return [source.name for source in shim_library_files() if not (folder / source.name).is_file()]
 
 
+def _launcher(fields: Mapping[str, Any]) -> Path:
+    """Return the bundled launcher binary that a shim effect copies to its path."""
+    linkage = str(fields.get("linkage", "dynamic"))
+    if linkage not in ("dynamic", "static"):
+        raise EffectError("shim linkage must be either 'dynamic' or 'static'")
+    kind = str(fields.get("type", "console"))
+    return _SHIM_DIR / (f"shim-{kind}.exe" if linkage == "dynamic" else f"shim-{kind}.static.exe")
+
+
 def _write_shim(fields: Mapping[str, Any], context: EffectContext) -> None:
     """Write a launcher, its config and, for a dynamic launcher, the runtime files that are not there yet."""
     path = _inside(Path(str(fields["path"])), context.bin_dir, "shim")
     config = _inside(Path(str(fields["config"])), context.bin_dir, "shim")
     linkage = str(fields.get("linkage", "dynamic"))
-    if linkage not in ("dynamic", "static"):
-        raise EffectError("shim linkage must be either 'dynamic' or 'static'")
-    kind = str(fields.get("type", "console"))
-    launcher = _SHIM_DIR / (f"shim-{kind}.exe" if linkage == "dynamic" else f"shim-{kind}.static.exe")
+    launcher = _launcher(fields)
     context.bin_dir.mkdir(parents=True, exist_ok=True)
     write_bytes_atomic(path, launcher.read_bytes())
     write_bytes_atomic(config, shim_config_text(fields).encode("utf-8"))

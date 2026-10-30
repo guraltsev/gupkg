@@ -36,6 +36,7 @@ from ..model.manifest import APP_MISSING_ERROR, INSTALLER_LABEL, Manifest, Sourc
 from ..model.plan import (
     CHECK_UPDATES_PHASES,
     INSTALL_PHASES,
+    OVERWRITE_KINDS,
     CopyIn,
     InstallPlan,
     Phase,
@@ -229,6 +230,62 @@ def check_names_between(wanted: Mapping[str, Sequence[Effect]]) -> dict[str, Nam
             refused.setdefault(other, error)
             refused.setdefault(package, error)
     return refused
+
+
+def name_key(group: str, path: str) -> tuple[str, str]:
+    """Return the comparison key of a path in ``bin`` (*group* ``file``) or of a shortcut (``shortcut``), letter case ignored."""
+    return group, os.path.normcase(os.path.normpath(path)).casefold()
+
+
+@dataclass(frozen=True)
+class UnownedFile:
+    """A file or shortcut that a plan would write over and that no installed package owns; ``kind`` is an ``--overwrite`` kind."""
+
+    path: str
+    kind: str
+
+
+class FileExists(PlanError):
+    """Refuse a package that would write over a file no installed package owns; the stable code is ``file-exists``."""
+
+    error_code = "file-exists"
+
+    def __init__(self, message: str, *, paths: "Sequence[str]", overwrite: str) -> None:
+        """Build the message; *paths* are the files and *overwrite* the ``--overwrite`` value that would lift the refusal."""
+        super().__init__(message)
+        self.error_details = {"paths": list(paths), "overwrite": overwrite}
+
+
+def check_unowned(
+    package: str, found: Sequence[UnownedFile], allowed: Sequence[str] = (), *, command: str | None = None,
+    verb: str = "installed", state: str = "",
+) -> tuple[UnownedFile, ...]:
+    """Refuse *found* unless ``--overwrite`` (*allowed*, a list of kinds) lifts it; return the files that will be replaced.
+
+    Each kind lifts only its own files. The message names the exact ``--overwrite`` value that would lift the refusal: the
+    kinds already allowed and the kinds still needed. *command*, when given, is the command to run instead of "the command
+    again" (``check --fix`` changes nothing and names the command that overwrites). *verb* is the word of "cannot be ...", and
+    *state* is a sentence appended to say what state the package is in when the refusal comes after work has started.
+
+    Raises
+    ------
+    FileExists
+        Listing every refused path (five at most), nothing has been changed.
+    """
+    refused = [item for item in found if item.kind not in allowed]
+    if refused:
+        needed = [kind for kind in OVERWRITE_KINDS if kind in allowed or any(item.kind == kind for item in refused)]
+        value = ",".join(needed)
+        many = len(refused) > 1
+        shown = ", ".join(f"'{item.path}'" for item in refused[:5]) + (f" and {len(refused) - 5} more" if len(refused) > 5 else "")
+        way = f"`{command}{value}`" if command else f"the command again with --overwrite={value}"
+        raise FileExists(
+            f"{package} cannot be {verb}: {shown} already exist{'' if many else 's'} and no installed package owns "
+            f"{'them' if many else 'it'}. Move or delete {'those files' if many else 'that file'}, or run {way} to replace "
+            f"{'them' if many else 'it'}.{state}",
+            paths=[item.path for item in refused], overwrite=value,
+        )
+    return tuple(found)
 
 
 class InvalidVersion(PlanError):
