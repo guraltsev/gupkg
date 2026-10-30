@@ -11,7 +11,7 @@ Usage and API
 -------------
 Call ``main(argv)`` from Python or run ``gupkg-manager``. Exit codes follow the CLI (0 ok, 2 usage or configuration, 3 an operation failed or was
 refused, 4 internal error, 5 declined or input needed, 6 a newer gupkg is needed): a batch returns the highest code of its targets.
-``--settings PATH`` and ``--sandbox DIR`` (before the command) are relayed to every ``gupkg`` call.
+``--settings PATH``, ``--root DIR`` and ``--sandbox DIR`` (before the command) are relayed to every ``gupkg`` call.
 
 Implementation Approach
 -----------------------

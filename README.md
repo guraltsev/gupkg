@@ -294,7 +294,7 @@ unmet `requires_gupkg`: a package launcher then runs its bundled gupkg).
 0.17 spellings are not aliases: `config-check`, `config-fix`, `doctor`, `repair-deps` and `update-deps` are unknown
 commands, and every other 0.17 option is an unrecognized argument. `gupkg tui` and `gupkg manager` are pass-through commands: they
 start `gupkg-tui` and `gupkg-manager` of the same gupkg and return their exit code. The programs run in the scope of their own process
-(an administrator shell manages the system root), and `--root DIR` names the root of the run for them as for every command: `gupkg --root DIR tui` and `gupkg --root DIR manager` pass it on (it must come before `tui`/`manager`; an elevated run needs an admin-only root, else the program stops with exit code 2). `--settings` and `--sandbox` before `tui`/`manager` are refused: start `gupkg-manager --settings PATH` (or `gupkg-tui --settings PATH`) directly, or start them from the gupkg that is installed in the root.
+(an administrator shell manages the system root), and `--root DIR` names the root of the run for them as for every command: `gupkg --root DIR tui` and `gupkg --root DIR manager` pass it on (it must come before `tui`/`manager`; an elevated run needs an admin-only root, else the program stops with exit code 2). `--settings` and `--sandbox` before `tui`/`manager` are refused: start `gupkg-manager --settings PATH` (or `gupkg-tui --settings PATH`) directly, or start them from the gupkg that is installed in the root. With `--root` both before and after the command (`gupkg --root A manager --root B`) the last one wins.
 
 ### The UI programs: `gupkg-tui` and `gupkg-manager`
 

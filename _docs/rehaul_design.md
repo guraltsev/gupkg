@@ -54,7 +54,7 @@ section's wording and the code differ, the code and the decision table win.
   `[[shortcut]]` has `run_as_admin` and `modes` (a subset of the package's `modes`); `copyq` writes `unins000.exe` with
   `write`, not `create`; the broken-package reason for a folder without an install record says `reinstall with: gupkg
   install <name>` (issue 035 4.7 quoted `--force`, which `install` does not have); the manager and `gupkg-tui` take
-  `--settings` and `--sandbox` but no `--root`; the scope is shown at the left of the status line, not in a title bar; the
+  `--settings`, `--root` and `--sandbox` (`gupkg --root DIR manager|tui` passes `--root` on; `--settings` and `--sandbox` before them stay refused); the scope is shown at the left of the status line, not in a title bar; the
   plan documents carry no `requires_elevation` and every document is `"api": 2`.
 - **Not verified on real hardware:** Smart App Control (spike S2), and the
   manual checks listed in `tests/manual_smoke.md`.

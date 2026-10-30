@@ -188,3 +188,12 @@ def test_through_gupkg_a_missing_root_is_reported_by_the_program_and_nothing_is_
 
     assert forwarded[:2] == ["--root", str(chosen)]
     assert code == 2 and "does not exist (create the folder first)" in capsys.readouterr().err and not chosen.exists()
+
+def test_a_default_or_configured_root_that_does_not_exist_yet_still_starts(tmp_path: Path) -> None:
+    """The folder check applies only to a GIVEN ``--root``: the default and ``[roots]`` roots may be missing on a first run."""
+    machine = Machine(tmp_path)
+    machine.app_settings()
+
+    env = environment(machine)
+
+    assert not machine.user_root.exists() and env.scope.root == machine.user_root
