@@ -12,6 +12,24 @@ download is checked against the SHA-256 in the same row before anything is unpac
 A row marked `-` was published before ZIPs had digests and cannot be installed by this
 method.
 
+## Changes in 1.1.1
+
+- **A file that no package owns is no longer overwritten silently.** An install, update, switch or
+  `self repair` that would write a shim, a wrapper file or a Start Menu shortcut over a file that no installed
+  package owns now stops before any work, names the path, and says how to go on: move or delete the file, or
+  repeat the command with `--overwrite=KINDS`. The kinds are named: `orphaned-bin-files` (a shim `.exe`, its
+  `.config.toml` or a wrapper in `bin`) and `orphaned-shortcuts` (a Start Menu shortcut), for example
+  `gupkg install tool --overwrite=orphaned-bin-files,orphaned-shortcuts`. A bare `--overwrite` is an error. A file
+  that already holds what would be written is not a conflict. `check --fix` reports such a file and changes
+  nothing. A file that appears while the install runs is refused too (the install stops before `current` moves,
+  or the effect is not applied and is reported).
+- **`gupkg-manager`, `gupkg-tui` and `gupkg --root DIR manager|tui` take `--root DIR`**, with the meaning it has for
+  every other command. A given `--root` that does not exist or is not a folder stops the program at startup (exit
+  code 2) and creates nothing; an elevated run still needs an admin-only root.
+- **Known limit:** the launcher `gupkg.cmd` is a batch file and splits arguments at `=` and `,`. `--root DIR` and
+  `--overwrite=...` are handled; `--skip-checksum=cli` is read as two words (`--skip-checksum` and a target `cli`),
+  as it was in 1.1.0 (not fixed yet), and an empty item in `--overwrite=a,,b` is not detected through `gupkg.cmd`.
+
 ## Upgrading to 1.1 from 1.0.x
 
 1.1.0 changes how one run is scoped. Nothing is converted automatically; read this before you update.
