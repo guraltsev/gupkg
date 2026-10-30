@@ -423,8 +423,8 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
    needing the system gupkg, no UAC prompt appears, user packages are updated. Why manual: the real ACL check decides it.
 5. **Schedule behaviour.** In Task Scheduler (no console) run `gupkg-manager check-updates --all` and then `gupkg-manager update --all
    --yes`: both finish without waiting for a key, and a package without a checksum under the default `ask` is reported as `refused: no
-   checksum` with exit code 3. Then tick "Run with highest privileges" on the task: it is refused with exit code 2 (the programs refuse an
-   elevated shell). Why manual: needs a real scheduled task without a terminal and a real elevated token.
+   checksum` with exit code 3. Then tick "Run with highest privileges" on the task: it is not refused: an elevated process manages the
+   system root, so the batch works on the system packages (exit codes as for any run). Why manual: needs a real scheduled task without a terminal and a real elevated token.
 6. **A hostile package name.** Make a folder `a&calc` in the user root and run `gupkg-manager update --all --yes` and open the browser:
    the package is listed literally, refused alone with exit code 2, and no Calculator starts. Why manual: real `cmd` quoting.
 7. **Closing while a call runs.** Start `gupkg-manager update --all --yes` of several packages, then close the console window (and, separately, press Ctrl-C in
@@ -659,7 +659,7 @@ in `$T\sys\.gupkg\settings.toml`, pointing at the `*bin` and `*menu` folders. Us
    elevated token.
 9. **`035-T17-1` `--root` for the manager and the TUI.** On a test machine make `$T\root` (a folder with one local package installed with `gupkg --root $T\root install ...`).
    (a) From a normal shell run `gupkg --root $T\root manager` and `gupkg-tui --root $T\root <package>`: the browser opens, the status line starts with `user · <root shortened>`
-   and lists that package; `gupkg-manager --root $T\root check --json` lists it too. (b) From an administrator shell run `gupkg-manager --root $T\user-writable`
+   and lists that package; `gupkg-manager --root $T\root check --json` lists it too. (b) `gupkg-manager --root $T\missing` and `gupkg-manager --root <a plain file>` (also `gupkg --root ... manager`): exit code 2 with `--root <path> does not exist (create the folder first)` / `--root <path> is not a folder`, nothing created. (c) From an administrator shell run `gupkg-manager --root $T\user-writable`
    (a folder standard users can change): exit code 2 with `--root <folder> is not admin-only, so it cannot be the system root: ...`, nothing created in the folder.
-   (c) `gupkg --settings X manager` and `gupkg --sandbox D tui` still print `--settings and --sandbox are not passed on to gupkg-<program>` (exit 2). Why manual:
+   (d) `gupkg --settings X manager` and `gupkg --sandbox D tui` still print `--settings and --sandbox are not passed on to gupkg-<program>` (exit 2). Why manual:
    real launchers, real terminal and a real elevated token.

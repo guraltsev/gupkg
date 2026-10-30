@@ -161,12 +161,15 @@ def build_environment(
     Raises
     ------
     StartupError
-        If the sibling ``gupkg`` is missing, the settings cannot be read, or an elevated run's gupkg tree is not admin-only.
+        If ``--root`` names a folder that does not exist or is not a folder, the sibling ``gupkg`` is missing, the settings cannot be read, or an elevated run's gupkg tree is not admin-only.
     """
     where = location or locate_running_gupkg()
     environment = dict(os.environ if env is None else env)
     machine = system or WindowsSystem()
     sandbox, settings_path, root_option = getattr(args, "sandbox", None), getattr(args, "settings", None), getattr(args, "root", None)
+    if root_option is not None and not root_option.is_dir():
+        # A given ``--root`` must already be a folder (nothing is created); the default and configured roots may be missing on a first run.
+        raise StartupError(f"--root {root_option} is not a folder" if root_option.exists() else f"--root {root_option} does not exist (create the folder first)")
     if sandbox is not None:
         sandbox.mkdir(parents=True, exist_ok=True)
         machine = FakeSystem.sandbox(sandbox, machine)

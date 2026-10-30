@@ -142,3 +142,49 @@ def test_a_single_very_long_folder_name_is_cut_from_its_front(tmp_path: Path) ->
     shortened = shorten_path("C:\\" + "x" * 80 + "\\end")
 
     assert len(shortened) <= 40 and shortened.startswith("C:\\…\\") and shortened.endswith("end")
+
+
+@pytest.mark.parametrize("module", ["gupkg_manager.cli", "gupkg_tui.cli"])
+@pytest.mark.parametrize("kind", ["missing", "file"])
+def test_a_given_root_that_is_missing_or_not_a_folder_stops_at_startup_and_nothing_is_created(tmp_path: Path, capsys: pytest.CaptureFixture[str], module: str, kind: str) -> None:
+    """``--root`` must name an existing folder: one-line message, exit code 2, nothing created at that path."""
+    import importlib
+
+    chosen = tmp_path / "chosen"
+    if kind == "file":
+        chosen.write_text("x", encoding="utf-8")
+    machine = Machine(tmp_path)
+    machine.app_settings()
+    argv = ["--root", str(chosen)] + (["alpha"] if module == "gupkg_tui.cli" else [])
+
+    code = importlib.import_module(module).main(argv, location=machine.location, system=machine.fake, env=machine.env, command=("gupkg",))
+
+    expected = f"--root {chosen} is not a folder" if kind == "file" else f"--root {chosen} does not exist (create the folder first)"
+    assert code == 2 and capsys.readouterr().err.strip().endswith(expected)
+    assert chosen.is_file() if kind == "file" else not chosen.exists()
+
+
+@pytest.mark.parametrize("word", ["manager", "tui"])
+def test_through_gupkg_a_missing_root_is_reported_by_the_program_and_nothing_is_created(tmp_path: Path, capsys: pytest.CaptureFixture[str], word: str) -> None:
+    """``gupkg --root X manager|tui`` forwards the option; the program it starts refuses the missing folder (exit 2) and creates nothing."""
+    import importlib
+
+    from gupkg import cli
+    from gupkg.selfmgmt.location import RunningGupkg
+    from gupkg.system.fake import FakeSystem
+    from gupkg.system.port import ProcessResult
+
+    chosen = tmp_path / "chosen"
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    (tree / f"gupkg-{word}.cmd").write_text("@echo off\r\n", encoding="ascii")
+    system = FakeSystem(tmp_path / "forward", processes={f"gupkg-{word}.cmd": lambda call: ProcessResult(0)})
+    cli.main(["--root", str(chosen), word, *(["alpha"] if word == "tui" else [])], system=system, env={}, location=RunningGupkg("source", tree / "gupkg", (tree,)))
+    forwarded = system.foreground_log[0][1:]
+    machine = Machine(tmp_path)
+    machine.app_settings()
+
+    code = importlib.import_module(f"gupkg_{word}.cli").main(forwarded, location=machine.location, system=machine.fake, env=machine.env, command=("gupkg",))
+
+    assert forwarded[:2] == ["--root", str(chosen)]
+    assert code == 2 and "does not exist (create the folder first)" in capsys.readouterr().err and not chosen.exists()
