@@ -573,6 +573,15 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
    use a package definition with a different name.` and exit code 2; `<root>\two\current` does not exist and `<root>\bin` holds only the files of `one`. Then
    `gupkg --root <test root> uninstall one` and `install two` succeed. Also `install one two` in a fresh root names both packages and installs neither. Why manual:
    shows the real message and the real folders once.
+2. **`035-T16-1` A file that no package owns is refused, then replaced with `--overwrite=`.** On a test machine (`--sandbox <empty folder A> --root <empty folder B>`,
+   never `C:\opt`), make a local package `tool` in B: `tool\1.0.0\pkg.toml` with `source.shipped = true` and `[[shim]] name = "tool"`, and `tool\1.0.0\App\app.exe`. Create
+   `<A>\bin\user\tool.exe` by hand (any text). Run `gupkg --sandbox <A> --root <B> install tool`: it stops with `tool cannot be installed: '<A>\bin\user\tool.exe'
+   already exists and no installed package owns it. Move or delete that file, or run the command again with --overwrite=orphaned-bin-files to replace it.`, exit code 2;
+   the hand-made file is unchanged and `<B>\tool\current` does not exist. Run `install tool --overwrite=orphaned-shortcuts`: still refused (the message names
+   `--overwrite=orphaned-bin-files,orphaned-shortcuts`). Run `install tool --overwrite=orphaned-bin-files`: it succeeds, prints `replaced <path> (no installed package
+   owned it)` once, and `tool.exe` is now the launcher (about 300 KB). `install tool --overwrite` alone and `--overwrite=nonsense` are usage errors (exit code 2) that
+   list the two kinds (through `gupkg.cmd`, which splits `--overwrite=a,b` at `=` and `,`, gupkg joins the kind names back; an unknown kind then shows as the bare
+   flag's error). Why manual: shows the real message, the real files, `gupkg.cmd` and the real usage errors once.
 
 ## Acceptance of issue 035 on a test machine (issue 035, task T13)
 
