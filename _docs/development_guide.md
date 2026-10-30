@@ -63,8 +63,8 @@ a `%`, `^` or `"` inside a forwarded argument is re-expanded by `cmd`: call `gup
 
 The Python package folder of a release (`gupkg\gupkg\`) also holds `gupkg.exe`, `gupkg-tui.exe` and so on beside their `.config.toml` (a `cmd /d /s /c <name>.cmd` shim made by
 `tools/build_standalone.py`). Their relative argument `gupkg.cmd` is resolved by `cmd.exe` against the *current directory*, not the shim's
-folder, so they work only when started from their own folder. The shims that gupkg installs from `pkg.toml` do not use them: they target
-`$App\gupkg.cmd` by absolute path. The tree's own `.cmd` wrappers are what `gupkg-location`, the package launchers and the UI programs call.
+folder, so they work only when started from their own folder. The shims that gupkg installs from `pkg.toml` do not use them: they start `$App\gupkg\python\python.exe` by absolute path with the fixed
+arguments `-I -s -B -S $App\gupkg\bootstrap.py` (a `.cmd` target would run as `cmd /c` and mangle the arguments). The tree's own `.cmd` wrappers are what `gupkg-location`, the package launchers and the UI programs call.
 
 ### One distribution, built in the development tree
 

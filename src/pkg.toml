@@ -29,14 +29,20 @@ description = "Manage the packages installed for all users"
 run_as_admin = true
 modes = ["system"]
 
+# The shims start the bundled Python directly, not a .cmd: Windows runs a .cmd target as `cmd /c "<target>" "a" "b"`, and cmd then
+# mangles the arguments (an argument with = , ; or & is split or breaks the command). A .exe target receives every argument
+# exactly as the caller typed it. The flags are those of gupkg.cmd; a gupkg-tui / gupkg-manager shim adds the program name first.
 [[shim]]
 name = "gupkg"
-target = "$App\\gupkg.cmd"
+target = "$App\\gupkg\\python\\python.exe"
+arguments = ["-I", "-s", "-B", "-S", "$App\\gupkg\\bootstrap.py"]
 
 [[shim]]
 name = "gupkg-tui"
-target = "$App\\gupkg-tui.cmd"
+target = "$App\\gupkg\\python\\python.exe"
+arguments = ["-I", "-s", "-B", "-S", "$App\\gupkg\\bootstrap.py", "--gupkg-program=tui"]
 
 [[shim]]
 name = "gupkg-manager"
-target = "$App\\gupkg-manager.cmd"
+target = "$App\\gupkg\\python\\python.exe"
+arguments = ["-I", "-s", "-B", "-S", "$App\\gupkg\\bootstrap.py", "--gupkg-program=manager"]

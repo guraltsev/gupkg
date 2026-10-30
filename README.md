@@ -341,6 +341,12 @@ with `Start gupkg through gupkg.cmd or gupkg.exe; it runs only on its bundled Py
 `python.exe -I -s -B -S bootstrap.py`; when it is missing it exits with status 1 and tells you to reinstall gupkg from a
 release ZIP.
 
+The `gupkg`, `gupkg-tui` and `gupkg-manager` commands that the gupkg package puts in `bin` are shims that start that same
+`python\python.exe` directly, with the same flags (`-I -s -B -S bootstrap.py`, and `--gupkg-program=tui|manager` for the other two),
+not a `.cmd` file: Windows runs a `.cmd` target through `cmd /c`, which mangles an argument that holds `=`, `,`, `;`, `&`, `|`, `%` or `^`.
+Every argument reaches gupkg as typed. With the bundled Python gone the shim prints `Could not create target <path>: Windows error 3.` and exits 1;
+reinstall gupkg from a release ZIP. A root installed with 1.1.1 keeps its old `.cmd` shims until `gupkg update gupkg` (or `U`) installs the new release.
+
 ### Settings, registries and authoring
 
 `gupkg settings show` lists every effective setting with the layer it came from; `settings path` names the file of each
