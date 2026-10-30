@@ -28,7 +28,7 @@ gupkg self status               :: is gupkg's own installation healthy?
 | `declares more than one [source]` / `[[origin.versions]]` | A version has exactly one `[source]`. Another version is another folder with its own `pkg.toml`. |
 | `needs 'portable' in modes` | `[portable]` is declared for a package whose `modes` exclude `portable`. |
 | `a SHA-256 ... must be exactly 64 hexadecimal digits` (`checksum-invalid`) | A malformed `sha256`. A malformed value makes the version invalid and is never skippable. |
-| `App is missing and no way to recover it.` | The version has no `App` and no `download_url`, populate script or shipped files. Restore the files, or add a `[source]` that fills them. |
+| `App is missing and no way to recover it.` | The version has no `App` and no `download_url`, populate script or shipped files. Restore the files, or add a `[source]` that fills them. `gupkg check --fix` says the files ship with the version, and that `gupkg install <name>` cannot rebuild a shipped App: copy the App folder back, or install another version. |
 | `... is not valid: ...` (`invalid-package`) | A version directory failed validation; the problems follow. Fix them and run `gupkg pkg check <folder>`. |
 | `the tracker is invalid: ...` | `_check_updates\pkg.toml` has a problem; run `gupkg pkg check <package folder>`. A tracker must have `[track]`; a version directory must not. |
 | `Error loading TOML config ...` / a syntax error with a line | `pkg.toml` or `settings.toml` is not valid TOML. |
@@ -98,6 +98,9 @@ never starts an elevated copy of itself, so none of these messages can be answer
 | `effect-error` / `portable-error` | An effect or portable data hand-over was refused (for example a link in the way). The message names the path. |
 | `package-busy`: `x is being changed by ... Wait for it to finish and run the command again.` | Another gupkg run holds the package. If it is gone, the next run removes the stale lock (`<package>\.gupkg\locks\package.lock`) once its process has ended. |
 | `io-error` | A file operation failed (permissions, a file in use, a path that is too long). The message names it; enable long paths and keep roots short for deep packages. |
+| `io-error`: `<file> is in use by another program. The package is uninstalled: ... its folder ... is still there.` (`uninstall --purge`) | The integration and `current` are already removed; only the folder is left. Close the program, then run `gupkg uninstall <name> --purge` again. |
+| `io-error`: `the Finish step failed: ... The package is now on <new>: `current` points to <new>; version <old> is kept.` (`update`, `install`, `switch`) | A step after `current` moved failed. `current` is not rolled back. `gupkg check <name>` shows the state; `gupkg switch <name> <old>` returns to the old version. |
+| `check`: `<name> has versions ... but no active version (`current` is missing) and the shim ... is still in `bin`.` | The `current` junction was deleted. `gupkg install <name>` activates a version again (`gupkg switch` and `check --fix` refuse a package with no active version). `gupkg self status` says the same of gupkg itself: run `gupkg install gupkg`, or the bootstrap again if gupkg does not start. |
 | `needs-real-run` | A `--sandbox` run met a step that needs a real process (not git or 7-Zip). Run without `--sandbox`. |
 | A new command or variable is "not found" | Windows gives new environment values only to new processes. Open a new terminal. |
 | `fatal: ... Filename too long` while cloning (git packages) | `git config --global core.longpaths true`, and keep the package root path short. |

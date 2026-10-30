@@ -55,6 +55,8 @@ class SelfStatus:
         The manifest comparison, ``None`` when there was nothing to compare with.
     manifest_problem : str, optional
         Why the manifest could not be read.
+    current_problem : str, optional
+        Set when an installed gupkg's package folder has no ``current`` (no active version), with the command that repairs it.
     """
 
     version: str
@@ -66,10 +68,13 @@ class SelfStatus:
     integrity: IntegrityReport | None = None
     manifest_problem: str | None = None
     notes: tuple[str, ...] = field(default_factory=tuple)
+    current_problem: str | None = None
 
     def problems(self) -> list[str]:
         """Return one line per finding that makes the status not ok."""
         found: list[str] = []
+        if self.current_problem:
+            found.append(self.current_problem)
         if self.kind != "source" and not self.interpreter_bundled:
             found.append(f"the running interpreter {self.interpreter} is not the isolated bundled Python of this gupkg")
         if self.manifest_problem:
@@ -133,7 +138,18 @@ def self_status(location: RunningGupkg) -> SelfStatus:
                 integrity = verify_version_directory(version_root)
         except (ManifestError, OSError) as error:
             problem = f"cannot check the files against {MANIFEST_RELATIVE_PATH}: {error}"
+
+    # An installed gupkg is the package ``gupkg`` of a root: without its ``current`` junction it has no active version, which
+    # ``gupkg self repair`` cannot fix (it needs an installed package), so the way back is installing the package again.
+    current_problem = None
+    if location.kind == "installed" and location.version_dir is not None:
+        package_root = location.version_dir.parent
+        if not os.path.lexists(package_root / "current"):
+            current_problem = (
+                f"the gupkg package {package_root} has no active version (`current` is missing). Run `gupkg install gupkg` "
+                "to activate its newest version; if gupkg does not start, install it again with gupkg-bootstrap.cmd"
+            )
     return SelfStatus(
         __version__, location.kind, str(package_dir), str(version_root) if version_root else None, sys.executable, bundled,
-        integrity, problem, tuple(notes),
+        integrity, problem, tuple(notes), current_problem,
     )

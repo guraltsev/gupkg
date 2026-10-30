@@ -26,7 +26,8 @@ from __future__ import annotations
 
 import os
 import shutil
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -180,10 +181,11 @@ def execute_install(engine: Engine, run: ExecutionInput) -> PackageResult:
     activated = _activate(engine, run, version_dir)
 
     # Integrate: diff the effects against the install record; the record lists what is really applied.
-    applied, failures, broadcast_warning = _integrate(engine, run)
+    with _after_switch(run, activated, "Integrate"):
+        applied, failures, broadcast_warning = _integrate(engine, run)
 
     # Finish: the receipt and the install record come last.
-    with phase("Finish") as finishing:
+    with _after_switch(run, activated, "Finish"), phase("Finish") as finishing:
         # A download-only update changes no integration, so the install record is left as it is.
         if not run.request.download_only:
             record = InstallRecord(context.mode, _link_after(run), tuple(applied))
@@ -204,6 +206,31 @@ def execute_install(engine: Engine, run: ExecutionInput) -> PackageResult:
         str(receipt), engine.log_path(package_path), tuple(warnings),
         {"origin": origin.kind, "populated": populated is not None, **({"label": origin.record.decision} if origin.record else {})},
     )
+
+
+@contextmanager
+def _after_switch(run: ExecutionInput, activated: bool, step: str) -> Iterator[None]:
+    """Say, when a step that runs after ``current`` moved fails with an ``OSError``, which step failed and where ``current`` points now.
+
+    ``current`` is not moved back: the integration and the install record may already describe the new version, so a rollback
+    would have to undo those too. The message states the real state and the command that returns to the old version.
+    The exception type stays ``OSError``, so the exit code does not change.
+    """
+    try:
+        yield
+    except OSError as error:
+        if not activated:
+            raise
+        plan = run.plan
+        old = plan.previous if plan.previous and plan.previous.casefold() != (plan.version or "").casefold() else None
+        back = (
+            f"; version {old} is kept. `gupkg check {plan.package}` shows its state, `gupkg switch {plan.package} {old}` returns to the old version"
+            if old else f". `gupkg check {plan.package}` shows its state"
+        )
+        raise OSError(
+            f"the {step} step failed: {error}. The package is now on {plan.version}: `current` points to "
+            f"{plan.version}{back}."
+        ) from error
 
 
 def emit_skipped(name: str) -> None:
@@ -704,7 +731,10 @@ def execute_uninstall(engine: Engine, run: ExecutionInput) -> PackageResult:
         if run.request.purge and not failures:
             emit(Step(f"Deleting {package_path} (including data\\)", "remove"))
             release_package_log(package_path)
-            remove_tree(package_path)
+            try:
+                remove_tree(package_path)
+            except OSError as error:
+                raise OSError(_purge_failure_text(plan.package, package_path, error)) from error
             return PackageResult(
                 plan.package, "uninstall", True, "purged", plan.previous, plan.previous, context.mode, 0, None, None,
                 engine.log_path(package_path), tuple(run.warnings), {"purged": str(package_path)},
@@ -721,6 +751,21 @@ def execute_uninstall(engine: Engine, run: ExecutionInput) -> PackageResult:
     return PackageResult(
         plan.package, "uninstall", True, "uninstalled", plan.previous, plan.previous, context.mode, 0, None, None,
         engine.log_path(package_path), tuple(run.warnings), {"kept_versions": [item.name for item in run.view.local.versions]},
+    )
+
+
+def _purge_failure_text(name: str, package_path: Path, error: OSError) -> str:
+    """Say what a failed ``--purge`` could not delete and why, what is already done, and the command that finishes it.
+
+    By the time the folder is deleted the integration and ``current`` are already removed, so the package is uninstalled; only
+    its folder is left. A file that another program holds open (Windows errors 32 and 33) is named as in use.
+    """
+    where = str(getattr(error, "filename", None) or package_path)
+    why = "is in use by another program" if getattr(error, "winerror", None) in (32, 33) else f"could not be deleted ({error.strerror or error})"
+    advice = "close the program" if getattr(error, "winerror", None) in (32, 33) else "remove the cause"
+    return (
+        f"{where} {why}. The package is uninstalled: its integration and `current` are removed; its folder {package_path} is "
+        f"still there. To finish, {advice}, then run `gupkg uninstall {name} --purge` again."
     )
 
 

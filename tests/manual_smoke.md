@@ -604,9 +604,10 @@ in `$T\sys\.gupkg\settings.toml`, pointing at the `*bin` and `*menu` folders. Us
    release published (a test release ZIP, or the real next release), run `gupkg self update` in the mode's own shell. Expect `current` to name
    the new version and `gupkg self status` to say `ok`. Then repeat with a failure part-way: (a) disconnect the network before the download: exit code 3,
    `current` unchanged, the message says nothing was changed; (b) hold a file of the new version open (`[IO.File]::Open(path,'Open','Read','None')`
-   in another PowerShell) so the finish step fails. Expected today: exit code 3 and a raw `[Errno 13] Permission denied: <file>`; `<root>\gupkg\current` is a
-   working junction, and it may already name the NEW version although the result says `failed` (the 2026-10-29 trial with an ordinary package did exactly
-   that). Known defect (separate issue, pre-existing at d8096b5): the message should say whether `current` moved and what state the package is in. Check
+   in another PowerShell) so the finish step fails. Expected: exit code 3 and a message that starts `the Finish step failed: [Errno 13] Permission denied: <file>`
+   and goes on `The package is now on <new>: `current` points to <new>; version <old> is kept. `gupkg check gupkg` shows its state, `gupkg switch gupkg <old>`
+   returns to the old version.` `<root>\gupkg\current` is a working junction naming the NEW version (the step after the switch failed; `current` is not rolled
+   back, because the integration and the install record already describe the new version). Check
    `gupkg self status` and `<root>\gupkg\current`: the junction must exist and work in either case. After each failure run `gupkg self repair` and then a launcher (`<bin>\gupkg.exe list`): it starts. Why manual: a real self update needs a
    release download and the real running interpreter behind the junction (AGENTS rule 6).
 4. **`035-T13-4` First manager run with an empty registry, in each mode, with a real sync (item 5).** Start from a root without `.gupkg\registry`. Start
@@ -637,9 +638,13 @@ in `$T\sys\.gupkg\settings.toml`, pointing at the `*bin` and `*menu` folders. Us
 8. **`035-T13-8` Failures in the system mode, and the elevated start of a user-installed gupkg (item 9).** (a) From an administrator shell start a gupkg
    that is installed in a user-writable root: exit code 2, "an elevated gupkg must be installed in an admin-only root; run the system gupkg" (see
    `035-T05-2`), nothing read or written under the test roots. (b) Elevated, offline: `gupkg registry sync` exits 3, names the registry and says the
-   previous tree stays; the roots are unchanged. (c) Elevated, with a file of `<sysroot>\<pkg>\current\App` held open: `uninstall --purge`. Expected today: exit 3 with a raw `[WinError 32]`; the shim and
-   `current` are already removed and the package folder is left; closing the program and repeating succeeds. Known defect (separate issue, pre-existing at d8096b5):
-   the message should say that the integration is already gone and what to do. (d) Elevated, with `<sysroot>\<pkg>\current` removed (`cmd /c rmdir`):
-   Expected today: `gupkg list` shows `local`, `check` and `check --fix` print `ok: not-installed` and change nothing, the shim stays. Known defect (separate issue,
-   pre-existing at d8096b5): they should say the package is broken and how to recover. Why manual: needs an
+   previous tree stays; the roots are unchanged. (c) Elevated, with a file of `<sysroot>\<pkg>\current\App` held open: `uninstall --purge`. Expected: exit 3 and `<file> is in use by another program. The package is
+   uninstalled: its integration and `current` are removed; its folder <folder> is still there. To finish, close the program, then run `gupkg uninstall <pkg> --purge`
+   again.`; the shim and `current` are removed and the package folder is left; closing the program and repeating succeeds. (d) Elevated, with `<sysroot>\<pkg>\current`
+   removed (`cmd /c rmdir`): Expected: `check` and `check --fix --yes` both exit 3 with `<pkg> has versions <list> but no active version (`current` is missing) and the
+   shim `<name>.exe` is still in `bin`. Run `gupkg install <pkg>` to activate a version again.` and change nothing (`check --fix` does not repair it); `gupkg install <pkg>`
+   then activates the version and `check` says `healthy`. (`gupkg list` still shows `local` for such a package.) Also delete `<sysroot>\<pkg>\<version>\App` of a shipped
+   package and the shim and run `check --fix --yes`: exit 2, `App is missing and no way to recover it: its files ship with the version. Restore the App folder of <version> (copy the package files back), or install another version; `gupkg install <pkg>` cannot rebuild a shipped App.` Finally remove
+   `<sysroot>\gupkg\current` and run `gupkg self status` (only on the test machine, with another way to start gupkg): it prints `problem: the gupkg package <folder> has no
+   active version (`current` is missing). Run `gupkg install gupkg` ...` and exits 3. Why manual: needs an
    elevated token.

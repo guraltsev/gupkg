@@ -118,6 +118,8 @@ def diagnose(
     if current.status not in ("absent", "valid"):
         problems.append(Problem("current", current.problem or f"current is {current.status}"))
     problems.extend(Problem("record", text) for text in view.problems)
+    if current.status == "absent" and view.local.versions and view.record is not None and view.record.effects:
+        problems.append(Problem("current-missing", _current_missing_text(view)))
     if view.installed is None:
         return Diagnosis(False, tuple(problems), ())
 
@@ -161,6 +163,24 @@ def diagnose(
     if state is not None and manifest is not None:
         problems.extend(_registry_problems(view, version, state.path, manifest))
     return Diagnosis(True, tuple(problems), tuple(notes), frozenset(drifted))
+
+
+def _current_missing_text(view: PackageView) -> str:
+    """Say that a package with version directories and recorded integration has no ``current``, and how to activate a version again.
+
+    ``gupkg switch`` refuses a package that has no active version, so the way back is ``gupkg install <name>`` (it activates
+    the newest valid version and applies the integration again); ``check --fix`` does not do that for a package it cannot call installed.
+    """
+    shims = [Path(str(item.fields.get("path") or "")).name for item in view.record.effects if item.kind == "shim"]
+    left = (
+        f"the {'shim' if len(shims) == 1 else 'shims'} {', '.join(f'`{name}`' for name in shims)} {'is' if len(shims) == 1 else 'are'} still in `bin`"
+        if shims else "its recorded integration is still in place"
+    )
+    versions = ", ".join(item.name for item in view.local.versions)
+    return (
+        f"{view.name} has versions {versions} but no active version (`current` is missing) and {left}. "
+        f"Run `gupkg install {view.name}` to activate a version again."
+    )
 
 
 def install_notes(view: PackageView) -> tuple[list[Problem], dict | None]:

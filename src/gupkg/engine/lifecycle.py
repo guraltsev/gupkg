@@ -939,10 +939,19 @@ def _repair(engine: Engine, target: _Target, diagnosis: Diagnosis) -> PackageRes
         raise PlanError(f"{view.name} {view.installed.version} is not a valid version directory, so it cannot be repaired")
     chosen = Chosen(Candidate(view.installed.version, "local", view.installed.path), state.manifest, state)
     desired, notes = desired_effects(state.manifest, effect_context(context, view.path, engine.effect_env))
-    repair_plan = plan_install(
-        target.request, view, context, chosen, desired, notes=notes, package_path=view.path, drifted=diagnosis.drifted,
-        allow_installer=bool(target.resolved.settings["hooks.allow_vendor_installers"]),
-    )
+    try:
+        repair_plan = plan_install(
+            target.request, view, context, chosen, desired, notes=notes, package_path=view.path, drifted=diagnosis.drifted,
+            allow_installer=bool(target.resolved.settings["hooks.allow_vendor_installers"]),
+        )
+    except PlanError as error:
+        if str(error) != APP_MISSING_ERROR:
+            raise
+        # Only a version whose App ships with it (no download or script) reaches this error, and `install` plans the same way and fails the same.
+        raise PlanError(
+            f"{APP_MISSING_ERROR.rstrip('.')}: its files ship with the version. Restore the App folder of {view.installed.version} "
+            f"(copy the package files back), or install another version; `gupkg install {view.name}` cannot rebuild a shipped App."
+        ) from error
     run = ExecutionInput(
         repair_plan, context, view, chosen, target.request, target.resolved.settings,
         warnings=list(target.resolved.warnings),
