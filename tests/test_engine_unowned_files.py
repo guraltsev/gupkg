@@ -200,6 +200,73 @@ def test_a_package_keeps_its_own_files_across_update_switch_repair_and_reinstall
         assert result.ok, (operation, result.error)
 
 
+
+def appear_during(monkeypatch: pytest.MonkeyPatch, module: object, world: CliWorld, call: int, *, after: bool = False) -> None:
+    """Make a hand-made ``bin\\tool.exe`` appear around the *call*-th look at the disk made through ``module.find_unowned``.
+
+    With *after* the file appears once that look has returned (so it saw nothing); otherwise just before it.
+    """
+    original, calls = module.find_unowned, []
+
+    def looking(*args, **kwargs):
+        calls.append(1)
+        if len(calls) != call:
+            return original(*args, **kwargs)
+        if after:
+            found = original(*args, **kwargs)
+            plant_file("tool.exe")(world)
+            return found
+        plant_file("tool.exe")(world)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(module, "find_unowned", looking)
+
+
+def test_a_file_that_appears_after_the_plan_is_refused_before_anything_is_activated(world: CliWorld, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The plan saw no file; one appears while the package is fetched and unpacked: exit code 2, the file is kept, ``current`` is not moved."""
+    from gupkg.engine import lifecycle
+
+    world.publish("first", "1.0.0", tables=SHIM.format(name="tool"))
+    appear_during(monkeypatch, lifecycle, world, call=1, after=True)
+
+    done = world.one("install", "first")
+
+    assert not done.ok and done.exit_code == 2 and done.error["code"] == "file-exists", done.error
+    path = bin_dir(world) / "tool.exe"
+    assert f"'{path}' already exists and no installed package owns it." in done.error["message"]
+    assert f"--overwrite={BIN} to replace it." in done.error["message"] and "was unpacked but not activated" in done.error["message"]
+    assert path.read_bytes() == b"made by hand" and not (world.user / "first" / "current").exists()
+
+
+def test_a_file_that_appears_after_the_plan_is_replaced_and_reported_when_the_kind_is_given(world: CliWorld, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The same sequence with ``--overwrite=orphaned-bin-files``: the file is replaced and one ``replaced`` line is printed."""
+    from gupkg.engine import lifecycle
+
+    world.publish("first", "1.0.0", tables=SHIM.format(name="tool"))
+    appear_during(monkeypatch, lifecycle, world, call=1, after=True)
+
+    done = world.cli("install", "first", f"--overwrite={BIN}")
+
+    assert done.code == 0, done.err
+    lines = [line for line in (done.out + done.err).splitlines() if "replaced " in line]
+    assert len(lines) == 1 and "tool.exe (no installed package owned it)" in lines[0]
+    assert (bin_dir(world) / "tool.exe").read_bytes() != b"made by hand"
+
+
+def test_a_file_that_appears_just_before_the_write_is_not_replaced_silently(world: CliWorld, monkeypatch: pytest.MonkeyPatch) -> None:
+    """It appears after the look before activation: the effect is not applied, the result says so (exit code 3), the file is kept."""
+    from gupkg.engine import executor
+
+    world.publish("first", "1.0.0", tables=SHIM.format(name="tool"))
+    appear_during(monkeypatch, executor, world, call=2)
+
+    done = world.one("install", "first")
+
+    assert not done.ok and done.error["code"] == "integrate-failed" and done.exit_code == 3, done.error
+    assert "already exists and no installed package owns it" in done.error["message"] and "this effect was not applied" in done.error["message"]
+    assert (bin_dir(world) / "tool.exe").read_bytes() == b"made by hand"
+
+
 def test_uninstall_cleanup_and_check_are_never_refused_by_an_unowned_file(world: CliWorld) -> None:
     """An update that is refused because of an unowned file leaves the package alone: it can be checked, cleaned and removed."""
     world.publish("first", "1.0.0", tables=SHIM.format(name="tool"))
@@ -229,6 +296,7 @@ def test_check_fix_reports_the_unowned_file_and_the_flag_and_changes_nothing(wor
     result = world.one("check", "first", fix=True)
 
     assert not result.ok and result.error["code"] == "file-exists"
+    assert result.error["message"].startswith("first cannot be repaired: ")
     assert f"run `gupkg install first --overwrite={BIN}` to replace it." in result.error["message"]
     assert exe.read_bytes() == b"made by hand" and state(world) == before
 
