@@ -12,6 +12,43 @@ download is checked against the SHA-256 in the same row before anything is unpac
 A row marked `-` was published before ZIPs had digests and cannot be installed by this
 method.
 
+## Upgrading to 1.1 from 1.0.x
+
+1.1.0 changes how one run is scoped. Nothing is converted automatically; read this before you update.
+
+- **One scope per run.** An elevated gupkg manages the system root and a normal gupkg manages the user's
+  root; the mode comes from the process token. `--mode` and the `system:` / `user:` selector prefixes are
+  gone, and gupkg no longer starts an elevated copy of itself. To work in system mode, start gupkg or the
+  manager elevated; the Start Menu entry "gupkg manager (administrator)" (installed with the system gupkg)
+  does that with one click. `--root DIR` names the root of the run.
+- **Settings schema 4.** A `settings.toml` with `schema = 3` is refused: change it to `schema = 4`.
+  `default_mode` and the tables `[integration.system]`, `[integration.user]` and `[integration.portable]`
+  are replaced by one `[integration]` table (`bin`, `start_menu`, `integrate = "full" | "none"`). `[roots]`
+  keeps only `system` and `user`, and is read only from `$App\settings.toml` and `--settings`, never from a
+  root's own `.gupkg\settings.toml`.
+- **Portable is a kind of package.** A package is portable or not, never both: the registry now has a
+  separate `<name>-portable` package for each tool that used to offer both. Install the one you want. A
+  portable package installs in user mode only. `[user]` and `[system]` step tables are gone (plain
+  `[[prepare]]`).
+- **Registry.** Run `gupkg registry sync` after updating: this gupkg reads only the converted registry.
+- **Launchers** (`install.cmd`, `gupkg-tui.cmd`, `check-updates.cmd` of a package) look for gupkg in this
+  order: the copy bundled in the package, the folder named in `<root>\.gupkg\gupkg-location` (written when
+  the gupkg package is installed), then `PATH`. The root forwarder is gone.
+- **A package cannot take another package's names.** An install, update, switch or repair that would
+  create a shim, wrapper, Start Menu shortcut or environment variable that another installed package
+  already provides stops before any work, and names both packages.
+- **Machine interface `"api": 2`.** `relaunched`, `child_exit_code`, `child_raw_exit_code` and the
+  `child-no-result` error are gone from the JSON documents; `list`, `info` and `search` carry `mode` and
+  `root` once, at document level.
+- **No migration code.** `gupkg migrate` and the readers of 0.17 data are removed. A package folder
+  without an install record is listed `broken`; fix it with `gupkg install <name>`. Moving from 0.17 or 0.18
+  needs a 1.0.x release (below) or a fresh install.
+- **Failure reports** now say what state a failed step left and the command that fixes it (`uninstall
+  --purge` with a locked file, an `update` that fails after `current` moved, a package whose `current` is
+  missing, `self status`).
+
+The section below describes the move to 1.0 and applies to 1.0.x only.
+
 ## Migrating to 1.0 from 0.17 or 0.18
 
 1.0 changes the package format (`pkg.toml` format 2), the settings file
