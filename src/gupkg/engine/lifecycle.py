@@ -70,7 +70,7 @@ from ..report.logfile import prune_logs
 from ..services.safepath import remove_tree
 from .checkupdates import check_updates_one, plan_check
 from .context import Engine
-from .effects import desired_effects, effect_context, verify_each
+from .effects import desired_effects, effect_context, find_unowned, verify_each
 from .errors import failure
 from .effects import launchers_find_gupkg
 from .executor import (
@@ -90,8 +90,10 @@ from .planner import (
     InvalidVersion,
     PlanError,
     NameIndex,
+    UnownedFile,
     check_names,
     check_names_between,
+    check_unowned,
     plan_cleanup,
     plan_install,
     plan_uninstall,
@@ -115,24 +117,30 @@ def check_updates(
 
 
 def install(
-    engine: Engine, selectors: Sequence[str], *, refresh: bool = False, skip: str | None = None,
+    engine: Engine, selectors: Sequence[str], *, refresh: bool = False, skip: str | None = None, overwrite: Sequence[str] = (),
 ) -> BatchResult:
-    """Install the named packages (a package that is installed is repaired); a tracker is never run."""
+    """Install the named packages (a package that is installed is repaired); a tracker is never run.
+
+    *overwrite* lists the kinds of file that no installed package owns and that may be replaced (``--overwrite=KINDS``).
+    """
     return run_batch(engine, [
-        Request("install", item, refresh=refresh, skip=skip) for item in selectors
+        Request("install", item, refresh=refresh, skip=skip, overwrite=tuple(overwrite)) for item in selectors
     ])
 
 
 def update(
-    engine: Engine, selectors: Sequence[str], *, skip: str | None = None, download_only: bool = False
+    engine: Engine, selectors: Sequence[str], *, skip: str | None = None, download_only: bool = False,
+    overwrite: Sequence[str] = (),
 ) -> BatchResult:
     """Activate the newest known version of each installed package; ``download_only`` prepares it and stops."""
-    return run_batch(engine, [Request("update", item, skip=skip, download_only=download_only) for item in selectors])
+    return run_batch(engine, [
+        Request("update", item, skip=skip, download_only=download_only, overwrite=tuple(overwrite)) for item in selectors
+    ])
 
 
-def switch(engine: Engine, selector: str, version: str) -> BatchResult:
+def switch(engine: Engine, selector: str, version: str, *, overwrite: Sequence[str] = ()) -> BatchResult:
     """Activate another known version of an installed package (the explicit way back)."""
-    return run_batch(engine, [Request("switch", selector, version=version)])
+    return run_batch(engine, [Request("switch", selector, version=version, overwrite=tuple(overwrite))])
 
 
 def uninstall(engine: Engine, selectors: Sequence[str], *, purge: bool = False) -> BatchResult:
@@ -161,9 +169,9 @@ def link(engine: Engine, selector: str, entry: str | None = None, *, unlink: boo
     return run_batch(engine, [Request("link", selector, link_to=entry, unlink=unlink)])
 
 
-def repair(engine: Engine, selectors: Sequence[str], *, skip: str | None = None) -> BatchResult:
+def repair(engine: Engine, selectors: Sequence[str], *, skip: str | None = None, overwrite: Sequence[str] = ()) -> BatchResult:
     """Re-apply the integration and rebuild a missing ``App`` of installed packages."""
-    return run_batch(engine, [Request("repair", item, skip=skip) for item in selectors])
+    return run_batch(engine, [Request("repair", item, skip=skip, overwrite=tuple(overwrite)) for item in selectors])
 
 
 # ---------------------------------------------------------------------------
@@ -587,9 +595,12 @@ def _prepare_install(
     notes = (*notes, *resolved.warnings)
 
     # A name another installed package provides refuses the version before any question is asked (plan_install holds the same check).
+    # Then a file that no installed package owns is refused too, unless --overwrite names its kind.
     owners = target.names.index().owners(view.name)
+    replacing: tuple[UnownedFile, ...] = ()
     if not request.download_only:
         check_names(view.name, desired, owners)
+        replacing = check_unowned(view.name, find_unowned(engine.system, desired, target.names.index().owners("")), request.overwrite)
     if execute:
         _ask_about_other_versions(engine, request, view, candidate.version, context.mode)
     drifted: frozenset[tuple[str, ...]] = frozenset()
@@ -612,7 +623,7 @@ def _prepare_install(
     return ExecutionInput(
         install_plan, context, view, chosen, request, resolved.settings, tracker, distribution, registry.fingerprint,
         registry.name, registry.path, precopied=precopied,
-        warnings=list(resolved.warnings),
+        warnings=list(resolved.warnings), replacing=replacing,
     )
 
 
@@ -922,7 +933,9 @@ def _check(engine: Engine, target: _Target) -> PackageResult:
     fixed: list[str] = []
     if request.fix and diagnosis.installed and diagnosis.fixable:
         fixed = [item.message for item in diagnosis.problems if item.fixable]
-        outcome = _repair(engine, _Target(replace(request, operation="repair", fix=False), resolved, target.catalog), diagnosis)
+        fixing = _Target(replace(request, operation="repair", fix=False), resolved, target.catalog)
+        fixing.names = target.names
+        outcome = _repair(engine, fixing, diagnosis)
         if not outcome.ok:
             return outcome
         view = target.catalog.describe(view.name)
@@ -939,6 +952,12 @@ def _repair(engine: Engine, target: _Target, diagnosis: Diagnosis) -> PackageRes
         raise PlanError(f"{view.name} {view.installed.version} is not a valid version directory, so it cannot be repaired")
     chosen = Chosen(Candidate(view.installed.version, "local", view.installed.path), state.manifest, state)
     desired, notes = desired_effects(state.manifest, effect_context(context, view.path, engine.effect_env))
+
+    # --fix never replaces a file that no installed package owns: it reports it and names the command that does.
+    check_unowned(
+        view.name, find_unowned(engine.system, desired, target.names.index().owners("")),
+        command=f"gupkg install {view.name} --overwrite=",
+    )
     try:
         repair_plan = plan_install(
             target.request, view, context, chosen, desired, notes=notes, package_path=view.path, drifted=diagnosis.drifted,
