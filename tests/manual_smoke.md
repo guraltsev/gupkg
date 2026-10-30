@@ -644,7 +644,7 @@ in `$T\sys\.gupkg\settings.toml`, pointing at the `*bin` and `*menu` folders. Us
    removed (`cmd /c rmdir`): Expected: `check` and `check --fix --yes` both exit 3 with `<pkg> has versions <list> but no active version (`current` is missing) and the
    shim `<name>.exe` is still in `bin`. Run `gupkg install <pkg>` to activate a version again.` and change nothing (`check --fix` does not repair it); `gupkg install <pkg>`
    then activates the version and `check` says `healthy`. (`gupkg list` still shows `local` for such a package.) Also delete `<sysroot>\<pkg>\<version>\App` of a shipped
-   package and the shim and run `check --fix --yes`: exit 2, `App is missing and no way to recover it. Reinstall with: `gupkg install <pkg>``. Finally remove
+   package and the shim and run `check --fix --yes`: exit 2, `App is missing and no way to recover it: its files ship with the version. Restore the App folder of <version> (copy the package files back), or install another version; `gupkg install <pkg>` cannot rebuild a shipped App.` Finally remove
    `<sysroot>\gupkg\current` and run `gupkg self status` (only on the test machine, with another way to start gupkg): it prints `problem: the gupkg package <folder> has no
    active version (`current` is missing). Run `gupkg install gupkg` ...` and exits 3. Why manual: needs an
    elevated token.

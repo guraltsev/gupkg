@@ -947,7 +947,11 @@ def _repair(engine: Engine, target: _Target, diagnosis: Diagnosis) -> PackageRes
     except PlanError as error:
         if str(error) != APP_MISSING_ERROR:
             raise
-        raise PlanError(f"{APP_MISSING_ERROR} Reinstall with: `gupkg install {view.name}`") from error
+        # Only a version whose App ships with it (no download or script) reaches this error, and `install` plans the same way and fails the same.
+        raise PlanError(
+            f"{APP_MISSING_ERROR.rstrip('.')}: its files ship with the version. Restore the App folder of {view.installed.version} "
+            f"(copy the package files back), or install another version; `gupkg install {view.name}` cannot rebuild a shipped App."
+        ) from error
     run = ExecutionInput(
         repair_plan, context, view, chosen, target.request, target.resolved.settings,
         warnings=list(target.resolved.warnings),

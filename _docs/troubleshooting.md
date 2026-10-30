@@ -28,7 +28,7 @@ gupkg self status               :: is gupkg's own installation healthy?
 | `declares more than one [source]` / `[[origin.versions]]` | A version has exactly one `[source]`. Another version is another folder with its own `pkg.toml`. |
 | `needs 'portable' in modes` | `[portable]` is declared for a package whose `modes` exclude `portable`. |
 | `a SHA-256 ... must be exactly 64 hexadecimal digits` (`checksum-invalid`) | A malformed `sha256`. A malformed value makes the version invalid and is never skippable. |
-| `App is missing and no way to recover it.` | The version has no `App` and no `download_url`, populate script or shipped files. Restore the files, or add a `[source]` that fills them. `gupkg check --fix` adds `Reinstall with: gupkg install <name>`. |
+| `App is missing and no way to recover it.` | The version has no `App` and no `download_url`, populate script or shipped files. Restore the files, or add a `[source]` that fills them. `gupkg check --fix` says the files ship with the version, and that `gupkg install <name>` cannot rebuild a shipped App: copy the App folder back, or install another version. |
 | `... is not valid: ...` (`invalid-package`) | A version directory failed validation; the problems follow. Fix them and run `gupkg pkg check <folder>`. |
 | `the tracker is invalid: ...` | `_check_updates\pkg.toml` has a problem; run `gupkg pkg check <package folder>`. A tracker must have `[track]`; a version directory must not. |
 | `Error loading TOML config ...` / a syntax error with a line | `pkg.toml` or `settings.toml` is not valid TOML. |

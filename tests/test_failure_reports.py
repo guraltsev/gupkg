@@ -187,7 +187,7 @@ def test_self_status_of_a_source_checkout_does_not_look_for_current(tmp_path: Pa
 # -- 5. check --fix with a missing shipped App ------------------------------------------------------------------------
 
 
-def test_check_fix_of_a_missing_shipped_app_says_how_to_reinstall(world: World) -> None:
+def test_check_fix_of_a_missing_shipped_app_says_how_to_restore_it(world: World) -> None:
     """With the App gone and the shim deleted, --fix cannot rebuild a shipped App: the line says so and names the reinstall command."""
     import shutil
 
@@ -197,4 +197,8 @@ def test_check_fix_of_a_missing_shipped_app_says_how_to_reinstall(world: World) 
     result = world.one("check", "tool", fix=True)
 
     assert not result.ok and result.exit_code == 2
-    assert result.error["message"] == "App is missing and no way to recover it. Reinstall with: `gupkg install tool`"
+    assert result.error["message"] == (
+        "App is missing and no way to recover it: its files ship with the version. Restore the App folder of 1.0.0 "
+        "(copy the package files back), or install another version; `gupkg install tool` cannot rebuild a shipped App."
+    )
+    assert "Reinstall with" not in result.error["message"]
