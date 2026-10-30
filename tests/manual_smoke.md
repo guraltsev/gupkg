@@ -580,8 +580,7 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
    the hand-made file is unchanged and `<B>\tool\current` does not exist. Run `install tool --overwrite=orphaned-shortcuts`: still refused (the message names
    `--overwrite=orphaned-bin-files,orphaned-shortcuts`). Run `install tool --overwrite=orphaned-bin-files`: it succeeds, prints `replaced <path> (no installed package
    owned it)` once, and `tool.exe` is now the launcher (about 300 KB). `install tool --overwrite` alone and `--overwrite=nonsense` are usage errors (exit code 2) that
-   list the two kinds (through `gupkg.cmd`, which splits `--overwrite=a,b` at `=` and `,`, gupkg joins the kind names back; an unknown kind then shows as the bare
-   flag's error). Why manual: shows the real message, the real files, `gupkg.cmd` and the real usage errors once.
+   list the two kinds (`--overwrite=a,,b` reports the empty item; `gupkg.cmd` forwards the arguments unchanged since T18). Why manual: shows the real message, the real files, `gupkg.cmd` and the real usage errors once.
 
 ## Acceptance of issue 035 on a test machine (issue 035, task T13)
 
@@ -663,3 +662,4 @@ in `$T\sys\.gupkg\settings.toml`, pointing at the `*bin` and `*menu` folders. Us
    (a folder standard users can change): exit code 2 with `--root <folder> is not admin-only, so it cannot be the system root: ...`, nothing created in the folder.
    (d) `gupkg --settings X manager` and `gupkg --sandbox D tui` still print `--settings and --sandbox are not passed on to gupkg-<program>` (exit 2). Why manual:
    real launchers, real terminal and a real elevated token.
+10. **`035-T18-1` Arguments through the native shim (open: the shim cannot start a `.cmd` with arguments).** In a temporary folder copy `src\gupkg\shim\shim-console.static.exe` to `g.exe` and write `g.config.toml` with `target = "<full path of src\\gupkg.cmd>"` (doubled backslashes) and `forward_arguments = true`. `g.exe` alone starts gupkg, but `g.exe --version` prints `'<path>\gupkg.cmd" "--version' is not recognized as an internal or external command` (the shim starts `cmd /c "<target>" "<arg>"` and `cmd` strips the outer quotes, so it never reaches the `.cmd` and no change to `gupkg.cmd` can fix it). T18 reproduced this with a probe; the gupkg shim needs another target or a shim change (see the T18 log). Why manual: records the state until the owner decides.

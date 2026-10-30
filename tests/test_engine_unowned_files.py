@@ -327,16 +327,14 @@ def test_a_bare_overwrite_is_a_usage_error_even_before_another_option(world: Cli
     assert not (world.user / "first" / "current").exists()
 
 
-def test_the_value_split_at_equals_and_comma_by_gupkg_cmd_is_one_value_again(world: CliWorld) -> None:
-    """``gupkg.cmd`` forwards ``--overwrite=a,b`` as ``--overwrite a b``: the kinds after a bare flag are its value."""
-    world.publish("first", "1.0.0", tables=SHIM.format(name="tool") + SHORTCUT.format(name="Tool"))
-    plant_file("tool.exe")(world), plant_shortcut("Tool.lnk")(world)
+def test_the_kind_names_after_a_bare_overwrite_are_not_its_value(world: CliWorld) -> None:
+    """``--overwrite orphaned-bin-files`` (a space) is a bare flag and a target, never the value: gupkg.cmd no longer splits ``=``."""
+    world.publish("first", "1.0.0", tables=SHIM.format(name="tool"))
 
-    refused = world.cli("install", "first", "--overwrite", BIN)
-    done = world.cli("install", "first", "--overwrite", BIN, SHORTCUTS)
+    result = world.cli("install", "first", "--overwrite", BIN)
 
-    assert refused.code == 2 and f"--overwrite={BIN},{SHORTCUTS}" in refused.err
-    assert done.code == 0, done.err
+    assert result.code == 2 and f"{BIN}, {SHORTCUTS}" in result.err, result.err
+    assert not (world.user / "first" / "current").exists()
 
 
 def test_the_option_exists_on_install_update_switch_and_self_repair_and_update_but_not_on_check(world: CliWorld) -> None:
