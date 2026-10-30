@@ -294,8 +294,7 @@ unmet `requires_gupkg`: a package launcher then runs its bundled gupkg).
 0.17 spellings are not aliases: `config-check`, `config-fix`, `doctor`, `repair-deps` and `update-deps` are unknown
 commands, and every other 0.17 option is an unrecognized argument. `gupkg tui` and `gupkg manager` are pass-through commands: they
 start `gupkg-tui` and `gupkg-manager` of the same gupkg and return their exit code. The programs run in the scope of their own process
-(an administrator shell manages the system root), and they take no root option of their own: `gupkg --root DIR tui` (and `--settings` or `--sandbox` before `tui`/`manager`) is refused. Start
-`gupkg-manager --settings PATH` (or `gupkg-tui --settings PATH`) directly, with a file that has `[roots].user`, or start them from the gupkg that is installed in the root.
+(an administrator shell manages the system root), and `--root DIR` names the root of the run for them as for every command: `gupkg --root DIR tui` and `gupkg --root DIR manager` pass it on (it must come before `tui`/`manager`; an elevated run needs an admin-only root, else the program stops with exit code 2). `--settings` and `--sandbox` before `tui`/`manager` are refused: start `gupkg-manager --settings PATH` (or `gupkg-tui --settings PATH`) directly, or start them from the gupkg that is installed in the root.
 
 ### The UI programs: `gupkg-tui` and `gupkg-manager`
 
@@ -328,7 +327,7 @@ skippable; in a system-mode run `--settings` is refused, so only the system root
 an update ends with `gupkg cleanup` for the root it updated. `check-updates --all` needs no confirmation (it activates nothing). Exit codes follow the CLI: the highest code of a target, where a
 refused package counts 3 and a skipped or declined one 5. `--json` prints one document (the CLI's head, one entry per target and the
 calls made) and sends the text to standard error. When a program closes, the summary of the last run and the log path are printed
-(`[manager] keep_screen`). `--settings PATH` and `--sandbox DIR` (before the command) are relayed to every call.
+(`[manager] keep_screen`). `--settings PATH`, `--root DIR` and `--sandbox DIR` (before the command) are relayed to every call; `--root` is the root of the run (the status line shows it).
 
 A scheduled task works on the root of the account it runs as: a task that runs as a normal user manages that user's root; a task with "Run with highest privileges"
 manages the system root, and then needs a gupkg installed in an admin-only folder (an elevated run refuses any other gupkg tree, exit 2). If the program is closed, its window

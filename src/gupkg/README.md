@@ -67,7 +67,8 @@ is `model` <- `catalog`, `services` <- `engine` <- `cli`, and nothing below
 
 `gupkg.cmd` starts `bootstrap.py` on the bundled Python; `gupkg-tui.cmd` and
 `gupkg-manager.cmd` start the two UI programs the same way (`bootstrap.py
---gupkg-program=tui|manager`), and `gupkg tui|manager ...` run them. The UI programs
+--gupkg-program=tui|manager`), and `gupkg [--root DIR] tui|manager ...` run them (`--root` is passed on to the program as its first argument; `--settings` and `--sandbox`
+before the command are refused). The UI programs
 (`gupkg_tui`, `gupkg_manager` and their shared library `gupkg_ui`, issue 030) sit beside the `gupkg`
 package; they read through core and perform every operation as a call to the sibling `gupkg.cmd`.
 These runtime modules are internal implementation details and are not a

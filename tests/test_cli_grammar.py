@@ -258,6 +258,31 @@ def test_each_ui_pass_through_command_starts_from_an_elevated_shell_and_does_not
     assert system.foreground_log == [[str(location.launcher_dirs[0] / f"gupkg-{word}.cmd"), "x"]]
 
 
+@pytest.mark.parametrize("word", ["tui", "manager"])
+@pytest.mark.parametrize("spelling", [("--root", "D:\\r"), ("--root=D:\\r",)], ids=["separate", "equals"])
+def test_root_before_a_pass_through_command_reaches_the_program_as_its_first_argument(tmp_path: Path, spelling: tuple[str, ...], word: str) -> None:
+    """``gupkg --root DIR tui|manager ...`` starts the program with ``--root DIR`` before the rest of the command line."""
+    location, _ = stand_in(tmp_path, **{f"gupkg-{word}": 0})
+    system = FakeSystem(tmp_path / "machine", processes={f"gupkg-{word}.cmd": lambda call: ProcessResult(0)})
+
+    code = cli.main([*spelling, word, "x"], system=system, env={}, location=location)
+
+    assert code == 0
+    assert system.foreground_log == [[str(location.launcher_dirs[0] / f"gupkg-{word}.cmd"), "--root", "D:\\r", "x"]]
+
+
+@pytest.mark.parametrize(("before", "word"), [(("--settings", "X"), "manager"), (("--sandbox", "D"), "tui"), (("--root", "D:\\r", "--sandbox", "D"), "tui")])
+def test_settings_and_sandbox_before_a_pass_through_command_stay_refused(tmp_path: Path, capsys: pytest.CaptureFixture[str], before: tuple[str, ...], word: str) -> None:
+    """They belong to the program (``gupkg-manager --settings PATH``): refused with a message that does not name ``--root``, nothing started."""
+    location, _ = stand_in(tmp_path, **{f"gupkg-{word}": 0})
+    system = FakeSystem(tmp_path / "machine")
+
+    code = cli.main([*before, word], system=system, env={}, location=location)
+
+    error = capsys.readouterr().err
+    assert code == 2 and "--settings and --sandbox are not passed on" in error and "--root" not in error and system.foreground_log == []
+
+
 def test_root_options_are_not_passed_to_a_forwarded_program(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """--settings and --sandbox before a pass-through command would silently not reach the program, so they are refused."""
     location, _ = stand_in(tmp_path, **{"gupkg-manager": 0})

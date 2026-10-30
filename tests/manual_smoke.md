@@ -657,3 +657,9 @@ in `$T\sys\.gupkg\settings.toml`, pointing at the `*bin` and `*menu` folders. Us
    `<sysroot>\gupkg\current` and run `gupkg self status` (only on the test machine, with another way to start gupkg): it prints `problem: the gupkg package <folder> has no
    active version (`current` is missing). Run `gupkg install gupkg` ...` and exits 3. Why manual: needs an
    elevated token.
+9. **`035-T17-1` `--root` for the manager and the TUI.** On a test machine make `$T\root` (a folder with one local package installed with `gupkg --root $T\root install ...`).
+   (a) From a normal shell run `gupkg --root $T\root manager` and `gupkg-tui --root $T\root <package>`: the browser opens, the status line starts with `user · <root shortened>`
+   and lists that package; `gupkg-manager --root $T\root check --json` lists it too. (b) From an administrator shell run `gupkg-manager --root $T\user-writable`
+   (a folder standard users can change): exit code 2 with `--root <folder> is not admin-only, so it cannot be the system root: ...`, nothing created in the folder.
+   (c) `gupkg --settings X manager` and `gupkg --sandbox D tui` still print `--settings and --sandbox are not passed on to gupkg-<program>` (exit 2). Why manual:
+   real launchers, real terminal and a real elevated token.

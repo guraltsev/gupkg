@@ -88,9 +88,9 @@ def info_of(name: str, tmp_path: Path) -> dict:
     return json.loads(text)
 
 
-def run_app(tmp_path: Path, fake: FakeGupkg, scenario: Callable, *, size=(80, 24), program: str = "manager", target: str = "alpha", toasts: bool = False, **settings) -> None:
+def run_app(tmp_path: Path, fake: FakeGupkg, scenario: Callable, *, size=(80, 24), program: str = "manager", target: str = "alpha", toasts: bool = False, root: Path | None = None, **settings) -> None:
     """Start the manager (or ``gupkg-tui``) in a headless terminal of *size* and run the async *scenario* ``(app, pilot)`` against it."""
-    env = make_env(tmp_path, fake, settings=settings.get("settings", ""))
+    env = make_env(tmp_path, fake, settings=settings.get("settings", ""), root=root)
     app = ManagerApp(env) if program == "manager" else TuiApp(env, target)
 
     async def main() -> None:
@@ -878,3 +878,22 @@ def test_the_renderer_without_colour_keeps_only_emphasis(tmp_path: Path) -> None
     assert all(not ({"red", "green", "cyan", "yellow", "magenta", "blue"} & set(str(line.style).split())) for line in lines)
     assert any(line.plain.startswith("  ✗ Fetch failed") for line in lines) and any(line.plain.startswith("Warning:") for line in lines)
     assert any(line.plain.startswith("Error:") for line in lines) and any(line.plain.startswith("━━ Failed (exit code 3)") for line in lines)
+
+
+@pytest.mark.parametrize("program", ["manager", "tui"])
+def test_the_root_of_the_run_is_on_the_status_line_and_in_the_title_at_80x24(tmp_path: Path, fake: FakeGupkg, program: str) -> None:
+    """``--root DIR`` is the root of the run: both programs start on it and their status line (after ``user ·``) and window title show it."""
+    root = tmp_path / "chosen-root"
+    root.mkdir()
+    seen: dict[str, object] = {}
+
+    async def scenario(app, pilot) -> None:
+        """Wait for the screen and keep its rows and the title."""
+        await wait_for(pilot, lambda: has(app, "alpha"), "the first screen")
+        seen["rows"], seen["title"] = screen_text(app), app.sub_title
+
+    run_app(tmp_path, fake, scenario, program=program, root=root)
+
+    status = seen["rows"][-1].strip()
+    assert seen["title"] == f"user · {root}" and status.startswith("user · ") and "chosen-root" in status and len(seen["rows"][-1]) <= 80
+    print("\n".join(seen["rows"]))

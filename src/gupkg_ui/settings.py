@@ -80,6 +80,7 @@ class UiSettings:
 def load_ui_settings(
     *,
     settings_path: Path | None = None,
+    root_option: Path | None = None,
     env: Mapping[str, str] | None = None,
     location: RunningGupkg | None = None,
     system: System | None = None,
@@ -90,6 +91,8 @@ def load_ui_settings(
     ----------
     settings_path : Path, optional
         ``--settings PATH``, the highest layer.
+    root_option : Path, optional
+        ``--root DIR``, the first source of the root chain.
     env : mapping, optional
         The environment; ``os.environ`` by default.
     location : RunningGupkg, optional
@@ -108,7 +111,7 @@ def load_ui_settings(
     machine = system or WindowsSystem()
     environment = dict(os.environ if env is None else env)
 
-    scope = build_scope(system=machine, env=environment, location=where, settings_path=settings_path)
+    scope = build_scope(system=machine, env=environment, location=where, root_option=root_option, settings_path=settings_path)
     return UiSettings(scope.settings, environment, scope)
 
 
