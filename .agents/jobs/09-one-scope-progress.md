@@ -146,3 +146,4 @@ Owner commit not pushed yet (goes to GitHub together with T03): `9fba5c5 volta: 
 - 2026-10-29: T13 worker reported (branch i035/T13: 3 new test files, manual checks 035-T13-1..8; 3602 passed/13 skipped); review started.
 - 2026-10-29: T13 round 1 (1 blocking: item 9 failure reporting, all four causes pre-existing at d8096b5 and reported to the owner; two job-introduced defects fixed in 38a0ed3, the `command` field in c46b348) ; merged as 6f0f7fd; suite 3613 passed, 13 skipped; source 35555 lines (was 37739, -2184), tests 36138 lines (was 40938, -4800). All tasks T00-T14 merged. Owner checks owed.
 - 2026-10-29: owner asked to fix the item-9 failure-reporting defects ("Fix 4"): T15 task file written (`09-tasks/T15-failure-reporting.md`), dispatched on i035/T15.
+- 2026-10-29: T15 worker reported (ecea11f, 1e615ec, cec7a8b, 85160b0; 3621 passed/13 skipped); review started.
