@@ -574,7 +574,7 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
    `gupkg --root <test root> uninstall one` and `install two` succeed. Also `install one two` in a fresh root names both packages and installs neither. Why manual:
    shows the real message and the real folders once.
 2. **`035-T16-1` A file that no package owns is refused, then replaced with `--overwrite=`.** On a test machine (`--sandbox <empty folder A> --root <empty folder B>`,
-   never `C:\opt`), make a local package `tool` in B: `tool\1.0.0\pkg.toml` with `source.shipped = true` and `[[shim]] name = "tool"`, and `tool\1.0.0\App\app.exe`. Create
+   never `C:\opt`), make a local package `tool` in B: `tool\1.0.0\App\app.exe` (any text) and `tool\1.0.0\pkg.toml` holding exactly the lines `format = 2`, `description = "t"`, `[source]`, `shipped = true`, `[[shim]]`, `name = "tool"`, `target = "$App\\app.exe"` (each on its own line). Create
    `<A>\bin\user\tool.exe` by hand (any text). Run `gupkg --sandbox <A> --root <B> install tool`: it stops with `tool cannot be installed: '<A>\bin\user\tool.exe'
    already exists and no installed package owns it. Move or delete that file, or run the command again with --overwrite=orphaned-bin-files to replace it.`, exit code 2;
    the hand-made file is unchanged and `<B>\tool\current` does not exist. Run `install tool --overwrite=orphaned-shortcuts`: still refused (the message names
