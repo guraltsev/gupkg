@@ -99,6 +99,7 @@ row.
 
 | Version | Commit | Date | SHA-256 | Notes |
 |---|---|---|---|---|
+| 1.1.1 | `909b8f92488d83ef46210ac1ac33cf9990375067` | 2026-10-29 | 0d2e580e3f78b1d6a27171e25a09aa002ec80f73861013f40d080ed5c262d147 | Named --overwrite kinds for unowned files - --root for the manager and TUI |
 | 1.1.0 | `908f406e0958b5eaec3b189a94241fe2562f4887` | 2026-10-29 | 96ad40619043dac3c1245f6e6c227d8ec85f7ef5f643b3bf798e6789caf8bfc8 | One scope per run - settings schema 4 - portable packages - new launcher order - api 2 |
 | 1.0.8 | `3386d3eb5bdd8498406f7e0548d94c99d1894428` | 2026-10-25 | 63912039a499b9e9065128583a57b33644a4fbdbc3a2f4250209eafa619d6b4a | gupkg 1.0.8 |
 | 1.0.7 | `c72a82f1dea839d0e6ab38f6dd564adb6d331aae` | 2026-10-25 | ccb410a83da145bb3184a4d6704ed31206bdb9827312aca6c247e1f7781db901 | gupkg 1.0.7 |
