@@ -81,6 +81,7 @@ row.
 
 | Version | Commit | Date | SHA-256 | Notes |
 |---|---|---|---|---|
+| 1.1.0 | `908f406e0958b5eaec3b189a94241fe2562f4887` | 2026-10-29 | 96ad40619043dac3c1245f6e6c227d8ec85f7ef5f643b3bf798e6789caf8bfc8 | One scope per run - settings schema 4 - portable packages - new launcher order - api 2 |
 | 1.0.8 | `3386d3eb5bdd8498406f7e0548d94c99d1894428` | 2026-10-25 | 63912039a499b9e9065128583a57b33644a4fbdbc3a2f4250209eafa619d6b4a | gupkg 1.0.8 |
 | 1.0.7 | `c72a82f1dea839d0e6ab38f6dd564adb6d331aae` | 2026-10-25 | ccb410a83da145bb3184a4d6704ed31206bdb9827312aca6c247e1f7781db901 | gupkg 1.0.7 |
 | 1.0.5 | `111aaff7cc6bea47ac1095567ec6d6e09053dd4a` | 2026-10-25 | 33f69fd433935bce5d96b9d91a8298db9bf3ce9bb2991a319fbbf31b5c4b0acd | gupkg 1.0.5 |
