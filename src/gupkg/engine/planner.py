@@ -257,13 +257,15 @@ class FileExists(PlanError):
 
 
 def check_unowned(
-    package: str, found: Sequence[UnownedFile], allowed: Sequence[str] = (), *, command: str | None = None
+    package: str, found: Sequence[UnownedFile], allowed: Sequence[str] = (), *, command: str | None = None,
+    verb: str = "installed", state: str = "",
 ) -> tuple[UnownedFile, ...]:
     """Refuse *found* unless ``--overwrite`` (*allowed*, a list of kinds) lifts it; return the files that will be replaced.
 
     Each kind lifts only its own files. The message names the exact ``--overwrite`` value that would lift the refusal: the
     kinds already allowed and the kinds still needed. *command*, when given, is the command to run instead of "the command
-    again" (``check --fix`` changes nothing and names the command that overwrites).
+    again" (``check --fix`` changes nothing and names the command that overwrites). *verb* is the word of "cannot be ...", and
+    *state* is a sentence appended to say what state the package is in when the refusal comes after work has started.
 
     Raises
     ------
@@ -278,9 +280,9 @@ def check_unowned(
         shown = ", ".join(f"'{item.path}'" for item in refused[:5]) + (f" and {len(refused) - 5} more" if len(refused) > 5 else "")
         way = f"`{command}{value}`" if command else f"the command again with --overwrite={value}"
         raise FileExists(
-            f"{package} cannot be installed: {shown} already exist{'' if many else 's'} and no installed package owns "
+            f"{package} cannot be {verb}: {shown} already exist{'' if many else 's'} and no installed package owns "
             f"{'them' if many else 'it'}. Move or delete {'those files' if many else 'that file'}, or run {way} to replace "
-            f"{'them' if many else 'it'}.",
+            f"{'them' if many else 'it'}.{state}",
             paths=[item.path for item in refused], overwrite=value,
         )
     return tuple(found)

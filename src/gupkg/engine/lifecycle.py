@@ -956,7 +956,7 @@ def _repair(engine: Engine, target: _Target, diagnosis: Diagnosis) -> PackageRes
     # --fix never replaces a file that no installed package owns: it reports it and names the command that does.
     check_unowned(
         view.name, find_unowned(engine.system, desired, target.names.index().owners("")),
-        command=f"gupkg install {view.name} --overwrite=",
+        command=f"gupkg install {view.name} --overwrite=", verb="repaired",
     )
     try:
         repair_plan = plan_install(
