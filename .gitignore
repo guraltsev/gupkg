@@ -186,3 +186,4 @@ src/gupkg/gupkg-config.toml
 /gupkg-registry
 # The shim runtime folder carries an assembly manifest that the launchers need (the *.manifest rule above would hide it).
 !src/gupkg/shim/exe-shim-lib/*.manifest
+exe-shim
