@@ -88,7 +88,7 @@ def main(argv: list[str] | None = None, *, root: Path = ROOT) -> int:
     row = f"| {version} | `{commit}` | {date.today().isoformat()} | {digest} | {notes} |"
     releases.write_text(text.replace(SEPARATOR, f"{SEPARATOR}\n{row}", 1), encoding="utf-8")
     _git(root, "add", "RELEASES.md")
-    _git(root, "commit", "-m", f"Release {version}")
+    _git(root, "commit", "-m", f"Record release {version} hash in RELEASES.md")
     print(f"Released {version} at {commit}.\nsha256 {digest}\nPublish the row with:  git push origin main")
     return 0
 

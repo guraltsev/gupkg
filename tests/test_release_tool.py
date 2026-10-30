@@ -67,7 +67,7 @@ def test_release_tags_the_commit_and_records_the_zip_digest(repository: Path, tm
     assert f"| 0.1.0 | `{head}` | " in table and f"| {digest} | first release |" in table
     assert table.index("| 0.1.0 |") < table.index("| 0.0.9 |")
     assert _git(repository, "rev-parse", "v0.1.0^{commit}") == head
-    assert _git(repository, "log", "-1", "--format=%s") == "Release 0.1.0"
+    assert _git(repository, "log", "-1", "--format=%s") == "Record release 0.1.0 hash in RELEASES.md"
 
 
 def test_publishing_pushes_the_tag_and_uploads_the_zip_before_recording_the_row(repository: Path, tmp_path: Path) -> None:
