@@ -41,14 +41,14 @@ For reference, issue 036 §2 measured on 2026-10-30:
 | T15 | Areas self (runtime, self-update) and project | T14 | waiting | | | | | |
 | T16 | Areas model and registry | T15 | waiting | | | | | |
 | T17 | Area project (docs), last flat files | T16 | waiting | | | | | |
-| T18 | Unused manager_policy code | T10 | waiting | | | | | owner approval first |
+| T18 | Unused manager_policy code | T10 | waiting | | | | | owner APPROVED removal 2026-10-31 |
 | T19 | Gaps | T17 | waiting | | | | | |
 | T20 | Acceptance | T00–T19 | waiting | | | | | |
 
 ## Owner questions
 
-- **T02:** the wording of `AGENTS.md` rule 3. The worker proposes it, and the owner approves it.
-- **T18:** may the unused `decide_targets` and `command_line` in `gupkg.model.manager_policy` be removed?
+- **T02:** answered 2026-10-31: rule 3 now says tests are required at the end of a task and are an aid during it (e2ced7a, 2b9d13a).
+- **T18:** answered 2026-10-31: the owner approved removing the unused `decide_targets` and `command_line` in `gupkg.model.manager_policy`, with their tests.
 
 ## Owner actions pending
 
@@ -65,3 +65,4 @@ None yet.
 - 2026-10-31: T04 reviewed (no defects: 3,829 ids and 4,245 asserts identical) and merged as 4e1b09f after the owner committed the adopt work; --all 3,818 passed, 13 skipped, 7:50. Baseline 158 lines. T05 is ready (registry preflight first).
 - 2026-10-31: T05 preflight clean (gupkg-registry on main, status empty, github/main..main empty). T05 dispatched without a worktree.
 - 2026-10-31: T05 reviewed (no blocking; two lost protections found and restored in a fix round: literal hwinfo headers, named portable-only set) and merged in the registry as 5ce5201; registry 473 passed. T06 is blocked until the owner pushes gupkg-registry main.
+- 2026-10-31: owner approved T18 (remove the unused manager_policy code and its tests); it still runs after T10. AGENTS rule 3 reworded by the owner's direction (e2ced7a, 2b9d13a).
