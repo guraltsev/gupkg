@@ -5,7 +5,7 @@ is one ZIP, ``gupkg-<version>-win-amd64.zip``, that already contains everything
 gupkg needs to run: the embedded CPython, the locked dependencies, the native
 shims and the application. The ZIP is a package-root fragment of the gupkg
 package (design 21.2): ``gupkg\\<version>\\`` (``pkg.toml``, ``pkg.local``, the launchers
-``install.cmd`` and ``gupkg-tui.cmd``, and the bundled tree ``gupkg\\``) and
+``install.cmd`` and ``manage.cmd``, and the bundled tree ``gupkg\\``) and
 ``gupkg\\_check_updates\\`` (the tracker, its hook and ``check-updates.cmd``).
 Hashes are computed here, once, and published with the bundle; installed code only checks them.
 
