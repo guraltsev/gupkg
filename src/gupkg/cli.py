@@ -1302,7 +1302,7 @@ def _build_parser() -> argparse.ArgumentParser:
     actions = sub.add_subparsers(dest="registry_command", required=True, metavar="<action>", parser_class=_Parser)
     for name, text in (("sync", "download the registries"), ("status", "show each cache's revision"),
                        ("list", "list the configured registries"), ("add", "add a registry"), ("remove", "remove a registry")):
-        leaf = actions.add_parser(name, description=text.capitalize() + ".", epilog=f"example:\n  gupkg registry {name}" + (" main" if name == "remove" else (" extra https://example.org/registry.zip" if name == "add" else "")))
+        leaf = actions.add_parser(name, help=text, description=text.capitalize() + ".", epilog=f"example:\n  gupkg registry {name}" + (" main" if name == "remove" else (" extra https://example.org/registry.zip" if name == "add" else "")))
         if name == "sync":
             leaf.add_argument("names", nargs="*", metavar="NAME")
             leaf.add_argument("--offline", action="store_true", help="report the cache without any request")
@@ -1317,7 +1317,7 @@ def _build_parser() -> argparse.ArgumentParser:
     actions = sub.add_subparsers(dest="settings_command", required=True, metavar="<action>", parser_class=_Parser)
     for name, text in (("show", "show every effective setting and its layer"), ("path", "show the settings files of every layer"),
                        ("init", "create a settings file"), ("set", "set one value")):
-        leaf = actions.add_parser(name, description=text.capitalize() + ".", epilog=f"example:\n  gupkg settings {name}" + (" logs.keep_runs 20" if name == "set" else ""))
+        leaf = actions.add_parser(name, help=text, description=text.capitalize() + ".", epilog=f"example:\n  gupkg settings {name}" + (" logs.keep_runs 20" if name == "set" else ""))
         if name == "init":
             leaf.add_argument("--force", action="store_true", help="replace an existing file")
         if name == "set":
@@ -1327,17 +1327,18 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sub = add("pkg", "Authoring: create, validate, pin, bundle and export package definitions.", "gupkg pkg check .")
     actions = sub.add_subparsers(dest="pkg_command", required=True, metavar="<action>", parser_class=_Parser)
-    leaf = actions.add_parser("new", description="Write a starter package definition.", epilog="example:\n  gupkg pkg new mytool --track github:owner/mytool")
+    leaf = actions.add_parser("new", help="write a starter package definition", description="Write a starter package definition.", epilog="example:\n  gupkg pkg new mytool --track github:owner/mytool")
     leaf.add_argument("name", metavar="NAME[@VERSION]")
     leaf.add_argument("--track", metavar="github:OWNER/REPO", help="write a tracker that follows the releases of a GitHub repository")
     leaf.add_argument("--dir", metavar="FOLDER", help="the folder that receives the package (default: the current folder)")
     _options(leaf)
-    leaf = actions.add_parser("check", description="Validate a version directory, a tracker or a package folder.", epilog="example:\n  gupkg pkg check .\\mytool\\1.0 --install")
+    leaf = actions.add_parser("check", help="validate a version directory, a tracker or a package folder", description="Validate a version directory, a tracker or a package folder.", epilog="example:\n  gupkg pkg check .\\mytool\\1.0 --install")
     leaf.add_argument("path")
     leaf.add_argument("--install", action="store_true", help="also run a sandboxed install (files and downloads are real)")
     _options(leaf, skip=True)
     leaf = actions.add_parser(
         "adopt",
+        help="write the pkg.toml of a program already unpacked in App, then install it",
         description="Write the pkg.toml of a program that is already unpacked in App from the Start Menu shortcuts its installer made "
                     "(moved into a `shortcuts` folder beside App), then install it where it stands. Uninstallers and links outside App "
                     "are skipped. The root is two folders above VERSION-DIR unless --root is given.",
@@ -1354,20 +1355,20 @@ def _build_parser() -> argparse.ArgumentParser:
     leaf.add_argument("--no-install", action="store_true", help="write pkg.toml and the launchers only")
     _overwrite_option(leaf)
     _options(leaf, mutating=True)
-    leaf = actions.add_parser("pin", description="Copy the hash of an install without a checksum into the version's pkg.toml.", epilog="example:\n  gupkg pkg pin mytool@1.0")
+    leaf = actions.add_parser("pin", help="pin the hash of an install without a checksum", description="Copy the hash of an install without a checksum into the version's pkg.toml.", epilog="example:\n  gupkg pkg pin mytool@1.0")
     leaf.add_argument("target", metavar="TARGET")
     _options(leaf, mutating=True)
-    leaf = actions.add_parser("bundle", description="Copy the running gupkg's verified bundle into a version directory.", epilog="example:\n  gupkg pkg bundle .\\mytool\\1.0")
+    leaf = actions.add_parser("bundle", help="copy the running gupkg into a version directory", description="Copy the running gupkg's verified bundle into a version directory.", epilog="example:\n  gupkg pkg bundle .\\mytool\\1.0")
     leaf.add_argument("directory", metavar="VERSION-DIR")
     _options(leaf)
     leaf = actions.add_parser(
-        "launchers", description="Copy install.cmd and manage.cmd into a version directory (replacing the ones there), so the package "
+        "launchers", help="write install.cmd and manage.cmd into a version directory", description="Copy install.cmd and manage.cmd into a version directory (replacing the ones there), so the package "
                                  "can be installed and managed from a double-click.",
         epilog="example:\n  gupkg pkg launchers C:\\Games\\Teardown\\v1.0",
     )
     leaf.add_argument("directory", nargs="?", default=".", metavar="VERSION-DIR", help="the version directory (default: the current folder)")
     _options(leaf)
-    leaf = actions.add_parser("export", description="Write a distribution ZIP of a version directory and print its SHA-256.", epilog="example:\n  gupkg pkg export .\\mytool\\1.0 -o mytool-1.0.zip")
+    leaf = actions.add_parser("export", help="write a distribution ZIP of a version directory", description="Write a distribution ZIP of a version directory and print its SHA-256.", epilog="example:\n  gupkg pkg export .\\mytool\\1.0 -o mytool-1.0.zip")
     leaf.add_argument("directory", metavar="VERSION-DIR")
     leaf.add_argument("-o", "--output", required=True, metavar="X.zip")
     _options(leaf)
@@ -1375,11 +1376,11 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = add("self", "Check and maintain gupkg itself; check-updates and update are `gupkg check-updates gupkg` and `gupkg update gupkg`.",
               "gupkg self status")
     actions = sub.add_subparsers(dest="self_command", required=True, metavar="<action>", parser_class=_Parser)
-    leaf = actions.add_parser("status", description="Report the interpreter and the MANIFEST.sha256 check.", epilog="example:\n  gupkg self status")
+    leaf = actions.add_parser("status", help="report the interpreter and the MANIFEST.sha256 check", description="Report the interpreter and the MANIFEST.sha256 check.", epilog="example:\n  gupkg self status")
     _options(leaf)
     for name, text in (("repair", "re-apply gupkg's own integration"), ("check-updates", "look for a new gupkg release"),
                        ("update", "activate the newest known gupkg")):
-        leaf = actions.add_parser(name, description=text.capitalize() + ".", epilog=f"example:\n  gupkg self {name}")
+        leaf = actions.add_parser(name, help=text, description=text.capitalize() + ".", epilog=f"example:\n  gupkg self {name}")
         if name == "check-updates":
             leaf.add_argument("--no-download", action="store_true", help="write the version directory only")
         if name != "check-updates":
