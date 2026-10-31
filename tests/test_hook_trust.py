@@ -36,12 +36,6 @@ from tests.support.scope import scope_of
 pytestmark = pytest.mark.unit
 
 
-@pytest.fixture(autouse=True)
-def not_marked_elevated(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Make these tests independent of an ambient GUPKG_ELEVATED marker; the marker cases set it themselves."""
-    monkeypatch.delenv("GUPKG_ELEVATED", raising=False)
-
-
 @pytest.fixture
 def version(tmp_path: Path) -> Path:
     """A version directory whose hook writes `executed.txt` beside itself when it is imported or called."""

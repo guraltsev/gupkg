@@ -23,7 +23,7 @@ from gupkg.model.manifest import ManifestError, parse_manifest, path_entry_shape
 from gupkg.model.state import Effect
 from gupkg.system.fake import FakeSystem
 from gupkg.system.port import Mode
-from tests.support.engine import World, pin_no_ambient_elevation  # noqa: F401
+from tests.support.engine import World
 
 pytestmark = pytest.mark.unit
 

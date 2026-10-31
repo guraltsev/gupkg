@@ -21,7 +21,7 @@ from gupkg.engine.stateio import read_track_state
 from gupkg.launchers import launcher_text
 from gupkg.report.events import Warning, use_reporter
 from gupkg.model.checksum import parse_skip_flag
-from tests.support.engine import BASE_URL, World, pin_no_ambient_elevation  # noqa: F401
+from tests.support.engine import BASE_URL, World
 
 pytestmark = pytest.mark.unit
 

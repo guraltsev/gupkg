@@ -26,7 +26,7 @@ from gupkg.engine.locks import Holder, lock_path, render_lock
 from gupkg.model.scope import SYSTEM_ONLY_REFUSAL
 from tests.support.cli import CliWorld
 from tests.support.engine import zip_bytes
-from tests.support.mode import pin_no_ambient_elevation, tree_snapshot  # noqa: F401
+from tests.support.mode import tree_snapshot
 
 pytestmark = pytest.mark.unit
 

@@ -22,7 +22,7 @@ from gupkg.model.scope import PORTABLE_REFUSAL, SYSTEM_ONLY_REFUSAL, USER_ONLY_R
 from gupkg.system.port import Mode
 from gupkg.targets import TargetRequest, resolve_target
 from tests.support.catalog import build_registry, version_text
-from tests.support.mode import Machine, pin_no_ambient_elevation, tree_snapshot  # noqa: F401
+from tests.support.mode import Machine, tree_snapshot
 
 pytestmark = pytest.mark.unit
 

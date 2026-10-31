@@ -27,7 +27,7 @@ from gupkg.system.port import ProcessResult
 from gupkg_manager.app.app import ManagerApp
 from gupkg_ui.startup import UiEnvironment, load_ui_settings
 from tests.support.cli import CliWorld
-from tests.support.mode import pin_no_ambient_elevation, tree_snapshot  # noqa: F401
+from tests.support.mode import tree_snapshot
 from tests.test_cli_tools import SOURCE, registry_zip, version_files
 from tests.test_ui_screens import screen_text, wait_for
 from tests.support.ui import FakeGupkg

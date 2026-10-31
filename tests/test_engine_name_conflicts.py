@@ -22,7 +22,7 @@ from gupkg.catalog.catalog import Catalog
 from gupkg.catalog.record import write_install_record
 from gupkg.model.state import Effect, InstallRecord
 from gupkg.system.port import Mode
-from tests.support.engine import World, pin_no_ambient_elevation  # noqa: F401
+from tests.support.engine import World
 from tests.support.mode import tree_snapshot
 
 pytestmark = pytest.mark.unit

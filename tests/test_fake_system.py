@@ -38,7 +38,7 @@ from gupkg.system.port import (
     run_checked,
 )
 from gupkg.system.windows import WindowsSystem
-from tests.support.mode import Machine, pin_no_ambient_elevation  # noqa: F401
+from tests.support.mode import Machine
 from tests.support.scope import scope_of
 
 pytestmark = pytest.mark.unit

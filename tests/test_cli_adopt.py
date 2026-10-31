@@ -21,7 +21,6 @@ from gupkg.launchers import launcher_text
 from gupkg.system.port import ShortcutSpec
 from gupkg.tomlio import read_toml
 from tests.support.cli import CliWorld
-from tests.support.mode import pin_no_ambient_elevation  # noqa: F401
 
 pytestmark = pytest.mark.unit
 

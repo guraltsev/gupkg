@@ -26,7 +26,6 @@ from gupkg.model.state import InstallRecord
 from gupkg.report.documents import read_results
 from gupkg.system.port import Mode, ShortcutSpec
 from tests.support.cli import CliWorld
-from tests.support.engine import pin_no_ambient_elevation  # noqa: F401
 from tests.test_engine_name_conflicts import ENV, SHIM, SHORTCUT, WRAPPER, state
 
 pytestmark = pytest.mark.unit

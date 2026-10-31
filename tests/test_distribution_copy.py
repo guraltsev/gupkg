@@ -35,7 +35,7 @@ from gupkg.model.settings import default_layer, merge_layers
 from gupkg.system.port import Mode
 from gupkg.system.fake import FakeSystem
 from tests.support.catalog import version_text
-from tests.support.mode import pin_no_ambient_elevation, tree_snapshot  # noqa: F401
+from tests.support.mode import tree_snapshot
 
 pytestmark = pytest.mark.unit
 

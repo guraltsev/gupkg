@@ -22,7 +22,6 @@ from gupkg.report.events import MultiReporter, Progress, use_reporter
 from gupkg.services.http import HttpClient
 from gupkg.system.fake import FakeResponse, FakeSystem
 from tests.support.cli import CliWorld
-from tests.support.mode import pin_no_ambient_elevation  # noqa: F401
 
 pytestmark = pytest.mark.unit
 

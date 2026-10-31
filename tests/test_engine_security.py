@@ -26,7 +26,7 @@ from gupkg.model.state import Effect, InstallRecord
 from gupkg.services.gitenv import GitUnavailable, git_command, git_environment, git_executable
 from gupkg.system.port import Mode, trusted_path_entries
 from gupkg.system.fake import FakeSystem
-from tests.support.engine import World, pin_no_ambient_elevation, pkg_text  # noqa: F401
+from tests.support.engine import World, pkg_text
 from gupkg.scope import process_mode
 
 pytestmark = pytest.mark.unit

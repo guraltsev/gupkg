@@ -23,7 +23,7 @@ import pytest
 from gupkg.selfmgmt.location import RunningGupkg
 from gupkg.system.port import Mode
 from tests.support.cli import CliWorld
-from tests.support.engine import World, pin_no_ambient_elevation  # noqa: F401
+from tests.support.engine import World
 
 pytestmark = pytest.mark.unit
 

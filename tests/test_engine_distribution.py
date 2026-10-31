@@ -23,7 +23,7 @@ from gupkg.catalog.record import read_install_record
 from gupkg.engine.receipts import read_receipt
 from gupkg.services.fingerprint import fingerprint_directory
 from gupkg.system.port import Mode
-from tests.support.engine import World, pin_no_ambient_elevation  # noqa: F401
+from tests.support.engine import World
 from tests.support.mode import tree_snapshot
 
 pytestmark = pytest.mark.unit

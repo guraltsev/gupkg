@@ -20,7 +20,6 @@ import pytest
 
 from tests.support.cli import CliWorld
 from tests.support.engine import zip_bytes
-from tests.support.mode import pin_no_ambient_elevation  # noqa: F401
 
 pytestmark = pytest.mark.unit
 

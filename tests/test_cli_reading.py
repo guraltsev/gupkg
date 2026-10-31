@@ -25,7 +25,6 @@ import pytest
 from gupkg.tomlio import dumps
 from tests.support.cli import CliWorld
 from tests.support.engine import pkg_text
-from tests.support.mode import pin_no_ambient_elevation  # noqa: F401
 
 pytestmark = pytest.mark.unit
 

@@ -23,7 +23,6 @@ from gupkg.report.session import RunSession
 from gupkg.system.fake import FakeSystem
 from gupkg.system.port import ProcessResult
 from tests.support.cli import CliResult, CliWorld
-from tests.support.mode import pin_no_ambient_elevation  # noqa: F401
 
 pytestmark = pytest.mark.unit
 

@@ -24,7 +24,7 @@ from gupkg.services.fingerprint import fingerprint_directory
 from gupkg.system.fake import FakeSystem, ProcessCall
 from gupkg.system.port import ProcessResult
 from gupkg.tomlio import write_toml
-from tests.support.mode import Machine, pin_no_ambient_elevation  # noqa: F401  (autouse fixture of every engine test)
+from tests.support.mode import Machine
 
 BASE_URL = "https://example.org/files"
 

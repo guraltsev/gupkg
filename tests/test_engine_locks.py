@@ -27,7 +27,7 @@ import pytest
 from gupkg.engine.context import stop_marker
 from gupkg.engine.locks import Holder, PackageBusy, lock_holder, lock_path, package_lock, render_lock
 from gupkg.selfmgmt.elevation import UntrustedLocationError
-from tests.support.engine import World, pin_no_ambient_elevation  # noqa: F401
+from tests.support.engine import World
 
 pytestmark = pytest.mark.unit
 

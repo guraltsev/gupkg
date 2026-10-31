@@ -69,12 +69,6 @@ class Machine:
         return build_scope(system=self.fake, env=self.env, read_text=self.read_text, **options)
 
 
-@pytest.fixture(autouse=True)
-def no_ambient_elevation(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Pin the launcher's ``GUPKG_ELEVATED`` marker off, so elevation comes only from the fake machine."""
-    monkeypatch.delenv("GUPKG_ELEVATED", raising=False)
-
-
 def test_a_process_that_is_not_elevated_gets_a_user_scope(tmp_path: Path) -> None:
     """No flag: a normal token is user mode, on the root the app layer names, with the user's machine folders."""
     machine = Machine(tmp_path)

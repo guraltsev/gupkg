@@ -21,7 +21,7 @@ from gupkg.engine.appbuild import AppBuildError, populate_version
 from gupkg.model.checksum import ChecksumMismatch
 from gupkg.model.manifest import parse_manifest
 from gupkg.report.events import PhaseStart, use_reporter
-from tests.support.engine import World, pin_no_ambient_elevation  # noqa: F401
+from tests.support.engine import World
 
 pytestmark = pytest.mark.unit
 

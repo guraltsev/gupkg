@@ -29,7 +29,6 @@ from gupkg.system.port import ProcessResult
 from gupkg.tomlio import dumps
 from tests.support.catalog import version_text
 from tests.support.cli import CliWorld
-from tests.support.mode import pin_no_ambient_elevation  # noqa: F401
 from tests.support.scope import scope_of
 
 pytestmark = pytest.mark.unit
