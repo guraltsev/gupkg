@@ -7,8 +7,12 @@ so the baseline only shrinks. A run of a few files does not report the baseline 
 Temporary-test folders under ``tests/_temp/`` need a README and an open reference, and a ``kind: report`` folder runs only
 when the command line names it.
 
-These tests build small fake repositories below ``tmp_path``. Two of them start a real pytest process to show the checks
-are wired into a session.
+Every test is also in exactly one tier (rule H7), and a ``unit`` test that starts a process, sleeps or opens a socket
+fails with a message naming the tier (rule H8); a ``unit`` test listed in the baseline for H8 passes, and its line is an error
+once the test stops breaking the rule.
+
+These tests build small fake repositories below ``tmp_path``. The ones marked ``process`` start a real pytest process in such
+a repository, to show the checks are wired into a session.
 """
 
 from __future__ import annotations
@@ -23,7 +27,10 @@ import pytest
 
 from tests.support import hygiene
 
+pytestmark = pytest.mark.unit
+
 REPOSITORY = Path(__file__).resolve().parents[2]
+PYTEST_INI = "[pytest]\nmarkers =\n    unit: x\n    process: x\n    release: x\n"
 
 CLEAN_MODULE = textwrap.dedent('''\
     """A feature as its user sees it."""
@@ -58,8 +65,8 @@ BROKEN_MODULES = {
     "H4": CLEAN_MODULE + '\n\n@pytest.mark.parametrize("n", [1, 2])\ndef test_a_case(n) -> None:\n    """A case."""\n',
     "H5": CLEAN_MODULE + "\n\ndef test_a_test_without_a_docstring() -> None:\n    pass\n",
 }
-SELF_CONTAINED = '"""A module."""\n\n\ndef test_issue_99_fix() -> None:\n    """Fixes the old behaviour."""\n'
-CLEAN_SELF_CONTAINED = '"""A module."""\n\n\ndef test_it_works() -> None:\n    """It works."""\n'
+SELF_CONTAINED = '"""A module."""\n\nimport pytest\n\npytestmark = pytest.mark.unit\n\n\ndef test_issue_99_fix() -> None:\n    """Fixes the old behaviour."""\n'
+CLEAN_SELF_CONTAINED = '"""A module."""\n\nimport pytest\n\npytestmark = pytest.mark.unit\n\n\ndef test_it_works() -> None:\n    """It works."""\n'
 BROKEN_NAMES = {
     "H1": "",
     "H2": "",
@@ -182,7 +189,7 @@ def test_a_complete_temporary_folder_with_an_open_reference_passes(tmp_path: Pat
 
 def _pytest(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
     """Run pytest with the hygiene plugin in the fake repository *root*."""
-    _write(root / "pytest.ini", "[pytest]\n")
+    _write(root / "pytest.ini", PYTEST_INI)
     env = {**os.environ, "PYTHONPATH": str(REPOSITORY), "PYTHONDONTWRITEBYTECODE": "1"}
     return subprocess.run(
         [sys.executable, "-m", "pytest", "-p", "tests.support.hygiene", "-p", "no:cacheprovider", "-q", *args],
@@ -190,6 +197,7 @@ def _pytest(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+@pytest.mark.process
 def test_a_pytest_session_fails_on_a_new_violation_and_names_the_rule(tmp_path: Path) -> None:
     """A real pytest session with the plugin stops with the message when a test module breaks a rule."""
     _module(tmp_path, SELF_CONTAINED)
@@ -200,6 +208,7 @@ def test_a_pytest_session_fails_on_a_new_violation_and_names_the_rule(tmp_path: 
     assert "H3 tests/test_subject.py::test_issue_99_fix" in done.stdout + done.stderr
 
 
+@pytest.mark.process
 def test_a_report_folder_runs_only_when_the_command_line_names_it(tmp_path: Path) -> None:
     """A ``kind: report`` temporary folder is left out of a normal run and collected when its path is given."""
     _module(tmp_path, CLEAN_SELF_CONTAINED)
@@ -211,3 +220,96 @@ def test_a_report_folder_runs_only_when_the_command_line_names_it(tmp_path: Path
 
     assert "test_scaffold" not in normal.stdout
     assert "test_scaffold" in named.stdout
+
+
+UNIT_PREFIX = '"""A module."""\n\nimport pytest\n\npytestmark = pytest.mark.unit\n\n\n'
+
+
+def _tiered(root: Path, name: str, body: str) -> Path:
+    """Write the test module ``tests/<name>.py`` with one-line docstrings and *body*, and return it."""
+    return _write(root / "tests" / f"{name}.py", body)
+
+
+@pytest.mark.process
+@pytest.mark.parametrize(
+    ("body", "what"),
+    [
+        pytest.param(
+            "import subprocess\n\n\ndef test_a_child() -> None:\n    \"\"\"Starts a child.\"\"\"\n"
+            "    subprocess.run(['cmd', '/c', 'exit'], check=False)\n",
+            "starts a process",
+            id="child-process",
+        ),
+        pytest.param(
+            "import time\n\n\ndef test_a_nap() -> None:\n    \"\"\"Sleeps.\"\"\"\n    time.sleep(0.5)\n",
+            "sleeps",
+            id="sleep",
+        ),
+    ],
+)
+def test_a_unit_test_that_starts_a_process_or_sleeps_fails_naming_the_tier(tmp_path: Path, body: str, what: str) -> None:
+    """In the unit tier a child process or a sleep of more than a hundredth of a second fails the test with rule H8 and the policy."""
+    _tiered(tmp_path, "test_subject", UNIT_PREFIX + body)
+
+    done = _pytest(tmp_path, "-m", "unit")
+
+    text = done.stdout + done.stderr
+    assert done.returncode == 1
+    assert "1 failed" in text
+    assert "H8 tests/test_subject.py::test_a_" in text
+    assert f"unit tier and {what}" in text
+    assert "_docs/tests.md section 5" in text
+
+
+@pytest.mark.process
+def test_a_process_test_may_start_a_process_and_a_unit_test_may_nap_a_hundredth_of_a_second(tmp_path: Path) -> None:
+    """The guard applies to the unit tier only, and a pause of 0.01 s or less is allowed there."""
+    _tiered(tmp_path, "test_process_tier", (
+        '"""A module."""\n\nimport subprocess\nimport sys\n\nimport pytest\n\npytestmark = pytest.mark.process\n\n\n'
+        'def test_a_child() -> None:\n    """Starts a child."""\n'
+        '    subprocess.run([sys.executable, "-c", "pass"], check=True)\n'
+    ))
+    _tiered(tmp_path, "test_unit_tier", UNIT_PREFIX + "import time\n\n\ndef test_a_blink() -> None:\n    \"\"\"Pauses briefly.\"\"\"\n    time.sleep(0.005)\n")
+
+    done = _pytest(tmp_path)
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "2 passed" in done.stdout
+
+
+@pytest.mark.process
+def test_a_baselined_unit_test_passes_until_it_stops_breaking_the_rule(tmp_path: Path) -> None:
+    """A unit test listed in the baseline for H8 passes while it sleeps; once it no longer does, the line is an error to delete."""
+    napping = UNIT_PREFIX + "import time\n\n\ndef test_a_nap() -> None:\n    \"\"\"Sleeps.\"\"\"\n    time.sleep(0.5)\n"
+    _tiered(tmp_path, "test_subject", napping)
+    _baseline(tmp_path, "H8|tests/test_subject.py|test_a_nap")
+
+    listed = _pytest(tmp_path)
+    _tiered(tmp_path, "test_subject", UNIT_PREFIX + "def test_a_nap() -> None:\n    \"\"\"Does not sleep.\"\"\"\n")
+    stale = _pytest(tmp_path)
+
+    assert listed.returncode == 0, listed.stdout + listed.stderr
+    assert stale.returncode == 1
+    assert "H8|tests/test_subject.py|test_a_nap no longer matches a violation" in stale.stdout + stale.stderr
+
+
+@pytest.mark.process
+def test_every_test_needs_exactly_one_tier_and_the_nearest_mark_decides(tmp_path: Path) -> None:
+    """A test without a tier, or with two, fails with rule H7; a mark on a test overrides its module's, and ``-m`` follows it."""
+    _tiered(tmp_path, "test_none", '"""A module."""\n\n\ndef test_a_test() -> None:\n    """Has no tier."""\n')
+    none = _pytest(tmp_path, "--collect-only")
+    _tiered(tmp_path, "test_none", '"""A module."""\n\nimport pytest\n\n\n@pytest.mark.unit\n@pytest.mark.process\ndef test_a_test() -> None:\n    """Has two tiers."""\n')
+    two = _pytest(tmp_path, "--collect-only")
+    (tmp_path / "tests" / "test_none.py").unlink()
+    _tiered(tmp_path, "test_mixed", (
+        UNIT_PREFIX + "def test_in_the_module_tier() -> None:\n    \"\"\"Is unit.\"\"\"\n\n\n"
+        "@pytest.mark.process\ndef test_in_its_own_tier() -> None:\n    \"\"\"Is process.\"\"\"\n"
+    ))
+    unit = _pytest(tmp_path, "--collect-only", "-m", "unit")
+    process = _pytest(tmp_path, "--collect-only", "-m", "process")
+
+    assert none.returncode != 0 and "H7 tests/test_none.py::test_a_test" in none.stdout + none.stderr
+    assert "no tier mark" in none.stdout + none.stderr
+    assert two.returncode != 0 and "marked process and unit" in two.stdout + two.stderr
+    assert "test_in_the_module_tier" in unit.stdout and "test_in_its_own_tier" not in unit.stdout
+    assert "test_in_its_own_tier" in process.stdout and "test_in_the_module_tier" not in process.stdout

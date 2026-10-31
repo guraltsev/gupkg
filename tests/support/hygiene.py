@@ -10,20 +10,38 @@ repository root with ``/`` separators, and ``test`` is empty for a rule about th
 ``H4`` every parametrised case has an explicit ``id``.
 ``H5`` every permanent test module and test function has a docstring that starts with a one-sentence summary.
 ``H6`` every ``tests/_temp/<ref>/`` has a complete README, and its ``ref`` is open.
+``H7`` every test has exactly one tier (``unit``, ``process`` or ``release``).
+``H8`` while a ``unit`` test runs, starting a process, sleeping and opening a socket fail the test.
 
-The files are read with ``ast`` and never imported.
+The files of H1 to H6 are read with ``ast`` and never imported. H7 reads the markers of the collected tests. H8 is checked
+while the test runs, so a violation is found only by running the unit tier; the baseline lists the ``unit`` tests that still
+break it, and such a test passes while it does.
+
+A test's tier is the one on the nearest node that has a tier mark: the test itself (including a mark of a parameter set),
+then its class, then its module. So a module that declares ``pytestmark = pytest.mark.unit`` can send one test to another
+tier with ``@pytest.mark.process``; the farther mark then no longer counts when ``-m`` selects tests.
 """
 
 from __future__ import annotations
 
 import ast
+import contextlib
+import os
 import re
+import socket
+import subprocess
+import sys
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
 BASELINE_NAME = "hygiene_baseline.txt"
+TIERS = ("unit", "process", "release")
+SLEEP_ALLOWED = 0.01
 
 PRODUCT_PACKAGES = frozenset({"gupkg", "gupkg_ui", "gupkg_tui", "gupkg_manager", "gupkg_registry"})
 
@@ -35,6 +53,8 @@ RULES = {
     "H4": ("a parametrised case has no explicit id", "_docs/tests.md section 4.4"),
     "H5": ("a permanent test module or test has no docstring that starts with a one-sentence summary", "_docs/tests.md section 4.2"),
     "H6": ("a temporary-test folder breaks its rules", "_docs/tests_hygiene.md sections 3.2, 3.3 and 8"),
+    "H7": ("a test does not have exactly one tier (unit, process or release)", "_docs/tests.md section 5"),
+    "H8": ("a unit test starts a process, sleeps or opens a socket", "_docs/tests.md section 5"),
 }
 
 _HISTORY = (
@@ -416,16 +436,19 @@ def load_baseline(path: Path) -> set[str]:
     return {line for line in lines if line and not line.startswith("#")}
 
 
-def check(root: Path, modules: list[Path], baseline: Path | None = None) -> str | None:
+def check(root: Path, modules: list[Path], baseline: Path | None = None, tier_violations: list[Violation] | None = None) -> str | None:
     """Check *modules* (permanent test modules) and the temporary folders of *root*; return the failure text, or ``None``.
 
-    Only the baseline lines of the files that were checked, and of files that no longer exist, can be stale, so a run of
-    one file does not report the rest of the baseline.
+    *tier_violations* are the H7 findings for the collected tests (see ``tier_problems``). Only the baseline lines of the
+    files that were checked, and of files that no longer exist, can be stale, so a run of one file does not report the
+    rest of the baseline. An H8 line is found stale while its test runs, not here, so only a missing file makes it stale
+    here.
     """
     baseline_path = baseline or root / "tests" / BASELINE_NAME
     listed = load_baseline(baseline_path)
     files = {_relative(path, root): path for path in modules}
     violations = scan_temp(root)
+    violations.extend(tier_violations or [])
     stems = _test_stems(root)
     for path in sorted(files.values()):
         violations.extend(scan_module(path, root, stems))
@@ -435,7 +458,9 @@ def check(root: Path, modules: list[Path], baseline: Path | None = None) -> str 
     for line in sorted(listed - present):
         rule, _, rest = line.partition("|")
         file = rest.partition("|")[0]
-        if rule == "H6" or file in files or not (root / file).exists():
+        if not (root / file).exists():
+            stale.append(line)
+        elif rule != "H8" and (rule == "H6" or file in files):
             stale.append(line)
     if not new and not stale:
         return None
@@ -453,8 +478,227 @@ def check(root: Path, modules: list[Path], baseline: Path | None = None) -> str 
 
 
 # ---------------------------------------------------------------------------
+# Tiers, rules H7 and H8
+# ---------------------------------------------------------------------------
+
+def _tier_node(item: pytest.Item):
+    """Return ``(node, tier names)`` for the nearest node of *item* that carries a tier mark, or ``(None, [])``."""
+    for node in item.iter_parents():
+        names = [mark.name for mark in node.own_markers if mark.name in TIERS]
+        if names:
+            return node, names
+    return None, []
+
+
+def tier_of(item: pytest.Item) -> str | None:
+    """Return the one tier of *item*, or ``None`` when it has none or more than one."""
+    _, names = _tier_node(item)
+    return names[0] if len(set(names)) == 1 else None
+
+
+def _test_name(item: pytest.Item) -> str:
+    """Return the baseline name of a test: ``Class::function``, without the parameter id."""
+    classes = [node.name for node in item.listchain() if isinstance(node, pytest.Class)]
+    return "::".join([*classes, getattr(item, "originalname", None) or item.name])
+
+
+def tier_problems(items: list[pytest.Item], root: Path) -> list[Violation]:
+    """Return the H7 violations of *items*, and make ``-m`` see only each test's own tier.
+
+    A test whose nearest tier mark is on the test or its class keeps the module's tier mark out of ``-m``, so
+    ``-m unit`` does not select a ``process`` test of a ``unit`` module.
+    """
+    found: dict[str, Violation] = {}
+    for item in items:
+        node, names = _tier_node(item)
+        file = _relative(item.path, root)
+        if node is None:
+            found.setdefault(f"{file}::{_test_name(item)}", Violation("H7", file, _test_name(item), "no tier mark"))
+            continue
+        if len(set(names)) > 1:
+            detail = "marked " + " and ".join(sorted(set(names)))
+            found.setdefault(f"{file}::{_test_name(item)}", Violation("H7", file, _test_name(item), detail))
+            continue
+        parents = list(item.iter_parents())
+        overridden = {
+            id(parent)
+            for parent in parents[parents.index(node) + 1 :]
+            if any(mark.name in TIERS for mark in parent.own_markers)
+        }
+        if overridden:
+            _hide_tier_marks(item, overridden)
+    return list(found.values())
+
+
+def _hide_tier_marks(item: pytest.Item, hidden_nodes: set[int]) -> None:
+    """Make *item* report no tier mark from the nodes in *hidden_nodes* (they are overridden by a nearer mark)."""
+    original = item.iter_markers_with_node
+
+    def iter_markers_with_node(name: str | None = None):
+        for node, mark in original(name):
+            if mark.name in TIERS and id(node) in hidden_nodes:
+                continue
+            yield node, mark
+
+    item.iter_markers_with_node = iter_markers_with_node
+
+
+_H8_ACTIONS = {
+    "process": "starts a process",
+    "system": "starts a process (os.system)",
+    "connect": "opens a socket (socket connect)",
+    "sleep": "sleeps",
+}
+
+
+class UnitGuard:
+    """Make the actions that a ``unit`` test must not do fail (or only note them, for a baselined test).
+
+    While the guard is active, ``subprocess.Popen`` (and so ``subprocess.run`` and the like), ``os.system``,
+    ``socket.socket.connect`` and ``time.sleep`` for more than ``SLEEP_ALLOWED`` seconds fail the test with a message that
+    names the tier and the policy. The one ``connect`` that ``socket.socketpair`` makes inside the process stays allowed:
+    the asyncio event loop needs it and it reaches no other program.
+    """
+
+    def __init__(self, test: str, only_note: bool) -> None:
+        self.test = test
+        self.only_note = only_note
+        self.seen: list[str] = []
+        self.failures: list[BaseException] = []
+        self._surfaced = False
+        self._stack = contextlib.ExitStack()
+
+    def _blocked(self, kind: str, original):
+        def blocked(*args, **kwargs):
+            if kind == "sleep" and args and isinstance(args[0], (int, float)) and args[0] <= SLEEP_ALLOWED:
+                return original(*args, **kwargs)
+            if kind == "connect" and self._inside_socketpair():
+                return original(*args, **kwargs)
+            self.seen.append(kind)
+            if self.only_note:
+                return original(*args, **kwargs)
+            failure = pytest.fail.Exception(self.message(kind), pytrace=False)
+            self.failures.append(failure)
+            raise failure
+
+        return blocked
+    @staticmethod
+    def _inside_socketpair() -> bool:
+        caller = sys._getframe(2)
+        return caller.f_code.co_name in {"socketpair", "_fallback_socketpair"} and caller.f_globals.get("__name__") == "socket"
+
+    def message(self, kind: str) -> str:
+        """Return the failure text: the rule, the test, what it did, the tier and where the policy is."""
+        what = _H8_ACTIONS[kind]
+        return (
+            f"H8 {self.test}: this test is in the unit tier and {what}. A unit test touches only its own process "
+            "(_docs/tests.md section 5, Tiers). Fake the boundary, or mark the test @pytest.mark.process "
+            "if the real thing is the behaviour."
+        )
+
+    def __enter__(self) -> "UnitGuard":
+        patches = [
+            (subprocess.Popen, "__init__", "process"),
+            (os, "system", "system"),
+            (socket.socket, "connect", "connect"),
+            (socket.socket, "connect_ex", "connect"),
+            (time, "sleep", "sleep"),
+        ]
+        for target, attribute, kind in patches:
+            original = getattr(target, attribute)
+            self._stack.enter_context(mock.patch.object(target, attribute, self._blocked(kind, original)))
+        return self
+
+    def __exit__(self, *exc_info) -> None:
+        self._stack.close()
+
+    def surface(self, error: BaseException | None) -> None:
+        """Make the test fail with the H8 message if a blocked action happened and *error* is not that failure.
+
+        The blocked action may have been raised in a thread or inside an asyncio task, where the exception is lost, so
+        the test would otherwise pass, or fail later with a timeout that hides the cause.
+        """
+        if self.failures and error is not self.failures[0] and not self._surfaced:
+            self._surfaced = True
+            raise self.failures[0] from error
+        if error is not None and error in self.failures:
+            self._surfaced = True
+
+
+# ---------------------------------------------------------------------------
 # The pytest plugin
 # ---------------------------------------------------------------------------
+
+_GUARD = pytest.StashKey[UnitGuard | None]()
+_CALL_PASSED = pytest.StashKey[bool]()
+_baselines: dict[Path, set[str]] = {}
+
+
+def _guard_of(item: pytest.Item) -> UnitGuard | None:
+    """Return the guard of *item* (made on first use), or ``None`` if the test is not in the ``unit`` tier."""
+    if _GUARD not in item.stash:
+        guard = None
+        if tier_of(item) == "unit":
+            root = item.config.rootpath
+            listed = _baselines.setdefault(root, load_baseline(root / "tests" / BASELINE_NAME))
+            test = f"{_relative(item.path, root)}::{_test_name(item)}"
+            baselined = f"H8|{_relative(item.path, root)}|{_test_name(item)}" in listed
+            guard = UnitGuard(test, only_note=baselined)
+        item.stash[_GUARD] = guard
+    return item.stash[_GUARD]
+
+
+def _guarded_phase(item: pytest.Item):
+    """Run one phase of *item* under its guard, if it has one."""
+    guard = _guard_of(item)
+    if guard is None:
+        return (yield)
+    try:
+        with guard:
+            result = yield
+    except BaseException as error:
+        guard.surface(error)
+        raise
+    guard.surface(None)
+    return result
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_setup(item: pytest.Item):
+    """Run the setup of a ``unit`` test under the guard of rule H8."""
+    return (yield from _guarded_phase(item))
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_call(item: pytest.Item):
+    """Run a ``unit`` test under the guard of rule H8."""
+    return (yield from _guarded_phase(item))
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None):
+    """Run the teardown of a ``unit`` test under the guard of rule H8, and fail a baseline line that no longer matches."""
+    result = yield from _guarded_phase(item)
+    guard = item.stash.get(_GUARD, None)
+    if guard is not None and guard.only_note and not guard.seen and item.stash.get(_CALL_PASSED, False):
+        root = item.config.rootpath
+        line = f"H8|{_relative(item.path, root)}|{_test_name(item)}"
+        pytest.fail(
+            f"Test hygiene: the baseline line {line} no longer matches a violation. "
+            f"Delete it from tests/{BASELINE_NAME} (the baseline only shrinks).",
+            pytrace=False,
+        )
+    return result
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo):
+    """Remember that the test body passed, so a stale H8 baseline line can be told from a test that stopped early."""
+    report = yield
+    if report.when == "call":
+        item.stash[_CALL_PASSED] = report.passed
+    return report
+
 
 def _named_on_command_line(config: pytest.Config, folder: Path) -> bool:
     for arg in config.invocation_params.args:
@@ -486,6 +730,6 @@ def pytest_collection_modifyitems(session: pytest.Session, config: pytest.Config
     root = config.rootpath
     temp = (root / "tests" / "_temp").resolve()
     modules = sorted({item.path for item in items if temp not in item.path.resolve().parents})
-    message = check(root, modules)
+    message = check(root, modules, tier_violations=tier_problems(items, root))
     if message:
         raise pytest.UsageError(message)
