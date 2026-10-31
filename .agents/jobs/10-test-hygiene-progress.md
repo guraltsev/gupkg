@@ -27,8 +27,8 @@ For reference, issue 036 ยง2 measured on 2026-10-30:
 | T01 | Hygiene checks and baseline | T00 | merged | | 6f71b14 | 3,780 passed, 13 skipped (one tier) | 166 | minor review gaps: modules with no collected tests unchecked; some H5/H6 cases untested; age warning (hygiene ง3.3) not built |
 | T02 | Tiers | T01 | merged | | 74dee1c | unit 2,776 / process 929 / release 123 collected; --all 3,815 passed, 13 skipped, 7:55 | 168 | rule 3 wording still needs the owner; tier rules are H8 (one tier) and H9 (unit guard) because main already had H7 (expiry); unit tier still 126 s |
 | T03 | Real waits and big copies | T02 | merged | | df4fc2b | unit 2,777 (67 s); --all 3,816 passed, 13 skipped, 5:59 | 167 | registry tool has no injectable sleep: 3 tests serve a 404 instead (owner may want a sleep parameter); rule 'neither tracker nor pinned version' has no test (for T06); 3 tests still copy the whole snapshot |
-| T04 | Shared support | T03 | ready | | | | | |
-| T05 | Registry receives its tests (gupkg-registry) | T04 | waiting | | | | | |
+| T04 | Shared support | T03 | merged | | 4e1b09f | --all 3,818 passed, 13 skipped, 7:50 | 158 | all H1 gone; node ids and asserts identical to base; conflict with the adopt work (6f4e226) resolved by hand in test_cli_adopt.py; many helpers still copied (Collect 4x, make_client 3x, two zip_bytes) |
+| T05 | Registry receives its tests (gupkg-registry) | T04 | ready | | | | | |
 | T06 | gupkg drops registry data | T05 | waiting | | | | | waits for the owner's push of T05 |
 | T07 | Area engine | T06 | waiting | | | | | |
 | T08 | Area catalog (with scope and settings) | T07 | waiting | | | | | |
@@ -62,3 +62,4 @@ None yet.
 - 2026-10-31: T01 reviewed (no blocking defects) and merged; suite 3,780 passed, 13 skipped, 7:12; baseline 166 lines (H1 9, H2 9, H3 38, H4 107, H5 3). T02 is ready; its AGENTS.md rule 3 wording needs owner approval.
 - 2026-10-31: T02 reviewed (round 2: no blocking defects) and a fix round (merge of main, H7 clash renumbered to H8/H9, guard tests for os.system and sockets) merged as 74dee1c; --all 3,815 passed, 13 skipped, 7:55. Unit tier 126 s. T03 is ready. AGENTS.md rule 3 still waits for the owner.
 - 2026-10-31: T03 reviewed (no defects; 20+ rules broken and caught) and merged as df4fc2b; --all 3,816 passed, 13 skipped, 5:59 (was 7:55). Unit tier 67 s (was 126-148 s). T04 is ready.
+- 2026-10-31: T04 reviewed (no defects: 3,829 ids and 4,245 asserts identical) and merged as 4e1b09f after the owner committed the adopt work; --all 3,818 passed, 13 skipped, 7:50. Baseline 158 lines. T05 is ready (registry preflight first).
