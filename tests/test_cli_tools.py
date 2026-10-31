@@ -20,6 +20,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import zipfile
 from pathlib import Path
 
@@ -164,6 +165,25 @@ def test_settings_init_then_set_writes_the_user_file_after_validation(world: Cli
     assert read_toml(path)["logs"] == {"keep_runs": 20} and read_toml(path)["ui"] == {"color": "never"}
     rows = {row["key"]: row for row in world.cli("settings", "show", "--json").document()["settings"]}
     assert rows["logs.keep_runs"]["value"] == 20 and rows["logs.keep_runs"]["layer"] == "root"
+
+
+def test_settings_init_writes_commented_entries_that_are_valid_once_switched_on(world: CliWorld) -> None:
+    """The new file explains the common settings in comments; switching every entry on keeps the defaults and the schema accepts it."""
+    path = world.user / ".gupkg" / "settings.toml"
+    defaults = {row["key"]: row["value"] for row in world.cli("settings", "show", "--json").document()["settings"]}
+    assert world.cli("settings", "init").code == 0
+    text = path.read_text(encoding="utf-8")
+
+    assert "shortcut_prefix" in text and "relative to the Start Menu folder" in text
+
+    path.write_text(re.sub(r"^# (\[\w+\]|\w+ = .*)$", r"\1", text, flags=re.MULTILINE), encoding="utf-8")
+    shown = world.cli("settings", "show", "--json")
+
+    assert shown.code == 0, shown.err
+    rows = {row["key"]: row for row in shown.document()["settings"]}
+    switched = {key for key, row in rows.items() if row["layer"] == "root"}
+    assert {"adopt.shortcut_prefix", "integration.start_menu", "install.record_manifest", "logs.keep_runs"} <= switched
+    assert all(rows[key]["value"] == defaults[key] for key in switched)
 
 
 def test_the_toml_reader_accepts_a_utf8_bom_and_settings_set_edits_such_a_file(world: CliWorld, tmp_path: Path) -> None:

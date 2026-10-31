@@ -25,6 +25,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+from .core import write_text_atomic
 from .model.settings import SCHEMA, Layer, RegistryEntry, SettingsError, validate_layer
 from .tomlio import read_toml, write_toml
 
@@ -51,8 +52,62 @@ def _validate(layer: str, data: dict[str, Any], path: Path) -> None:
         raise SettingsEditError(str(error)) from error
 
 
+def _template() -> str:
+    """Return the text of a new settings file: ``schema`` and the common settings as commented entries with their defaults.
+
+    Every ``# key = value`` line is valid once the ``# `` is removed; the file as written holds only ``schema``.
+    """
+    return f"""\
+# gupkg settings for this root. Everything below is commented out and shows the built-in default:
+# remove the leading "# " of a line to change it. `gupkg settings show` lists the effective values.
+schema = {SCHEMA}
+
+# [integration]
+# Where the root's shortcuts go. `start_menu` is the base Start Menu folder; the `name` of a shortcut in pkg.toml
+# is relative to it (a games root: "%APPDATA%\\\\Microsoft\\\\Windows\\\\Start Menu\\\\Games").
+# start_menu = "%APPDATA%\\\\Microsoft\\\\Windows\\\\Start Menu\\\\opt"
+# Folder that holds the command shims of the root's programs (put it on PATH).
+# bin = "%USERPROFILE%\\\\bin"
+# "none": touch neither the registry (PATH, environment) nor the Start Menu, e.g. for a root on a stick.
+# integrate = "full"
+
+# [adopt]
+# Folder put before the shortcut names that `gupkg pkg adopt` writes, relative to the Start Menu folder above
+# (never a full path). Empty means none. `gupkg pkg adopt --prefix FOLDER` overrides it for one call.
+# shortcut_prefix = ""
+
+# [install]
+# Record a fingerprint of every file of App after an install, so `gupkg check` can notice changes. Turn it off for
+# very large programs such as games; a package can also say `record_manifest = false` in its pkg.toml.
+# record_manifest = true
+
+# [manager]
+# What to do with a download that has no checksum: "ask", "refuse" or "skip". Schedules treat "ask" as "refuse".
+# checksum_missing = "ask"
+# Keep the manager's screen open after a command finishes.
+# keep_screen = true
+
+# [cleanup]
+# true: `gupkg-manager update --all` removes old Apps, receipts and logs afterwards.
+# auto = false
+
+# [logs]
+# How many runs, and how many days of them, are kept.
+# keep_runs = 50
+# keep_days = 90
+
+# [ui]
+# Colour in the terminal: "auto", "always" or "never".
+# color = "auto"
+
+# [hooks]
+# Allow packages to run the vendor's own installer as a step.
+# allow_vendor_installers = true
+"""
+
+
 def init_settings(path: Path, layer: str, *, force: bool = False) -> dict[str, Any]:
-    """Write a new settings file holding only ``schema = 4``, and return its data.
+    """Write a new settings file holding ``schema = 4`` and the common settings as commented entries, and return its data.
 
     Parameters
     ----------
@@ -71,7 +126,7 @@ def init_settings(path: Path, layer: str, *, force: bool = False) -> dict[str, A
     if path.exists() and not force:
         raise SettingsEditError(f"{path} exists; use --force to replace it")
     data: dict[str, Any] = {"schema": SCHEMA}
-    write_toml(path, data)
+    write_text_atomic(path, _template())
     return data
 
 
