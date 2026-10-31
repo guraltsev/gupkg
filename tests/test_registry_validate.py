@@ -7,9 +7,10 @@ launcher in a tracker, a tracker that fails the package checker (an error or onl
 ``ignore_checksum``, CR line endings in a text file, a backup file, a link, a hook file with no
 ``Why no service`` note, more than 13 hook files, a script-populated version, and a malformed
 ``_registry.toml``. The fingerprint check is also shown to follow a changed file.
-Real: the committed registry snapshot copied to a temporary folder, then damaged one way at a time,
-and the real checker and fingerprint code. Mocked: nothing. Out of scope: the registry tool that
-writes the files (``test_registry_tool.py``) and the real registry (``test_registry_100.py``).
+Real: a registry of two packages written under a temporary folder for these tests, damaged one way
+at a time, and the real checker and fingerprint code; one test validates the committed registry
+snapshot as it is, without copying it. Mocked: nothing. Out of scope: the registry tool that
+writes the files (``test_registry_tool.py``).
 """
 
 from __future__ import annotations
@@ -23,8 +24,8 @@ import pytest
 from gupkg.services.fingerprint import fingerprint_directory
 from gupkg.system.fake import FakeSystem
 from gupkg.launchers import launcher_text, write_launchers
-from gupkg_registry.layout import read_registry_file, write_registry_file
-from gupkg_registry.validate import MAX_HOOK_FILES, _stray_problems, validate_registry
+from gupkg_registry.layout import TRACKER_LAUNCHER_NAME, read_registry_file, write_registry_file
+from gupkg_registry.validate import MAX_HOOK_FILES, ValidationReport, _stray_problems, validate_registry
 from tests.http_fixtures import FIXTURES
 
 pytestmark = pytest.mark.unit
@@ -32,23 +33,43 @@ pytestmark = pytest.mark.unit
 SNAPSHOT = FIXTURES / "registry_100"
 HASH = "c" * 64
 
+# A tracker that passes the package checker with no warning, and a pinned version that validates.
+TRACKER = (
+    'format = 2\ndescription = "A command-line tool."\nmodes = ["system", "user"]\n\n'
+    '[track]\nprovider = "github"\nrepo = "owner/tool"\nasset = "tool_${version}_windows_amd64.zip"\n\n'
+    '[source]\ndownload_url = "${asset_url}"\nrequire = ["bin/tool.exe"]\n\n'
+    '[[path]]\nvalue = "$App\\\\bin"\n\n'
+    '[[shim]]\nname = "tool"\ntarget = "$App\\\\bin\\\\tool.exe"\n'
+).encode()
+VERSION = (
+    'format = 2\ndescription = "d"\nmodes = ["system", "user"]\n\n[source]\n'
+    'download_url = "https://www.hwinfo.com/files/hwi_1002.zip"\n'
+    f'sha256 = "{HASH}"\nsha256_from = "registry"\nshipped = false\n'
+).encode()
+
+
+@pytest.fixture(scope="session")
+def snapshot_report() -> ValidationReport:
+    """The report of validating the committed snapshot once for the whole session (validation writes nothing)."""
+    return validate_registry(SNAPSHOT)
+
 
 @pytest.fixture
 def registry(tmp_path: Path) -> Path:
-    """A copy of the snapshot with one more fully pinned version, ``hwinfo/10.02``, that validates."""
+    """A registry of two packages that validates: ``gh`` (a tracker) and ``hwinfo`` (the fully pinned version ``10.02``)."""
     root = tmp_path / "registry"
-    shutil.copytree(SNAPSHOT, root)
+    tracker = root / "gh" / "_check_updates"
+    tracker.mkdir(parents=True)
+    (tracker / "pkg.toml").write_bytes(TRACKER)
+    write_launchers(tracker, (TRACKER_LAUNCHER_NAME,))
     version = root / "hwinfo" / "10.02"
-    version.mkdir()
-    (version / "pkg.toml").write_bytes(
-        b'format = 2\ndescription = "d"\nmodes = ["system", "user"]\n\n[source]\n'
-        b'download_url = "https://www.hwinfo.com/files/hwi_1002.zip"\n'
-        + f'sha256 = "{HASH}"\nsha256_from = "registry"\nshipped = false\n'.encode()
-    )
+    version.mkdir(parents=True)
+    (version / "pkg.toml").write_bytes(VERSION)
     write_launchers(version)
-    settings = read_registry_file(root)
-    settings["fingerprints"]["hwinfo/10.02"] = fingerprint_directory(version)
-    write_registry_file(root, settings)
+    write_registry_file(root, {
+        "format": 2, "name": "test-registry", "description": "A registry for tests.",
+        "fingerprints": {"hwinfo/10.02": fingerprint_directory(version)},
+    })
     return root
 
 
@@ -65,11 +86,17 @@ def problems_of(root: Path) -> list[str]:
 
 
 def test_a_sound_registry_has_no_problem(registry: Path) -> None:
-    """The snapshot plus one fully pinned version validates."""
+    """A registry with a tracker and one fully pinned version validates, and the report counts both."""
     report = validate_registry(registry)
 
     assert report.problems == ()
-    assert report.packages == 79 and report.versions == 2
+    assert report.packages == 2 and report.versions == 1
+
+
+def test_the_committed_registry_snapshot_has_no_problem(snapshot_report: ValidationReport) -> None:
+    """The committed snapshot of the registry passes every rule, exactly as it is (it is validated once, without being copied)."""
+    assert snapshot_report.problems == ()
+    assert snapshot_report.packages > 0
 
 
 def test_the_fingerprint_follows_every_changed_file(registry: Path) -> None:
@@ -196,7 +223,7 @@ def unpinned_with_hash(root: Path) -> None:
 def unpinned_nothing(root: Path) -> None:
     """List a version that does not exist as unpinned."""
     settings = read_registry_file(root)
-    settings["unpinned"] = ["hwinfo/3.0", "qbittorrent/5.2.3"]
+    settings["unpinned"] = ["hwinfo/3.0", "ghost/1.0"]
     write_registry_file(root, settings)
 
 
@@ -318,7 +345,7 @@ def test_a_version_listed_as_unpinned_is_accepted_while_it_has_no_hash(registry:
     assert any("has no sha256" in p for p in problems_of(registry))
 
     settings = read_registry_file(registry)
-    settings["unpinned"] = [*settings["unpinned"], "hwinfo/10.02"]
+    settings["unpinned"] = ["hwinfo/10.02"]
     write_registry_file(registry, settings)
 
     assert problems_of(registry) == []
