@@ -101,6 +101,17 @@ def machine(tmp_path: Path, *cases: str, artifacts: dict[str, bytes] | None = No
     return system
 
 
+def vendor_page_gone(tmp_path: Path, case: str) -> FakeSystem:
+    """A FakeSystem on which every page of fixture *case* answers 404, a permanent failure the HTTP client does not retry.
+
+    A page that is simply not served makes the client retry with its real delays (1 + 2 + 4 s); a 404 fails at once.
+    """
+    system = machine(tmp_path)
+    for url in load_case(case):
+        system.urls[url] = FakeHttp("", 404)
+    return system
+
+
 def zip_bytes(tmp_path: Path, name: str, members: dict[str, str]) -> bytes:
     """Return the bytes of a zip archive of *members*."""
     return make_zip(tmp_path / name, members).read_bytes()
@@ -539,7 +550,7 @@ def test_a_failing_git_step_fails_the_run_and_stops_there(tmp_path: Path, failin
 def test_the_exit_status_is_one_when_a_package_fails_and_two_without_a_registry_file(tmp_path: Path) -> None:
     """A failing package makes status 1; a folder with no ``_registry.toml`` is a usage error (2) that writes nothing."""
     root = registry_of(tmp_path, "hwinfo")
-    assert run_cli(root, machine(tmp_path), tmp_path, "update", "hwinfo") == 1  # the vendor page is not served
+    assert run_cli(root, vendor_page_gone(tmp_path, "page_hwinfo"), tmp_path, "update", "hwinfo") == 1
 
     bare = tmp_path / "bare"
     (bare / "x").mkdir(parents=True)
@@ -578,7 +589,7 @@ def test_a_run_removes_the_staging_folders_an_interrupted_run_left_but_nothing_e
     (root / "hwinfo" / ".new-keep").mkdir()
     (root / "hwinfo" / ".new-0123abcdef").mkdir()
 
-    run_update(root, machine(tmp_path), tmp_path, "hwinfo")
+    run_update(root, vendor_page_gone(tmp_path, "page_hwinfo"), tmp_path, "hwinfo")
 
     assert sorted(p.name for p in (root / "hwinfo").iterdir()) == [".new-0123abcdef", ".new-fedcba98", ".new-keep", "_check_updates"]
 
@@ -596,7 +607,7 @@ def test_a_staging_folder_that_cannot_be_removed_is_a_warning_not_a_failure(tmp_
     monkeypatch.setattr("gupkg_registry.update.remove_tree", refuse)
     reporter = Collect()
     with use_reporter(reporter):
-        report = run_update(root, machine(tmp_path), tmp_path, "hwinfo")
+        report = run_update(root, vendor_page_gone(tmp_path, "page_hwinfo"), tmp_path, "hwinfo")
 
     assert stale.is_dir() and [o.package for o in report.outcomes] == ["hwinfo"]
     assert any(isinstance(e, Warning) and "in use" in e.text for e in reporter.events)
