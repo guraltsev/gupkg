@@ -25,8 +25,8 @@ For reference, issue 036 §2 measured on 2026-10-30:
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | T00 | Indicators tool | — | merged | | b2ee140 | 3,765 passed, 13 skipped (one tier) | n/a | minor review defects left: CLI --spec/--timings untested, weak heading asserts, silent unknown --spec |
 | T01 | Hygiene checks and baseline | T00 | merged | | 6f71b14 | 3,780 passed, 13 skipped (one tier) | 166 | minor review gaps: modules with no collected tests unchecked; some H5/H6 cases untested; age warning (hygiene �3.3) not built |
-| T02 | Tiers | T01 | in progress | i036/T02 | | | | rule 3 wording needs the owner |
-| T03 | Real waits and big copies | T02 | waiting | | | | | |
+| T02 | Tiers | T01 | merged | | 74dee1c | unit 2,776 / process 929 / release 123 collected; --all 3,815 passed, 13 skipped, 7:55 | 168 | rule 3 wording still needs the owner; tier rules are H8 (one tier) and H9 (unit guard) because main already had H7 (expiry); unit tier still 126 s |
+| T03 | Real waits and big copies | T02 | ready | | | | | |
 | T04 | Shared support | T03 | waiting | | | | | |
 | T05 | Registry receives its tests (gupkg-registry) | T04 | waiting | | | | | |
 | T06 | gupkg drops registry data | T05 | waiting | | | | | waits for the owner's push of T05 |
@@ -60,3 +60,4 @@ None yet.
 - 2026-10-31: baseline recorded (3,760 passed, 13 skipped, 7:19). T00 dispatched.
 - 2026-10-31: T00 reviewed (no blocking defects) and merged as b2ee140; suite 3,765 passed, 13 skipped, 7:26. Indicators on main: 1,753 test functions, 3,773 cases, tests ~454k tokens vs source ~405k (ratio 1.12), docstring share 21.2%, 138 flat test files, slowest 200 = 70.4% of time. T01 is ready.
 - 2026-10-31: T01 reviewed (no blocking defects) and merged; suite 3,780 passed, 13 skipped, 7:12; baseline 166 lines (H1 9, H2 9, H3 38, H4 107, H5 3). T02 is ready; its AGENTS.md rule 3 wording needs owner approval.
+- 2026-10-31: T02 reviewed (round 2: no blocking defects) and a fix round (merge of main, H7 clash renumbered to H8/H9, guard tests for os.system and sockets) merged as 74dee1c; --all 3,815 passed, 13 skipped, 7:55. Unit tier 126 s. T03 is ready. AGENTS.md rule 3 still waits for the owner.
