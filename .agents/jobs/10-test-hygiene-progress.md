@@ -24,7 +24,7 @@ For reference, issue 036 §2 measured on 2026-10-30:
 | Task | Title | Depends on | Status | Branch | Merge commit | Tests (per tier) | Baseline lines | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | T00 | Indicators tool | — | merged | | b2ee140 | 3,765 passed, 13 skipped (one tier) | n/a | minor review defects left: CLI --spec/--timings untested, weak heading asserts, silent unknown --spec |
-| T01 | Hygiene checks and baseline | T00 | ready | | | | | |
+| T01 | Hygiene checks and baseline | T00 | in progress | i036/T01 | | | | |
 | T02 | Tiers | T01 | waiting | | | | | rule 3 wording needs the owner |
 | T03 | Real waits and big copies | T02 | waiting | | | | | |
 | T04 | Shared support | T03 | waiting | | | | | |
