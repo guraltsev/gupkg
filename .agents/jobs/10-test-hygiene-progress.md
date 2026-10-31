@@ -28,8 +28,8 @@ For reference, issue 036 §2 measured on 2026-10-30:
 | T02 | Tiers | T01 | merged | | 74dee1c | unit 2,776 / process 929 / release 123 collected; --all 3,815 passed, 13 skipped, 7:55 | 168 | rule 3 wording still needs the owner; tier rules are H8 (one tier) and H9 (unit guard) because main already had H7 (expiry); unit tier still 126 s |
 | T03 | Real waits and big copies | T02 | merged | | df4fc2b | unit 2,777 (67 s); --all 3,816 passed, 13 skipped, 5:59 | 167 | registry tool has no injectable sleep: 3 tests serve a 404 instead (owner may want a sleep parameter); rule 'neither tracker nor pinned version' has no test (for T06); 3 tests still copy the whole snapshot |
 | T04 | Shared support | T03 | merged | | 4e1b09f | --all 3,818 passed, 13 skipped, 7:50 | 158 | all H1 gone; node ids and asserts identical to base; conflict with the adopt work (6f4e226) resolved by hand in test_cli_adopt.py; many helpers still copied (Collect 4x, make_client 3x, two zip_bytes) |
-| T05 | Registry receives its tests (gupkg-registry) | T04 | in progress | i036/T05 (in gupkg-registry) | | | | preflight 2026-10-31: branch main, status empty, no commits ahead of github/main | | | | | |
-| T06 | gupkg drops registry data | T05 | waiting | | | | | waits for the owner's push of T05 |
+| T05 | Registry receives its tests (gupkg-registry) | T04 | merged | | registry 5ce5201 | registry 473 passed (was 212) | n/a | OWNER MUST PUSH gupkg-registry main before T06; 92 fixture cases are synthetic (recorded: null), owner records them with python _tools\record_http_fixtures.py; fabe2a6 (serviwin-portable unversioned) kept |
+| T06 | gupkg drops registry data | T05 | blocked | | | | | waits for the owner's push of T05 |
 | T07 | Area engine | T06 | waiting | | | | | |
 | T08 | Area catalog (with scope and settings) | T07 | waiting | | | | | |
 | T09 | Area cli | T08 | waiting | | | | | |
@@ -64,3 +64,4 @@ None yet.
 - 2026-10-31: T03 reviewed (no defects; 20+ rules broken and caught) and merged as df4fc2b; --all 3,816 passed, 13 skipped, 5:59 (was 7:55). Unit tier 67 s (was 126-148 s). T04 is ready.
 - 2026-10-31: T04 reviewed (no defects: 3,829 ids and 4,245 asserts identical) and merged as 4e1b09f after the owner committed the adopt work; --all 3,818 passed, 13 skipped, 7:50. Baseline 158 lines. T05 is ready (registry preflight first).
 - 2026-10-31: T05 preflight clean (gupkg-registry on main, status empty, github/main..main empty). T05 dispatched without a worktree.
+- 2026-10-31: T05 reviewed (no blocking; two lost protections found and restored in a fix round: literal hwinfo headers, named portable-only set) and merged in the registry as 5ce5201; registry 473 passed. T06 is blocked until the owner pushes gupkg-registry main.
