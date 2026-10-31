@@ -2,14 +2,16 @@
 
 The controller's state for job 10 (`10-test-hygiene-controller.md`). Only the controller edits this file.
 
-Status: Open, not started.
+Status: In progress.
 
 Statuses: `waiting` (dependencies not merged), `ready`, `in progress`, `in review`, `blocked` (see "Owner questions"),
 `merged`.
 
 ## Baseline
 
-Not recorded yet. Before T00, the controller records the test counts and the wall time of `scripts\test.cmd` on `main`.
+Recorded 2026-10-31 on `main` at 33899f3 with `scripts\test.cmd` (serial): 3,760 passed, 13 skipped, 439.53 s (7 min 19 s).
+Caveat: uncommitted edits to `src/gupkg/settingsedit.py` and `tests/test_cli_tools.py` appeared in the working tree during
+the run (not from this job), so the run may include them.
 After T00, it records `tools\test_report.py --timings`.
 
 For reference, issue 036 §2 measured on 2026-10-30:
@@ -21,8 +23,8 @@ For reference, issue 036 §2 measured on 2026-10-30:
 
 | Task | Title | Depends on | Status | Branch | Merge commit | Tests (per tier) | Baseline lines | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| T00 | Indicators tool | — | ready | | | | | |
-| T01 | Hygiene checks and baseline | T00 | waiting | | | | | |
+| T00 | Indicators tool | — | merged | | b2ee140 | 3,765 passed, 13 skipped (one tier) | n/a | minor review defects left: CLI --spec/--timings untested, weak heading asserts, silent unknown --spec |
+| T01 | Hygiene checks and baseline | T00 | ready | | | | | |
 | T02 | Tiers | T01 | waiting | | | | | rule 3 wording needs the owner |
 | T03 | Real waits and big copies | T02 | waiting | | | | | |
 | T04 | Shared support | T03 | waiting | | | | | |
@@ -55,3 +57,5 @@ None yet.
 ## Log
 
 - 2026-10-30: job written. Not started.
+- 2026-10-31: baseline recorded (3,760 passed, 13 skipped, 7:19). T00 dispatched.
+- 2026-10-31: T00 reviewed (no blocking defects) and merged as b2ee140; suite 3,765 passed, 13 skipped, 7:26. Indicators on main: 1,753 test functions, 3,773 cases, tests ~454k tokens vs source ~405k (ratio 1.12), docstring share 21.2%, 138 flat test files, slowest 200 = 70.4% of time. T01 is ready.
