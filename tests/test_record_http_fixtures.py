@@ -66,16 +66,19 @@ def test_an_index_walk_is_recorded_page_by_page_and_unvisited_pages_are_dropped(
     assert recorded["expected"]["version"] == "2.14.13"
 
 
-def test_a_failing_run_leaves_the_case_file_untouched(system: FakeSystem, tmp_path: Path) -> None:
-    """If a URL cannot be fetched, nothing is written: the old, working fixture stays."""
+def test_a_failing_run_leaves_the_case_file_untouched(system: FakeSystem, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """If a URL cannot be fetched, even after the client's retries, nothing is written: the old, working fixture stays."""
     case = copy_case(tmp_path, "last_modified_autoruns")
     before = case.read_bytes()
     url = json.loads(case.read_text(encoding="utf-8"))["responses"][0]["url"]
     system.urls[url] = ConnectionResetError("reset")
+    waits: list[float] = []
+    monkeypatch.setattr(record_http_fixtures.time, "sleep", waits.append)  # the client's retry delays, without waiting
 
     with pytest.raises(Exception):
         record_http_fixtures.record_case(case, system)
 
+    assert waits, "the failed request was retried before the run gave up"
     assert case.read_bytes() == before
 
 
