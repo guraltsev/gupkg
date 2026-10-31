@@ -42,12 +42,6 @@ from gupkg.tomlio import write_toml
 pytestmark = pytest.mark.unit
 
 
-@pytest.fixture
-def system(tmp_path: Path) -> FakeSystem:
-    """A fake machine whose junctions are real."""
-    return FakeSystem(tmp_path / "machine")
-
-
 def write(path: Path, text: str = "x") -> Path:
     """Write a text file, creating folders, and return it."""
     path.parent.mkdir(parents=True, exist_ok=True)

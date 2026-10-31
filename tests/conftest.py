@@ -181,6 +181,14 @@ def system(tmp_path: Path):
     return FakeSystem(tmp_path / "machine")
 
 
+@pytest.fixture
+def stage(tmp_path: Path) -> Path:
+    """An empty folder where unpack destinations are made; a failed unpack must leave it empty."""
+    folder = tmp_path / "stage"
+    folder.mkdir()
+    return folder
+
+
 # ---------------------------------------------------------------------------
 # Pretend machines with an engine (one fixture for each kind of world)
 # ---------------------------------------------------------------------------

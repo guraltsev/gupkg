@@ -33,12 +33,6 @@ from gupkg.system.port import Mode
 pytestmark = pytest.mark.unit
 
 
-@pytest.fixture
-def system(tmp_path: Path) -> FakeSystem:
-    """A fake machine whose files live below the temporary folder."""
-    return FakeSystem(tmp_path / "machine")
-
-
 def context(tmp_path: Path, *, mode: str = "user", start_menu: bool = True, scope: Mode | None = Mode.USER, env=None) -> EffectContext:
     """Return an effect context below *tmp_path*."""
     package = tmp_path / "opt" / "tool"

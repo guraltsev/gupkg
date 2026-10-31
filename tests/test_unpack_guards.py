@@ -36,14 +36,6 @@ def files(folder: Path, sizes: list[int]) -> None:
         (folder / f"f{index}.bin").write_bytes(bytes(size))
 
 
-@pytest.fixture
-def stage(tmp_path: Path) -> Path:
-    """An empty folder where unpack destinations are made; a failed unpack must leave it empty."""
-    folder = tmp_path / "stage"
-    folder.mkdir()
-    return folder
-
-
 # -- the folder watcher -------------------------------------------------------------------------
 
 

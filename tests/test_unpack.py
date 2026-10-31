@@ -30,14 +30,6 @@ from tests.support.archive import make_7z, make_tar, make_zip, sums_manifest, tr
 pytestmark = pytest.mark.unit
 
 
-@pytest.fixture
-def stage(tmp_path: Path) -> Path:
-    """An empty folder where unpack destinations are made; a failed unpack must leave it empty."""
-    folder = tmp_path / "stage"
-    folder.mkdir()
-    return folder
-
-
 def unpack(system: FakeSystem, archive: Path, stage: Path, plan: UnpackPlan | None = None, **options):
     """Unpack *archive* into ``stage/App`` and return the report."""
     return unpack_artifact(system, archive, stage / "App", plan or UnpackPlan(), **options)

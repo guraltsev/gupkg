@@ -33,14 +33,6 @@ MIB = 1024 * 1024
 SMALL = Limits(max_total_bytes=MIB, max_file_bytes=MIB)
 
 
-@pytest.fixture
-def stage(tmp_path: Path) -> Path:
-    """An empty folder where unpack destinations are made; a failed unpack must leave it empty."""
-    folder = tmp_path / "stage"
-    folder.mkdir()
-    return folder
-
-
 def zero_tar(data_size: int) -> bytes:
     """Return an uncompressed tar holding one file of *data_size* zero bytes."""
     buffer = io.BytesIO()
