@@ -4,7 +4,7 @@ Behaviour covered: the links in the ``shortcuts`` folder become the Start Menu s
 inside ``App`` follow the package, uninstallers and links outside ``App`` are skipped and reported); the install happens where
 the version directory stands, with the root taken from the folder's position; an existing ``pkg.toml`` is never replaced without
 ``--force`` (and then kept as ``pkg.toml.old``); a run whose root is not the folder's root, or with no usable link, changes
-nothing; ``--no-install`` writes only the file.
+nothing; ``--no-install`` writes only the file and the launchers (``install.cmd`` and ``manage.cmd``, those the folder lacks).
 
 Real: the argument parser, the engine, the catalog, real folders. Mocked: ``FakeSystem`` (the Start Menu is a record, so each
 ``.lnk`` here is an empty placeholder file next to the fake's record of its fields).
@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from gupkg.launchers import launcher_text
 from gupkg.system.port import ShortcutSpec
 from gupkg.tomlio import read_toml
 from tests.cli_support import CliWorld
@@ -183,8 +184,21 @@ def test_adopt_installs_the_shortcuts_into_the_start_menu_folder_of_the_root(wor
     assert {path.name for path in placed} == {"Game.lnk", "Editor.lnk"}
 
 
+def test_adopt_writes_the_launchers_the_folder_lacks_and_keeps_those_it_has(world: CliWorld, tmp_path: Path) -> None:
+    """The adopted version gets install.cmd and manage.cmd from the templates; a launcher already there is left as it is."""
+    folder = make_game(world, tmp_path / "Games")
+    (folder / "install.cmd").write_bytes(b"@echo mine\r\n")
+
+    result = world.cli("pkg", "adopt", str(folder), "--no-install", "--json")
+
+    assert result.code == 0, result.err
+    assert result.document()["launchers"] == ["manage.cmd"]
+    assert (folder / "install.cmd").read_bytes() == b"@echo mine\r\n"
+    assert (folder / "manage.cmd").read_bytes() == launcher_text("tui").encode("ascii")
+
+
 def test_adopt_no_install_writes_the_file_and_nothing_else(world: CliWorld, tmp_path: Path) -> None:
-    """With --no-install only pkg.toml is written: no install record, no shortcut on the machine, a document that lists both groups."""
+    """With --no-install only pkg.toml and the launchers are written: no install record, no shortcut on the machine, a document that lists both groups."""
     folder = make_game(world, tmp_path / "Games")
     before = set(world.fake.shortcuts())
 
@@ -195,3 +209,4 @@ def test_adopt_no_install_writes_the_file_and_nothing_else(world: CliWorld, tmp_
     assert document["shortcuts"] == ["Editor", "Game"] and len(document["skipped"]) == 2
     assert set(world.fake.shortcuts()) == before
     assert not (folder.parent / ".gupkg").exists() and not (folder.parent / "current").exists()
+    assert sorted(item.name for item in folder.iterdir()) == ["App", "install.cmd", "manage.cmd", "pkg.toml", "shortcuts"]

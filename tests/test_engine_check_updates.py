@@ -60,7 +60,7 @@ def test_a_normal_shell_with_no_download_writes_only_the_manifest_and_support_fi
 
     version = world.user / "tool" / "1.1.0"
     assert result.ok and result.details["populated"] is False
-    assert sorted(item.name for item in version.iterdir()) == ["gupkg-tui.cmd", "icons", "install.cmd", "pkg.toml"]
+    assert sorted(item.name for item in version.iterdir()) == ["icons", "install.cmd", "manage.cmd", "pkg.toml"]
     assert f"{BASE_URL}/tool-1.1.0.zip" not in world.fake.fetch_log
 
 
@@ -177,7 +177,7 @@ def test_a_bundled_install_carries_its_own_gupkg_into_the_new_version(tmp_path: 
 
 
 def test_every_new_version_directory_gets_the_launchers_also_in_a_root_with_a_gupkg_location(tmp_path: Path) -> None:
-    """With an installed gupkg in the root (a gupkg-location) the new version still carries its own install.cmd and gupkg-tui.cmd, and no bundled gupkg."""
+    """With an installed gupkg in the root (a gupkg-location) the new version still carries its own install.cmd and manage.cmd, and no bundled gupkg."""
     world = World(tmp_path)
     installed(world)
     (world.user / ".gupkg").mkdir(exist_ok=True)
@@ -189,11 +189,11 @@ def test_every_new_version_directory_gets_the_launchers_also_in_a_root_with_a_gu
     new = world.user / "tool" / "1.1.0"
     assert result.ok and not (new / "gupkg").exists()
     assert (new / "install.cmd").read_bytes() == launcher_text("install").encode("ascii")
-    assert (new / "gupkg-tui.cmd").read_bytes() == launcher_text("tui").encode("ascii")
+    assert (new / "manage.cmd").read_bytes() == launcher_text("tui").encode("ascii")
 
 
 def test_the_trackers_launcher_is_never_copied_into_a_version_directory(tmp_path: Path) -> None:
-    """`check-updates.cmd` of `_check_updates` stays there; the new version has install.cmd and gupkg-tui.cmd instead."""
+    """`check-updates.cmd` of `_check_updates` stays there; the new version has install.cmd and manage.cmd instead."""
     world = World(tmp_path)
     installed(world)
     (world.user / "tool" / "_check_updates" / "check-updates.cmd").write_text("@echo off\n", encoding="utf-8")

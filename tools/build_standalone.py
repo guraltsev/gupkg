@@ -216,6 +216,12 @@ def build_bundle(
             if wrapper.is_file():
                 shutil.copy2(wrapper, tree / wrapper_name)
 
+        # The finished package launchers (install.cmd, manage.cmd, check-updates.cmd) sit beside the ``gupkg`` package, where
+        # ``gupkg.launchers`` looks for them (issue 037).
+        templates = source.parent / "templates"
+        if templates.is_dir():
+            shutil.copytree(templates, tree / "templates")
+
         # The separate programs (the UI programs and their shared library) sit beside the ``gupkg``
         # package in the tree (design section 12).
         for program in ("gupkg_ui", "gupkg_tui", "gupkg_manager"):

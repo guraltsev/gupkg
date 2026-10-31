@@ -5,7 +5,9 @@ The checks run with every pytest session (``_docs/tests_hygiene.md`` section 6).
 naming the rule, the file, the test and the section of the policy. A baseline line that matches no violation fails too,
 so the baseline only shrinks. A run of a few files does not report the baseline lines of the files it did not check.
 Temporary-test folders under ``tests/_temp/`` need a README and an open reference, and a ``kind: report`` folder runs only
-when the command line names it.
+when the command line names it. Conditional-test folders under ``tests/_conditional/`` are checked like permanent tests and need
+a README with the condition that ends them (``until``), a date to check it again (``expires``) and a ``purpose``; after the date
+the session fails.
 
 These tests build small fake repositories below ``tmp_path``. Two of them start a real pytest process to show the checks
 are wired into a session.
@@ -17,6 +19,7 @@ import os
 import subprocess
 import sys
 import textwrap
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -178,6 +181,57 @@ def test_a_complete_temporary_folder_with_an_open_reference_passes(tmp_path: Pat
     _temp_folder(tmp_path, "issue999", _readme("_issues/issue999-x.md"), "_issues/issue999-x.md")
 
     assert hygiene.check(tmp_path, []) is None
+
+
+def _conditional_folder(root: Path, name: str, readme: str | None) -> None:
+    """Create ``tests/_conditional/<name>/`` with a clean test module and, if given, a README."""
+    _write(root / "tests" / "_conditional" / name / "test_compat.py", CLEAN_SELF_CONTAINED)
+    if readme is not None:
+        _write(root / "tests" / "_conditional" / name / "README.md", readme)
+
+
+def _conditional_readme(until: str = "No registry in the old layout is supported.", expires: str = "2027-04-30") -> str:
+    return f"until: {until}\nexpires: {expires}\npurpose: Convert registries made in the old layout.\n"
+
+
+def test_a_complete_conditional_folder_passes_until_its_date_and_fails_after_it(tmp_path: Path) -> None:
+    """A folder with ``until``, ``expires`` and ``purpose`` passes up to its date; the day after, the session fails until the date is moved or the tests are retired."""
+    _conditional_folder(tmp_path, "old_layout", _conditional_readme(expires="2027-04-30"))
+
+    assert hygiene.check(tmp_path, [], today=date(2027, 4, 30)) is None
+    message = hygiene.check(tmp_path, [], today=date(2027, 5, 1))
+
+    assert "H7 tests/_conditional/old_layout" in message
+    assert "expired on 2027-04-30" in message and "retire the tests" in message
+
+
+@pytest.mark.parametrize(
+    ("readme", "reason"),
+    [
+        pytest.param(None, "no README.md", id="no-readme"),
+        pytest.param("expires: 2027-04-30\npurpose: Convert.\n", "README lacks until", id="no-condition"),
+        pytest.param("until: Gone.\npurpose: Convert.\n", "README lacks expires", id="no-date"),
+        pytest.param(_conditional_readme(expires="next spring"), "expires must be a date written YYYY-MM-DD", id="date-not-a-date"),
+    ],
+)
+def test_a_conditional_folder_needs_a_condition_and_a_date(tmp_path: Path, readme: str | None, reason: str) -> None:
+    """A conditional folder without a README, or whose README gives no condition or no valid date, is refused, naming rule H7 and the folder."""
+    _conditional_folder(tmp_path, "old_layout", readme)
+
+    message = hygiene.check(tmp_path, [], today=date(2026, 11, 1))
+
+    assert "H7 tests/_conditional/old_layout" in message
+    assert reason in message
+
+
+def test_a_test_module_may_not_import_from_a_conditional_folder(tmp_path: Path) -> None:
+    """Nothing imports from ``tests/_conditional/``, because the tests there end with their condition (H1)."""
+    _conditional_folder(tmp_path, "old_layout", _conditional_readme())
+    module = _module(tmp_path, CLEAN_MODULE + "\nfrom tests._conditional.old_layout import helper\n")
+
+    message = hygiene.check(tmp_path, [module], today=date(2026, 11, 1))
+
+    assert "H1 tests/test_subject.py" in message
 
 
 def _pytest(root: Path, *args: str) -> subprocess.CompletedProcess[str]:

@@ -17,6 +17,7 @@ scope: the bootstrap script and self-update, covered by their own modules.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import os
 import subprocess
 import sys
@@ -43,7 +44,7 @@ def installed(tmp_path: Path, release_bundle) -> Path:
 
 
 def test_zip_is_a_package_root_fragment_of_the_gupkg_package(release_bundle) -> None:
-    """The ZIP holds `gupkg/<version>/{pkg.toml, pkg.local, gupkg, install.cmd, gupkg-tui.cmd}` and `gupkg/_check_updates/{pkg.toml, pkg.local, check-updates.cmd}` only."""
+    """The ZIP holds `gupkg/<version>/{pkg.toml, pkg.local, gupkg, install.cmd, manage.cmd}` and `gupkg/_check_updates/{pkg.toml, pkg.local, check-updates.cmd}` only."""
     with zipfile.ZipFile(release_bundle.zip) as archive:
         names = archive.namelist()
     version = release_bundle.version
@@ -51,7 +52,7 @@ def test_zip_is_a_package_root_fragment_of_the_gupkg_package(release_bundle) -> 
     top = {"/".join(name.split("/")[:3]) for name in names}
     assert top == {
         f"gupkg/{version}/pkg.toml", f"gupkg/{version}/pkg.local", f"gupkg/{version}/gupkg", f"gupkg/{version}/install.cmd",
-        f"gupkg/{version}/gupkg-tui.cmd", "gupkg/_check_updates/pkg.toml", "gupkg/_check_updates/pkg.local",
+        f"gupkg/{version}/manage.cmd", "gupkg/_check_updates/pkg.toml", "gupkg/_check_updates/pkg.local",
         "gupkg/_check_updates/check-updates.cmd",
     }
 
@@ -70,10 +71,25 @@ def test_the_versions_pkg_toml_is_pinned_without_a_download_address_and_the_hook
     assert check_directory(installed).ok and check_directory(installed.parent / "_check_updates").ok
 
 
+def test_the_tree_carries_the_launcher_templates_where_gupkg_launchers_looks_for_them(installed: Path) -> None:
+    """`<tree>\\templates` holds the three finished launchers of the source's `templates` folder, beside the `gupkg` package."""
+    shipped = installed / "gupkg" / "templates"
+
+    assert sorted(path.name for path in shipped.iterdir()) == ["check-updates.cmd", "install.cmd", "manage.cmd"]
+    for path in shipped.iterdir():
+        assert path.read_bytes() == (REPO / "src" / "templates" / path.name).read_bytes()
+    # The shipped module, loaded from the unpacked tree, must read the templates of that tree, not of the source checkout.
+    spec = importlib.util.spec_from_file_location("shipped_launchers", installed / "gupkg" / "gupkg" / "launchers" / "__init__.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.TEMPLATES_DIR == shipped.resolve()
+    assert module.launcher_text("tui").encode("ascii") == (shipped / "manage.cmd").read_bytes()
+
+
 def test_the_launchers_are_the_generated_ones(installed: Path) -> None:
-    """install.cmd and gupkg-tui.cmd of the version, and check-updates.cmd of the tracker, equal the template output."""
+    """install.cmd and manage.cmd of the version, and check-updates.cmd of the tracker, equal the template output."""
     assert (installed / "install.cmd").read_bytes() == launcher_text("install").encode("ascii")
-    assert (installed / "gupkg-tui.cmd").read_bytes() == launcher_text("tui").encode("ascii")
+    assert (installed / "manage.cmd").read_bytes() == launcher_text("tui").encode("ascii")
     assert (installed.parent / "_check_updates" / "check-updates.cmd").read_bytes() == launcher_text("check-updates").encode("ascii")
 
 

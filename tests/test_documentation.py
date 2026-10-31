@@ -103,7 +103,7 @@ def test_the_readme_lists_every_subcommand_of_the_groups() -> None:
     block = _reference_block((ROOT / "README.md").read_text(encoding="utf-8"))
     expected = {
         "registry": "sync|status|list|add|remove", "settings": "show|path|init|set KEY VALUE",
-        "pkg": "new|adopt|check|pin|bundle|export", "self": "status|repair|check-updates|update",
+        "pkg": "new|adopt|check|pin|launchers|bundle|export", "self": "status|repair|check-updates|update",
     }
 
     for group, actions in expected.items():

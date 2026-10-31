@@ -16,7 +16,7 @@ src/gupkg/            core (the `gupkg` command)
   engine/      planner (pure), executor, appbuild (atomic App), effects, portable data, locks, check-updates, health, lifecycle
   report/      events, the Rich console renderer, log files, the --json documents
   selfmgmt/    gupkg's own tree: where it lives, MANIFEST.sha256 status, elevated-run trust checks
-  launchers/   the one template of install.cmd, gupkg-tui.cmd and check-updates.cmd
+  launchers/   the code that copies install.cmd, manage.cmd and check-updates.cmd from src/templates/
   scope.py, settingsload.py, targets.py, distcopy.py   the one Scope of a run (mode from the process token, root), its settings, target -> package, copying a distribution into the root
   cli.py       the grammar -> lifecycle calls -> exit code; --json, --plan, --events-file, --no-input; the pass-through commands tui and manager
 src/gupkg_ui/         shared by the two UI programs; reads through core, never the engine
@@ -56,8 +56,9 @@ Dependency rules:
 
 ## Package launchers and shims
 
-A version directory carries `install.cmd` and `gupkg-tui.cmd` (a tracker folder carries `check-updates.cmd`), all generated from the one
-template in `gupkg.launchers` by whichever gupkg runs `check-updates`, `pkg new/bundle/export`, or the registry tool.
+A version directory carries `install.cmd` and `manage.cmd` (a tracker folder carries `check-updates.cmd`), all finished files of `src/templates/`
+(in a release, `templates` beside the `gupkg` package), copied byte for byte by `gupkg.launchers` for whichever gupkg runs `check-updates`,
+`pkg new/launchers/adopt/bundle/export`, or the registry tool. Do not name a launcher `gupkg-tui.cmd`: that is the program of a gupkg tree.
 They find a gupkg relative to themselves (the bundled copy, then the folder in `<root>\.gupkg\gupkg-location`, then `PATH`; an elevated launcher takes only admin-only candidates) and forward their arguments through `cmd.exe`, so
 a `%`, `^` or `"` inside a forwarded argument is re-expanded by `cmd`: call `gupkg` directly for such values (documented, not fixed).
 

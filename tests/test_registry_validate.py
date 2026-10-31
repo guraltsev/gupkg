@@ -122,8 +122,8 @@ def tamper_launcher(root: Path) -> None:
 
 
 def remove_launcher(root: Path) -> None:
-    """Delete ``gupkg-tui.cmd`` of ``hwinfo/10.02`` and refingerprint."""
-    (root / "hwinfo" / "10.02" / "gupkg-tui.cmd").unlink()
+    """Delete ``manage.cmd`` of ``hwinfo/10.02`` and refingerprint."""
+    (root / "hwinfo" / "10.02" / "manage.cmd").unlink()
     refingerprint(root, "hwinfo/10.02")
 
 
@@ -279,7 +279,7 @@ RULES: list[tuple[str, Callable[[Path], None], str]] = [
     ("no-fingerprint", drop_fingerprint, "hwinfo/10.02: no fingerprint"),
     ("fingerprint-of-nothing", stale_fingerprint, "fingerprint of 'hwinfo/0.0' names no version directory"),
     ("tampered-launcher", tamper_launcher, "hwinfo/10.02/install.cmd: differs from the launcher template"),
-    ("missing-launcher", remove_launcher, "hwinfo/10.02/gupkg-tui.cmd: launcher is missing"),
+    ("missing-launcher", remove_launcher, "hwinfo/10.02/manage.cmd: launcher is missing"),
     ("launcher-in-tracker", launcher_in_tracker, "a tracker never installs, so it carries no install.cmd"),
     ("missing-check-updates-launcher", remove_tracker_launcher, "gh/_check_updates/check-updates.cmd: launcher is missing"),
     ("tampered-check-updates-launcher", tamper_tracker_launcher, "gh/_check_updates/check-updates.cmd: differs from the launcher template"),

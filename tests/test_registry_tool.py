@@ -136,7 +136,7 @@ def test_a_hash_the_vendor_does_not_publish_is_computed_marked_and_fingerprinted
     assert manifest.source.sha256 == hashlib.sha256(body).hexdigest()
     assert manifest.source.sha256_from == "registry"
     assert manifest.source.download_url == "https://www.hwinfo.com/files/hwi_1002.zip"
-    assert sorted(p.name for p in version.iterdir()) == ["gupkg-tui.cmd", "install.cmd", "pkg.toml"]
+    assert sorted(p.name for p in version.iterdir()) == ["install.cmd", "manage.cmd", "pkg.toml"]
     settings = read_registry_file(root)
     assert settings["fingerprints"]["hwinfo/10.02"] == fingerprint_directory(version)
     assert check_directory(version).ok and not check_directory(version).warnings
@@ -277,7 +277,7 @@ def test_support_files_are_copied_but_no_update_check_code_launcher_or_backup(tm
         "tool/_check_updates/icons/tool.ico": "ico",
         "tool/_check_updates/pkg.local/helper.py": "PKG_MODULE_API = 2\nVALUE = 1\n",
         "tool/_check_updates/pkg.local/old_track.py": "PKG_MODULE_API = 2\n\n\ndef track(ctx):\n    return None\n",
-        "tool/_check_updates/gupkg-tui.cmd": "stale launcher",
+        "tool/_check_updates/manage.cmd": "stale launcher",
         "tool/_check_updates/notes.bak": "backup",
     })
     system = machine(tmp_path, artifacts={"https://example.org/tool-1.5.zip": zip_bytes(tmp_path, "t.zip", {"a.exe": "a"})})
@@ -288,9 +288,9 @@ def test_support_files_are_copied_but_no_update_check_code_launcher_or_backup(tm
     assert outcome.status == "added", outcome.message
     version = root / "tool" / "1.5"
     assert sorted(p.relative_to(version).as_posix() for p in version.rglob("*") if p.is_file()) == [
-        "gupkg-tui.cmd", "icons/tool.ico", "install.cmd", "pkg.local/helper.py", "pkg.toml",
+        "icons/tool.ico", "install.cmd", "manage.cmd", "pkg.local/helper.py", "pkg.toml",
     ]
-    assert (version / "gupkg-tui.cmd").read_bytes() == launcher_text("tui").encode("ascii")
+    assert (version / "manage.cmd").read_bytes() == launcher_text("tui").encode("ascii")
 
 
 def test_a_tracker_that_does_not_validate_is_reported_and_skipped(tmp_path: Path) -> None:

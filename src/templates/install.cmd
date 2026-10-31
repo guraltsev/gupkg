@@ -1,0 +1,394 @@
+@echo off
+setlocal EnableExtensions DisableDelayedExpansion
+rem Installs this package with gupkg.
+rem Copied by gupkg from its templates folder (install.cmd); do not edit.
+rem
+rem Which gupkg runs, in this order (design 21.3, decision D52):
+rem   1. the gupkg bundled in this folder, gupkg\gupkg.cmd;
+rem   2. the gupkg named by the root's setting: the first line of <root>\.gupkg\gupkg-location is a folder that holds gupkg.cmd
+rem      (a relative folder is relative to the root). The line is read as data and never executed. A missing or empty file, or a
+rem      folder without gupkg.cmd, is skipped and the skipped file is named;
+rem   3. gupkg on PATH: the first gupkg.cmd or gupkg.exe that the process PATH finds (never the current directory);
+rem   4. none: print how to get gupkg and exit 9009.
+rem There is no version comparison. The registry, AppData and ProgramData are never read. Exit code 6 (this gupkg is too old for the
+rem package) moves on to the next step; when no step is left, the launcher exits with 6.
+rem
+rem An elevated run first checks that nothing it will run can be changed by a standard user, and refuses when that is not so or
+rem cannot be established (design 21.3). On PATH an elevated run skips, and names, every entry whose gupkg is not admin-only. The
+rem check is the PowerShell script at the end of this file; PowerShell reads it from this file, because a checker kept in
+rem the checked folders could have been replaced.
+
+set "GUPKG_HERE=%~dp0"
+set "GUPKG_VERSION_DIR=%~dp0"
+if "%GUPKG_VERSION_DIR:~-1%"=="\" set "GUPKG_VERSION_DIR=%GUPKG_VERSION_DIR:~0,-1%"
+for %%I in ("%GUPKG_HERE%..") do set "GUPKG_PACKAGE_DIR=%%~fI"
+for %%I in ("%GUPKG_HERE%..\..") do set "GUPKG_ROOT=%%~fI"
+if "%GUPKG_ROOT:~-1%"=="\" set "GUPKG_ROOT=%GUPKG_ROOT:~0,-1%"
+set "GUPKG_LOCFILE=%GUPKG_ROOT%\.gupkg\gupkg-location"
+set "GUPKG_BUNDLED=%GUPKG_HERE%gupkg\gupkg.cmd"
+
+set "GUPKG_EXTRA="
+
+:collect
+if "%~1"=="" goto :collected
+set "GUPKG_EXTRA=%GUPKG_EXTRA% "%~1""
+shift
+goto :collect
+:collected
+
+rem Is this run elevated? Unknown counts as a refusal, never as "not elevated".
+set "GUPKG_ELEVATED="
+call :integrity_level
+if not defined GUPKG_ELEVATED goto :refuse_unknown
+
+rem Choose the gupkg: step by step, until one is found; exit code 6 comes back here for the next step.
+set "GUPKG_STEP=0"
+set "GUPKG_TRIED="
+set "GUPKG_REFUSE="
+:next_step
+set /a GUPKG_STEP+=1
+set "GUPKG_RUN="
+set "GUPKG_KIND="
+if "%GUPKG_STEP%"=="1" call :pick_bundled
+if "%GUPKG_STEP%"=="2" call :pick_location
+if "%GUPKG_STEP%"=="3" call :pick_path
+if defined GUPKG_REFUSE goto :refuse_untrusted
+if %GUPKG_STEP% GEQ 4 goto :no_more_steps
+if not defined GUPKG_RUN goto :next_step
+
+rem Elevated: everything that will run must be admin-only, before anything starts. A PATH entry was checked when it was picked.
+if not "%GUPKG_ELEVATED%"=="yes" goto :run
+if "%GUPKG_KIND%"=="path" goto :run
+if "%GUPKG_KIND%"=="location" (call :check_location) else (call :check_bundled)
+if errorlevel 1 goto :refuse_untrusted
+
+:run
+call "%GUPKG_RUN%" install "%GUPKG_HERE%."%GUPKG_EXTRA%
+set "GUPKG_EXIT=%ERRORLEVEL%"
+
+rem Exit code 6: this gupkg cannot handle the package. Try the next step.
+if not "%GUPKG_EXIT%"=="6" goto :finish
+set "GUPKG_TRIED=1"
+>&2 echo [gupkg] The gupkg %GUPKG_RUN% cannot handle this package; trying the next one.
+goto :next_step
+
+:no_more_steps
+if defined GUPKG_TRIED goto :finish
+goto :no_gupkg
+
+:finish
+if not defined GUPKG_NO_PAUSE pause
+exit /b %GUPKG_EXIT%
+
+:no_gupkg
+>&2 echo [gupkg] gupkg is not installed, and none is bundled with this package.
+>&2 echo [gupkg] Install gupkg first: https://github.com/guraltsev/gupkg ^(download gupkg-bootstrap.cmd and run it^).
+if not defined GUPKG_NO_PAUSE pause
+exit /b 9009
+
+:refuse_unknown
+>&2 echo [gupkg] Cannot tell whether this run is elevated, so it is refused.
+if not defined GUPKG_NO_PAUSE pause
+exit /b 1
+
+:refuse_untrusted
+>&2 echo [gupkg] Refusing to run elevated: something this launcher would run can be changed by a standard user,
+>&2 echo [gupkg] or that could not be established. Install the package with an installed system gupkg instead.
+if not defined GUPKG_NO_PAUSE pause
+exit /b 1
+
+rem Step 1: the gupkg bundled in this folder.
+:pick_bundled
+if exist "%GUPKG_BUNDLED%" if not exist "%GUPKG_BUNDLED%\NUL" (set "GUPKG_RUN=%GUPKG_BUNDLED%" & set "GUPKG_KIND=bundled")
+exit /b 0
+
+rem Step 2: the folder named by the first line of the root's gupkg-location. The line is only data: it is read with set /p.
+:pick_location
+if not exist "%GUPKG_LOCFILE%" goto :loc_missing
+set "GUPKG_LOC="
+set /p GUPKG_LOC=<"%GUPKG_LOCFILE%"
+if not defined GUPKG_LOC goto :loc_empty
+set "GUPKG_LOC=%GUPKG_LOC:"=%"
+if not defined GUPKG_LOC goto :loc_empty
+rem The line is data, and it is printed below: a line with a command separator or a redirection is refused, never echoed.
+set "GUPKG_CHK=%GUPKG_LOC%"
+set "GUPKG_CHK=%GUPKG_CHK:&=%"
+set "GUPKG_CHK=%GUPKG_CHK:|=%"
+set "GUPKG_CHK=%GUPKG_CHK:<=%"
+set "GUPKG_CHK=%GUPKG_CHK:>=%"
+set "GUPKG_CHK=%GUPKG_CHK:^=%"
+if not "%GUPKG_CHK%"=="%GUPKG_LOC%" goto :loc_bad
+set "GUPKG_LOCDIR=%GUPKG_LOC%"
+if not "%GUPKG_LOC:~1,1%"==":" if not "%GUPKG_LOC:~0,2%"=="\\" set "GUPKG_LOCDIR=%GUPKG_ROOT%\%GUPKG_LOC%"
+for %%I in ("%GUPKG_LOCDIR%") do set "GUPKG_LOCDIR=%%~fI"
+if "%GUPKG_LOCDIR:~-1%"=="\" set "GUPKG_LOCDIR=%GUPKG_LOCDIR:~0,-1%"
+if not exist "%GUPKG_LOCDIR%\gupkg.cmd" goto :loc_no_gupkg
+if exist "%GUPKG_LOCDIR%\gupkg.cmd\NUL" goto :loc_no_gupkg
+set "GUPKG_RUN=%GUPKG_LOCDIR%\gupkg.cmd"
+set "GUPKG_KIND=location"
+exit /b 0
+:loc_missing
+>&2 echo [gupkg] Skipped %GUPKG_LOCFILE%: the file does not exist.
+exit /b 0
+:loc_empty
+>&2 echo [gupkg] Skipped %GUPKG_LOCFILE%: the file is empty.
+exit /b 0
+:loc_bad
+>&2 echo [gupkg] Skipped %GUPKG_LOCFILE%: its first line is not a folder name.
+exit /b 0
+:loc_no_gupkg
+>&2 echo [gupkg] Skipped %GUPKG_LOCFILE%: %GUPKG_LOCDIR% has no gupkg.cmd.
+exit /b 0
+
+rem Step 3: the first gupkg.cmd or gupkg.exe on the process PATH. where "$PATH:..." searches PATH only, never the current directory.
+:pick_path
+set "GUPKG_BASE_CHECKED="
+for /f "usebackq delims=" %%P in (`where "$PATH:gupkg.*" 2^>nul`) do call :path_candidate "%%P"
+exit /b 0
+
+:path_candidate
+if defined GUPKG_RUN exit /b 0
+if defined GUPKG_REFUSE exit /b 0
+if /I not "%~n1"=="gupkg" exit /b 0
+set "GUPKG_CAND_KIND="
+if /I "%~x1"==".cmd" set "GUPKG_CAND_KIND=cmd"
+if /I "%~x1"==".exe" set "GUPKG_CAND_KIND=exe"
+if not defined GUPKG_CAND_KIND exit /b 0
+set "GUPKG_CAND=%~1"
+if "%GUPKG_ELEVATED%"=="yes" goto :path_candidate_elevated
+set "GUPKG_RUN=%GUPKG_CAND%"
+set "GUPKG_KIND=path"
+exit /b 0
+:path_candidate_elevated
+rem Elevated: the launcher's own folders first (a failure there refuses the run), then this entry (a failure skips it).
+if not defined GUPKG_BASE_CHECKED call :check_base
+if defined GUPKG_REFUSE exit /b 0
+set "GUPKG_CAND_DIR=%~dp1"
+if "%GUPKG_CAND_DIR:~-1%"=="\" set "GUPKG_CAND_DIR=%GUPKG_CAND_DIR:~0,-1%"
+if "%GUPKG_CAND_KIND%"=="exe" (call :spec_shim "%GUPKG_CAND%") else call :spec_tree "%GUPKG_CAND_DIR%"
+call :acl_check
+if errorlevel 1 goto :path_candidate_skipped
+set "GUPKG_RUN=%GUPKG_CAND%"
+set "GUPKG_KIND=path"
+exit /b 0
+:path_candidate_skipped
+>&2 echo [gupkg] Skipped PATH entry %GUPKG_CAND_DIR%: %GUPKG_CAND% cannot be trusted in an elevated run.
+exit /b 0
+rem Sets GUPKG_ELEVATED to yes (High or System integrity) or no (Medium or Low); leaves it unset when unknown.
+:integrity_level
+for /f "usebackq delims=" %%L in (`""%SystemRoot%\System32\whoami.exe" /groups" 2^>nul`) do call :level_line "%%L"
+exit /b 0
+
+:level_line
+set "GUPKG_LINE=%~1"
+if not "%GUPKG_LINE:S-1-16-12288=%"=="%GUPKG_LINE%" set "GUPKG_ELEVATED=yes"
+if not "%GUPKG_LINE:S-1-16-16384=%"=="%GUPKG_LINE%" set "GUPKG_ELEVATED=yes"
+if "%GUPKG_ELEVATED%"=="yes" exit /b 0
+if not "%GUPKG_LINE:S-1-16-8192=%"=="%GUPKG_LINE%" set "GUPKG_ELEVATED=no"
+if not "%GUPKG_LINE:S-1-16-4096=%"=="%GUPKG_LINE%" set "GUPKG_ELEVATED=no"
+exit /b 0
+
+rem The launcher's own places: the root, the package, this version, the root data folder and its gupkg-location (when they exist).
+:spec_base
+set "GUPKG_SPEC=n:%GUPKG_ROOT%|n:%GUPKG_PACKAGE_DIR%|v:%GUPKG_VERSION_DIR%"
+if exist "%GUPKG_ROOT%\.gupkg" set "GUPKG_SPEC=%GUPKG_SPEC%|n:%GUPKG_ROOT%\.gupkg"
+if exist "%GUPKG_LOCFILE%" set "GUPKG_SPEC=%GUPKG_SPEC%|n:%GUPKG_LOCFILE%"
+exit /b 0
+
+rem Checks the launcher's own places once; a failure refuses the run.
+:check_base
+set "GUPKG_BASE_CHECKED=1"
+call :spec_base
+call :acl_check
+if errorlevel 1 set "GUPKG_REFUSE=1"
+exit /b 0
+
+rem The gupkg tree in folder %~1 (a folder that holds gupkg.cmd): its parent (a version folder, or the current junction) and the whole tree.
+:spec_tree
+for %%I in ("%~1\..") do set "GUPKG_UP1=%%~fI"
+for %%I in ("%~1\..\..") do set "GUPKG_UP2=%%~fI"
+for %%I in ("%~1\..\..\..") do set "GUPKG_UP3=%%~fI"
+set "GUPKG_SPEC=v:%GUPKG_UP1%|n:%GUPKG_UP2%|n:%GUPKG_UP3%|r:%~1"
+exit /b 0
+
+rem The shim folder of a gupkg.exe %~1 and its parent (whoever can change them can swap the shim), then the shim, its config and its target.
+:spec_shim
+for %%I in ("%~dp1.") do set "GUPKG_UP1=%%~fI"
+for %%I in ("%~dp1..") do set "GUPKG_UP2=%%~fI"
+set "GUPKG_SPEC=n:%GUPKG_UP1%|n:%GUPKG_UP2%|s:%~1"
+exit /b 0
+
+rem The bundled gupkg: the launcher's own places and the whole bundled tree.
+:check_bundled
+call :spec_base
+set "GUPKG_SPEC=%GUPKG_SPEC%|r:%GUPKG_VERSION_DIR%\gupkg"
+goto :acl_check
+
+rem The gupkg named by gupkg-location: the launcher's own places, the file's folder through its parent and the whole tree.
+:check_location
+call :spec_base
+set "GUPKG_SPEC_BASE=%GUPKG_SPEC%"
+call :spec_tree "%GUPKG_LOCDIR%"
+set "GUPKG_SPEC=%GUPKG_SPEC_BASE%|%GUPKG_SPEC%"
+goto :acl_check
+rem Runs the fixed check below with System32's PowerShell; exit code 0 only when it printed exactly GUPKG-ACL-OK.
+rem The command travels in a variable because parentheses on the for line would end the for clause.
+:acl_check
+set "GUPKG_ACL_PATHS=%GUPKG_SPEC%"
+set "GUPKG_SELF=%~f0"
+set "GUPKG_PSCMD=$t=Get-Content -Raw -LiteralPath $env:GUPKG_SELF;$i=$t.LastIndexOf('#GUPKG-PS-BEGIN');Invoke-Expression $t.Substring($i)"
+set "GUPKG_ACL_LAST="
+set "GUPKG_ACL_LINES=0"
+for /f "usebackq delims=" %%L in (`""%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command "Invoke-Expression $env:GUPKG_PSCMD"" 2^>nul`) do call :acl_line "%%L"
+if not "%GUPKG_ACL_LINES%"=="1" exit /b 1
+if not "%GUPKG_ACL_LAST%"=="GUPKG-ACL-OK" exit /b 1
+exit /b 0
+
+:acl_line
+set /a GUPKG_ACL_LINES+=1
+set "GUPKG_ACL_LAST=%~1"
+>&2 echo [gupkg] check: %~1
+exit /b 0
+
+#GUPKG-PS-BEGIN
+# The fixed elevated-launcher check (design 21.3, decision D30). Input: $env:GUPKG_ACL_PATHS, entries
+# separated by '|', each "<kind>:<path>": n = this one object, r = this folder and everything below it,
+# v = a version folder (when it is the 'current' junction, its target must be a folder of the same package
+# and both are checked), s = a gupkg.exe shim (the shim, its config, the target the config names and that target's tree). Output: one line GUPKG-ACL-OK when every object passes, else GUPKG-ACL-FAIL lines.
+# Every object must be owned by Administrators, SYSTEM or TrustedInstaller, and no other security
+# identifier may hold a write-type right. Links below a checked folder fail. It compares security
+# identifiers parsed from the SDDL text of Get-Acl, never account names, and calls no .NET method, so it
+# also runs under Constrained Language Mode. A null DACL, an unreadable ACL and an unknown ACE type fail.
+
+$ErrorActionPreference = 'Stop'
+$ti = 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'
+$trusted = @{ 'S-1-5-32-544' = 1; 'S-1-5-18' = 1; $ti = 1 }
+$alias = @{ 'BA' = 'S-1-5-32-544'; 'SY' = 'S-1-5-18'; 'CO' = 'S-1-3-0' }
+$tokens = @{
+    'GA' = 0x10000000; 'GX' = 0x20000000; 'GW' = 0x40000000; 'GR' = [int64]2147483648
+    'RC' = 0x20000; 'SD' = 0x10000; 'WD' = 0x40000; 'WO' = 0x80000
+    'CC' = 0x1; 'DC' = 0x2; 'LC' = 0x4; 'SW' = 0x8; 'RP' = 0x10; 'WP' = 0x20
+    'DT' = 0x40; 'LO' = 0x80; 'CR' = 0x100
+    'FA' = 0x1F01FF; 'FR' = 0x120089; 'FW' = 0x120116; 'FX' = 0x1200A0
+}
+# write data / add file, append / add subdirectory, write EA, delete child, write attributes, delete,
+# write DAC, write owner, GENERIC_ALL, GENERIC_WRITE, MAXIMUM_ALLOWED.
+$writeMask = [int64](0x2 -bor 0x4 -bor 0x10 -bor 0x40 -bor 0x100 -bor 0x10000 -bor 0x40000 -bor 0x80000 -bor 0x10000000 -bor 0x40000000 -bor 0x02000000)
+
+$failures = @()
+$specs = @($env:GUPKG_ACL_PATHS -split '\|' | Where-Object { $_ -ne '' })
+if ($specs.Count -eq 0) { $failures += 'no paths given' }
+
+# Phase 1: list every object to check; a link is refused instead of followed.
+$targets = @()
+for ($n = 0; $n -lt $specs.Count; $n++) {
+    $spec = $specs[$n]
+    $kind = $spec.Substring(0, 1)
+    $path = $spec.Substring(2)
+    if ($kind -eq 's') {
+        # A gupkg.exe shim: the shim, its <name>.config.toml, the target the config names, and that target's gupkg tree.
+        $config = $path -replace '\.exe$', '.config.toml'
+        $specs += "n:$path"
+        $specs += "n:$config"
+        try { $text = Get-Content -Raw -LiteralPath $config } catch { $failures += "${config}: the shim's config cannot be read"; continue }
+        if ($text -match '(?m)^\s*target\s*=\s*"((?:[^"\\]|\\.)*)"\s*$') {
+            $named = $Matches[1].Replace('\"', '"').Replace('\\', '\')
+        } elseif ($text -match "(?m)^\s*target\s*=\s*'([^']*)'\s*$") {
+            $named = $Matches[1]
+        } else { $failures += "${config}: names no target"; continue }
+        if ($named -notmatch '^(?:[A-Za-z]:\\|\\\\)') { $failures += "${config}: its target $named is not an absolute path"; continue }
+        if (-not (Test-Path -LiteralPath $named -PathType Leaf)) { $failures += "${config}: its target $named is not a file"; continue }
+        # The target's gupkg tree, the version folder above it and the package and root folders above that, as for a bundled gupkg.
+        $tree = Split-Path -Parent $named
+        $up1 = Split-Path -Parent $tree
+        $specs += "r:$tree"
+        if ($up1) {
+            $specs += "v:$up1"
+            $up2 = Split-Path -Parent $up1
+            if ($up2) { $specs += "n:$up2"; $up3 = Split-Path -Parent $up2; if ($up3) { $specs += "n:$up3" } }
+        }
+        continue
+    }
+    try { $item = Get-Item -LiteralPath $path -Force } catch { $failures += "${path}: missing or unreadable"; continue }
+    $isLink = [bool]($item.Attributes -match 'ReparsePoint')
+    if ($kind -eq 'v' -and $isLink) {
+        # Launched through 'current': a junction whose target is a version folder of the same package.
+        if ($item.LinkType -ne 'Junction') { $failures += "${path}: is a link that is not a junction"; continue }
+        try { $target = Get-Item -LiteralPath @($item.Target)[0] -Force } catch { $failures += "${path}: its target cannot be read"; continue }
+        if ([bool]($target.Attributes -match 'ReparsePoint')) { $failures += "${path}: its target is a link"; continue }
+        if ((Split-Path -Parent $item.FullName) -ne (Split-Path -Parent $target.FullName)) {
+            $failures += "${path}: points to $($target.FullName), which is not a version folder of the same package"
+            continue
+        }
+        $targets += $item.FullName
+        $targets += $target.FullName
+        continue
+    }
+    if ($isLink) { $failures += "${path}: is a link"; continue }
+    $targets += $item.FullName
+    if ($kind -eq 'r' -and $item.PSIsContainer) {
+        $stack = @($item.FullName)
+        while ($stack.Count -gt 0) {
+            $folder = $stack[$stack.Count - 1]
+            $stack = @($stack | Select-Object -SkipLast 1)
+            try { $children = @(Get-ChildItem -LiteralPath $folder -Force) } catch { $failures += "${folder}: cannot be listed"; continue }
+            foreach ($child in $children) {
+                if ([bool]($child.Attributes -match 'ReparsePoint')) { $failures += "$($child.FullName): is a link"; continue }
+                $targets += $child.FullName
+                if ($child.PSIsContainer) { $stack += $child.FullName }
+            }
+        }
+    }
+}
+
+# Phase 2: judge each object by its owner and access entries; an identical descriptor is judged once.
+$judged = @{}
+foreach ($path in $targets) {
+    try { $sddl = (Get-Acl -LiteralPath $path).Sddl } catch { $failures += "${path}: cannot read ACL"; continue }
+    if ($judged.ContainsKey($sddl)) { continue }
+    $judged[$sddl] = 1
+    if ($sddl -notmatch 'D:') { $failures += "${path}: null DACL (everyone has full access)"; continue }
+    if ($sddl -notmatch '^O:(?<o>.+?)(G:(?<g>.+?))?D:(?<d>.*)$') { $failures += "${path}: unparsable SDDL"; continue }
+    $owner = $Matches['o']
+    $dacl = $Matches['d']
+    if ($alias.ContainsKey($owner)) { $owner = $alias[$owner] }
+    if (-not $trusted.ContainsKey($owner)) { $failures += "${path}: owner $owner is not Administrators, SYSTEM or TrustedInstaller" }
+    if ($dacl -match 'NO_ACCESS_CONTROL') { $failures += "${path}: null DACL (everyone has full access)"; continue }
+    if ($dacl -notmatch '^(?<flags>[A-Z]*)(?<aces>(\([^()]*\))*)') { $failures += "${path}: unparsable DACL"; continue }
+    $aceText = $Matches['aces']
+    $aces = @()
+    if ($aceText -ne '') { $aces = @($aceText.Substring(1, $aceText.Length - 2) -split '\)\(') }
+    foreach ($ace in $aces) {
+        $f = $ace -split ';'
+        if ($f.Count -lt 6) { $failures += "${path}: unparsable ACE ($ace)"; continue }
+        $type = $f[0]; $aceFlags = $f[1]; $rights = $f[2]; $sid = $f[5]
+        if ($type -eq 'D' -or $type -eq 'OD') { continue }
+        if ($type -ne 'A' -and $type -ne 'OA') { $failures += "${path}: unsupported ACE type ($ace)"; continue }
+        if ($alias.ContainsKey($sid)) { $sid = $alias[$sid] }
+        $mask = [int64]0
+        if ($rights -match '^0x[0-9A-Fa-f]+$') {
+            $mask = [int64]$rights
+        } elseif ($rights -match '^([A-Z]{2})+$') {
+            for ($i = 0; $i -lt $rights.Length; $i += 2) {
+                $t = $rights.Substring($i, 2)
+                if (-not $tokens.ContainsKey($t)) { $mask = $writeMask; break }
+                $mask = $mask -bor [int64]$tokens[$t]
+            }
+        } else {
+            $failures += "${path}: unparsable rights ($ace)"; continue
+        }
+        if (($mask -band $writeMask) -eq 0) { continue }
+        if ($trusted.ContainsKey($sid)) { continue }
+        # An inherit-only CREATOR OWNER entry gives rights only to whoever creates a child, and only trusted
+        # principals can create children here.
+        if ($sid -eq 'S-1-3-0' -and $aceFlags -match 'IO') { continue }
+        $failures += "${path}: $sid has write-type rights ($ace)"
+    }
+}
+
+if ($failures.Count -eq 0) {
+    'GUPKG-ACL-OK'
+    exit 0
+}
+$failures | Select-Object -First 20 | ForEach-Object { "GUPKG-ACL-FAIL $_" }
+exit 1

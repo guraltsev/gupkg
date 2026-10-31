@@ -176,7 +176,7 @@ bundle (`python -m gupkg_registry`, or `_scripts\registry-tool.cmd` in the regis
 _scripts\registry-tool.cmd update [PACKAGE...]   :: run trackers, write new pinned versions with sha256 and fingerprint
 _scripts\registry-tool.cmd update --auto-push    :: also commit and push (a hash the tool computed itself needs --allow-computed)
 _scripts\registry-tool.cmd pin NAME/VERSION      :: give a version without a hash its first one
-_scripts\registry-tool.cmd launchers             :: rewrite install.cmd, gupkg-tui.cmd and check-updates.cmd
+_scripts\registry-tool.cmd launchers             :: rewrite install.cmd, manage.cmd and check-updates.cmd
 _scripts\registry-tool.cmd validate              :: what CI runs: every tracker and version, fingerprints, launchers
 ```
 

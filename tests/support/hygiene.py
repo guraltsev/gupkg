@@ -10,6 +10,7 @@ repository root with ``/`` separators, and ``test`` is empty for a rule about th
 ``H4`` every parametrised case has an explicit ``id``.
 ``H5`` every permanent test module and test function has a docstring that starts with a one-sentence summary.
 ``H6`` every ``tests/_temp/<ref>/`` has a complete README, and its ``ref`` is open.
+``H7`` every ``tests/_conditional/<name>/`` has a complete README, and its ``expires`` date has not passed.
 
 The files are read with ``ast`` and never imported.
 """
@@ -19,6 +20,7 @@ from __future__ import annotations
 import ast
 import re
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -35,6 +37,7 @@ RULES = {
     "H4": ("a parametrised case has no explicit id", "_docs/tests.md section 4.4"),
     "H5": ("a permanent test module or test has no docstring that starts with a one-sentence summary", "_docs/tests.md section 4.2"),
     "H6": ("a temporary-test folder breaks its rules", "_docs/tests_hygiene.md sections 3.2, 3.3 and 8"),
+    "H7": ("a conditional-test folder breaks its rules or has expired", "_docs/tests_hygiene.md sections 2.1 and 6"),
 }
 
 _HISTORY = (
@@ -136,7 +139,7 @@ def _h1(tree: ast.Module, file: str, test_stems: frozenset[str]) -> list[Violati
             if not parts:
                 continue
             local = relative or parts[0] == "tests" or parts[0] in test_stems
-            if local and any(part in test_stems or part == "_temp" for part in parts):
+            if local and any(part in test_stems or part in ("_temp", "_conditional") for part in parts):
                 found.append(".".join(parts))
                 break
     if found:
@@ -340,7 +343,7 @@ def parse_readme(folder: Path) -> dict[str, str] | None:
     entries: dict[str, list[str]] = {}
     current = None
     for line in readme.read_text(encoding="utf-8").splitlines():
-        match = re.match(r"^\s*(?:[-*]\s*)?\**(ref|kind|purpose|fate)\**\s*:\**\s*(.*)$", line, re.IGNORECASE)
+        match = re.match(r"^\s*(?:[-*]\s*)?\**(ref|kind|purpose|fate|until|expires)\**\s*:\**\s*(.*)$", line, re.IGNORECASE)
         if match:
             current = match.group(1).lower()
             entries.setdefault(current, []).append(match.group(2))
@@ -404,6 +407,40 @@ def scan_temp(root: Path) -> list[Violation]:
     return found
 
 
+_CONDITIONAL_KEYS = ("until", "expires", "purpose")
+
+
+def scan_conditional(root: Path, today: date) -> list[Violation]:
+    """Return the violations of H7 in every ``tests/_conditional/<name>/`` folder.
+
+    A folder needs a README with ``until`` (the condition that ends the tests), ``expires`` (a ``YYYY-MM-DD`` date by which the
+    condition is checked again) and ``purpose``. A date before *today* fails the session until someone confirms the condition
+    and moves the date, or removes the tests.
+    """
+    base = root / "tests" / "_conditional"
+    if not base.is_dir():
+        return []
+    found = []
+    for folder in sorted(p for p in base.iterdir() if p.is_dir() and p.name != "__pycache__"):
+        file = _relative(folder, root)
+        entries = parse_readme(folder)
+        if entries is None:
+            found.append(Violation("H7", file, "", "no README.md"))
+            continue
+        missing = [key for key in _CONDITIONAL_KEYS if not entries.get(key)]
+        if missing:
+            found.append(Violation("H7", file, "", "README lacks " + ", ".join(missing)))
+            continue
+        try:
+            expires = date.fromisoformat(entries["expires"].strip("` "))
+        except ValueError:
+            found.append(Violation("H7", file, "", "expires must be a date written YYYY-MM-DD"))
+            continue
+        if expires < today:
+            found.append(Violation("H7", file, "", f"expired on {expires}: confirm the condition and set a later date, or retire the tests"))
+    return found
+
+
 # ---------------------------------------------------------------------------
 # The baseline and the verdict
 # ---------------------------------------------------------------------------
@@ -416,8 +453,10 @@ def load_baseline(path: Path) -> set[str]:
     return {line for line in lines if line and not line.startswith("#")}
 
 
-def check(root: Path, modules: list[Path], baseline: Path | None = None) -> str | None:
-    """Check *modules* (permanent test modules) and the temporary folders of *root*; return the failure text, or ``None``.
+def check(root: Path, modules: list[Path], baseline: Path | None = None, today: date | None = None) -> str | None:
+    """Check *modules* (permanent and conditional test modules), the temporary and the conditional folders of *root*; return the failure text, or ``None``.
+
+    *today* is the date the ``expires`` of a conditional folder is compared with (the current date by default).
 
     Only the baseline lines of the files that were checked, and of files that no longer exist, can be stale, so a run of
     one file does not report the rest of the baseline.
@@ -425,7 +464,7 @@ def check(root: Path, modules: list[Path], baseline: Path | None = None) -> str 
     baseline_path = baseline or root / "tests" / BASELINE_NAME
     listed = load_baseline(baseline_path)
     files = {_relative(path, root): path for path in modules}
-    violations = scan_temp(root)
+    violations = scan_temp(root) + scan_conditional(root, today or date.today())
     stems = _test_stems(root)
     for path in sorted(files.values()):
         violations.extend(scan_module(path, root, stems))
@@ -435,7 +474,7 @@ def check(root: Path, modules: list[Path], baseline: Path | None = None) -> str 
     for line in sorted(listed - present):
         rule, _, rest = line.partition("|")
         file = rest.partition("|")[0]
-        if rule == "H6" or file in files or not (root / file).exists():
+        if rule in ("H6", "H7") or file in files or not (root / file).exists():
             stale.append(line)
     if not new and not stale:
         return None

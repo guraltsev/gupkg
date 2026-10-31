@@ -63,7 +63,7 @@ from gupkg.scope import process_mode
 from gupkg.system.port import System
 from gupkg.launchers import write_launchers
 
-from .layout import LAUNCHER_NAMES, TRACKER_LAUNCHER_NAME, RegistryFileError, package_dirs, read_registry_file, write_registry_file, write_text_bytes
+from .layout import LAUNCHER_NAMES, RETIRED_LAUNCHER_NAMES, TRACKER_LAUNCHER_NAME, RegistryFileError, package_dirs, read_registry_file, write_registry_file, write_text_bytes
 
 REGISTRY_SHA256_FROM = "registry"
 LOCK_NAME = ".registry-tool.lock"
@@ -403,10 +403,10 @@ def _update_package(run: _Run, package: Path) -> Outcome:
 def sync_launchers(root: Path) -> list[str]:
     """Write the generated launchers into the whole registry at *root*; return one line per file changed.
 
-    Every pinned version directory gets ``install.cmd`` and ``gupkg-tui.cmd``, every tracker folder gets ``check-updates.cmd``
-    and loses a stale ``install.cmd`` or ``gupkg-tui.cmd`` (a tracker never installs). Because the fingerprint of a version covers
-    its launchers, the fingerprint of each version that changed is recomputed in ``_registry.toml``. A registry that is already in
-    step is left byte for byte as it was.
+    Every pinned version directory gets ``install.cmd`` and ``manage.cmd`` and loses a retired ``gupkg-tui.cmd``, every tracker
+    folder gets ``check-updates.cmd`` and loses a stale ``install.cmd``, ``manage.cmd`` or ``gupkg-tui.cmd`` (a tracker never
+    installs). Because the fingerprint of a version covers its launchers, the fingerprint of each version that changed is
+    recomputed in ``_registry.toml``. A registry that is already in step is left byte for byte as it was.
     """
     root = Path(root)
     data = read_registry_file(root)
@@ -416,7 +416,7 @@ def sync_launchers(root: Path) -> list[str]:
         for child in sorted(item for item in package.iterdir() if item.is_dir()):
             if child.name == TRACKER_DIR_NAME:
                 tracker = child
-                for stale in LAUNCHER_NAMES:
+                for stale in (*LAUNCHER_NAMES, *RETIRED_LAUNCHER_NAMES):
                     if (tracker / stale).is_file():
                         (tracker / stale).unlink()
                         changed.append(f"{package.name}/{TRACKER_DIR_NAME}/{stale}: removed (a tracker never installs)")
@@ -424,11 +424,15 @@ def sync_launchers(root: Path) -> list[str]:
                     changed.append(f"{package.name}/{TRACKER_DIR_NAME}/{TRACKER_LAUNCHER_NAME}: written")
             elif (child / MANIFEST_NAME).is_file():
                 written = _write_if_different(child, LAUNCHER_NAMES)
-                if written:
+                retired = [name for name in RETIRED_LAUNCHER_NAMES if (child / name).is_file()]
+                for name in retired:
+                    (child / name).unlink()
+                if written or retired:
                     changed.extend(f"{package.name}/{child.name}/{name}: written" for name in written)
+                    changed.extend(f"{package.name}/{child.name}/{name}: removed (renamed to manage.cmd)" for name in retired)
                     key = f"{package.name}/{child.name}"
                     fingerprints[key] = fingerprint_directory(child)
-    if any(line.endswith(": written") and "/_check_updates/" not in line for line in changed):
+    if any((line.endswith(": written") or "(renamed to" in line) and f"/{TRACKER_DIR_NAME}/" not in line for line in changed):
         write_registry_file(root, {**data, "fingerprints": fingerprints})
     return changed
 

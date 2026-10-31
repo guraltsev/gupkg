@@ -762,7 +762,7 @@ def _cmd_settings(run: _Run) -> int:
 
 
 def _cmd_pkg(run: _Run) -> int:
-    """Run the authoring commands ``pkg new|adopt|check|pin|bundle|export``."""
+    """Run the authoring commands ``pkg new|adopt|check|pin|launchers|bundle|export``."""
     args = run.args
     action = args.pkg_command
     command = f"pkg {action}"
@@ -779,6 +779,11 @@ def _cmd_pkg(run: _Run) -> int:
             return _pkg_adopt(run)
         if action == "pin":
             return _pkg_pin(run)
+        if action == "launchers":
+            written = authoring.add_launchers(Path(args.directory))
+            _human(run, "\n".join(f"wrote {Path(args.directory) / name}" for name in written))
+            _document(run, results.envelope(command, ok=True, exit_code=EXIT_OK, launchers=written))
+            return EXIT_OK
         if action == "export":
             exported = authoring.export_distribution(Path(args.directory), Path(args.output))
             print(exported.sha256, file=sys.stderr if run.json else sys.stdout)
@@ -842,12 +847,13 @@ def _pkg_adopt(run: _Run) -> int:
         shortcuts=Path(args.shortcuts) if args.shortcuts else None, prefix=prefix, force=args.force,
     )
     lines = [f"wrote {adopted.path}"] + [f"  shortcut {name}" for name in adopted.shortcuts]
+    lines += [f"  launcher {name}" for name in adopted.launchers]
     lines += [f"  skipped {name}: {reason}" for name, reason in adopted.skipped]
     _human(run, "\n".join(lines))
     if args.no_install:
         _document(run, results.envelope(
             "pkg adopt", ok=True, exit_code=EXIT_OK, file=str(adopted.path), shortcuts=list(adopted.shortcuts),
-            skipped=[{"file": name, "reason": reason} for name, reason in adopted.skipped],
+            launchers=list(adopted.launchers), skipped=[{"file": name, "reason": reason} for name, reason in adopted.skipped],
         ))
         return EXIT_OK
 
@@ -950,9 +956,9 @@ def _pkg_bundle(run: _Run) -> int:
             + ("; ".join(status.integrity.problems()) if status.integrity is not None else "it is a source checkout or its manifest is unreadable")
         )
     copied = authoring.bundle_gupkg(Path(run.args.directory), Path(status.version_root) / "gupkg")
-    _human(run, f"copied {copied} files into {Path(run.args.directory) / 'gupkg'} and wrote install.cmd and gupkg-tui.cmd")
+    _human(run, f"copied {copied} files into {Path(run.args.directory) / 'gupkg'} and wrote install.cmd and manage.cmd")
     _document(run, results.envelope(
-        "pkg bundle", ok=True, exit_code=EXIT_OK, files=copied, version=status.version, launchers=["install.cmd", "gupkg-tui.cmd"],
+        "pkg bundle", ok=True, exit_code=EXIT_OK, files=copied, version=status.version, launchers=["install.cmd", "manage.cmd"],
     ))
     return EXIT_OK
 
@@ -1141,7 +1147,7 @@ maintenance:
   settings       show | path | init | set
 
 authoring:
-  pkg            new | adopt | check | pin | bundle | export
+  pkg            new | adopt | check | pin | launchers | bundle | export
 
 gupkg itself:
   self           status | repair | check-updates | update
@@ -1322,7 +1328,7 @@ def _build_parser() -> argparse.ArgumentParser:
              "(default: the setting adopt.shortcut_prefix, empty by default; --prefix \"\" means none)",
     )
     leaf.add_argument("--force", action="store_true", help="replace an existing pkg.toml (kept as pkg.toml.old)")
-    leaf.add_argument("--no-install", action="store_true", help="write pkg.toml only")
+    leaf.add_argument("--no-install", action="store_true", help="write pkg.toml and the launchers only")
     _overwrite_option(leaf)
     _options(leaf, mutating=True)
     leaf = actions.add_parser("pin", description="Copy the hash of an install without a checksum into the version's pkg.toml.", epilog="example:\n  gupkg pkg pin mytool@1.0")
@@ -1330,6 +1336,13 @@ def _build_parser() -> argparse.ArgumentParser:
     _options(leaf, mutating=True)
     leaf = actions.add_parser("bundle", description="Copy the running gupkg's verified bundle into a version directory.", epilog="example:\n  gupkg pkg bundle .\\mytool\\1.0")
     leaf.add_argument("directory", metavar="VERSION-DIR")
+    _options(leaf)
+    leaf = actions.add_parser(
+        "launchers", description="Copy install.cmd and manage.cmd into a version directory (replacing the ones there), so the package "
+                                 "can be installed and managed from a double-click.",
+        epilog="example:\n  gupkg pkg launchers C:\\Games\\Teardown\\v1.0",
+    )
+    leaf.add_argument("directory", nargs="?", default=".", metavar="VERSION-DIR", help="the version directory (default: the current folder)")
     _options(leaf)
     leaf = actions.add_parser("export", description="Write a distribution ZIP of a version directory and print its SHA-256.", epilog="example:\n  gupkg pkg export .\\mytool\\1.0 -o mytool-1.0.zip")
     leaf.add_argument("directory", metavar="VERSION-DIR")

@@ -290,7 +290,7 @@ def test_pkg_new_writes_starters_that_pkg_check_accepts_and_never_overwrites(wor
     checked = world.cli("pkg", "check", str(base / "mine"), "--json")
 
     assert version.code == 0 and tracker.code == 0, (version.err, tracker.err)
-    assert version.document()["files"] == [str(base / "mine" / "1.0" / name) for name in ("pkg.toml", "install.cmd", "gupkg-tui.cmd")]
+    assert version.document()["files"] == [str(base / "mine" / "1.0" / name) for name in ("pkg.toml", "install.cmd", "manage.cmd")]
     assert (base / "mine" / "_check_updates" / "check-updates.cmd").is_file()
     assert checked.code == 0 and [item["ok"] for item in checked.document()["checks"]] == [True, True]
     assert world.cli("pkg", "new", "mine@1.0", "--dir", str(base)).code == 2
@@ -394,7 +394,7 @@ def test_pkg_export_writes_a_distribution_zip_and_prints_its_sha256(world: CliWo
     assert result.err.strip() == document["sha256"]
     with zipfile.ZipFile(output) as archive:
         assert sorted(archive.namelist()) == [
-            "mine/1.0/gupkg-tui.cmd", "mine/1.0/install.cmd", "mine/1.0/pkg.toml",
+            "mine/1.0/install.cmd", "mine/1.0/manage.cmd", "mine/1.0/pkg.toml",
             "mine/_check_updates/check-updates.cmd", "mine/_check_updates/pkg.toml",
         ]
         assert archive.read("mine/1.0/install.cmd") == launcher_text("install").encode("ascii")
@@ -405,7 +405,7 @@ def test_pkg_export_writes_a_distribution_zip_and_prints_its_sha256(world: CliWo
 
 
 def test_pkg_export_adds_the_launchers_that_a_hand_made_folder_lacks(world: CliWorld, tmp_path: Path) -> None:
-    """A version folder with no launchers still exports with install.cmd and gupkg-tui.cmd, so every distribution carries them."""
+    """A version folder with no launchers still exports with install.cmd and manage.cmd, so every distribution carries them."""
     folder = tmp_path / "hand" / "mine" / "1.0"
     folder.mkdir(parents=True)
     manifest = f"format = 2\n[source]\ndownload_url = 'https://example.org/a.zip'\nsha256 = '{'0' * 64}'\n"
@@ -415,7 +415,7 @@ def test_pkg_export_adds_the_launchers_that_a_hand_made_folder_lacks(world: CliW
     assert world.cli("pkg", "export", str(folder), "-o", str(output)).code == 0
 
     with zipfile.ZipFile(output) as archive:
-        assert sorted(archive.namelist()) == ["mine/1.0/gupkg-tui.cmd", "mine/1.0/install.cmd", "mine/1.0/pkg.toml"]
+        assert sorted(archive.namelist()) == ["mine/1.0/install.cmd", "mine/1.0/manage.cmd", "mine/1.0/pkg.toml"]
     assert not (folder / "install.cmd").exists()
 
 
@@ -449,7 +449,7 @@ def test_pkg_bundle_copies_the_verified_bundle_and_refuses_a_damaged_one(world: 
     assert good.code == 0, good.err
     assert (target / "gupkg" / "cli.py").is_file() and (target / "gupkg" / "python" / "python.exe").is_file()
     assert (target / "install.cmd").read_bytes() == launcher_text("install").encode("ascii")
-    assert (target / "gupkg-tui.cmd").read_bytes() == launcher_text("tui").encode("ascii")
+    assert (target / "manage.cmd").read_bytes() == launcher_text("tui").encode("ascii")
     assert world.cli("pkg", "bundle", str(target), location=make_bundle(tmp_path / "again")).code == 2
 
     other = base / "mine" / "2.0"
@@ -457,6 +457,23 @@ def test_pkg_bundle_copies_the_verified_bundle_and_refuses_a_damaged_one(world: 
     other.joinpath("pkg.toml").write_text((target / "pkg.toml").read_text(encoding="utf-8"), encoding="utf-8")
     bad = world.cli("pkg", "bundle", str(other), location=make_bundle(tmp_path / "bad", tamper=True))
     assert bad.code == 2 and "modified: gupkg/cli.py" in bad.err and not (other / "gupkg").exists()
+
+
+def test_pkg_launchers_copies_the_templates_into_a_version_directory_and_replaces_old_ones(world: CliWorld, tmp_path: Path) -> None:
+    """`pkg launchers` writes install.cmd and manage.cmd (byte for byte the templates), replacing a stale one; a non-version folder is refused."""
+    base = tmp_path / "authoring"
+    assert world.cli("pkg", "new", "mine@1.0", "--dir", str(base)).code == 0
+    target = base / "mine" / "1.0"
+    (target / "install.cmd").unlink()
+    (target / "manage.cmd").write_bytes(b"@echo stale\r\n")
+
+    result = world.cli("pkg", "launchers", str(target), "--json")
+
+    assert result.code == 0, result.err
+    assert result.document()["launchers"] == ["install.cmd", "manage.cmd"]
+    assert (target / "install.cmd").read_bytes() == launcher_text("install").encode("ascii")
+    assert (target / "manage.cmd").read_bytes() == launcher_text("tui").encode("ascii")
+    assert world.cli("pkg", "launchers", str(tmp_path)).code == 2
 
 
 # ---------------------------------------------------------------------------

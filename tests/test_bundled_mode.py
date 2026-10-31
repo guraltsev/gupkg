@@ -141,7 +141,7 @@ def distribution_with_bundle(world: World, version: str = "1.0.0") -> Path:
     (folder / "gupkg").mkdir()
     (folder / "gupkg" / "gupkg.cmd").write_text("@echo off\r\n", encoding="ascii")
     (folder / "install.cmd").write_bytes(launcher_text("install").encode("ascii"))
-    (folder / "gupkg-tui.cmd").write_bytes(launcher_text("tui").encode("ascii"))
+    (folder / "manage.cmd").write_bytes(launcher_text("tui").encode("ascii"))
     return folder
 
 

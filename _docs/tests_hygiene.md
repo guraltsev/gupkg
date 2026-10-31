@@ -15,13 +15,14 @@ behind. Nobody is to blame for any single step, so the decay must be stopped by 
 
 ## 2. The life of a test
 
-A test is in exactly one of three states:
+A test is in exactly one of four states:
 
-| State | Where | Held to |
-| --- | --- | --- |
-| **Temporary** | `tests/_temp/<ref>/`, linked to one open issue or job | Determinism (Q6 of [tests.md](tests.md) §2.1) and the folder's README; the other quality rules are relaxed |
-| **Permanent** | `tests/<area>/test_<feature>.py` | Every rule of [tests.md](tests.md) |
-| **Retired** | Deleted. Git history keeps it | — |
+| State | Lifetime | Where | Held to |
+| --- | --- | --- | --- |
+| **Permanent** | Until the behaviour it protects is removed | `tests/<area>/test_<feature>.py` | Every rule of [tests.md](tests.md) |
+| **Conditional** | Until a stated condition ends (§2.1) | `tests/_conditional/<name>/` | Every rule of [tests.md](tests.md), plus the folder's README |
+| **Temporary** | Until the exit review of one open issue or job (§3) | `tests/_temp/<ref>/` | Determinism (Q6 of [tests.md](tests.md) §2.1) and the folder's README; the other quality rules are relaxed |
+| **Retired** | — | Deleted. Git history keeps it | — |
 
 A test changes state only through these steps:
 
@@ -31,6 +32,30 @@ A test changes state only through these steps:
 - **Removing code:** remove its tests, fixtures and helpers in the same change. A test of code that no longer exists is
   retired, never "kept just in case".
 - **Closing temporary tests:** the exit review of §3.4.
+- **Ending conditional tests:** the check of §2.1 fails the suite after the folder's date; the tests are then retired, or the
+  condition is confirmed and the date moved.
+
+### 2.1 Conditional tests
+
+A conditional test protects real behaviour that exists only while a stated condition holds: a compatibility path for an old
+layout or format, a workaround for an outside tool, support for a version that is still in use. It is not scaffolding for a
+piece of work, so it does not belong in `tests/_temp/`, and it does not last for ever, so it does not belong among the
+permanent tests.
+
+- **Held to every rule of [tests.md](tests.md):** behaviour, proof that it failed first, a docstring in the product's terms, no
+  issue or version number. Only its lifetime differs from a permanent test.
+- **One folder per condition,** `tests/_conditional/<name>/`, named after the behaviour (`old_registry_layout`), never after
+  an issue.
+- **Every folder has a `README.md`** with:
+  - `until:` the condition that ends the tests, written so a person can check it (for example, a constant that is removed,
+    a version that is no longer supported);
+  - `expires:` a date, `YYYY-MM-DD`, by which the condition is checked again;
+  - `purpose:` one paragraph: the behaviour the tests protect and why it is conditional.
+- **The date makes the condition checked.** After `expires`, the suite fails (rule H7) until someone confirms the condition
+  still holds and moves the date, or the condition has ended and the tests are retired together with the code they protect.
+  A date is a reminder to decide, not a reason to delete a test that still protects something.
+- **Promote when the condition goes away for good:** a conditional test whose condition turns out to be permanent moves to its
+  feature file and the folder is removed.
 
 ## 3. Temporary tests
 
@@ -44,7 +69,8 @@ Long work sometimes needs tests that are not yet good permanent tests:
   Their assertions are light sanity checks.
 
 They are not allowed as a way around the quality rules for ordinary work. If the work fits in one change, its tests are
-permanent from the start.
+permanent from the start. A test that protects a behaviour which lasts beyond the work, but not for ever, is a conditional
+test (§2.1), not a temporary one.
 
 ### 3.2 The rules
 
@@ -128,6 +154,7 @@ These run at collection time with the suite itself, so they cannot be skipped. E
 | Every parametrised case has an `id=` | §4.4 |
 | Every permanent test module and test has a docstring that starts with a one-sentence summary | §4.2 |
 | Every `_temp/<ref>/` has a README with `ref`, `kind`, `purpose` and `fate`, and its `ref` is open | §3.2, §3.3 here |
+| Every `_conditional/<name>/` has a README with `until`, `expires` (a valid date) and `purpose`, and its `expires` has not passed (H7); its tests follow every other rule | §2.1 here |
 | A violation that is in the baseline passes; a new one fails | §5 here |
 
 A tool also prints the indicators of [tests.md](tests.md) §2.3, so every job can paste a before-and-after.

@@ -14,4 +14,6 @@ exit /b %ERRORLEVEL%
 
 :missing
 >&2 echo [gupkg] This gupkg is incomplete: %GUPKG_TARGET% is missing.
+>&2 echo [gupkg] This file only starts the program in the gupkg folder beside it, so it works only inside a complete gupkg folder.
+>&2 echo [gupkg] To open or install a package, use manage.cmd or install.cmd from its version folder (gupkg pkg launchers VERSION-DIR writes them).
 exit /b 9009

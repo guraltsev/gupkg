@@ -162,7 +162,7 @@ A root (the run's root; each mode has its own) holds package folders. A package 
       pkg.toml
       App\                             # the payload: the files that run (empty or absent until populated)
       pkg.local\                       # optional trusted hook modules and populate scripts
-      install.cmd, gupkg-tui.cmd       # package launchers (double-click installs / opens this version)
+      install.cmd, manage.cmd         # package launchers (double-click installs / opens this version)
       gupkg\                           # optional: a bundled gupkg (bundled mode)
     1.2.4\                             # pinned, not populated yet: status "available"
     data\                              # portable packages only: persistent state
@@ -186,7 +186,7 @@ receipt, and `gupkg check` reports modified, missing and extra files.
 You may give `gupkg` a package name, a version directory, a package folder or its `current` junction. A package folder
 without `current` is accepted when it holds exactly one version.
 
-**Package launchers.** Each version directory holds `install.cmd` and `gupkg-tui.cmd` (a tracker folder holds
+**Package launchers.** Each version directory holds `install.cmd` and `manage.cmd` (a tracker folder holds
 `check-updates.cmd`), so that a double-click works without gupkg on `PATH`. A launcher runs the first gupkg it finds, in this
 order: the gupkg bundled in its own version directory (`gupkg\`); the folder named by the one-line file
 `<root>\.gupkg\gupkg-location` (written when the `gupkg` package is installed into the root, removed when it is uninstalled,
@@ -220,7 +220,7 @@ gupkg logs     [<target>] [--open | --path]
 gupkg shell                                             the PATH line of a root with integrate = "none"
 gupkg registry sync|status|list|add|remove
 gupkg settings show|path|init|set KEY VALUE
-gupkg pkg new|adopt|check|pin|bundle|export
+gupkg pkg new|adopt|check|pin|launchers|bundle|export
 gupkg self status|repair|check-updates|update
 gupkg tui <target> | gupkg manager ...     start gupkg-tui, gupkg-manager of this gupkg
 ```
@@ -360,13 +360,14 @@ version directory, a tracker or a whole package folder (`--install` also install
 machine; the registry's CI can run `gupkg pkg check <path> --json` in place of calling `gupkg.pkgcheck.check_directory`);
 `pkg pin TARGET` copies the hash that a receipt observed for an install made with `--skip-checksum` into `pkg.toml`, after
 it shows the URL, the final URL, the size and the date and says that the hash comes from an unverified download;
-`pkg export VERSION-DIR -o X.zip` writes a distribution ZIP and prints its SHA-256; `pkg bundle VERSION-DIR` copies the
+`pkg launchers [VERSION-DIR]` copies `install.cmd` and `manage.cmd` (the files of the `templates` folder of the gupkg tree) into a
+version directory, replacing the ones there; `pkg export VERSION-DIR -o X.zip` writes a distribution ZIP and prints its SHA-256; `pkg bundle VERSION-DIR` copies the
 running gupkg's verified bundle into a version directory.
 
 `gupkg pkg adopt [VERSION-DIR] [--shortcuts FOLDER] [--prefix FOLDER] [--force] [--no-install]` turns a program that an
 installer already unpacked into `<root>\<name>\<version>\App` into a package: it reads the `.lnk` files in
 `<version>\shortcuts` (default; the Start Menu shortcuts the installer made, moved there), writes a format 2 `pkg.toml`
-(`[source] shipped = true`, `record_manifest = false`, one `[[shortcut]]` per link, named after the link) and installs it where it stands. The shortcuts go into the root's
+(`[source] shipped = true`, `record_manifest = false`, one `[[shortcut]]` per link, named after the link) and writes the launchers `install.cmd` and `manage.cmd` the folder lacks, and installs it where it stands. The shortcuts go into the root's
 `integration.start_menu` folder (`...\Start Menu\opt` by default; a root can set its own in `<root>\.gupkg\settings.toml`). A
 folder put before each name comes from the setting `adopt.shortcut_prefix` (empty by default) or `--prefix FOLDER` for one call;
 it is relative to `integration.start_menu`, `--prefix ""` means none, and a full path or `..` is refused. Targets, working directory (the program's folder when the link had none), icon and description
@@ -587,7 +588,7 @@ target = "$App\\pandoc.exe"
    something is current.
 3. **Write the version directory** `<package>\<version>\`: the support files are copied (never update-check code), `pkg.toml`
    is rendered with every template expanded and `[track]` removed, `sha256` is filled only from a hash the tracker
-   *discovered* (`sha256_from` says how), and the version's own `install.cmd` and `gupkg-tui.cmd` launchers are written.
+   *discovered* (`sha256_from` says how), and the version's own `install.cmd` and `manage.cmd` launchers are written.
 4. **Populate it** (unless `--no-download`): download, verify, unpack and prepare, with the same checksum rules as `install`.
    When the rules refuse the download (no hash and no `--skip-checksum`) the directory stays without `App` and the refusal is
    reported.

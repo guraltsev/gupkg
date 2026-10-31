@@ -64,3 +64,5 @@ def test_a_missing_inner_launcher_exits_9009_and_nothing_on_path_or_in_the_curre
 
     assert result.returncode == 9009
     assert "incomplete" in result.stderr and not marker.exists()
+    # The message says what the file is and what a person who copied it into a package folder needs instead.
+    assert "gupkg folder" in result.stderr and "manage.cmd" in result.stderr and "pkg launchers" in result.stderr

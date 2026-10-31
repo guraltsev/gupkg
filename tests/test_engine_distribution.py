@@ -134,13 +134,13 @@ def test_a_shipped_app_is_labelled_as_not_covered_by_the_registry_fingerprint(wo
 
 
 def test_launchers_carried_forward_into_a_local_version_do_not_make_it_look_edited(world: World) -> None:
-    """A local version that received install.cmd and gupkg-tui.cmd from an earlier one still matches the registry's copy without them."""
+    """A local version that received install.cmd and manage.cmd from an earlier one still matches the registry's copy without them."""
     local = world.publish("tool", "1.0.0", tables=SHIM)
     published = world.base / "published" / "1.0.0"
     shutil.copytree(local, published)
     world.registry({"tool": {"versions": {"1.0.0": published}}}, fingerprints=[("tool", "1.0.0")])
     (local / "install.cmd").write_text("@echo off\n", encoding="utf-8")
-    (local / "gupkg-tui.cmd").write_text("@echo off\n", encoding="utf-8")
+    (local / "manage.cmd").write_text("@echo off\n", encoding="utf-8")
 
     result = world.one("install", "tool")
 
