@@ -6,4 +6,4 @@ deletes them are in [`_docs/tests_hygiene.md`](../../_docs/tests_hygiene.md) sec
 `tests/support/hygiene.py`.
 
 Nothing outside `tests/_temp/<ref>/` imports from here, and a `kind: report` folder runs only when its path is given on the
-command line: `scripts\test.cmd tests\_temp\<ref>\<file>.py -s`.
+command line: `scripts\test.cmd --all tests\_temp\<ref>\<file>.py -s`.

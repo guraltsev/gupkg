@@ -200,7 +200,7 @@ machine, and a test cannot drift into the wrong tier unnoticed.
 | Tier | What a test in it may touch | Runs |
 | --- | --- | --- |
 | `unit` | Only the process itself: fakes of every boundary, small temporary files. No child process, real sleep, network, or system-wide state | After every edit |
-| `process` | Real child processes, real operating-system objects (links, junctions, registry keys under a test name), loopback servers | Before saying a change is done |
+| `process` | Real child processes, real operating-system objects (links, junctions, registry keys under a test name), loopback servers. Junctions made by the real system implementation (`WindowsSystem`) are `process`; the real junctions that `FakeSystem` makes in-process below `tmp_path` are not | Before saying a change is done |
 | `release` | Builds, unpacks or verifies the shipped product, or runs another repository's checks against this one | Before a commit to the main branch, a merge or a release; after changing the build, install or self-update |
 | manual | A person on a real machine | Before a release, as `manual_smoke.md` lists |
 
@@ -208,6 +208,9 @@ Rules:
 
 - **Every test module declares its tier.** A module without a tier is an error.
 - **In the `unit` tier, starting a process, sleeping or opening a socket fails the test** with a message naming the tier.
+  The check patches `subprocess.Popen`, `os.system`, `os.spawn*`, `socket.socket.connect` and `time.sleep` (over 0.01 s). It does
+  not see a `sleep` function imported by name before the check is installed, nor `asyncio.sleep` (Textual and asyncio poll with it);
+  review those by hand.
 - **Speed is a design concern, not a run-time check** (§4.7).
   - No test fails for being slow.
   - Each tier's serial wall time and its slowest tests are reported (§2.3), so that slow tests are found and redesigned.

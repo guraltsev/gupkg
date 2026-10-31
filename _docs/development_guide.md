@@ -53,7 +53,9 @@ Dependency rules:
   [tests.md](tests.md) section 5), and a `unit` test that starts a process, sleeps or opens a socket fails. Run
   `scripts\test.cmd` (`unit`, after every edit), `scripts\test.cmd --process` (`unit` and `process`, before calling a
   change done) or `scripts\test.cmd --all` (every tier, before a merge, and after a change to the build, bootstrap,
-  self-update or activation). Other arguments go to pytest. The last line it prints names the tiers that ran.
+  self-update or activation). The option must be the first argument; every other argument goes to pytest unchanged, and a `-m` of your own overrides the
+  tier selection. The last line it prints names the tiers that ran; when nothing was selected (exit 5) it says which tier ran
+  and that `--process` or `--all` is needed for a process or release test.
 - Anything that needs UAC, the Start Menu, a real `PATH` broadcast or a real release is a numbered entry in
   [tests/manual_smoke.md](../tests/manual_smoke.md).
 - The documentation is tested: `tests/test_documentation.py` checks that no link in `README.md` and `_docs/` points to a missing file or

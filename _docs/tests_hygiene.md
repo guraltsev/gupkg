@@ -144,7 +144,7 @@ A tool also prints the indicators of [tests.md](tests.md) §2.3, so every job ca
 
 - **References:** `<ref>` is `issueNNN` (file `_issues/issueNNN-*.md`; closed when it moves to `_issues/_closed/`) or
   `jobNN` (file `.agents/jobs/NN-*-controller.md`; closed when its progress file says `Status: Closed`).
-- **Report runs:** `scripts\test.cmd tests\_temp\<ref>\<file>.py -s`.
+- **Report runs:** `scripts\test.cmd --all tests\_temp\<ref>\<file>.py -s`.
 - **Baseline:** `tests/hygiene_baseline.txt`, written once by job 10 task T01 and then only shortened.
 - **Indicators:** `tools\test_report.py` (job 10 task T00).
 - **Status (2026-10-30):**
