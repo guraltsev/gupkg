@@ -22,6 +22,8 @@ from gupkg_ui.plans import PackageRow
 from gupkg_ui.session import BatchOutcome, BatchSession
 from tests.ui_support import FakeGupkg, ListSink, until, entry, make_env, plan_doc, plan_entry, plan_failure, result
 
+pytestmark = pytest.mark.process
+
 
 def rows_for(base: Path, *names: str) -> list[PackageRow]:
     """Return outdated inventory rows for *names*, with package folders under the test's root."""

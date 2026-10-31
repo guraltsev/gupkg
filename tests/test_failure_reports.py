@@ -25,6 +25,8 @@ from gupkg.system.port import Mode
 from tests.cli_support import CliWorld
 from tests.engine_support import World, pin_no_ambient_elevation  # noqa: F401
 
+pytestmark = pytest.mark.unit
+
 SHIM = '[[shim]]\nname = "tool"\ntarget = "$App\\\\app.exe"\n'
 
 windows_only = pytest.mark.skipif(sys.platform != "win32", reason="holds a file open with no sharing (Windows file locking)")

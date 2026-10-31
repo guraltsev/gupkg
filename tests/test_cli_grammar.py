@@ -29,6 +29,8 @@ from gupkg.system.windows import WindowsSystem
 from tests.cli_support import CliWorld
 from tests.mode_support import pin_no_ambient_elevation  # noqa: F401
 
+pytestmark = pytest.mark.unit
+
 COMMANDS = [
     "check-updates", "install", "update", "switch", "uninstall", "check", "list", "info", "search", "cleanup", "link", "logs",
     "shell", "registry", "settings", "pkg", "self", "tui", "manager",
@@ -200,7 +202,7 @@ def stand_in(tmp_path: Path, **launchers: str) -> tuple[RunningGupkg, Path]:
     return RunningGupkg("source", tree / "gupkg", (tree,)), record
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 @pytest.mark.parametrize(
     ("argv", "recorded", "code"),
     [

@@ -25,6 +25,8 @@ from gupkg.services.artifact import fetch_artifact
 from gupkg.services.http import HttpClient
 from gupkg.system.fake import FakeHttp, FakeSystem
 
+pytestmark = pytest.mark.unit
+
 URL = "https://example.org/tool-1.0.zip"
 BODY = b"payload bytes " * 100
 OBSERVED = hashlib.sha256(BODY).hexdigest()

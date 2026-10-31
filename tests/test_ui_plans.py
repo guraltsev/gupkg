@@ -19,6 +19,8 @@ from gupkg.report.documents import DocumentError
 from gupkg_ui.plans import PlannedTarget, decide_targets, read_plan
 from tests.ui_support import entry, plan_doc, plan_entry, plan_failure
 
+pytestmark = pytest.mark.unit
+
 
 def decide(items: list[PlannedTarget], policy: str, *, interactive: bool, answer: bool = True):
     """Decide *items* under *policy*; return the decisions and the list of targets that were asked about."""

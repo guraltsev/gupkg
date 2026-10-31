@@ -42,6 +42,8 @@ from gupkg.model.checksum import (
 from gupkg.model.manifest import ManifestError, parse_manifest
 from gupkg.redact import redact_url
 
+pytestmark = pytest.mark.unit
+
 DIGEST = "ab" * 32
 URL = "https://example.org/tool.zip"
 COMMIT = "0123456789abcdef0123456789abcdef01234567"

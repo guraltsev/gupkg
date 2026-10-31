@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.skipif(os.name != "nt", reason="NTFS junctions")
+pytestmark = [pytest.mark.process, pytest.mark.skipif(os.name != "nt", reason="NTFS junctions")]
 
 _SRC = Path(__file__).resolve().parents[1] / "src"
 

@@ -13,6 +13,8 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+import pytest
+
 from gupkg.launchers import launcher_text
 from gupkg.services.fingerprint import fingerprint_directory
 from gupkg_registry.cli import main
@@ -22,6 +24,8 @@ from tests.http_fixtures import FIXTURES
 
 VERSION = "qbittorrent/5.2.3"
 TRACKER = "gh/_check_updates"
+
+pytestmark = pytest.mark.unit
 
 
 def old_layout_registry(tmp_path: Path) -> Path:

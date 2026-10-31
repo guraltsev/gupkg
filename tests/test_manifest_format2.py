@@ -26,6 +26,8 @@ from gupkg.model.manifest import (
     render_pinned,
 )
 
+pytestmark = pytest.mark.unit
+
 SHA = "ab" * 32
 
 PINNED = """\

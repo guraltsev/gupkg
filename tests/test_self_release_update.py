@@ -30,6 +30,8 @@ from gupkg.launchers import write_launchers
 from gupkg.model.manifest import ManifestKind, TrackResult, parse_manifest, render_pinned, manifest_to_toml
 from tests.engine_support import World, pin_no_ambient_elevation  # noqa: F401
 
+pytestmark = pytest.mark.release
+
 SOURCE = Path(__file__).resolve().parents[1] / "src"
 COMMIT = "c" * 40
 RELEASES_URL = "https://raw.githubusercontent.com/guraltsev/gupkg/main/RELEASES.md"

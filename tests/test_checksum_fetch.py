@@ -48,6 +48,8 @@ from gupkg.system.windows import WindowsSystem
 from tests.test_git_services import COMMIT, OTHER, FakeGit, machine
 from gupkg.system.port import Mode
 
+pytestmark = pytest.mark.unit
+
 BODY = bytes(range(256)) * 700
 GOOD = hashlib.sha256(BODY).hexdigest()
 WRONG = hashlib.sha256(b"something else").hexdigest()
@@ -424,6 +426,7 @@ def real_client(tmp_path: Path) -> HttpClient:
     return HttpClient(WindowsSystem(), env={}, sleep=lambda seconds: None, cache_dir=tmp_path / "cache", retries=0)
 
 
+@pytest.mark.process
 def test_a_real_streamed_download_is_hashed_and_recorded(loopback: tuple[str, list[str]], tmp_path: Path) -> None:
     """The bytes that came over a socket are the bytes whose hash is recorded as observed."""
     base, hits = loopback
@@ -434,6 +437,7 @@ def test_a_real_streamed_download_is_hashed_and_recorded(loopback: tuple[str, li
     assert fetched.record.size == len(BODY) and hits == ["/good"]
 
 
+@pytest.mark.process
 def test_a_real_modified_body_is_a_mismatch_and_is_not_left_in_the_cache(loopback: tuple[str, list[str]], tmp_path: Path) -> None:
     """One flipped bit in a streamed body fails verification, flag or not, and no ready file remains."""
     base, _ = loopback
@@ -444,6 +448,7 @@ def test_a_real_modified_body_is_a_mismatch_and_is_not_left_in_the_cache(loopbac
     assert GOOD in str(raised.value) and cached_files(tmp_path) == []
 
 
+@pytest.mark.process
 def test_a_real_body_cut_short_is_an_error_not_a_hash_of_a_prefix(loopback: tuple[str, list[str]], tmp_path: Path) -> None:
     """A body that ends before its Content-Length fails; a prefix is never accepted or recorded."""
     base, _ = loopback

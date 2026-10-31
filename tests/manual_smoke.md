@@ -437,7 +437,7 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
 ## Bundled mode, package launchers and bootstrap (issue 033)
 
 1. **Elevated launcher refusals and the elevated test run.** From an elevated PowerShell run
-   `scripts\test.cmd tests\test_package_launcher.py -v`: the twelve tests marked `needs_admin` (they skip in a standard shell) build an
+   `scripts\test.cmd --process tests\test_package_launcher.py -v`: the twelve tests marked `needs_admin` (they skip in a standard shell) build an
    admin-only tree under the temporary folder, grant `Users` write on one object at a time (package folder, version folder, root data
    folder, `gupkg-location`, a Python file, the root itself, a file deep in the installed gupkg) and expect the launcher to refuse, and expect
    it to proceed in the untouched tree and through `current` only when `current` names a version of the same package. Then right-click
@@ -556,7 +556,7 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
 
 ## Launchers: bundled, then gupkg-location, then PATH (issue 035, task T11)
 
-1. **`035-T11-1` The elevated launcher tests and the elevated PATH step.** From an elevated PowerShell run `scripts\test.cmd tests\test_package_launcher.py -v`: the
+1. **`035-T11-1` The elevated launcher tests and the elevated PATH step.** From an elevated PowerShell run `scripts\test.cmd --process tests\test_package_launcher.py -v`: the
    tests marked `needs_admin` (they skip in a standard shell) must pass, in particular `test_an_elevated_launcher_skips_a_user_writable_path_entry_and_names_it`
    (a `gupkg.cmd` in a user-writable `PATH` folder is skipped with the line `Skipped PATH entry <folder>` and the next admin-only entry runs) and
    `test_an_elevated_launcher_refuses_a_gupkg_exe_shim_whose_config_a_user_can_write`. Then, by hand with a real system install in `C:\opt`: from an

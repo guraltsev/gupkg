@@ -27,6 +27,8 @@ from gupkg.system.fake import FakeSystem, ProcessCall
 from gupkg.system.port import ProcessResult
 from tests.archive_support import make_zip
 
+pytestmark = pytest.mark.unit
+
 MIB = 1024 * 1024
 SMALL = Limits(max_total_bytes=MIB, max_file_bytes=MIB)
 
@@ -49,6 +51,7 @@ def zero_tar(data_size: int) -> bytes:
     return buffer.getvalue()
 
 
+@pytest.mark.process
 @pytest.mark.parametrize(
     ("compress", "name"),
     [pytest.param(bz2.compress, "bomb.tar.bz2", id="bzip2"), pytest.param(gzip.compress, "bomb.tar.gz", id="gzip")],

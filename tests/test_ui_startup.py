@@ -22,6 +22,8 @@ from tests.mode_support import pin_no_ambient_elevation  # noqa: F401 - autouse 
 from gupkg.settingsload import SOURCE_ROOT_OPTION
 from tests.test_scope import Machine
 
+pytestmark = pytest.mark.unit
+
 
 def environment(machine: Machine):
     """Build the UI environment of a run on *machine* with a stand-in ``gupkg`` command."""

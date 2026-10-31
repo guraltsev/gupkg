@@ -21,6 +21,8 @@ from gupkg.system.fake import FakeHttp, FakeSystem
 from gupkg.system.port import ResponseTooLarge, System
 from gupkg.system.windows import WindowsSystem
 
+pytestmark = pytest.mark.process
+
 PAYLOAD = bytes(range(256)) * 400  # 102,400 bytes
 
 

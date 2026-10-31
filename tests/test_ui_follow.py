@@ -17,6 +17,9 @@ from pathlib import Path
 from gupkg_ui import follow
 from gupkg_ui.follow import EventStream, RecordReader, read_run_end
 from tests.ui_support import load_fixture
+import pytest
+
+pytestmark = pytest.mark.unit
 
 
 def write(path: Path, *records: object, raw: str = "") -> None:

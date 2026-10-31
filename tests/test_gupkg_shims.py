@@ -35,7 +35,7 @@ REPO = Path(__file__).resolve().parents[1]
 SRC = REPO / "src"
 SHIMS = {"gupkg": [], "gupkg-tui": ["--gupkg-program=tui"], "gupkg-manager": ["--gupkg-program=manager"]}
 
-pytestmark = pytest.mark.skipif(os.name != "nt", reason="the shims are Windows launchers")
+pytestmark = [pytest.mark.process, pytest.mark.skipif(os.name != "nt", reason="the shims are Windows launchers")]
 
 
 def _shim_effects(tmp_path: Path) -> tuple[EffectContext, dict[str, Effect]]:

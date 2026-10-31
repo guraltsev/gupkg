@@ -26,6 +26,8 @@ import pytest
 from gupkg.selfmgmt import elevation
 from gupkg.selfmgmt.elevation import AccessEntry, DirectorySecurity, UntrustedLocationError
 
+pytestmark = pytest.mark.unit
+
 ADMINS = "S-1-5-32-544"
 SYSTEM = "S-1-5-18"
 USERS = "S-1-5-32-545"

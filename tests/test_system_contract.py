@@ -1,7 +1,7 @@
 """Cover the behavior that every ``System`` implementation must share.
 
 One set of contract tests runs against ``FakeSystem`` on every run and against
-``WindowsSystem`` on Windows (marked ``windows_integration``), so the real and
+``WindowsSystem`` on Windows (marked ``process``), so the real and
 the fake machine cannot drift apart. The Windows run is real: NTFS junctions,
 hard links, ``.lnk`` files through the Shell COM API, child processes, and
 ``file:`` URL downloads, all below pytest temporary directories; environment
@@ -29,6 +29,8 @@ from gupkg.system.fake import FakeSystem
 from gupkg.system.port import EnvValue, ProcessAborted, ProcessResult, Mode, ShortcutSpec, System, WorkerDidNotStart
 from gupkg.system.windows import WindowsSystem, _ProcessJob
 
+pytestmark = pytest.mark.unit
+
 windows_only = pytest.mark.skipif(os.name != "nt", reason="needs Windows")
 
 AWKWARD_TEXT = "it's \"quoted\" $var `tick` %TEMP% caf\u00e9 \u4e2d\u6587"
@@ -54,7 +56,7 @@ def _delete_key_tree(hive: object, subkey: str) -> None:
 @pytest.fixture(
     params=[
         pytest.param("fake", id="fake"),
-        pytest.param("windows", id="windows", marks=[pytest.mark.windows_integration, windows_only]),
+        pytest.param("windows", id="windows", marks=[pytest.mark.process, windows_only]),
     ]
 )
 def machine(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[System]:
@@ -299,6 +301,7 @@ def test_a_scratch_directory_is_private_empty_and_deleted_on_exit(machine: Syste
     assert not first.exists() and not second.exists()
 
 
+@pytest.mark.process
 def test_the_process_id_is_running_and_an_unused_one_is_not(machine: System) -> None:
     """``process_id`` is a running process on every implementation; a freshly finished child's id is not running."""
     import subprocess
@@ -316,7 +319,7 @@ def test_fake_reports_the_configured_elevation(tmp_path: Path, flag: bool) -> No
     assert FakeSystem(tmp_path / "machine", elevated=flag).is_elevated() is flag
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 @windows_only
 def test_windows_elevation_matches_an_independent_reading_of_the_token() -> None:
     """The Windows implementation agrees with ``IsUserAnAdmin`` about whether this test process is elevated.
@@ -329,7 +332,7 @@ def test_windows_elevation_matches_an_independent_reading_of_the_token() -> None
     assert WindowsSystem().is_elevated() == bool(ctypes.windll.shell32.IsUserAnAdmin())
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 @windows_only
 def test_windows_distinguishes_admin_only_folders_from_user_writable_ones(tmp_path: Path) -> None:
     """``System32`` is admin-only, a pytest temporary folder is not, and the refusal names a reason."""
@@ -342,7 +345,7 @@ def test_windows_distinguishes_admin_only_folders_from_user_writable_ones(tmp_pa
     assert system.directory_untrusted_reason(tmp_path)
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 @windows_only
 def test_windows_judges_a_single_file_by_its_own_permissions(tmp_path: Path) -> None:
     """A user-writable file is untrusted, and a file of an admin-only folder is trusted (the per-file check of the hook rule)."""
@@ -405,7 +408,7 @@ def test_fetch_text_returns_decoded_text_and_an_unreachable_url_is_an_oserror(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 @windows_only
 def test_windows_run_returns_status_and_streams_each_line_of_both_streams(tmp_path: Path) -> None:
     """A child's exit status and both output streams are returned, and every line reaches ``on_line`` as it is read."""
@@ -423,7 +426,7 @@ def test_windows_run_returns_status_and_streams_each_line_of_both_streams(tmp_pa
     assert sorted(lines) == ["err one", "out one", "out two"]
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 @windows_only
 def test_windows_run_feeds_standard_input_and_runs_scripts_through_their_interpreter(tmp_path: Path) -> None:
     """Input text reaches a ``.cmd`` script that is started by path, which runs in the directory it was given."""
@@ -437,7 +440,7 @@ def test_windows_run_feeds_standard_input_and_runs_scripts_through_their_interpr
     assert Path(result.stdout.splitlines()[1]).resolve() == tmp_path.resolve()
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 @windows_only
 def test_windows_run_kills_a_child_that_outlives_its_timeout(tmp_path: Path) -> None:
     """A child that runs past the timeout is killed and the caller gets a ``TimeoutError``."""
@@ -486,7 +489,7 @@ def test_a_watcher_that_returns_nothing_leaves_the_run_unchanged(machine: System
     assert len(calls) < 50
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 @windows_only
 def test_windows_watcher_is_polled_while_the_child_runs_and_the_timeout_still_applies(tmp_path: Path) -> None:
     """A slow child sees several polls; with a watcher that never objects, ``timeout`` still raises ``TimeoutError``."""
@@ -501,7 +504,7 @@ def test_windows_watcher_is_polled_while_the_child_runs_and_the_timeout_still_ap
     assert len(polls) >= 3
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 @windows_only
 def test_windows_aborted_child_is_gone_and_so_is_a_grandchild_it_started(tmp_path: Path) -> None:
     """After an abort neither the child nor the helper process it started is still running to write its marker file."""
@@ -552,7 +555,7 @@ GRANDCHILD_SCRIPT = (
 )
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 @windows_only
 @pytest.mark.parametrize("how", [pytest.param("raises", id="the-final-poll-raises"), pytest.param("aborts", id="the-final-poll-names-a-reason")])
 def test_a_helper_that_outlived_a_finished_child_is_killed_when_the_last_watcher_poll_fails(tmp_path: Path, how: str) -> None:
@@ -578,7 +581,7 @@ def test_a_helper_that_outlived_a_finished_child_is_killed_when_the_last_watcher
     assert not marker.exists() and elapsed < 3
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 @windows_only
 def test_a_helper_started_by_a_normal_run_is_left_running_when_nothing_went_wrong(tmp_path: Path) -> None:
     """The job object kills nothing on a clean finish: a helper that is meant to outlive its parent keeps running."""
@@ -591,7 +594,7 @@ def test_a_helper_started_by_a_normal_run_is_left_running_when_nothing_went_wron
     assert result.returncode == 0 and marker.read_text() == "alive"
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 @windows_only
 def test_a_child_that_never_reads_its_input_cannot_keep_the_call_past_its_timeout(tmp_path: Path) -> None:
     """Two megabytes of input to a child that sleeps: the timeout still fires (input is fed from its own thread)."""
@@ -616,6 +619,7 @@ def _alive(pid: int) -> bool:
     return f'"{pid}"' in listing.stdout
 
 
+@pytest.mark.process
 def test_the_regex_worker_answers_a_request_in_isolation(machine: System, tmp_path: Path) -> None:
     """A benign request gets an `ok` answer with the match; the first line on standard error is the worker's pid."""
     lines: list[str] = []
@@ -627,6 +631,7 @@ def test_the_regex_worker_answers_a_request_in_isolation(machine: System, tmp_pa
     assert '"ok":true' in result.stdout and '"42"' in result.stdout
 
 
+@pytest.mark.process
 def test_the_regex_worker_is_killed_at_its_deadline_and_is_gone(machine: System) -> None:
     """A catastrophic pattern raises TimeoutError about a second after the worker is up, and its process no longer exists."""
     lines: list[str] = []
@@ -649,7 +654,7 @@ PROBE = (
 )
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 @windows_only
 def test_the_regex_worker_runs_isolated_with_a_minimal_environment_in_an_empty_temporary_folder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The worker is started with -I -s -B -S, only SystemRoot in its environment, and an empty temporary folder as cwd."""
@@ -666,7 +671,7 @@ def test_the_regex_worker_runs_isolated_with_a_minimal_environment_in_an_empty_t
     assert "gupkg-regex-" in seen["cwd"] and "secret-token" not in result.stdout
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 @windows_only
 def test_the_regex_deadline_counts_from_the_pid_line_not_from_the_process_start(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """A worker that is slow to say it is up (1.5 s) but quick afterwards is not timed out by a 0.5 s deadline."""
@@ -683,7 +688,7 @@ def test_the_regex_deadline_counts_from_the_pid_line_not_from_the_process_start(
     assert result.returncode == 0 and '"ok":true' in result.stdout
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 @windows_only
 def test_a_worker_that_overruns_its_start_limit_is_reported_as_not_started_with_that_limit(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """The error names the start limit, not the (shorter) matching deadline."""
@@ -711,7 +716,7 @@ def job_closes(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     return closed
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 @windows_only
 @pytest.mark.parametrize("path", ["finishes", "times-out", "watcher-raises", "worker-deadline"])
 def test_the_job_handle_is_closed_on_every_path(job_closes: list[int], tmp_path: Path, path: str) -> None:
@@ -734,7 +739,7 @@ def test_the_job_handle_is_closed_on_every_path(job_closes: list[int], tmp_path:
     assert job_closes == [1]
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 @windows_only
 def test_a_failure_to_create_the_job_kills_the_child_and_reaches_the_caller(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """If the job object code raises, the child is killed (no leaked process or reader thread) and the error is raised."""
@@ -757,7 +762,7 @@ def test_a_failure_to_create_the_job_kills_the_child_and_reaches_the_caller(monk
     assert not _alive(int(lines[0])) if lines else True
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 @windows_only
 def test_the_regex_worker_runs_in_a_kill_on_close_job_and_an_ordinary_child_does_not(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Only the regex worker's job ends its processes when the handle closes; a normal run's helpers may outlive it."""
@@ -777,7 +782,7 @@ def test_the_regex_worker_runs_in_a_kill_on_close_job_and_an_ordinary_child_does
     assert asked == [True, False]
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 @windows_only
 def test_closing_a_kill_on_close_job_ends_the_process_in_it(tmp_path: Path) -> None:
     """With kill_on_close the process dies when the job handle is closed (as it would if the parent were killed); without it, it lives."""
@@ -797,7 +802,7 @@ def test_closing_a_kill_on_close_job_ends_the_process_in_it(tmp_path: Path) -> N
         mortal.wait()
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 @windows_only
 def test_a_regex_worker_that_never_starts_is_stopped(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """A worker that does not report within the start limit is killed and reported as a timeout, not waited for."""

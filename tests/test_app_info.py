@@ -20,6 +20,8 @@ from gupkg.engine.receipts import list_receipts, read_receipt, update_receipt
 from gupkg.services.fingerprint import fingerprint_directory
 from tests.engine_support import World
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture
 def world(tmp_path: Path) -> World:

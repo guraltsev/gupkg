@@ -19,6 +19,8 @@ import pytest
 from tests.cli_support import CliWorld
 from tests.mode_support import pin_no_ambient_elevation  # noqa: F401
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.mark.parametrize(
     ("arguments", "message"),

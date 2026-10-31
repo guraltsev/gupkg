@@ -33,6 +33,8 @@ from gupkg.system.fake import FakeHttp, FakeSystem, ProcessCall
 from gupkg.system.port import ProcessResult
 from tests.http_fixtures import HTTP_CASES, REGISTRY2, environment, load_case, tracker_manifest
 
+pytestmark = pytest.mark.process
+
 REGISTRY = REGISTRY2  # the committed snapshot, or the registry under test when the registry's CI sets GUPKG_REGISTRY_TRACKERS
 
 

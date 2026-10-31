@@ -29,6 +29,8 @@ from tests.cli_support import CliWorld
 from tests.engine_support import pin_no_ambient_elevation  # noqa: F401
 from tests.test_engine_name_conflicts import ENV, SHIM, SHORTCUT, WRAPPER, state
 
+pytestmark = pytest.mark.unit
+
 BIN, SHORTCUTS = OVERWRITE_KINDS
 
 

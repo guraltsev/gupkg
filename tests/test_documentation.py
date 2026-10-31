@@ -18,6 +18,8 @@ import pytest
 
 from tests.cli_support import CliWorld
 
+pytestmark = pytest.mark.unit
+
 ROOT = Path(__file__).resolve().parents[1]
 DOCUMENTS = [ROOT / "README.md", *sorted((ROOT / "_docs").glob("*.md")), ROOT / "src" / "gupkg" / "README.md", ROOT / "tests" / "manual_smoke.md"]
 LINK = re.compile(r"(?<!!)\[[^\]]*\]\(([^)\s]+)\)")

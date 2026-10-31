@@ -26,6 +26,8 @@ from tests.catalog_support import activate, build_registry, make_catalog, versio
 from tests.cli_support import CliWorld
 from tests.mode_support import tree_snapshot
 
+pytestmark = pytest.mark.unit
+
 
 def test_a_catalog_of_one_root_never_sees_the_package_of_the_other_root(system, tmp_path: Path) -> None:
     """Root A lists, describes and resolves only its own package; a path into root B is refused, by every spelling of the target."""

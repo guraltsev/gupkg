@@ -12,6 +12,8 @@ import pytest
 
 from gupkg.model.manifest import ManifestError, ManifestKind, parse_manifest
 
+pytestmark = pytest.mark.unit
+
 
 def parse(track: str, source: str = '[source]\ndownload_url = "${download_url}"\n'):
     """Parse a tracker made of the given `[track]` text and `[source]` text."""

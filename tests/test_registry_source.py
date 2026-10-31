@@ -32,6 +32,8 @@ from tests.cli_support import CliWorld
 from tests.mode_support import pin_no_ambient_elevation  # noqa: F401
 from tests.scope_support import scope_of
 
+pytestmark = pytest.mark.unit
+
 SOURCE = "https://github.com/example/gupkg-registry.git"
 REVISION = "a" * 40
 REGISTRY_FILE = dumps({"format": 2, "name": "main"})

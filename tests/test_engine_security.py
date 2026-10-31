@@ -29,6 +29,8 @@ from gupkg.system.fake import FakeSystem
 from tests.engine_support import World, pin_no_ambient_elevation, pkg_text  # noqa: F401
 from gupkg.scope import process_mode
 
+pytestmark = pytest.mark.unit
+
 ENV = '[[env]]\nname = "TOOL_HOME"\nvalue = "$App"\n'
 SHIM = '[[shim]]\nname = "tool"\ntarget = "$App\\\\app.exe"\n' + ENV
 

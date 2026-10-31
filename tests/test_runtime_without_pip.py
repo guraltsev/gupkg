@@ -34,6 +34,8 @@ import fetch_runtime
 import update_deps
 from gupkg.integrity import verify_version_directory
 
+pytestmark = pytest.mark.release
+
 REPO = Path(__file__).resolve().parents[1]
 RUNTIME = REPO / "src" / "gupkg" / "python"
 SITE_PACKAGES = RUNTIME / "Lib" / "site-packages"

@@ -23,6 +23,8 @@ from gupkg.model.scope import PORTABLE_REFUSAL, SYSTEM_ONLY_REFUSAL, USER_ONLY_R
 from gupkg.system.port import Mode
 from tests.engine_support import World, pin_no_ambient_elevation, pkg_text  # noqa: F401
 
+pytestmark = pytest.mark.unit
+
 PORTABLE_TOP = 'modes = ["portable"]\n'
 PERSIST = """
 [portable]

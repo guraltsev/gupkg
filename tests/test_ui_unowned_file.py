@@ -15,6 +15,9 @@ from pathlib import Path
 from gupkg_ui.screens.run import RunScreen
 from tests.test_ui_screens import fake, has, open_browser, run_app, screen_text, update_run, wait_for  # noqa: F401
 from tests.ui_support import FakeGupkg, entry, result
+import pytest
+
+pytestmark = pytest.mark.process
 
 MESSAGE = (
     "alpha cannot be installed: 'C:\\Users\\me\\opt\\bin\\tool.exe' already exists and no installed package owns it. Move or "

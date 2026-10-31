@@ -29,6 +29,8 @@ from gupkg.launchers import launcher_text
 from gupkg.system.port import ProcessResult, Mode
 from tests.engine_support import World, pin_no_ambient_elevation  # noqa: F401
 
+pytestmark = pytest.mark.unit
+
 GUPKG_TABLES = '[[shim]]\nname = "gupkg"\ntarget = "$App\\\\gupkg.cmd"\n\n[[shim]]\nname = "gupkg-manager"\ntarget = "$App\\\\gupkg-manager.cmd"\n'
 SHIM = '[[shim]]\nname = "tool"\ntarget = "$App\\\\app.exe"\n'
 

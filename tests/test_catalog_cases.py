@@ -33,6 +33,8 @@ from tests.catalog_support import (
 )
 from gupkg.catalog.catalog import ListFilter, NeedsRepair, NoVersionKnown, NotInstalled
 
+pytestmark = pytest.mark.unit
+
 
 @dataclass
 class Ctx:

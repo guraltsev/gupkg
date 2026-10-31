@@ -21,6 +21,8 @@ import pytest
 from gupkg.model.manifest import APP_MISSING_ERROR, ManifestKind
 from gupkg.pkgcheck import check_directory, defines_track
 
+pytestmark = pytest.mark.unit
+
 URL = 'download_url = "https://example.org/tool-1.0.zip"'
 
 

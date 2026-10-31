@@ -18,6 +18,8 @@ import pytest
 
 from tests.catalog_support import catalog_over
 
+pytestmark = pytest.mark.unit
+
 
 def resolve_package_path(path: Path, system):
     """Resolve *path* in a catalog whose root is the folder that holds it."""

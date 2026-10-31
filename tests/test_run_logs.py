@@ -25,6 +25,8 @@ from gupkg.system.port import ProcessResult
 from tests.cli_support import CliResult, CliWorld
 from tests.mode_support import pin_no_ambient_elevation  # noqa: F401
 
+pytestmark = pytest.mark.unit
+
 FIXED_TIME = datetime(2026, 10, 22, 10, 15, 0, tzinfo=timezone.utc)
 
 
@@ -540,7 +542,7 @@ def test_an_events_file_name_that_is_a_hard_link_to_another_file_is_refused(
     assert (result.out + result.err).count("WARNING: Cannot write the log of package Example") == 1
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 def test_an_events_file_name_that_is_a_symbolic_link_is_not_followed(
     tmp_path: Path,
 ) -> None:
@@ -696,7 +698,7 @@ def test_the_age_limit_alone_removes_old_runs_while_the_count_would_keep_them(tm
     assert not (logs / f"{aged}.log").exists() and not (logs / f"{aged}.jsonl").exists()
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 def test_pruning_leaves_symbolic_links_named_like_old_runs_alone(tmp_path: Path) -> None:
     """A symbolic link named like an expired run is neither removed nor followed; only regular files are pruned."""
     import os

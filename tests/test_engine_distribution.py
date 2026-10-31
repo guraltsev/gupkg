@@ -26,6 +26,8 @@ from gupkg.system.port import Mode
 from tests.engine_support import World, pin_no_ambient_elevation  # noqa: F401
 from tests.mode_support import tree_snapshot
 
+pytestmark = pytest.mark.unit
+
 SHIM = '[[shim]]\nname = "tool"\ntarget = "$App\\\\app.exe"\n'
 
 
@@ -219,7 +221,7 @@ def test_the_copy_never_overwrites_a_directory_that_differs(world: World) -> Non
     assert (existing / "pkg.local" / "populate.cmd").read_text() == before
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 def test_copies_of_a_marked_distribution_carry_no_mark_and_the_receipt_records_it(world: World) -> None:
     """A source whose files carry the Mark of the Web is installed from unmarked copies; the receipt says the source was marked."""
     folder = distribution(world)

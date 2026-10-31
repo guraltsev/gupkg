@@ -31,6 +31,8 @@ from gupkg.launchers import launcher_text
 from gupkg.model.manifest import ManifestKind, parse_manifest
 from gupkg.pkgcheck import check_directory
 
+pytestmark = pytest.mark.release
+
 REPO = Path(__file__).resolve().parents[1]
 BUILD = REPO / "tools" / "build_standalone.py"
 

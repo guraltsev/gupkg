@@ -22,6 +22,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.process
+
 ROOT = Path(__file__).resolve().parents[1]
 FORBIDDEN = ("py -3", "call python", "GUPKG_PYTHON", "gupkg.python", "GUPKG_EMBEDDED", "GUPKG_BUNDLED_RUNTIME", "--embedded")
 windows_only = pytest.mark.skipif(os.name != "nt", reason="Windows batch scripts")

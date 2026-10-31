@@ -2136,7 +2136,7 @@ same frame for one package:
   and nested archives. HTTP fixtures are recorded pages for the providers.
   Each provider is tested against recorded real-world pages from the registry
   cases in section 8.1.
-- **Real-Windows tests are marked `windows_integration`.** These are the
+- **Real-Windows tests are marked `process`.** These are the
   `WindowsSystem` contract tests: junction, HKCU in a throwaway key, a
   shortcut in a temporary folder. The same contract tests also run against
   `FakeSystem`, so the two cannot drift.

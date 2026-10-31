@@ -24,6 +24,8 @@ import pytest
 
 import release
 
+pytestmark = pytest.mark.release
+
 TABLE = "| Version | Commit | Date | SHA-256 | Notes |\n|---|---|---|---|---|\n| 0.0.9 | `{}` | 2026-01-01 | - | old |\n"
 
 

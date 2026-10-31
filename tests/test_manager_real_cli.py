@@ -20,6 +20,8 @@ import pytest
 
 from tests.ui_support import LAUNCHERS, RealWorld
 
+pytestmark = pytest.mark.process
+
 
 def run_plain(world: RealWorld, launcher: str, *args: str) -> subprocess.CompletedProcess:
     """Run a real launcher without root options (the pass-through commands refuse them, which is how ``gupkg manager`` and ``gupkg tui`` are started)."""

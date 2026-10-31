@@ -15,6 +15,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.unit
+
 SOURCE = Path(__file__).resolve().parents[1] / "src"
 PYTHON = SOURCE / "gupkg" / "python" / "python.exe"
 
@@ -47,7 +49,7 @@ sys.exit(1 if failed else 0)
 """
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 def test_every_module_imports_on_the_bundled_interpreter_without_writing_bytecode() -> None:
     """All modules import with -I -s -B -S on the committed Python; none needs deleted code, and no .pyc appears."""
     before = {path for path in SOURCE.rglob("*.pyc") if "python" not in path.relative_to(SOURCE).parts[:2]}

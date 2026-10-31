@@ -18,6 +18,8 @@ import pytest
 
 from tests.engine_support import World
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture
 def world(tmp_path: Path) -> World:

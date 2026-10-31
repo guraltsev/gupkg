@@ -30,7 +30,7 @@ if not defined NOTES (
     for /f "delims=" %%V in ('%PY% tools\bump_version.py --print') do set "NOTES=gupkg %%V"
 )
 
-call "%~dp0test.cmd" || (>&2 echo [release] Tests failed; nothing was released. & popd & exit /b 1)
+call "%~dp0test.cmd" --all || (>&2 echo [release] Tests failed; nothing was released. & popd & exit /b 1)
 if defined NOPUSH (
     %PY% tools\release.py "%NOTES%" --no-publish || (popd & exit /b 1)
     echo [release] Not publishing. Upload the ZIP and push yourself: git push ^<remote^> HEAD and the new v^<version^> tag.

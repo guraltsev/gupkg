@@ -20,6 +20,8 @@ import pytest
 from gupkg.catalog.catalog import CatalogError, NotFound, parse_selector
 from tests.catalog_support import activate, build_registry, make_catalog, write_tracker, write_version
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.mark.parametrize(
     ("text", "kind", "name", "version", "registry"),

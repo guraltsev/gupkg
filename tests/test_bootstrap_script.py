@@ -30,7 +30,7 @@ BOOTSTRAP = REPO / "gupkg-bootstrap.cmd"
 SCRIPT = REPO / "gupkg-bootstrap.ps1"
 POWERSHELL = Path(os.environ.get("SystemRoot", "C:\\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
 
-pytestmark = pytest.mark.skipif(os.name != "nt", reason="the bootstrap script targets Windows PowerShell")
+pytestmark = [pytest.mark.release, pytest.mark.skipif(os.name != "nt", reason="the bootstrap script targets Windows PowerShell")]
 
 
 def _elevated() -> bool:

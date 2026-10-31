@@ -19,6 +19,8 @@ from gupkg_ui import render
 from gupkg_ui.render import EventRenderer, progress_line, summarize_entries, verdict_lines
 from tests.ui_support import entry, load_fixture
 
+pytestmark = pytest.mark.unit
+
 
 def plain(lines) -> list[str]:
     """Return the plain text of rendered lines."""

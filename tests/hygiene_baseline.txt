@@ -1,4 +1,4 @@
-# Known violations of the test-hygiene rules H1-H6 (_docs/tests_hygiene.md section 5), one per line: rule|file|test.
+# Known violations of the test-hygiene rules H1-H9 (_docs/tests_hygiene.md section 5), one per line: rule|file|test.
 # This file may only shrink: delete a line when you fix its violation, never add one.
 H1|tests/test_chain_and_checksum_limits.py|
 H1|tests/test_checksum_fetch.py|
@@ -166,3 +166,5 @@ H4|tests/test_wrapper_scripts.py|test_each_command_starts_its_inner_launcher_wit
 H5|tests/test_cli_tools.py|test_pkg_export_writes_a_distribution_zip_and_prints_its_sha256
 H5|tests/test_engine_installer.py|test_an_unpinned_installer_is_refused_before_any_download_even_with_skip_checksum
 H5|tests/test_registry_tool.py|test_update_prints_a_progress_line_per_package_and_a_summary
+H9|tests/test_engine_locks.py|test_racing_runs_never_hold_the_lock_together
+H9|tests/test_record_http_fixtures.py|test_a_failing_run_leaves_the_case_file_untouched

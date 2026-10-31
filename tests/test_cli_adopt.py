@@ -23,6 +23,8 @@ from gupkg.tomlio import read_toml
 from tests.cli_support import CliWorld
 from tests.mode_support import pin_no_ambient_elevation  # noqa: F401
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture
 def world(tmp_path: Path) -> CliWorld:

@@ -22,6 +22,8 @@ from tests.cli_support import CliWorld
 from tests.engine_support import zip_bytes
 from tests.mode_support import pin_no_ambient_elevation  # noqa: F401
 
+pytestmark = pytest.mark.unit
+
 
 def snapshot(folder: Path) -> dict[str, str | None]:
     """Return every file and folder below *folder* with the SHA-256 of each file (``None`` for a folder)."""

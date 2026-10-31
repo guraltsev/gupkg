@@ -23,6 +23,8 @@ from gupkg.model.manifest import parse_manifest
 from gupkg.report.events import PhaseStart, use_reporter
 from tests.engine_support import World, pin_no_ambient_elevation  # noqa: F401
 
+pytestmark = pytest.mark.unit
+
 
 def build(world: World, version_dir: Path, **options):
     """Call ``populate_version`` for the version directory of ``tool`` in the user root."""

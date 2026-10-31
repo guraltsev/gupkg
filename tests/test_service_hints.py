@@ -16,6 +16,8 @@ import pytest
 from gupkg.pkgcheck import check_directory
 from gupkg.services.hints import scan_directory, scan_text
 
+pytestmark = pytest.mark.unit
+
 REGISTRY = Path(__file__).resolve().parent / "fixtures" / "hints"
 HOOKS = sorted(REGISTRY.glob("*/*.py"))
 

@@ -23,6 +23,8 @@ from gupkg_ui.follow import EventStream
 from gupkg_ui.client import Client, ClientError, StopRequest, check_document, refuse_unsafe, sibling_launcher, with_options
 from tests.ui_support import FakeGupkg, entry, head, result, until
 
+pytestmark = pytest.mark.process
+
 
 @pytest.fixture
 def fake(tmp_path: Path) -> FakeGupkg:

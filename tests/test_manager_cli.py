@@ -22,6 +22,8 @@ from gupkg_manager import cli
 from tests.test_ui_flows import logs_of, schedule_run
 from tests.ui_support import FakeGupkg, entry, list_doc, make_env, plan_doc, plan_entry, result
 
+pytestmark = pytest.mark.process
+
 
 class Terminal(io.StringIO):
     """A stream that claims to be a console and holds what a person types."""

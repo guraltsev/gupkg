@@ -23,6 +23,8 @@ from gupkg_registry.layout import read_registry_file, write_registry_file
 from gupkg_registry.update import update_registry
 from tests.catalog_support import write_version
 
+pytestmark = pytest.mark.unit
+
 REAL = ["1.2.3", "2024.10.1", "v1.2", "1.0.0-rc.1", "20261022-101500-ab12cd3", "0.17.0.local.1", "bootstrap2", "10.02", "3.31-1", "2.26", "1" + "0" * 127, "v1.0b2", "2024-10-22_rc"]
 HOSTILE = [
     "CON", "con", "Con.txt", "con.tar.gz", "PRN", "AUX", "aux", "NUL", "nul.txt", "CONIN$", "conout$", "COM1", "com9", "COM1.txt", "LPT1", "lpt9.x",
@@ -59,6 +61,7 @@ TRACKER = (
 )
 
 
+@pytest.mark.process
 @pytest.mark.parametrize("version", ["CON", "con.txt", "COM1", "aux", "NUL", "lpt1", "-rf", "PROGRA~1", "%TEMP%", "a$b"])
 def test_a_hostile_version_on_a_vendor_page_writes_nothing(tmp_path: Path, version: str) -> None:
     """A tracker that finds a hostile version fails for its package; no directory and no fingerprint appears."""

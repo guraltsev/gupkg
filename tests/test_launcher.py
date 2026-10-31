@@ -28,7 +28,7 @@ import pytest
 SRC = Path(__file__).resolve().parents[1] / "src"
 SHIM = SRC / "gupkg" / "shim" / "shim-console.static.exe"
 
-pytestmark = pytest.mark.skipif(os.name != "nt", reason="Windows batch launcher behavior")
+pytestmark = [pytest.mark.process, pytest.mark.skipif(os.name != "nt", reason="Windows batch launcher behavior")]
 
 
 def _package(root: Path) -> tuple[Path, Path]:

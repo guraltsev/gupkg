@@ -22,6 +22,8 @@ from gupkg.report.events import (
     SubprocessLine, Warning, subprocess_lines, use_reporter,
 )
 
+pytestmark = pytest.mark.unit
+
 MIB = 1024 * 1024
 
 
@@ -170,7 +172,7 @@ def test_package_text_with_markup_and_escape_codes_is_shown_literally_on_a_termi
     assert "WARNING: [/unclosed" in text
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 def test_real_child_process_output_is_shown_line_by_line_without_control_codes(monkeypatch) -> None:
     """Output of a real child (carriage-return progress, colour codes, non-ASCII text, an error stream) renders as clean separate lines."""
     from gupkg.system.windows import WindowsSystem
@@ -413,12 +415,14 @@ HOSTILE_LINES = {
 }
 
 
+@pytest.mark.process
 @pytest.mark.parametrize("name", list(HOSTILE_LINES))
 def test_a_64_kib_line_of_unterminated_escape_openers_is_cleaned_in_linear_time(name: str) -> None:
     """Repeated unterminated escape openers, the worst input for a backtracking pattern, clean in well under a second."""
     assert _slowest_line([HOSTILE_LINES[name][:64 * 1024]], timeout=60) < 1.0
 
 
+@pytest.mark.process
 def test_a_10_mb_flood_of_hostile_lines_is_cleaned_in_linear_time() -> None:
     """Ten megabytes of hostile lines, cut into 64 KiB lines like the output reader does, clean with every line fast."""
     flood = "".join(HOSTILE_LINES.values())

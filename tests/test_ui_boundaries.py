@@ -15,6 +15,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.unit
+
 SOURCE = Path(__file__).resolve().parents[1] / "src"
 PACKAGES = ("gupkg_ui", "gupkg_tui", "gupkg_manager")
 FILES = sorted(path for package in PACKAGES for path in (SOURCE / package).rglob("*.py"))

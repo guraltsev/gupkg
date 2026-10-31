@@ -39,6 +39,8 @@ from gupkg.system.fake import FakeSystem
 from gupkg.system.port import ProcessNotAllowed
 from gupkg.tomlio import write_toml
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture
 def system(tmp_path: Path) -> FakeSystem:

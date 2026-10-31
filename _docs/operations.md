@@ -276,7 +276,7 @@ never search for another Python; a missing `.venv` is created first by `setup.cm
 | Script | What it does |
 |---|---|
 | `setup.cmd [python.exe] [--force]` | Create or repair `.venv`: it must have pip and the packages of `requirements-dev.txt`. Tries `uv venv --seed` first, then `python -m venv`. See "The development environment" below. |
-| `test.cmd [pytest args]` | Run the test suite. |
+| `test.cmd [--process\|--all] [pytest args]` | Run the test suite by tier: no option runs `unit`, `--process` runs `unit` and `process`, `--all` runs every tier. The option must be the first argument. `release.cmd` runs `--all`. |
 | `run.cmd [gupkg args]` | Run `src\gupkg\gupkg.cmd` from the source tree. |
 | `bump.cmd [patch\|minor\|major\|<version>]` | Raise the patch number (the default), the minor or the major number, or set an exact version, in `_version.py`, and commit. |
 | `release.cmd ["notes"] [--no-push]` | Test, build the ZIP, tag, push the tag, upload the ZIP and its `.sha256` file to GitHub release `v<version>`, download the ZIP again and require the same SHA-256, add the `RELEASES.md` row (with that SHA-256), and push the branch. Without notes the row says `gupkg <version>`. `--no-push` keeps everything local and uploads nothing. |

@@ -201,7 +201,7 @@ machine, and a test cannot drift into the wrong tier unnoticed.
 | Tier | What a test in it may touch | Runs |
 | --- | --- | --- |
 | `unit` | Only the process itself: fakes of every boundary, small temporary files. No child process, real sleep, network, or system-wide state | After every edit |
-| `process` | Real child processes, real operating-system objects (links, junctions, registry keys under a test name), loopback servers | Before saying a change is done |
+| `process` | Real child processes, real operating-system objects (links, junctions, registry keys under a test name), loopback servers. Junctions made by the real system implementation (`WindowsSystem`) are `process`; the real junctions that `FakeSystem` makes in-process below `tmp_path` are not | Before saying a change is done |
 | `release` | Builds, unpacks or verifies the shipped product, or runs another repository's checks against this one | Before a commit to the main branch, a merge or a release; after changing the build, install or self-update |
 | manual | A person on a real machine | Before a release, as `manual_smoke.md` lists |
 
@@ -209,6 +209,9 @@ Rules:
 
 - **Every test module declares its tier.** A module without a tier is an error.
 - **In the `unit` tier, starting a process, sleeping or opening a socket fails the test** with a message naming the tier.
+  The check patches `subprocess.Popen`, `os.system`, `os.spawn*`, `socket.socket.connect` and `time.sleep` (over 0.01 s). It does
+  not see a `sleep` function imported by name before the check is installed, nor `asyncio.sleep` (Textual and asyncio poll with it);
+  review those by hand.
 - **Speed is a design concern, not a run-time check** (§4.7).
   - No test fails for being slow.
   - Each tier's serial wall time and its slowest tests are reported (§2.3), so that slow tests are found and redesigned.
@@ -265,7 +268,7 @@ touched it. These rules counter that:
 - **Machine safety** (`AGENTS.md`): no test touches `C:\opt`, the user's real roots, the real `PATH`, the Start Menu or
   the Windows registry outside a `gupkg-test-*` key.
 - **Status (2026-10-30):**
-  - The suite is still flat in `tests/` and has no tiers; job 10 (`.agents/jobs/10-test-hygiene-controller.md`) migrates
-    it.
-  - Until then, legacy modules are recorded in the hygiene baseline ([tests_hygiene.md](tests_hygiene.md) §5).
+  - The suite is still flat in `tests/`; job 10 (`.agents/jobs/10-test-hygiene-controller.md`) migrates it. Every test
+    module declares its tier and `scripts\test.cmd` selects by it.
+  - Until the migration is done, legacy violations are recorded in the hygiene baseline ([tests_hygiene.md](tests_hygiene.md) §5).
   - New tests follow this policy from today.

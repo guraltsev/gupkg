@@ -22,7 +22,7 @@ from gupkg_ui import client as client_module
 from gupkg_ui.client import ClientError, StopRequest
 from tests.ui_support import FakeGupkg, GrandchildStub, entry, process_alive, result
 
-pytestmark = pytest.mark.windows_integration
+pytestmark = pytest.mark.process
 
 
 @pytest.fixture

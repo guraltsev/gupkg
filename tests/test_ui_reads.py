@@ -21,6 +21,8 @@ from gupkg.viewdata import info_document, list_document, registry_status
 from gupkg_ui.reads import Reads
 from tests.catalog_support import activate, build_registry, make_catalog, write_version
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture
 def world(system, tmp_path: Path):

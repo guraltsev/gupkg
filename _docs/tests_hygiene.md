@@ -146,8 +146,8 @@ These run at collection time with the suite itself, so they cannot be skipped. E
 
 | Check | Rule |
 | --- | --- |
-| Every test module declares a tier | [tests.md](tests.md) §5 |
-| A `unit` test does not start a process, sleep or open a socket | §5 |
+| Every test has exactly one tier (H8) | [tests.md](tests.md) §5 |
+| A `unit` test does not start a process, sleep or open a socket (H9) | [tests.md](tests.md) §5 |
 | No test module imports from another test module or from `_temp/` | §3, §3.2 here |
 | No import of a private name (`_name`) from the product's own code | §4.5 |
 | No issue, decision, task, review or old-version number in a permanent test's name or docstring | §4.1, §4.2 |
@@ -171,7 +171,7 @@ A tool also prints the indicators of [tests.md](tests.md) §2.3, so every job ca
 
 - **References:** `<ref>` is `issueNNN` (file `_issues/issueNNN-*.md`; closed when it moves to `_issues/_closed/`) or
   `jobNN` (file `.agents/jobs/NN-*-controller.md`; closed when its progress file says `Status: Closed`).
-- **Report runs:** `scripts\test.cmd tests\_temp\<ref>\<file>.py -s`.
+- **Report runs:** `scripts\test.cmd --all tests\_temp\<ref>\<file>.py -s`.
 - **Baseline:** `tests/hygiene_baseline.txt`, written once by job 10 task T01 and then only shortened.
 - **Indicators:** `tools\test_report.py` (job 10 task T00).
 - **Status (2026-10-30):**

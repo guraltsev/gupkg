@@ -19,6 +19,8 @@ import record_http_fixtures
 from gupkg.system.fake import FakeHttp, FakeSystem
 from tests.http_fixtures import HTTP_CASES, load_case
 
+pytestmark = pytest.mark.unit
+
 
 def copy_case(tmp_path: Path, name: str) -> Path:
     """Copy a committed fixture case into *tmp_path* and return the copy."""
@@ -43,6 +45,7 @@ def test_recording_rewrites_the_responses_and_the_expected_block(system: FakeSys
     assert system.request_log[0].headers["User-Agent"] == "gupkg-fixture-recorder/1"
 
 
+@pytest.mark.process
 def test_an_index_walk_is_recorded_page_by_page_and_unvisited_pages_are_dropped(system: FakeSystem, tmp_path: Path) -> None:
     """Re-recording pidgin records the root listing and the two folders the walk visits, and drops a stale extra URL."""
     case = copy_case(tmp_path, "index_pidgin")

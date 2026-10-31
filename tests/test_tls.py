@@ -10,6 +10,9 @@ from __future__ import annotations
 import ssl
 
 from gupkg.tls import enable_partial_chain_verification
+import pytest
+
+pytestmark = pytest.mark.unit
 
 
 def test_default_https_context_verifies_and_accepts_partial_chains() -> None:

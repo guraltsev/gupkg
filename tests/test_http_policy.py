@@ -21,6 +21,8 @@ from gupkg.system.windows import WindowsSystem
 from gupkg.scope import process_mode
 from gupkg.system.port import Mode
 
+pytestmark = pytest.mark.unit
+
 URL = "https://example.org/data"
 
 
@@ -54,6 +56,7 @@ def test_secret_looking_headers_are_dropped_on_a_cross_host_redirect_but_plain_o
     assert second["Referer"] == "https://api.example.org/"
 
 
+@pytest.mark.process
 def test_a_request_has_a_total_deadline_not_only_an_idle_timeout(system: FakeSystem) -> None:
     """A server that keeps answering 503 cannot keep a request alive forever: the total deadline ends it."""
     system.urls[URL] = FakeHttp("", 503)
@@ -65,6 +68,7 @@ def test_a_request_has_a_total_deadline_not_only_an_idle_timeout(system: FakeSys
     assert 0 < system.request_log[0].total_timeout <= 0.4
 
 
+@pytest.mark.process
 def test_a_download_has_a_total_deadline(system: FakeSystem, tmp_path: Path) -> None:
     """The download deadline stops retries of a failing transfer and is passed to the transport as its total time."""
     system.urls[URL] = FakeHttp("", 503)
@@ -179,6 +183,7 @@ def drip_server() -> Iterator[str]:
     thread.join(timeout=5)
 
 
+@pytest.mark.process
 def test_the_real_transport_enforces_the_total_time_against_a_trickling_server(drip_server: str, tmp_path: Path) -> None:
     """Each byte arrives inside the idle timeout, yet request and download stop at the total limit."""
     system = WindowsSystem()

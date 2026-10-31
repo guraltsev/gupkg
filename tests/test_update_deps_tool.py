@@ -26,6 +26,8 @@ import pytest
 import update_deps
 from update_deps import LockedRequirement
 
+pytestmark = pytest.mark.release
+
 HASH_A = "a" * 64
 HASH_B = "b" * 64
 HASH_C = "c" * 64

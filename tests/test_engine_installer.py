@@ -36,6 +36,8 @@ from gupkg.services.http import Download
 from gupkg.system.port import ProcessResult
 from tests.engine_support import BASE_URL, World, pin_no_ambient_elevation, pkg_text  # noqa: F401
 
+pytestmark = pytest.mark.unit
+
 RUN = '[source.installer]\nrun = ["/VERYSILENT", "/DIR=$Stage", "/NOICONS"]\n'
 SETUP = "gimp-setup-1.0.0.exe"
 

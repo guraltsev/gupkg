@@ -25,6 +25,8 @@ from gupkg.tomlio import dumps
 from tests.catalog_support import build_registry, make_catalog, tracker_text, version_text
 from tests.scope_support import scope_of
 
+pytestmark = pytest.mark.unit
+
 SOURCE = "https://example.org/main.zip"
 
 
