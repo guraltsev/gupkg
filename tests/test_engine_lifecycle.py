@@ -111,7 +111,7 @@ def test_install_creates_the_whole_machine_state(world: World) -> None:
 
 
 def test_install_again_is_a_repair_that_downloads_nothing(world: World) -> None:
-    """A second install of an installed package re-applies nothing that is in place, fetches nothing and is reported as a repair."""
+    """A second install of an installed package writes every effect it owns again (the environment too), fetches nothing and is reported as a repair."""
     world.publish("tool", "1.0.0", tables=FULL)
     world.one("install", "tool")
     world.fake.fetch_log.clear()
@@ -120,7 +120,7 @@ def test_install_again_is_a_repair_that_downloads_nothing(world: World) -> None:
     result = world.one("install", "tool")
 
     assert result.ok and result.status == "repaired" and world.fake.fetch_log == []
-    assert world.fake.broadcasts == broadcasts and current_version(world.user / "tool") == "1.0.0"
+    assert world.fake.broadcasts == broadcasts + 1 and current_version(world.user / "tool") == "1.0.0"
     assert launchers(world) == ["tool.exe"]
 
 
@@ -504,7 +504,7 @@ def test_an_install_reports_its_phases_in_order_and_skipped_ones_as_skipped(worl
     first, second = ends[:8], ends[8:]
     assert [name for name, _ in first] == list(INSTALL_PHASES) and {status for _, status in first} == {"ok"}
     assert dict(second) == {"Resolve": "ok", "Fetch": "skipped", "Verify": "skipped", "Unpack": "skipped", "Prepare": "skipped",
-                            "Activate": "skipped", "Integrate": "skipped", "Finish": "ok"}
+                            "Activate": "skipped", "Integrate": "ok", "Finish": "ok"}
     kinds = [type(event).__name__ for event in collected.events]
     assert kinds[0] == "PackageStart" and kinds.count("PackageStart") == kinds.count("PackageEnd") == 2
 

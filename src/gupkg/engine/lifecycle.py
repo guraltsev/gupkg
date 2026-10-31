@@ -944,7 +944,7 @@ def _check(engine: Engine, target: _Target) -> PackageResult:
 
 
 def _repair(engine: Engine, target: _Target, diagnosis: Diagnosis) -> PackageResult:
-    """Run the install repair plan for ``check --fix``, applying again the effects that the diagnosis found missing."""
+    """Run the install repair plan for ``check --fix``: it writes every effect the package owns again, the drifted ones among them."""
     view = target.resolved.resolved.view
     context = target.resolved.scope
     state = view.local.version(view.installed.version)

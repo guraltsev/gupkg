@@ -93,6 +93,22 @@ def test_install_again_repairs_drift(world: World) -> None:
     assert result.ok and result.status == "repaired" and shim.is_file()
 
 
+@pytest.mark.parametrize("operation", [pytest.param("repair", id="repair"), pytest.param("install", id="install-again")])
+def test_a_repair_rewrites_every_owned_effect_even_one_that_is_not_drift(world: World, operation: str) -> None:
+    """A shim launcher from an older gupkg is not drift (check calls the package healthy), yet a repair replaces it with this gupkg's launcher.
+
+    `install` of the installed version is the manager's "install or repair", which promises that shims are re-applied.
+    """
+    shim = world.fake.scope_folders(Mode.USER).bin_dir / "tool.exe"
+    bundled = shim.read_bytes()
+    shim.write_bytes(b"an older launcher")
+    assert world.one("check", "tool").status == "healthy"
+
+    result = world.one(operation, "tool")
+
+    assert result.ok and result.status == "repaired" and shim.read_bytes() == bundled
+
+
 def test_a_dangling_current_and_a_missing_app_are_reported(world: World) -> None:
     """A missing active App is reported as fixable; a current that points nowhere is reported as the package's problem."""
     package = world.user / "tool"
