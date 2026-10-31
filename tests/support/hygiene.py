@@ -602,8 +602,9 @@ class UnitGuard:
     While the guard is active, ``subprocess.Popen`` (and so ``subprocess.run`` and the like), ``os.system``,
     ``os.spawn*``, ``socket.socket.connect`` and ``time.sleep`` for more than ``SLEEP_ALLOWED`` seconds fail the test with a
     message that names the tier and the policy. Limits: a ``sleep`` bound by ``from time import sleep`` before the guard is
-    installed, and ``asyncio.sleep``, are not seen (asyncio and Textual poll with it, so guarding it would fail the UI tests). The one ``connect`` that ``socket.socketpair`` makes inside the process stays allowed:
-    the asyncio event loop needs it and it reaches no other program.
+    installed, and ``asyncio.sleep``, are not seen (asyncio and Textual poll with it, so guarding it would fail the UI
+    tests). The one ``connect`` that ``socket.socketpair`` makes inside the process stays allowed: the asyncio event loop
+    needs it and it reaches no other program.
     """
 
     def __init__(self, test: str, only_note: bool) -> None:
@@ -628,6 +629,7 @@ class UnitGuard:
             raise failure
 
         return blocked
+
     @staticmethod
     def _inside_socketpair() -> bool:
         caller = sys._getframe(2)

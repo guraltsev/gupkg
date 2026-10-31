@@ -300,6 +300,21 @@ def _tiered(root: Path, name: str, body: str) -> Path:
             id="os-spawn",
         ),
         pytest.param(
+            "import os\n\n\ndef test_a_shell() -> None:\n    \"\"\"Runs a shell.\"\"\"\n    os.system('exit 0')\n",
+            "starts a process (os.system)",
+            id="os-system",
+        ),
+        pytest.param(
+            "import socket\n\n\ndef test_a_connection() -> None:\n    \"\"\"Connects.\"\"\"\n    socket.socket().connect(('127.0.0.1', 9))\n",
+            "opens a socket",
+            id="socket-connect",
+        ),
+        pytest.param(
+            "import socket\n\n\ndef test_a_connection() -> None:\n    \"\"\"Connects.\"\"\"\n    socket.socket().connect_ex(('127.0.0.1', 9))\n",
+            "opens a socket",
+            id="socket-connect-ex",
+        ),
+        pytest.param(
             "import time\n\n\ndef test_a_nap() -> None:\n    \"\"\"Sleeps.\"\"\"\n    time.sleep(0.5)\n",
             "sleeps",
             id="sleep",
@@ -318,6 +333,20 @@ def test_a_unit_test_that_starts_a_process_or_sleeps_fails_naming_the_tier(tmp_p
     assert "H9 tests/test_subject.py::test_a_" in text
     assert f"unit tier and {what}" in text
     assert "_docs/tests.md section 5" in text
+
+
+@pytest.mark.process
+def test_a_unit_test_may_make_a_socket_pair_inside_its_own_process(tmp_path: Path) -> None:
+    """``socket.socketpair`` (the self-pipe of the asyncio event loop) reaches no other program, so a unit test may call it."""
+    _tiered(tmp_path, "test_subject", UNIT_PREFIX + (
+        "import socket\n\n\ndef test_a_pair() -> None:\n    \"\"\"Makes a pair.\"\"\"\n"
+        "    a, b = socket.socketpair()\n    a.close()\n    b.close()\n"
+    ))
+
+    done = _pytest(tmp_path, "-m", "unit")
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "1 passed" in done.stdout
 
 
 @pytest.mark.process
