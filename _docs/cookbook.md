@@ -154,6 +154,25 @@ gupkg self repair                     :: gupkg's own launch metadata
 3. Edit it to add shortcuts, `PATH` entries or shims, run `gupkg pkg check <folder>`,
    then `gupkg install <name>`.
 
+## Adopt a program that an installer unpacked (games)
+
+1. Run the program's installer with `<root>\<name>\<version>\App` as the install folder (for example
+   `C:\Games\Teardown\v1.0\App`).
+2. Move the Start Menu shortcuts it made into `<root>\<name>\<version>\shortcuts\` (a folder inside the version directory, beside
+   `App`; sub folders are fine).
+3. In the version directory:
+
+```bat
+cd C:\Games\Teardown\v1.0
+gupkg pkg adopt                        :: writes pkg.toml from the links, then installs in place
+gupkg pkg adopt --no-install           :: only write pkg.toml; look at it, then `gupkg --root C:\Games install Teardown`
+gupkg pkg adopt --force                :: replace an old-format pkg.toml (kept as pkg.toml.old)
+```
+
+The root is the folder two levels above, so nothing is copied. Uninstallers, links that point outside `App` and links to
+missing files are skipped, and each skip is listed with its reason. The root must be writable by your account, because
+gupkg keeps its state in `<root>\.gupkg`.
+
 ## Pin a hash after a skipped install
 
 ```bat

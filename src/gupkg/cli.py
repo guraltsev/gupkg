@@ -179,7 +179,7 @@ def _configure_streams() -> None:
 def _needs_scope(args: argparse.Namespace) -> bool:
     """Return whether the command works on a root: ``pkg new|check|export|bundle`` and ``self status`` need none, so they build no scope."""
     if args.command == "pkg":
-        return args.pkg_command == "pin" or bool(getattr(args, "install", False))
+        return args.pkg_command == "pin" or bool(getattr(args, "install", False)) or (args.pkg_command == "adopt" and not args.no_install)
     return not (args.command == "self" and args.self_command == "status")
 
 
@@ -200,6 +200,10 @@ def _run(args: argparse.Namespace, tokens: list[str], machine: System, env: Mapp
             args.sandbox.mkdir(parents=True, exist_ok=True)
             machine = FakeSystem.sandbox(args.sandbox, machine)
         scope, layers = None, ()
+
+        # `pkg adopt` installs where the version directory stands: its root is two levels up unless --root says otherwise.
+        if args.command == "pkg" and args.pkg_command == "adopt" and args.root is None and not args.no_install:
+            args.root = Path(os.path.abspath(args.directory)).parent.parent
         if _needs_scope(args):
             scope, layers = build_scope_and_layers(
                 system=machine, env=env, location=where, root_option=args.root, settings_path=args.settings,
@@ -749,7 +753,7 @@ def _cmd_settings(run: _Run) -> int:
 
 
 def _cmd_pkg(run: _Run) -> int:
-    """Run the authoring commands ``pkg new|check|pin|bundle|export``."""
+    """Run the authoring commands ``pkg new|adopt|check|pin|bundle|export``."""
     args = run.args
     action = args.pkg_command
     command = f"pkg {action}"
@@ -762,6 +766,8 @@ def _cmd_pkg(run: _Run) -> int:
             return EXIT_OK
         if action == "check":
             return _pkg_check(run)
+        if action == "adopt":
+            return _pkg_adopt(run)
         if action == "pin":
             return _pkg_pin(run)
         if action == "export":
@@ -806,6 +812,35 @@ def _pkg_check(run: _Run) -> int:
     _human(run, "ok" if code == EXIT_OK else "failed")
     _document(run, results.envelope("pkg check", ok=code == EXIT_OK, exit_code=code, checks=rows, **extra))
     return code
+
+
+def _pkg_adopt(run: _Run) -> int:
+    """Write the ``pkg.toml`` of an unpacked program from its shortcuts and, unless ``--no-install``, install it where it stands."""
+    args = run.args
+    folder = Path(os.path.abspath(args.directory))
+
+    # Installing a path outside the run's root would copy the whole program into it: refuse before anything is written.
+    if not args.no_install and canonical_path(folder.parent.parent) != canonical_path(run.scope.root):
+        raise AuthoringError(
+            f"{folder} is not inside the root of this run ({run.scope.root}), so installing it would copy it there. "
+            f"Run with `--root {folder.parent.parent}`, or pass --no-install."
+        )
+    adopted = authoring.adopt_version(
+        folder, run.system.read_shortcut, run.env,
+        shortcuts=Path(args.shortcuts) if args.shortcuts else None, group=args.group, force=args.force,
+    )
+    lines = [f"wrote {adopted.path}"] + [f"  shortcut {name}" for name in adopted.shortcuts]
+    lines += [f"  skipped {name}: {reason}" for name, reason in adopted.skipped]
+    _human(run, "\n".join(lines))
+    if args.no_install:
+        _document(run, results.envelope(
+            "pkg adopt", ok=True, exit_code=EXIT_OK, file=str(adopted.path), shortcuts=list(adopted.shortcuts),
+            skipped=[{"file": name, "reason": reason} for name, reason in adopted.skipped],
+        ))
+        return EXIT_OK
+
+    # The install result is the run's result document (and its exit code); the adopt summary above went to the human output.
+    return _lifecycle(run, "install", [folder.parent.name], lambda target: Request("install", target, overwrite=args.overwrite))
 
 
 def _sandbox_install(run: _Run, version_dir: Path) -> dict[str, Any]:
@@ -1094,7 +1129,7 @@ maintenance:
   settings       show | path | init | set
 
 authoring:
-  pkg            new | check | pin | bundle | export
+  pkg            new | adopt | check | pin | bundle | export
 
 gupkg itself:
   self           status | repair | check-updates | update
@@ -1260,6 +1295,20 @@ def _build_parser() -> argparse.ArgumentParser:
     leaf.add_argument("path")
     leaf.add_argument("--install", action="store_true", help="also run a sandboxed install (files and downloads are real)")
     _options(leaf, skip=True)
+    leaf = actions.add_parser(
+        "adopt",
+        description="Write the pkg.toml of a program that is already unpacked in App from the Start Menu shortcuts its installer made "
+                    "(moved into a `shortcuts` folder beside App), then install it where it stands. Uninstallers and links outside App "
+                    "are skipped. The root is two folders above VERSION-DIR unless --root is given.",
+        epilog="example:\n  cd C:\\Games\\Teardown\\v1.0\n  gupkg pkg adopt",
+    )
+    leaf.add_argument("directory", nargs="?", default=".", metavar="VERSION-DIR", help="the version directory (default: the current folder)")
+    leaf.add_argument("--shortcuts", metavar="FOLDER", help="the folder that holds the .lnk files (default: VERSION-DIR\\shortcuts)")
+    leaf.add_argument("--group", default="Games", metavar="NAME", help="the Start Menu folder of the shortcuts (default: Games; empty: none)")
+    leaf.add_argument("--force", action="store_true", help="replace an existing pkg.toml (kept as pkg.toml.old)")
+    leaf.add_argument("--no-install", action="store_true", help="write pkg.toml only")
+    _overwrite_option(leaf)
+    _options(leaf, mutating=True)
     leaf = actions.add_parser("pin", description="Copy the hash of an install without a checksum into the version's pkg.toml.", epilog="example:\n  gupkg pkg pin mytool@1.0")
     leaf.add_argument("target", metavar="TARGET")
     _options(leaf, mutating=True)

@@ -1,7 +1,8 @@
-"""Create, export and bundle package definitions (``gupkg pkg new``, ``pkg export`` and ``pkg bundle``).
+"""Create, adopt, export and bundle package definitions (``gupkg pkg new``, ``pkg adopt``, ``pkg export`` and ``pkg bundle``).
 
 These are the maintainer-side commands of the ``pkg`` group. ``new`` writes a starter version directory or tracker that
-passes ``gupkg pkg check``; ``export`` writes a distribution ZIP of one version (``<name>\\<version>\\...`` plus the package's
+passes ``gupkg pkg check``; ``adopt`` writes the ``pkg.toml`` of a program that is already unpacked in ``App`` from the Start Menu
+shortcuts its installer made (moved into a ``shortcuts`` folder beside ``App``); ``export`` writes a distribution ZIP of one version (``<name>\\<version>\\...`` plus the package's
 ``_check_updates`` when it has one) and reports its SHA-256; ``bundle`` copies the verified bundle of the running gupkg into a
 version directory (together with its launchers) so the program can be installed without gupkg (design section 21). Nothing is
 overwritten, links are never followed, and every command checks the directory it acts on first. The launchers (``install.cmd`` and
@@ -9,13 +10,16 @@ overwritten, links are never followed, and every command checks the directory it
 
 Usage and API
 -------------
-``new_package(parent, name, version=None, track=None)`` returns the files it wrote. ``export_distribution(version_dir, output)``
+``new_package(parent, name, version=None, track=None)`` returns the files it wrote. ``adopt_version(version_dir, read_shortcut,
+env)`` returns an ``AdoptResult`` (the file written, the shortcuts kept and the ones skipped with a reason).
+``export_distribution(version_dir, output)``
 returns an ``ExportResult`` (path, SHA-256 and entry count). ``bundle_gupkg(version_dir, source)`` copies the bundle tree and
 returns the number of files copied and writes the version's launchers. ``AuthoringError`` carries the message of a refusal.
 
 Implementation Approach
 -----------------------
-Every output goes to a new file or a new folder that must not exist yet. The ZIP is written in sorted order with a fixed
+Every output goes to a new file or a new folder that must not exist yet (``adopt`` replaces a ``pkg.toml`` only when asked, keeping the
+old one as ``pkg.toml.old``, and puts it back if the new one fails ``pkg check``). The ZIP is written in sorted order with a fixed
 timestamp so the same version directory always gives the same bytes, and the digest is computed from the written file. The
 bundle copy refuses a source or a destination that contains a link or a junction, and leaves out bytecode and per-install state.
 """
@@ -27,6 +31,7 @@ import os
 import re
 import shutil
 import zipfile
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -34,6 +39,8 @@ from .launchers import TRACKER_LAUNCHER, VERSION_LAUNCHERS, launcher_text, write
 from .model.version import MANIFEST_NAME, TRACKER_DIR_NAME, is_version_name
 from .pkgcheck import check_directory
 from .services.safepath import is_reparse_point
+from .system.port import ShortcutSpec
+from .tomlio import dumps_tables
 
 # The time stored for every ZIP entry, so that an export is reproducible byte for byte.
 _ZIP_TIME = (2020, 1, 1, 0, 0, 0)
@@ -158,6 +165,189 @@ def _version_starter(name: str, version: str) -> str:
         f'# name = "{name}"\n'
         f'# target = "$App\\\\{name}.exe"\n'
     )
+
+
+# ---------------------------------------------------------------------------
+# pkg adopt
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class AdoptResult:
+    """The ``pkg.toml`` that ``adopt_version`` wrote, the shortcuts it kept and the shortcut files it skipped (file, reason)."""
+
+    path: Path
+    shortcuts: tuple[str, ...]
+    skipped: tuple[tuple[str, str], ...]
+
+
+def adopt_version(
+    version_dir: Path,
+    read_shortcut: Callable[[Path], ShortcutSpec],
+    env: Mapping[str, str],
+    *,
+    shortcuts: Path | None = None,
+    group: str = "Games",
+    force: bool = False,
+) -> AdoptResult:
+    """Write the ``pkg.toml`` of a program that is already unpacked in ``<version_dir>\\App`` from the shortcuts its installer made.
+
+    Every ``.lnk`` below the shortcuts folder that starts a program inside ``App`` becomes a ``[[shortcut]]`` of a shipped,
+    format 2 package: its target, arguments, working directory (the program's folder when the link had none or one outside
+    ``App``), icon (dropped when outside ``App``) and description are kept, and every path inside ``App`` is written as ``$App``.
+    Uninstallers, links to files that are not programs, links outside ``App`` and links to missing files are skipped and
+    reported. The package name is the name of the folder above *version_dir* and the version is the name of *version_dir*.
+
+    Parameters
+    ----------
+    version_dir : Path
+        The version directory ``<root>\\<name>\\<version>``; it must hold ``App``.
+    read_shortcut : callable
+        Returns the ``ShortcutSpec`` of a ``.lnk`` path (the machine's ``read_shortcut``).
+    env : mapping
+        The environment used to expand ``%VAR%`` in the targets of the links.
+    shortcuts : Path, optional
+        The folder that holds the links (default ``<version_dir>\\shortcuts``). It is only read.
+    group : str
+        The Start Menu folder of the new shortcuts (default ``Games``); empty puts them at the top.
+    force : bool
+        Replace an existing ``pkg.toml`` (kept as ``pkg.toml.old``) instead of refusing.
+
+    Returns
+    -------
+    AdoptResult
+        The file written, the shortcut names kept and the skipped links with the reason for each.
+
+    Raises
+    ------
+    AuthoringError
+        If the folders are missing or not valid names, ``pkg.toml`` exists without *force*, no link is usable, two links share a
+        name, or the file written fails ``pkg check`` (the previous file is then put back).
+    """
+    # Validate the places first: nothing is written unless the version directory has the shape of a package.
+    version_dir = Path(os.path.abspath(version_dir))
+    app = version_dir / "App"
+    package = version_dir.parent.name
+    folder = Path(shortcuts) if shortcuts is not None else version_dir / "shortcuts"
+    if not is_version_name(version_dir.name) or not is_version_name(package):
+        raise AuthoringError(f"{version_dir} is not <root>\\<name>\\<version>: '{package}' and '{version_dir.name}' must be valid folder names")
+    if not app.is_dir() or is_reparse_point(app):
+        raise AuthoringError(f"{app} is not a folder: install the program into the App folder of the version first")
+    if not folder.is_dir():
+        raise AuthoringError(f"{folder} is not a folder: move the program's Start Menu shortcuts there first")
+    manifest = version_dir / MANIFEST_NAME
+    if os.path.lexists(manifest) and not force:
+        raise AuthoringError(f"{manifest} exists; pass --force to replace it (the old one is kept as {MANIFEST_NAME}.old)")
+
+    # Turn each link into a shortcut row or a reason for skipping it.
+    links = sorted(item for item in folder.rglob("*") if item.suffix.lower() == ".lnk" and item.is_file())
+    rows: list[dict[str, str]] = []
+    skipped: list[tuple[str, str]] = []
+    for link in links:
+        absorbed = _absorb_shortcut(link, read_shortcut, app, env, group)
+        if isinstance(absorbed, str):
+            skipped.append((str(link.relative_to(folder)), absorbed))
+        else:
+            rows.append(absorbed)
+    if not rows:
+        reasons = "; ".join(f"{name}: {reason}" for name, reason in skipped) or "no .lnk files"
+        raise AuthoringError(f"no usable shortcut in {folder} ({reasons})")
+    names = [row["name"] for row in rows]
+    for name in names:
+        if names.count(name) > 1:
+            raise AuthoringError(f"two shortcuts are both called '{name}': rename or remove one in {folder}")
+
+    # Games are tens of gigabytes: the App fingerprint (a hash of every file) is left out of the receipt.
+    data = {"format": 2, "description": package, "record_manifest": False, "source": {"shipped": True}, "shortcut": rows}
+    text = f"# Written by `gupkg pkg adopt` from the shortcuts in {folder.name}\\.\n" + dumps_tables(data)
+
+    _write_checked_manifest(version_dir, text)
+    return AdoptResult(manifest, tuple(names), tuple(skipped))
+
+
+def _absorb_shortcut(link: Path, read_shortcut: Callable[[Path], ShortcutSpec], app: Path, env: Mapping[str, str], group: str) -> dict[str, str] | str:
+    """Decide what one installer link becomes: its ``[[shortcut]]`` row, or the reason (a string) it is left out.
+
+    A link is kept only when it starts a program that exists inside *app*; unreadable links, links outside *app*, links to
+    files that are not programs and uninstallers are reasons.
+    """
+    # A link that cannot be read is reported, not fatal: the other links of the folder may still be good.
+    try:
+        spec = read_shortcut(link)
+    except (OSError, ValueError) as error:
+        return f"cannot be read: {error}"
+
+    # Only a program that lives in App can be started through the package.
+    target = _inside_app(spec.target_path, app, env)
+    if target is None:
+        return f"its target is outside App ({spec.target_path})"
+    program = os.path.basename(target).lower()
+    if not program.endswith((".exe", ".bat", ".cmd")):
+        return f"its target is not a program ({program})"
+    if re.search(r"uninstall|(?<![a-z])unins\d*\.exe", f"{link.stem} {program}".lower()):
+        return "it is an uninstaller"
+    if not (app / target).is_file():
+        return f"its target does not exist in App ({target})"
+    return _shortcut_row(link.stem, group, target, spec, app, env)
+
+
+def _write_checked_manifest(version_dir: Path, text: str) -> None:
+    """Write *text* as the version's ``pkg.toml``; the old file is kept as ``pkg.toml.old`` and put back if the new one fails ``pkg check``."""
+    manifest = version_dir / MANIFEST_NAME
+    old = manifest.with_name(MANIFEST_NAME + ".old")
+
+    # Move the old file aside rather than overwrite it, so every failure path below can restore it.
+    replaced = os.path.lexists(manifest)
+    if replaced:
+        os.replace(manifest, old)
+    manifest.write_text(text, encoding="utf-8", newline="\n")
+
+    # A file that does not validate is never left behind: remove it and bring the old one back.
+    report = check_directory(version_dir)
+    if not report.ok:
+        manifest.unlink()
+        if replaced:
+            os.replace(old, manifest)
+        raise AuthoringError(f"the {MANIFEST_NAME} made from the shortcuts is not valid: " + "; ".join(report.errors))
+
+
+def _inside_app(text: str, app: Path, env: Mapping[str, str]) -> str | None:
+    """Return the path *text* relative to *app* (``%VAR%`` expanded from *env*; ``.`` for *app* itself), or ``None`` when it is not inside *app*."""
+    lowered = {key.lower(): value for key, value in env.items()}
+    expanded = re.sub(r"%([^%]+)%", lambda found: lowered.get(found.group(1).lower(), found.group(0)), text)
+    if not os.path.isabs(expanded):
+        return None
+
+    # Compare resolved spellings: an installer may store the short (8.3) or the long name of the same folder.
+    try:
+        relative = os.path.relpath(os.path.realpath(expanded), os.path.realpath(app))
+    except ValueError:  # another drive
+        return None
+    if relative == ".." or relative.startswith(".." + os.sep):
+        return None
+    return relative
+
+
+def _shortcut_row(stem: str, group: str, target: str, spec: ShortcutSpec, app: Path, env: Mapping[str, str]) -> dict[str, str]:
+    """Return the ``[[shortcut]]`` row for one link: *target* is already relative to *app*; the other fields come from *spec*."""
+    row = {"name": f"{group}\\{stem}" if group else stem, "target": "$App\\" + target}
+    if spec.arguments:
+        row["arguments"] = spec.arguments
+
+    # A program usually has to start in its own folder: use the link's folder when it is inside App, else the program's.
+    folder = _inside_app(spec.working_directory, app, env) if spec.working_directory else None
+    if folder is None:
+        folder = os.path.dirname(target)
+    row["working_dir"] = "$App" if folder in ("", ".") else "$App\\" + folder
+
+    # An icon is kept only when it is a file of App; the index after the last comma is kept with it.
+    icon, _, index = spec.icon_location.rpartition(",") if "," in spec.icon_location else (spec.icon_location, "", "0")
+    inside = _inside_app(icon, app, env) if icon else None
+    if inside is not None:
+        row["icon_location"] = f"$App\\{inside},{index}"
+    if spec.description:
+        row["description"] = spec.description
+    return row
 
 
 # ---------------------------------------------------------------------------
