@@ -122,6 +122,3 @@ TODO            text eol=lf
 
 # Vendored third-party runtime, kept byte-identical to its wheels.
 src/gupkg/python/** -whitespace
-
-# The registry snapshot is compared byte for byte with the registry (fingerprints hash exact bytes).
-tests/fixtures/registry_100/** -text -whitespace
