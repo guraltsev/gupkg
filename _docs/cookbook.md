@@ -158,8 +158,9 @@ gupkg self repair                     :: gupkg's own launch metadata
 
 1. Run the program's installer with `<root>\<name>\<version>\App` as the install folder (for example
    `C:\Games\Teardown\v1.0\App`).
-2. Move the Start Menu shortcuts it made into `<root>\<name>\<version>\shortcuts\` (a folder inside the version directory, beside
-   `App`; sub folders are fine).
+2. Optionally, move the Start Menu shortcuts it made into `<root>\<name>\<version>\shortcuts\` (a folder inside the version
+   directory, beside `App`; sub folders are fine). Without that folder, adopt searches your and the machine's Start Menu for
+   links into this `App` and ignores the rest; when it finds none, `pkg.toml` is written without shortcuts for you to add.
 3. In the version directory:
 
 ```bat
@@ -174,7 +175,10 @@ its own once, `gupkg --root C:\Games settings set integration.start_menu "%APPDA
 folder before each name is `adopt.shortcut_prefix` (empty by default) or `--prefix` for one call.
 
 The root is the folder two levels above, so nothing is copied. Uninstallers, links that point outside `App` and links to
-missing files are skipped, and each skip is listed with its reason. The root must be writable by your account, because
+missing files are skipped, and each skip is listed with its reason. A link into `current\App` or into the `App` of another
+version of the same package is read as a link into this `App`, and the output says so for each such shortcut. Links that start
+the same program with the same arguments make one shortcut (the first found); the others are listed as skipped. The root must
+be writable by your account, because
 gupkg keeps its state in `<root>\.gupkg`.
 
 ## Pin a hash after a skipped install

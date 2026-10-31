@@ -1,7 +1,8 @@
 """Cover ``gupkg pkg adopt``: a program already unpacked in ``App`` becomes a package from the shortcuts its installer made.
 
-Behaviour covered: the links in the ``shortcuts`` folder become the Start Menu shortcuts of the installed package (paths
-inside ``App`` follow the package, uninstallers and links outside ``App`` are skipped and reported); the install happens where
+Behaviour covered: the links in the ``shortcuts`` folder, or without it the Start Menu links into ``App``, become the Start
+Menu shortcuts of the installed package (paths inside ``App``, ``current\\App`` or another version's ``App`` follow the
+package, uninstallers and links outside ``App`` are skipped and reported); the install happens where
 the version directory stands, with the root taken from the folder's position; an existing ``pkg.toml`` is never replaced without
 ``--force`` (and then kept as ``pkg.toml.old``); a run whose root is not the folder's root, or with no usable link, changes
 nothing; ``--no-install`` writes only the file and the launchers (``install.cmd`` and ``manage.cmd``, those the folder lacks).
@@ -13,12 +14,13 @@ Out of scope: reading real ``.lnk`` files (``test_shell_link.py``) and the insta
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
 
 from gupkg.launchers import launcher_text
-from gupkg.system.port import ShortcutSpec
+from gupkg.system.port import Mode, ShortcutSpec
 from gupkg.tomlio import read_toml
 from tests.cli_support import CliWorld
 from tests.mode_support import pin_no_ambient_elevation  # noqa: F401
@@ -122,6 +124,90 @@ def test_adopt_changes_nothing_when_the_root_is_elsewhere_or_no_link_is_usable(w
 
     assert unusable.code == 2 and "no usable shortcut" in unusable.err
     assert not (only_uninstaller / "pkg.toml").exists()
+
+
+def test_adopt_without_a_shortcuts_folder_takes_the_start_menu_links_into_app(world: CliWorld, tmp_path: Path) -> None:
+    """Without a `shortcuts` folder the user's and the machine's Start Menu are searched for links into this version's App.
+
+    Links to other programs are ignored without a report, and an uninstaller into App is still reported as skipped. Links
+    that start the same program with the same arguments make one shortcut, whatever their names: the installer's links in
+    both menus and gupkg's own link in `Start Menu\\opt` (into `current\\App`), the first found winning; the others are
+    reported as skipped. When no link points into App the pkg.toml is written without shortcuts, and the output says so.
+    """
+    folder = make_game(world, tmp_path / "Games")
+    shutil.rmtree(folder / "shortcuts")
+    app = folder / "App"
+    menus = [world.fake.scope_folders(mode).shortcut_root.parent / "Programs" for mode in (Mode.USER, Mode.SYSTEM)]
+    opt = world.fake.scope_folders(Mode.USER).shortcut_root
+    links = {
+        menus[0] / "Teardown" / "Game.lnk": ShortcutSpec(str(app / "game.exe"), description="The game"),
+        menus[1] / "Teardown" / "Game.lnk": ShortcutSpec(str(app / "game.exe"), description="The game"),
+        menus[1] / "Teardown" / "Uninstall.lnk": ShortcutSpec(str(app / "unins000.exe")),
+        menus[1] / "Other.lnk": ShortcutSpec("C:\\Windows\\notepad.exe"),
+        opt / "Editor.lnk": ShortcutSpec(str(folder.parent / "current" / "App" / "bin" / "editor.exe")),
+        opt / "Teardown.lnk": ShortcutSpec(str(folder.parent / "current" / "App" / "game.exe")),
+        menus[1] / "Teardown" / "Editor (bin).lnk": ShortcutSpec(str(app / "bin" / "editor.exe"), description="Edit"),
+    }
+    for link, spec in links.items():
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.write_bytes(b"")
+        world.fake.write_shortcut(link, spec)
+
+    found = world.cli("pkg", "adopt", str(folder), "--no-install", "--json")
+
+    assert found.code == 0, found.err
+    assert sorted(found.document()["shortcuts"]) == ["Editor", "Teardown"]
+    assert found.document()["read_from"] == {"Editor": str(folder.parent / "current" / "App"), "Teardown": str(folder.parent / "current" / "App")}
+    assert {(row["file"], row["reason"]) for row in found.document()["skipped"]} == {
+        (str(menus[0] / "Teardown" / "Game.lnk"), "it starts the same program as shortcut Teardown"),
+        (str(menus[1] / "Teardown" / "Editor (bin).lnk"), "it starts the same program as shortcut Editor"),
+        (str(menus[1] / "Teardown" / "Game.lnk"), "it starts the same program as shortcut Teardown"),
+        (str(menus[1] / "Teardown" / "Uninstall.lnk"), "it is an uninstaller"),
+    }
+    rows = {row["name"]: row for row in read_toml(folder / "pkg.toml")["shortcut"]}
+    assert rows["Teardown"] == {"name": "Teardown", "target": "$App\\game.exe", "working_dir": "$App"}
+    assert rows["Editor"]["target"] == "$App\\bin\\editor.exe" and set(rows) == {"Editor", "Teardown"}
+    assert "searched the Start Menu" in found.err and "Other.lnk" not in found.err
+
+    for link in links:
+        link.unlink()
+    empty = world.cli("pkg", "adopt", str(folder), "--no-install", "--force")
+
+    assert empty.code == 0, empty.err
+    assert "shortcut" not in read_toml(folder / "pkg.toml")
+    assert "no shortcut found" in empty.out
+
+
+def test_adopt_takes_links_into_current_or_another_version_as_links_into_this_versions_app(world: CliWorld, tmp_path: Path) -> None:
+    """A link into `current\\App` or into the App of another version of the same package becomes a shortcut into this App.
+
+    The target, the working directory and the icon all follow, and the output names each link that was read this way.
+    A link into another package's App stays outside App.
+    """
+    folder = make_game(world, tmp_path / "Games")
+    package = folder.parent
+    (package / "v0.9" / "App").mkdir(parents=True)
+    links = {
+        "Game.lnk": ShortcutSpec(str(package / "current" / "App" / "game.exe"), icon_location=f"{package / 'current' / 'App' / 'game.exe'},0"),
+        "Docs\\Editor.lnk": ShortcutSpec(str(package / "v0.9" / "App" / "bin" / "editor.exe"), working_directory=str(package / "v0.9" / "App" / "bin")),
+        "Docs\\Website.lnk": ShortcutSpec(str(tmp_path / "Games" / "Other" / "v1" / "App" / "game.exe")),
+        "Old\\Teardown.lnk": ShortcutSpec(str(package / "v0.9" / "App" / "game.exe")),
+    }
+    for relative, spec in links.items():
+        (folder / "shortcuts" / relative).parent.mkdir(parents=True, exist_ok=True)
+        (folder / "shortcuts" / relative).write_bytes(b"")
+        world.fake.write_shortcut(folder / "shortcuts" / relative, spec)
+
+    result = world.cli("pkg", "adopt", str(folder), "--no-install")
+
+    assert result.code == 0, result.err
+    rows = {row["name"]: row for row in read_toml(folder / "pkg.toml")["shortcut"]}
+    assert rows["Game"]["target"] == "$App\\game.exe" and rows["Game"]["icon_location"] == "$App\\game.exe,0"
+    assert rows["Editor"]["target"] == "$App\\bin\\editor.exe" and rows["Editor"]["working_dir"] == "$App\\bin"
+    assert f"shortcut Game (its link points into {package / 'current' / 'App'}: read as this version's App)" in result.out
+    assert f"shortcut Editor (its link points into {package / 'v0.9' / 'App'}: read as this version's App)" in result.out
+    assert "skipped Docs\\Website.lnk: its target is outside App" in result.out
+    assert "skipped Old\\Teardown.lnk: it starts the same program as shortcut Game" in result.out and "Teardown" not in rows
 
 
 def test_adopt_recognises_app_when_the_link_spells_the_folder_differently(world: CliWorld, tmp_path: Path) -> None:

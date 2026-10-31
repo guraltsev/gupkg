@@ -56,7 +56,7 @@ from .report.logfile import list_run_logs, running_gupkg_logs_base, validate_log
 from .report.session import RunSession
 from .selfmgmt.location import RunningGupkg, locate_running_gupkg
 from .selfmgmt.status import self_status
-from .scope import build_scope, build_scope_and_layers
+from .scope import build_scope, build_scope_and_layers, default_folders
 from .settingsload import LayerReport, settings_file
 from .system.fake import FakeSystem
 from .system.port import Mode, System
@@ -865,11 +865,19 @@ def _pkg_adopt(run: _Run) -> int:
 
     # The prefix of the shortcut names is --prefix when given (empty: none), else the root's `adopt.shortcut_prefix`.
     prefix = args.prefix if args.prefix is not None else run.scope.settings["adopt.shortcut_prefix"]
+    # Without a shortcuts folder the links are looked for in the user's and the machine's Start Menu (the folder above `opt`).
+    menus = [found.start_menu.parent for found in (default_folders(run.system, mode) for mode in (Mode.USER, Mode.SYSTEM)) if found]
     adopted = authoring.adopt_version(
         folder, run.system.read_shortcut, run.env,
-        shortcuts=Path(args.shortcuts) if args.shortcuts else None, prefix=prefix, force=args.force,
+        shortcuts=Path(args.shortcuts) if args.shortcuts else None, start_menus=menus, prefix=prefix, force=args.force,
     )
-    lines = [f"wrote {adopted.path}"] + [f"  shortcut {name}" for name in adopted.shortcuts]
+    lines = [f"searched the Start Menu: {', '.join(map(str, adopted.searched))}"] if adopted.searched else []
+    lines += [f"wrote {adopted.path}"] + [
+        f"  shortcut {name} (its link points into {adopted.read_from[name]}: read as this version's App)"
+        if name in adopted.read_from else f"  shortcut {name}" for name in adopted.shortcuts
+    ]
+    if not adopted.shortcuts:
+        lines.append("  no shortcut found: add [[shortcut]] rows to pkg.toml, then run `gupkg install` again")
     lines += [f"  launcher {name}" for name in adopted.launchers]
     lines += [f"  skipped {name}: {reason}" for name, reason in adopted.skipped]
     _human(run, "\n".join(lines))
@@ -877,6 +885,7 @@ def _pkg_adopt(run: _Run) -> int:
         _document(run, results.envelope(
             "pkg adopt", ok=True, exit_code=EXIT_OK, file=str(adopted.path), shortcuts=list(adopted.shortcuts),
             launchers=list(adopted.launchers), skipped=[{"file": name, "reason": reason} for name, reason in adopted.skipped],
+            searched=[str(menu) for menu in adopted.searched], read_from={name: str(path) for name, path in adopted.read_from.items()},
         ))
         return EXIT_OK
 
@@ -1340,8 +1349,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "adopt",
         help="write the pkg.toml of a program already unpacked in App, then install it",
         description="Write the pkg.toml of a program that is already unpacked in App from the Start Menu shortcuts its installer made "
-                    "(moved into a `shortcuts` folder beside App), then install it where it stands. Uninstallers and links outside App "
-                    "are skipped. The root is two folders above VERSION-DIR unless --root is given.",
+                    "(moved into a `shortcuts` folder beside App; without that folder, the Start Menu links into App), then install it "
+                    "where it stands. Links into `current` or another version of the package are read as links into this App. "
+                    "Uninstallers and links outside App are skipped. The root is two folders above VERSION-DIR unless --root is given.",
         epilog="example:\n  cd C:\\Games\\Teardown\\v1.0\n  gupkg pkg adopt",
     )
     leaf.add_argument("directory", nargs="?", default=".", metavar="VERSION-DIR", help="the version directory (default: the current folder)")

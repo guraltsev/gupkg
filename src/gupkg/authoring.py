@@ -2,7 +2,7 @@
 
 These are the maintainer-side commands of the ``pkg`` group. ``new`` writes a starter version directory or tracker that
 passes ``gupkg pkg check``; ``adopt`` writes the ``pkg.toml`` of a program that is already unpacked in ``App`` from the Start Menu
-shortcuts its installer made (moved into a ``shortcuts`` folder beside ``App``); ``export`` writes a distribution ZIP of one version (``<name>\\<version>\\...`` plus the package's
+shortcuts its installer made (moved into a ``shortcuts`` folder beside ``App``, else found in the Start Menu); ``export`` writes a distribution ZIP of one version (``<name>\\<version>\\...`` plus the package's
 ``_check_updates`` when it has one) and reports its SHA-256; ``bundle`` copies the verified bundle of the running gupkg into a
 version directory (together with its launchers) so the program can be installed without gupkg (design section 21). Nothing is
 overwritten, links are never followed, and every command checks the directory it acts on first. The launchers (``install.cmd`` and
@@ -32,8 +32,8 @@ import os
 import re
 import shutil
 import zipfile
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .launchers import TRACKER_LAUNCHER, VERSION_LAUNCHERS, launcher_text, write_launchers
@@ -181,6 +181,8 @@ class AdoptResult:
     shortcuts: tuple[str, ...]
     skipped: tuple[tuple[str, str], ...]
     launchers: tuple[str, ...] = ()
+    searched: tuple[Path, ...] = ()
+    read_from: Mapping[str, Path] = field(default_factory=dict)
 
 
 def adopt_version(
@@ -189,6 +191,7 @@ def adopt_version(
     env: Mapping[str, str],
     *,
     shortcuts: Path | None = None,
+    start_menus: Sequence[Path] = (),
     prefix: str = "",
     force: bool = False,
 ) -> AdoptResult:
@@ -200,6 +203,14 @@ def adopt_version(
     Uninstallers, links to files that are not programs, links outside ``App`` and links to missing files are skipped and
     reported. The package name is the name of the folder above *version_dir* and the version is the name of *version_dir*.
 
+    When *shortcuts* is not given and ``<version_dir>\\shortcuts`` does not exist, the links below each of *start_menus* are
+    used instead: only those into ``App`` count (the others belong to other programs and are not reported), and when none is
+    found the file is written without shortcuts. Links that start the same program with the same arguments make one
+    shortcut, the first found; the others are skipped with a reason.
+
+    A link into ``current\\App`` or into the App of another version of the package is read as a link into this ``App``,
+    and the result names the folder it was read from.
+
     Parameters
     ----------
     version_dir : Path
@@ -210,6 +221,8 @@ def adopt_version(
         The environment used to expand ``%VAR%`` in the targets of the links.
     shortcuts : Path, optional
         The folder that holds the links (default ``<version_dir>\\shortcuts``). It is only read.
+    start_menus : sequence of Path
+        The Start Menu folders searched when there is no shortcuts folder (the user's and the machine's). They are only read.
     prefix : str
         A folder put before each shortcut name, relative to the root's Start Menu folder (default empty: none).
     force : bool
@@ -218,13 +231,14 @@ def adopt_version(
     Returns
     -------
     AdoptResult
-        The file written, the shortcut names kept and the skipped links with the reason for each.
+        The file written, the shortcut names kept, the skipped links with the reason for each, and the Start Menu folders
+        searched (empty when a shortcuts folder was read).
 
     Raises
     ------
     AuthoringError
-        If the folders are missing or not valid names, ``pkg.toml`` exists without *force*, no link is usable, two links share a
-        name, or the file written fails ``pkg check`` (the previous file is then put back).
+        If the folders are missing or not valid names, ``pkg.toml`` exists without *force*, no link of a shortcuts folder is
+        usable, two different links share a name, or the file written fails ``pkg check`` (the previous file is then put back).
     """
     # Validate the places first: nothing is written unless the version directory has the shape of a package.
     version_dir = Path(os.path.abspath(version_dir))
@@ -235,23 +249,40 @@ def adopt_version(
         raise AuthoringError(f"{version_dir} is not <root>\\<name>\\<version>: '{package}' and '{version_dir.name}' must be valid folder names")
     if not app.is_dir() or is_reparse_point(app):
         raise AuthoringError(f"{app} is not a folder: install the program into the App folder of the version first")
-    if not folder.is_dir():
+    # A missing default folder means "find them": the Start Menu links into App. A folder that was named must exist.
+    searched = tuple(Path(menu) for menu in start_menus if shortcuts is None and not folder.is_dir())
+    if not searched and not folder.is_dir():
         raise AuthoringError(f"{folder} is not a folder: move the program's Start Menu shortcuts there first")
     manifest = version_dir / MANIFEST_NAME
     if os.path.lexists(manifest) and not force:
         raise AuthoringError(f"{manifest} exists; pass --force to replace it (the old one is kept as {MANIFEST_NAME}.old)")
 
-    # Turn each link into a shortcut row or a reason for skipping it.
-    links = sorted(item for item in folder.rglob("*") if item.suffix.lower() == ".lnk" and item.is_file())
+    # Turn each link into a shortcut row or a reason for skipping it. In the Start Menu most links start other programs:
+    # those, and links that cannot be read, are none of this package's business and are not reported.
+    bases = searched or (folder,)
+    links = [(base, item) for base in bases if base.is_dir() and not is_reparse_point(base)
+             for item in sorted(base.rglob("*")) if item.suffix.lower() == ".lnk" and item.is_file()]
     rows: list[dict[str, str]] = []
     skipped: list[tuple[str, str]] = []
-    for link in links:
+    read_from: dict[str, Path] = {}
+    started: dict[tuple[str, str], str] = {}
+    for base, link in links:
         absorbed = _absorb_shortcut(link, read_shortcut, app, env, prefix)
+        # Links that start the same program with the same arguments are one shortcut (an installer's link in both menus,
+        # gupkg's own link into `current`): the first one found is kept.
+        if not isinstance(absorbed, str):
+            program = (absorbed[0]["target"].lower(), absorbed[0].get("arguments", ""))
+            if program in started:
+                absorbed = f"it starts the same program as shortcut {started[program]}"
         if isinstance(absorbed, str):
-            skipped.append((str(link.relative_to(folder)), absorbed))
-        else:
-            rows.append(absorbed)
-    if not rows:
+            if not searched or not absorbed.startswith(("cannot be read", "its target is outside App")):
+                skipped.append((str(link) if searched else str(link.relative_to(base)), absorbed))
+            continue
+        started[program] = absorbed[0]["name"]
+        rows.append(absorbed[0])
+        if absorbed[1] is not None:
+            read_from[absorbed[0]["name"]] = absorbed[1]
+    if not rows and not searched:
         reasons = "; ".join(f"{name}: {reason}" for name, reason in skipped) or "no .lnk files"
         raise AuthoringError(f"no usable shortcut in {folder} ({reasons})")
     names = [row["name"] for row in rows]
@@ -260,13 +291,16 @@ def adopt_version(
             raise AuthoringError(f"two shortcuts are both called '{name}': rename or remove one in {folder}")
 
     # Games are tens of gigabytes: the App fingerprint (a hash of every file) is left out of the receipt.
-    data = {"format": 2, "description": package, "record_manifest": False, "source": {"shipped": True}, "shortcut": rows}
-    text = f"# Written by `gupkg pkg adopt` from the shortcuts in {folder.name}\\.\n" + dumps_tables(data)
+    data: dict[str, object] = {"format": 2, "description": package, "record_manifest": False, "source": {"shipped": True}}
+    if rows:
+        data["shortcut"] = rows
+    origin = "the Start Menu links into App" if searched else f"the shortcuts in {folder.name}\\"
+    text = f"# Written by `gupkg pkg adopt` from {origin}.\n" + dumps_tables(data)
 
     _write_checked_manifest(version_dir, text)
 
     # The adopted program can be installed and managed from a double-click like any other version: add the launchers it lacks.
-    return AdoptResult(manifest, tuple(names), tuple(skipped), tuple(add_launchers(version_dir, replace=False)))
+    return AdoptResult(manifest, tuple(names), tuple(skipped), tuple(add_launchers(version_dir, replace=False)), searched, read_from)
 
 
 def add_launchers(version_dir: Path, *, replace: bool = True) -> list[str]:
@@ -305,11 +339,14 @@ def add_launchers(version_dir: Path, *, replace: bool = True) -> list[str]:
     return names
 
 
-def _absorb_shortcut(link: Path, read_shortcut: Callable[[Path], ShortcutSpec], app: Path, env: Mapping[str, str], prefix: str) -> dict[str, str] | str:
+def _absorb_shortcut(
+    link: Path, read_shortcut: Callable[[Path], ShortcutSpec], app: Path, env: Mapping[str, str], prefix: str,
+) -> tuple[dict[str, str], Path | None] | str:
     """Decide what one installer link becomes: its ``[[shortcut]]`` row, or the reason (a string) it is left out.
 
     A link is kept only when it starts a program that exists inside *app*; unreadable links, links outside *app*, links to
-    files that are not programs and uninstallers are reasons.
+    files that are not programs and uninstallers are reasons. A kept link comes with the other App folder of the package
+    (``current`` or another version) its target was read from, or ``None``.
     """
     # A link that cannot be read is reported, not fatal: the other links of the folder may still be good.
     try:
@@ -318,9 +355,10 @@ def _absorb_shortcut(link: Path, read_shortcut: Callable[[Path], ShortcutSpec], 
         return f"cannot be read: {error}"
 
     # Only a program that lives in App can be started through the package.
-    target = _inside_app(spec.target_path, app, env)
-    if target is None:
+    located = _locate_in_app(spec.target_path, app, env)
+    if located is None:
         return f"its target is outside App ({spec.target_path})"
+    target, other_app = located
     program = os.path.basename(target).lower()
     if not program.endswith((".exe", ".bat", ".cmd")):
         return f"its target is not a program ({program})"
@@ -328,7 +366,7 @@ def _absorb_shortcut(link: Path, read_shortcut: Callable[[Path], ShortcutSpec], 
         return "it is an uninstaller"
     if not (app / target).is_file():
         return f"its target does not exist in App ({target})"
-    return _shortcut_row(link.stem, prefix, target, spec, app, env)
+    return _shortcut_row(link.stem, prefix, target, spec, app, env), other_app
 
 
 def _write_checked_manifest(version_dir: Path, text: str) -> None:
@@ -353,6 +391,16 @@ def _write_checked_manifest(version_dir: Path, text: str) -> None:
 
 def _inside_app(text: str, app: Path, env: Mapping[str, str]) -> str | None:
     """Return the path *text* relative to *app* (``%VAR%`` expanded from *env*; ``.`` for *app* itself), or ``None`` when it is not inside *app*."""
+    located = _locate_in_app(text, app, env)
+    return located[0] if located is not None else None
+
+
+def _locate_in_app(text: str, app: Path, env: Mapping[str, str]) -> tuple[str, Path | None] | None:
+    """Return the path *text* relative to *app*, and the other App folder it was read from (``None`` when it is *app* itself).
+
+    A path into ``current\\App`` or into the App of another version of the same package is read as the same path in
+    *app*: links made for an earlier install of the package still name the right program. ``None`` when it is neither.
+    """
     lowered = {key.lower(): value for key, value in env.items()}
     expanded = re.sub(r"%([^%]+)%", lambda found: lowered.get(found.group(1).lower(), found.group(0)), text)
     if not os.path.isabs(expanded):
@@ -363,9 +411,16 @@ def _inside_app(text: str, app: Path, env: Mapping[str, str]) -> str | None:
         relative = os.path.relpath(os.path.realpath(expanded), os.path.realpath(app))
     except ValueError:  # another drive
         return None
-    if relative == ".." or relative.startswith(".." + os.sep):
-        return None
-    return relative
+    if relative != ".." and not relative.startswith(".." + os.sep):
+        return relative, None
+
+    # Then <package>\<other version or current>\App\...: the written spelling first, so a link to `current` is reported as such.
+    for spelling in (os.path.abspath(expanded), os.path.realpath(expanded)):
+        for package in (os.path.abspath(app.parent.parent), os.path.realpath(app.parent.parent)):
+            parts = Path(os.path.relpath(spelling, package)).parts
+            if len(parts) >= 2 and parts[0] != ".." and parts[1].lower() == "app":
+                return os.path.join(*parts[2:]) if len(parts) > 2 else ".", Path(package, *parts[:2])
+    return None
 
 
 def _shortcut_row(stem: str, prefix: str, target: str, spec: ShortcutSpec, app: Path, env: Mapping[str, str]) -> dict[str, str]:
