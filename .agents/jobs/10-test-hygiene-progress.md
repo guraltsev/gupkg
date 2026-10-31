@@ -24,8 +24,8 @@ For reference, issue 036 §2 measured on 2026-10-30:
 | Task | Title | Depends on | Status | Branch | Merge commit | Tests (per tier) | Baseline lines | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | T00 | Indicators tool | — | merged | | b2ee140 | 3,765 passed, 13 skipped (one tier) | n/a | minor review defects left: CLI --spec/--timings untested, weak heading asserts, silent unknown --spec |
-| T01 | Hygiene checks and baseline | T00 | in progress | i036/T01 | | | | |
-| T02 | Tiers | T01 | waiting | | | | | rule 3 wording needs the owner |
+| T01 | Hygiene checks and baseline | T00 | merged | | 6f71b14 | 3,780 passed, 13 skipped (one tier) | 166 | minor review gaps: modules with no collected tests unchecked; some H5/H6 cases untested; age warning (hygiene �3.3) not built |
+| T02 | Tiers | T01 | ready | | | | | rule 3 wording needs the owner |
 | T03 | Real waits and big copies | T02 | waiting | | | | | |
 | T04 | Shared support | T03 | waiting | | | | | |
 | T05 | Registry receives its tests (gupkg-registry) | T04 | waiting | | | | | |
@@ -59,3 +59,4 @@ None yet.
 - 2026-10-30: job written. Not started.
 - 2026-10-31: baseline recorded (3,760 passed, 13 skipped, 7:19). T00 dispatched.
 - 2026-10-31: T00 reviewed (no blocking defects) and merged as b2ee140; suite 3,765 passed, 13 skipped, 7:26. Indicators on main: 1,753 test functions, 3,773 cases, tests ~454k tokens vs source ~405k (ratio 1.12), docstring share 21.2%, 138 flat test files, slowest 200 = 70.4% of time. T01 is ready.
+- 2026-10-31: T01 reviewed (no blocking defects) and merged; suite 3,780 passed, 13 skipped, 7:12; baseline 166 lines (H1 9, H2 9, H3 38, H4 107, H5 3). T02 is ready; its AGENTS.md rule 3 wording needs owner approval.
