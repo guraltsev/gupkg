@@ -117,14 +117,17 @@ def test_a_published_asset_that_differs_from_the_local_zip_stops_the_release(rep
 
 @pytest.mark.parametrize(
     "problem",
-    ["dirty-tree", "version-listed", "zip-from-another-commit", "zip-for-another-version"],
+    ["staged-change", "releases-edited", "version-listed", "zip-from-another-commit", "zip-for-another-version"],
 )
 def test_release_is_refused_before_anything_is_tagged_or_recorded(repository: Path, tmp_path: Path, problem: str) -> None:
     """Each refused situation leaves no tag, no new row and no extra commit."""
     head = _git(repository, "rev-parse", "HEAD")
     version, commit = "0.1.0", head
-    if problem == "dirty-tree":
-        (repository / "notes.txt").write_text("uncommitted", encoding="utf-8")
+    if problem == "staged-change":
+        (repository / "notes.txt").write_text("staged", encoding="utf-8")
+        _git(repository, "add", "notes.txt")
+    elif problem == "releases-edited":
+        (repository / "RELEASES.md").write_text("edited\n", encoding="utf-8")
     elif problem == "version-listed":
         (repository / "RELEASES.md").write_text(TABLE.format("0" * 40) + f"| 0.1.0 | `{'1' * 40}` | 2026-01-02 | {'a' * 64} | x |\n", encoding="utf-8")
         _git(repository, "commit", "-q", "-am", "list it")
@@ -142,3 +145,56 @@ def test_release_is_refused_before_anything_is_tagged_or_recorded(repository: Pa
     assert _git(repository, "tag") == ""
     assert (repository / "RELEASES.md").read_text(encoding="utf-8") == before
     assert _git(repository, "rev-parse", "HEAD") == head
+
+
+def _fake_build(calls: list[dict[str, str]]):
+    """A stand-in for ``build_standalone.main`` that writes the ZIP a real build of the given ``--source`` would."""
+
+    def build(argv: list[str]) -> int:
+        options = dict(zip(argv[::2], argv[1::2]))
+        calls.append(options)
+        source = Path(options["--source"])
+        version = release.runtime_version(source.parents[1])
+        Path(options["--output"]).parent.mkdir(parents=True, exist_ok=True)
+        _release_zip(Path(options["--output"]), version=version, commit=options["--commit"])
+        return 0
+
+    return build
+
+
+def test_the_zip_is_built_from_a_worktree_of_head_not_from_the_working_tree(
+    repository: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Uncommitted edits and untracked files do not stop a release and are not in what gets built; the worktree is removed."""
+    (repository / "src" / "gupkg" / "_version.py").write_text('__version__ = "9.9.9"\n', encoding="utf-8")
+    (repository / "notes.txt").write_text("untracked", encoding="utf-8")
+    calls: list[dict[str, str]] = []
+    monkeypatch.setattr(release.build_standalone, "main", _fake_build(calls))
+
+    status = release.main(["from head", "--no-publish"], root=repository)
+
+    assert status == 0
+    source = Path(calls[0]["--source"])
+    assert repository not in source.parents
+    assert calls[0]["--commit"] == _git(repository, "rev-parse", "HEAD~1")
+    assert "| 0.1.0 |" in (repository / "RELEASES.md").read_text(encoding="utf-8")
+    assert not source.exists()
+    assert len(_git(repository, "worktree", "list").splitlines()) == 1
+
+
+def test_the_worktree_is_removed_when_the_build_fails(repository: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failing build leaves no worktree behind, no tag and no row."""
+    seen: list[Path] = []
+
+    def failing(argv: list[str]) -> int:
+        seen.append(Path(argv[argv.index("--source") + 1]))
+        raise SystemExit("build failed")
+
+    monkeypatch.setattr(release.build_standalone, "main", failing)
+
+    with pytest.raises(SystemExit):
+        release.main(["notes", "--no-publish"], root=repository)
+
+    assert not seen[0].exists()
+    assert len(_git(repository, "worktree", "list").splitlines()) == 1
+    assert _git(repository, "tag") == ""

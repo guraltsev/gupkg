@@ -1,9 +1,10 @@
 """Build, publish and record a gupkg release.
 
-A release is the current ``HEAD`` commit. The script checks that the working
-tree is clean and that the version in ``_version.py`` is not already listed,
-builds the self-contained ZIP ``gupkg-<version>-win-amd64.zip`` (or takes one
-given with ``--zip``), and refuses a ZIP that was not built from ``HEAD`` (the
+A release is the current ``HEAD`` commit. The script checks that nothing is staged
+and ``RELEASES.md`` has no edits, and that the version in ``_version.py`` of ``HEAD`` is
+not already listed. It builds the self-contained ZIP ``gupkg-<version>-win-amd64.zip``
+from a temporary Git worktree of ``HEAD`` (so other edits or untracked files in the
+working tree cannot reach the ZIP), or takes one given with ``--zip``, and refuses a ZIP that was not built from ``HEAD`` (the
 commit is recorded in the ZIP as ``gupkg/RELEASE.txt``) or that declares another
 version. It then tags the released commit ``v<version>``, pushes the tag,
 attaches the ZIP to the GitHub release (``gh release create``), and adds the
@@ -26,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import contextlib
 import hashlib
 import re
 import subprocess
@@ -53,20 +55,30 @@ def main(argv: list[str] | None = None, *, root: Path = ROOT) -> int:
     args = parser.parse_args(argv)
     notes = args.notes.replace("|", "/").strip()
 
-    # Refuse to release from a dirty tree or a version that is already listed.
-    version = runtime_version(root)
-    if _git(root, "status", "--porcelain"):
-        raise SystemExit("The working tree is not clean; commit or stash first.")
+    # The release is the commit HEAD. Only the row commit is made from the working tree, so refuse a staged change
+    # (it would ride along in that commit) and an edited RELEASES.md; other edits and untracked files are harmless.
+    if _git(root, "diff", "--cached", "--name-only"):
+        raise SystemExit("Changes are staged; commit or unstage them first.")
+    if _git(root, "status", "--porcelain", "--untracked-files=no", "--", "RELEASES.md"):
+        raise SystemExit("RELEASES.md has uncommitted edits; commit or discard them first.")
+    commit = _git(root, "rev-parse", "HEAD")
+    version = committed_version(root, commit)
     releases = root / "RELEASES.md"
     text = releases.read_text(encoding="utf-8")
     if re.search(rf"^\|\s*{re.escape(version)}\s*\|", text, re.MULTILINE):
         raise SystemExit(f"Version {version} is already listed in RELEASES.md; bump the version first.")
-    commit = _git(root, "rev-parse", "HEAD")
 
-    # Build the ZIP from HEAD (or accept one), then prove it is that release.
+    # Build the ZIP from a worktree of HEAD (or accept one), then prove it is that release.
     archive = args.zip or root / "dist" / f"gupkg-{version}-win-amd64.zip"
     if args.zip is None:
-        build_standalone.main(["--output", str(archive), "--commit", commit])
+        with _worktree(root, commit) as tree:
+            build_standalone.main([
+                "--source", str(tree / "src" / "gupkg"),
+                "--manifest", str(tree / "src" / "pkg.toml"),
+                "--deps-lock", str(tree / "tools" / "gupkg-deps.lock"),
+                "--output", str(archive),
+                "--commit", commit,
+            ])
     check_release_zip(archive, version, commit)
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
 
@@ -144,16 +156,38 @@ def check_release_zip_object(zipped: zipfile.ZipFile, name: str, version: str, c
         )
 
 
+@contextlib.contextmanager
+def _worktree(root: Path, commit: str):
+    """Check *commit* out into a temporary detached worktree of the repository, yield its path, and remove it again."""
+    with tempfile.TemporaryDirectory(prefix="gupkg-release-") as folder:
+        tree = Path(folder) / "tree"
+        _git(root, "worktree", "add", "--detach", str(tree), commit)
+        try:
+            yield tree
+        finally:
+            _git(root, "worktree", "remove", "--force", str(tree))
+
+
+def committed_version(root: Path, commit: str) -> str:
+    """Read ``__version__`` from ``_version.py`` as it is in *commit*, not in the working tree."""
+    text = _git(root, "show", f"{commit}:src/gupkg/_version.py")
+    return _version_from(ast.parse(text), f"{commit}:src/gupkg/_version.py")
+
+
 def runtime_version(root: Path = ROOT) -> str:
     """Read ``__version__`` from the runtime's version module."""
     version_file = root / "src" / "gupkg" / "_version.py"
-    tree = ast.parse(version_file.read_text(encoding="utf-8"))
+    return _version_from(ast.parse(version_file.read_text(encoding="utf-8")), str(version_file))
+
+
+def _version_from(tree: ast.Module, origin: str) -> str:
+    """Return the ``__version__`` assigned in the parsed module *tree* (read from *origin*)."""
     for node in tree.body:
         if isinstance(node, ast.Assign) and any(
             isinstance(target, ast.Name) and target.id == "__version__" for target in node.targets
         ):
             return ast.literal_eval(node.value)
-    raise SystemExit(f"No __version__ in {version_file}")
+    raise SystemExit(f"No __version__ in {origin}")
 
 
 def _git(root: Path, *arguments: str) -> str:
