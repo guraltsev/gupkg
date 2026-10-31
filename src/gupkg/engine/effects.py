@@ -768,9 +768,24 @@ def _write_shim(fields: Mapping[str, Any], context: EffectContext) -> None:
     launcher = _launcher(fields)
     context.bin_dir.mkdir(parents=True, exist_ok=True)
     # An identical launcher is left alone: `gupkg update gupkg` runs through this very file, and Windows refuses to replace a running .exe.
+    # A different one that is running can still be renamed: it is moved aside, and a later write deletes it once it has exited.
+    for stale in path.parent.glob(f".{path.name}.*.old"):
+        try:
+            stale.unlink()
+        except OSError:
+            pass
     launcher_bytes = launcher.read_bytes()
     if not path.is_file() or path.read_bytes() != launcher_bytes:
-        write_bytes_atomic(path, launcher_bytes)
+        try:
+            write_bytes_atomic(path, launcher_bytes)
+        except PermissionError:
+            aside = path.with_name(f".{path.name}.{os.getpid()}-{os.urandom(4).hex()}.old")
+            os.replace(path, aside)
+            try:
+                write_bytes_atomic(path, launcher_bytes)
+            except BaseException:
+                os.replace(aside, path)
+                raise
     write_bytes_atomic(config, shim_config_text(fields).encode("utf-8"))
 
     # Shared runtime files are never overwritten: another command may be using them.

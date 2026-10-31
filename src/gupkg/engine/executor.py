@@ -410,7 +410,7 @@ def _label_local(engine: Engine, run: ExecutionInput, version_dir: Path, origin:
 def _differs_only_by_launchers(version_dir: Path, registry_copy: Path | None) -> bool:
     """Return whether the only difference from the registry's copy is launchers that this version has and the copy lacks.
 
-    ``check-updates`` writes ``install.cmd`` and ``gupkg-tui.cmd`` into every new version directory; the fingerprint covers
+    ``check-updates`` writes ``install.cmd`` and ``manage.cmd`` into every new version directory; the fingerprint covers
     them, so a version written next to a registry copy that has none would otherwise look edited. Compared without them, it is
     the registry's copy. A launcher that the registry copy also has and that differs is a real difference.
     """

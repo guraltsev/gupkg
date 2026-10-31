@@ -1,4 +1,4 @@
-r"""Cover the package launchers (`install.cmd`, `gupkg-tui.cmd`, `check-updates.cmd`): which gupkg runs and when elevated runs refuse.
+r"""Cover the package launchers (`install.cmd`, `manage.cmd`, `check-updates.cmd`): which gupkg runs and when elevated runs refuse.
 
 Behavior covered: a launcher runs the gupkg bundled in its folder first, then the folder named by the first line of
 `<root>\.gupkg\gupkg-location` (absolute, or relative to the root; read as data), then the first `gupkg.cmd` or `gupkg.exe` on
@@ -90,12 +90,14 @@ def on_path(folder: Path) -> str:
 
 
 def test_all_launchers_come_from_one_template_with_different_commands() -> None:
-    """`install.cmd` runs `install` and `gupkg-tui.cmd` runs `tui`; everything else is identical."""
+    """`install.cmd` runs `install` and `manage.cmd` runs `tui`; everything else is identical."""
     install, tui = launcher_text("install"), launcher_text("tui")
 
-    assert set(LAUNCHERS) == {"install.cmd", "gupkg-tui.cmd", "check-updates.cmd"}
+    assert set(LAUNCHERS) == {"install.cmd", "manage.cmd", "check-updates.cmd"}
     differing = ("if not defined GUPKG_NO_PAUSE pause", 'if not "%GUPKG_EXIT%"=="0" if not defined GUPKG_NO_PAUSE pause')
-    assert install.replace(" install ", " tui ").replace(*differing, 1).splitlines()[3:] == tui.splitlines()[3:]
+    # Line 4 names the file itself (issue 037); the rest differs only in the command and the pause rule.
+    assert install.replace(" install ", " tui ").replace(*differing, 1).splitlines()[4:] == tui.splitlines()[4:]
+    assert "(install.cmd)" in install.splitlines()[3] and "(manage.cmd)" in tui.splitlines()[3]
     assert "\r\n" in install
 
 
@@ -186,7 +188,7 @@ def test_a_missing_gupkg_location_is_skipped_and_named(tmp_path: Path) -> None:
 
 
 def test_install_and_check_updates_launchers_always_wait_for_a_key_and_the_tui_launcher_only_after_a_failure(tmp_path: Path) -> None:
-    """Double-clicking install.cmd or check-updates.cmd keeps the window open on success and failure; gupkg-tui.cmd waits only after a failure."""
+    """Double-clicking install.cmd or check-updates.cmd keeps the window open on success and failure; manage.cmd waits only after a failure."""
     version = build_tree(tmp_path, bundled=True)
     tracker = tmp_path / "tool" / "_check_updates"
     tracker.mkdir()
@@ -195,7 +197,7 @@ def test_install_and_check_updates_launchers_always_wait_for_a_key_and_the_tui_l
     (tmp_path / ".gupkg" / "gupkg-location").write_text("gupkg\\current\\App", encoding="ascii")
     write_fake(tmp_path / "gupkg" / "current" / "App", "LOCATION", "LOCATION_EXIT")
 
-    for launcher, waits_on_success in ((version / "install.cmd", True), (tracker / "check-updates.cmd", True), (version / "gupkg-tui.cmd", False)):
+    for launcher, waits_on_success in ((version / "install.cmd", True), (tracker / "check-updates.cmd", True), (version / "manage.cmd", False)):
         assert ("Press any key" in run(launcher, pause=True).stdout) is waits_on_success, launcher.name
         assert "Press any key" in run(launcher, bundled_exit=3, location_exit=3, pause=True).stdout, launcher.name
 
@@ -208,10 +210,10 @@ def test_no_pause_variable_turns_the_pause_off_even_for_install(tmp_path: Path) 
 
 
 def test_tui_launcher_runs_the_tui_command(tmp_path: Path) -> None:
-    """`gupkg-tui.cmd` asks gupkg for its text interface on this folder."""
+    """`manage.cmd` asks gupkg for its text interface on this folder."""
     version = build_tree(tmp_path, bundled=True)
 
-    assert " tui " in run(version / "gupkg-tui.cmd").stdout
+    assert " tui " in run(version / "manage.cmd").stdout
 
 
 def test_exit_code_6_moves_on_to_the_next_step(tmp_path: Path) -> None:

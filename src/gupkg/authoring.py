@@ -6,12 +6,13 @@ shortcuts its installer made (moved into a ``shortcuts`` folder beside ``App``);
 ``_check_updates`` when it has one) and reports its SHA-256; ``bundle`` copies the verified bundle of the running gupkg into a
 version directory (together with its launchers) so the program can be installed without gupkg (design section 21). Nothing is
 overwritten, links are never followed, and every command checks the directory it acts on first. The launchers (``install.cmd`` and
-``gupkg-tui.cmd`` of a version, ``check-updates.cmd`` of a tracker) come from the one template of ``gupkg.launchers``.
+``manage.cmd`` of a version, ``check-updates.cmd`` of a tracker) are the files of the ``templates`` folder, copied by ``gupkg.launchers``.
 
 Usage and API
 -------------
 ``new_package(parent, name, version=None, track=None)`` returns the files it wrote. ``adopt_version(version_dir, read_shortcut,
-env)`` returns an ``AdoptResult`` (the file written, the shortcuts kept and the ones skipped with a reason).
+env)`` returns an ``AdoptResult`` (the file written, the shortcuts kept, the ones skipped with a reason, and the launchers it added).
+``add_launchers(version_dir, replace=True)`` copies the launchers into a valid version directory and returns the names written.
 ``export_distribution(version_dir, output)``
 returns an ``ExportResult`` (path, SHA-256 and entry count). ``bundle_gupkg(version_dir, source)`` copies the bundle tree and
 returns the number of files copied and writes the version's launchers. ``AuthoringError`` carries the message of a refusal.
@@ -179,6 +180,7 @@ class AdoptResult:
     path: Path
     shortcuts: tuple[str, ...]
     skipped: tuple[tuple[str, str], ...]
+    launchers: tuple[str, ...] = ()
 
 
 def adopt_version(
@@ -262,7 +264,45 @@ def adopt_version(
     text = f"# Written by `gupkg pkg adopt` from the shortcuts in {folder.name}\\.\n" + dumps_tables(data)
 
     _write_checked_manifest(version_dir, text)
-    return AdoptResult(manifest, tuple(names), tuple(skipped))
+
+    # The adopted program can be installed and managed from a double-click like any other version: add the launchers it lacks.
+    return AdoptResult(manifest, tuple(names), tuple(skipped), tuple(add_launchers(version_dir, replace=False)))
+
+
+def add_launchers(version_dir: Path, *, replace: bool = True) -> list[str]:
+    """Copy ``install.cmd`` and ``manage.cmd`` into a version directory and return the names written.
+
+    Parameters
+    ----------
+    version_dir : Path
+        A version directory that passes ``gupkg pkg check``.
+    replace : bool
+        Replace launchers that are already there (default); otherwise leave an existing launcher as it is.
+
+    Returns
+    -------
+    list of str
+        The launcher file names written, in the order of ``VERSION_LAUNCHERS``.
+
+    Raises
+    ------
+    AuthoringError
+        If the directory is not a valid version directory, or a launcher in it is a link.
+    """
+    version_dir = Path(os.path.abspath(version_dir))
+    report = check_directory(version_dir)
+    if not report.ok:
+        raise AuthoringError(f"{version_dir} is not a valid version directory: " + "; ".join(report.errors))
+    names = []
+    for name in VERSION_LAUNCHERS:
+        target = version_dir / name
+        if is_reparse_point(target):
+            raise AuthoringError(f"{target} is a link; gupkg never writes through a link")
+        if os.path.lexists(target) and not replace:
+            continue
+        write_launchers(version_dir, (name,))
+        names.append(name)
+    return names
 
 
 def _absorb_shortcut(link: Path, read_shortcut: Callable[[Path], ShortcutSpec], app: Path, env: Mapping[str, str], prefix: str) -> dict[str, str] | str:
@@ -360,8 +400,8 @@ def export_distribution(version_dir: Path, output: Path) -> ExportResult:
 
     The ZIP holds ``<name>\\<version>\\...`` (the whole version directory, bundled gupkg and shipped ``App`` included) and the
     package's ``_check_updates`` folder when it has one, so it unpacks into a root as it stands (design 21.2). The version
-    directory must pass ``gupkg pkg check`` and contain no link. A launcher the folder lacks (``install.cmd`` and ``gupkg-tui.cmd``,
-    and ``check-updates.cmd`` in the tracker) is added to the ZIP from the template, so every distribution carries them.
+    directory must pass ``gupkg pkg check`` and contain no link. A launcher the folder lacks (``install.cmd`` and ``manage.cmd``,
+    and ``check-updates.cmd`` in the tracker) is added to the ZIP from the templates, so every distribution carries them.
 
     Raises
     ------
@@ -392,7 +432,7 @@ def export_distribution(version_dir: Path, output: Path) -> ExportResult:
                 relative = (here / item).relative_to(folder).as_posix()
                 entries.append((here / item, f"{prefix}/{relative}"))
 
-    # Add the launchers that the folders lack, generated from the template.
+    # Add the launchers that the folders lack, copied from the templates.
     present = {arcname for _source, arcname in entries}
     wanted = [(f"{name}/{version}/{launcher}", command) for launcher, command in VERSION_LAUNCHERS.items()]
     if tracker.is_dir():

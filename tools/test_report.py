@@ -40,7 +40,7 @@ from pathlib import Path
 
 CHARS_PER_TOKEN = 4
 # Folders of tests/ that hold no feature files of an area.
-NON_AREA_DIRS = {"_temp", "support", "fixtures", "__pycache__"}
+NON_AREA_DIRS = {"_temp", "_conditional", "support", "fixtures", "__pycache__"}
 
 
 def _py_files(folder: Path, skip: tuple[Path, ...] = ()) -> list[Path]:

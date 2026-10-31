@@ -39,7 +39,7 @@ section's wording and the code differ, the code and the decision table win.
   of itself, so the issue 029 text about waiting for such a copy, clamping its exit code and the
   `child_raw_exit_code` field no longer applies.
 - **Where launchers sit (issue 033).** A version directory holds `install.cmd`
-  and `gupkg-tui.cmd` in the run's root, and a tracker folder holds
+  and `manage.cmd` in the run's root, and a tracker folder holds
   `check-updates.cmd` and never `install.cmd`; `MANIFEST.sha256` is verified
   for the bundled tree (`gupkg/` entries) only. The 1.x guard: gupkg's tracker
   refuses a release of a major version above the running gupkg's and names the
@@ -274,7 +274,7 @@ Non-goals:
 The reserved names in a package root are `current`, `_check_updates`,
 `data`, and anything starting with `.` or `_`. Inside a version directory,
 `pkg.local\`, `gupkg\` (a bundled gupkg, section 21), `install.cmd` and
-`gupkg-tui.cmd` (the package launchers) are reserved. 0.17's `_bootstrap`
+`manage.cmd` (the package launchers) are reserved. 0.17's `_bootstrap`
 gets no special treatment: it starts with `_`, so it is reserved and
 ignored (D54).
 
@@ -755,7 +755,7 @@ target = "$App\\firefox.exe"
    - fill `[source].sha256` **only** from a checksum the tracker
      *discovered* (GitHub digest, sums file, sidecar), with `sha256_from`
      set accordingly;
-   - write the version's own launchers, `install.cmd` and `gupkg-tui.cmd`,
+   - write the version's own launchers, `install.cmd` and `manage.cmd`,
      into the new directory **in the run's root**: whichever gupkg runs the
      check generates them from the one template of gupkg core (section
      21.3), so a double-click on the new version's `install.cmd` installs
@@ -1142,7 +1142,7 @@ registry tool, install and `check` all call it. It ignores the top-level `App` a
 shipped `App` is not part of it either) and refuses links. A match for a version that ships its `App` is therefore
 labelled **verified (App not covered)**: the receipt's `[origin]` has `app_covered = false`, the run warns and `check` shows a
 `verified-partly` note; the `App` is then compared only with the D41 install-time record. A local version that has
-launchers (`install.cmd`, `gupkg-tui.cmd`) that the registry's copy lacks is compared without them. A **distribution folder** is copied, then judged: no
+launchers (`install.cmd`, `manage.cmd`) that the registry's copy lacks is compared without them. A **distribution folder** is copied, then judged: no
 published fingerprint labels the install *origin not verified*, a match
 *verified against registry `<name>`*, a mismatch refuses it, names the files that differ and
 removes the copy this run created. The same comparison runs for a version copied from a registry
@@ -1641,7 +1641,7 @@ gupkg/
   viewdata.py   PackageView -> the plain data of list, info and --json (reads small files, prints nothing)
   settingsedit.py  create and edit one settings file (settings init/set, registry add/remove), validated by the schema first
   authoring.py  pkg new, pkg export, pkg bundle
-  launchers/    the one template of the package launchers (install.cmd, gupkg-tui.cmd, check-updates.cmd) and the code that writes them; used by check-updates, authoring and the registry tool
+  launchers/    the code that copies the package launchers (install.cmd, manage.cmd, check-updates.cmd) from the templates folder of the tree; used by check-updates, authoring and the registry tool
   report/results.py  the result, plan and error documents of --json, and the text of list, info and --plan
   selfmgmt/     self status/repair: MANIFEST.sha256 check, bundled-runtime enforcement (issues 016, 018); self check-updates/update are aliases (section 20)
     location.py   where the running gupkg lives (installed, bundled, source): $App, its version directory and root, its sibling launchers
@@ -2033,7 +2033,7 @@ and both are specified in issue 030.
 - **`gupkg-tui`** shows one package and acts on it: versions (local,
   registry, tracker), link, data folder, the last receipt and the log,
   with check-updates, update, repair, switch, uninstall and logs on keys.
-  `gupkg-tui.cmd`, the package launcher in each version folder, finds a
+  `manage.cmd`, the package launcher in each version folder, finds a
   gupkg as described in section 21.3, then runs `gupkg tui "%~dp0."`.
   `gupkg tui PATH` starts it.
 - **`gupkg-manager`** is the general manager: the browser over every
@@ -2422,7 +2422,7 @@ its roots (section 9.7).
 | **Installed gupkg** | The `current` version of the `gupkg` package in a root (`<root>\gupkg\current\App\`). Only installing the `gupkg` package creates one, and that install writes its root's `gupkg-location` file. |
 | **Bundled install** | A package installed by a bundled gupkg, with no installed gupkg involved. It writes no `gupkg-location` file. The package keeps its bundled copy, so it can later be updated, repaired and uninstalled the same way (section 21.4). |
 | **Distribution** | A ZIP of a package-root fragment (`<name>\<version>\…`, optionally with `<name>\_check_updates\`) whose version directory carries a bundled gupkg and the package launchers. |
-| **Package launchers** | `install.cmd` and `gupkg-tui.cmd` in a version directory, and `check-updates.cmd` in a `_check_updates` folder (which only checks and never installs). gupkg core generates all of them from one template, whichever gupkg runs the operation. They find a gupkg to run (section 21.3). `gupkg-tui.cmd` keeps today's name and now starts the `gupkg-tui` program (section 15). |
+| **Package launchers** | `install.cmd` and `manage.cmd` in a version directory, and `check-updates.cmd` in a `_check_updates` folder (which only checks and never installs). They are the finished files of the `templates` folder of the gupkg tree, copied byte for byte by whichever gupkg runs the operation (`gupkg pkg launchers` copies them on request). They find a gupkg to run (section 21.3). `manage.cmd` starts the `gupkg-tui` program for the package (section 15); it was called `gupkg-tui.cmd` before issue 037, and that name now belongs only to the program of a gupkg tree. |
 
 ### 21.2 Layouts
 
@@ -2439,11 +2439,11 @@ C:\opt\                               a root (system mode, admin-only)
       App\                            the installed gupkg runs from here
         gupkg.cmd  gupkg-tui.cmd  gupkg-manager.cmd  gupkg\ (the package, with python\)  gupkg_ui\  gupkg_tui\  gupkg_manager\  MANIFEST.sha256  VERSION  RELEASE.txt
       gupkg\                          bundled copy: kept, it is the populate script's input
-      install.cmd  gupkg-tui.cmd
+      install.cmd  manage.cmd
     _check_updates\pkg.toml  pkg.local\track.py
   firefox\
     135.0.1\
-      install.cmd  gupkg-tui.cmd       launchers: no bundled gupkg, so they read C:\opt\.gupkg\gupkg-location (two levels up)
+      install.cmd  manage.cmd       launchers: no bundled gupkg, so they read C:\opt\.gupkg\gupkg-location (two levels up)
 
 MyApp-1.2.0.zip                       a distribution of another program
   myapp\
@@ -2451,19 +2451,19 @@ MyApp-1.2.0.zip                       a distribution of another program
       pkg.toml                        ordinary format 2 pinned version
       App\                            empty (filled by its populate script) or shipped (section 4)
       gupkg\                          bundled gupkg (reserved name)
-      install.cmd  gupkg-tui.cmd
+      install.cmd  manage.cmd
     _check_updates\                   optional
 
 gupkg-1.0.0-win-amd64.zip             gupkg's own distribution (issue 016)
   gupkg\
-    1.0.0\  pkg.toml  pkg.local\  gupkg\  install.cmd  gupkg-tui.cmd
+    1.0.0\  pkg.toml  pkg.local\  gupkg\  install.cmd  manage.cmd
     _check_updates\pkg.toml  pkg.local\track.py
 ```
 
 Rules:
 
 - **Reserved names inside a version directory:** `gupkg\`, `install.cmd` and
-  `gupkg-tui.cmd`, like `pkg.local`. The engine reads, verifies and copies a
+  `manage.cmd`, like `pkg.local`. The engine reads, verifies and copies a
   bundled gupkg, and never executes it. Only package launchers run a bundled
   gupkg.
 - **Copying the bundled tree into `App`** is the job of gupkg's own
@@ -2472,7 +2472,7 @@ Rules:
 
 ### 21.3 Package launchers: which gupkg runs
 
-`install.cmd`, `gupkg-tui.cmd` and the tracker's `check-updates.cmd` are generated from one template of gupkg core
+`install.cmd`, `manage.cmd` and the tracker's `check-updates.cmd` are generated from one template of gupkg core
 (`gupkg\launchers\package-launcher.cmd`) by `check-updates` (new version directories of the run's root), `gupkg pkg new`,
 `pkg bundle` and `pkg export`, and the registry tool (`launchers`). They are plain `cmd`.
 A launcher lives at `<root>\<name>\<version>\`, so its root is `%~dp0..\..`.
@@ -2585,7 +2585,7 @@ Further rules:
   - `check-updates.cmd` (in `_check_updates` only) runs `gupkg check-updates <name>`, the name being the folder's
     parent, and nothing else.
   - `install.cmd` runs `gupkg install "%~dp0."` and pauses on failure.
-    - `gupkg-tui.cmd` runs `gupkg tui "%~dp0."` through the gupkg it found,
+    - `manage.cmd` runs `gupkg tui "%~dp0."` through the gupkg it found,
     which starts `gupkg-tui` and opens the package view: check-updates,
     update, repair, uninstall, logs.
 
@@ -2632,7 +2632,7 @@ folder can be deleted afterwards.
 **A bundled install keeps working without an installed gupkg.**
 
 - **The bundled copy stays** in the installed version directory. The
-  version's `gupkg-tui.cmd` uses it for check-updates, update, repair and
+  version's `manage.cmd` uses it for check-updates, update, repair and
   uninstall.
 - **It is carried forward** (D32). When `check-updates` or `update` creates
   a new version directory in a root that has no `gupkg-location` file, the package's
@@ -2754,7 +2754,7 @@ value.
 | Addition | Section | Purpose |
 | --- | --- | --- |
 | `[source] script = "<path>"` | 4, 8.6 | A custom populate script: Python, `.ps1`, `.cmd`/`.bat` or an executable (D27). |
-| Reserved version-directory names `gupkg\`, `install.cmd`, `gupkg-tui.cmd` | 4 | The bundled runtime and the launchers. The engine never executes the bundled tree. |
+| Reserved version-directory names `gupkg\`, `install.cmd`, `manage.cmd` | 4 | The bundled runtime and the launchers. The engine never executes the bundled tree. |
 | Carrying a bundled gupkg forward | 5.3, 7.4 | New version directories of a bundled install get a copy of the package's own bundle, so the active version can always manage itself (D32). |
 | `<root>\.gupkg\gupkg-location` (written by installing the gupkg package) | 4, 21.3 | A one-line text file naming the folder that contains `gupkg.cmd`. Launchers read it as data after the bundled copy (D52). It replaces the per-root launcher file of earlier designs. |
 | `requires_gupkg = ">=1.2"` (optional) | 7 | The minimum gupkg version a package needs. An older gupkg exits 6. |

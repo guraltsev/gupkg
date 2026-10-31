@@ -75,6 +75,7 @@ tests/
   <area>/                one folder per real boundary of the code (a package or a program)
     conftest.py          the area's shared fixtures
     test_<feature>.py    one file per feature of that area
+  _conditional/<name>/   tests that last while a stated condition holds, each folder with a condition and a date (tests_hygiene.md §2.1)
   _temp/<ref>/           temporary tests, each folder linked to an open issue or job (tests_hygiene.md §3)
   manual_smoke.md        checks that only a person on a real machine can run
 ```

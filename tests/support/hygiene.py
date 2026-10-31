@@ -10,10 +10,11 @@ repository root with ``/`` separators, and ``test`` is empty for a rule about th
 ``H4`` every parametrised case has an explicit ``id``.
 ``H5`` every permanent test module and test function has a docstring that starts with a one-sentence summary.
 ``H6`` every ``tests/_temp/<ref>/`` has a complete README, and its ``ref`` is open.
-``H7`` every test has exactly one tier (``unit``, ``process`` or ``release``).
-``H8`` while a ``unit`` test runs, starting a process, sleeping and opening a socket fail the test.
+``H7`` every ``tests/_conditional/<name>/`` has a complete README, and its ``expires`` date has not passed.
+``H8`` every test has exactly one tier (``unit``, ``process`` or ``release``).
+``H9`` while a ``unit`` test runs, starting a process, sleeping and opening a socket fail the test.
 
-The files of H1 to H6 are read with ``ast`` and never imported. H7 reads the markers of the collected tests. H8 is checked
+The files of H1 to H6 are read with ``ast`` and never imported. H8 reads the markers of the collected tests. H9 is checked
 while the test runs, so a violation is found only by running the unit tier; the baseline lists the ``unit`` tests that still
 break it, and such a test passes while it does.
 
@@ -34,6 +35,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from unittest import mock
 
@@ -53,8 +55,9 @@ RULES = {
     "H4": ("a parametrised case has no explicit id", "_docs/tests.md section 4.4"),
     "H5": ("a permanent test module or test has no docstring that starts with a one-sentence summary", "_docs/tests.md section 4.2"),
     "H6": ("a temporary-test folder breaks its rules", "_docs/tests_hygiene.md sections 3.2, 3.3 and 8"),
-    "H7": ("a test does not have exactly one tier (unit, process or release)", "_docs/tests.md section 5"),
-    "H8": ("a unit test starts a process, sleeps or opens a socket", "_docs/tests.md section 5"),
+    "H7": ("a conditional-test folder breaks its rules or has expired", "_docs/tests_hygiene.md sections 2.1 and 6"),
+    "H8": ("a test does not have exactly one tier (unit, process or release)", "_docs/tests.md section 5"),
+    "H9": ("a unit test starts a process, sleeps or opens a socket", "_docs/tests.md section 5"),
 }
 
 _HISTORY = (
@@ -156,7 +159,7 @@ def _h1(tree: ast.Module, file: str, test_stems: frozenset[str]) -> list[Violati
             if not parts:
                 continue
             local = relative or parts[0] == "tests" or parts[0] in test_stems
-            if local and any(part in test_stems or part == "_temp" for part in parts):
+            if local and any(part in test_stems or part in ("_temp", "_conditional") for part in parts):
                 found.append(".".join(parts))
                 break
     if found:
@@ -360,7 +363,7 @@ def parse_readme(folder: Path) -> dict[str, str] | None:
     entries: dict[str, list[str]] = {}
     current = None
     for line in readme.read_text(encoding="utf-8").splitlines():
-        match = re.match(r"^\s*(?:[-*]\s*)?\**(ref|kind|purpose|fate)\**\s*:\**\s*(.*)$", line, re.IGNORECASE)
+        match = re.match(r"^\s*(?:[-*]\s*)?\**(ref|kind|purpose|fate|until|expires)\**\s*:\**\s*(.*)$", line, re.IGNORECASE)
         if match:
             current = match.group(1).lower()
             entries.setdefault(current, []).append(match.group(2))
@@ -424,6 +427,40 @@ def scan_temp(root: Path) -> list[Violation]:
     return found
 
 
+_CONDITIONAL_KEYS = ("until", "expires", "purpose")
+
+
+def scan_conditional(root: Path, today: date) -> list[Violation]:
+    """Return the violations of H7 in every ``tests/_conditional/<name>/`` folder.
+
+    A folder needs a README with ``until`` (the condition that ends the tests), ``expires`` (a ``YYYY-MM-DD`` date by which the
+    condition is checked again) and ``purpose``. A date before *today* fails the session until someone confirms the condition
+    and moves the date, or removes the tests.
+    """
+    base = root / "tests" / "_conditional"
+    if not base.is_dir():
+        return []
+    found = []
+    for folder in sorted(p for p in base.iterdir() if p.is_dir() and p.name != "__pycache__"):
+        file = _relative(folder, root)
+        entries = parse_readme(folder)
+        if entries is None:
+            found.append(Violation("H7", file, "", "no README.md"))
+            continue
+        missing = [key for key in _CONDITIONAL_KEYS if not entries.get(key)]
+        if missing:
+            found.append(Violation("H7", file, "", "README lacks " + ", ".join(missing)))
+            continue
+        try:
+            expires = date.fromisoformat(entries["expires"].strip("` "))
+        except ValueError:
+            found.append(Violation("H7", file, "", "expires must be a date written YYYY-MM-DD"))
+            continue
+        if expires < today:
+            found.append(Violation("H7", file, "", f"expired on {expires}: confirm the condition and set a later date, or retire the tests"))
+    return found
+
+
 # ---------------------------------------------------------------------------
 # The baseline and the verdict
 # ---------------------------------------------------------------------------
@@ -436,18 +473,26 @@ def load_baseline(path: Path) -> set[str]:
     return {line for line in lines if line and not line.startswith("#")}
 
 
-def check(root: Path, modules: list[Path], baseline: Path | None = None, tier_violations: list[Violation] | None = None) -> str | None:
-    """Check *modules* (permanent test modules) and the temporary folders of *root*; return the failure text, or ``None``.
+def check(
+    root: Path,
+    modules: list[Path],
+    baseline: Path | None = None,
+    today: date | None = None,
+    tier_violations: list[Violation] | None = None,
+) -> str | None:
+    """Check *modules* (permanent and conditional test modules), the temporary and the conditional folders of *root*; return the failure text, or ``None``.
 
-    *tier_violations* are the H7 findings for the collected tests (see ``tier_problems``). Only the baseline lines of the
+    *today* is the date the ``expires`` of a conditional folder is compared with (the current date by default).
+
+    *tier_violations* are the H8 findings for the collected tests (see ``tier_problems``). Only the baseline lines of the
     files that were checked, and of files that no longer exist, can be stale, so a run of one file does not report the
-    rest of the baseline. An H8 line is found stale while its test runs, not here, so only a missing file makes it stale
+    rest of the baseline. An H9 line is found stale while its test runs, not here, so only a missing file makes it stale
     here.
     """
     baseline_path = baseline or root / "tests" / BASELINE_NAME
     listed = load_baseline(baseline_path)
     files = {_relative(path, root): path for path in modules}
-    violations = scan_temp(root)
+    violations = scan_temp(root) + scan_conditional(root, today or date.today())
     violations.extend(tier_violations or [])
     stems = _test_stems(root)
     for path in sorted(files.values()):
@@ -460,7 +505,7 @@ def check(root: Path, modules: list[Path], baseline: Path | None = None, tier_vi
         file = rest.partition("|")[0]
         if not (root / file).exists():
             stale.append(line)
-        elif rule != "H8" and (rule == "H6" or file in files):
+        elif rule != "H9" and (rule in ("H6", "H7") or file in files):
             stale.append(line)
     if not new and not stale:
         return None
@@ -478,7 +523,7 @@ def check(root: Path, modules: list[Path], baseline: Path | None = None, tier_vi
 
 
 # ---------------------------------------------------------------------------
-# Tiers, rules H7 and H8
+# Tiers, rules H8 and H9
 # ---------------------------------------------------------------------------
 
 def _tier_node(item: pytest.Item):
@@ -503,7 +548,7 @@ def _test_name(item: pytest.Item) -> str:
 
 
 def tier_problems(items: list[pytest.Item], root: Path) -> list[Violation]:
-    """Return the H7 violations of *items*, and make ``-m`` see only each test's own tier.
+    """Return the H8 violations of *items*, and make ``-m`` see only each test's own tier.
 
     A test whose nearest tier mark is on the test or its class keeps the module's tier mark out of ``-m``, so
     ``-m unit`` does not select a ``process`` test of a ``unit`` module.
@@ -513,11 +558,11 @@ def tier_problems(items: list[pytest.Item], root: Path) -> list[Violation]:
         node, names = _tier_node(item)
         file = _relative(item.path, root)
         if node is None:
-            found.setdefault(f"{file}::{_test_name(item)}", Violation("H7", file, _test_name(item), "no tier mark"))
+            found.setdefault(f"{file}::{_test_name(item)}", Violation("H8", file, _test_name(item), "no tier mark"))
             continue
         if len(set(names)) > 1:
             detail = "marked " + " and ".join(sorted(set(names)))
-            found.setdefault(f"{file}::{_test_name(item)}", Violation("H7", file, _test_name(item), detail))
+            found.setdefault(f"{file}::{_test_name(item)}", Violation("H8", file, _test_name(item), detail))
             continue
         parents = list(item.iter_parents())
         overridden = {
@@ -543,7 +588,7 @@ def _hide_tier_marks(item: pytest.Item, hidden_nodes: set[int]) -> None:
     item.iter_markers_with_node = iter_markers_with_node
 
 
-_H8_ACTIONS = {
+_H9_ACTIONS = {
     "process": "starts a process",
     "system": "starts a process (os.system)",
     "connect": "opens a socket (socket connect)",
@@ -590,9 +635,9 @@ class UnitGuard:
 
     def message(self, kind: str) -> str:
         """Return the failure text: the rule, the test, what it did, the tier and where the policy is."""
-        what = _H8_ACTIONS[kind]
+        what = _H9_ACTIONS[kind]
         return (
-            f"H8 {self.test}: this test is in the unit tier and {what}. A unit test touches only its own process "
+            f"H9 {self.test}: this test is in the unit tier and {what}. A unit test touches only its own process "
             "(_docs/tests.md section 5, Tiers). Fake the boundary, or mark the test @pytest.mark.process "
             "if the real thing is the behaviour."
         )
@@ -615,7 +660,7 @@ class UnitGuard:
         self._stack.close()
 
     def surface(self, error: BaseException | None) -> None:
-        """Make the test fail with the H8 message if a blocked action happened and *error* is not that failure.
+        """Make the test fail with the H9 message if a blocked action happened and *error* is not that failure.
 
         The blocked action may have been raised in a thread or inside an asyncio task, where the exception is lost, so
         the test would otherwise pass, or fail later with a timeout that hides the cause.
@@ -644,7 +689,7 @@ def _guard_of(item: pytest.Item) -> UnitGuard | None:
             root = item.config.rootpath
             listed = _baselines.setdefault(root, load_baseline(root / "tests" / BASELINE_NAME))
             test = f"{_relative(item.path, root)}::{_test_name(item)}"
-            baselined = f"H8|{_relative(item.path, root)}|{_test_name(item)}" in listed
+            baselined = f"H9|{_relative(item.path, root)}|{_test_name(item)}" in listed
             guard = UnitGuard(test, only_note=baselined)
         item.stash[_GUARD] = guard
     return item.stash[_GUARD]
@@ -667,24 +712,24 @@ def _guarded_phase(item: pytest.Item):
 
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_setup(item: pytest.Item):
-    """Run the setup of a ``unit`` test under the guard of rule H8."""
+    """Run the setup of a ``unit`` test under the guard of rule H9."""
     return (yield from _guarded_phase(item))
 
 
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_call(item: pytest.Item):
-    """Run a ``unit`` test under the guard of rule H8."""
+    """Run a ``unit`` test under the guard of rule H9."""
     return (yield from _guarded_phase(item))
 
 
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None):
-    """Run the teardown of a ``unit`` test under the guard of rule H8, and fail a baseline line that no longer matches."""
+    """Run the teardown of a ``unit`` test under the guard of rule H9, and fail a baseline line that no longer matches."""
     result = yield from _guarded_phase(item)
     guard = item.stash.get(_GUARD, None)
     if guard is not None and guard.only_note and not guard.seen and item.stash.get(_CALL_PASSED, False):
         root = item.config.rootpath
-        line = f"H8|{_relative(item.path, root)}|{_test_name(item)}"
+        line = f"H9|{_relative(item.path, root)}|{_test_name(item)}"
         pytest.fail(
             f"Test hygiene: the baseline line {line} no longer matches a violation. "
             f"Delete it from tests/{BASELINE_NAME} (the baseline only shrinks).",
@@ -695,7 +740,7 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None):
 
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo):
-    """Remember that the test body passed, so a stale H8 baseline line can be told from a test that stopped early."""
+    """Remember that the test body passed, so a stale H9 baseline line can be told from a test that stopped early."""
     report = yield
     if report.when == "call":
         item.stash[_CALL_PASSED] = report.passed

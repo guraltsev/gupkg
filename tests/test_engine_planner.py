@@ -101,15 +101,15 @@ def test_a_plan_of_an_elevated_run_names_the_system_root(tmp_path: Path) -> None
 
 
 def test_installing_an_installed_populated_package_skips_fetch_and_activate(world: World) -> None:
-    """A repair of a healthy package skips the download phases and the switch, and changes no effect."""
+    """A repair of a healthy package skips the download phases and the switch, and writes every effect it owns again."""
     world.publish("tool", "1.0.0", tables=TABLES)
     world.one("install", "tool")
 
     plan = planned(world, "install", "tool")
 
     skipped = {phase.name for phase in plan.phases if phase.skipped}
-    assert skipped == {"Fetch", "Verify", "Unpack", "Prepare", "Activate", "Integrate"}
-    assert plan.changes == () and not plan.populate.needed
+    assert skipped == {"Fetch", "Verify", "Unpack", "Prepare", "Activate"}
+    assert plan.changes and {item.action for item in plan.changes} == {"update"} and not plan.populate.needed
 
 
 def test_an_install_plan_never_contains_a_tracker_step(world: World) -> None:

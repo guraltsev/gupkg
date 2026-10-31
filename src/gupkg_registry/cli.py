@@ -214,7 +214,7 @@ def _parser() -> argparse.ArgumentParser:
     network(pin)
     pin.set_defaults(run=_run_pin)
 
-    launchers = commands.add_parser("launchers", help="write install.cmd and gupkg-tui.cmd into every version and check-updates.cmd into every tracker")
+    launchers = commands.add_parser("launchers", help="write install.cmd and manage.cmd into every version and check-updates.cmd into every tracker")
     common(launchers)
     launchers.set_defaults(run=_run_launchers)
 

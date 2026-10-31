@@ -144,7 +144,7 @@ The automated tests cover the model, the validator, the settings layers (with th
 admin-only check replaced by a stand-in). These steps need a real administrator token.
 
 1. **Elevated launchers refuse.** Take an installed version directory, open an administrator shell, and run the generated
-   `install.cmd` and `gupkg-tui.cmd` in it. Each prints "This launcher does not run
+   `install.cmd` and `manage.cmd` in it. Each prints "This launcher does not run
    elevated" and exits 1 without starting any gupkg. Run them from a normal shell and
    confirm they start the bundled gupkg, else the one named by `<root>\.gupkg\gupkg-location`, else `gupkg` on `PATH`. Why manual: the
    automated launcher tests run in a normal shell, and elevation needs a real token.
@@ -448,7 +448,7 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
    the security warning). Expect the program installed under `%USERPROFILE%\opt\<name>\<version>`, its shortcut and shims, and no
    `<root>\gupkg` package, no `<root>\.gupkg\gupkg-location`, no `gupkg` shim and no gupkg `PATH` entry; nothing new under `%LOCALAPPDATA%`,
    `%APPDATA%` or `%ProgramData%` other than the Start Menu entry. Delete the `Downloads` folder: the program still works. Then
-   double-click `current\gupkg-tui.cmd`, run check-updates and an update, and confirm the new version directory holds a copy of `gupkg\`
+   double-click `current\manage.cmd`, run check-updates and an update, and confirm the new version directory holds a copy of `gupkg\`
    and that switching back to the old one leaves its launchers working. `uninstall --purge` leaves only `<root>\.gupkg\logs`. Why manual:
    the real registry, Start Menu and a clean machine (clean-VM run; the automated tests use `FakeSystem`).
 3. **Bootstrap, user and system.** On a clean VM run `gupkg-bootstrap.cmd` (user), then in an elevated shell
@@ -459,7 +459,7 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
    expect a refusal naming the reason and nothing unpacked; delete the folder and run it again to see it succeed. Why manual: needs a real
    `C:\opt` created by a standard user (the automated test checks the same decision on a temporary folder).
 5. **The bundled gupkg runs first; the root's gupkg-location and PATH come next (issue 035, T11).** With bundled installs from item 2 in the root,
-   run the bootstrap in the same root: their `install.cmd` and `gupkg-tui.cmd` still run their bundled copy (see the newest file in
+   run the bootstrap in the same root: their `install.cmd` and `manage.cmd` still run their bundled copy (see the newest file in
    `<root>\.gupkg\logs`). Rename a bundled `gupkg` folder: the launcher runs the gupkg named by `<root>\.gupkg\gupkg-location` (and prints a
    `Skipped ...` line instead if that file is missing or wrong). Then temporarily set `requires_gupkg = ">=99"` in the version's
    `pkg.toml`, run `install.cmd`: the bundled gupkg exits 6 and the launcher goes on to the gupkg named by `gupkg-location`, then to `PATH`.
@@ -479,7 +479,7 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
    `gupkg install <folder in Downloads>`: the folder is copied into `C:\opt\<name>\<v>` and installed from there, nothing
    starts from `Downloads`. Why manual: real elevation and a real `C:\opt`.
 9. **The registry after the launcher change.** In the registry checkout run `python -m gupkg_registry launchers --registry .`, review the
-   diff (every tracker gets `check-updates.cmd`, every pinned version gets the new `install.cmd` and `gupkg-tui.cmd`, `_registry.toml`
+   diff (every tracker gets `check-updates.cmd`, every pinned version gets the new `install.cmd` and `manage.cmd`, `_registry.toml`
    gets the new fingerprints), run `validate`, then commit. Why manual: the registry is a separate repository.
 
 ## Portable packages and the modes a package declares (issue 035, task T02)

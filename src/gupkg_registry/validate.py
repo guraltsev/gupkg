@@ -30,7 +30,7 @@ from gupkg.services.fingerprint import FingerprintError, fingerprint_directory
 from gupkg.services.safepath import is_reparse_point
 from gupkg.launchers import LAUNCHERS, launcher_text
 
-from .layout import LAUNCHER_NAMES, TRACKER_LAUNCHER_NAME, RegistryFileError, package_dirs, read_registry_file
+from .layout import LAUNCHER_NAMES, RETIRED_LAUNCHER_NAMES, TRACKER_LAUNCHER_NAME, RegistryFileError, package_dirs, read_registry_file
 
 MAX_HOOK_FILES = 13
 WHY_NO_SERVICE = "Why no service"
@@ -133,6 +133,8 @@ def _launcher_problems(label: str, version: Path) -> list[str]:
             problems.append(f"{label}/{name}: launcher is missing")
         elif target.read_bytes() != expected:
             problems.append(f"{label}/{name}: differs from the launcher template")
+    problems.extend(f"{label}/{name}: retired launcher name (now manage.cmd; run the registry tool: launchers)"
+                    for name in RETIRED_LAUNCHER_NAMES if (version / name).exists())
     return problems
 
 
@@ -185,7 +187,7 @@ def validate_registry(root: Path) -> ValidationReport:
             problems.extend(_report_problems(label, check_directory(tracker)))
             mode_problem = _modes_problem(label, tracker)
             problems.extend([mode_problem] if mode_problem else [])
-            problems.extend(f"{label}/{n}: a tracker never installs, so it carries no {n}" for n in LAUNCHER_NAMES if (tracker / n).exists())
+            problems.extend(f"{label}/{n}: a tracker never installs, so it carries no {n}" for n in (*LAUNCHER_NAMES, *RETIRED_LAUNCHER_NAMES) if (tracker / n).exists())
             problems.extend(_tracker_launcher_problems(label, tracker))
         for child in children:
             if child.name == TRACKER_DIR_NAME or not (child / MANIFEST_NAME).is_file():

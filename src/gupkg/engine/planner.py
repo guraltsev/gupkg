@@ -444,11 +444,15 @@ def plan_install(
     )
 
     # The integration diff against what the install record says is applied now. An effect that is recorded but
-    # known to be missing on the machine (a repair found it) is applied again.
+    # known to be missing on the machine (a repair found it) is applied again. A repair (`repair`, or `install` of the
+    # installed version) writes every effect the package owns again, so that, say, a shim launcher left by an older gupkg
+    # is replaced although it is not drift.
     effects = diff_effects(record_effects, desired)
-    if drifted:
+    rewrite_all = request.operation in ("install", "repair") and previous is not None and previous.casefold() == version.casefold()
+    if drifted or rewrite_all:
         effects = tuple(
-            PlannedEffect("update", item.effect, item.effect) if item.action == "keep" and effect_key(item.effect) in drifted else item
+            PlannedEffect("update", item.effect, item.effect)
+            if item.action == "keep" and (rewrite_all or effect_key(item.effect) in drifted) else item
             for item in effects
         )
     activating = previous is None or previous.casefold() != version.casefold() or (

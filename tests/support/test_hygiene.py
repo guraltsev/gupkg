@@ -5,10 +5,12 @@ The checks run with every pytest session (``_docs/tests_hygiene.md`` section 6).
 naming the rule, the file, the test and the section of the policy. A baseline line that matches no violation fails too,
 so the baseline only shrinks. A run of a few files does not report the baseline lines of the files it did not check.
 Temporary-test folders under ``tests/_temp/`` need a README and an open reference, and a ``kind: report`` folder runs only
-when the command line names it.
+when the command line names it. Conditional-test folders under ``tests/_conditional/`` are checked like permanent tests and need
+a README with the condition that ends them (``until``), a date to check it again (``expires``) and a ``purpose``; after the date
+the session fails.
 
-Every test is also in exactly one tier (rule H7), and a ``unit`` test that starts a process, sleeps or opens a socket
-fails with a message naming the tier (rule H8); a ``unit`` test listed in the baseline for H8 passes, and its line is an error
+Every test is also in exactly one tier (rule H8), and a ``unit`` test that starts a process, sleeps or opens a socket
+fails with a message naming the tier (rule H9); a ``unit`` test listed in the baseline for H9 passes, and its line is an error
 once the test stops breaking the rule.
 
 These tests build small fake repositories below ``tmp_path``. The ones marked ``process`` start a real pytest process in such
@@ -21,6 +23,7 @@ import os
 import subprocess
 import sys
 import textwrap
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -187,6 +190,57 @@ def test_a_complete_temporary_folder_with_an_open_reference_passes(tmp_path: Pat
     assert hygiene.check(tmp_path, []) is None
 
 
+def _conditional_folder(root: Path, name: str, readme: str | None) -> None:
+    """Create ``tests/_conditional/<name>/`` with a clean test module and, if given, a README."""
+    _write(root / "tests" / "_conditional" / name / "test_compat.py", CLEAN_SELF_CONTAINED)
+    if readme is not None:
+        _write(root / "tests" / "_conditional" / name / "README.md", readme)
+
+
+def _conditional_readme(until: str = "No registry in the old layout is supported.", expires: str = "2027-04-30") -> str:
+    return f"until: {until}\nexpires: {expires}\npurpose: Convert registries made in the old layout.\n"
+
+
+def test_a_complete_conditional_folder_passes_until_its_date_and_fails_after_it(tmp_path: Path) -> None:
+    """A folder with ``until``, ``expires`` and ``purpose`` passes up to its date; the day after, the session fails until the date is moved or the tests are retired."""
+    _conditional_folder(tmp_path, "old_layout", _conditional_readme(expires="2027-04-30"))
+
+    assert hygiene.check(tmp_path, [], today=date(2027, 4, 30)) is None
+    message = hygiene.check(tmp_path, [], today=date(2027, 5, 1))
+
+    assert "H7 tests/_conditional/old_layout" in message
+    assert "expired on 2027-04-30" in message and "retire the tests" in message
+
+
+@pytest.mark.parametrize(
+    ("readme", "reason"),
+    [
+        pytest.param(None, "no README.md", id="no-readme"),
+        pytest.param("expires: 2027-04-30\npurpose: Convert.\n", "README lacks until", id="no-condition"),
+        pytest.param("until: Gone.\npurpose: Convert.\n", "README lacks expires", id="no-date"),
+        pytest.param(_conditional_readme(expires="next spring"), "expires must be a date written YYYY-MM-DD", id="date-not-a-date"),
+    ],
+)
+def test_a_conditional_folder_needs_a_condition_and_a_date(tmp_path: Path, readme: str | None, reason: str) -> None:
+    """A conditional folder without a README, or whose README gives no condition or no valid date, is refused, naming rule H7 and the folder."""
+    _conditional_folder(tmp_path, "old_layout", readme)
+
+    message = hygiene.check(tmp_path, [], today=date(2026, 11, 1))
+
+    assert "H7 tests/_conditional/old_layout" in message
+    assert reason in message
+
+
+def test_a_test_module_may_not_import_from_a_conditional_folder(tmp_path: Path) -> None:
+    """Nothing imports from ``tests/_conditional/``, because the tests there end with their condition (H1)."""
+    _conditional_folder(tmp_path, "old_layout", _conditional_readme())
+    module = _module(tmp_path, CLEAN_MODULE + "\nfrom tests._conditional.old_layout import helper\n")
+
+    message = hygiene.check(tmp_path, [module], today=date(2026, 11, 1))
+
+    assert "H1 tests/test_subject.py" in message
+
+
 def _pytest(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
     """Run pytest with the hygiene plugin in the fake repository *root*."""
     _write(root / "pytest.ini", PYTEST_INI)
@@ -253,7 +307,7 @@ def _tiered(root: Path, name: str, body: str) -> Path:
     ],
 )
 def test_a_unit_test_that_starts_a_process_or_sleeps_fails_naming_the_tier(tmp_path: Path, body: str, what: str) -> None:
-    """In the unit tier a child process or a sleep of more than a hundredth of a second fails the test with rule H8 and the policy."""
+    """In the unit tier a child process or a sleep of more than a hundredth of a second fails the test with rule H9 and the policy."""
     _tiered(tmp_path, "test_subject", UNIT_PREFIX + body)
 
     done = _pytest(tmp_path, "-m", "unit")
@@ -261,7 +315,7 @@ def test_a_unit_test_that_starts_a_process_or_sleeps_fails_naming_the_tier(tmp_p
     text = done.stdout + done.stderr
     assert done.returncode == 1
     assert "1 failed" in text
-    assert "H8 tests/test_subject.py::test_a_" in text
+    assert "H9 tests/test_subject.py::test_a_" in text
     assert f"unit tier and {what}" in text
     assert "_docs/tests.md section 5" in text
 
@@ -284,10 +338,10 @@ def test_a_process_test_may_start_a_process_and_a_unit_test_may_nap_a_hundredth_
 
 @pytest.mark.process
 def test_a_baselined_unit_test_passes_until_it_stops_breaking_the_rule(tmp_path: Path) -> None:
-    """A unit test listed in the baseline for H8 passes while it sleeps; once it no longer does, the line is an error to delete."""
+    """A unit test listed in the baseline for H9 passes while it sleeps; once it no longer does, the line is an error to delete."""
     napping = UNIT_PREFIX + "import time\n\n\ndef test_a_nap() -> None:\n    \"\"\"Sleeps.\"\"\"\n    time.sleep(0.5)\n"
     _tiered(tmp_path, "test_subject", napping)
-    _baseline(tmp_path, "H8|tests/test_subject.py|test_a_nap")
+    _baseline(tmp_path, "H9|tests/test_subject.py|test_a_nap")
 
     listed = _pytest(tmp_path)
     _tiered(tmp_path, "test_subject", UNIT_PREFIX + "def test_a_nap() -> None:\n    \"\"\"Does not sleep.\"\"\"\n")
@@ -295,12 +349,12 @@ def test_a_baselined_unit_test_passes_until_it_stops_breaking_the_rule(tmp_path:
 
     assert listed.returncode == 0, listed.stdout + listed.stderr
     assert stale.returncode == 1
-    assert "H8|tests/test_subject.py|test_a_nap no longer matches a violation" in stale.stdout + stale.stderr
+    assert "H9|tests/test_subject.py|test_a_nap no longer matches a violation" in stale.stdout + stale.stderr
 
 
 @pytest.mark.process
 def test_every_test_needs_exactly_one_tier_and_the_nearest_mark_decides(tmp_path: Path) -> None:
-    """A test without a tier, or with two, fails with rule H7; a mark on a test overrides its module's, and ``-m`` follows it."""
+    """A test without a tier, or with two, fails with rule H8; a mark on a test overrides its module's, and ``-m`` follows it."""
     _tiered(tmp_path, "test_none", '"""A module."""\n\n\ndef test_a_test() -> None:\n    """Has no tier."""\n')
     none = _pytest(tmp_path, "--collect-only")
     _tiered(tmp_path, "test_none", '"""A module."""\n\nimport pytest\n\n\n@pytest.mark.unit\n@pytest.mark.process\ndef test_a_test() -> None:\n    """Has two tiers."""\n')
@@ -313,7 +367,7 @@ def test_every_test_needs_exactly_one_tier_and_the_nearest_mark_decides(tmp_path
     unit = _pytest(tmp_path, "--collect-only", "-m", "unit")
     process = _pytest(tmp_path, "--collect-only", "-m", "process")
 
-    assert none.returncode != 0 and "H7 tests/test_none.py::test_a_test" in none.stdout + none.stderr
+    assert none.returncode != 0 and "H8 tests/test_none.py::test_a_test" in none.stdout + none.stderr
     assert "no tier mark" in none.stdout + none.stderr
     assert two.returncode != 0 and "marked process and unit" in two.stdout + two.stderr
     assert "test_in_the_module_tier" in unit.stdout and "test_in_its_own_tier" not in unit.stdout

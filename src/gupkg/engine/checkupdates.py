@@ -4,7 +4,7 @@ The tracker (``_check_updates``) is the only code that discovers new versions. T
 built-in providers, lets the catalog compare the result with the known versions, renders the pinned ``pkg.toml`` with
 ``render_pinned`` (strip every template and the ``[track]`` table, fill ``sha256`` only from a checksum the tracker
 discovered), writes ``<package>\\<version>\\`` atomically with the support files but without any update-check code and with
-the launchers of its own (``install.cmd`` and ``gupkg-tui.cmd``, in every root) and the package's own bundled gupkg carried
+the launchers of its own (``install.cmd`` and ``manage.cmd``, in every root) and the package's own bundled gupkg carried
 forward where the root has no gupkg-location (decision D32), and, unless
 ``--no-download``, downloads, verifies and populates its ``App``. It then stops: ``current``, shortcuts, shims and the
 environment are unchanged. A system package checked from a normal shell is only reported (nothing under the system root

@@ -25,7 +25,7 @@ For reference, issue 036 §2 measured on 2026-10-30:
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | T00 | Indicators tool | — | merged | | b2ee140 | 3,765 passed, 13 skipped (one tier) | n/a | minor review defects left: CLI --spec/--timings untested, weak heading asserts, silent unknown --spec |
 | T01 | Hygiene checks and baseline | T00 | merged | | 6f71b14 | 3,780 passed, 13 skipped (one tier) | 166 | minor review gaps: modules with no collected tests unchecked; some H5/H6 cases untested; age warning (hygiene �3.3) not built |
-| T02 | Tiers | T01 | ready | | | | | rule 3 wording needs the owner |
+| T02 | Tiers | T01 | in progress | i036/T02 | | | | rule 3 wording needs the owner |
 | T03 | Real waits and big copies | T02 | waiting | | | | | |
 | T04 | Shared support | T03 | waiting | | | | | |
 | T05 | Registry receives its tests (gupkg-registry) | T04 | waiting | | | | | |

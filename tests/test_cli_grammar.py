@@ -37,7 +37,7 @@ COMMANDS = [
 ]
 SUBCOMMANDS = [
     ("registry", "sync"), ("registry", "status"), ("registry", "list"), ("registry", "add"), ("registry", "remove"),
-    ("pkg", "new"), ("pkg", "check"), ("pkg", "pin"), ("pkg", "bundle"), ("pkg", "export"),
+    ("pkg", "new"), ("pkg", "check"), ("pkg", "adopt"), ("pkg", "pin"), ("pkg", "bundle"), ("pkg", "launchers"), ("pkg", "export"),
     ("settings", "show"), ("settings", "path"), ("settings", "init"), ("settings", "set"),
     ("self", "status"), ("self", "repair"), ("self", "check-updates"), ("self", "update"),
 ]
@@ -87,6 +87,16 @@ def test_every_subcommand_has_an_example_in_its_help(world: CliWorld, group: str
     result = world.cli(group, action, "--help")
 
     assert result.code == 0 and "example:" in result.out and f"gupkg {group} {action}" in result.out
+
+
+@pytest.mark.parametrize("group", [pytest.param(name, id=name) for name in dict.fromkeys(group for group, _ in SUBCOMMANDS)])
+def test_every_group_help_lists_its_actions(world: CliWorld, group: str) -> None:
+    """gupkg <group> --help names every action of the group, so an action can be found without reading the code."""
+    result = world.cli(group, "--help")
+
+    assert result.code == 0
+    for action in (action for name, action in SUBCOMMANDS if name == group):
+        assert f"    {action} " in result.out
 
 
 @pytest.mark.parametrize("word", [pytest.param(word, id=word.replace("-", "_")) for word in ("config-check", "config-fix", "doctor", "repair-deps", "update-deps")])
