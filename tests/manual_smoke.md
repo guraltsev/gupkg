@@ -242,19 +242,18 @@ temporary directories. These steps cover real consoles, real permissions and a r
 
 ## Built-in services (issue 026)
 
-The automated tests replay synthetic HTTP fixtures, build archives at test time and run
+The automated tests serve invented vendor answers, build archives at test time and run
 7-Zip for real, but they cannot reach vendor sites or build NSIS installers. These steps cover
 what only real sites and real installers show.
 
-1. **Re-record the HTTP fixtures (owed to issue 031).** The files under `tests/fixtures/http` are
-   synthetic fixtures modelled on the registry hooks' regular expressions, marked
-   `"recorded": null`, because the worker had no network. With a network, run `python
-   tools/record_http_fixtures.py`: it runs each tracker against the live site and records the whole
-   walk, the date and the `expected` block. Review the diff (a changed `expected` is a vendor
-   change, a failing case is a pattern that was wrong) and commit the recorded files. Why
-   manual: needs the real vendor sites.
+1. **Re-record the HTTP fixtures (owed to issue 031).** The vendor answers of the real packages belong to
+   the registry repository (`gupkg-registry\_tests\fixtures`), where most are synthetic and marked
+   `"recorded": null`. With a network, run `python _tools\record_http_fixtures.py` there: it runs each tracker against
+   the live site and records the whole walk, the date and the `expected` block. Review the diff (a changed
+   `expected` is a vendor change, a failing case is a pattern that was wrong) and commit the recorded files in
+   that repository. Why manual: needs the real vendor sites.
 2. **Real NSIS installers.** In a sandbox (`gupkg --sandbox <dir> install`) install the
-   obsidian and pidgin trackers of `tests/fixtures/registry_100` after copying them into a test
+   obsidian and pidgin trackers of the registry (`gupkg-registry`) after copying them into a test
    registry with a real downloaded installer (`kind = "nsis"`). Confirm `App` holds the
    application with no `$PLUGINSDIR` folder and no uninstaller, and that no installer code ran
    (no new Start Menu or Programs entry). Why manual: no NSIS sample can be built offline and
@@ -338,8 +337,7 @@ repository `gupkg-registry`; its README repeats the commands.
    Correct the package's `[portable]` table where the upstream behaviour differs and delete its row. Why manual: only the real
    applications show how they enter portable mode.
 6. **Record the HTTP fixtures and commit a real NSIS sample** (owed by issue 026 to this issue): see "Built-in services" steps 1
-   and 2. After recording, `python tools/snapshot_registry.py <registry> --check` must still say "snapshot is current", and the
-   CI job of the registry runs the recorded cases against its own trackers.
+   and 2. The registry's own tests run the recorded cases against its trackers.
 7. **Distribution folder against the published fingerprint (needs the engine, issues 028 and 029).** Copy a registry version
    directory (for example `<registry cache>\qbittorrent\5.2.3`) to a folder outside every root and run `gupkg install <folder>
    ` with the registry synced: the install is labelled *verified against registry <name>*. Change one byte of the
