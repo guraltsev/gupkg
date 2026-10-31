@@ -311,6 +311,7 @@ gupkg-tui PATH|NAME                        the package view of one package (vers
 gupkg-manager [tui]                        the browser over every package
 gupkg-manager check-updates --all [--no-download] [--yes] [--json]
 gupkg-manager update --all [--yes] [--json]
+gupkg-manager repair --all [--yes] [--json]
 gupkg-manager check [--fix] [--yes] [--json]
 ```
 

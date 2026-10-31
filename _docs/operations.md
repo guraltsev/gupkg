@@ -201,6 +201,7 @@ Update is two commands on purpose, so a schedule can look first and switch later
 gupkg-manager check-updates --all --json   :: find and prepare new versions; activates nothing
 gupkg-manager update --all --yes --json    :: activate what is prepared
 gupkg-manager check --json                 :: health: drift, fingerprints
+gupkg-manager repair --all --yes           :: install every installed package again (shortcuts, shims, PATH entries)
 ```
 
 Run them as the account whose packages they manage. From a normal shell they act on the user's root. A Task Scheduler task with "Run

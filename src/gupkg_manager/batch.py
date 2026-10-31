@@ -1,13 +1,14 @@
 """The manager's own batch logic: the inventory of every package, which packages an ``--all`` batch acts on, and the batch commands.
 
 ``gupkg-manager`` reads the inventory in-process (the core functions behind ``gupkg list --json``) and selects the packages an ``--all`` batch acts on (``update``: those with a newer known
-version; ``check-updates``: those that are installed or local; ``check``: every package of the root). The plan, the confirmation, the checksum policy and the
+version; ``check-updates``: those that are installed or local; ``repair``: those that are installed; ``check``: every package of the root). The plan, the confirmation, the checksum policy and the
 execution (one call of the CLI, in the run's scope) are the shared flows of ``gupkg_ui.flows``, which the batch functions here start with the selection.
 
 Usage and API
 -------------
 ``await load_inventory(env)`` returns the ``PackageRow`` list (``available=True`` adds the registry's packages that are not installed). ``pick(rows, command)``
-selects the rows. ``await update_all``, ``await check_updates_all`` and ``await check_all`` run the batch commands and return a ``BatchOutcome``.
+selects the rows. ``await update_all``, ``await check_updates_all``, ``await repair_all`` and ``await check_all`` run the batch commands and return a
+``BatchOutcome``.
 
 Implementation Approach
 -----------------------
@@ -45,9 +46,11 @@ def pick(rows: Sequence[PackageRow], command: str) -> list[PackageRow]:
     """Return the rows an ``--all`` batch of *command* acts on.
 
     ``update`` takes the packages that have a newer known version; ``check-updates`` takes every package that is installed or local (a package
-    with no tracker simply reports that); any other command takes every package that is in a root.
+    with no tracker simply reports that); ``repair`` takes every installed package; any other command takes every package that is in a root.
     """
-    statuses = {"update": {"outdated"}, "check-updates": {"installed", "outdated", "local", "broken"}}.get(command)
+    statuses = {
+        "update": {"outdated"}, "check-updates": {"installed", "outdated", "local", "broken"}, "repair": {"installed", "outdated", "broken"},
+    }.get(command)
     return [row for row in rows if (row.status in statuses if statuses is not None else row.status != "available")]
 
 
@@ -63,6 +66,14 @@ async def check_updates_all(
 ) -> BatchOutcome:
     """Run ``check-updates`` on *rows*: new versions are written and populated, nothing is activated."""
     return await run_check_updates(env, rows, session=session, interaction=interaction, options=options)
+
+
+async def repair_all(env: UiEnvironment, rows: Sequence[PackageRow], *, session: BatchSession) -> BatchOutcome:
+    """Install *rows* again (the browser's "install or repair"): every shortcut, shim and PATH entry is written again, a missing App rebuilt.
+
+    The caller confirmed the batch, so the call passes ``--yes``.
+    """
+    return await run_operation(env, "install", rows, session=session, options=["--yes"])
 
 
 async def check_all(env: UiEnvironment, rows: Sequence[PackageRow], *, session: BatchSession, fix: bool = False) -> BatchOutcome:

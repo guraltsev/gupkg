@@ -3,8 +3,8 @@
 ``gupkg-manager`` (or ``gupkg-manager tui``) opens the browser over every package. ``gupkg-manager check-updates --all`` writes and populates the
 new versions of every package and activates nothing. ``gupkg-manager update --all [--yes]`` plans an update of every package that has
 a newer known version, asks once (``--yes`` answers), applies the ``[manager] checksum_missing`` policy per package and runs it in one call. The
-program manages the scope of its own process: an administrator's shell the system root, any other shell the user's. ``gupkg-manager check [--fix]`` is the
-health check. All of them take ``--json`` for one result document on standard output (human text then goes to standard error). Everything the
+program manages the scope of its own process: an administrator's shell the system root, any other shell the user's. ``gupkg-manager repair --all [--yes]``
+installs every installed package again (shortcuts, shims and PATH entries are written again). ``gupkg-manager check [--fix]`` is the health check. All of them take ``--json`` for one result document on standard output (human text then goes to standard error). Everything the
 manager does to a package is a call to the ``gupkg`` of the same gupkg tree.
 
 Usage and API
@@ -38,7 +38,7 @@ from gupkg_ui.session import EXIT_FAILED, EXIT_INPUT, BatchOutcome, BatchSession
 from gupkg_ui.startup import StartupError, UiEnvironment, add_root_options, build_environment
 
 from .app.app import ManagerApp
-from .batch import check_all, check_updates_all, load_inventory, pick, update_all
+from .batch import check_all, check_updates_all, load_inventory, pick, repair_all, update_all
 
 PROGRAM = "gupkg-manager"
 
@@ -126,7 +126,8 @@ async def _batch_command(args: argparse.Namespace, environment: UiEnvironment, s
         print(f"{PROGRAM}: error: the package list could not be read: {error}", file=stderr)
         return EXIT_FAILED
     if not rows:
-        print("No packages." if command == "check" else f"No packages to {'update' if command == 'update' else 'check for updates'}.", file=stream)
+        verb = {"update": "update", "check-updates": "check for updates", "repair": "repair"}.get(command)
+        print("No packages." if verb is None else f"No packages to {verb}.", file=stream)
         if args.json:
             stdout.write(dumps(outcome_document(command, BatchOutcome())))
         return 0
@@ -136,6 +137,8 @@ async def _batch_command(args: argparse.Namespace, environment: UiEnvironment, s
         outcome = await update_all(environment, rows, session=session, sink=sink, interaction=interaction)
     elif command == "check-updates":
         outcome = await check_updates_all(environment, rows, session=session, interaction=interaction, options=["--no-download"] if args.no_download else [])
+    elif command == "repair":
+        outcome = await _repair(args, environment, rows, session, stdin, stream)
     else:
         outcome = await _check(args, environment, rows, session, stdin, stream)
 
@@ -162,6 +165,16 @@ async def _check(args: argparse.Namespace, environment: UiEnvironment, rows, ses
             print("not confirmed: pass --yes to repair without a question; nothing was changed", file=stream)
             return BatchOutcome(exit_code=EXIT_INPUT)
     return await check_all(environment, rows, session=session, fix=args.fix)
+
+
+async def _repair(args: argparse.Namespace, environment: UiEnvironment, rows, session: BatchSession, stdin: TextIO, stream: TextIO) -> BatchOutcome:
+    """Install every installed package again (it asks once, or ``--yes`` answers)."""
+    tty = bool(getattr(stdin, "isatty", lambda: False)())
+    question = f"Repair {len(rows)} package{'s' if len(rows) != 1 else ''} (write their shortcuts, shims and PATH entries again)?"
+    if not args.yes and not (tty and not args.json and console_confirm(stdin, stream)([], question)):
+        print("not confirmed: pass --yes to repair without a question; nothing was changed", file=stream)
+        return BatchOutcome(exit_code=EXIT_INPUT)
+    return await repair_all(environment, rows, session=session)
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +210,8 @@ def _parser() -> argparse.ArgumentParser:
     for name, text in (
         ("check-updates", "Write and populate the new version of every package; activate nothing."),
         ("update", "Update every package that has a newer known version."),
-        ("check", "Health check of every package (drift, App fingerprint, unverified installs)."),
+        ("repair", "Install every installed package again: write its shortcuts, shims and PATH entries again; rebuild a missing App."),
+        ("check","Health check of every package (drift, App fingerprint, unverified installs)."),
     ):
         leaf = commands.add_parser(name, help=text, description=text)
         if name != "check":

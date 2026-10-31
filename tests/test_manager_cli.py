@@ -173,7 +173,29 @@ def test_check_with_fix_needs_a_yes(fake: FakeGupkg, tmp_path: Path) -> None:
     assert code == 5 and fake.read_calls() == ["list"] and fake.calls() == []
 
 
-@pytest.mark.parametrize("command", ["update", "check-updates"])
+def test_repair_all_with_yes_installs_every_installed_package_again_in_one_call(fake: FakeGupkg, tmp_path: Path) -> None:
+    """``repair --all --yes`` is the browser's "install or repair" for every installed package (outdated and broken too, never a local one)."""
+    rows = [("a", "installed", "1.0.0", None), ("b", "outdated", "1.0.0", "2.0.0"), ("c", "broken", "1.0.0", None), ("d", "local", None, "1.0.0")]
+    fake.respond("list", doc=list_doc([(name, "user", status, active, newest, str(tmp_path / "roots" / "user" / name)) for name, status, active, newest in rows]))
+    doc = result("install", [entry(name, "install", status="repaired") for name in "abc"])
+    fake.respond("install", doc=doc, events={"dir": logs_of(tmp_path), "result": doc, "packages": [{"name": "a", "path": str(tmp_path / "roots" / "user" / "a"), "records": []}]})
+
+    code, out, _ = manager(tmp_path, fake, "repair", "--all", "--yes")
+
+    (call,) = [item for item in fake.calls() if item["key"] == "install"]
+    assert code == 0 and call["targets"] == ["a", "b", "c"] and "--yes" in call["options"]
+
+
+def test_repair_all_without_yes_and_without_a_terminal_changes_nothing(fake: FakeGupkg, tmp_path: Path) -> None:
+    """Repairing rewrites every package's integration: with nobody to confirm it is refused (exit 5) and only the list is read."""
+    fake.respond("list", doc=list_doc([("a", "user", "installed", "1.0.0", None, str(tmp_path / "roots" / "user" / "a"))]))
+
+    code, out, _ = manager(tmp_path, fake, "repair", "--all")
+
+    assert code == 5 and "--yes" in out and fake.read_calls() == ["list"] and fake.calls() == []
+
+
+@pytest.mark.parametrize("command", ["update", "check-updates", "repair"])
 def test_all_is_required(fake: FakeGupkg, tmp_path: Path, command: str) -> None:
     """The batch commands act on every package only when ``--all`` says so; named packages belong to ``gupkg``."""
     code, _, err = manager(tmp_path, fake, command)
@@ -205,8 +227,8 @@ def test_the_browser_needs_a_terminal(fake: FakeGupkg, tmp_path: Path) -> None:
 
 
 def test_the_help_names_every_command(capsys: pytest.CaptureFixture[str]) -> None:
-    """``--help`` lists the browser and the three batch commands."""
+    """``--help`` lists the browser and the four batch commands."""
     assert cli.main(["--help"]) == 0
 
     text = capsys.readouterr().out
-    assert all(word in text for word in ("tui", "check-updates", "update", "check"))
+    assert all(word in text for word in ("tui", "check-updates", "update", "check", "repair"))
