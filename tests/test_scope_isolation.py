@@ -155,23 +155,21 @@ def test_a_run_never_considers_the_poisoned_root_of_the_other_mode(tmp_path: Pat
     assert not [call for call in world.fake.process_log if str(other_root) in " ".join(map(str, call))]
 
 
-def test_the_recorder_sees_the_poison_when_the_poisoned_root_is_the_runs_own(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_recorder_sees_the_poison_when_the_poisoned_root_is_the_runs_own(cli_world: CliWorld, monkeypatch: pytest.MonkeyPatch) -> None:
     """Control: a run on ``--root <poisoned root>`` fails on the invalid TOML, and the recorder logs the open of that file."""
-    world = CliWorld(tmp_path)
-    root, _ = poison(world, "user")
+    root, _ = poison(cli_world, "user")
     touches = Touches(root, monkeypatch)
 
-    result = world.cli("--root", str(root), "list")
+    result = cli_world.cli("--root", str(root), "list")
 
     touches.active = False
     assert result.code == 2 and "not valid TOML" in result.err, result.err
     assert any("settings.toml" in path for path in touches.paths), touches.paths
 
 
-def test_a_mere_exists_of_the_other_root_is_recorded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_mere_exists_of_the_other_root_is_recorded(cli_world: CliWorld, monkeypatch: pytest.MonkeyPatch) -> None:
     """Control: ``Path.exists`` and ``os.stat`` of the watched folder are noted (the recorder hooks more than ``open``)."""
-    world = CliWorld(tmp_path)
-    root, _ = poison(world, "user")
+    root, _ = poison(cli_world, "user")
     touches = Touches(root, monkeypatch)
 
     root.exists()
@@ -180,10 +178,9 @@ def test_a_mere_exists_of_the_other_root_is_recorded(tmp_path: Path, monkeypatch
     touches.active = False
     assert len(touches.paths) >= 2, touches.paths
 
-def test_the_program_root_carve_out_covers_that_folder_and_nothing_below_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_program_root_carve_out_covers_that_folder_and_nothing_below_it(cli_world: CliWorld, monkeypatch: pytest.MonkeyPatch) -> None:
     """The user run may look at the folder its gupkg is installed in; a read of its ``.gupkg\\settings.toml`` is still a violation."""
-    world = CliWorld(tmp_path)
-    program = world.location.root
+    program = cli_world.location.root
     (program / ".gupkg").mkdir(parents=True, exist_ok=True)
     (program / ".gupkg" / "settings.toml").write_text("schema = 4\n", encoding="utf-8")
     touches = Touches(program, monkeypatch, program_root=program)

@@ -14,8 +14,6 @@ Real: the engine, the catalog, real folders. Mocked: ``FakeSystem``. Out of scop
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from gupkg.catalog.catalog import Catalog
@@ -42,12 +40,6 @@ KINDS = [
     pytest.param(ENV, "TOOL_HOME", "TOOL_HOME", "environment variable 'TOOL_HOME'", id="environment-variable"),
     pytest.param(ENV, "TOOL_HOME", "tool_home", "environment variable 'tool_home'", id="environment-variable-letter-case"),
 ]
-
-
-@pytest.fixture
-def world(tmp_path: Path) -> World:
-    """A fake machine with a user root."""
-    return World(tmp_path)
 
 
 def state(world: World) -> dict[str, object]:

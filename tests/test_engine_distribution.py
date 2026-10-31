@@ -31,12 +31,6 @@ pytestmark = pytest.mark.unit
 SHIM = '[[shim]]\nname = "tool"\ntarget = "$App\\\\app.exe"\n'
 
 
-@pytest.fixture
-def world(tmp_path: Path) -> World:
-    """A fake machine with a user root and an engine."""
-    return World(tmp_path)
-
-
 def distribution(world: World, version: str = "1.0.0") -> Path:
     """Write a script-populated distribution folder outside every root and return its version folder."""
     world.publish_script("tool", version, root=world.base / "downloads", tables=SHIM)
@@ -317,31 +311,29 @@ def test_a_registry_with_only_a_tracker_copies_it_and_stops_with_a_hint(world: W
     assert (world.user / "tool" / "_check_updates" / "pkg.toml").is_file() and not (world.user / "tool" / "current").exists()
 
 
-def test_an_administrator_installs_a_distribution_system_wide_from_an_admin_only_copy(tmp_path: Path) -> None:
+def test_an_administrator_installs_a_distribution_system_wide_from_an_admin_only_copy(elevated_world: World) -> None:
     """From an admin shell the folder in Downloads is only read and copied into the system root; the install runs from the copy."""
-    world = World(tmp_path, elevated=True)
-    folder = distribution(world)
+    folder = distribution(elevated_world)
 
-    result = world.one("install", str(folder))
+    result = elevated_world.one("install", str(folder))
 
-    package = world.system_root / "tool"
+    package = elevated_world.system_root / "tool"
     assert result.ok and result.mode == "system" and (package / "1.0.0" / "pkg.local" / "populate.cmd").is_file()
     assert (package / "current" / "App" / "app.exe").is_file()
     assert read_receipt(package, "1.0.0").data["origin"]["copied_from"] == str(folder)
-    assert not (world.user / "tool").exists()
+    assert not (elevated_world.user / "tool").exists()
 
 
-def test_a_distribution_copied_by_an_elevated_run_is_taken_back_when_the_install_cannot_be_planned(tmp_path: Path) -> None:
+def test_a_distribution_copied_by_an_elevated_run_is_taken_back_when_the_install_cannot_be_planned(elevated_world: World) -> None:
     """The elevated run copies before it can read the manifest; when the plan then fails the copy and its package folder are removed."""
-    world = World(tmp_path, elevated=True)
-    folder = distribution(world)
+    folder = distribution(elevated_world)
     manifest = folder / "pkg.toml"
     manifest.write_text(manifest.read_text(encoding="utf-8") + '\n[[shortcut]]\nname = "..\\\\..\\\\evil"\ntarget = "$App\\\\a.exe"\n', encoding="utf-8")
 
-    result = world.one("install", str(folder))
+    result = elevated_world.one("install", str(folder))
 
     assert not result.ok and "outside" in result.error["message"]
-    assert not (world.system_root / "tool").exists()
+    assert not (elevated_world.system_root / "tool").exists()
 
 
 def test_a_source_that_changes_between_the_plan_and_the_copy_is_refused_and_the_copy_removed(world: World) -> None:

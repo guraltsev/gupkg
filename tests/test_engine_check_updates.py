@@ -36,22 +36,20 @@ def installed(world: World, mode: str = "user", **options) -> World:
     return world
 
 
-def test_an_administrator_checking_a_system_package_writes_and_populates_the_version(tmp_path: Path) -> None:
+def test_an_administrator_checking_a_system_package_writes_and_populates_the_version(elevated_world: World) -> None:
     """Elevated, on a system package: the new version directory, populated, appears in the system root; the package stays on its old version."""
-    world = World(tmp_path, elevated=True)
-    installed(world, "system")
-    world.announce("tool", "1.1.0")
+    installed(elevated_world, "system")
+    elevated_world.announce("tool", "1.1.0")
 
-    result = world.one("check-updates", "tool")
+    result = elevated_world.one("check-updates", "tool")
 
-    package = world.system_root / "tool"
+    package = elevated_world.system_root / "tool"
     assert result.ok and result.status == "new-version" and result.version == "1.1.0" and result.mode == "system"
     assert (package / "1.1.0" / "App" / "app.exe").is_file() and Path(os.path.realpath(package / "current")).name == "1.0.0"
 
 
-def test_a_normal_shell_with_no_download_writes_only_the_manifest_and_support_files(tmp_path: Path) -> None:
+def test_a_normal_shell_with_no_download_writes_only_the_manifest_and_support_files(world: World) -> None:
     """Non-elevated, on a user package, --no-download: pkg.toml, support files and the version's own launchers are written; nothing is downloaded."""
-    world = World(tmp_path)
     installed(world)
     (world.user / "tool" / "_check_updates" / "icons").mkdir()
     (world.user / "tool" / "_check_updates" / "icons" / "tool.ico").write_text("icon", encoding="utf-8")
@@ -66,9 +64,8 @@ def test_a_normal_shell_with_no_download_writes_only_the_manifest_and_support_fi
     assert f"{BASE_URL}/tool-1.1.0.zip" not in world.fake.fetch_log
 
 
-def test_the_new_version_directory_is_pinned_and_carries_no_update_check_code(tmp_path: Path) -> None:
+def test_the_new_version_directory_is_pinned_and_carries_no_update_check_code(world: World) -> None:
     """The version is rendered from the tracker: concrete URL, discovered digest, no [track], no track hook, support files kept."""
-    world = World(tmp_path)
     installed(world)
     local = world.user / "tool" / "_check_updates" / "pkg.local"
     local.mkdir()
@@ -84,9 +81,8 @@ def test_the_new_version_directory_is_pinned_and_carries_no_update_check_code(tm
     assert sorted(item.name for item in (world.user / "tool" / "1.1.0" / "pkg.local").iterdir()) == ["helper.py"]
 
 
-def test_a_download_the_checksum_rules_refuse_leaves_the_version_without_app(tmp_path: Path) -> None:
+def test_a_download_the_checksum_rules_refuse_leaves_the_version_without_app(world: World) -> None:
     """With no digest and no --skip-checksum the directory stays written without App and the refusal is reported (D46); update can populate it with the flag."""
-    world = World(tmp_path)
     world.publish("tool", "1.0.0", tables=ENV_ONLY)
     world.tracker("tool", tables=ENV_ONLY, checksum=False)
     assert world.one("install", "tool").ok
@@ -107,9 +103,8 @@ def test_a_download_the_checksum_rules_refuse_leaves_the_version_without_app(tmp
     assert read_receipt(package, "1.1.0").data["checksum"]["decision"] == "skipped-cli"
 
 
-def test_check_updates_with_skip_checksum_populates_a_version_that_has_no_hash(tmp_path: Path) -> None:
+def test_check_updates_with_skip_checksum_populates_a_version_that_has_no_hash(world: World) -> None:
     """With the flag the unhashed https download is populated and the receipt records the skip; without it D46 applies."""
-    world = World(tmp_path)
     world.publish("tool", "1.0.0", tables=ENV_ONLY)
     world.tracker("tool", tables=ENV_ONLY, checksum=False)
     world.one("install", "tool")
@@ -123,9 +118,8 @@ def test_check_updates_with_skip_checksum_populates_a_version_that_has_no_hash(t
     assert "sha256" not in (package / "1.1.0" / "pkg.toml").read_text()
 
 
-def test_check_updates_reports_nothing_new_when_the_version_is_known(tmp_path: Path) -> None:
+def test_check_updates_reports_nothing_new_when_the_version_is_known(world: World) -> None:
     """A tracker result that equals the active version writes nothing and says so."""
-    world = World(tmp_path)
     installed(world)
     world.announce("tool", "1.0.0")
     before = sorted(item.name for item in (world.user / "tool").iterdir())
@@ -136,9 +130,8 @@ def test_check_updates_reports_nothing_new_when_the_version_is_known(tmp_path: P
     assert sorted(item.name for item in (world.user / "tool").iterdir()) == before
 
 
-def test_check_updates_of_a_package_that_is_not_local_is_an_error_with_a_hint(tmp_path: Path) -> None:
+def test_check_updates_of_a_package_that_is_not_local_is_an_error_with_a_hint(world: World) -> None:
     """A registry-only name has nothing to check: the error says to install it."""
-    world = World(tmp_path)
     world.registry({"tool": {"versions": {"1.0.0": {"app.exe": "x"}}}})
 
     result = world.one("check-updates", "tool")
@@ -146,9 +139,8 @@ def test_check_updates_of_a_package_that_is_not_local_is_an_error_with_a_hint(tm
     assert not result.ok and "install" in result.error["message"]
 
 
-def test_the_registrys_tracker_is_copied_in_and_run(tmp_path: Path) -> None:
+def test_the_registrys_tracker_is_copied_in_and_run(tmp_path: Path, world: World) -> None:
     """A linked package with no tracker gets the registry's tracker copied in, and the copy's hash is recorded in the install record."""
-    world = World(tmp_path)
     world.publish("tool", "1.0.0", tables=ENV_ONLY)
     world.one("install", "tool")
     tracker_text = world.tracker("tool", root=tmp_path / "scratch").joinpath("pkg.toml").read_text(encoding="utf-8")
@@ -161,9 +153,8 @@ def test_the_registrys_tracker_is_copied_in_and_run(tmp_path: Path) -> None:
     assert result.ok and result.version == "1.1.0" and (package / "_check_updates" / "pkg.toml").is_file()
 
 
-def test_a_bundled_install_carries_its_own_gupkg_into_the_new_version(tmp_path: Path) -> None:
+def test_a_bundled_install_carries_its_own_gupkg_into_the_new_version(world: World) -> None:
     """In a root with no gupkg-location the package's bundled gupkg is copied into the new directory, next to launchers written fresh (decision D32)."""
-    world = World(tmp_path)
     installed(world)
     version = world.user / "tool" / "1.0.0"
     (version / "gupkg").mkdir()
@@ -178,9 +169,8 @@ def test_a_bundled_install_carries_its_own_gupkg_into_the_new_version(tmp_path: 
     assert (new / "install.cmd").read_bytes() == launcher_text("install").encode("ascii")
 
 
-def test_every_new_version_directory_gets_the_launchers_also_in_a_root_with_a_gupkg_location(tmp_path: Path) -> None:
+def test_every_new_version_directory_gets_the_launchers_also_in_a_root_with_a_gupkg_location(world: World) -> None:
     """With an installed gupkg in the root (a gupkg-location) the new version still carries its own install.cmd and manage.cmd, and no bundled gupkg."""
-    world = World(tmp_path)
     installed(world)
     (world.user / ".gupkg").mkdir(exist_ok=True)
     (world.user / ".gupkg" / "gupkg-location").write_text("gupkg\\current\\App\n", encoding="utf-8")
@@ -194,9 +184,8 @@ def test_every_new_version_directory_gets_the_launchers_also_in_a_root_with_a_gu
     assert (new / "manage.cmd").read_bytes() == launcher_text("tui").encode("ascii")
 
 
-def test_the_trackers_launcher_is_never_copied_into_a_version_directory(tmp_path: Path) -> None:
+def test_the_trackers_launcher_is_never_copied_into_a_version_directory(world: World) -> None:
     """`check-updates.cmd` of `_check_updates` stays there; the new version has install.cmd and manage.cmd instead."""
-    world = World(tmp_path)
     installed(world)
     (world.user / "tool" / "_check_updates" / "check-updates.cmd").write_text("@echo off\n", encoding="utf-8")
     world.announce("tool", "1.1.0")
@@ -206,9 +195,8 @@ def test_the_trackers_launcher_is_never_copied_into_a_version_directory(tmp_path
     assert result.ok and not (world.user / "tool" / "1.1.0" / "check-updates.cmd").exists()
 
 
-def test_a_waived_optional_checksum_source_is_shown_returned_and_recorded(tmp_path: Path) -> None:
+def test_a_waived_optional_checksum_source_is_shown_returned_and_recorded(world: World) -> None:
     """`[source.checksum] optional = true` with nothing behind it: the version is written unpinned and the note reaches the events, the result and the receipt."""
-    world = World(tmp_path)
     world.publish("tool", "1.0.0", tables=ENV_ONLY)
     world.tracker("tool", tables="optional = true\n" + ENV_ONLY)
     assert world.one("install", "tool").ok
@@ -233,9 +221,8 @@ def test_a_waived_optional_checksum_source_is_shown_returned_and_recorded(tmp_pa
 
 
 @pytest.mark.parametrize("version", ["con", "NUL.txt", "1.0 ", "..", "a%b"])
-def test_a_discovered_version_that_cannot_name_a_directory_writes_nothing(tmp_path: Path, version: str) -> None:
+def test_a_discovered_version_that_cannot_name_a_directory_writes_nothing(world: World, version: str) -> None:
     """A tracker that finds a device name or an unsafe string as a version is refused before any directory is made."""
-    world = World(tmp_path)
     installed(world)
     world.fake.add_url(f"{BASE_URL}/tool-latest.json", f'{{"version": "{version}"}}')
     before = sorted(item.name for item in (world.user / "tool").iterdir())

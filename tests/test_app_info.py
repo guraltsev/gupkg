@@ -23,12 +23,6 @@ from tests.support.engine import World
 pytestmark = pytest.mark.unit
 
 
-@pytest.fixture
-def world(tmp_path: Path) -> World:
-    """A fake machine with a user root."""
-    return World(tmp_path)
-
-
 def test_an_install_writes_app_info_in_the_version_directory_and_nothing_in_the_old_place(world: World) -> None:
     """`<package>\\<version>\\App.info` holds the record; `.gupkg\\receipts` is not created."""
     world.publish("tool", "1.0.0")

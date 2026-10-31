@@ -49,9 +49,8 @@ class Tamper:
                     item.write_bytes(bytes(reversed(item.read_bytes())))
 
 
-def test_a_cached_file_replaced_after_its_verification_stops_the_population(tmp_path: Path) -> None:
+def test_a_cached_file_replaced_after_its_verification_stops_the_population(world: World) -> None:
     """The file is hashed again right before it is unpacked: a replacement between the check and the use is a checksum mismatch."""
-    world = World(tmp_path)
     folder = world.publish("tool", "1.0.0")
 
     with use_reporter(Tamper(world.user / ".gupkg" / "cache")):
@@ -78,9 +77,8 @@ def test_an_elevated_run_refuses_a_seven_zip_in_an_untrusted_folder_before_any_d
     assert not result.ok and result.error["code"] == "untrusted-location" and world.fake.fetch_log == []
 
 
-def test_an_app_that_is_a_link_is_never_built_below_or_replaced(tmp_path: Path) -> None:
+def test_an_app_that_is_a_link_is_never_built_below_or_replaced(tmp_path: Path, world: World) -> None:
     """An App junction in the version directory is refused by the population itself, whatever the scan above it did."""
-    world = World(tmp_path)
     folder = world.publish("tool", "1.0.0")
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
@@ -92,9 +90,8 @@ def test_an_app_that_is_a_link_is_never_built_below_or_replaced(tmp_path: Path) 
     assert list(elsewhere.iterdir()) == []
 
 
-def test_an_existing_app_is_replaced_only_on_request(tmp_path: Path) -> None:
+def test_an_existing_app_is_replaced_only_on_request(world: World) -> None:
     """Without `replace` a populated App stays and the call says so; with it the new App takes its place."""
-    world = World(tmp_path)
     folder = world.publish("tool", "1.0.0")
     build(world, folder)
     (folder / "App" / "app.exe").write_text("edited", encoding="utf-8")
@@ -107,9 +104,8 @@ def test_an_existing_app_is_replaced_only_on_request(tmp_path: Path) -> None:
     assert (folder / "App" / "app.exe").read_text() == "tool 1.0.0\n"
 
 
-def test_the_old_app_is_put_back_when_the_new_one_cannot_be_moved_into_place(tmp_path: Path) -> None:
+def test_the_old_app_is_put_back_when_the_new_one_cannot_be_moved_into_place(world: World) -> None:
     """If the final rename fails the previous App is restored, the failure is reported and no scratch folder is left."""
-    world = World(tmp_path)
     folder = world.publish("tool", "1.0.0")
     build(world, folder)
     (folder / "App" / "keep.txt").write_text("previous", encoding="utf-8")
@@ -133,9 +129,8 @@ def test_the_old_app_is_put_back_when_the_new_one_cannot_be_moved_into_place(tmp
     assert not work.exists() or list(work.iterdir()) == []
 
 
-def test_when_the_old_app_cannot_be_put_back_it_is_kept_and_named(tmp_path: Path) -> None:
+def test_when_the_old_app_cannot_be_put_back_it_is_kept_and_named(world: World) -> None:
     """If even the restore fails, the previous App is not deleted: it stays in the work folder and the error says where."""
-    world = World(tmp_path)
     folder = world.publish("tool", "1.0.0")
     build(world, folder)
     (folder / "App" / "keep.txt").write_text("previous", encoding="utf-8")

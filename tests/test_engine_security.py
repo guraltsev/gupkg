@@ -87,9 +87,8 @@ def test_an_elevated_run_never_starts_a_populate_script_from_an_untrusted_folder
 
 
 @pytest.mark.parametrize("url", ["file://fileserver/share/tool.zip", "file:////fileserver/share/tool.zip"], ids=["host", "unc-share"])
-def test_a_download_from_a_network_share_through_a_file_url_is_refused(tmp_path: Path, url: str) -> None:
+def test_a_download_from_a_network_share_through_a_file_url_is_refused(world: World, url: str) -> None:
     """Windows would authenticate to that server, so the engine's client refuses `file:` URLs that name a host or share."""
-    world = World(tmp_path)
     folder = world.user / "tool" / "1.0.0"
     folder.mkdir(parents=True)
     (folder / "pkg.toml").write_text(pkg_text(url, sha256="ab" * 32, tables=ENV), encoding="utf-8")
@@ -100,19 +99,18 @@ def test_a_download_from_a_network_share_through_a_file_url_is_refused(tmp_path:
     assert not result.ok and result.error["code"] == "network-error" and url not in world.fake.fetch_log
 
 
-def test_an_elevated_run_expands_only_machine_variables_in_a_packages_declarations(tmp_path: Path) -> None:
+def test_an_elevated_run_expands_only_machine_variables_in_a_packages_declarations(elevated_world: World) -> None:
     """`${ProgramData}` resolves, `${USERPROFILE}` (the user's) does not: the install is refused and nothing is applied."""
-    world = World(tmp_path, elevated=True)
-    world.engine.env = {**world.machine.env, "ProgramData": "C:\\ProgramData", "USERPROFILE": "C:\\Users\\mallory"}
-    world.publish("good", "1.0.0", mode="system", tables='[[env]]\nname = "GOOD"\nvalue = "${ProgramData}\\\\good"\n')
-    world.publish("bad", "1.0.0", mode="system", tables='[[env]]\nname = "BAD"\nvalue = "${USERPROFILE}\\\\bad"\n')
+    elevated_world.engine.env = {**elevated_world.machine.env, "ProgramData": "C:\\ProgramData", "USERPROFILE": "C:\\Users\\mallory"}
+    elevated_world.publish("good", "1.0.0", mode="system", tables='[[env]]\nname = "GOOD"\nvalue = "${ProgramData}\\\\good"\n')
+    elevated_world.publish("bad", "1.0.0", mode="system", tables='[[env]]\nname = "BAD"\nvalue = "${USERPROFILE}\\\\bad"\n')
 
-    good = world.one("install", "good")
-    bad = world.one("install", "bad")
+    good = elevated_world.one("install", "good")
+    bad = elevated_world.one("install", "bad")
 
-    assert good.ok and world.fake.env_values(Mode.SYSTEM)["GOOD"].value == "C:\\ProgramData\\good"
-    assert not bad.ok and "USERPROFILE" in bad.error["message"] and "BAD" not in world.fake.env_values(Mode.SYSTEM)
-    assert not (world.system_root / "bad" / "current").exists()
+    assert good.ok and elevated_world.fake.env_values(Mode.SYSTEM)["GOOD"].value == "C:\\ProgramData\\good"
+    assert not bad.ok and "USERPROFILE" in bad.error["message"] and "BAD" not in elevated_world.fake.env_values(Mode.SYSTEM)
+    assert not (elevated_world.system_root / "bad" / "current").exists()
 
 
 def test_an_elevated_run_does_not_read_a_system_root_that_users_can_change(tmp_path: Path) -> None:
@@ -125,9 +123,8 @@ def test_an_elevated_run_does_not_read_a_system_root_that_users_can_change(tmp_p
     assert not result.ok and not (world.system_root / "tool" / "current").exists() and not (world.system_root / ".gupkg").exists()
 
 
-def test_a_hostile_install_record_cannot_steer_uninstall_outside_the_modes_folders(tmp_path: Path) -> None:
+def test_a_hostile_install_record_cannot_steer_uninstall_outside_the_modes_folders(tmp_path: Path, world: World) -> None:
     """A record that names a shim in System32 and a real one: the real one is removed, the hostile one is ignored and dropped."""
-    world = World(tmp_path)
     world.publish("tool", "1.0.0", tables=SHIM)
     assert world.one("install", "tool").ok
     package = world.user / "tool"
@@ -146,9 +143,8 @@ def test_a_hostile_install_record_cannot_steer_uninstall_outside_the_modes_folde
     assert not (world.fake.scope_folders(Mode.USER).bin_dir / "tool.exe").exists()
 
 
-def test_a_gupkg_folder_that_is_a_junction_elsewhere_is_never_written_through(tmp_path: Path) -> None:
+def test_a_gupkg_folder_that_is_a_junction_elsewhere_is_never_written_through(tmp_path: Path, world: World) -> None:
     """If `<package>\\.gupkg` leads somewhere else, the install refuses and the other place gets nothing."""
-    world = World(tmp_path)
     world.publish("tool", "1.0.0", tables=ENV)
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
@@ -160,9 +156,8 @@ def test_a_gupkg_folder_that_is_a_junction_elsewhere_is_never_written_through(tm
     assert not (world.user / "tool" / "current").exists()
 
 
-def test_a_hook_that_builds_the_name_track_at_run_time_is_refused_when_it_loads(tmp_path: Path) -> None:
+def test_a_hook_that_builds_the_name_track_at_run_time_is_refused_when_it_loads(world: World) -> None:
     """The static scan cannot see `globals()["tr" + "ack"]`; the loader refuses a version-directory hook that exposes `track`."""
-    world = World(tmp_path)
     folder = world.user / "tool" / "1.0.0"
     (folder / "pkg.local").mkdir(parents=True)
     (folder / "pkg.local" / "populate.py").write_text(
@@ -176,9 +171,8 @@ def test_a_hook_that_builds_the_name_track_at_run_time_is_refused_when_it_loads(
     assert not (folder / "App").exists()
 
 
-def test_a_sandbox_without_a_double_says_the_package_needs_a_real_run(tmp_path: Path) -> None:
+def test_a_sandbox_without_a_double_says_the_package_needs_a_real_run(world: World) -> None:
     """A populate script that the sandbox has no double for is a clear result with code needs-real-run, not a crash."""
-    world = World(tmp_path)
     world.publish_script("tool", "1.0.0", tables=ENV)
     del world.fake.processes["populate.cmd"]
 

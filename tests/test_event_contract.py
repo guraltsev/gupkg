@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import threading
-from pathlib import Path
 
 import pytest
 
@@ -212,16 +211,15 @@ def test_events_are_silently_dropped_without_a_reporter() -> None:
     assert events.current_reporter() is None
 
 
-def test_a_real_cli_run_writes_only_contract_records_to_its_event_file(tmp_path: Path) -> None:
+def test_a_real_cli_run_writes_only_contract_records_to_its_event_file(cli_world: CliWorld) -> None:
     """A real install through the CLI leaves JSON Lines in which every record is a pinned event (or the log link) with a timestamp."""
-    world = CliWorld(tmp_path)
-    world.publish("example", "1.0.0")
+    cli_world.publish("example", "1.0.0")
 
-    result = world.cli("install", "example", "--events-file", "events.jsonl")
+    result = cli_world.cli("install", "example", "--events-file", "events.jsonl")
 
     assert result.code == 0, result.err
-    run_events = (world.user / ".gupkg" / "logs" / "events.jsonl").read_text(encoding="utf-8").splitlines()
-    package_events = (world.user / "example" / ".gupkg" / "logs" / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    run_events = (cli_world.user / ".gupkg" / "logs" / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    package_events = (cli_world.user / "example" / ".gupkg" / "logs" / "events.jsonl").read_text(encoding="utf-8").splitlines()
     wire_names = {event_to_dict(param.values[0])["event"] for param in CONTRACT} | {"log_link"}
     for line in run_events + package_events:
         record = json.loads(line)

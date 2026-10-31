@@ -87,12 +87,6 @@ def publish_installer(
     return double
 
 
-@pytest.fixture
-def world(tmp_path: Path) -> World:
-    """A fake machine with a user root."""
-    return World(tmp_path)
-
-
 def test_an_allowed_installer_runs_into_the_stage_and_becomes_the_app(world: World) -> None:
     """The verified installer runs once with `$Stage` expanded; its files are the App; the receipt records the arguments."""
     double = publish_installer(world)

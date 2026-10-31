@@ -31,7 +31,7 @@ def run_plain(world: RealWorld, launcher: str, *args: str) -> subprocess.Complet
 
 
 @pytest.fixture
-def world(tmp_path: Path) -> RealWorld:
+def real_world_with_alpha_and_beta(tmp_path: Path) -> RealWorld:
     """A pretend machine with alpha 1.0.0 installed and 2.0.0 and 3.0.0 on disk, and beta installed at its only version."""
     machine = RealWorld(tmp_path)
     machine.package("alpha", ("1.0.0", "2.0.0", "3.0.0"))
@@ -40,28 +40,28 @@ def world(tmp_path: Path) -> RealWorld:
     return machine
 
 
-def test_update_all_updates_through_the_real_cli(world: RealWorld) -> None:
+def test_update_all_updates_through_the_real_cli(real_world_with_alpha_and_beta: RealWorld) -> None:
     """The outdated package moves to its newest known version; the up-to-date one is left alone; the output ends with the verdict and the summary."""
-    done = world.run("gupkg-manager", "update", "--all", "--yes")
+    done = real_world_with_alpha_and_beta.run("gupkg-manager", "update", "--all", "--yes")
 
     assert done.returncode == 0, done.stderr
-    assert world.active("alpha") == "3.0.0" and world.active("beta") == "1.0.0"
+    assert real_world_with_alpha_and_beta.active("alpha") == "3.0.0" and real_world_with_alpha_and_beta.active("beta") == "1.0.0"
     lines = done.stdout.rstrip().splitlines()
     assert lines[-1] == "    ok alpha 3.0.0: updated (was 1.0.0)" and lines[-2].startswith("━━ Done")
     assert "━━ Activate" in done.stdout and "+ current -> 3.0.0" in done.stdout
 
 
-def test_update_all_without_yes_and_without_a_terminal_changes_nothing(world: RealWorld) -> None:
+def test_update_all_without_yes_and_without_a_terminal_changes_nothing(real_world_with_alpha_and_beta: RealWorld) -> None:
     """The schedule mistake (forgetting ``--yes``) is exit code 5 and a clear message, with every package where it was."""
-    done = world.run("gupkg-manager", "update", "--all")
+    done = real_world_with_alpha_and_beta.run("gupkg-manager", "update", "--all")
 
     assert done.returncode == 5 and "Pass --yes" in done.stdout
-    assert world.active("alpha") == "1.0.0"
+    assert real_world_with_alpha_and_beta.active("alpha") == "1.0.0"
 
 
-def test_json_is_one_document_with_the_cli_head(world: RealWorld) -> None:
+def test_json_is_one_document_with_the_cli_head(real_world_with_alpha_and_beta: RealWorld) -> None:
     """Standard output is one parseable document; the run's text is on standard error."""
-    done = world.run("gupkg-manager", "update", "--all", "--yes", "--json")
+    done = real_world_with_alpha_and_beta.run("gupkg-manager", "update", "--all", "--yes", "--json")
 
     document = json.loads(done.stdout)
     assert (document["api"], document["command"], document["ok"], document["exit_code"]) == (2, "update", True, 0)
@@ -69,13 +69,13 @@ def test_json_is_one_document_with_the_cli_head(world: RealWorld) -> None:
     assert "━━ Done" in done.stderr and document["calls"][0]["exit_code"] == 0
 
 
-def test_check_reads_every_package_and_changes_nothing(world: RealWorld) -> None:
+def test_check_reads_every_package_and_changes_nothing(real_world_with_alpha_and_beta: RealWorld) -> None:
     """The health check is one call for all packages and reports each as healthy."""
-    done = world.run("gupkg-manager", "check", "--json")
+    done = real_world_with_alpha_and_beta.run("gupkg-manager", "check", "--json")
 
     document = json.loads(done.stdout)
     assert done.returncode == 0 and sorted(item["package"] for item in document["results"]) == ["alpha", "beta"]
-    assert {item["status"] for item in document["results"]} == {"healthy"} and world.active("alpha") == "1.0.0"
+    assert {item["status"] for item in document["results"]} == {"healthy"} and real_world_with_alpha_and_beta.active("alpha") == "1.0.0"
 
 
 @pytest.mark.parametrize(("auto", "cleanup_calls"), [pytest.param(True, 1, id="auto-cleanup"), pytest.param(False, 0, id="no-cleanup")])
@@ -109,24 +109,24 @@ def test_a_package_folder_with_shell_characters_is_refused_alone(tmp_path: Path)
     assert all("evil&calc" not in " ".join(call["argv"]) for call in document["calls"])
 
 
-def test_gupkg_manager_forwards_to_the_manager_of_the_same_tree(world: RealWorld) -> None:
+def test_gupkg_manager_forwards_to_the_manager_of_the_same_tree(real_world_with_alpha_and_beta: RealWorld) -> None:
     """``gupkg manager --help`` starts the real ``gupkg-manager`` launcher of the same tree and passes its output and exit code through."""
-    done = run_plain(world, "gupkg", "manager", "--help")
+    done = run_plain(real_world_with_alpha_and_beta, "gupkg", "manager", "--help")
 
     assert done.returncode == 0 and "check-updates" in done.stdout and "Open the browser" in done.stdout
 
 
-def test_gupkg_tui_forwards_to_the_package_program_and_does_not_loop(world: RealWorld) -> None:
+def test_gupkg_tui_forwards_to_the_package_program_and_does_not_loop(real_world_with_alpha_and_beta: RealWorld) -> None:
     """``gupkg tui --help`` reaches ``gupkg-tui`` once and prints its help; the old launcher that called ``gupkg tui`` again is gone."""
-    done = run_plain(world, "gupkg", "tui", "--help")
+    done = run_plain(real_world_with_alpha_and_beta, "gupkg", "tui", "--help")
 
     assert done.returncode == 0 and "PATH|NAME" in done.stdout
 
 
 @pytest.mark.parametrize("program", ["gupkg-tui", "gupkg-manager"])
-def test_the_programs_run_on_the_bundled_interpreter_without_writing_bytecode(world: RealWorld, program: str) -> None:
+def test_the_programs_run_on_the_bundled_interpreter_without_writing_bytecode(real_world_with_alpha_and_beta: RealWorld, program: str) -> None:
     """Each launcher starts ``python -I -s -B -S`` of its own tree (the help works), and no ``__pycache__`` appears in the three packages."""
-    done = world.run(program, "--help")
+    done = real_world_with_alpha_and_beta.run(program, "--help")
 
     assert done.returncode == 0 and "usage:" in done.stdout
     # The test process (another Python) may have left its own bytecode; the bundled 3.12 interpreter, started with -B, writes none.

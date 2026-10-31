@@ -28,7 +28,7 @@ from gupkg.report.documents import read_plan, read_results
 from gupkg.report.events import Error, PackageEnd, PhaseEnd, use_reporter
 from gupkg.report.results import plan_document, result_document
 from gupkg.system.port import Mode
-from tests.support.engine import BASE_URL, World, pkg_text
+from tests.support.engine import BASE_URL, World
 
 pytestmark = pytest.mark.unit
 
@@ -81,12 +81,6 @@ def current_version(package: Path) -> str:
 def user_path(world: World) -> list[str]:
     """Return the user ``PATH`` entries of the fake machine."""
     return [item for item in world.fake.env_values(Mode.USER).get("Path").value.split(";") if item]
-
-
-@pytest.fixture
-def world(tmp_path: Path) -> World:
-    """A fake machine with a user root, a system root and an engine."""
-    return World(tmp_path)
 
 
 def test_install_creates_the_whole_machine_state(world: World) -> None:

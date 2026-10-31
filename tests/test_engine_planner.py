@@ -32,12 +32,6 @@ TABLES = (
 ENV = '[[env]]\nname = "TOOL_HOME"\nvalue = "$App"\n'
 
 
-@pytest.fixture
-def world(tmp_path: Path) -> World:
-    """A fake machine with a user root."""
-    return World(tmp_path)
-
-
 def planned(world: World, operation: str, selector: str, **options) -> InstallPlan:
     """Return the plan of one request (it must be a plan, not a failure)."""
     found = lifecycle.plan(world.engine, [Request(operation, selector, **options)])[0]

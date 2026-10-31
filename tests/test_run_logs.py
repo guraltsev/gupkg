@@ -404,26 +404,25 @@ def test_events_file_appears_in_the_run_and_package_log_directories(tmp_path: Pa
     assert set(tmp_path.rglob("events.jsonl")) == {_logs(root) / "events.jsonl", _logs(root / "Example") / "events.jsonl"}
 
 
-def test_a_failing_git_clone_shows_gits_error_lines_in_the_unpack_phase_of_console_and_log(tmp_path: Path) -> None:
+def test_a_failing_git_clone_shows_gits_error_lines_in_the_unpack_phase_of_console_and_log(cli_world: CliWorld) -> None:
     """A git clone that fails prints git's own error lines inside the Fetch phase, on the console and in the package log, and the install fails."""
     def git(call) -> ProcessResult:
         """Answer the git command that was started."""
         return ProcessResult(128, "", "Cloning into 'App.new'...\nfatal: unable to access 'https://example.invalid/x.git/': Could not resolve host\n")
 
-    world = CliWorld(tmp_path)
-    world.fake.processes["git"] = git
-    folder = world.user / "Example" / "1.0.0"
+    cli_world.fake.processes["git"] = git
+    folder = cli_world.user / "Example" / "1.0.0"
     folder.mkdir(parents=True)
     folder.joinpath("pkg.toml").write_text(
         f'format = 2\n[source]\ndownload_url = "https://example.invalid/x.git"\nkind = "git"\n[source.git]\ncommit = "{"a" * 40}"\n',
         encoding="utf-8",
     )
 
-    result = world.cli("install", "Example")
+    result = cli_world.cli("install", "Example")
 
     output = result.out + result.err
     assert result.code == 3, output
-    package_text = _run_files(world.user / "Example", ".log")[0].read_text(encoding="utf-8")
+    package_text = _run_files(cli_world.user / "Example", ".log")[0].read_text(encoding="utf-8")
     for text in (output, package_text):
         unpack = text.split("==> Unpack", 1)[1].split("Unpack: failed", 1)[0]
         assert "[git] fatal: unable to access 'https://example.invalid/x.git/': Could not resolve host" in unpack
@@ -478,16 +477,15 @@ def test_a_bundled_gupkg_run_with_no_package_logs_into_its_own_package(tmp_path:
 # ---------------------------------------------------------------------------
 
 
-def test_a_call_with_several_packages_logs_each_one_and_links_them_from_the_run_log(tmp_path: Path) -> None:
+def test_a_call_with_several_packages_logs_each_one_and_links_them_from_the_run_log(cli_world: CliWorld) -> None:
     """An update of two packages records each package's phase output in its own log, and the run log links both without their output."""
-    world = CliWorld(tmp_path)
     for name in ("alpha", "beta"):
-        world.publish(name, "1.0.0")
-        assert world.cli("install", name).code == 0
-        world.publish(name, "2.0.0")
-    user = world.user
+        cli_world.publish(name, "1.0.0")
+        assert cli_world.cli("install", name).code == 0
+        cli_world.publish(name, "2.0.0")
+    user = cli_world.user
 
-    result = world.cli("update", "alpha", "beta", "--yes")
+    result = cli_world.cli("update", "alpha", "beta", "--yes")
 
     output = result.out + result.err
     assert result.code == 0, output

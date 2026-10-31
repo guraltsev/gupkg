@@ -12,19 +12,12 @@ Out of scope: how the command line reads the answer (``tests/test_cli_machine_in
 from __future__ import annotations
 
 from dataclasses import replace
-from pathlib import Path
 
 import pytest
 
 from tests.support.engine import World
 
 pytestmark = pytest.mark.unit
-
-
-@pytest.fixture
-def world(tmp_path: Path) -> World:
-    """A fake machine with a user root and an engine."""
-    return World(tmp_path)
 
 
 def answering(world: World, answer: bool, **flags) -> list[str]:

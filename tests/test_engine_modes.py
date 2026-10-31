@@ -37,12 +37,6 @@ MEMBERS = {
 }
 
 
-@pytest.fixture
-def world(tmp_path: Path) -> World:
-    """A fake machine with a user root and a system root."""
-    return World(tmp_path)
-
-
 def publish(world: World, version: str, **options) -> Path:
     """Publish a version of the portable package ``tool`` (with the persistence table) into the user root."""
     return world.publish("tool", version, mode="user", members=MEMBERS, top=PORTABLE_TOP, tables=PERSIST, **options)
@@ -150,17 +144,16 @@ def assert_nothing_was_created(world: World, mode: str) -> None:
     assert world.fake.fetch_log == [] and world.fake.registry_log == [] and world.fake.shortcuts() == {}
 
 
-def test_a_portable_package_in_system_mode_is_refused_before_any_file_is_created(tmp_path: Path) -> None:
+def test_a_portable_package_in_system_mode_is_refused_before_any_file_is_created(tmp_path: Path, elevated_world: World) -> None:
     """The portable package of the user test, in an elevated (system) run, is refused with the portable message and creates nothing."""
-    world = World(tmp_path, elevated=True)
-    publish_in_registry(world, tmp_path, top=PORTABLE_TOP, tables='[portable]\npersist = ["config"]\n', mode="system")
-    world.fake.fetch_log.clear()
+    publish_in_registry(elevated_world, tmp_path, top=PORTABLE_TOP, tables='[portable]\npersist = ["config"]\n', mode="system")
+    elevated_world.fake.fetch_log.clear()
 
-    result = world.one("install", "tool")
+    result = elevated_world.one("install", "tool")
 
     assert not result.ok and result.exit_code == 2 and result.error["message"] == PORTABLE_REFUSAL
     assert PORTABLE_REFUSAL == "This is a portable package: it installs only for a single user. Run gupkg without administrator rights."
-    assert_nothing_was_created(world, "system")
+    assert_nothing_was_created(elevated_world, "system")
 
 
 def test_a_system_only_package_in_user_mode_is_refused_before_any_file_is_created(world: World, tmp_path: Path) -> None:
@@ -178,17 +171,16 @@ def test_a_system_only_package_in_user_mode_is_refused_before_any_file_is_create
     assert_nothing_was_created(world, "user")
 
 
-def test_a_user_only_package_in_system_mode_is_refused_before_any_file_is_created(tmp_path: Path) -> None:
+def test_a_user_only_package_in_system_mode_is_refused_before_any_file_is_created(tmp_path: Path, elevated_world: World) -> None:
     """``modes = ["user"]`` in an elevated (system) run: refused with the single-user message."""
-    world = World(tmp_path, elevated=True)
-    publish_in_registry(world, tmp_path, top='modes = ["user"]\n', mode="system")
-    world.fake.fetch_log.clear()
+    publish_in_registry(elevated_world, tmp_path, top='modes = ["user"]\n', mode="system")
+    elevated_world.fake.fetch_log.clear()
 
-    result = world.one("install", "tool")
+    result = elevated_world.one("install", "tool")
 
     assert not result.ok and result.exit_code == 2 and result.error["message"] == USER_ONLY_REFUSAL
     assert USER_ONLY_REFUSAL == "This package installs only for a single user. Run gupkg without administrator rights."
-    assert_nothing_was_created(world, "system")
+    assert_nothing_was_created(elevated_world, "system")
 
 
 @pytest.mark.parametrize(
@@ -234,15 +226,14 @@ def test_integrate_none_touches_no_registry_start_menu_or_path(world: World) -> 
     assert not (world.fake.scope_folders(Mode.USER).bin_dir).exists()
 
 
-def test_a_mode_prefix_is_refused_and_nothing_is_written(tmp_path: Path) -> None:
+def test_a_mode_prefix_is_refused_and_nothing_is_written(elevated_world: World) -> None:
     """``user:tool`` is not a target: a run works in the mode of its token (an elevated run never reaches a user root)."""
-    world = World(tmp_path, elevated=True)
-    world.publish("tool", "1.0.0", mode="user", members=MEMBERS)
+    elevated_world.publish("tool", "1.0.0", mode="user", members=MEMBERS)
 
-    result = world.one("install", "user:tool")
+    result = elevated_world.one("install", "user:tool")
 
     assert not result.ok and result.exit_code == 2 and "no longer names a mode" in result.error["message"]
-    assert not (world.user / "tool" / "current").exists()
+    assert not (elevated_world.user / "tool" / "current").exists()
 
 
 def test_a_portable_package_integrates_like_any_user_package(world: World) -> None:

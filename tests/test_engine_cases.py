@@ -28,12 +28,6 @@ pytestmark = pytest.mark.unit
 ENV = '[[env]]\nname = "TOOL_HOME"\nvalue = "$App"\n'
 
 
-@pytest.fixture
-def world(tmp_path: Path) -> World:
-    """A fake machine with a user root."""
-    return World(tmp_path)
-
-
 def current(world: World) -> str | None:
     """Return the version `current` points at, or ``None``."""
     link = world.user / "tool" / "current"

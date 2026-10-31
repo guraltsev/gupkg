@@ -155,14 +155,13 @@ def test_list_available_marks_what_the_system_mode_cannot_install(tmp_path: Path
     assert views["tool"].restriction is None
 
 
-def test_list_json_has_mode_and_root_once_and_no_mode_in_a_row(tmp_path: Path) -> None:
+def test_list_json_has_mode_and_root_once_and_no_mode_in_a_row(cli_world: CliWorld) -> None:
     """The list document names the run's ``mode`` and ``root`` at document level; no row carries a ``mode``."""
-    world = CliWorld(tmp_path)
-    world.publish("tool", "1.0.0")
-    assert world.cli("install", "tool").code == 0
+    cli_world.publish("tool", "1.0.0")
+    assert cli_world.cli("install", "tool").code == 0
 
-    document = world.cli("list", "--json").document()
+    document = cli_world.cli("list", "--json").document()
 
-    assert document["mode"] == "user" and document["root"] == str(world.user)
+    assert document["mode"] == "user" and document["root"] == str(cli_world.user)
     assert [row["name"] for row in document["packages"]] == ["tool"]
     assert all("mode" not in row for row in document["packages"])

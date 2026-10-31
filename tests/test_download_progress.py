@@ -56,14 +56,13 @@ def test_a_download_of_known_size_announces_its_total_and_completes_once(tmp_pat
     assert [event for event in progress if event.done == event.total] == [Progress("Downloading update", len(content), len(content))]
 
 
-def test_a_redirected_install_prints_one_final_progress_line_and_json_keeps_standard_output_clean(tmp_path: Path) -> None:
+def test_a_redirected_install_prints_one_final_progress_line_and_json_keeps_standard_output_clean(cli_world: CliWorld) -> None:
     """Human output has one 100 percent line per download and no carriage return; --json standard output is only the document."""
-    world = CliWorld(tmp_path)
-    world.publish("tool", "1.0.0", members={"tool.exe": "payload" * 5000})
-    world.publish("other", "1.0.0", members={"other.exe": "payload" * 5000})
+    cli_world.publish("tool", "1.0.0", members={"tool.exe": "payload" * 5000})
+    cli_world.publish("other", "1.0.0", members={"other.exe": "payload" * 5000})
 
-    human = world.cli("install", "tool")
-    machine = world.cli("install", "other", "--json")
+    human = cli_world.cli("install", "tool")
+    machine = cli_world.cli("install", "other", "--json")
 
     lines = [line for line in human.out.splitlines() if "(100%)" in line]
     assert human.code == 0 and len(lines) == 1 and "tool-1.0.0.zip" in lines[0] and "\r" not in human.out
@@ -71,14 +70,13 @@ def test_a_redirected_install_prints_one_final_progress_line_and_json_keeps_stan
     assert "==>" not in machine.out and len([line for line in machine.err.splitlines() if "(100%)" in line]) == 1
 
 
-def test_the_events_file_of_an_install_carries_the_progress_of_the_download(tmp_path: Path) -> None:
+def test_the_events_file_of_an_install_carries_the_progress_of_the_download(cli_world: CliWorld) -> None:
     """A UI that follows --events-file sees the total up front and a last event that equals it."""
-    world = CliWorld(tmp_path)
-    world.publish("tool", "1.0.0", members={"tool.exe": "payload" * 5000})
+    cli_world.publish("tool", "1.0.0", members={"tool.exe": "payload" * 5000})
 
-    assert world.cli("install", "tool", "--events-file", "run.jsonl").code == 0
+    assert cli_world.cli("install", "tool", "--events-file", "run.jsonl").code == 0
 
-    records = [json.loads(line) for line in (world.user / "tool" / ".gupkg" / "logs" / "run.jsonl").read_text(encoding="utf-8").splitlines()]
+    records = [json.loads(line) for line in (cli_world.user / "tool" / ".gupkg" / "logs" / "run.jsonl").read_text(encoding="utf-8").splitlines()]
     progress = [record for record in records if record["event"] == "progress"]
     assert progress[0]["done"] == 0 and progress[0]["total"] and progress[-1]["done"] == progress[-1]["total"] == progress[0]["total"]
     assert sum(record["done"] == record["total"] for record in progress) == 1

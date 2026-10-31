@@ -182,6 +182,43 @@ def system(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
+# Pretend machines with an engine (one fixture for each kind of world)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def world(tmp_path: Path):
+    """A ``World``: a fake machine with a user root, a system root and an engine in user mode, under ``tmp_path``."""
+    from tests.support.engine import World
+
+    return World(tmp_path)
+
+
+@pytest.fixture
+def elevated_world(tmp_path: Path):
+    """A ``World`` whose fake machine reports an elevated process, so the engine runs in system mode."""
+    from tests.support.engine import World
+
+    return World(tmp_path, elevated=True)
+
+
+@pytest.fixture
+def cli_world(tmp_path: Path):
+    """A ``CliWorld``: a ``World`` driven through ``gupkg.cli.main``, with a stand-in installed system gupkg."""
+    from tests.support.cli import CliWorld
+
+    return CliWorld(tmp_path)
+
+
+@pytest.fixture
+def cli_elevated_world(tmp_path: Path):
+    """A ``CliWorld`` whose fake machine reports an elevated process."""
+    from tests.support.cli import CliWorld
+
+    return CliWorld(tmp_path, elevated=True)
+
+
+# ---------------------------------------------------------------------------
 # The environment that decides how output looks
 # ---------------------------------------------------------------------------
 

@@ -29,12 +29,6 @@ pytestmark = pytest.mark.unit
 SHIM = '[[shim]]\nname = "tool"\ntarget = "$App\\\\app.exe"\n\n[[env]]\nname = "TOOL_HOME"\nvalue = "$App"\n'
 
 
-@pytest.fixture
-def world(tmp_path: Path) -> World:
-    """A fake machine with a user root and an engine."""
-    return World(tmp_path)
-
-
 def machine_state(world: World) -> tuple:
     """Return what integration produced: shortcuts, environment, launchers and the install record text."""
     folder = world.fake.scope_folders(Mode.USER).bin_dir
