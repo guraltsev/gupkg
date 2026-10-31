@@ -19,24 +19,10 @@ import pytest
 
 from gupkg.system.fake import FakeSystem
 from gupkg_manager import cli
-from tests.test_ui_flows import logs_of, schedule_run
-from tests.ui_support import FakeGupkg, entry, list_doc, make_env, plan_doc, plan_entry, result
+from tests.support.cli import Terminal
+from tests.support.ui import FakeGupkg, entry, list_doc, logs_of, make_env, plan_doc, plan_entry, result, schedule_run
 
 pytestmark = pytest.mark.process
-
-
-class Terminal(io.StringIO):
-    """A stream that claims to be a console and holds what a person types."""
-
-    def isatty(self) -> bool:
-        """Report a console."""
-        return True
-
-
-@pytest.fixture
-def fake(tmp_path: Path) -> FakeGupkg:
-    """A scripted ``gupkg`` double."""
-    return FakeGupkg(tmp_path)
 
 
 def manager(tmp_path: Path, fake: FakeGupkg, *argv: str, typed: str | None = None, elevated: bool = False, settings: str = ""):

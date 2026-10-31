@@ -23,7 +23,7 @@ from gupkg.model.manifest import ManifestError, parse_manifest, path_entry_shape
 from gupkg.model.state import Effect
 from gupkg.system.fake import FakeSystem
 from gupkg.system.port import Mode
-from tests.engine_support import World, pin_no_ambient_elevation  # noqa: F401
+from tests.support.engine import World
 
 pytestmark = pytest.mark.unit
 
@@ -173,31 +173,29 @@ def test_a_hostile_install_record_cannot_make_uninstall_touch_the_machine_path(t
     assert system.get_path(Mode.SYSTEM) == before
 
 
-def test_uninstall_removes_exactly_what_was_added_and_leaves_unrelated_entries(tmp_path: Path) -> None:
+def test_uninstall_removes_exactly_what_was_added_and_leaves_unrelated_entries(elevated_world: World) -> None:
     """End to end in an elevated system install: the package's entry goes on PATH and off again; other entries stay in order."""
-    world = World(tmp_path, elevated=True)
-    world.publish("tool", "1.0.0", mode="system", tables='[[path]]\nvalue = "$App"\n[[path]]\nvalue = "$App\\\\bin"\n')
-    world.fake.set_path(Mode.SYSTEM, ["C:\\Windows", "C:\\Tools"])
+    elevated_world.publish("tool", "1.0.0", mode="system", tables='[[path]]\nvalue = "$App"\n[[path]]\nvalue = "$App\\\\bin"\n')
+    elevated_world.fake.set_path(Mode.SYSTEM, ["C:\\Windows", "C:\\Tools"])
 
-    assert world.one("install", "tool").ok
-    entries = world.fake.get_path(Mode.SYSTEM)
-    package = str(world.system_root / "tool" / "current" / "App")
+    assert elevated_world.one("install", "tool").ok
+    entries = elevated_world.fake.get_path(Mode.SYSTEM)
+    package = str(elevated_world.system_root / "tool" / "current" / "App")
     assert entries[:2] == ["C:\\Windows", "C:\\Tools"] and package in entries and package + "\\bin" in entries
 
-    assert world.one("uninstall", "tool").ok
-    assert world.fake.get_path(Mode.SYSTEM) == ["C:\\Windows", "C:\\Tools"]
+    assert elevated_world.one("uninstall", "tool").ok
+    assert elevated_world.fake.get_path(Mode.SYSTEM) == ["C:\\Windows", "C:\\Tools"]
 
 
-def test_a_package_with_a_hostile_path_is_not_installed(tmp_path: Path) -> None:
+def test_a_package_with_a_hostile_path_is_not_installed(elevated_world: World) -> None:
     """The validator refuses the package before anything is downloaded, in the elevated system mode too."""
-    world = World(tmp_path, elevated=True)
-    world.publish("tool", "1.0.0", mode="system", tables='[[path]]\nvalue = "C:\\\\a;C:\\\\evil"\n')
-    world.fake.set_path(Mode.SYSTEM, ["C:\\Windows"])
-    world.fake.fetch_log.clear()
+    elevated_world.publish("tool", "1.0.0", mode="system", tables='[[path]]\nvalue = "C:\\\\a;C:\\\\evil"\n')
+    elevated_world.fake.set_path(Mode.SYSTEM, ["C:\\Windows"])
+    elevated_world.fake.fetch_log.clear()
 
-    result = world.one("install", "tool")
+    result = elevated_world.one("install", "tool")
 
-    assert not result.ok and world.fake.get_path(Mode.SYSTEM) == ["C:\\Windows"] and world.fake.fetch_log == []
+    assert not result.ok and elevated_world.fake.get_path(Mode.SYSTEM) == ["C:\\Windows"] and elevated_world.fake.fetch_log == []
 
 
 def machine(tmp_path: Path):

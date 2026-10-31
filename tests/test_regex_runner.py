@@ -33,7 +33,7 @@ from gupkg.services.regexrun import RegexError, RegexRunner, RegexTimeout, Remot
 from gupkg.services.track import TrackError, run_tracker
 from gupkg.system.fake import FakeHttp, FakeSystem, ProcessCall
 from gupkg.system.port import ProcessResult, WorkerDidNotStart
-from tests.http_fixtures import HTTP_CASES, environment, serve, tracker_manifest
+from tests.support.http_fixtures import HTTP_CASES, environment, serve, tracker_manifest
 
 pytestmark = pytest.mark.process
 

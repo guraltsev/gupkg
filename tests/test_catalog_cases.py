@@ -21,7 +21,7 @@ from typing import Callable
 
 import pytest
 
-from tests.catalog_support import (
+from tests.support.catalog import (
     activate,
     build_registry,
     link_record,

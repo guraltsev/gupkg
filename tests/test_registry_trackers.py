@@ -4,9 +4,9 @@ Behavior covered: the trackers of latex-toolkit, overleaf-sync and windebloattoo
 the form ``YYYYMMDD-HHMMSS-<short sha>``, pin the full commit they found in the version's ``[source.git]``
 (the commit is the integrity anchor, so no ``sha256`` is expected), and render a pinned version that passes
 the package checker. The CI job of the registry runs this module against its own checkout, through the
-``GUPKG_REGISTRY_TRACKERS`` variable that ``tests/http_fixtures.py`` reads.
+``GUPKG_REGISTRY_TRACKERS`` variable that ``tests/support/http_fixtures.py`` reads.
 Real: the committed (or CI-supplied) trackers, the git provider, ``render_pinned``, the package checker.
-Mocked: ``git`` (``FakeGit`` of ``test_git_services``). Out of scope: real clones (manual) and the HTTP trackers.
+Mocked: ``git`` (``FakeGit`` of ``tests/support/git.py``). Out of scope: real clones (manual) and the HTTP trackers.
 """
 
 from __future__ import annotations
@@ -19,8 +19,8 @@ import pytest
 from gupkg.model.manifest import ManifestKind, manifest_to_toml, render_pinned
 from gupkg.pkgcheck import check_directory
 from gupkg.services.track import run_tracker
-from tests.http_fixtures import environment, tracker_manifest
-from tests.test_git_services import COMMIT, FakeGit, machine
+from tests.support.http_fixtures import environment, tracker_manifest
+from tests.support.git import COMMIT, FakeGit, git_machine
 
 pytestmark = pytest.mark.unit
 
@@ -33,7 +33,7 @@ def test_a_git_tracker_pins_the_commit_it_found(tmp_path: Path, package: str) ->
     git = FakeGit()
     manifest = tracker_manifest(package)
 
-    result = run_tracker(manifest, environment(machine(tmp_path, git), tmp_path, package=package))
+    result = run_tracker(manifest, environment(git_machine(tmp_path, git), tmp_path, package=package))
     pinned = render_pinned(manifest, result)
 
     assert re.fullmatch(r"\d{8}-\d{6}-0123456", result.version)

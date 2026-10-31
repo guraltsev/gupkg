@@ -11,11 +11,8 @@ Out of scope: the system mode (the same executor code; the mode only decides whi
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from gupkg.system.port import Mode
-from tests.cli_support import CliWorld
-from tests.mode_support import pin_no_ambient_elevation  # noqa: F401
+from tests.support.cli import CliWorld
 import pytest
 
 pytestmark = pytest.mark.unit
@@ -33,22 +30,21 @@ def names(world: CliWorld) -> list[str]:
     return sorted(path.name for path in world.fake.shortcuts())
 
 
-def test_an_update_removes_the_shortcut_whose_modes_no_longer_include_the_run_and_a_later_one_restores_it(tmp_path: Path) -> None:
+def test_an_update_removes_the_shortcut_whose_modes_no_longer_include_the_run_and_a_later_one_restores_it(cli_world: CliWorld) -> None:
     """The recorded shortcut goes away when the new version excludes the user mode, and the shim stays."""
-    world = CliWorld(tmp_path)
-    shim = world.fake.scope_folders(Mode.USER).bin_dir / "tool.exe"
-    world.publish("tool", "1.0.0", tables=SHIM + shortcut("Both", '["system", "user"]') + shortcut("SystemOnly", '["system"]'))
-    installed = world.cli("install", "tool", "--yes")
+    shim = cli_world.fake.scope_folders(Mode.USER).bin_dir / "tool.exe"
+    cli_world.publish("tool", "1.0.0", tables=SHIM + shortcut("Both", '["system", "user"]') + shortcut("SystemOnly", '["system"]'))
+    installed = cli_world.cli("install", "tool", "--yes")
     assert installed.code == 0, installed.err
-    assert len(names(world)) == 1 and names(world)[0].startswith("Both"), names(world)
+    assert len(names(cli_world)) == 1 and names(cli_world)[0].startswith("Both"), names(cli_world)
 
-    world.publish("tool", "2.0.0", tables=SHIM + shortcut("Both", '["system"]'))
-    narrowed = world.cli("update", "tool", "--yes")
+    cli_world.publish("tool", "2.0.0", tables=SHIM + shortcut("Both", '["system"]'))
+    narrowed = cli_world.cli("update", "tool", "--yes")
     assert narrowed.code == 0, narrowed.err
-    assert names(world) == [], names(world)
+    assert names(cli_world) == [], names(cli_world)
     assert shim.exists()
 
-    world.publish("tool", "3.0.0", tables=SHIM + shortcut("Both", '["user"]'))
-    widened = world.cli("update", "tool", "--yes")
+    cli_world.publish("tool", "3.0.0", tables=SHIM + shortcut("Both", '["user"]'))
+    widened = cli_world.cli("update", "tool", "--yes")
     assert widened.code == 0, widened.err
-    assert len(names(world)) == 1 and names(world)[0].startswith("Both"), names(world)
+    assert len(names(cli_world)) == 1 and names(cli_world)[0].startswith("Both"), names(cli_world)

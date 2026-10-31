@@ -45,7 +45,7 @@ from gupkg.services.artifact import FetchedArtifact, fetch_artifact, fetch_git, 
 from gupkg.services.http import Download, DownloadMismatch as HttpMismatch, HttpClient, HttpError
 from gupkg.system.fake import FakeHttp, FakeSystem
 from gupkg.system.windows import WindowsSystem
-from tests.test_git_services import COMMIT, OTHER, FakeGit, machine
+from tests.support.git import COMMIT, OTHER, FakeGit, git_machine
 from gupkg.system.port import Mode
 
 pytestmark = pytest.mark.unit
@@ -604,7 +604,7 @@ def checkout(tmp_path: Path, git: FakeGit, *, commit: str | None, skip: str | No
     """Run `fetch_git` on a machine whose only process is *git*."""
     work = tmp_path / "work"
     work.mkdir(exist_ok=True)
-    return fetch_git(machine(tmp_path, git), Mode.USER, url, "refs/heads/main", commit, tmp_path / "app", work, skip=skip)
+    return fetch_git(git_machine(tmp_path, git), Mode.USER, url, "refs/heads/main", commit, tmp_path / "app", work, skip=skip)
 
 
 def test_a_pinned_commit_is_verified_and_recorded(tmp_path: Path) -> None:

@@ -21,17 +21,11 @@ import pytest
 from gupkg.catalog.record import read_install_record, write_install_record
 from gupkg.model.state import InstallRecord, Link
 from gupkg.system.port import Mode
-from tests.engine_support import BASE_URL, World, pin_no_ambient_elevation  # noqa: F401
+from tests.support.engine import BASE_URL, World
 
 pytestmark = pytest.mark.unit
 
 ENV = '[[env]]\nname = "TOOL_HOME"\nvalue = "$App"\n'
-
-
-@pytest.fixture
-def world(tmp_path: Path) -> World:
-    """A fake machine with a user root."""
-    return World(tmp_path)
 
 
 def current(world: World) -> str | None:

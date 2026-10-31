@@ -10,11 +10,11 @@ from __future__ import annotations
 
 import json
 import threading
-from pathlib import Path
 
 import pytest
 
-from tests.cli_support import CliWorld
+from tests.support.cli import CliWorld
+from tests.support.reporters import Collector
 from gupkg.report import events
 from gupkg.report.events import (
     EVENT_TYPES, Diagnostic, Error, MultiReporter, PackageEnd, PackageStart, PhaseEnd, PhaseStart,
@@ -23,16 +23,6 @@ from gupkg.report.events import (
 )
 
 pytestmark = pytest.mark.unit
-
-
-class _Collector:
-    """Collect every event handed to it, in order."""
-
-    def __init__(self) -> None:
-        self.events: list = []
-
-    def handle(self, event) -> None:
-        self.events.append(event)
 
 
 # One example of every event type and the exact JSON record it must produce.
@@ -122,7 +112,7 @@ def test_every_event_type_has_a_pinned_json_shape(event, record) -> None:
 
 def test_a_diagnostic_traceback_is_redacted_like_every_other_text() -> None:
     """A traceback that holds a URL with credentials reaches the reporters (and so the log files) without them."""
-    collector = _Collector()
+    collector = Collector()
     text = "Traceback (most recent call last):\nHttpError: https://user:hunter2@example.org/a.zip?token=SECRET123&x=1 failed"
 
     with use_reporter(collector):
@@ -140,7 +130,7 @@ def test_the_contract_covers_every_event_type() -> None:
 
 def test_a_problem_is_delivered_once_per_package_and_once_in_the_run_summary() -> None:
     """A warning repeated live and in a result appears once, while two packages may each report the same words."""
-    collector = _Collector()
+    collector = Collector()
 
     with use_reporter(collector):
         with package_scope("a", "C:\\opt\\a"):
@@ -156,7 +146,7 @@ def test_a_problem_is_delivered_once_per_package_and_once_in_the_run_summary() -
 
 def test_phase_reports_start_end_status_and_elapsed_time() -> None:
     """A phase ends ok by default, failed when its body raises or is marked, and skipped when it says so."""
-    collector = _Collector()
+    collector = Collector()
 
     with use_reporter(collector):
         with phase("One"):
@@ -182,7 +172,7 @@ def test_a_failing_reporter_is_dropped_with_one_warning_and_the_others_continue(
         def handle(self, event) -> None:
             raise OSError("disk full")
 
-    good = _Collector()
+    good = Collector()
     hub = MultiReporter([Broken(), good])
 
     hub.handle(Step("one"))
@@ -193,7 +183,7 @@ def test_a_failing_reporter_is_dropped_with_one_warning_and_the_others_continue(
 
 def test_child_process_lines_reach_the_reporter_from_other_threads() -> None:
     """Lines reported by a reader thread (which has no context) still reach the reporter active when the callback was made."""
-    collector = _Collector()
+    collector = Collector()
 
     with use_reporter(collector):
         on_line = subprocess_lines(["C:\\tools\\git.exe", "clone"])
@@ -212,16 +202,15 @@ def test_events_are_silently_dropped_without_a_reporter() -> None:
     assert events.current_reporter() is None
 
 
-def test_a_real_cli_run_writes_only_contract_records_to_its_event_file(tmp_path: Path) -> None:
+def test_a_real_cli_run_writes_only_contract_records_to_its_event_file(cli_world: CliWorld) -> None:
     """A real install through the CLI leaves JSON Lines in which every record is a pinned event (or the log link) with a timestamp."""
-    world = CliWorld(tmp_path)
-    world.publish("example", "1.0.0")
+    cli_world.publish("example", "1.0.0")
 
-    result = world.cli("install", "example", "--events-file", "events.jsonl")
+    result = cli_world.cli("install", "example", "--events-file", "events.jsonl")
 
     assert result.code == 0, result.err
-    run_events = (world.user / ".gupkg" / "logs" / "events.jsonl").read_text(encoding="utf-8").splitlines()
-    package_events = (world.user / "example" / ".gupkg" / "logs" / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    run_events = (cli_world.user / ".gupkg" / "logs" / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    package_events = (cli_world.user / "example" / ".gupkg" / "logs" / "events.jsonl").read_text(encoding="utf-8").splitlines()
     wire_names = {event_to_dict(param.values[0])["event"] for param in CONTRACT} | {"log_link"}
     for line in run_events + package_events:
         record = json.loads(line)

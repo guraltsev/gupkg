@@ -34,7 +34,7 @@ from gupkg.selfmgmt.elevation import UntrustedLocationError
 from gupkg.services.artifact import FetchedArtifact
 from gupkg.services.http import Download
 from gupkg.system.port import ProcessResult
-from tests.engine_support import BASE_URL, World, pin_no_ambient_elevation, pkg_text  # noqa: F401
+from tests.support.engine import BASE_URL, World, pkg_text
 
 pytestmark = pytest.mark.unit
 
@@ -85,12 +85,6 @@ def publish_installer(
     double = double or InstallerDouble()
     world.fake.processes[SETUP.replace("1.0.0", version).lower()] = double
     return double
-
-
-@pytest.fixture
-def world(tmp_path: Path) -> World:
-    """A fake machine with a user root."""
-    return World(tmp_path)
 
 
 def test_an_allowed_installer_runs_into_the_stage_and_becomes_the_app(world: World) -> None:

@@ -12,49 +12,27 @@ Out of scope: the real CLI (``test_manager_real_cli.py``), colour (``test_ui_ren
 
 from __future__ import annotations
 
-import asyncio
 import json
 import time
-from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
-from gupkg_manager.app.app import ManagerApp
-from gupkg_tui.app import TuiApp
 from gupkg_ui.client import Client
 from gupkg_ui.follow import EventStream
 from gupkg_ui.render import EventRenderer, verdict_lines
 from gupkg_ui.screens.run import MAX_LOG_LINES, RunScreen
-from tests.ui_support import FakeGupkg, entry, fixture_json, list_doc, make_env, plan_doc, plan_entry, registry_doc, result
+from tests.support.ui import FakeGupkg, entry, fixture_json, list_doc, plan_doc, plan_entry, registry_doc, result
+from tests.support.ui_screens import has, open_browser, run_app, screen_text, update_run, wait_for
 
 pytestmark = pytest.mark.process
 
 SIZES = [pytest.param((80, 24), id="80x24"), pytest.param((200, 50), id="200x50")]
 
 
-def screen_text(app) -> list[str]:
-    """Return the text of every row of the screen as the person sees it (the compositor's rendering, trailing blanks removed)."""
-    return [strip.text.rstrip() for strip in app.screen._compositor.render_strips()]
-
-
 def content(app) -> list[str]:
     """Return the rows of the screen between the two frame lines that show something (scroll-bar glyphs and blank rows left out)."""
     return [row.strip() for row in screen_text(app)[1:-1] if any(character.isalnum() for character in row)]
-
-
-def has(app, needle: str) -> bool:
-    """Return whether *needle* is visible anywhere on the screen."""
-    return any(needle in row for row in screen_text(app))
-
-
-async def wait_for(pilot, condition: Callable[[], bool], what: str, timeout: float = 20.0) -> None:
-    """Pause in small steps until *condition* holds; fail with *what* after *timeout* seconds (bounded, never a fixed sleep)."""
-    waited = 0.0
-    while not condition():
-        await pilot.pause(0.05)
-        waited += 0.05
-        assert waited < timeout, f"timed out waiting for {what}; the screen shows:\n" + "\n".join(screen_text(pilot.app))
 
 
 def assert_frame(app, width: int) -> None:
@@ -66,55 +44,19 @@ def assert_frame(app, width: int) -> None:
     assert len(hint) <= width
 
 
-@pytest.fixture
-def fake(tmp_path: Path) -> FakeGupkg:
-    """A scripted ``gupkg`` double with the recorded documents of the real CLI for two outdated packages."""
-    double = FakeGupkg(tmp_path)
-    double.respond("list", doc=fixture_json("list.json", tmp_path))
-    double.respond("info", doc=fixture_json("info_alpha.json", tmp_path))
-    double.respond("registry status", doc=registry_doc("4f2a9c1d00"))
-    return double
-
-
-def update_run(fake: FakeGupkg, tmp_path: Path, names=("alpha", "beta"), *, records=None, delay: float = 0.0, **extra) -> None:
-    """Schedule a plan and a successful ``update`` of *names* in the user root, with *records* as each package's own events (the call waits *delay* seconds first)."""
-    fake.respond("update:plan", doc=plan_doc([plan_entry(f"{name}", name) for name in names]))
-    doc = result("update", [entry(name) for name in names])
-    packages = [{"name": name, "path": str(tmp_path / "home" / "opt" / name), "records": records or [{"event": "phase_start", "phase": "Resolve"}, {"event": "phase_end", "phase": "Resolve", "status": "ok", "elapsed": 0.1}]} for name in names]
-    fake.respond("update", doc=doc, sleep=delay, events={"dir": str(tmp_path / "home" / "opt" / ".gupkg" / "logs"), "result": doc, "packages": packages, **extra})
-
-
 def info_of(name: str, tmp_path: Path) -> dict:
     """Return the recorded ``info`` document of ``alpha`` turned into the one of *name* (the same shape, another package)."""
     text = json.dumps(fixture_json("info_alpha.json", tmp_path)).replace("alpha", name)
     return json.loads(text)
 
 
-def run_app(tmp_path: Path, fake: FakeGupkg, scenario: Callable, *, size=(80, 24), program: str = "manager", target: str = "alpha", toasts: bool = False, root: Path | None = None, **settings) -> None:
-    """Start the manager (or ``gupkg-tui``) in a headless terminal of *size* and run the async *scenario* ``(app, pilot)`` against it."""
-    env = make_env(tmp_path, fake, settings=settings.get("settings", ""), root=root)
-    app = ManagerApp(env) if program == "manager" else TuiApp(env, target)
-
-    async def main() -> None:
-        """Run the scenario inside the app."""
-        async with app.run_test(size=size, notifications=toasts) as pilot:
-            await scenario(app, pilot)
-
-    asyncio.run(main())
-
-
-async def open_browser(app, pilot) -> None:
-    """Wait until the browser shows the two packages."""
-    await wait_for(pilot, lambda: has(app, "alpha") and has(app, "beta"), "the browser to list the packages")
-
-
 # -- the frame ----------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("size", SIZES)
-def test_every_screen_of_the_manager_has_a_hint_line_and_a_status_line(tmp_path: Path, fake: FakeGupkg, size) -> None:
+def test_every_screen_of_the_manager_has_a_hint_line_and_a_status_line(tmp_path: Path, recorded_fake: FakeGupkg, size) -> None:
     """The browser, package view, plan confirmation, uninstall question, version picker, log view, help and the run view (running and finished) all keep the frame."""
-    update_run(fake, tmp_path, ("alpha",))
+    update_run(recorded_fake, tmp_path, ("alpha",))
     seen: list[str] = []
 
     async def scenario(app, pilot) -> None:
@@ -150,17 +92,17 @@ def test_every_screen_of_the_manager_has_a_hint_line_and_a_status_line(tmp_path:
         await wait_for(pilot, lambda: app.screen.outcome is not None, "the run to finish")
         assert_frame(app, width), seen.append("run finished")
 
-    run_app(tmp_path, fake, scenario, size=size)
+    run_app(tmp_path, recorded_fake, scenario, size=size)
 
     assert seen == ["browser", "help", "package", "log", "uninstall question", "version picker", "plan confirmation", "run", "run finished"]
 
 
 @pytest.mark.parametrize("size", SIZES)
-def test_the_checksum_question_and_the_cancel_question_have_the_frame(tmp_path: Path, fake: FakeGupkg, size) -> None:
+def test_the_checksum_question_and_the_cancel_question_have_the_frame(tmp_path: Path, recorded_fake: FakeGupkg, size) -> None:
     """The two questions that stop a run keep the hint and status lines as well."""
-    fake.respond("update:plan", doc=plan_doc([plan_entry("alpha", "alpha", sha256="missing")]))
+    recorded_fake.respond("update:plan", doc=plan_doc([plan_entry("alpha", "alpha", sha256="missing")]))
     doc = result("update", [entry("alpha")])
-    fake.respond("update", doc=doc, events={"dir": str(tmp_path / "home" / "opt" / ".gupkg" / "logs"), "stop_after": 0, "result": doc, "packages": [{"name": "alpha", "path": str(tmp_path / "home" / "opt" / "alpha"), "records": []}]})
+    recorded_fake.respond("update", doc=doc, events={"dir": str(tmp_path / "home" / "opt" / ".gupkg" / "logs"), "stop_after": 0, "result": doc, "packages": [{"name": "alpha", "path": str(tmp_path / "home" / "opt" / "alpha"), "records": []}]})
 
     async def scenario(app, pilot) -> None:
         """Reach the checksum question, answer yes, then open the cancel question during the run."""
@@ -179,11 +121,11 @@ def test_the_checksum_question_and_the_cancel_question_have_the_frame(tmp_path: 
         await pilot.press("y")
         await wait_for(pilot, lambda: app.screen.outcome is not None if isinstance(app.screen, RunScreen) else False, "the run to end")
 
-    run_app(tmp_path, fake, scenario, size=size)
+    run_app(tmp_path, recorded_fake, scenario, size=size)
 
 
 @pytest.mark.parametrize("size", SIZES)
-def test_the_package_program_has_the_frame_and_escape_leaves_it(tmp_path: Path, fake: FakeGupkg, size) -> None:
+def test_the_package_program_has_the_frame_and_escape_leaves_it(tmp_path: Path, recorded_fake: FakeGupkg, size) -> None:
     """``gupkg-tui`` opens the package view of its target with the frame; Escape at that view quits the program with exit code 0."""
     codes: list[object] = []
 
@@ -196,16 +138,16 @@ def test_the_package_program_has_the_frame_and_escape_leaves_it(tmp_path: Path, 
         await wait_for(pilot, lambda: app.return_code is not None, "the program to leave")
         codes.append(app.return_code)
 
-    run_app(tmp_path, fake, scenario, size=size, program="tui")
+    run_app(tmp_path, recorded_fake, scenario, size=size, program="tui")
 
     assert codes == [0]
-    assert fake.read_calls() == ["info"] and fake.calls() == []
+    assert recorded_fake.read_calls() == ["info"] and recorded_fake.calls() == []
 
 
 # -- the browser --------------------------------------------------------------------
 
 
-def test_the_browser_lists_the_packages_and_the_status_line_counts_them(tmp_path: Path, fake: FakeGupkg) -> None:
+def test_the_browser_lists_the_packages_and_the_status_line_counts_them(tmp_path: Path, recorded_fake: FakeGupkg) -> None:
     """Name, version, status (with the newer version) and registry columns; the status line has the scope, the counts and the registry revision."""
     async def scenario(app, pilot) -> None:
         """Read the table and the status line."""
@@ -215,10 +157,10 @@ def test_the_browser_lists_the_packages_and_the_status_line_counts_them(tmp_path
         assert any(word in rows[1] for word in ("Name", "Version")) and any("alpha" in row and "outdated → 2.0.0" in row for row in rows)
         assert "2 packages · 2 outdated · 0 broken" in rows[-1]
 
-    run_app(tmp_path, fake, scenario)
+    run_app(tmp_path, recorded_fake, scenario)
 
 
-def test_the_browser_shows_the_scope_on_the_status_line_at_80x24_and_has_no_mode_column(tmp_path: Path, fake: FakeGupkg) -> None:
+def test_the_browser_shows_the_scope_on_the_status_line_at_80x24_and_has_no_mode_column(tmp_path: Path, recorded_fake: FakeGupkg) -> None:
     """A run has one scope: at 80x24 the status line starts with ``user · <root>`` (the root shortened, its last folders kept) and then the counts of ``list --json``; the window title has the full root; the table has no Mode column."""
     shown: dict[str, object] = {}
     listed = fixture_json("list.json", tmp_path)
@@ -229,7 +171,7 @@ def test_the_browser_shows_the_scope_on_the_status_line_at_80x24_and_has_no_mode
         await wait_for(pilot, lambda: "registry main @ 4f2a9c1" in app.registry and has(app, "2 packages"), "the registry state")
         shown["rows"], shown["title"], shown["label"] = screen_text(app), app.sub_title, app.env.scope_label
 
-    run_app(tmp_path, fake, scenario)
+    run_app(tmp_path, recorded_fake, scenario)
 
     rows = shown["rows"]
     root = tmp_path / "roots" / "user"
@@ -241,7 +183,7 @@ def test_the_browser_shows_the_scope_on_the_status_line_at_80x24_and_has_no_mode
     assert "Mode" not in rows[1] and rows[1].split() == ["Name", "Version", "Status", "Registry"]
 
 
-def test_the_package_program_shows_the_scope_first_on_its_status_line_at_80x24(tmp_path: Path, fake: FakeGupkg) -> None:
+def test_the_package_program_shows_the_scope_first_on_its_status_line_at_80x24(tmp_path: Path, recorded_fake: FakeGupkg) -> None:
     """``gupkg-tui`` shares the app: its status line starts with ``user · <root>`` and then names the package; the window title has the full root."""
     seen: dict[str, object] = {}
 
@@ -250,16 +192,16 @@ def test_the_package_program_shows_the_scope_first_on_its_status_line_at_80x24(t
         await wait_for(pilot, lambda: has(app, "Installed:") and "alpha outdated" in screen_text(app)[-1], "the package view")
         seen["status"], seen["title"] = screen_text(app)[-1].strip(), app.sub_title
 
-    run_app(tmp_path, fake, scenario, program="tui")
+    run_app(tmp_path, recorded_fake, scenario, program="tui")
 
     assert seen["status"].startswith("user · C:\\…\\") and " · alpha outdated" in seen["status"]
     assert seen["title"] == f"user · {tmp_path / 'roots' / 'user'}"
 
 
-def test_the_a_key_lists_the_registry_packages_that_are_not_installed_and_a_second_press_hides_them(tmp_path: Path, fake: FakeGupkg) -> None:
+def test_the_a_key_lists_the_registry_packages_that_are_not_installed_and_a_second_press_hides_them(tmp_path: Path, recorded_fake: FakeGupkg) -> None:
     """``a`` adds the registry's packages that are not installed to the table (the real CLI gives them the document's mode, like every row), says so in the status line, and ``a`` again hides them."""
     # The recorded documents of the real CLI: ``list`` and ``list --available`` are two reads with two answers (the double tells them apart).
-    fake.respond("list --available", doc=fixture_json("list_available.json", tmp_path, "cli_docs"))
+    recorded_fake.respond("list --available", doc=fixture_json("list_available.json", tmp_path, "cli_docs"))
     seen: dict[str, object] = {}
 
     async def scenario(app, pilot) -> None:
@@ -271,21 +213,21 @@ def test_the_a_key_lists_the_registry_packages_that_are_not_installed_and_a_seco
         await pilot.press("a")
         await wait_for(pilot, lambda: not has(app, "copyq"), "the available packages to be hidden")
 
-    run_app(tmp_path, fake, scenario)
+    run_app(tmp_path, recorded_fake, scenario)
 
     hint, status, rows = seen["shown"]
     assert "a hide" in hint
     assert "3 available in the registry" in status and "2 packages" in status and status.startswith("user · ")
     assert rows and "available" in rows[0]
-    assert fake.read_calls() == ["list", "registry status", "list", "list --available", "registry status", "list", "registry status"]
-    assert fake.calls() == []
+    assert recorded_fake.read_calls() == ["list", "registry status", "list", "list --available", "registry status", "list", "registry status"]
+    assert recorded_fake.calls() == []
 
 
-def test_the_a_key_marks_a_package_this_mode_cannot_install_and_the_status_line_gives_the_reason(tmp_path: Path, fake: FakeGupkg) -> None:
+def test_the_a_key_marks_a_package_this_mode_cannot_install_and_the_status_line_gives_the_reason(tmp_path: Path, recorded_fake: FakeGupkg) -> None:
     """Owner answer Q14: a registry package the mode cannot install is listed, marked ``system only`` with the CLI's reason, which the status line shows on the highlighted row."""
     recorded = fixture_json("list_available.json", tmp_path, "cli_docs")
     reason = next(row["restriction_reason"] for row in recorded["packages"] if row["name"] == "drv")
-    fake.respond("list --available", doc=recorded)
+    recorded_fake.respond("list --available", doc=recorded)
     seen: dict[str, object] = {}
 
     async def scenario(app, pilot) -> None:
@@ -297,7 +239,7 @@ def test_the_a_key_marks_a_package_this_mode_cannot_install_and_the_status_line_
         await wait_for(pilot, lambda: has(app, "is system only"), "the restriction on the status line")
         seen["rows"], seen["status"] = screen_text(app), app.screen.status_text()
 
-    run_app(tmp_path, fake, scenario)
+    run_app(tmp_path, recorded_fake, scenario)
 
     rows = seen["rows"]
     assert any("drv" in row and "available (system only)" in row for row in rows)
@@ -305,12 +247,12 @@ def test_the_a_key_marks_a_package_this_mode_cannot_install_and_the_status_line_
     assert f"drv is system only: {reason}" in seen["status"]
 
 
-def test_filter_selection_and_the_application_survive_opening_a_package_and_a_run(tmp_path: Path, fake: FakeGupkg) -> None:
+def test_filter_selection_and_the_application_survive_opening_a_package_and_a_run(tmp_path: Path, recorded_fake: FakeGupkg) -> None:
     """Filter to ``beta``, open it, run an update and go back: the same application is still on the browser with the filter text and the selection, and the list was re-read."""
-    update_run(fake, tmp_path, ("beta",))
-    fake.respond("list", doc=list_doc([("alpha", "user", "outdated", "1.0.0", "2.0.0", str(tmp_path / "home" / "opt" / "alpha")), ("beta", "user", "installed", "2.0.0", None, str(tmp_path / "home" / "opt" / "beta"))]))
-    fake.read_scenario["info"].clear()
-    fake.respond("info", doc=info_of("beta", tmp_path))
+    update_run(recorded_fake, tmp_path, ("beta",))
+    recorded_fake.respond("list", doc=list_doc([("alpha", "user", "outdated", "1.0.0", "2.0.0", str(tmp_path / "home" / "opt" / "alpha")), ("beta", "user", "installed", "2.0.0", None, str(tmp_path / "home" / "opt" / "beta"))]))
+    recorded_fake.read_scenario["info"].clear()
+    recorded_fake.respond("info", doc=info_of("beta", tmp_path))
     identity: list[object] = []
 
     async def scenario(app, pilot) -> None:
@@ -335,29 +277,29 @@ def test_filter_selection_and_the_application_survive_opening_a_package_and_a_ru
         assert has(app, "bet")
         assert app.screen.selected_target() == "beta"
 
-    run_app(tmp_path, fake, scenario)
+    run_app(tmp_path, recorded_fake, scenario)
 
-    assert fake.read_calls().count("list") == 2
+    assert recorded_fake.read_calls().count("list") == 2
 
 
-def test_names_with_markup_characters_are_shown_literally(tmp_path: Path, fake: FakeGupkg) -> None:
+def test_names_with_markup_characters_are_shown_literally(tmp_path: Path, recorded_fake: FakeGupkg) -> None:
     """A package called ``[bold red]x[/]`` or with a control character is drawn as typed; the program neither crashes nor styles it."""
     hostile = "[bold red]x[/] \x1b[31m"
-    fake.read_scenario["list"].clear()
-    fake.respond("list", doc=list_doc([(hostile, "user", "installed", "[b]1[/b]", None, None)]))
+    recorded_fake.read_scenario["list"].clear()
+    recorded_fake.respond("list", doc=list_doc([(hostile, "user", "installed", "[b]1[/b]", None, None)]))
 
     async def scenario(app, pilot) -> None:
         """The row shows the characters, cleaned."""
         await wait_for(pilot, lambda: has(app, "[bold red]x[/]"), "the hostile name")
         assert has(app, "[b]1[/b]") and not any("\x1b" in row for row in screen_text(app))
 
-    run_app(tmp_path, fake, scenario)
+    run_app(tmp_path, recorded_fake, scenario)
 
 
-def test_an_unreadable_inventory_is_shown_in_the_status_line_not_a_crash(tmp_path: Path, fake: FakeGupkg) -> None:
+def test_an_unreadable_inventory_is_shown_in_the_status_line_not_a_crash(tmp_path: Path, recorded_fake: FakeGupkg) -> None:
     """If the listing cannot be read the browser says so (ERROR in the status line, the full text in a notification and in ``app.problems``) and stays usable."""
-    fake.read_scenario["list"].clear()
-    fake.respond("list", doc={"nonsense": True})
+    recorded_fake.read_scenario["list"].clear()
+    recorded_fake.respond("list", doc={"nonsense": True})
 
     async def scenario(app, pilot) -> None:
         """Wait for the error and quit with the key."""
@@ -365,13 +307,13 @@ def test_an_unreadable_inventory_is_shown_in_the_status_line_not_a_crash(tmp_pat
         assert any("DocumentError" in text and "'api' is missing" in text for text in app.problems)
         await pilot.press("q")
 
-    run_app(tmp_path, fake, scenario)
+    run_app(tmp_path, recorded_fake, scenario)
 
 
-def test_an_unreadable_registry_status_shows_a_message_in_the_status_line_at_80x24(tmp_path: Path, fake: FakeGupkg) -> None:
+def test_an_unreadable_registry_status_shows_a_message_in_the_status_line_at_80x24(tmp_path: Path, recorded_fake: FakeGupkg) -> None:
     """A registry status that cannot be read is not left out silently: ``ERROR: registry unreadable: <reason>`` leads the program's part of the status line, the full text is in ``app.problems``, the browser still lists the packages."""
-    fake.read_scenario["registry status"] = []
-    fake.respond("registry status", error=OSError("cache is locked"))
+    recorded_fake.read_scenario["registry status"] = []
+    recorded_fake.respond("registry status", error=OSError("cache is locked"))
     seen: dict[str, object] = {}
 
     async def scenario(app, pilot) -> None:
@@ -380,7 +322,7 @@ def test_an_unreadable_registry_status_shows_a_message_in_the_status_line_at_80x
         await wait_for(pilot, lambda: "registry unreadable" in screen_text(app)[-1], "the message in the status line")
         seen["screen"], seen["problems"] = screen_text(app), list(app.problems)
 
-    run_app(tmp_path, fake, scenario)
+    run_app(tmp_path, recorded_fake, scenario)
 
     screen = seen["screen"]
     print("\n".join(screen))
@@ -388,7 +330,7 @@ def test_an_unreadable_registry_status_shows_a_message_in_the_status_line_at_80x
     assert any("alpha" in row for row in screen) and "OSError" in seen["problems"][0] and "locked" in seen["problems"][0]
 
 
-def test_no_read_of_the_manager_starts_the_cli(tmp_path: Path, fake: FakeGupkg, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_no_read_of_the_manager_starts_the_cli(tmp_path: Path, recorded_fake: FakeGupkg, monkeypatch: pytest.MonkeyPatch) -> None:
     """The inventory, ``a``, a package's details and the registry state are read in-process: with the ``Client`` made to fail on any use, the browser and the package view still work and the double saw no call."""
     async def forbidden(*args, **kwargs):
         """Fail the test: a read went through the CLI."""
@@ -396,7 +338,7 @@ def test_no_read_of_the_manager_starts_the_cli(tmp_path: Path, fake: FakeGupkg, 
 
     monkeypatch.setattr(Client, "query", forbidden)
     monkeypatch.setattr(Client, "call", forbidden)
-    fake.respond("list --available", doc=fixture_json("list_available.json", tmp_path, "cli_docs"))
+    recorded_fake.respond("list --available", doc=fixture_json("list_available.json", tmp_path, "cli_docs"))
 
     async def scenario(app, pilot) -> None:
         """Load, press ``a``, open the first package."""
@@ -406,14 +348,14 @@ def test_no_read_of_the_manager_starts_the_cli(tmp_path: Path, fake: FakeGupkg, 
         await pilot.press("enter")
         await wait_for(pilot, lambda: has(app, "Installed:"), "the package view")
 
-    run_app(tmp_path, fake, scenario)
+    run_app(tmp_path, recorded_fake, scenario)
 
-    assert fake.calls() == [] and {"list", "list --available", "info", "registry status"} <= set(fake.read_calls())
+    assert recorded_fake.calls() == [] and {"list", "list --available", "info", "registry status"} <= set(recorded_fake.read_calls())
 
 
-def test_the_run_view_puts_the_run_state_before_the_scope_at_80x24(tmp_path: Path, fake: FakeGupkg) -> None:
+def test_the_run_view_puts_the_run_state_before_the_scope_at_80x24(tmp_path: Path, recorded_fake: FakeGupkg) -> None:
     """On the run view the status line starts with the title and state of the run, then the scope: a long root can never push ``Finished`` out of 80 columns (every other screen starts with the scope)."""
-    update_run(fake, tmp_path, ("alpha",))
+    update_run(recorded_fake, tmp_path, ("alpha",))
     seen: dict[str, object] = {}
 
     async def scenario(app, pilot) -> None:
@@ -426,7 +368,7 @@ def test_the_run_view_puts_the_run_state_before_the_scope_at_80x24(tmp_path: Pat
         await wait_for(pilot, lambda: isinstance(app.screen, RunScreen) and app.screen.outcome is not None, "the run to finish")
         seen["run"] = screen_text(app)
 
-    run_app(tmp_path, fake, scenario)
+    run_app(tmp_path, recorded_fake, scenario)
 
     print("\n".join(seen["run"]))
     run = seen["run"][-1]
@@ -437,13 +379,13 @@ def test_the_run_view_puts_the_run_state_before_the_scope_at_80x24(tmp_path: Pat
 # -- running ------------------------------------------------------------------------
 
 
-def test_the_run_view_shows_the_phases_in_order_and_the_verdict_last(tmp_path: Path, fake: FakeGupkg) -> None:
+def test_the_run_view_shows_the_phases_in_order_and_the_verdict_last(tmp_path: Path, recorded_fake: FakeGupkg) -> None:
     """Headers Resolve then Fetch appear in that order inside the package, and the last line of the log is the summary under ``Done``."""
     records = [
         {"event": "phase_start", "phase": "Resolve"}, {"event": "step", "text": "alpha  1.0.0  ->  2.0.0", "kind": "info"}, {"event": "phase_end", "phase": "Resolve", "status": "ok", "elapsed": 0.1},
         {"event": "phase_start", "phase": "Fetch"}, {"event": "phase_end", "phase": "Fetch", "status": "ok", "elapsed": 0.2},
     ]
-    update_run(fake, tmp_path, ("alpha",), records=records)
+    update_run(recorded_fake, tmp_path, ("alpha",), records=records)
 
     async def scenario(app, pilot) -> None:
         """Run an update and read the finished log."""
@@ -457,13 +399,13 @@ def test_the_run_view_shows_the_phases_in_order_and_the_verdict_last(tmp_path: P
         assert [row.split()[1] for row in headers] == ["Resolve", "Fetch", "Done"]
         assert rows[-1] == "ok alpha 2.0.0: updated (was 1.0.0)" and "Finished" in screen_text(app)[-1]
 
-    run_app(tmp_path, fake, scenario)
+    run_app(tmp_path, recorded_fake, scenario)
 
 
-def test_a_2000_line_events_file_keeps_the_view_on_the_tail_and_the_keys_alive(tmp_path: Path, fake: FakeGupkg) -> None:
+def test_a_2000_line_events_file_keeps_the_view_on_the_tail_and_the_keys_alive(tmp_path: Path, recorded_fake: FakeGupkg) -> None:
     """The log follows the tail through 2,000 lines; the view can be scrolled back; keys (help) still work while and after it is fed."""
     records = [{"event": "subprocess_line", "cmd": "git", "line": f"line {number}"} for number in range(2000)]
-    update_run(fake, tmp_path, ("alpha",), records=records)
+    update_run(recorded_fake, tmp_path, ("alpha",), records=records)
 
     async def scenario(app, pilot) -> None:
         """Feed the file, check the tail, scroll back, open help."""
@@ -480,12 +422,12 @@ def test_a_2000_line_events_file_keeps_the_view_on_the_tail_and_the_keys_alive(t
         await wait_for(pilot, lambda: has(app, "Browser"), "help to answer while the log is long")
         await pilot.press("escape")
 
-    run_app(tmp_path, fake, scenario)
+    run_app(tmp_path, recorded_fake, scenario)
 
 
-def test_escape_during_a_run_asks_and_a_no_keeps_it_running(tmp_path: Path, fake: FakeGupkg) -> None:
+def test_escape_during_a_run_asks_and_a_no_keeps_it_running(tmp_path: Path, recorded_fake: FakeGupkg) -> None:
     """Escape never leaves a running view: it asks to cancel after the current package, and ``n`` lets the run go on to its end."""
-    update_run(fake, tmp_path, ("alpha",), delay=1.0)
+    update_run(recorded_fake, tmp_path, ("alpha",), delay=1.0)
 
     async def scenario(app, pilot) -> None:
         """Press Escape while the double sleeps, answer no, wait for the end."""
@@ -500,16 +442,16 @@ def test_escape_during_a_run_asks_and_a_no_keeps_it_running(tmp_path: Path, fake
         await wait_for(pilot, lambda: isinstance(app.screen, RunScreen) and app.screen.outcome is not None, "the run to finish")
         assert app.screen.outcome.ok and not app.screen.outcome.cancelled
 
-    run_app(tmp_path, fake, scenario)
+    run_app(tmp_path, recorded_fake, scenario)
 
-    assert fake.stop_events() == []
+    assert recorded_fake.stop_events() == []
 
 
-def test_a_yes_to_the_cancel_question_asks_the_call_to_stop_after_the_current_package(tmp_path: Path, fake: FakeGupkg) -> None:
+def test_a_yes_to_the_cancel_question_asks_the_call_to_stop_after_the_current_package(tmp_path: Path, recorded_fake: FakeGupkg) -> None:
     """The stop marker the run announced is created, the double sees it after package one, and the second package is reported skipped."""
-    fake.respond("update:plan", doc=plan_doc([plan_entry("alpha", "alpha"), plan_entry("beta", "beta")]))
+    recorded_fake.respond("update:plan", doc=plan_doc([plan_entry("alpha", "alpha"), plan_entry("beta", "beta")]))
     doc = result("update", [entry("alpha"), entry("beta", status="skipped", version=None, previous=None, code=5)])
-    fake.respond("update", doc=doc, events={
+    recorded_fake.respond("update", doc=doc, events={
         "dir": str(tmp_path / "home" / "opt" / ".gupkg" / "logs"), "stop_after": 0, "result": doc,
         "packages": [{"name": name, "path": str(tmp_path / "home" / "opt" / name), "records": []} for name in ("alpha", "beta")],
     })
@@ -529,15 +471,15 @@ def test_a_yes_to_the_cancel_question_asks_the_call_to_stop_after_the_current_pa
         assert "- beta: skipped" in text and "Stopped after the current package at your request." in text
         assert app.screen.outcome.exit_code == 5
 
-    run_app(tmp_path, fake, scenario)
+    run_app(tmp_path, recorded_fake, scenario)
 
-    assert fake.stop_events()[0]["saw_stop"] is True
+    assert recorded_fake.stop_events()[0]["saw_stop"] is True
 
 
-def test_dialogs_answer_only_to_explicit_keys(tmp_path: Path, fake: FakeGupkg) -> None:
+def test_dialogs_answer_only_to_explicit_keys(tmp_path: Path, recorded_fake: FakeGupkg) -> None:
     """Enter does not confirm an uninstall; ``n`` and Escape decline; ``y`` runs it (with ``--yes`` for the CLI, which is called with ``--no-input``)."""
     doc = result("uninstall", [entry("alpha", "uninstall", status="uninstalled")])
-    fake.respond("uninstall", doc=doc, events={"dir": str(tmp_path / "home" / "opt" / ".gupkg" / "logs"), "result": doc, "packages": [{"name": "alpha", "path": str(tmp_path / "home" / "opt" / "alpha"), "records": []}]})
+    recorded_fake.respond("uninstall", doc=doc, events={"dir": str(tmp_path / "home" / "opt" / ".gupkg" / "logs"), "result": doc, "packages": [{"name": "alpha", "path": str(tmp_path / "home" / "opt" / "alpha"), "records": []}]})
 
     async def scenario(app, pilot) -> None:
         """Try the keys in turn."""
@@ -549,22 +491,22 @@ def test_dialogs_answer_only_to_explicit_keys(tmp_path: Path, fake: FakeGupkg) -
         assert has(app, "Uninstall alpha?")
         await pilot.press("escape")
         await wait_for(pilot, lambda: not has(app, "Uninstall alpha?"), "the question to close")
-        assert not [call for call in fake.calls() if call["key"] == "uninstall"]
+        assert not [call for call in recorded_fake.calls() if call["key"] == "uninstall"]
         await pilot.press("x")
         await wait_for(pilot, lambda: has(app, "Uninstall alpha?"), "the question again")
         await pilot.press("y")
         await wait_for(pilot, lambda: isinstance(app.screen, RunScreen) and app.screen.outcome is not None, "the run")
 
-    run_app(tmp_path, fake, scenario)
+    run_app(tmp_path, recorded_fake, scenario)
 
-    (call,) = [item for item in fake.calls() if item["key"] == "uninstall"]
+    (call,) = [item for item in recorded_fake.calls() if item["key"] == "uninstall"]
     assert call["targets"] == ["alpha"] and "--yes" in call["options"] and "--no-input" in call["options"] and "--purge" not in call["options"]
 
 
-def test_a_registry_that_was_never_downloaded_is_announced_in_the_hint_line_and_the_status_line(tmp_path: Path, fake: FakeGupkg) -> None:
+def test_a_registry_that_was_never_downloaded_is_announced_in_the_hint_line_and_the_status_line(tmp_path: Path, recorded_fake: FakeGupkg) -> None:
     """With no registry downloaded, the key-hint line leads with `s DOWNLOAD THE REGISTRY` and the status line says it; `s` is always in the hints."""
-    fake.read_scenario["registry status"] = []  # the fixture's preset answer is replaced
-    fake.respond("registry status", doc=registry_doc(None))
+    recorded_fake.read_scenario["registry status"] = []  # the fixture's preset answer is replaced
+    recorded_fake.respond("registry status", doc=registry_doc(None))
     seen: dict[str, str] = {}
 
     async def scenario(app, pilot) -> None:
@@ -574,17 +516,17 @@ def test_a_registry_that_was_never_downloaded_is_announced_in_the_hint_line_and_
         rows = screen_text(app)
         seen["hint"], seen["status"], seen["full"] = rows[0], rows[-1], app.status_line()
 
-    run_app(tmp_path, fake, scenario)
+    run_app(tmp_path, recorded_fake, scenario)
 
     assert seen["hint"].strip().startswith("s DOWNLOAD THE REGISTRY") and "a avail" in seen["hint"]
     assert seen["status"].strip().startswith("user · C:\\…\\") and "2 packages" in seen["status"]
     assert "registry main: NOT DOWNLOADED, press s" in seen["full"]
 
 
-def test_a_downloaded_registry_leaves_a_plain_hint_line_that_still_names_s(tmp_path: Path, fake: FakeGupkg) -> None:
+def test_a_downloaded_registry_leaves_a_plain_hint_line_that_still_names_s(tmp_path: Path, recorded_fake: FakeGupkg) -> None:
     """With a registry downloaded the normal hints show, and they include `s sync`."""
-    fake.read_scenario["registry status"] = []  # the fixture's preset answer is replaced
-    fake.respond("registry status", doc=registry_doc("abcdef1234", synchronized_at="2026-10-25T00:00:00+00:00"))
+    recorded_fake.read_scenario["registry status"] = []  # the fixture's preset answer is replaced
+    recorded_fake.respond("registry status", doc=registry_doc("abcdef1234", synchronized_at="2026-10-25T00:00:00+00:00"))
     seen: dict[str, str] = {}
 
     async def scenario(app, pilot) -> None:
@@ -593,15 +535,15 @@ def test_a_downloaded_registry_leaves_a_plain_hint_line_that_still_names_s(tmp_p
         await wait_for(pilot, lambda: "registry main @ abcdef1" in app.registry and has(app, "2 packages"), "the registry state")
         seen["hint"] = screen_text(app)[0]
 
-    run_app(tmp_path, fake, scenario)
+    run_app(tmp_path, recorded_fake, scenario)
 
     assert "s sync" in seen["hint"] and "DOWNLOAD" not in seen["hint"]
 
 
-def test_the_s_key_synchronises_the_registry_with_one_cli_call_and_no_package(tmp_path: Path, fake: FakeGupkg) -> None:
+def test_the_s_key_synchronises_the_registry_with_one_cli_call_and_no_package(tmp_path: Path, recorded_fake: FakeGupkg) -> None:
     """In the manager, ``s`` runs ``gupkg registry sync`` once with the machine options, names no package, and returns to the browser."""
     doc = result("registry sync", [])
-    fake.respond("registry", doc=doc, events={"dir": str(tmp_path / "home" / "opt" / ".gupkg" / "logs"), "result": doc, "packages": []})
+    recorded_fake.respond("registry", doc=doc, events={"dir": str(tmp_path / "home" / "opt" / ".gupkg" / "logs"), "result": doc, "packages": []})
 
     async def scenario(app, pilot) -> None:
         """Press ``s`` in the browser, wait for the run to finish and leave the run view."""
@@ -611,17 +553,17 @@ def test_the_s_key_synchronises_the_registry_with_one_cli_call_and_no_package(tm
         await pilot.press("escape")
         await wait_for(pilot, lambda: has(app, "alpha") and not isinstance(app.screen, RunScreen), "the browser")
 
-    run_app(tmp_path, fake, scenario)
+    run_app(tmp_path, recorded_fake, scenario)
 
-    (call,) = [item for item in fake.calls() if item["key"] == "registry" and "sync" in item["argv"]]
+    (call,) = [item for item in recorded_fake.calls() if item["key"] == "registry" and "sync" in item["argv"]]
     assert call["targets"] == [] and "--no-input" in call["options"] and "--json" in call["options"] and "--events-file" in call["options"]
 
 
-def test_every_operation_is_one_cli_call_with_the_machine_options(tmp_path: Path, fake: FakeGupkg) -> None:
+def test_every_operation_is_one_cli_call_with_the_machine_options(tmp_path: Path, recorded_fake: FakeGupkg) -> None:
     """Check for updates, repair and the health check each arrive as one ``gupkg`` call for the qualified target; the program itself changes nothing."""
     for command, status in (("check-updates", "written"), ("install", "installed"), ("check", "healthy")):
         doc = result(command, [entry("alpha", command, status=status)])
-        fake.respond(command, doc=doc, events={"dir": str(tmp_path / "home" / "opt" / ".gupkg" / "logs"), "result": doc, "packages": [{"name": "alpha", "path": str(tmp_path / "home" / "opt" / "alpha"), "records": []}]})
+        recorded_fake.respond(command, doc=doc, events={"dir": str(tmp_path / "home" / "opt" / ".gupkg" / "logs"), "result": doc, "packages": [{"name": "alpha", "path": str(tmp_path / "home" / "opt" / "alpha"), "records": []}]})
 
     async def scenario(app, pilot) -> None:
         """Run the three operations from the browser, leaving each run view."""
@@ -635,21 +577,21 @@ def test_every_operation_is_one_cli_call_with_the_machine_options(tmp_path: Path
             await pilot.press("escape")
             await wait_for(pilot, lambda: has(app, "alpha") and not isinstance(app.screen, RunScreen), "the browser")
 
-    run_app(tmp_path, fake, scenario)
+    run_app(tmp_path, recorded_fake, scenario)
 
-    operations = [call for call in fake.calls() if call["key"] in ("check-updates", "install", "check")]
+    operations = [call for call in recorded_fake.calls() if call["key"] in ("check-updates", "install", "check")]
     assert [call["key"] for call in operations] == ["check-updates", "install", "check"]
     assert all(call["targets"] == ["alpha"] for call in operations)
 
 
-def test_the_package_program_runs_check_update_repair_uninstall_and_health_as_cli_calls(tmp_path: Path, fake: FakeGupkg) -> None:
+def test_the_package_program_runs_check_update_repair_uninstall_and_health_as_cli_calls(tmp_path: Path, recorded_fake: FakeGupkg) -> None:
     """From ``gupkg-tui`` each key starts one ``gupkg`` call for the package (with ``--yes`` for the confirmations already given) and Escape comes back to the same view."""
     root = tmp_path / "home" / "opt" / ".gupkg" / "logs"
     package = {"name": "alpha", "path": str(tmp_path / "home" / "opt" / "alpha"), "records": []}
     for command, status in (("check-updates", "written"), ("install", "installed"), ("uninstall", "uninstalled"), ("check", "healthy")):
         doc = result(command, [entry("alpha", command, status=status)])
-        fake.respond(command, doc=doc, events={"dir": str(root), "result": doc, "packages": [package]})
-    update_run(fake, tmp_path, ("alpha",))
+        recorded_fake.respond(command, doc=doc, events={"dir": str(root), "result": doc, "packages": [package]})
+    update_run(recorded_fake, tmp_path, ("alpha",))
 
     async def scenario(app, pilot) -> None:
         """Press each operation key, answer the dialog where there is one, and come back."""
@@ -664,22 +606,22 @@ def test_the_package_program_runs_check_update_repair_uninstall_and_health_as_cl
             await pilot.press("escape")
             await wait_for(pilot, lambda: has(app, "Versions in the package folder") and not isinstance(app.screen, RunScreen), "the package view")
 
-    run_app(tmp_path, fake, scenario, program="tui")
+    run_app(tmp_path, recorded_fake, scenario, program="tui")
 
-    operations = [call for call in fake.calls() if call["key"] in ("check-updates", "install", "uninstall", "check", "update")]
+    operations = [call for call in recorded_fake.calls() if call["key"] in ("check-updates", "install", "uninstall", "check", "update")]
     assert [call["key"] for call in operations] == ["check-updates", "install", "uninstall", "check", "update"]
     assert all(call["targets"] == ["alpha"] and "--no-input" in call["options"] for call in operations)
     # ``check-updates`` activates nothing, so the program answers its own multi-package question; the health check changes nothing and needs none.
     assert [call["key"] for call in operations if "--yes" in call["options"]] == ["check-updates", "install", "uninstall", "update"]
 
 
-def test_cli_error_text_with_markup_is_shown_literally_everywhere(tmp_path: Path, fake: FakeGupkg) -> None:
+def test_cli_error_text_with_markup_is_shown_literally_everywhere(tmp_path: Path, recorded_fake: FakeGupkg) -> None:
     """A ``[red]x`` inside what the CLI says (an api value, an error message, a log lookup failure) reaches the status line, the package view, the run log and the toast as typed."""
-    fake.read_scenario["info"].clear()
-    fake.respond("info", doc={"api": "[red]x", "command": "info", "ok": True, "exit_code": 0})
-    fake.respond("update:plan", doc=plan_doc([plan_entry("alpha", "alpha")]))
+    recorded_fake.read_scenario["info"].clear()
+    recorded_fake.respond("info", doc={"api": "[red]x", "command": "info", "ok": True, "exit_code": 0})
+    recorded_fake.respond("update:plan", doc=plan_doc([plan_entry("alpha", "alpha")]))
     failing = result("update", [entry("alpha", ok=False, status="failed", code=3, error={"code": "x", "message": "[red]boom[/red] [bold]x"})])
-    fake.respond("update", doc=failing, events={"dir": str(tmp_path / "home" / "opt" / ".gupkg" / "logs"), "result": failing, "packages": [{"name": "alpha", "path": str(tmp_path / "home" / "opt" / "alpha"), "records": [{"event": "error", "text": "[red]x"}]}]})
+    recorded_fake.respond("update", doc=failing, events={"dir": str(tmp_path / "home" / "opt" / ".gupkg" / "logs"), "result": failing, "packages": [{"name": "alpha", "path": str(tmp_path / "home" / "opt" / "alpha"), "records": [{"event": "error", "text": "[red]x"}]}]})
 
     async def scenario(app, pilot) -> None:
         """Look at the toast of a failed log lookup, then the failed run's log."""
@@ -692,7 +634,7 @@ def test_cli_error_text_with_markup_is_shown_literally_everywhere(tmp_path: Path
         await wait_for(pilot, lambda: isinstance(app.screen, RunScreen) and app.screen.outcome is not None, "the run to finish")
         assert has(app, "Error: [red]x") and has(app, "[red]boom[/red] [bold]x")
 
-    run_app(tmp_path, fake, scenario, toasts=True)
+    run_app(tmp_path, recorded_fake, scenario, toasts=True)
 
 
 # -- Ctrl-C ---------------------------------------------------------------------------
@@ -703,9 +645,9 @@ def slow_update(fake: FakeGupkg, tmp_path: Path, delay: float = 1.5) -> None:
     update_run(fake, tmp_path, ("alpha",), delay=delay)
 
 
-def test_ctrl_c_on_a_running_run_asks_the_cancel_question_and_never_quits(tmp_path: Path, fake: FakeGupkg) -> None:
+def test_ctrl_c_on_a_running_run_asks_the_cancel_question_and_never_quits(tmp_path: Path, recorded_fake: FakeGupkg) -> None:
     """Ctrl-C while a call runs opens "Cancel after the current package?"; a second Ctrl-C with that dialog open is ignored; ``n`` lets the run finish."""
-    slow_update(fake, tmp_path)
+    slow_update(recorded_fake, tmp_path)
 
     async def scenario(app, pilot) -> None:
         """Press Ctrl-C twice during the call, then answer no."""
@@ -723,16 +665,16 @@ def test_ctrl_c_on_a_running_run_asks_the_cancel_question_and_never_quits(tmp_pa
         await wait_for(pilot, lambda: isinstance(app.screen, RunScreen) and app.screen.outcome is not None, "the run to finish")
         assert app.screen.outcome.ok and app.return_code is None
 
-    run_app(tmp_path, fake, scenario)
+    run_app(tmp_path, recorded_fake, scenario)
 
 
-def test_ctrl_c_over_a_question_asked_during_a_run_is_ignored(tmp_path: Path, fake: FakeGupkg) -> None:
+def test_ctrl_c_over_a_question_asked_during_a_run_is_ignored(tmp_path: Path, recorded_fake: FakeGupkg) -> None:
     """A checksum question that appears inside a running batch (a check's follow-up) is not a way out: Ctrl-C does not quit, the answer does."""
     refusal = {"code": "checksum-missing", "message": "no checksum", "url": "https://example.org/a.zip", "skippable": True}
     first = result("check-updates", [entry("alpha", "check-updates", ok=False, status="failed", code=3, error=refusal)])
     again = result("check-updates", [entry("alpha", "check-updates", status="written")])
     for doc in (first, again):
-        fake.respond("check-updates", doc=doc, events={"dir": str(tmp_path / "home" / "opt" / ".gupkg" / "logs"), "result": doc, "packages": [{"name": "alpha", "path": str(tmp_path / "home" / "opt" / "alpha"), "records": []}]})
+        recorded_fake.respond("check-updates", doc=doc, events={"dir": str(tmp_path / "home" / "opt" / ".gupkg" / "logs"), "result": doc, "packages": [{"name": "alpha", "path": str(tmp_path / "home" / "opt" / "alpha"), "records": []}]})
 
     async def scenario(app, pilot) -> None:
         """Reach the follow-up question, press Ctrl-C, answer no."""
@@ -745,13 +687,13 @@ def test_ctrl_c_over_a_question_asked_during_a_run_is_ignored(tmp_path: Path, fa
         await pilot.press("n")
         await wait_for(pilot, lambda: isinstance(app.screen, RunScreen) and app.screen.outcome is not None, "the run to finish")
 
-    run_app(tmp_path, fake, scenario)
+    run_app(tmp_path, recorded_fake, scenario)
 
 
 @pytest.mark.parametrize("where", ["plan-confirmation", "browser"])
-def test_ctrl_c_quits_when_nothing_is_running(tmp_path: Path, fake: FakeGupkg, where: str) -> None:
+def test_ctrl_c_quits_when_nothing_is_running(tmp_path: Path, recorded_fake: FakeGupkg, where: str) -> None:
     """On the browser, and on a plan that was not confirmed yet (no call has started), Ctrl-C quits with exit code 1."""
-    update_run(fake, tmp_path, ("alpha",))
+    update_run(recorded_fake, tmp_path, ("alpha",))
 
     async def scenario(app, pilot) -> None:
         """Go to the place and press Ctrl-C."""
@@ -762,14 +704,14 @@ def test_ctrl_c_quits_when_nothing_is_running(tmp_path: Path, fake: FakeGupkg, w
         await pilot.press("ctrl+c")
         await wait_for(pilot, lambda: app.return_code == 1, "the program to quit")
 
-    run_app(tmp_path, fake, scenario)
+    run_app(tmp_path, recorded_fake, scenario)
 
-    assert not [call for call in fake.calls() if call["key"] == "update"]
+    assert not [call for call in recorded_fake.calls() if call["key"] == "update"]
 
 
-def test_ctrl_c_on_the_checksum_question_before_any_call_quits(tmp_path: Path, fake: FakeGupkg) -> None:
+def test_ctrl_c_on_the_checksum_question_before_any_call_quits(tmp_path: Path, recorded_fake: FakeGupkg) -> None:
     """The per-package checksum question of an update comes before the first update call, so nothing runs and Ctrl-C may quit."""
-    fake.respond("update:plan", doc=plan_doc([plan_entry("alpha", "alpha", sha256="missing")]))
+    recorded_fake.respond("update:plan", doc=plan_doc([plan_entry("alpha", "alpha", sha256="missing")]))
 
     async def scenario(app, pilot) -> None:
         """Confirm the plan, then press Ctrl-C on the checksum question."""
@@ -781,18 +723,18 @@ def test_ctrl_c_on_the_checksum_question_before_any_call_quits(tmp_path: Path, f
         await pilot.press("ctrl+c")
         await wait_for(pilot, lambda: app.return_code == 1, "the program to quit")
 
-    run_app(tmp_path, fake, scenario)
+    run_app(tmp_path, recorded_fake, scenario)
 
-    assert not [call for call in fake.calls() if call["key"] == "update"]
+    assert not [call for call in recorded_fake.calls() if call["key"] == "update"]
 
 
 # -- responsiveness and colour -----------------------------------------------------------
 
 
-def test_a_100000_record_run_keeps_the_keys_responsive_and_the_log_bounded(tmp_path: Path, fake: FakeGupkg) -> None:
+def test_a_100000_record_run_keeps_the_keys_responsive_and_the_log_bounded(tmp_path: Path, recorded_fake: FakeGupkg) -> None:
     """While 100,000 events are ingested a key press is handled within 0.5 s (the log never re-renders what it has, and keeps at most its cap of lines)."""
     records = [{"event": "subprocess_line", "cmd": "git", "line": f"line {number}"} for number in range(100_000)]
-    update_run(fake, tmp_path, ("alpha",), records=records)
+    update_run(recorded_fake, tmp_path, ("alpha",), records=records)
     latencies: list[float] = []
 
     async def scenario(app, pilot) -> None:
@@ -814,7 +756,7 @@ def test_a_100000_record_run_keeps_the_keys_responsive_and_the_log_bounded(tmp_p
         log = app.screen.query_one("RunLog")
         assert len(log.lines) <= MAX_LOG_LINES and has(app, "ok alpha 2.0.0")
 
-    run_app(tmp_path, fake, scenario)
+    run_app(tmp_path, recorded_fake, scenario)
 
     assert len(latencies) == 3 and min(latencies) < 0.5, f"key presses took {latencies} seconds during ingestion"
 
@@ -838,16 +780,16 @@ def test_ingesting_100000_records_takes_bounded_time(tmp_path: Path) -> None:
     assert shown <= 10_000 and renderer.detail_omitted >= 90_000
 
 
-def test_with_colour_off_nothing_is_carried_by_colour_alone(tmp_path: Path, fake: FakeGupkg) -> None:
+def test_with_colour_off_nothing_is_carried_by_colour_alone(tmp_path: Path, recorded_fake: FakeGupkg) -> None:
     """With ``[ui] color = "never"`` (the program's own setting) at 80x24 the run view shows failures, warnings and errors in words and marks, and its lines carry no colour."""
     records = [
         {"event": "phase_start", "phase": "Verify"}, {"event": "warning", "text": "slow mirror"}, {"event": "error", "text": "checksum differs", "hint": "retry later"},
         {"event": "phase_end", "phase": "Verify", "status": "failed", "elapsed": 0.5},
     ]
-    update_run(fake, tmp_path, ("alpha",), records=records)
-    fake.scenario["update"][0]["doc"] = result("update", [entry("alpha", ok=False, status="failed", code=3, error={"code": "x", "message": "checksum differs"})])
-    fake.scenario["update"][0]["events"]["result"] = fake.scenario["update"][0]["doc"]
-    fake.respond("update", **fake.scenario["update"].pop(0))
+    update_run(recorded_fake, tmp_path, ("alpha",), records=records)
+    recorded_fake.scenario["update"][0]["doc"] = result("update", [entry("alpha", ok=False, status="failed", code=3, error={"code": "x", "message": "checksum differs"})])
+    recorded_fake.scenario["update"][0]["events"]["result"] = recorded_fake.scenario["update"][0]["doc"]
+    recorded_fake.respond("update", **recorded_fake.scenario["update"].pop(0))
     coloured: list[bool] = []
 
     async def scenario(app, pilot) -> None:
@@ -862,7 +804,7 @@ def test_with_colour_off_nothing_is_carried_by_colour_alone(tmp_path: Path, fake
             assert word in text, word
         coloured.append(app.env.settings.colour)
 
-    run_app(tmp_path, fake, scenario, settings='[ui]\ncolor = "never"')
+    run_app(tmp_path, recorded_fake, scenario, settings='[ui]\ncolor = "never"')
 
     assert coloured == [False]
 
@@ -883,7 +825,7 @@ def test_the_renderer_without_colour_keeps_only_emphasis(tmp_path: Path) -> None
 
 
 @pytest.mark.parametrize("program", ["manager", "tui"])
-def test_the_root_of_the_run_is_on_the_status_line_and_in_the_title_at_80x24(tmp_path: Path, fake: FakeGupkg, program: str) -> None:
+def test_the_root_of_the_run_is_on_the_status_line_and_in_the_title_at_80x24(tmp_path: Path, recorded_fake: FakeGupkg, program: str) -> None:
     """``--root DIR`` is the root of the run: both programs start on it and their status line (after ``user ·``) and window title show it."""
     root = tmp_path / "chosen-root"
     root.mkdir()
@@ -894,7 +836,7 @@ def test_the_root_of_the_run_is_on_the_status_line_and_in_the_title_at_80x24(tmp
         await wait_for(pilot, lambda: has(app, "alpha"), "the first screen")
         seen["rows"], seen["title"] = screen_text(app), app.sub_title
 
-    run_app(tmp_path, fake, scenario, program=program, root=root)
+    run_app(tmp_path, recorded_fake, scenario, program=program, root=root)
 
     status = seen["rows"][-1].strip()
     assert seen["title"] == f"user · {root}" and status.startswith("user · ") and "chosen-root" in status and len(seen["rows"][-1]) <= 80

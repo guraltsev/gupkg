@@ -21,7 +21,7 @@ from gupkg.model.version import is_version_name
 from gupkg.system.fake import FakeHttp, FakeSystem
 from gupkg_registry.layout import read_registry_file, write_registry_file
 from gupkg_registry.update import update_registry
-from tests.catalog_support import write_version
+from tests.support.catalog import write_version
 
 pytestmark = pytest.mark.unit
 

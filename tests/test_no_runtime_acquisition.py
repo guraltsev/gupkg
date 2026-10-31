@@ -16,8 +16,7 @@ from unittest import mock
 
 import pytest
 
-from tests.cli_support import CliWorld
-from tests.mode_support import pin_no_ambient_elevation  # noqa: F401
+from tests.support.cli import CliWorld
 
 pytestmark = pytest.mark.unit
 

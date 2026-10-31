@@ -20,7 +20,7 @@ from gupkg.engine import lifecycle
 from gupkg.model.plan import PackageResult, Request
 from gupkg.redact import redact_text, redact_url
 from gupkg.report.events import use_reporter
-from tests.engine_support import World, pin_no_ambient_elevation, pkg_text, zip_bytes  # noqa: F401
+from tests.support.engine import World, pkg_text, zip_bytes
 
 pytestmark = pytest.mark.unit
 
@@ -80,9 +80,8 @@ def serve_secret(world: World, url: str, name: str = "tool", version: str = "1.0
 
 
 @pytest.mark.parametrize("url", ["https://example.org/files/tool.zip?token=TOPSECRET", "https://example.org/files/tool.zip?X-Amz-Signature=TOPSECRET"])
-def test_an_install_of_a_url_with_a_secret_leaves_no_secret_in_receipt_events_or_plan(tmp_path: Path, url: str) -> None:
+def test_an_install_of_a_url_with_a_secret_leaves_no_secret_in_receipt_events_or_plan(world: World, url: str) -> None:
     """The receipt, every event of the run and the plan data hold the masked address only."""
-    world = World(tmp_path)
     serve_secret(world, url)
     events: list[object] = []
 
@@ -101,9 +100,8 @@ def test_an_install_of_a_url_with_a_secret_leaves_no_secret_in_receipt_events_or
     assert "***" in receipt and "***" in repr(plan)
 
 
-def test_an_error_that_quotes_a_secret_url_is_masked(tmp_path: Path) -> None:
+def test_an_error_that_quotes_a_secret_url_is_masked(world: World) -> None:
     """A download that fails reports the address without its secret, in the message and in the structured error."""
-    world = World(tmp_path)
     url = "https://example.org/files/tool.zip?token=TOPSECRET"
     serve_secret(world, url)
     world.fake.urls[url] = OSError(f"connection reset while reading {url}")

@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from gupkg.catalog.catalog import CatalogError, NotFound, parse_selector
-from tests.catalog_support import activate, build_registry, make_catalog, write_tracker, write_version
+from tests.support.catalog import activate, build_registry, make_catalog, write_tracker, write_version
 
 pytestmark = pytest.mark.unit
 

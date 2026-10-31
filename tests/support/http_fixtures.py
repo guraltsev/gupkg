@@ -18,9 +18,9 @@ from gupkg.model.manifest import Manifest, ManifestKind, parse_manifest
 from gupkg.services.http import HttpClient
 from gupkg.services.track import TrackEnvironment
 from gupkg.system.fake import FakeHttp, FakeSystem
-from tests.scope_support import scope_of
+from tests.support.scope import scope_of
 
-FIXTURES = Path(__file__).resolve().parent / "fixtures"
+FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 HTTP_CASES = FIXTURES / "http"
 REGISTRY2 = Path(os.environ.get("GUPKG_REGISTRY_TRACKERS") or FIXTURES / "registry_100")  # the CI job of the registry points this at its own checkout
 

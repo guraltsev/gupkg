@@ -27,18 +27,12 @@ from gupkg.catalog.record import read_install_record
 from gupkg.engine.effects import launchers_find_gupkg
 from gupkg.launchers import launcher_text
 from gupkg.system.port import ProcessResult, Mode
-from tests.engine_support import World, pin_no_ambient_elevation  # noqa: F401
+from tests.support.engine import World
 
 pytestmark = pytest.mark.unit
 
 GUPKG_TABLES = '[[shim]]\nname = "gupkg"\ntarget = "$App\\\\gupkg.cmd"\n\n[[shim]]\nname = "gupkg-manager"\ntarget = "$App\\\\gupkg-manager.cmd"\n'
 SHIM = '[[shim]]\nname = "tool"\ntarget = "$App\\\\app.exe"\n'
-
-
-@pytest.fixture
-def world(tmp_path: Path) -> World:
-    """A fake machine with a user root and an engine."""
-    return World(tmp_path)
 
 
 def install_gupkg(world: World, mode: str = "user") -> Path:
@@ -286,24 +280,23 @@ def test_launchers_find_a_gupkg_by_the_launchers_own_rules(tmp_path: Path) -> No
     assert not launchers_find_gupkg(root, str(app), lambda folder: "Users can modify it")
 
 
-def test_cleanup_bundled_in_system_mode_ignores_a_gupkg_that_standard_users_can_change(tmp_path: Path) -> None:
+def test_cleanup_bundled_in_system_mode_ignores_a_gupkg_that_standard_users_can_change(elevated_world: World) -> None:
     """An elevated launcher refuses a user-writable gupkg, so it would not find it: a user-writable PATH gupkg or location does not let bundled copies go."""
-    world = World(tmp_path, elevated=True)
-    assert world.one("install", str(distribution_with_bundle(world))).ok
-    root = world.root("system")
+    assert elevated_world.one("install", str(distribution_with_bundle(elevated_world))).ok
+    root = elevated_world.root("system")
     version = root / "tool" / "1.0.0"
-    elsewhere = world.base / "on-path"
+    elsewhere = elevated_world.base / "on-path"
     elsewhere.mkdir()
     (elsewhere / "gupkg.cmd").write_text("@echo off\r\n", encoding="ascii")
-    world.engine.env = {**world.engine.env, "PATH": str(elsewhere)}
-    world.machine.fake.untrusted_dirs.add(elsewhere.resolve())
+    elevated_world.engine.env = {**elevated_world.engine.env, "PATH": str(elsewhere)}
+    elevated_world.machine.fake.untrusted_dirs.add(elsewhere.resolve())
 
-    refused = world.one("cleanup", "tool", bundled=True)
+    refused = elevated_world.one("cleanup", "tool", bundled=True)
 
     assert refused.ok and (version / "gupkg" / "gupkg.cmd").is_file() and refused.details["bundled"] == []
-    world.machine.fake.untrusted_dirs.clear()
+    elevated_world.machine.fake.untrusted_dirs.clear()
 
-    allowed = world.one("cleanup", "tool", bundled=True)
+    allowed = elevated_world.one("cleanup", "tool", bundled=True)
 
     assert allowed.ok and allowed.details["bundled"] == ["1.0.0"] and not (version / "gupkg").exists()
 
@@ -365,15 +358,14 @@ def test_a_populate_script_that_copies_a_shipped_folder_makes_app_recoverable(wo
 # ---------------------------------------------------------------------------
 
 
-def test_a_system_install_of_a_distribution_runs_nothing_from_the_source_folder(tmp_path: Path) -> None:
+def test_a_system_install_of_a_distribution_runs_nothing_from_the_source_folder(elevated_world: World) -> None:
     """From an admin shell the folder in Downloads is read and copied only: the process log has no path under it, and the install uses the admin-only copy."""
-    world = World(tmp_path, elevated=True)
-    world.publish_script("tool", "1.0.0", script="populate.cmd", tables=SHIM, root=world.base / "downloads")
-    source = world.base / "downloads" / "tool" / "1.0.0"
+    elevated_world.publish_script("tool", "1.0.0", script="populate.cmd", tables=SHIM, root=elevated_world.base / "downloads")
+    source = elevated_world.base / "downloads" / "tool" / "1.0.0"
 
-    result = world.one("install", str(source))
+    result = elevated_world.one("install", str(source))
 
     assert result.ok, result.error
-    commands = [part for call in (*world.fake.process_log, *world.fake.foreground_log) for part in call]
+    commands = [part for call in (*elevated_world.fake.process_log, *elevated_world.fake.foreground_log) for part in call]
     assert commands and not [part for part in commands if str(source) in part]
-    assert (world.system_root / "tool" / "1.0.0" / "pkg.local" / "populate.cmd").is_file()
+    assert (elevated_world.system_root / "tool" / "1.0.0" / "pkg.local" / "populate.cmd").is_file()

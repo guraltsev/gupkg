@@ -20,7 +20,7 @@ import pytest
 from gupkg.model.scope import Scope, make_scope
 from gupkg.model.settings import default_layer, expand_env, merge_layers
 from gupkg.system.port import Mode
-from tests.mode_support import Machine, pin_no_ambient_elevation  # noqa: F401
+from tests.support.mode import Machine
 
 pytestmark = pytest.mark.unit
 

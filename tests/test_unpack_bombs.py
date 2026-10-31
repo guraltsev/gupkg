@@ -25,20 +25,12 @@ from gupkg.services.unpack import Limits, UnpackError, UnpackPlan, unpack_artifa
 from gupkg.services.unpack.extract import decompress_capped
 from gupkg.system.fake import FakeSystem, ProcessCall
 from gupkg.system.port import ProcessResult
-from tests.archive_support import make_zip
+from tests.support.archive import make_zip
 
 pytestmark = pytest.mark.unit
 
 MIB = 1024 * 1024
 SMALL = Limits(max_total_bytes=MIB, max_file_bytes=MIB)
-
-
-@pytest.fixture
-def stage(tmp_path: Path) -> Path:
-    """An empty folder where unpack destinations are made; a failed unpack must leave it empty."""
-    folder = tmp_path / "stage"
-    folder.mkdir()
-    return folder
 
 
 def zero_tar(data_size: int) -> bytes:

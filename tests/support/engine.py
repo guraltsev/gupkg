@@ -1,6 +1,6 @@
 """Build a pretend machine with published packages for the engine tests.
 
-``World`` wraps the temporary machine of ``tests.mode_support`` (two roots, an app settings file, a ``FakeSystem``) and an
+``World`` wraps the temporary machine of ``tests.support.mode`` (two roots, an app settings file, a ``FakeSystem``) and an
 ``Engine`` over the one scope of a run on it (user mode, or system mode when the fake machine is elevated). ``World.publish`` writes a pinned version directory into a root and serves its zip artifact from the
 fake's URL map, with the digest in ``pkg.toml`` when asked, so install, update, check-updates and repair run end to end on
 real folders, real ``current`` junctions and the fake registry, shortcuts and ``PATH``.
@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import shutil
 import zipfile
 from pathlib import Path
@@ -24,7 +25,7 @@ from gupkg.services.fingerprint import fingerprint_directory
 from gupkg.system.fake import FakeSystem, ProcessCall
 from gupkg.system.port import ProcessResult
 from gupkg.tomlio import write_toml
-from tests.mode_support import Machine, pin_no_ambient_elevation  # noqa: F401  (autouse fixture of every engine test)
+from tests.support.mode import Machine
 
 BASE_URL = "https://example.org/files"
 
@@ -279,3 +280,22 @@ class World:
         batch = self.run(operation, selector, **options)
         assert len(batch.results) == 1
         return batch.results[0]
+
+
+def current(package: Path) -> str:
+    """Return the version that ``<package>/current`` points at."""
+    return Path(os.path.realpath(package / "current")).name
+
+
+def replace_declared_sha256(version_dir: Path, replacement: str | None = None, *, length: int = 64) -> None:
+    """Overwrite the first *length* characters of the ``sha256`` that ``<version_dir>/pkg.toml`` declares with *replacement*.
+
+    Without *replacement* the digest becomes a different, well-formed one (64 zeros, or 64 ones when it already is 64 zeros), so
+    the download no longer matches it.
+    """
+    manifest = version_dir / "pkg.toml"
+    text = manifest.read_text(encoding="utf-8")
+    start = text.index('sha256 = "') + len('sha256 = "')
+    if replacement is None:
+        replacement = "0" * 64 if text[start:start + 64] != "0" * 64 else "1" * 64
+    manifest.write_text(text[:start] + replacement + text[start + length:], encoding="utf-8")

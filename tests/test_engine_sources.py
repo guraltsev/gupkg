@@ -21,18 +21,12 @@ import pytest
 from gupkg.model.manifest import APP_MISSING_ERROR
 from gupkg.engine.receipts import read_receipt
 from gupkg.system.port import Mode
-from tests.engine_support import World, pin_no_ambient_elevation  # noqa: F401
-from tests.mode_support import tree_snapshot
+from tests.support.engine import World
+from tests.support.mode import tree_snapshot
 
 pytestmark = pytest.mark.unit
 
 SHIM = '[[shim]]\nname = "tool"\ntarget = "$App\\\\app.exe"\n\n[[env]]\nname = "TOOL_HOME"\nvalue = "$App"\n'
-
-
-@pytest.fixture
-def world(tmp_path: Path) -> World:
-    """A fake machine with a user root and an engine."""
-    return World(tmp_path)
 
 
 def machine_state(world: World) -> tuple:

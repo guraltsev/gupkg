@@ -13,7 +13,7 @@ from pathlib import Path
 
 from gupkg.model.manager_policy import USER_APPROVED, skip_argument
 from gupkg_ui.steps import Subject, make_steps
-from tests.ui_support import FakeGupkg, make_env
+from tests.support.ui import FakeGupkg, make_env
 import pytest
 
 pytestmark = pytest.mark.unit

@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.cli_support import CliWorld
+from tests.support.cli import CliWorld
 
 pytestmark = pytest.mark.unit
 

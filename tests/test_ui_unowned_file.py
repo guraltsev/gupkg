@@ -13,8 +13,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from gupkg_ui.screens.run import RunScreen
-from tests.test_ui_screens import fake, has, open_browser, run_app, screen_text, update_run, wait_for  # noqa: F401
-from tests.ui_support import FakeGupkg, entry, result
+from tests.support.ui_screens import has, open_browser, run_app, screen_text, update_run, wait_for
+from tests.support.ui import FakeGupkg, entry, result
 import pytest
 
 pytestmark = pytest.mark.process
@@ -25,16 +25,16 @@ MESSAGE = (
 )
 
 
-def test_the_run_screen_shows_the_unowned_file_refusal(tmp_path: Path, fake: FakeGupkg) -> None:
+def test_the_run_screen_shows_the_unowned_file_refusal(tmp_path: Path, recorded_fake: FakeGupkg) -> None:
     """The refusal text (path, reason, the flag) is on the finished run screen at 80x24, with the hint and status lines."""
-    update_run(fake, tmp_path, ("alpha",), records=[
+    update_run(recorded_fake, tmp_path, ("alpha",), records=[
         {"event": "phase_start", "phase": "Resolve"}, {"event": "error", "text": MESSAGE},
         {"event": "phase_end", "phase": "Resolve", "status": "failed", "elapsed": 0.1},
     ])
     failing = result("update", [entry("alpha", ok=False, status="failed", code=2, error={"code": "file-exists", "message": MESSAGE})])
-    fake.scenario["update"][0]["doc"] = failing
-    fake.scenario["update"][0]["events"]["result"] = failing
-    fake.respond("update", **fake.scenario["update"].pop(0))
+    recorded_fake.scenario["update"][0]["doc"] = failing
+    recorded_fake.scenario["update"][0]["events"]["result"] = failing
+    recorded_fake.respond("update", **recorded_fake.scenario["update"].pop(0))
     shown: list[list[str]] = []
 
     async def scenario(app, pilot) -> None:
@@ -46,7 +46,7 @@ def test_the_run_screen_shows_the_unowned_file_refusal(tmp_path: Path, fake: Fak
         await wait_for(pilot, lambda: isinstance(app.screen, RunScreen) and app.screen.outcome is not None, "the run to finish")
         shown.append(screen_text(app))
 
-    run_app(tmp_path, fake, scenario, size=(80, 24))
+    run_app(tmp_path, recorded_fake, scenario, size=(80, 24))
 
     text = " ".join(" ".join(shown[0]).split())
     assert "alpha cannot be installed: 'C:\\Users\\me\\opt\\bin\\tool.exe' already exists and no installed package owns it." in text

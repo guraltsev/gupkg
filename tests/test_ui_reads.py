@@ -19,13 +19,13 @@ import pytest
 from gupkg.report.documents import DocumentError, read_info, read_list, read_registry_status
 from gupkg.viewdata import info_document, list_document, registry_status
 from gupkg_ui.reads import Reads
-from tests.catalog_support import activate, build_registry, make_catalog, write_version
+from tests.support.catalog import activate, build_registry, make_catalog, write_version
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def world(system, tmp_path: Path):
+def catalog_and_root(system, tmp_path: Path):
     """A user root with one installed package and a registry holding two packages, one for the system mode only; returns ``(catalog, root)``."""
     catalog, roots = make_catalog(system, tmp_path, mode="user")
     package = roots["user"] / "alpha"
@@ -37,9 +37,9 @@ def world(system, tmp_path: Path):
     return catalog, roots["user"]
 
 
-def test_the_inventory_is_read_in_process_and_equals_the_document_of_list(system, world) -> None:
+def test_the_inventory_is_read_in_process_and_equals_the_document_of_list(system, catalog_and_root) -> None:
     """``inventory`` lists the installed package; with ``available`` it adds the registry's, and ``drv`` is marked ``system only`` with its reason."""
-    catalog, root = world
+    catalog, root = catalog_and_root
     reads = Reads(catalog.scope, system)
 
     installed = asyncio.run(reads.inventory())
@@ -53,9 +53,9 @@ def test_the_inventory_is_read_in_process_and_equals_the_document_of_list(system
     assert read_list(document).rows == tuple(reads.list_document(False).rows) and read_list(document).root == str(root)
 
 
-def test_one_package_and_the_registry_state_are_read_in_process(system, world) -> None:
+def test_one_package_and_the_registry_state_are_read_in_process(system, catalog_and_root) -> None:
     """``info`` gives the typed details (and equals the info document), ``registry`` the revision and package count of the cache."""
-    catalog, _ = world
+    catalog, _ = catalog_and_root
     reads = Reads(catalog.scope, system)
 
     info = asyncio.run(reads.info("alpha"))
@@ -67,9 +67,9 @@ def test_one_package_and_the_registry_state_are_read_in_process(system, world) -
     assert read_registry_status(registry_status(catalog.scope).to_data()) == registry
 
 
-def test_a_package_that_is_not_there_is_an_error_with_the_reason(system, world) -> None:
+def test_a_package_that_is_not_there_is_an_error_with_the_reason(system, catalog_and_root) -> None:
     """``info`` of an unknown name raises ``DocumentError`` carrying the CLI's message, not an empty answer."""
-    catalog, _ = world
+    catalog, _ = catalog_and_root
 
     with pytest.raises(DocumentError, match="no information about ghost: .*ghost"):
         asyncio.run(Reads(catalog.scope, system).info("ghost"))

@@ -26,15 +26,9 @@ from gupkg.services.http import HttpClient
 from gupkg.services.populate import prepare_app
 from gupkg.services.prepare import PrepareError, run_prepare
 from gupkg.system.fake import FakeSystem
-from tests.scope_support import scope_of
+from tests.support.scope import scope_of
 
 pytestmark = pytest.mark.unit
-
-
-@pytest.fixture(autouse=True)
-def not_marked_elevated(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Make these tests independent of an ambient GUPKG_ELEVATED marker (it makes hook loading strict)."""
-    monkeypatch.delenv("GUPKG_ELEVATED", raising=False)
 
 
 @pytest.fixture

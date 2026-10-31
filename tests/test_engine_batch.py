@@ -20,7 +20,7 @@ from gupkg.engine import lifecycle
 from gupkg.engine.context import stop_marker
 from gupkg.engine.receipts import read_receipt
 from gupkg.report.session import RunSession
-from tests.engine_support import ScriptDouble, World, pin_no_ambient_elevation  # noqa: F401
+from tests.support.engine import ScriptDouble, World
 
 pytestmark = pytest.mark.unit
 
@@ -43,12 +43,6 @@ class MarkerDouble(ScriptDouble):
         """Write the stop marker, then fill App as usual."""
         self.marker.write_text("stop", encoding="utf-8")
         return super().__call__(call)
-
-
-@pytest.fixture
-def world(tmp_path: Path) -> World:
-    """A fake machine with a user root."""
-    return World(tmp_path)
 
 
 def test_a_failing_package_does_not_stop_the_batch_and_the_summary_and_log_name_it(world: World) -> None:
@@ -104,19 +98,18 @@ def test_cancel_while_package_one_runs_finishes_it_and_skips_the_rest(world: Wor
     assert not (world.user / "two" / ".gupkg").exists()
 
 
-def test_a_stop_marker_given_to_an_elevated_batch_has_the_same_effect(tmp_path: Path) -> None:
+def test_a_stop_marker_given_to_an_elevated_batch_has_the_same_effect(tmp_path: Path, elevated_world: World) -> None:
     """In an elevated run the same user-writable marker stops the batch after the current package, and can do nothing else."""
-    world = World(tmp_path, elevated=True)
     marker = tmp_path / "stop.marker"
-    world.publish_script("one", "1.0.0", mode="system", tables=env_of("one"))
-    world.fake.processes["populate.cmd"] = MarkerDouble({"app.exe": "one"}, marker)
-    world.publish("two", "1.0.0", mode="system", tables=env_of("two"))
-    world.engine.cancel = stop_marker(marker)
+    elevated_world.publish_script("one", "1.0.0", mode="system", tables=env_of("one"))
+    elevated_world.fake.processes["populate.cmd"] = MarkerDouble({"app.exe": "one"}, marker)
+    elevated_world.publish("two", "1.0.0", mode="system", tables=env_of("two"))
+    elevated_world.engine.cancel = stop_marker(marker)
 
-    batch = lifecycle.install(world.engine, ["one", "two"])
+    batch = lifecycle.install(elevated_world.engine, ["one", "two"])
 
     assert [item.status for item in batch.results] == ["installed", "skipped"]
-    assert not (world.system_root / "two" / "current").exists()
+    assert not (elevated_world.system_root / "two" / "current").exists()
 
 
 def test_install_update_and_uninstall_read_nothing_from_the_registry_but_path(world: World) -> None:

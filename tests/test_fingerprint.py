@@ -31,7 +31,7 @@ from gupkg.services.fingerprint import (
     verify_directory,
 )
 from gupkg.system.fake import FakeSystem
-from tests.http_fixtures import FIXTURES
+from tests.support.http_fixtures import FIXTURES
 
 pytestmark = pytest.mark.unit
 

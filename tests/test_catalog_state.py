@@ -25,7 +25,7 @@ from gupkg.model.manifest import TrackResult
 from gupkg.model.state import Effect, InstallRecord, Link
 from gupkg.system.port import Mode, ShortcutSpec
 from gupkg.system.windows import WindowsSystem
-from tests.catalog_support import (
+from tests.support.catalog import (
     activate,
     build_registry,
     link_record,

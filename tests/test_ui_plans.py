@@ -17,7 +17,7 @@ import pytest
 
 from gupkg.report.documents import DocumentError
 from gupkg_ui.plans import PlannedTarget, decide_targets, read_plan
-from tests.ui_support import entry, plan_doc, plan_entry, plan_failure
+from tests.support.ui import entry, plan_doc, plan_entry, plan_failure
 
 pytestmark = pytest.mark.unit
 

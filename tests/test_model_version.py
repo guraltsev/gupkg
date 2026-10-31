@@ -24,7 +24,7 @@ from gupkg.model.version import (
     newest_version,
     sort_versions,
 )
-from tests.catalog_support import catalog_over
+from tests.support.catalog import catalog_over
 
 pytestmark = pytest.mark.unit
 

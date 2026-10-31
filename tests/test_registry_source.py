@@ -27,10 +27,9 @@ from gupkg.services.registrysource import trusted_git
 from gupkg.system.fake import FakeSystem, ProcessCall
 from gupkg.system.port import ProcessResult
 from gupkg.tomlio import dumps
-from tests.catalog_support import version_text
-from tests.cli_support import CliWorld
-from tests.mode_support import pin_no_ambient_elevation  # noqa: F401
-from tests.scope_support import scope_of
+from tests.support.catalog import version_text
+from tests.support.cli import CliWorld
+from tests.support.scope import scope_of
 
 pytestmark = pytest.mark.unit
 
@@ -187,14 +186,13 @@ def test_ordinary_run_reads_any_registry_cache_location(tmp_path: Path) -> None:
     assert cache_state(tmp_path / "cache", scope_of(system)).revision is None
 
 
-def test_the_registry_status_command_reports_the_refusal_as_an_error(tmp_path: Path) -> None:
+def test_the_registry_status_command_reports_the_refusal_as_an_error(cli_elevated_world: CliWorld) -> None:
     """The command line turns the refusal into a normal error (exit 2 with a structured error), not a crash."""
-    world = CliWorld(tmp_path, elevated=True)
-    cache_folder = world.system_root / ".gupkg" / "registry"
+    cache_folder = cli_elevated_world.system_root / ".gupkg" / "registry"
     cache_folder.mkdir(parents=True)
-    world.fake.untrusted_dirs.add(cache_folder)
+    cli_elevated_world.fake.untrusted_dirs.add(cache_folder)
 
-    result = world.cli("registry", "status", "--json")
+    result = cli_elevated_world.cli("registry", "status", "--json")
 
     document = result.document()
     assert result.code == 2 and document["ok"] is False

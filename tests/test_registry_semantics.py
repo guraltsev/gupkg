@@ -31,7 +31,7 @@ from gupkg.services.track.page import MAX_EACH_CANDIDATES
 from gupkg.system import regex_worker
 from gupkg.system.fake import FakeHttp, FakeSystem, ProcessCall
 from gupkg.system.port import ProcessResult
-from tests.http_fixtures import HTTP_CASES, REGISTRY2, environment, load_case, tracker_manifest
+from tests.support.http_fixtures import HTTP_CASES, REGISTRY2, environment, load_case, tracker_manifest
 
 pytestmark = pytest.mark.process
 

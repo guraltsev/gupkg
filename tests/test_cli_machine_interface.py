@@ -16,15 +16,14 @@ Out of scope: the content of each event (``test_event_contract.py``) and the mod
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 import pytest
 
 from gupkg.engine import lifecycle
-from tests.cli_support import CliWorld
-from tests.engine_support import ScriptDouble
-from tests.mode_support import pin_no_ambient_elevation, tree_snapshot  # noqa: F401
+from tests.support.cli import CliWorld
+from tests.support.engine import ScriptDouble, current, replace_declared_sha256
+from tests.support.mode import tree_snapshot
 
 pytestmark = pytest.mark.unit
 
@@ -50,7 +49,7 @@ PLAN_KEYS = {
 
 
 @pytest.fixture
-def world(tmp_path: Path) -> CliWorld:
+def cli_world_with_tool_update(tmp_path: Path) -> CliWorld:
     """A fake machine with tool 1.0.0 installed in the user root and 2.0.0 published beside it."""
     machine = CliWorld(tmp_path)
     machine.publish("tool", "1.0.0")
@@ -59,9 +58,9 @@ def world(tmp_path: Path) -> CliWorld:
     return machine
 
 
-def test_the_result_document_has_the_pinned_keys(world: CliWorld) -> None:
+def test_the_result_document_has_the_pinned_keys(cli_world_with_tool_update: CliWorld) -> None:
     """One document on standard output: the call's head, then one entry per target with the pinned keys."""
-    result = world.cli("update", "tool", "--json")
+    result = cli_world_with_tool_update.cli("update", "tool", "--json")
 
     document = result.document()
     assert set(document) == RESULT_KEYS and document["api"] == 2 and document["command"] == "update"
@@ -72,9 +71,9 @@ def test_the_result_document_has_the_pinned_keys(world: CliWorld) -> None:
     assert Path(entry["receipt"]).is_file() and Path(entry["log"]).is_file()
 
 
-def test_human_output_goes_to_standard_error_when_json_is_asked(world: CliWorld) -> None:
+def test_human_output_goes_to_standard_error_when_json_is_asked(cli_world_with_tool_update: CliWorld) -> None:
     """Standard output holds exactly the document; the phases and the summary are on standard error."""
-    result = world.cli("update", "tool", "--json")
+    result = cli_world_with_tool_update.cli("update", "tool", "--json")
 
     json.loads(result.out)
     assert "==> Fetch" in result.err and "tool 2.0.0: updated" in result.err
@@ -92,16 +91,16 @@ def test_human_output_goes_to_standard_error_when_json_is_asked(world: CliWorld)
     ],
 )
 def test_every_command_that_accepts_plan_prints_a_plan_document_and_changes_nothing(
-    world: CliWorld, argv: tuple[str, ...], operation: str
+    cli_world_with_tool_update: CliWorld, argv: tuple[str, ...], operation: str
 ) -> None:
     """--plan --json names the target's version, mode, checksum status and URL, and writes only the log files."""
-    world.tracker("tool")
-    world.announce("tool", "2.0.0")
-    roots = [world.user, world.system_root]
+    cli_world_with_tool_update.tracker("tool")
+    cli_world_with_tool_update.announce("tool", "2.0.0")
+    roots = [cli_world_with_tool_update.user, cli_world_with_tool_update.system_root]
     before = [tree_snapshot(root) for root in roots]
-    machine_before = (len(world.fake.registry_log), world.fake.broadcasts, sorted(str(path) for path in world.fake.shortcuts()))
+    machine_before = (len(cli_world_with_tool_update.fake.registry_log), cli_world_with_tool_update.fake.broadcasts, sorted(str(path) for path in cli_world_with_tool_update.fake.shortcuts()))
 
-    result = world.cli(*argv, "--plan", "--json")
+    result = cli_world_with_tool_update.cli(*argv, "--plan", "--json")
 
     document = result.document()
     assert result.code == 0, result.err
@@ -114,7 +113,7 @@ def test_every_command_that_accepts_plan_prints_a_plan_document_and_changes_noth
     for old, new in zip(before, after):
         changed = {name for name in set(old) | set(new) if old.get(name) != new.get(name)}
         assert all(".gupkg\\logs" in name or name.endswith(".gupkg") or name.endswith("logs") for name in changed), changed
-    assert (len(world.fake.registry_log), world.fake.broadcasts, sorted(str(path) for path in world.fake.shortcuts())) == machine_before
+    assert (len(cli_world_with_tool_update.fake.registry_log), cli_world_with_tool_update.fake.broadcasts, sorted(str(path) for path in cli_world_with_tool_update.fake.shortcuts())) == machine_before
 
 
 @pytest.mark.parametrize(
@@ -124,70 +123,64 @@ def test_every_command_that_accepts_plan_prints_a_plan_document_and_changes_noth
         pytest.param(False, "missing", True, id="absent-and-skippable"),
     ],
 )
-def test_the_plan_marks_the_checksum_present_or_missing(world: CliWorld, hashed: bool, status: str, skippable: bool) -> None:
+def test_the_plan_marks_the_checksum_present_or_missing(cli_world_with_tool_update: CliWorld, hashed: bool, status: str, skippable: bool) -> None:
     """The plan of an install says whether the download's SHA-256 is declared or absent, and whether --skip-checksum could allow it."""
-    world.publish("fresh", "1.0.0", hashed=hashed)
+    cli_world_with_tool_update.publish("fresh", "1.0.0", hashed=hashed)
 
-    result = world.cli("install", "fresh", "--plan", "--json")
+    result = cli_world_with_tool_update.cli("install", "fresh", "--plan", "--json")
 
     plan = result.document()["plans"][0]["plan"]
     assert plan["sha256"] == status and plan["url"].endswith("fresh-1.0.0.zip")
     assert plan["populate"]["checksum"]["sha256"] == status and plan["populate"]["checksum"]["skippable"] is skippable
 
 
-def test_a_malformed_hash_is_never_planned_and_never_skippable(world: CliWorld) -> None:
+def test_a_malformed_hash_is_never_planned_and_never_skippable(cli_world_with_tool_update: CliWorld) -> None:
     """A declared hash that is not 64 hexadecimal digits makes the version invalid: no plan, and --skip-checksum does not help."""
-    folder = world.publish("fresh", "1.0.0", hashed=True)
-    text = folder.joinpath("pkg.toml").read_text(encoding="utf-8")
-    start = text.index('sha256 = "') + len('sha256 = "')
-    folder.joinpath("pkg.toml").write_text(text[:start] + "not-a-hash" + text[start + 64:], encoding="utf-8")
+    folder = cli_world_with_tool_update.publish("fresh", "1.0.0", hashed=True)
+    replace_declared_sha256(folder, "not-a-hash")
 
-    planned = world.cli("install", "fresh", "--plan", "--json")
-    skipped = world.cli("install", "fresh", "--skip-checksum", "--json")
+    planned = cli_world_with_tool_update.cli("install", "fresh", "--plan", "--json")
+    skipped = cli_world_with_tool_update.cli("install", "fresh", "--skip-checksum", "--json")
 
     error = planned.document()["plans"][0]["result"]["error"]
     assert planned.code == 2 and error["code"] == "invalid-checksum"
     assert set(error) == {"code", "message", "version", "field"} and (error["version"], error["field"]) == ("1.0.0", "source.sha256")
-    assert skipped.code == 2 and not (world.user / "fresh" / "current").exists()
+    assert skipped.code == 2 and not (cli_world_with_tool_update.user / "fresh" / "current").exists()
     assert skipped.document()["results"][0]["error"]["code"] == "invalid-checksum" and "64 hexadecimal" in planned.out
 
 
-def test_a_named_malformed_version_has_the_same_stable_code(world: CliWorld) -> None:
+def test_a_named_malformed_version_has_the_same_stable_code(cli_world_with_tool_update: CliWorld) -> None:
     """`name@version` of a version whose declared hash is malformed is `invalid-checksum` too, with the version and the field."""
-    folder = world.publish("fresh", "1.0.0", hashed=True)
-    text = folder.joinpath("pkg.toml").read_text(encoding="utf-8")
-    start = text.index('sha256 = "') + len('sha256 = "')
-    folder.joinpath("pkg.toml").write_text(text[:start] + "zz" + text[start + 2:], encoding="utf-8")
+    folder = cli_world_with_tool_update.publish("fresh", "1.0.0", hashed=True)
+    replace_declared_sha256(folder, "zz", length=2)
 
-    result = world.cli("install", "fresh@1.0.0", "--json")
+    result = cli_world_with_tool_update.cli("install", "fresh@1.0.0", "--json")
 
     error = result.document()["results"][0]["error"]
     assert result.code == 2 and error["code"] == "invalid-checksum" and (error["version"], error["field"]) == ("1.0.0", "source.sha256")
 
 
-def test_a_bare_install_that_falls_back_to_an_older_version_names_the_invalid_newer_one(world: CliWorld) -> None:
+def test_a_bare_install_that_falls_back_to_an_older_version_names_the_invalid_newer_one(cli_world_with_tool_update: CliWorld) -> None:
     """When the newest version directory is invalid, `install tool` installs the older valid one and says which one it skipped."""
-    world.publish("fresh", "1.0.0")
-    newer = world.publish("fresh", "2.0.0")
-    text = newer.joinpath("pkg.toml").read_text(encoding="utf-8")
-    start = text.index('sha256 = "') + len('sha256 = "')
-    newer.joinpath("pkg.toml").write_text(text[:start] + "zz" + text[start + 2:], encoding="utf-8")
+    cli_world_with_tool_update.publish("fresh", "1.0.0")
+    newer = cli_world_with_tool_update.publish("fresh", "2.0.0")
+    replace_declared_sha256(newer, "zz", length=2)
 
-    refused = world.cli("install", "fresh", "--json")
+    refused = cli_world_with_tool_update.cli("install", "fresh", "--json")
 
     shown = refused.out + refused.err
     assert refused.code == 5 and "other version directories that are broken or not supported: 2.0.0" in shown and "Install 1.0.0 anyway?" in shown
 
-    result = world.cli("install", "fresh", "--allow-other-broken-versions", "--json")
+    result = cli_world_with_tool_update.cli("install", "fresh", "--allow-other-broken-versions", "--json")
 
     assert result.code == 0, result.err
     assert result.document()["results"][0]["version"] == "1.0.0"
     assert "fresh 2.0.0 is newer than 1.0.0 but not valid" in result.err and "sha256 is malformed" in result.err
 
 
-def test_a_plan_that_cannot_be_made_is_the_targets_failure_with_its_exit_code(world: CliWorld) -> None:
+def test_a_plan_that_cannot_be_made_is_the_targets_failure_with_its_exit_code(cli_world_with_tool_update: CliWorld) -> None:
     """An unknown target is an entry with ok false and its structured error; the document's exit code is the highest one."""
-    result = world.cli("install", "nothing-like-this", "--plan", "--json")
+    result = cli_world_with_tool_update.cli("install", "nothing-like-this", "--plan", "--json")
 
     document = result.document()
     assert result.code == 2 and document["ok"] is False and document["exit_code"] == 2
@@ -198,11 +191,11 @@ def test_a_plan_that_cannot_be_made_is_the_targets_failure_with_its_exit_code(wo
     assert set(document) == {"api", "command", "ok", "exit_code", "plan", "plans"}
 
 
-def test_a_failed_entry_and_an_error_document_have_exactly_the_pinned_keys(world: CliWorld) -> None:
+def test_a_failed_entry_and_an_error_document_have_exactly_the_pinned_keys(cli_world_with_tool_update: CliWorld) -> None:
     """A failed target has the base keys plus ``error`` (code, message, hint); a document-level error has errors[] and nothing else."""
-    failed = world.cli("install", "nothing-like-this", "--json").document()
-    usage = world.cli("install", "tool", "--mode", "nowhere", "--json").document()
-    declined = world.cli("uninstall", "tool", "--purge", "--no-input", "--json").document()
+    failed = cli_world_with_tool_update.cli("install", "nothing-like-this", "--json").document()
+    usage = cli_world_with_tool_update.cli("install", "tool", "--mode", "nowhere", "--json").document()
+    declined = cli_world_with_tool_update.cli("uninstall", "tool", "--purge", "--no-input", "--json").document()
 
     assert set(failed) == RESULT_KEYS and set(failed["results"][0]) == FAILED_ENTRY_KEYS
     assert_error_shape(failed["results"][0]["error"])
@@ -212,9 +205,9 @@ def test_a_failed_entry_and_an_error_document_have_exactly_the_pinned_keys(world
     assert_error_shape(declined["results"][0]["error"])
 
 
-def test_a_usage_error_is_exit_2_with_an_error_document_when_json_is_asked(world: CliWorld) -> None:
+def test_a_usage_error_is_exit_2_with_an_error_document_when_json_is_asked(cli_world_with_tool_update: CliWorld) -> None:
     """A refused command line prints the message on standard error and, with --json, the error document on standard output."""
-    result = world.cli("install", "tool", "--mode", "nowhere", "--json")
+    result = cli_world_with_tool_update.cli("install", "tool", "--mode", "nowhere", "--json")
 
     document = result.document()
     assert result.code == 2 and "unrecognized arguments" in result.err
@@ -222,16 +215,16 @@ def test_a_usage_error_is_exit_2_with_an_error_document_when_json_is_asked(world
     assert document["errors"][0]["code"] == "usage"
 
 
-def test_the_events_file_is_json_lines_that_end_with_the_result_document(world: CliWorld) -> None:
+def test_the_events_file_is_json_lines_that_end_with_the_result_document(cli_world_with_tool_update: CliWorld) -> None:
     """Every line is a JSON event, run_start announces the stop marker, and run_end carries the same result as --json."""
-    result = world.cli("update", "tool", "--events-file", "run.jsonl", "--json")
+    result = cli_world_with_tool_update.cli("update", "tool", "--events-file", "run.jsonl", "--json")
 
-    lines = (world.user / ".gupkg" / "logs" / "run.jsonl").read_text(encoding="utf-8").splitlines()
+    lines = (cli_world_with_tool_update.user / ".gupkg" / "logs" / "run.jsonl").read_text(encoding="utf-8").splitlines()
     records = [json.loads(line) for line in lines]
     assert records[0]["event"] == "run_start" and records[0]["api"] == 2 and records[0]["stop_file"]
-    assert Path(records[0]["stop_file"]).parent == world.temp and not Path(records[0]["stop_file"]).exists()
+    assert Path(records[0]["stop_file"]).parent == cli_world_with_tool_update.temp and not Path(records[0]["stop_file"]).exists()
     assert records[-1]["event"] == "run_end" and records[-1]["result"] == result.document()
-    package_lines = (world.user / "tool" / ".gupkg" / "logs" / "run.jsonl").read_text(encoding="utf-8").splitlines()
+    package_lines = (cli_world_with_tool_update.user / "tool" / ".gupkg" / "logs" / "run.jsonl").read_text(encoding="utf-8").splitlines()
     assert any(json.loads(line)["event"] == "phase_start" for line in package_lines)
 
 
@@ -243,19 +236,14 @@ def test_the_events_file_is_json_lines_that_end_with_the_result_document(world: 
         pytest.param("con.jsonl", id="device-name"), pytest.param("a b.jsonl", id="space"), pytest.param("x.log", id="text-log-name"),
     ],
 )
-def test_an_events_file_that_is_not_a_plain_name_is_a_usage_error_and_writes_nothing(world: CliWorld, name: str) -> None:
+def test_an_events_file_that_is_not_a_plain_name_is_a_usage_error_and_writes_nothing(cli_world_with_tool_update: CliWorld, name: str) -> None:
     """A path, a drive, a stream, a device name or a text-log name is refused before any work: exit 2 and no new file anywhere."""
-    before = tree_snapshot(world.user)
+    before = tree_snapshot(cli_world_with_tool_update.user)
 
-    result = world.cli("update", "tool", "--events-file", name)
+    result = cli_world_with_tool_update.cli("update", "tool", "--events-file", name)
 
     assert result.code == 2 and "events file name" in result.err
-    assert tree_snapshot(world.user) == before and current(world) == "1.0.0"
-
-
-def current(world: CliWorld) -> str:
-    """Return the version that the user package ``tool`` has active."""
-    return Path(os.path.realpath(world.user / "tool" / "current")).name
+    assert tree_snapshot(cli_world_with_tool_update.user) == before and current(cli_world_with_tool_update.user / "tool") == "1.0.0"
 
 
 class StopDouble(ScriptDouble):
@@ -275,61 +263,61 @@ class StopDouble(ScriptDouble):
         return super().__call__(call)
 
 
-def test_a_stop_marker_created_during_the_run_stops_it_after_the_current_package(world: CliWorld) -> None:
+def test_a_stop_marker_created_during_the_run_stops_it_after_the_current_package(cli_world_with_tool_update: CliWorld) -> None:
     """The announced marker makes the run finish package one, skip the rest and exit 5; the marker is removed at the end."""
-    double = world.publish_script("one", "1.0.0")
-    world.fake.processes["populate.cmd"] = StopDouble({"app.exe": "one"}, world.user / ".gupkg" / "logs")
-    world.publish("two", "1.0.0")
-    world.publish("three", "1.0.0")
+    double = cli_world_with_tool_update.publish_script("one", "1.0.0")
+    cli_world_with_tool_update.fake.processes["populate.cmd"] = StopDouble({"app.exe": "one"}, cli_world_with_tool_update.user / ".gupkg" / "logs")
+    cli_world_with_tool_update.publish("two", "1.0.0")
+    cli_world_with_tool_update.publish("three", "1.0.0")
 
-    result = world.cli("install", "one", "two", "three", "--yes", "--json")
+    result = cli_world_with_tool_update.cli("install", "one", "two", "three", "--yes", "--json")
 
     statuses = [item["status"] for item in result.document()["results"]]
     assert result.code == 5 and statuses == ["installed", "skipped", "skipped"]
-    assert not (world.user / "two" / "current").exists() and not list(world.temp.glob("gupkg-stop-*"))
+    assert not (cli_world_with_tool_update.user / "two" / "current").exists() and not list(cli_world_with_tool_update.temp.glob("gupkg-stop-*"))
     assert double is not None
 
 
-def test_a_file_that_already_exists_is_not_a_stop_request(world: CliWorld) -> None:
+def test_a_file_that_already_exists_is_not_a_stop_request(cli_world_with_tool_update: CliWorld) -> None:
     """The marker's name is chosen when the run starts, so a file planted beforehand (any name) never skips a package."""
-    (world.temp / "gupkg-stop-1234").write_text("stop", encoding="utf-8")
-    world.publish("one", "1.0.0")
-    world.publish("two", "1.0.0")
+    (cli_world_with_tool_update.temp / "gupkg-stop-1234").write_text("stop", encoding="utf-8")
+    cli_world_with_tool_update.publish("one", "1.0.0")
+    cli_world_with_tool_update.publish("two", "1.0.0")
 
-    result = world.cli("install", "one", "two", "--yes")
+    result = cli_world_with_tool_update.cli("install", "one", "two", "--yes")
 
-    assert result.code == 0 and (world.user / "two" / "current").is_dir()
+    assert result.code == 0 and (cli_world_with_tool_update.user / "two" / "current").is_dir()
 
 
-def test_two_runs_announce_different_stop_markers(world: CliWorld) -> None:
+def test_two_runs_announce_different_stop_markers(cli_world_with_tool_update: CliWorld) -> None:
     """Each run gets a fresh marker name, so a stale request cannot stop the next run."""
-    first = world.cli("update", "tool", "--events-file", "a.jsonl")
-    second = world.cli("check", "tool", "--events-file", "b.jsonl")
+    first = cli_world_with_tool_update.cli("update", "tool", "--events-file", "a.jsonl")
+    second = cli_world_with_tool_update.cli("check", "tool", "--events-file", "b.jsonl")
     names = [
-        json.loads((world.user / ".gupkg" / "logs" / name).read_text(encoding="utf-8").splitlines()[0])["stop_file"]
+        json.loads((cli_world_with_tool_update.user / ".gupkg" / "logs" / name).read_text(encoding="utf-8").splitlines()[0])["stop_file"]
         for name in ("a.jsonl", "b.jsonl")
     ]
 
     assert first.code == second.code == 0 and names[0] != names[1]
 
 
-def test_exit_code_6_is_a_package_that_needs_a_newer_gupkg(world: CliWorld) -> None:
+def test_exit_code_6_is_a_package_that_needs_a_newer_gupkg(cli_world_with_tool_update: CliWorld) -> None:
     """A package that requires a newer gupkg, or has a pkg.toml format this gupkg does not know, exits with code 6."""
-    world.publish("future", "1.0.0", top='requires_gupkg = ">=99.0"')
-    folder = world.publish("later", "1.0.0")
+    cli_world_with_tool_update.publish("future", "1.0.0", top='requires_gupkg = ">=99.0"')
+    folder = cli_world_with_tool_update.publish("later", "1.0.0")
     folder.joinpath("pkg.toml").write_text('format = 3\n[source]\ndownload_url = "https://example.org/later.zip"\n', encoding="utf-8")
 
-    required = world.cli("install", "future", "--json")
-    unknown_format = world.cli("install", "later", "--json")
-    check_updates = world.cli("install", "future", "--plan", "--json")
+    required = cli_world_with_tool_update.cli("install", "future", "--json")
+    unknown_format = cli_world_with_tool_update.cli("install", "later", "--json")
+    check_updates = cli_world_with_tool_update.cli("install", "future", "--plan", "--json")
 
     assert required.code == 6 and required.document()["results"][0]["error"]["code"] == "needs-newer-gupkg"
     assert unknown_format.code == 6 and unknown_format.document()["results"][0]["error"]["code"] == "needs-newer-gupkg"
     assert check_updates.code == 6
-    assert not (world.user / "future" / "current").exists()
+    assert not (cli_world_with_tool_update.user / "future" / "current").exists()
 
 
-def test_exit_code_4_is_an_internal_error_and_is_structured(world: CliWorld, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_exit_code_4_is_an_internal_error_and_is_structured(cli_world_with_tool_update: CliWorld, monkeypatch: pytest.MonkeyPatch) -> None:
     """Something unexpected is exit code 4 with a structured error and no traceback."""
     def broken(*args, **kwargs):
         """Raise an unexpected error, as a bug would."""
@@ -337,13 +325,13 @@ def test_exit_code_4_is_an_internal_error_and_is_structured(world: CliWorld, mon
 
     monkeypatch.setattr(lifecycle, "run_batch", broken)
 
-    result = world.cli("update", "tool", "--json")
+    result = cli_world_with_tool_update.cli("update", "tool", "--json")
 
     assert result.code == 4 and "Traceback" not in result.err + result.out
     assert result.document()["errors"][0]["code"] == "internal-error"
 
 
-def test_an_internal_error_in_one_package_keeps_its_traceback_in_the_package_log_only(world: CliWorld, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_an_internal_error_in_one_package_keeps_its_traceback_in_the_package_log_only(cli_world_with_tool_update: CliWorld, monkeypatch: pytest.MonkeyPatch) -> None:
     """An unexpected exception of one target is exit code 4 for it; the traceback is in its log file, never on the console."""
     def broken(*args, **kwargs):
         """Raise an unexpected error, as a bug would."""
@@ -351,20 +339,20 @@ def test_an_internal_error_in_one_package_keeps_its_traceback_in_the_package_log
 
     monkeypatch.setattr(lifecycle, "_dispatch", broken)
 
-    result = world.cli("update", "tool", "--json")
+    result = cli_world_with_tool_update.cli("update", "tool", "--json")
 
     assert result.code == 4 and "Traceback" not in result.err + result.out and "kaboom" in result.err
-    [package_log] = (world.user / "tool" / ".gupkg" / "logs").glob("*-update.log")
+    [package_log] = (cli_world_with_tool_update.user / "tool" / ".gupkg" / "logs").glob("*-update.log")
     assert "DIAGNOSTIC: Traceback" in package_log.read_text(encoding="utf-8") and "RuntimeError: kaboom" in package_log.read_text(encoding="utf-8")
 
 
-def test_exit_codes_2_3_and_5_are_distinguished(world: CliWorld) -> None:
+def test_exit_codes_2_3_and_5_are_distinguished(cli_world_with_tool_update: CliWorld) -> None:
     """A mistake of the caller is 2, a failed operation 3, a question that was not answered 5."""
-    world.publish("broken", "1.0.0", source='require = ["missing.exe"]\n')
+    cli_world_with_tool_update.publish("broken", "1.0.0", source='require = ["missing.exe"]\n')
 
-    assert world.cli("install", "unknown-package").code == 2
-    assert world.cli("install", "broken").code == 3
-    assert world.cli("uninstall", "tool", "--purge", "--no-input").code == 5
+    assert cli_world_with_tool_update.cli("install", "unknown-package").code == 2
+    assert cli_world_with_tool_update.cli("install", "broken").code == 3
+    assert cli_world_with_tool_update.cli("uninstall", "tool", "--purge", "--no-input").code == 5
 
 
 @pytest.mark.parametrize(
@@ -372,21 +360,21 @@ def test_exit_codes_2_3_and_5_are_distinguished(world: CliWorld) -> None:
     [("install", "tool"), ("update", "tool"), ("uninstall", "tool"), ("check", "tool"), ("check-updates", "tool")],
     ids=lambda argv: argv[0],
 )
-def test_every_result_document_says_api_2_and_has_no_relaunch_key(world: CliWorld, argv: tuple[str, ...]) -> None:
+def test_every_result_document_says_api_2_and_has_no_relaunch_key(cli_world_with_tool_update: CliWorld, argv: tuple[str, ...]) -> None:
     """The documents of API 2 carry ``"api": 2`` and none of the keys that only the elevated relaunch needed."""
-    world.tracker("tool")
-    world.announce("tool", "2.0.0")
+    cli_world_with_tool_update.tracker("tool")
+    cli_world_with_tool_update.announce("tool", "2.0.0")
 
-    document = world.cli(*argv, "--json").document()
+    document = cli_world_with_tool_update.cli(*argv, "--json").document()
 
     assert document["api"] == 2
     assert not {"relaunched", "child_exit_code", "child_raw_exit_code"} & set(document)
     assert "child-no-result" not in json.dumps(document)
 
 
-def test_a_plan_document_has_no_relaunch_key_either(world: CliWorld) -> None:
+def test_a_plan_document_has_no_relaunch_key_either(cli_world_with_tool_update: CliWorld) -> None:
     """``--plan --json`` is an API 2 document too, and a plan has no ``requires_elevation``."""
-    document = world.cli("update", "tool", "--plan", "--json").document()
+    document = cli_world_with_tool_update.cli("update", "tool", "--plan", "--json").document()
 
     assert document["api"] == 2 and "relaunched" not in document
     assert "requires_elevation" not in document["plans"][0]["plan"]

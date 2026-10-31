@@ -22,8 +22,8 @@ from gupkg.catalog.catalog import NoVersionKnown
 from gupkg.catalog.registry import load_registry, registry_cache_dir, search_snapshot, sync_registry
 from gupkg.model.manifest import ManifestKind, TrackResult, manifest_to_toml, parse_manifest, render_pinned
 from gupkg.tomlio import dumps
-from tests.catalog_support import build_registry, make_catalog, tracker_text, version_text
-from tests.scope_support import scope_of
+from tests.support.catalog import build_registry, make_catalog, tracker_text, version_text
+from tests.support.scope import scope_of
 
 pytestmark = pytest.mark.unit
 

@@ -26,8 +26,7 @@ from gupkg.selfmgmt.location import RunningGupkg
 from gupkg.system.fake import FakeSystem
 from gupkg.system.port import ProcessResult
 from gupkg.system.windows import WindowsSystem
-from tests.cli_support import CliWorld
-from tests.mode_support import pin_no_ambient_elevation  # noqa: F401
+from tests.support.cli import CliWorld
 
 pytestmark = pytest.mark.unit
 
@@ -43,29 +42,23 @@ SUBCOMMANDS = [
 ]
 
 
-@pytest.fixture
-def world(tmp_path: Path) -> CliWorld:
-    """A fake machine for the commands that need one."""
-    return CliWorld(tmp_path)
-
-
-def test_version_flag_reports_the_version(world: CliWorld) -> None:
+def test_version_flag_reports_the_version(cli_world: CliWorld) -> None:
     """--version prints the running version and exits 0."""
-    result = world.cli("--version")
+    result = cli_world.cli("--version")
 
     assert result.code == 0 and result.out.strip() == f"gupkg {__version__}"
 
 
-def test_no_command_prints_the_help_and_is_a_usage_error(world: CliWorld) -> None:
+def test_no_command_prints_the_help_and_is_a_usage_error(cli_world: CliWorld) -> None:
     """Running gupkg alone shows the command list (on standard error) and exits 2."""
-    result = world.cli()
+    result = cli_world.cli()
 
     assert result.code == 2 and "check-updates" in result.err
 
 
-def test_the_help_lists_the_commands_in_task_order(world: CliWorld) -> None:
+def test_the_help_lists_the_commands_in_task_order(cli_world: CliWorld) -> None:
     """check-updates, install, update, list and info come first, then maintenance (check among it), authoring and self."""
-    text = world.cli("--help").out
+    text = cli_world.cli("--help").out
 
     order = [text.index(marker) for marker in ("  check-updates ", "  install ", "  update ", "  list ", "  info ", "maintenance:", "  check ", "authoring:", "  pkg ", "gupkg itself:", "  self ")]
     assert order == sorted(order)
@@ -74,25 +67,25 @@ def test_the_help_lists_the_commands_in_task_order(world: CliWorld) -> None:
 
 
 @pytest.mark.parametrize("command", [pytest.param(name, id=name) for name in COMMANDS if name not in ("tui", "manager")])
-def test_every_command_has_an_example_in_its_help(world: CliWorld, command: str) -> None:
+def test_every_command_has_an_example_in_its_help(cli_world: CliWorld, command: str) -> None:
     """gupkg <command> --help shows the options and an example, and exits 0."""
-    result = world.cli(command, "--help")
+    result = cli_world.cli(command, "--help")
 
     assert result.code == 0 and "example:" in result.out and f"gupkg {command}" in result.out
 
 
 @pytest.mark.parametrize(("group", "action"), [pytest.param(*pair, id=" ".join(pair)) for pair in SUBCOMMANDS])
-def test_every_subcommand_has_an_example_in_its_help(world: CliWorld, group: str, action: str) -> None:
+def test_every_subcommand_has_an_example_in_its_help(cli_world: CliWorld, group: str, action: str) -> None:
     """gupkg <group> <action> --help shows an example, and exits 0."""
-    result = world.cli(group, action, "--help")
+    result = cli_world.cli(group, action, "--help")
 
     assert result.code == 0 and "example:" in result.out and f"gupkg {group} {action}" in result.out
 
 
 @pytest.mark.parametrize("group", [pytest.param(name, id=name) for name in dict.fromkeys(group for group, _ in SUBCOMMANDS)])
-def test_every_group_help_lists_its_actions(world: CliWorld, group: str) -> None:
+def test_every_group_help_lists_its_actions(cli_world: CliWorld, group: str) -> None:
     """gupkg <group> --help names every action of the group, so an action can be found without reading the code."""
-    result = world.cli(group, "--help")
+    result = cli_world.cli(group, "--help")
 
     assert result.code == 0
     for action in (action for name, action in SUBCOMMANDS if name == group):
@@ -100,9 +93,9 @@ def test_every_group_help_lists_its_actions(world: CliWorld, group: str) -> None
 
 
 @pytest.mark.parametrize("word", [pytest.param(word, id=word.replace("-", "_")) for word in ("config-check", "config-fix", "doctor", "repair-deps", "update-deps")])
-def test_the_old_commands_are_unknown(world: CliWorld, word: str) -> None:
+def test_the_old_commands_are_unknown(cli_world: CliWorld, word: str) -> None:
     """0.17 command names are not aliases (D33): argparse reports an invalid choice and nothing runs."""
-    result = world.cli(word, ".")
+    result = cli_world.cli(word, ".")
 
     assert result.code == 2 and "invalid choice" in result.err and word in result.err
 
@@ -110,30 +103,30 @@ def test_the_old_commands_are_unknown(world: CliWorld, word: str) -> None:
 @pytest.mark.parametrize(
     "option", ["--all", "--check", "--check-only", "--scope", "--no-checksum", "--refresh-app", "--shim-linkage", "--format", "--pause", "--download-only"]
 )
-def test_the_other_removed_options_are_plain_unrecognized_arguments(world: CliWorld, option: str) -> None:
+def test_the_other_removed_options_are_plain_unrecognized_arguments(cli_world: CliWorld, option: str) -> None:
     """Core keeps no legacy-specific code (D33): every removed spelling is argparse's own error."""
-    result = world.cli("install", "tool", option)
+    result = cli_world.cli("install", "tool", option)
 
     assert result.code == 2 and "unrecognized arguments" in result.err and option in result.err
     assert "no longer" not in result.err and "use --" not in result.err
-    assert not (world.user / "tool").exists()
+    assert not (cli_world.user / "tool").exists()
 
 
-def test_options_go_after_the_command_and_are_not_abbreviated(world: CliWorld) -> None:
+def test_options_go_after_the_command_and_are_not_abbreviated(cli_world: CliWorld) -> None:
     """An option before the command and an abbreviated option are refused; --mode no longer exists in any position (exit code 2)."""
-    world.publish("tool", "1.0.0")
+    cli_world.publish("tool", "1.0.0")
 
-    assert world.cli("--yes", "install", "tool").code == 2
-    assert world.cli("install", "tool", "--ye").code == 2
-    assert world.cli("--mode", "user", "install", "tool").code == 2
-    assert world.cli("install", "tool", "--mode", "user").code == 2
-    assert world.cli("install", "tool").code == 0
+    assert cli_world.cli("--yes", "install", "tool").code == 2
+    assert cli_world.cli("install", "tool", "--ye").code == 2
+    assert cli_world.cli("--mode", "user", "install", "tool").code == 2
+    assert cli_world.cli("install", "tool", "--mode", "user").code == 2
+    assert cli_world.cli("install", "tool").code == 0
 
 
-def test_a_target_is_required_by_the_lifecycle_commands(world: CliWorld) -> None:
+def test_a_target_is_required_by_the_lifecycle_commands(cli_world: CliWorld) -> None:
     """install, update and the others take at least one target: there is no implicit 'everything' (no --all)."""
     for command in ("check-updates", "install", "update", "uninstall", "info"):
-        assert world.cli(command).code == 2, command
+        assert cli_world.cli(command).code == 2, command
 
 
 @pytest.mark.parametrize(
@@ -147,41 +140,41 @@ def test_a_target_is_required_by_the_lifecycle_commands(world: CliWorld) -> None
         pytest.param("--skip-checksum=", True, id="empty-is-bare"),
     ],
 )
-def test_skip_checksum_takes_only_the_known_reasons(world: CliWorld, flag: str, accepted: bool) -> None:
+def test_skip_checksum_takes_only_the_known_reasons(cli_world: CliWorld, flag: str, accepted: bool) -> None:
     """A reason other than cli, setting and user-approved is refused with exit code 2 and installs nothing."""
-    world.publish("tool", "1.0.0", hashed=False)
+    cli_world.publish("tool", "1.0.0", hashed=False)
 
-    result = world.cli("install", "tool", flag)
+    result = cli_world.cli("install", "tool", flag)
 
-    assert (result.code == 0) is accepted and ((world.user / "tool" / "current").is_dir() is accepted)
+    assert (result.code == 0) is accepted and ((cli_world.user / "tool" / "current").is_dir() is accepted)
     if not accepted:
         assert result.code == 2
 
 
-def test_a_bare_skip_checksum_does_not_swallow_the_next_word(world: CliWorld) -> None:
+def test_a_bare_skip_checksum_does_not_swallow_the_next_word(cli_world: CliWorld) -> None:
     """`install --skip-checksum tool` installs `tool` unverified: the flag takes no target as its reason."""
-    world.publish("tool", "1.0.0", hashed=False)
+    cli_world.publish("tool", "1.0.0", hashed=False)
 
-    result = world.cli("install", "--skip-checksum", "tool")
+    result = cli_world.cli("install", "--skip-checksum", "tool")
 
-    assert result.code == 0 and (world.user / "tool" / "current").is_dir()
+    assert result.code == 0 and (cli_world.user / "tool" / "current").is_dir()
 
 
-def test_the_recorded_decision_names_who_allowed_the_skip(world: CliWorld) -> None:
+def test_the_recorded_decision_names_who_allowed_the_skip(cli_world: CliWorld) -> None:
     """The receipt records skipped-cli for the bare flag and skipped-setting / user-approved for the manager's reasons."""
     for index, (flag, decision) in enumerate((("--skip-checksum", "skipped-cli"), ("--skip-checksum=setting", "skipped-setting"),
                                               ("--skip-checksum=user-approved", "user-approved"))):
         name = f"tool{index}"
-        world.publish(name, "1.0.0", hashed=False)
-        assert world.cli("install", name, flag).code == 0
-        assert read_receipt(world.user / name, "1.0.0").data["checksum"]["decision"] == decision
+        cli_world.publish(name, "1.0.0", hashed=False)
+        assert cli_world.cli("install", name, flag).code == 0
+        assert read_receipt(cli_world.user / name, "1.0.0").data["checksum"]["decision"] == decision
 
 
-def test_a_missing_checksum_is_refused_with_a_structured_error_and_never_asked_about(world: CliWorld) -> None:
+def test_a_missing_checksum_is_refused_with_a_structured_error_and_never_asked_about(cli_world: CliWorld) -> None:
     """Without the flag a download with no hash fails (exit 3, code checksum-missing with its URL), even interactively."""
-    world.publish("tool", "1.0.0", hashed=False)
+    cli_world.publish("tool", "1.0.0", hashed=False)
 
-    result = world.cli("install", "tool", "--json", stdin="y\n")
+    result = cli_world.cli("install", "tool", "--json", stdin="y\n")
 
     error = result.document()["results"][0]["error"]
     assert result.code == 3 and error["code"] == "checksum-missing" and error["url"].endswith("tool-1.0.0.zip")
@@ -246,13 +239,13 @@ def test_a_missing_program_is_a_clear_message_and_exit_2(tmp_path: Path, word: s
     assert system.foreground_log == []
 
 
-def test_a_sandbox_that_is_an_existing_file_is_a_usage_error_not_a_traceback(world: CliWorld, tmp_path: Path) -> None:
+def test_a_sandbox_that_is_an_existing_file_is_a_usage_error_not_a_traceback(cli_world: CliWorld, tmp_path: Path) -> None:
     """--sandbox naming a file cannot be made a folder: exit code 2 with a message (and a document under --json), never exit 1."""
     sandbox = tmp_path / "a-file"
     sandbox.write_text("x", encoding="utf-8")
 
-    plain = world.cli("--sandbox", str(sandbox), "list")
-    machine = world.cli("--sandbox", str(sandbox), "list", "--json")
+    plain = cli_world.cli("--sandbox", str(sandbox), "list")
+    machine = cli_world.cli("--sandbox", str(sandbox), "list", "--json")
 
     assert plain.code == 2 and "cannot set up the run in --sandbox" in plain.err and "Traceback" not in plain.err
     assert machine.code == 2 and machine.document()["errors"][0]["code"] == "usage"

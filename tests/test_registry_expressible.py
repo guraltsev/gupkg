@@ -24,8 +24,8 @@ from gupkg.pkgcheck import check_directory
 from gupkg.services.populate import populate_app
 from gupkg.services.track import run_tracker
 from gupkg.system.fake import FakeSystem
-from tests.archive_support import make_7z, make_tar, make_zip, tree
-from tests.http_fixtures import REGISTRY2, environment, serve, tracker_manifest
+from tests.support.archive import make_7z, make_tar, make_zip, tree
+from tests.support.http_fixtures import REGISTRY2, environment, serve, tracker_manifest
 
 pytestmark = pytest.mark.process
 

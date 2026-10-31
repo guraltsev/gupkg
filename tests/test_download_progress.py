@@ -21,25 +21,15 @@ from gupkg.report.console import LineReporter
 from gupkg.report.events import MultiReporter, Progress, use_reporter
 from gupkg.services.http import HttpClient
 from gupkg.system.fake import FakeResponse, FakeSystem
-from tests.cli_support import CliWorld
-from tests.mode_support import pin_no_ambient_elevation  # noqa: F401
+from tests.support.cli import CliWorld
+from tests.support.reporters import Collector
 
 pytestmark = pytest.mark.unit
 
 
-class _Collector:
-    """Collect every event handed to it, in order."""
-
-    def __init__(self) -> None:
-        self.events: list = []
-
-    def handle(self, event) -> None:
-        self.events.append(event)
-
-
 def download(system: FakeSystem, tmp_path: Path, content: bytes, *reporters) -> list[Progress]:
     """Download a fixture through the HTTP client with *reporters* installed; return the progress events it sent."""
-    collector = _Collector()
+    collector = Collector()
     with use_reporter(MultiReporter([collector, *reporters])):
         HttpClient(system, cache_dir=tmp_path / "cache", env={}, retries=0).download("https://example.invalid/payload", label="Downloading update")
     return [event for event in collector.events if isinstance(event, Progress)]
@@ -57,14 +47,13 @@ def test_a_download_of_known_size_announces_its_total_and_completes_once(tmp_pat
     assert [event for event in progress if event.done == event.total] == [Progress("Downloading update", len(content), len(content))]
 
 
-def test_a_redirected_install_prints_one_final_progress_line_and_json_keeps_standard_output_clean(tmp_path: Path) -> None:
+def test_a_redirected_install_prints_one_final_progress_line_and_json_keeps_standard_output_clean(cli_world: CliWorld) -> None:
     """Human output has one 100 percent line per download and no carriage return; --json standard output is only the document."""
-    world = CliWorld(tmp_path)
-    world.publish("tool", "1.0.0", members={"tool.exe": "payload" * 5000})
-    world.publish("other", "1.0.0", members={"other.exe": "payload" * 5000})
+    cli_world.publish("tool", "1.0.0", members={"tool.exe": "payload" * 5000})
+    cli_world.publish("other", "1.0.0", members={"other.exe": "payload" * 5000})
 
-    human = world.cli("install", "tool")
-    machine = world.cli("install", "other", "--json")
+    human = cli_world.cli("install", "tool")
+    machine = cli_world.cli("install", "other", "--json")
 
     lines = [line for line in human.out.splitlines() if "(100%)" in line]
     assert human.code == 0 and len(lines) == 1 and "tool-1.0.0.zip" in lines[0] and "\r" not in human.out
@@ -72,14 +61,13 @@ def test_a_redirected_install_prints_one_final_progress_line_and_json_keeps_stan
     assert "==>" not in machine.out and len([line for line in machine.err.splitlines() if "(100%)" in line]) == 1
 
 
-def test_the_events_file_of_an_install_carries_the_progress_of_the_download(tmp_path: Path) -> None:
+def test_the_events_file_of_an_install_carries_the_progress_of_the_download(cli_world: CliWorld) -> None:
     """A UI that follows --events-file sees the total up front and a last event that equals it."""
-    world = CliWorld(tmp_path)
-    world.publish("tool", "1.0.0", members={"tool.exe": "payload" * 5000})
+    cli_world.publish("tool", "1.0.0", members={"tool.exe": "payload" * 5000})
 
-    assert world.cli("install", "tool", "--events-file", "run.jsonl").code == 0
+    assert cli_world.cli("install", "tool", "--events-file", "run.jsonl").code == 0
 
-    records = [json.loads(line) for line in (world.user / "tool" / ".gupkg" / "logs" / "run.jsonl").read_text(encoding="utf-8").splitlines()]
+    records = [json.loads(line) for line in (cli_world.user / "tool" / ".gupkg" / "logs" / "run.jsonl").read_text(encoding="utf-8").splitlines()]
     progress = [record for record in records if record["event"] == "progress"]
     assert progress[0]["done"] == 0 and progress[0]["total"] and progress[-1]["done"] == progress[-1]["total"] == progress[0]["total"]
     assert sum(record["done"] == record["total"] for record in progress) == 1

@@ -19,7 +19,7 @@ from gupkg.engine.receipts import MAX_RECEIPT_BYTES, read_receipt
 from gupkg.model.checksum import parse_skip_flag
 from gupkg.report.events import PhaseEnd, PhaseStart, Warning, use_reporter
 from gupkg.system.port import Mode
-from tests.engine_support import World, pin_no_ambient_elevation  # noqa: F401
+from tests.support.engine import World
 
 pytestmark = pytest.mark.unit
 
@@ -30,7 +30,7 @@ FULL = (
 
 
 @pytest.fixture
-def world(tmp_path: Path) -> World:
+def world_with_tool_installed(tmp_path: Path) -> World:
     """A fake machine with tool 1.0.0 installed in the user root."""
     machine = World(tmp_path)
     machine.publish("tool", "1.0.0", tables=FULL)
@@ -43,98 +43,97 @@ def kinds(result) -> list[str]:
     return [item["kind"] for item in result.details["problems"]]
 
 
-def test_a_healthy_install_has_no_problems(world: World) -> None:
+def test_a_healthy_install_has_no_problems(world_with_tool_installed: World) -> None:
     """Right after an install nothing is reported as a problem."""
-    result = world.one("check", "tool")
+    result = world_with_tool_installed.one("check", "tool")
 
     assert result.ok and result.status == "healthy" and result.details["problems"] == []
 
 
-def test_check_reports_a_deleted_shim_and_a_missing_path_entry_and_fix_restores_both(world: World) -> None:
+def test_check_reports_a_deleted_shim_and_a_missing_path_entry_and_fix_restores_both(world_with_tool_installed: World) -> None:
     """Drift is reported for the shim and the PATH entry; --fix applies both again and the package is healthy."""
-    shim = world.fake.scope_folders(Mode.USER).bin_dir / "tool.exe"
-    package_dir = str(world.user / "tool" / "current" / "App")
+    shim = world_with_tool_installed.fake.scope_folders(Mode.USER).bin_dir / "tool.exe"
+    package_dir = str(world_with_tool_installed.user / "tool" / "current" / "App")
     shim.unlink()
-    world.fake.set_path(Mode.USER, [item for item in world.fake.get_path(Mode.USER) if item != package_dir])
+    world_with_tool_installed.fake.set_path(Mode.USER, [item for item in world_with_tool_installed.fake.get_path(Mode.USER) if item != package_dir])
 
-    result = world.one("check", "tool")
+    result = world_with_tool_installed.one("check", "tool")
 
     assert not result.ok and kinds(result).count("drift") == 2
     messages = " ".join(item["message"] for item in result.details["problems"])
     assert "shim missing" in messages and "PATH entry missing" in messages
 
-    fixed = world.one("check", "tool", fix=True)
+    fixed = world_with_tool_installed.one("check", "tool", fix=True)
 
     assert fixed.ok and len(fixed.details["fixed"]) == 2
-    assert shim.is_file() and package_dir in world.fake.get_path(Mode.USER)
-    assert world.one("check", "tool").status == "healthy"
+    assert shim.is_file() and package_dir in world_with_tool_installed.fake.get_path(Mode.USER)
+    assert world_with_tool_installed.one("check", "tool").status == "healthy"
 
 
-def test_a_changed_shortcut_and_a_lost_environment_value_are_drift_too(world: World) -> None:
+def test_a_changed_shortcut_and_a_lost_environment_value_are_drift_too(world_with_tool_installed: World) -> None:
     """A shortcut whose target was edited and an environment value that was deleted are reported and repaired."""
-    link = next(iter(world.fake.shortcuts()))
-    spec = world.fake.read_shortcut(link)
-    world.fake.write_shortcut(link, type(spec)(target_path="C:\\elsewhere.exe"))
-    world.fake.delete_env(Mode.USER, "TOOL_HOME")
+    link = next(iter(world_with_tool_installed.fake.shortcuts()))
+    spec = world_with_tool_installed.fake.read_shortcut(link)
+    world_with_tool_installed.fake.write_shortcut(link, type(spec)(target_path="C:\\elsewhere.exe"))
+    world_with_tool_installed.fake.delete_env(Mode.USER, "TOOL_HOME")
 
-    result = world.one("check", "tool")
+    result = world_with_tool_installed.one("check", "tool")
     assert kinds(result).count("drift") == 2
 
-    assert world.one("check", "tool", fix=True).ok
-    assert world.fake.read_shortcut(link).target_path.endswith("app.exe")
-    assert world.fake.env_values(Mode.USER)["TOOL_HOME"].value.endswith("App")
+    assert world_with_tool_installed.one("check", "tool", fix=True).ok
+    assert world_with_tool_installed.fake.read_shortcut(link).target_path.endswith("app.exe")
+    assert world_with_tool_installed.fake.env_values(Mode.USER)["TOOL_HOME"].value.endswith("App")
 
 
-def test_install_again_repairs_drift(world: World) -> None:
+def test_install_again_repairs_drift(world_with_tool_installed: World) -> None:
     """The install of an installed package re-applies a recorded effect that is missing from the machine."""
-    shim = world.fake.scope_folders(Mode.USER).bin_dir / "tool.exe"
+    shim = world_with_tool_installed.fake.scope_folders(Mode.USER).bin_dir / "tool.exe"
     shim.unlink()
 
-    result = world.one("install", "tool")
+    result = world_with_tool_installed.one("install", "tool")
 
     assert result.ok and result.status == "repaired" and shim.is_file()
 
 
 @pytest.mark.parametrize("operation", [pytest.param("repair", id="repair"), pytest.param("install", id="install-again")])
-def test_a_repair_rewrites_every_owned_effect_even_one_that_is_not_drift(world: World, operation: str) -> None:
+def test_a_repair_rewrites_every_owned_effect_even_one_that_is_not_drift(world_with_tool_installed: World, operation: str) -> None:
     """A shim launcher from an older gupkg is not drift (check calls the package healthy), yet a repair replaces it with this gupkg's launcher.
 
     `install` of the installed version is the manager's "install or repair", which promises that shims are re-applied.
     """
-    shim = world.fake.scope_folders(Mode.USER).bin_dir / "tool.exe"
+    shim = world_with_tool_installed.fake.scope_folders(Mode.USER).bin_dir / "tool.exe"
     bundled = shim.read_bytes()
     shim.write_bytes(b"an older launcher")
-    assert world.one("check", "tool").status == "healthy"
+    assert world_with_tool_installed.one("check", "tool").status == "healthy"
 
-    result = world.one(operation, "tool")
+    result = world_with_tool_installed.one(operation, "tool")
 
     assert result.ok and result.status == "repaired" and shim.read_bytes() == bundled
 
 
-def test_a_dangling_current_and_a_missing_app_are_reported(world: World) -> None:
+def test_a_dangling_current_and_a_missing_app_are_reported(world_with_tool_installed: World) -> None:
     """A missing active App is reported as fixable; a current that points nowhere is reported as the package's problem."""
-    package = world.user / "tool"
+    package = world_with_tool_installed.user / "tool"
     for item in sorted((package / "1.0.0" / "App").rglob("*"), reverse=True):
         item.unlink()
     (package / "1.0.0" / "App").rmdir()
 
-    result = world.one("check", "tool")
+    result = world_with_tool_installed.one("check", "tool")
 
     assert not result.ok and "app-missing" in kinds(result) and result.details["problems"][0]["fixable"] is True
 
 
-def test_a_package_that_is_not_installed_is_not_unhealthy(world: World) -> None:
+def test_a_package_that_is_not_installed_is_not_unhealthy(world_with_tool_installed: World) -> None:
     """A local package with no current has nothing to check: it is reported as not installed, healthy."""
-    world.publish("other", "1.0.0")
+    world_with_tool_installed.publish("other", "1.0.0")
 
-    result = world.one("check", "other")
+    result = world_with_tool_installed.one("check", "other")
 
     assert result.ok and result.status == "not-installed"
 
 
-def test_a_skipped_checksum_is_listed_as_unverified(tmp_path: Path) -> None:
+def test_a_skipped_checksum_is_listed_as_unverified(world: World) -> None:
     """An install that skipped a missing checksum is flagged in check with the way it was allowed."""
-    world = World(tmp_path)
     world.publish("tool", "1.0.0", hashed=False)
     assert not world.one("install", "tool").ok
     assert world.one("install", "tool", skip=parse_skip_flag("setting")).ok
@@ -145,9 +144,8 @@ def test_a_skipped_checksum_is_listed_as_unverified(tmp_path: Path) -> None:
     assert notes == ["installed without a checksum (the manager's checksum_missing = skip)"]
 
 
-def test_a_skipped_checksum_is_shown_in_the_verify_phase_of_the_run(tmp_path: Path) -> None:
+def test_a_skipped_checksum_is_shown_in_the_verify_phase_of_the_run(world: World) -> None:
     """The run reports an unverified download as a warning inside its Verify phase, and the log carries it."""
-    world = World(tmp_path)
     world.publish("tool", "1.0.0", hashed=False)
     events: list[object] = []
 
@@ -172,26 +170,25 @@ def test_a_skipped_checksum_is_shown_in_the_verify_phase_of_the_run(tmp_path: Pa
     assert any("installed without a checksum (--skip-checksum)" in text for text in inside)
 
 
-def test_a_stored_verified_is_shown_as_a_self_report_in_user_mode(world: World) -> None:
+def test_a_stored_verified_is_shown_as_a_self_report_in_user_mode(world_with_tool_installed: World) -> None:
     """In user mode the receipt can be edited, so a recorded `verified` is reported as the install's own claim."""
-    result = world.one("check", "tool")
+    result = world_with_tool_installed.one("check", "tool")
 
     assert [note["kind"] for note in result.details["notes"]] == ["self-reported"]
     assert "not proof" in result.details["notes"][0]["message"]
 
 
-def test_a_changed_app_file_is_reported_whatever_the_receipt_claims(world: World) -> None:
+def test_a_changed_app_file_is_reported_whatever_the_receipt_claims(world_with_tool_installed: World) -> None:
     """A file changed after the install is reported even though the receipt still says `verified`."""
-    (world.user / "tool" / "1.0.0" / "App" / "app.exe").write_text("changed", encoding="utf-8")
+    (world_with_tool_installed.user / "tool" / "1.0.0" / "App" / "app.exe").write_text("changed", encoding="utf-8")
 
-    result = world.one("check", "tool")
+    result = world_with_tool_installed.one("check", "tool")
 
     assert not result.ok and "app-modified" in kinds(result)
 
 
-def test_an_app_with_too_many_files_to_list_is_still_checked_by_its_digest(tmp_path: Path) -> None:
+def test_an_app_with_too_many_files_to_list_is_still_checked_by_its_digest(world: World) -> None:
     """Over the engine's max_recorded_files the receipt keeps the count and the digest only; a change is still reported."""
-    world = World(tmp_path)
     world.engine.max_recorded_files = 5
     members = {f"lib/file{index:05d}.dat": f"{index}\n" for index in range(6)}
     world.publish("big", "1.0.0", members=members)
@@ -208,13 +205,12 @@ def test_an_app_with_too_many_files_to_list_is_still_checked_by_its_digest(tmp_p
     assert not result.ok and "app-modified" in kinds(result) and "too many files" in result.details["problems"][0]["message"]
 
 
-def test_an_elevated_check_does_not_read_the_users_environment(tmp_path: Path) -> None:
+def test_an_elevated_check_does_not_read_the_users_environment(elevated_world: World) -> None:
     """An elevated run verifies system-scope effects only and never asks the user's environment."""
-    world = World(tmp_path, elevated=True)
-    world.publish("tool", "1.0.0", mode="system", tables=FULL)
-    assert world.one("install", "tool").ok
-    world.fake.registry_log.clear()
+    elevated_world.publish("tool", "1.0.0", mode="system", tables=FULL)
+    assert elevated_world.one("install", "tool").ok
+    elevated_world.fake.registry_log.clear()
 
-    result = world.one("check", "tool")
+    result = elevated_world.one("check", "tool")
 
-    assert result.ok and {access.scope for access in world.fake.registry_log} == {"system"}
+    assert result.ok and {access.scope for access in elevated_world.fake.registry_log} == {"system"}

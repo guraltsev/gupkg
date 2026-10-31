@@ -17,7 +17,7 @@ import pytest
 
 from gupkg_ui import render
 from gupkg_ui.render import EventRenderer, progress_line, summarize_entries, verdict_lines
-from tests.ui_support import entry, load_fixture
+from tests.support.ui import entry, load_fixture
 
 pytestmark = pytest.mark.unit
 
