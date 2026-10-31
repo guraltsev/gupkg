@@ -12,7 +12,7 @@ Usage and API
   and the share of docstrings in the test text;
 * layout: test files still flat in ``tests/`` against files in ``tests/<area>/``, and the folders of ``tests/_temp/``
   with their ``ref`` and whether that reference is open;
-* hygiene: the number of lines in ``tests/hygiene_baseline.txt``;
+* hygiene: the number of violation lines in ``tests/hygiene_baseline.txt`` (comment lines are not counted);
 * time (with ``--timings``): the total, the time per tier, the 10 slowest tests and the share of the slowest 200.
 
 ``python tools/test_report.py --spec [AREA]`` prints the module and test docstrings of one area folder (or one test
@@ -165,7 +165,9 @@ def report(root: Path, collect: bool = True) -> dict:
     baseline = tests_dir / "hygiene_baseline.txt"
     baseline_lines = None
     if baseline.is_file():
-        baseline_lines = sum(1 for line in baseline.read_text(encoding="utf-8").splitlines() if line.strip())
+        baseline_lines = sum(
+            1 for line in baseline.read_text(encoding="utf-8").splitlines() if line.strip() and not line.startswith("#")
+        )
 
     return {
         "size": {

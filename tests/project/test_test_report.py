@@ -53,7 +53,7 @@ def fake_repo(tmp_path: Path) -> Path:
     _write(tmp_path / "tests" / "_temp" / "job77" / "README.md", "ref: .agents/jobs/77-x-controller.md\nkind: guard\n")
     _write(tmp_path / "tests" / "_temp" / "issue5" / "README.md", "ref: _issues/issue5-gone.md\n")
     _write(tmp_path / ".agents" / "jobs" / "77-x-progress.md", "Status: Open, not started.\n")
-    _write(tmp_path / "tests" / "hygiene_baseline.txt", "rule a file::t\n\nrule b file::u\n")
+    _write(tmp_path / "tests" / "hygiene_baseline.txt", "# header comment\nrule a file::t\n\nrule b file::u\n")
     _write(tmp_path / "src" / "pkg" / "mod.py", "x = 1\n")
     _write(tmp_path / "src" / "gupkg" / "python" / "bundled.py", "y = 2\n" * 100)
     return tmp_path
