@@ -1,6 +1,7 @@
 # Agent Instructions
 
-Consult `_docs/tests.md` for instructions on how to write tests and what kind of tests to write.
+Consult `_docs/tests.md` for instructions on how to write tests and what kind of tests to write, and `_docs/tests_hygiene.md`
+for temporary tests, retiring tests and the automatic test checks.
 
 Consult `_docs/docstring_schema.md` for guides for writing docstrings
 

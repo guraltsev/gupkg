@@ -26,7 +26,9 @@ options for the version you have installed.
 - [python_rules.md](python_rules.md) — Python implementation style, including
   code organization and block comments.
 - [docstring_schema.md](docstring_schema.md) — docstring style.
-- [tests.md](tests.md) — testing policy and what belongs in the suite.
+- [tests.md](tests.md) — testing policy: test quality, where tests go, tiers.
+- [tests_hygiene.md](tests_hygiene.md) — how the suite stays healthy: temporary
+  tests, retiring tests, the debt baseline and the automatic checks.
 - [tui_style_guide.md](tui_style_guide.md) — principles, interaction model, and
   visual style for the list-first terminal interfaces.
 - [../tests/manual_smoke.md](../tests/manual_smoke.md) — Windows, elevation, and
