@@ -99,6 +99,7 @@ row.
 
 | Version | Commit | Date | SHA-256 | Notes |
 |---|---|---|---|---|
+| 1.1.12 | `ce4a452049a5de8fa7988c751f299a0bd7876eec` | 2026-10-31 | 52f9fdec69778796f702ec232dffa80b3ec944f167ec864a98d42a9a402a4248 | Package launchers keep option=value arguments intact |
 | 1.1.11 | `3b79c38fba0bdf8abc27d534849297c820f2b04b` | 2026-10-31 | cb102ee26be5dab73068fa9333c4eec380e8952af36e9eace055f2b7614000fe | gupkg 1.1.11 |
 | 1.1.9 | `6ed2ba56268502325e160f50c2c6916ef48ae60c` | 2026-10-31 | 5fd1bf10916495ad3b5fcd48b35240b5a3ad2f9169d3d5836125d1273d0861c7 | gupkg-manager repair --all reinstalls every installed package (shortcuts, shims, PATH entries) |
 | 1.1.8 | `e945ce29916c8221d8eda72f08fcec54d15f7c88` | 2026-10-31 | e2bd093b544aa0331f96b073e1748138999fe7701decb6714d5d29c6a506b6b2 | Repair rewrites every owned effect (outdated shim launchers are replaced, also while running) - subcommand help lists every action |
