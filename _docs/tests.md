@@ -264,7 +264,7 @@ touched it. These rules counter that:
 - **Machine safety** (`AGENTS.md`): no test touches `C:\opt`, the user's real roots, the real `PATH`, the Start Menu or
   the Windows registry outside a `gupkg-test-*` key.
 - **Status (2026-10-30):**
-  - The suite is still flat in `tests/` and has no tiers; job 10 (`.agents/jobs/10-test-hygiene-controller.md`) migrates
-    it.
-  - Until then, legacy modules are recorded in the hygiene baseline ([tests_hygiene.md](tests_hygiene.md) §5).
+  - The suite is still flat in `tests/`; job 10 (`.agents/jobs/10-test-hygiene-controller.md`) migrates it. Every test
+    module declares its tier and `scripts\test.cmd` selects by it.
+  - Until the migration is done, legacy violations are recorded in the hygiene baseline ([tests_hygiene.md](tests_hygiene.md) §5).
   - New tests follow this policy from today.
