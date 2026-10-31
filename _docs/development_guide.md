@@ -51,7 +51,7 @@ Dependency rules:
   double must write only under `tmp_path`, never relative to the current directory.
 - **Tiers.** Every test module declares what its tests touch (`pytest.mark.unit`, `process` or `release`; policy in
   [tests.md](tests.md) section 5), and a `unit` test that starts a process, sleeps or opens a socket fails. Run
-  `scripts\test.cmd` (`unit`, when a task is complete; while working, run just the area's tests), `scripts\test.cmd --process` (`unit` and `process`, before calling a
+  `scripts\test.cmd` (`unit`, required when a task is complete; while working, running the area's tests is an aid, not a requirement), `scripts\test.cmd --process` (`unit` and `process`, before calling a
   change done) or `scripts\test.cmd --all` (every tier, before a merge, and after a change to the build, bootstrap,
   self-update or activation). The option must be the first argument; every other argument goes to pytest unchanged, and a `-m` of your own overrides the
   tier selection. The last line it prints names the tiers that ran; when nothing was selected (exit 5) it says which tier ran
