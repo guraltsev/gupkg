@@ -190,3 +190,55 @@ def test_applying_a_shim_effect_while_that_shim_is_running_still_rewrites_its_co
         busy.wait()
 
     assert tomllib.loads(config.read_text(encoding="utf-8"))["target"].endswith("python.exe")
+
+
+def test_a_running_shim_whose_launcher_differs_is_replaced_and_the_old_launcher_removed_later(installed: tuple[Path, Path], tmp_path: Path) -> None:
+    """`gupkg self repair` runs through an older `bin\\gupkg.exe`: Windows refuses to overwrite a running .exe, so it is moved aside.
+
+    The running launcher is a different build (the static launcher stands in for an older one). Applying the effect puts this
+    gupkg's launcher in place while the old one still runs; the next apply, after it exited, deletes the moved-aside file.
+    """
+    context, effects = _shim_effects(tmp_path)
+    shutil.copytree(installed[0], context.bin_dir)
+    launcher = context.bin_dir / "gupkg.exe"
+    bundled = launcher.read_bytes()
+    shutil.copyfile(SRC / "gupkg" / "shim" / "shim-console.static.exe", launcher)
+    config = context.bin_dir / "gupkg.config.toml"
+    config.write_text(f'target = "{sys.executable.replace(chr(92), chr(92) * 2)}"\nforward_arguments = true\n', encoding="utf-8")
+    system = FakeSystem(tmp_path / "machine")
+    busy = subprocess.Popen([str(launcher), "-c", "import time; time.sleep(30)"])
+    try:
+        time.sleep(1)
+        assert busy.poll() is None
+
+        apply_effect(system, effects["gupkg"], context)
+
+        assert launcher.read_bytes() == bundled and busy.poll() is None
+    finally:
+        busy.kill()
+        busy.wait()
+    assert [path.name for path in context.bin_dir.glob("*.old")] != []
+
+    apply_effect(system, effects["gupkg"], context)
+
+    assert [path.name for path in context.bin_dir.glob("*.old")] == []
+    assert tomllib.loads(config.read_text(encoding="utf-8"))["target"].endswith("python.exe")
+
+
+def test_a_launcher_moved_aside_is_put_back_when_the_new_one_cannot_be_written(installed: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """If the write after the move fails too, the old launcher is back under its name: the command never disappears from `bin`."""
+    context, effects = _shim_effects(tmp_path)
+    shutil.copytree(installed[0], context.bin_dir)
+    launcher = context.bin_dir / "gupkg.exe"
+    old = b"an older launcher"
+    launcher.write_bytes(old)
+
+    def refuse(path: Path, content: bytes) -> None:
+        """Fail like a running .exe, then like a full disk."""
+        raise PermissionError(13, "Access is denied") if path.suffix == ".exe" else OSError(28, "No space left on device")
+
+    monkeypatch.setattr("gupkg.engine.effects.write_bytes_atomic", refuse)
+    with pytest.raises(PermissionError):
+        apply_effect(FakeSystem(tmp_path / "machine"), effects["gupkg"], context)
+
+    assert launcher.read_bytes() == old and list(context.bin_dir.glob("*.old")) == []
