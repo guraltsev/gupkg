@@ -241,6 +241,11 @@ def _tiered(root: Path, name: str, body: str) -> Path:
             id="child-process",
         ),
         pytest.param(
+            "import os\n\n\ndef test_a_spawn() -> None:\n    \"\"\"Spawns.\"\"\"\n    os.spawnv(os.P_WAIT, 'C:\\\\Windows\\\\System32\\\\cmd.exe', ['cmd', '/c', 'exit'])\n",
+            "starts a process",
+            id="os-spawn",
+        ),
+        pytest.param(
             "import time\n\n\ndef test_a_nap() -> None:\n    \"\"\"Sleeps.\"\"\"\n    time.sleep(0.5)\n",
             "sleeps",
             id="sleep",

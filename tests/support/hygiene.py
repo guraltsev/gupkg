@@ -555,8 +555,9 @@ class UnitGuard:
     """Make the actions that a ``unit`` test must not do fail (or only note them, for a baselined test).
 
     While the guard is active, ``subprocess.Popen`` (and so ``subprocess.run`` and the like), ``os.system``,
-    ``socket.socket.connect`` and ``time.sleep`` for more than ``SLEEP_ALLOWED`` seconds fail the test with a message that
-    names the tier and the policy. The one ``connect`` that ``socket.socketpair`` makes inside the process stays allowed:
+    ``os.spawn*``, ``socket.socket.connect`` and ``time.sleep`` for more than ``SLEEP_ALLOWED`` seconds fail the test with a
+    message that names the tier and the policy. Limits: a ``sleep`` bound by ``from time import sleep`` before the guard is
+    installed, and ``asyncio.sleep``, are not seen (asyncio and Textual poll with it, so guarding it would fail the UI tests). The one ``connect`` that ``socket.socketpair`` makes inside the process stays allowed:
     the asyncio event loop needs it and it reaches no other program.
     """
 
@@ -600,6 +601,7 @@ class UnitGuard:
         patches = [
             (subprocess.Popen, "__init__", "process"),
             (os, "system", "system"),
+            *[(os, name, "process") for name in ("spawnl", "spawnle", "spawnlp", "spawnlpe", "spawnv", "spawnve", "spawnvp", "spawnvpe") if hasattr(os, name)],
             (socket.socket, "connect", "connect"),
             (socket.socket, "connect_ex", "connect"),
             (time, "sleep", "sleep"),
