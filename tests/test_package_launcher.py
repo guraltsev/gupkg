@@ -216,6 +216,17 @@ def test_tui_launcher_runs_the_tui_command(tmp_path: Path) -> None:
     assert " tui " in run(version / "manage.cmd").stdout
 
 
+@pytest.mark.parametrize("name", ["install.cmd", "manage.cmd"], ids=["install", "manage"])
+def test_options_reach_gupkg_exactly_as_typed_with_the_equals_sign_kept(tmp_path: Path, name: str) -> None:
+    """`--overwrite=orphaned-shortcuts` is one argument for gupkg; a batch loop over `%~1` would split it at `=` into two words."""
+    version = build_tree(tmp_path, bundled=True)
+
+    result = run(version / name, "--overwrite=orphaned-shortcuts", "--skip-checksum=cli", "two words")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.rstrip().endswith(' --overwrite=orphaned-shortcuts --skip-checksum=cli "two words"')
+
+
 def test_exit_code_6_moves_on_to_the_next_step(tmp_path: Path) -> None:
     """A bundled gupkg that cannot handle the package exits 6; the launcher says so and runs the gupkg of `gupkg-location`."""
     version = build_tree(tmp_path, location="gupkg\\current\\App", bundled=True)
