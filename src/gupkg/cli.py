@@ -183,6 +183,27 @@ def _needs_scope(args: argparse.Namespace) -> bool:
     return not (args.command == "self" and args.self_command == "status")
 
 
+def _root_of_version_folders(targets: list[str]) -> Path | None:
+    """Return the root that every path target stands in, or ``None``.
+
+    A folder two levels above a version folder is a root only when it holds a ``.gupkg`` folder; a download folder is not one,
+    so such a target is copied into the run's own root as before. Targets that are names, or that disagree, infer nothing.
+    """
+    roots: set[Path] = set()
+    for target in targets:
+        try:
+            selector = parse_selector(target)
+        except CatalogError:
+            return None
+        if selector.kind != "path":
+            return None
+        roots.add(Path(os.path.abspath(selector.path)).parent.parent)
+    if len(roots) != 1:
+        return None
+    root = roots.pop()
+    return root if (root / ".gupkg").is_dir() else None
+
+
 def _run(args: argparse.Namespace, tokens: list[str], machine: System, env: Mapping[str, str], where: RunningGupkg) -> int:
     """Run a parsed command on the real or sandboxed machine and turn what goes wrong into an exit code."""
     try:
@@ -205,6 +226,8 @@ def _run(args: argparse.Namespace, tokens: list[str], machine: System, env: Mapp
         # there and reads that root's settings.
         if args.command == "pkg" and args.pkg_command == "adopt" and args.root is None:
             args.root = Path(os.path.abspath(args.directory)).parent.parent
+        if args.command == "install" and args.root is None:
+            args.root = _root_of_version_folders(args.targets)
         if _needs_scope(args):
             scope, layers = build_scope_and_layers(
                 system=machine, env=env, location=where, root_option=args.root, settings_path=args.settings,

@@ -12,6 +12,7 @@ environment mapping built by the test. Out of scope: Mark-of-the-Web handling of
 from __future__ import annotations
 
 import hashlib
+import shutil
 import tomllib
 from pathlib import Path
 
@@ -28,6 +29,30 @@ def snapshot(folder: Path) -> dict[str, str | None]:
         str(path.relative_to(folder)): None if path.is_dir() else hashlib.sha256(path.read_bytes()).hexdigest()
         for path in sorted(folder.rglob("*"))
     }
+
+
+def test_installing_a_version_folder_of_a_root_uses_that_root_but_a_folder_without_dot_gupkg_above_it_is_copied(tmp_path: Path) -> None:
+    """Two levels above the version folder a `.gupkg` folder makes that folder the root (its settings apply); without one nothing is inferred."""
+    world = CliWorld(tmp_path)
+    games = tmp_path / "Games"
+    (games / ".gupkg").mkdir(parents=True)
+    (games / ".gupkg" / "settings.toml").write_text(
+        f"schema = 4\n[integration]\nbin = '{games / 'bin'}'\nstart_menu = '{games / 'sm'}'\n", encoding="utf-8"
+    )
+    source = world.machine.distribution("demo", "1.0.0")
+    shutil.move(str(source.parent), str(games / "demo"))
+    world.fake.add_url("https://example.org/tool-1.0.0.zip", zip_bytes({"app.exe": "demo 1.0.0"}))
+
+    inside = world.cli("install", str(games / "demo" / "1.0.0"), "--yes", "--skip-checksum")
+
+    assert inside.code == 0, inside.out + inside.err
+    assert (games / "demo" / "current").exists() and not (world.user / "demo").exists()
+
+    loose = world.machine.distribution("loose", "1.0.0")
+    copied = world.cli("install", str(loose), "--yes", "--skip-checksum")
+
+    assert copied.code == 0, copied.out + copied.err
+    assert (world.user / "loose" / "current").exists()
 
 
 @pytest.mark.parametrize("mode", ["user", "system"])
