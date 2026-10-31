@@ -5,11 +5,11 @@ not depend on creation order or timestamps; any change of content (one byte, a l
 (including its letter case), or file set (an added, removed or empty file) changes it; the top-level
 ``App`` and ``gupkg`` folders are not part of it and nothing else is; links and junctions
 are refused instead of followed or skipped; ``verify_directory`` accepts a faithful copy,
-refuses a changed one and names the files that differ; and a copy of a version directory of the real
-registry snapshot is verified against the fingerprint ``_registry.toml`` publishes (and refused
+refuses a changed one and names the files that differ; and a copy of a version directory of a registry
+is verified against the fingerprint ``_registry.toml`` publishes (and refused
 after one file changes), which is what installing a distribution folder will rely on.
-Real: files in ``tmp_path``, ``hashlib``, real junctions through ``FakeSystem``, the committed
-registry snapshot, the catalog's registry reader. Out of scope: the install engine that will call
+Real: files in ``tmp_path``, ``hashlib``, real junctions through ``FakeSystem``, a registry of one package
+written for the test, the catalog's registry reader. Out of scope: the install engine that will call
 ``verify_directory`` (issue 028) and the command line (issue 029).
 """
 
@@ -31,11 +31,8 @@ from gupkg.services.fingerprint import (
     verify_directory,
 )
 from gupkg.system.fake import FakeSystem
-from tests.support.http_fixtures import FIXTURES
 
 pytestmark = pytest.mark.unit
-
-SNAPSHOT = FIXTURES / "registry_100"
 
 TREE = {"pkg.toml": b"format = 2\n", "pkg.local/hook.py": b"x = 1\n", "install.cmd": b"@echo off\r\n", "empty.txt": b""}
 
@@ -192,11 +189,11 @@ def test_differing_files_lists_changed_missing_and_extra() -> None:
 
 
 def test_a_distribution_copy_of_a_registry_version_is_verified_against_the_published_fingerprint(tmp_path: Path) -> None:
-    """The real registry's qbittorrent version matches its published fingerprint, and one changed file in a copy is refused."""
+    """A version of a registry matches the fingerprint the registry publishes, and one changed file in a copy is refused."""
     snapshot = build_snapshot("official", _registry_tree(tmp_path), "0" * 40)
-    version = snapshot.entry("qbittorrent").versions[0]
+    version = snapshot.entry("tool").versions[0]
     assert version.fingerprint is not None
-    copy = tmp_path / "distribution" / "qbittorrent" / version.name
+    copy = tmp_path / "distribution" / "tool" / version.name
     shutil.copytree(version.path, copy)
 
     assert verify_directory(copy, version.fingerprint, reference=version.path) == []
@@ -209,11 +206,15 @@ def test_a_distribution_copy_of_a_registry_version_is_verified_against_the_publi
 
 
 def _registry_tree(tmp_path: Path) -> Path:
-    """Lay the snapshot out as the catalog's registry cache expects (``pkgs`` and ``registry.toml``)."""
-    tree = tmp_path / "tree"
-    shutil.copytree(SNAPSHOT, tree / "pkgs", ignore=shutil.ignore_patterns("_registry.toml"))
-    shutil.copyfile(SNAPSHOT / "_registry.toml", tree / "registry.toml")
-    return tree
+    """Lay out a registry of one package as the catalog's registry cache expects it (``pkgs`` and ``registry.toml``)."""
+    pinned = f'format = 2\n[source]\ndownload_url = "https://vendor.example/tool-1.0.0.zip"\nsha256 = "{"a" * 64}"\nsha256_from = "registry"\n'
+    version = build(tmp_path / "tree" / "pkgs" / "tool" / "1.0.0", {
+        "pkg.toml": pinned.encode(), "install.cmd": b"@echo off\r\n", "manage.cmd": b"@echo off\r\n",
+    })
+    (tmp_path / "tree" / "registry.toml").write_text(
+        f'format = 2\nname = "official"\n\n[fingerprints]\n"tool/1.0.0" = "{fingerprint_directory(version)}"\n', encoding="utf-8", newline="\n"
+    )
+    return tmp_path / "tree"
 
 
 def test_a_tree_with_too_many_files_or_bytes_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -5,12 +5,12 @@ Such a registry has the old file in every version directory. The registry tool's
 nothing. `validate` names a version directory that still carries the old name and tells the maintainer to run `launchers`.
 The behaviour belongs to old registries only; the folder README gives the condition that ends these tests.
 
-Real: the registry tool and validator, real files. Out of scope: the install engine.
+Real: the registry tool and validator, and a registry of two packages written for the test (a tracker and one pinned version).
+Out of scope: the install engine.
 """
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 import pytest
@@ -20,18 +20,17 @@ from gupkg.services.fingerprint import fingerprint_directory
 from gupkg_registry.cli import main
 from gupkg_registry.layout import read_registry_file, write_registry_file
 from gupkg_registry.validate import validate_registry
-from tests.support.http_fixtures import FIXTURES
+from tests.support.registry_tool import valid_registry
 
-VERSION = "qbittorrent/5.2.3"
+VERSION = "gizmo/10.02"
 TRACKER = "gh/_check_updates"
 
 pytestmark = pytest.mark.unit
 
 
 def old_layout_registry(tmp_path: Path) -> Path:
-    """Copy the snapshot and give it the old launcher name in a version and in a tracker; return its root."""
-    root = tmp_path / "registry"
-    shutil.copytree(FIXTURES / "registry_100", root)
+    """Build a small registry and give it the old launcher name in a version and in a tracker; return its root."""
+    root = valid_registry(tmp_path)
     (root / VERSION / "manage.cmd").rename(root / VERSION / "gupkg-tui.cmd")
     (root / TRACKER / "gupkg-tui.cmd").write_bytes(b"@echo off\r\n")
     settings = read_registry_file(root)

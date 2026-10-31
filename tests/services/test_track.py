@@ -67,8 +67,8 @@ def requested(system: FakeSystem, method: str | None = None) -> list[str]:
 def test_each_provider_finds_the_newest_version_and_the_download_address(system: FakeSystem, tmp_path: Path, kind: str) -> None:
     """The newest version and the expanded download address come out in the pinned version, with any digest the vendor gave.
 
-    The vendor answers list an older version, a newer one written with a longer number, and what a real listing holds
-    besides (another system's file, an unstable release), so the version order and the selection rules are on the path.
+    Where a vendor lists several versions, its answers include older ones (`1.9` beside `1.10`) and entries that must be
+    passed over (another system's file, an unstable release), so the version order and the selection rules are on the path.
     The pinned version is an ordinary version: no `[track]`, an address with no template left, a checksum only when the
     provider found one, and it passes the package checker as it would be written to the registry.
     """

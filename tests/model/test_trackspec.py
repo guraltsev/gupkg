@@ -130,4 +130,3 @@ def test_select_each_is_refused_where_it_has_nothing_to_try_and_unknown_selects_
     """`each` needs a later step to try its candidates against, and only max, first, unique and each are values of `select`."""
     with pytest.raises(ManifestError, match=message):
         parse(track)
-

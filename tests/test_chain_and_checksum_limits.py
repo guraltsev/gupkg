@@ -13,8 +13,6 @@ Mocked: ``FakeSystem`` serves synthetic pages. Out of scope: the live vendors (m
 
 from __future__ import annotations
 
-import subprocess
-import sys
 import tomllib
 from pathlib import Path
 
@@ -26,12 +24,11 @@ from gupkg.report.events import Warning, use_reporter
 from gupkg.services.checksum import ChecksumDiscoveryError
 from gupkg.services.track import TrackError, run_tracker
 from gupkg.services.track.page import MAX_CHAIN_REQUESTS, ChainBudgetExceeded
-from gupkg.system import regex_worker
 from gupkg.system.fake import FakeHttp, FakeSystem, ProcessCall
 from gupkg.system.port import ProcessResult
 from gupkg_registry.layout import write_registry_file
-from tests.support.http_fixtures import environment, load_case, tracker_manifest
-from tests.support.registry_tool import Git, machine, registry_of, run_cli, zip_bytes
+from tests.support.registry_tool import ANSWERS, SUMS, TRACKERS, Git, machine, registry_of, run_cli, zip_bytes
+from tests.support.track import environment, parse_tracker, real_regex_worker
 
 pytestmark = pytest.mark.process
 
@@ -52,15 +49,6 @@ class Collect:
 def run(text: str, system: FakeSystem, tmp_path: Path):
     """Parse the tracker *text* and run it."""
     return run_tracker(parse_manifest(text, ManifestKind.TRACKER), environment(system, tmp_path))
-
-
-def real_worker(call: ProcessCall) -> ProcessResult:
-    """Run the real regex worker for *call* (for doubles that only want to change one of the answers)."""
-    done = subprocess.run(
-        [sys.executable, "-I", "-S", "-s", "-B", str(Path(regex_worker.__file__))],
-        input=call.input_text, capture_output=True, text=True, check=False,
-    )
-    return ProcessResult(done.returncode, done.stdout, done.stderr)
 
 
 # -- the chain: one each, a request budget -------------------------------------------------------------------
@@ -137,7 +125,7 @@ def test_an_optional_step_whose_pattern_runs_out_of_time_stops_the_check(tmp_pat
         calls.append(1)
         if len(calls) >= 2:
             raise TimeoutError("deadline")
-        return real_worker(call)
+        return real_regex_worker(call)
 
     system.processes["regex-worker"] = worker
 
@@ -147,26 +135,23 @@ def test_an_optional_step_whose_pattern_runs_out_of_time_stops_the_check(tmp_pat
 
 # -- the optional checksum source ------------------------------------------------------------------------------------
 
-SUMS_URL = "https://ftp.gnu.org/gnu/emacs/windows/emacs-30/emacs-30.2-sha256sums.txt"
-
-
 @pytest.mark.parametrize(
     ("answer", "kind"),
     [
         pytest.param(FakeHttp("", 404), "not found", id="404"),
         pytest.param(FakeHttp("", 500), "fetch failed", id="500"),
-        pytest.param(FakeHttp(f"{'a' * 64}  emacs-30.2-no-deps.zip\n"), "not listed", id="archive-not-listed"),
+        pytest.param(FakeHttp(f"{'a' * 64}  editor-30.2-other.zip\n"), "not listed", id="archive-not-listed"),
     ],
 )
 def test_an_optional_checksum_that_holds_nothing_is_waived_and_says_how(tmp_path: Path, answer: FakeHttp, kind: str) -> None:
     """The version is found without a checksum; the kind of absence is in a warning and in the result's notes."""
     system = FakeSystem(tmp_path / "machine")
-    system.urls.update(load_case("index_emacs"))
-    system.urls[SUMS_URL] = answer
+    system.urls.update(ANSWERS["index_editor"])
+    system.urls[SUMS] = answer
     reporter = Collect()
 
     with use_reporter(reporter):
-        result = run_tracker(tracker_manifest("emacs"), environment(system, tmp_path, package="emacs"))
+        result = run_tracker(parse_tracker(TRACKERS["editor"]), environment(system, tmp_path, package="editor"))
 
     assert result.version == "30.2" and result.checksum is None
     assert len(result.notes) == 1 and f"({kind})" in result.notes[0]
@@ -176,23 +161,23 @@ def test_an_optional_checksum_that_holds_nothing_is_waived_and_says_how(tmp_path
 def test_a_fetch_failure_without_a_status_is_reported_as_a_failed_fetch(tmp_path: Path) -> None:
     """A source that cannot be reached at all (the fake has no answer for the address) is waived as ``fetch failed``."""
     system = FakeSystem(tmp_path / "machine")
-    system.urls.update(load_case("index_emacs"))
-    del system.urls[SUMS_URL]
+    system.urls.update(ANSWERS["index_editor"])
+    del system.urls[SUMS]
 
-    result = run_tracker(tracker_manifest("emacs"), environment(system, tmp_path, package="emacs"))
+    result = run_tracker(parse_tracker(TRACKERS["editor"]), environment(system, tmp_path, package="editor"))
 
     assert result.checksum is None and "(fetch failed)" in result.notes[0]
 
 
-@pytest.mark.parametrize("line", ["not-a-digest  emacs-30.2-UCRT64.zip", f"{'z' * 64}  emacs-30.2-UCRT64.zip", f"{'a' * 63}  emacs-30.2-UCRT64.zip"])
+@pytest.mark.parametrize("line", ["not-a-digest  editor-30.2-win.zip", f"{'z' * 64}  editor-30.2-win.zip", f"{'a' * 63}  editor-30.2-win.zip"])
 def test_a_malformed_digest_line_is_an_error_even_when_the_source_is_optional(tmp_path: Path, line: str) -> None:
     """Optional means the source may be absent, not that garbage is accepted: the check stops and names the entry."""
     system = FakeSystem(tmp_path / "machine")
-    system.urls.update(load_case("index_emacs"))
-    system.urls[SUMS_URL] = FakeHttp(line + "\n")
+    system.urls.update(ANSWERS["index_editor"])
+    system.urls[SUMS] = FakeHttp(line + "\n")
 
     with pytest.raises(ChecksumDiscoveryError, match="not a SHA-256"):
-        run_tracker(tracker_manifest("emacs"), environment(system, tmp_path, package="emacs"))
+        run_tracker(parse_tracker(TRACKERS["editor"]), environment(system, tmp_path, package="editor"))
 
 
 # -- no tracker keys in a version -----------------------------------------------------------------------------------------
@@ -201,15 +186,15 @@ def test_a_malformed_digest_line_is_an_error_even_when_the_source_is_optional(tm
 def test_a_rendered_version_has_no_checksum_table_and_the_checker_refuses_one_that_has(tmp_path: Path) -> None:
     """The pinned manifest drops the tracker-only ``[source.checksum]``; a version directory that carries one is an error."""
     system = FakeSystem(tmp_path / "machine")
-    system.urls.update(load_case("index_emacs"))
-    manifest = tracker_manifest("emacs")
-    result = run_tracker(manifest, environment(system, tmp_path, package="emacs"))
+    system.urls.update(ANSWERS["index_editor"])
+    manifest = parse_tracker(TRACKERS["editor"])
+    result = run_tracker(manifest, environment(system, tmp_path, package="editor"))
 
     pinned = render_pinned(manifest, result)
     text = manifest_to_toml(pinned)
 
     assert "checksum" not in tomllib.loads(text)["source"] and pinned.source.sha256 is not None
-    version = tmp_path / "emacs" / "30.2"
+    version = tmp_path / "editor" / "30.2"
     version.mkdir(parents=True)
     (version / "pkg.toml").write_text(text, encoding="utf-8", newline="\n")
     assert check_directory(version).ok
@@ -229,33 +214,33 @@ def test_update_prints_the_unversioned_marker_and_the_commit_message_names_the_p
 ) -> None:
     """For a package listed as unversioned the output says so and the auto-push commit message has its own section."""
     git = Git()
-    root = registry_of(tmp_path, "autoruns")
-    write_registry_file(root, {"format": 2, "name": "t", "description": "t", "unversioned": ["autoruns"]})
-    body = zip_bytes(tmp_path, "a.zip", {"Autoruns64.exe": "a", "autoruns.chm": "c"})
-    system = machine(tmp_path, "last_modified_autoruns", git=git)
-    url = "https://download.sysinternals.com/files/Autoruns.zip"
-    system.urls[url] = FakeHttp(body, 200, load_case("last_modified_autoruns")[url].headers)  # the same address answers the date and the file
+    root = registry_of(tmp_path, "stamped")
+    write_registry_file(root, {"format": 2, "name": "t", "description": "t", "unversioned": ["stamped"]})
+    body = zip_bytes(tmp_path, "a.zip", {"Stamped64.exe": "a", "stamped.chm": "c"})
+    system = machine(tmp_path, "last_modified_stamped", git=git)
+    url = "https://download.example/files/Stamped.zip"
+    system.urls[url] = FakeHttp(body, 200, ANSWERS["last_modified_stamped"][url].headers)  # the same address answers the date and the file
 
-    status = run_cli(root, system, tmp_path, "update", "autoruns", "--auto-push", "--allow-computed")
+    status = run_cli(root, system, tmp_path, "update", "stamped", "--auto-push", "--allow-computed")
 
     assert status == 0
     assert "[UNVERSIONED]" in capsys.readouterr().out
     message = next(call.argv[3] for call in git.calls if call.argv[1] == "commit")
-    assert "has no version in it" in message and "- autoruns " in message
+    assert "has no version in it" in message and "- stamped " in message
 
 
 def test_a_waived_checksum_note_reaches_the_registry_tool_output(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """When an optional checksum source held nothing, the tool's line for the version says which absence it was."""
-    root = registry_of(tmp_path, "emacs")
+    root = registry_of(tmp_path, "editor")
     write_registry_file(root, {"format": 2, "name": "t", "description": "t"})
     system = FakeSystem(tmp_path / "machine")
-    system.urls.update(load_case("index_emacs"))
-    system.urls[SUMS_URL] = FakeHttp("", 404)
-    system.urls["https://ftp.gnu.org/gnu/emacs/windows/emacs-30/emacs-30.2-UCRT64.zip"] = FakeHttp(
-        zip_bytes(tmp_path, "e.zip", {"bin/runemacs.exe": "r", "bin/emacs.exe": "e"})
+    system.urls.update(ANSWERS["index_editor"])
+    system.urls[SUMS] = FakeHttp("", 404)
+    system.urls["https://ftp.example/editor/editor-30/editor-30.2-win.zip"] = FakeHttp(
+        zip_bytes(tmp_path, "e.zip", {"bin/editorw.exe": "r", "bin/editor.exe": "e"})
     )
 
-    status = run_cli(root, system, tmp_path, "update", "emacs")
+    status = run_cli(root, system, tmp_path, "update", "editor")
 
     output = capsys.readouterr().out
     assert status == 0 and "(not found)" in output and "[REVIEW]" in output
