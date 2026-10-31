@@ -15,14 +15,12 @@ Out of scope: the lifecycle commands (``test_cli_lifecycle.py``) and the registr
 
 from __future__ import annotations
 
-import io
 import json
-import zipfile
 from pathlib import Path
 
 import pytest
 
-from gupkg.tomlio import dumps
+from tests.support.archive import registry_zip
 from tests.support.cli import CliWorld
 from tests.support.engine import pkg_text
 
@@ -40,16 +38,6 @@ def cli_world_with_tool_and_registry(tmp_path: Path) -> CliWorld:
     machine.publish("tool", "2.0.0", tables=FULL)
     machine.registry({"alpha": {"versions": {"1.0.0": None}}, "beta": {"versions": {"2.0.0": None}}})
     return machine
-
-
-def registry_zip(files: dict[str, str]) -> bytes:
-    """Return the ZIP of a registry repository with format 2 and *files*."""
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w") as archive:
-        archive.writestr("repo-main/_registry.toml", dumps({"format": 2, "name": "main"}))
-        for name, text in files.items():
-            archive.writestr(f"repo-main/{name}", text)
-    return buffer.getvalue()
 
 
 @pytest.mark.parametrize(

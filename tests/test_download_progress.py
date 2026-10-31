@@ -22,23 +22,14 @@ from gupkg.report.events import MultiReporter, Progress, use_reporter
 from gupkg.services.http import HttpClient
 from gupkg.system.fake import FakeResponse, FakeSystem
 from tests.support.cli import CliWorld
+from tests.support.reporters import Collector
 
 pytestmark = pytest.mark.unit
 
 
-class _Collector:
-    """Collect every event handed to it, in order."""
-
-    def __init__(self) -> None:
-        self.events: list = []
-
-    def handle(self, event) -> None:
-        self.events.append(event)
-
-
 def download(system: FakeSystem, tmp_path: Path, content: bytes, *reporters) -> list[Progress]:
     """Download a fixture through the HTTP client with *reporters* installed; return the progress events it sent."""
-    collector = _Collector()
+    collector = Collector()
     with use_reporter(MultiReporter([collector, *reporters])):
         HttpClient(system, cache_dir=tmp_path / "cache", env={}, retries=0).download("https://example.invalid/payload", label="Downloading update")
     return [event for event in collector.events if isinstance(event, Progress)]

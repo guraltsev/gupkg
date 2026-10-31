@@ -21,11 +21,11 @@ from unittest import mock
 
 from gupkg import cli
 from gupkg.selfmgmt.location import RunningGupkg
-from tests.support.engine import World
+from tests.support.engine import World, pkg_text
 
 
-class TerminalInput(io.StringIO):
-    """A standard input that claims to be a console (``isatty``), as when a person runs the command in a window."""
+class Terminal(io.StringIO):
+    """A stream that claims to be a console (``isatty``) and holds what a person types, as when a person runs the command in a window."""
 
     def isatty(self) -> bool:
         """Report a console."""
@@ -87,7 +87,7 @@ class CliWorld(World):
         """Run ``gupkg <argv>`` and return its exit code and output; *stdin* is what a question would read (``None``: reading it fails the test); *tty* makes it look like a console."""
         out, err = io.StringIO(), io.StringIO()
         original = sys.stdin
-        sys.stdin = ForbiddenInput() if stdin is None else (TerminalInput if tty else io.StringIO)(stdin)
+        sys.stdin = ForbiddenInput() if stdin is None else (Terminal if tty else io.StringIO)(stdin)
 
         # The process PATH is pinned to a folder with nothing in it: a git or program on the developer's PATH must not decide a test.
         try:
@@ -96,3 +96,11 @@ class CliWorld(World):
         finally:
             sys.stdin = original
         return CliResult(code, out.getvalue(), err.getvalue())
+
+
+SOURCE = "https://example.org/main.zip"
+
+
+def version_files(name: str, version: str) -> dict[str, str]:
+    """Return the files of one registry version (a hashed download)."""
+    return {f"{name}/{version}/pkg.toml": pkg_text(f"https://example.org/{name}-{version}.zip", sha256="a" * 64)}

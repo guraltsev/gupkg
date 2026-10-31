@@ -16,14 +16,13 @@ Out of scope: the content of each event (``test_event_contract.py``) and the mod
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 import pytest
 
 from gupkg.engine import lifecycle
 from tests.support.cli import CliWorld
-from tests.support.engine import ScriptDouble
+from tests.support.engine import ScriptDouble, current, replace_declared_sha256
 from tests.support.mode import tree_snapshot
 
 pytestmark = pytest.mark.unit
@@ -138,9 +137,7 @@ def test_the_plan_marks_the_checksum_present_or_missing(cli_world_with_tool_upda
 def test_a_malformed_hash_is_never_planned_and_never_skippable(cli_world_with_tool_update: CliWorld) -> None:
     """A declared hash that is not 64 hexadecimal digits makes the version invalid: no plan, and --skip-checksum does not help."""
     folder = cli_world_with_tool_update.publish("fresh", "1.0.0", hashed=True)
-    text = folder.joinpath("pkg.toml").read_text(encoding="utf-8")
-    start = text.index('sha256 = "') + len('sha256 = "')
-    folder.joinpath("pkg.toml").write_text(text[:start] + "not-a-hash" + text[start + 64:], encoding="utf-8")
+    replace_declared_sha256(folder, "not-a-hash")
 
     planned = cli_world_with_tool_update.cli("install", "fresh", "--plan", "--json")
     skipped = cli_world_with_tool_update.cli("install", "fresh", "--skip-checksum", "--json")
@@ -155,9 +152,7 @@ def test_a_malformed_hash_is_never_planned_and_never_skippable(cli_world_with_to
 def test_a_named_malformed_version_has_the_same_stable_code(cli_world_with_tool_update: CliWorld) -> None:
     """`name@version` of a version whose declared hash is malformed is `invalid-checksum` too, with the version and the field."""
     folder = cli_world_with_tool_update.publish("fresh", "1.0.0", hashed=True)
-    text = folder.joinpath("pkg.toml").read_text(encoding="utf-8")
-    start = text.index('sha256 = "') + len('sha256 = "')
-    folder.joinpath("pkg.toml").write_text(text[:start] + "zz" + text[start + 2:], encoding="utf-8")
+    replace_declared_sha256(folder, "zz", length=2)
 
     result = cli_world_with_tool_update.cli("install", "fresh@1.0.0", "--json")
 
@@ -169,9 +164,7 @@ def test_a_bare_install_that_falls_back_to_an_older_version_names_the_invalid_ne
     """When the newest version directory is invalid, `install tool` installs the older valid one and says which one it skipped."""
     cli_world_with_tool_update.publish("fresh", "1.0.0")
     newer = cli_world_with_tool_update.publish("fresh", "2.0.0")
-    text = newer.joinpath("pkg.toml").read_text(encoding="utf-8")
-    start = text.index('sha256 = "') + len('sha256 = "')
-    newer.joinpath("pkg.toml").write_text(text[:start] + "zz" + text[start + 2:], encoding="utf-8")
+    replace_declared_sha256(newer, "zz", length=2)
 
     refused = cli_world_with_tool_update.cli("install", "fresh", "--json")
 
@@ -250,12 +243,7 @@ def test_an_events_file_that_is_not_a_plain_name_is_a_usage_error_and_writes_not
     result = cli_world_with_tool_update.cli("update", "tool", "--events-file", name)
 
     assert result.code == 2 and "events file name" in result.err
-    assert tree_snapshot(cli_world_with_tool_update.user) == before and current(cli_world_with_tool_update) == "1.0.0"
-
-
-def current(world: CliWorld) -> str:
-    """Return the version that the user package ``tool`` has active."""
-    return Path(os.path.realpath(world.user / "tool" / "current")).name
+    assert tree_snapshot(cli_world_with_tool_update.user) == before and current(cli_world_with_tool_update.user / "tool") == "1.0.0"
 
 
 class StopDouble(ScriptDouble):

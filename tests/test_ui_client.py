@@ -26,12 +26,6 @@ from tests.support.ui import FakeGupkg, entry, head, result, until
 pytestmark = pytest.mark.process
 
 
-@pytest.fixture
-def fake(tmp_path: Path) -> FakeGupkg:
-    """A scripted ``gupkg`` double with its own folders under the test's temporary folder."""
-    return FakeGupkg(tmp_path)
-
-
 def call(client: Client, args, logs: Path | None, **options):
     """Run ``client.call`` to the end."""
     return asyncio.run(client.call(args, events_dir=logs, **options))

@@ -20,7 +20,7 @@ from gupkg_manager.batch import check_all, check_updates_all, pick, update_all
 from gupkg_ui.interaction import Interaction
 from gupkg_ui.plans import PackageRow
 from gupkg_ui.session import BatchOutcome, BatchSession
-from tests.support.ui import FakeGupkg, ListSink, until, entry, make_env, plan_doc, plan_entry, plan_failure, result
+from tests.support.ui import FakeGupkg, ListSink, until, entry, make_env, plan_doc, plan_entry, plan_failure, result, logs_of, schedule_run
 
 pytestmark = pytest.mark.process
 
@@ -28,19 +28,6 @@ pytestmark = pytest.mark.process
 def rows_for(base: Path, *names: str) -> list[PackageRow]:
     """Return outdated inventory rows for *names*, with package folders under the test's root."""
     return [PackageRow(name, "outdated", "1.0.0", "2.0.0", str(base / "roots" / "user" / name), None) for name in names]
-
-
-def logs_of(base: Path) -> str:
-    """Return the log folder of the root, where the double writes its events file."""
-    return str(base / "roots" / "user" / ".gupkg" / "logs")
-
-
-def schedule_run(fake: FakeGupkg, base: Path, names: list[str], *, doc_entries=None, **extra) -> None:
-    """Schedule the next ``update`` call of the double: it succeeds for *names* in the root."""
-    entries = doc_entries if doc_entries is not None else [entry(name) for name in names]
-    child = result("update", entries)
-    events = {"dir": logs_of(base), "result": child, "packages": [{"name": name, "path": str(base / "roots" / "user" / name), "records": []} for name in names], **extra}
-    fake.respond("update", doc=child, events=events)
 
 
 def run_flow(coroutine_factory, env) -> tuple[BatchOutcome, ListSink]:
@@ -58,12 +45,6 @@ def update(env, rows, interaction: Interaction):
 def update_calls(fake: FakeGupkg) -> list[dict]:
     """Return the non-plan ``update`` calls the double received."""
     return [call for call in fake.calls() if call["key"] == "update"]
-
-
-@pytest.fixture
-def fake(tmp_path: Path) -> FakeGupkg:
-    """A scripted ``gupkg`` double."""
-    return FakeGupkg(tmp_path)
 
 
 def test_an_update_of_three_packages_makes_one_plan_one_confirmation_and_one_call_with_all_three_targets(fake: FakeGupkg, tmp_path: Path) -> None:

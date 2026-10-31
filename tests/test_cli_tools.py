@@ -17,7 +17,6 @@ Out of scope: the lifecycle commands themselves (``test_cli_lifecycle.py``) and 
 from __future__ import annotations
 
 import hashlib
-import io
 import json
 import os
 import re
@@ -30,30 +29,15 @@ from gupkg.engine.receipts import read_receipt
 from gupkg.launchers import launcher_text
 from gupkg.selfmgmt.location import RunningGupkg
 from gupkg.system.port import Mode
-from gupkg.tomlio import dumps, read_toml
-from tests.support.cli import CliWorld
+from gupkg.tomlio import read_toml
+from tests.support.archive import registry_zip
+from tests.support.cli import SOURCE, CliWorld, version_files
 from tests.support.engine import pkg_text, zip_bytes
 from tests.support.mode import tree_snapshot
 
 pytestmark = pytest.mark.unit
 
 FULL = '[[shim]]\nname = "tool"\ntarget = "$App\\\\app.exe"\n'
-SOURCE = "https://example.org/main.zip"
-
-
-def registry_zip(files: dict[str, str]) -> bytes:
-    """Return the ZIP of a registry repository with format 2 and *files*."""
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w") as archive:
-        archive.writestr("repo-main/_registry.toml", dumps({"format": 2, "name": "main"}))
-        for name, text in files.items():
-            archive.writestr(f"repo-main/{name}", text)
-    return buffer.getvalue()
-
-
-def version_files(name: str, version: str) -> dict[str, str]:
-    """Return the files of one registry version (a hashed download)."""
-    return {f"{name}/{version}/pkg.toml": pkg_text(f"https://example.org/{name}-{version}.zip", sha256="a" * 64)}
 
 
 # ---------------------------------------------------------------------------

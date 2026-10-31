@@ -13,6 +13,7 @@ from __future__ import annotations
 import pytest
 
 from tests.support.cli import CliWorld
+from tests.support.engine import replace_declared_sha256
 
 pytestmark = pytest.mark.unit
 
@@ -60,10 +61,7 @@ def test_bundled_removes_the_bundled_gupkg_of_old_versions_and_a_plain_cleanup_k
 def test_skip_checksum_never_waives_a_hash_that_does_not_match(cli_world: CliWorld) -> None:
     """A declared hash that the download does not match is exit code 3 whatever the flag says, and no App is left."""
     folder = cli_world.publish("tool", "1.0.0", tables=SHIM)
-    manifest = folder / "pkg.toml"
-    text = manifest.read_text(encoding="utf-8")
-    start = text.index('sha256 = "') + len('sha256 = "')
-    manifest.write_text(text[:start] + ("0" * 64 if text[start:start + 64] != "0" * 64 else "1" * 64) + text[start + 64:], encoding="utf-8")
+    replace_declared_sha256(folder)
 
     plain = cli_world.cli("install", "tool", "--json")
     skipped = cli_world.cli("install", "tool", "--skip-checksum=cli", "--json")

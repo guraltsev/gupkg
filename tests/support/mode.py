@@ -22,13 +22,29 @@ from tests.support.catalog import activate, version_text, write_version
 
 
 class Machine:
-    """A temporary machine: ``system`` and ``user`` roots, an environment and an app settings file."""
+    """A temporary machine: ``system`` and ``user`` roots, an environment and an app settings file.
 
-    def __init__(self, base: Path, *, elevated: bool = False, untrusted: set[Path] | None = None) -> None:
+    Parameters
+    ----------
+    base : Path
+        The temporary folder everything lives under.
+    elevated : bool
+        Whether the fake machine reports an elevated process.
+    untrusted : set[Path] | None
+        Folders that the fake machine reports as changeable by standard users.
+    installed : bool
+        Whether the running gupkg is the one installed in the system root (its ``$App`` folder is
+        ``<system root>\\gupkg\\1.0.0\\App``). By default it is a source tree and ``$App`` is ``<base>\\app``.
+    """
+
+    def __init__(
+        self, base: Path, *, elevated: bool = False, untrusted: set[Path] | None = None, installed: bool = False
+    ) -> None:
         self.base = base
+        self.installed = installed
         self.system_root = base / "sys" / "opt"
         self.user_root = base / "home" / "opt"
-        self.app = base / "app"
+        self.app = self.system_root / "gupkg" / "1.0.0" / "App" if installed else base / "app"
         self.env = {
             "USERPROFILE": str(base / "home"),
             "APPDATA": str(base / "appdata"),
@@ -55,7 +71,9 @@ class Machine:
 
     @property
     def location(self) -> RunningGupkg:
-        """A stand-in for the running gupkg: a source tree whose ``$App`` folder is this machine's app folder."""
+        """A stand-in for the running gupkg: the one installed in the system root, or a source tree; its ``$App`` folder is this machine's app folder."""
+        if self.installed:
+            return RunningGupkg("installed", self.app / "gupkg", (self.app,), self.app.parent, self.system_root, self.app)
         return RunningGupkg("source", self.base / "gupkg-src" / "gupkg", (), app_dir=self.app)
 
     def scope(self, *, settings_path: Path | None = None, root_option: Path | None = None) -> Scope:

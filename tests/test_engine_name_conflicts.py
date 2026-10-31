@@ -21,14 +21,9 @@ from gupkg.catalog.record import write_install_record
 from gupkg.model.state import Effect, InstallRecord
 from gupkg.system.port import Mode
 from tests.support.engine import World
-from tests.support.mode import tree_snapshot
+from tests.support.names import ENV, SHIM, SHORTCUT, WRAPPER, state
 
 pytestmark = pytest.mark.unit
-
-SHIM = '[[shim]]\nname = "{name}"\ntarget = "$App\\\\app.exe"\n'
-SHORTCUT = '[[shortcut]]\nname = "{name}"\ntarget = "$App\\\\app.exe"\n'
-WRAPPER = '[[shim]]\nname = "{name}"\ncontent = "@echo off"\n'
-ENV = '[[env]]\nname = "{name}"\nvalue = "$App"\n'
 
 # (id, table, name in the installed package, name in the new one, words of the message)
 KINDS = [
@@ -40,16 +35,6 @@ KINDS = [
     pytest.param(ENV, "TOOL_HOME", "TOOL_HOME", "environment variable 'TOOL_HOME'", id="environment-variable"),
     pytest.param(ENV, "TOOL_HOME", "tool_home", "environment variable 'tool_home'", id="environment-variable-letter-case"),
 ]
-
-
-def state(world: World) -> dict[str, object]:
-    """Return everything a refused run must leave alone: the root (without run logs), the bin folder, shortcuts, environment, PATH."""
-    root = {key: value for key, value in tree_snapshot(world.user).items() if "logs" not in key}
-    scope = Mode.USER
-    return {
-        "root": root, "bin": tree_snapshot(world.fake.scope_folders(scope).bin_dir), "shortcuts": sorted(map(str, world.fake.shortcuts())),
-        "env": sorted(world.fake.env_values(scope)), "path": list(world.fake.get_path(scope)),
-    }
 
 
 def install_first(world: World, table: str, name: str) -> None:

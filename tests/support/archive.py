@@ -15,6 +15,7 @@ from pathlib import Path
 
 from gupkg.extractors import find_7z
 from gupkg.system.fake import FakeSystem
+from gupkg.tomlio import dumps
 
 
 def make_zip(path: Path, members: dict[str, bytes | str]) -> Path:
@@ -65,3 +66,13 @@ def tree(root: Path) -> dict[str, str]:
 def sums_manifest(files: dict[str, str]) -> str:
     """Return the text of a ``<sha256>  <path>`` manifest for *files*."""
     return "".join(f"{hashlib.sha256(text.encode()).hexdigest()}  {name}\n" for name, text in sorted(files.items()))
+
+
+def registry_zip(files: dict[str, str]) -> bytes:
+    """Return the ZIP of a registry repository with format 2 and *files*."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("repo-main/_registry.toml", dumps({"format": 2, "name": "main"}))
+        for name, text in files.items():
+            archive.writestr(f"repo-main/{name}", text)
+    return buffer.getvalue()

@@ -219,6 +219,30 @@ def cli_elevated_world(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
+# The scripted ``gupkg`` of the UI program tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def fake(tmp_path: Path):
+    """A scripted ``gupkg`` double (``FakeGupkg``) with its own folders under ``tmp_path``; the test schedules its responses."""
+    from tests.support.ui import FakeGupkg
+
+    return FakeGupkg(tmp_path)
+
+
+@pytest.fixture
+def recorded_fake(fake, tmp_path: Path):
+    """``fake`` that answers ``list``, ``info`` and ``registry status`` with the recorded documents of the real CLI (two outdated packages)."""
+    from tests.support.ui import fixture_json, registry_doc
+
+    fake.respond("list", doc=fixture_json("list.json", tmp_path))
+    fake.respond("info", doc=fixture_json("info_alpha.json", tmp_path))
+    fake.respond("registry status", doc=registry_doc("4f2a9c1d00"))
+    return fake
+
+
+# ---------------------------------------------------------------------------
 # The environment that decides how output looks
 # ---------------------------------------------------------------------------
 

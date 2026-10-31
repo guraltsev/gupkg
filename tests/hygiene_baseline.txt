@@ -1,14 +1,5 @@
 # Known violations of the test-hygiene rules H1-H9 (_docs/tests_hygiene.md section 5), one per line: rule|file|test.
 # This file may only shrink: delete a line when you fix its violation, never add one.
-H1|tests/test_chain_and_checksum_limits.py|
-H1|tests/test_checksum_fetch.py|
-H1|tests/test_engine_unowned_files.py|
-H1|tests/test_manager_cli.py|
-H1|tests/test_registry_trackers.py|
-H1|tests/test_scope_isolation.py|
-H1|tests/test_ui_name_conflict.py|
-H1|tests/test_ui_startup.py|
-H1|tests/test_ui_unowned_file.py|
 H2|tests/test_cli_machine_interface.py|
 H2|tests/test_elevated_runtime.py|
 H2|tests/test_engine_name_conflicts.py|

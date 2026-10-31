@@ -19,7 +19,7 @@ from gupkg.scope import NOT_ADMIN_ONLY_REFUSAL
 from gupkg.system.port import Mode
 from gupkg_ui.startup import StartupError, build_environment, shorten_path
 from gupkg.settingsload import SOURCE_ROOT_OPTION
-from tests.test_scope import Machine
+from tests.support.mode import Machine
 
 pytestmark = pytest.mark.unit
 
@@ -31,8 +31,8 @@ def environment(machine: Machine):
 
 def test_an_elevated_run_with_an_admin_only_gupkg_starts_and_its_scope_is_the_systems(tmp_path: Path) -> None:
     """No refusal for the elevated shell: the program manages the system root, and says so."""
-    machine = Machine(tmp_path, elevated=True)
-    machine.app_settings()
+    machine = Machine(tmp_path, installed=True, elevated=True)
+    machine.write_app_settings()
 
     env = environment(machine)
 
@@ -42,8 +42,8 @@ def test_an_elevated_run_with_an_admin_only_gupkg_starts_and_its_scope_is_the_sy
 
 def test_a_normal_run_manages_the_users_root(tmp_path: Path) -> None:
     """A normal token gives the user scope, and the label names it."""
-    machine = Machine(tmp_path)
-    machine.app_settings()
+    machine = Machine(tmp_path, installed=True)
+    machine.write_app_settings()
 
     env = environment(machine)
 
@@ -52,8 +52,8 @@ def test_a_normal_run_manages_the_users_root(tmp_path: Path) -> None:
 
 def test_an_elevated_run_from_a_tree_standard_users_can_change_is_refused_with_the_scopes_message(tmp_path: Path) -> None:
     """The only refusal left: the administrator never runs a gupkg a standard user can change."""
-    machine = Machine(tmp_path, elevated=True, untrusted={tmp_path / "sys" / "opt"})
-    machine.app_settings()
+    machine = Machine(tmp_path, installed=True, elevated=True, untrusted={tmp_path / "sys" / "opt"})
+    machine.write_app_settings()
 
     with pytest.raises(StartupError) as refused:
         environment(machine)
@@ -63,8 +63,8 @@ def test_an_elevated_run_from_a_tree_standard_users_can_change_is_refused_with_t
 
 def test_root_names_the_root_of_the_run_and_is_relayed_to_every_call(tmp_path: Path) -> None:
     """``--root DIR`` is row 1 of the root chain: the scope is on that folder, says so, and the client passes the option to every ``gupkg`` call."""
-    machine = Machine(tmp_path)
-    machine.app_settings()
+    machine = Machine(tmp_path, installed=True)
+    machine.write_app_settings()
     chosen = tmp_path / "chosen"
     chosen.mkdir()
 
@@ -78,8 +78,8 @@ def test_an_elevated_run_with_a_root_that_standard_users_can_change_stops_at_sta
     """System mode needs an admin-only root: the scope refuses it (StartupError, exit code 2) and the folder is left as it was."""
     chosen = tmp_path / "user-writable"
     chosen.mkdir()
-    machine = Machine(tmp_path, elevated=True, untrusted={chosen})
-    machine.app_settings()
+    machine = Machine(tmp_path, installed=True, elevated=True, untrusted={chosen})
+    machine.write_app_settings()
 
     with pytest.raises(StartupError) as refused:
         build_environment(argparse.Namespace(root=chosen), location=machine.location, system=machine.fake, env=machine.env, command=("gupkg",))
@@ -103,8 +103,8 @@ def test_each_program_stops_at_startup_with_the_scopes_message_for_an_unsuitable
 
     chosen = tmp_path / "user-writable"
     chosen.mkdir()
-    machine = Machine(tmp_path, elevated=True, untrusted={chosen})
-    machine.app_settings()
+    machine = Machine(tmp_path, installed=True, elevated=True, untrusted={chosen})
+    machine.write_app_settings()
     argv = ["--root", str(chosen)] + (["alpha"] if module == "gupkg_tui.cli" else [])
 
     code = importlib.import_module(module).main(argv, location=machine.location, system=machine.fake, env=machine.env, command=("gupkg",))
@@ -115,8 +115,8 @@ def test_each_program_stops_at_startup_with_the_scopes_message_for_an_unsuitable
 @pytest.mark.parametrize("value", ["ask", "refuse", "skip"])
 def test_the_checksum_policy_is_read_from_the_layers_of_the_run(tmp_path: Path, value: str) -> None:
     """``[manager] checksum_missing`` of the app layer (which an elevated run reads too) is the policy, with no per-target rule."""
-    machine = Machine(tmp_path, elevated=True)
-    machine.app_settings(f'[manager]\nchecksum_missing = "{value}"\n')
+    machine = Machine(tmp_path, installed=True, elevated=True)
+    machine.write_app_settings(tables=f'[manager]\nchecksum_missing = "{value}"\n')
 
     assert environment(machine).settings.checksum_policy == value
 
@@ -154,8 +154,8 @@ def test_a_given_root_that_is_missing_or_not_a_folder_stops_at_startup_and_nothi
     chosen = tmp_path / "chosen"
     if kind == "file":
         chosen.write_text("x", encoding="utf-8")
-    machine = Machine(tmp_path)
-    machine.app_settings()
+    machine = Machine(tmp_path, installed=True)
+    machine.write_app_settings()
     argv = ["--root", str(chosen)] + (["alpha"] if module == "gupkg_tui.cli" else [])
 
     code = importlib.import_module(module).main(argv, location=machine.location, system=machine.fake, env=machine.env, command=("gupkg",))
@@ -182,8 +182,8 @@ def test_through_gupkg_a_missing_root_is_reported_by_the_program_and_nothing_is_
     system = FakeSystem(tmp_path / "forward", processes={f"gupkg-{word}.cmd": lambda call: ProcessResult(0)})
     cli.main(["--root", str(chosen), word, *(["alpha"] if word == "tui" else [])], system=system, env={}, location=RunningGupkg("source", tree / "gupkg", (tree,)))
     forwarded = system.foreground_log[0][1:]
-    machine = Machine(tmp_path)
-    machine.app_settings()
+    machine = Machine(tmp_path, installed=True)
+    machine.write_app_settings()
 
     code = importlib.import_module(f"gupkg_{word}.cli").main(forwarded, location=machine.location, system=machine.fake, env=machine.env, command=("gupkg",))
 
@@ -192,8 +192,8 @@ def test_through_gupkg_a_missing_root_is_reported_by_the_program_and_nothing_is_
 
 def test_a_default_or_configured_root_that_does_not_exist_yet_still_starts(tmp_path: Path) -> None:
     """The folder check applies only to a GIVEN ``--root``: the default and ``[roots]`` roots may be missing on a first run."""
-    machine = Machine(tmp_path)
-    machine.app_settings()
+    machine = Machine(tmp_path, installed=True)
+    machine.write_app_settings()
 
     env = environment(machine)
 

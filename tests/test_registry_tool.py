@@ -33,8 +33,7 @@ from gupkg.model.manifest import ManifestKind, manifest_to_toml, parse_manifest
 from gupkg.pkgcheck import check_directory
 from gupkg.report.events import Warning, use_reporter
 from gupkg.services.fingerprint import fingerprint_directory, verify_directory
-from gupkg.system.fake import FakeHttp, FakeSystem, ProcessCall
-from gupkg.system.port import ProcessResult
+from gupkg.system.fake import FakeHttp, FakeSystem
 from gupkg.launchers import launcher_text, write_launchers
 from gupkg.engine.locks import Holder, render_lock
 from gupkg_registry.cli import main
@@ -42,12 +41,11 @@ from gupkg_registry.layout import RegistryFileError, read_registry_file, write_r
 from gupkg_registry.publish import commit_message
 from gupkg_registry.update import Outcome, pin_version, update_registry
 from gupkg_registry.validate import validate_registry
-from tests.support.archive import make_zip
-from tests.support.http_fixtures import FIXTURES, HTTP_CASES, load_case
+from tests.support.registry_tool import SNAPSHOT, Git, machine, registry_of, run_cli, zip_bytes
+from tests.support.http_fixtures import HTTP_CASES, load_case
 
 pytestmark = pytest.mark.process
 
-SNAPSHOT = FIXTURES / "registry_100"
 HWINFO_ZIP = {"HWiNFO64.EXE": "exe", "HWiNFO64.INI": "ini"}
 VOLTA_ZIP = {"volta.exe": "v", "volta-shim.exe": "s", "volta-migrate.exe": "m"}
 
@@ -63,44 +61,6 @@ class Collect:
         self.events.append(event)
 
 
-class Git:
-    """A ``git`` double that records every command and can fail one subcommand."""
-
-    def __init__(self, fail: str | None = None) -> None:
-        """Remember which subcommand (``add``, ``commit`` or ``push``) should exit non-zero."""
-        self.fail = fail
-        self.calls: list[ProcessCall] = []
-
-    def __call__(self, call: ProcessCall) -> ProcessResult:
-        """Record the call and answer with success, or with status 1 for the failing subcommand."""
-        self.calls.append(call)
-        return ProcessResult(1, "", "refused") if call.argv[1] == self.fail else ProcessResult(0)
-
-
-def registry_of(tmp_path: Path, *packages: str, extra: dict[str, str] | None = None) -> Path:
-    """Build a registry in ``tmp_path/registry`` holding the real trackers of *packages* and a fresh ``_registry.toml``."""
-    root = tmp_path / "registry"
-    root.mkdir()
-    for package in packages:
-        shutil.copytree(SNAPSHOT / package / "_check_updates", root / package / "_check_updates")
-    for name, text in (extra or {}).items():
-        target = root / name
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(text, encoding="utf-8", newline="\n")
-    write_registry_file(root, {"format": 2, "name": "test-registry", "description": "A registry for tests."})
-    return root
-
-
-def machine(tmp_path: Path, *cases: str, artifacts: dict[str, bytes] | None = None, git: Git | None = None) -> FakeSystem:
-    """A FakeSystem serving the fixture *cases* and the *artifacts* ``{url: bytes}``, with *git* as the only ``git``."""
-    system = FakeSystem(tmp_path / "machine", processes={"git": git} if git else {})
-    for case in cases:
-        system.urls.update(load_case(case))
-    for url, body in (artifacts or {}).items():
-        system.urls[url] = FakeHttp(body)
-    return system
-
-
 def vendor_page_gone(tmp_path: Path, case: str) -> FakeSystem:
     """A FakeSystem on which every page of fixture *case* answers 404, a permanent failure the HTTP client does not retry.
 
@@ -110,11 +70,6 @@ def vendor_page_gone(tmp_path: Path, case: str) -> FakeSystem:
     for url in load_case(case):
         system.urls[url] = FakeHttp("", 404)
     return system
-
-
-def zip_bytes(tmp_path: Path, name: str, members: dict[str, str]) -> bytes:
-    """Return the bytes of a zip archive of *members*."""
-    return make_zip(tmp_path / name, members).read_bytes()
 
 
 def snapshot_files(root: Path) -> dict[str, bytes]:
@@ -393,11 +348,6 @@ def test_pin_refuses_a_version_that_is_not_a_directory_of_the_registry(tmp_path:
 
 
 # -- git and the command line -------------------------------------------------------------------------------
-
-
-def run_cli(root: Path, system: FakeSystem, tmp_path: Path, *arguments: str) -> int:
-    """Run the command line against *root* with the given system and an empty environment."""
-    return main([*arguments, "--registry", str(root), "--sandbox", str(tmp_path / "sandbox")], system=system, environ={})
 
 
 def git_words(git: Git) -> list[list[str]]:

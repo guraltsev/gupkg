@@ -23,20 +23,11 @@ from gupkg.report.session import RunSession
 from gupkg.system.fake import FakeSystem
 from gupkg.system.port import ProcessResult
 from tests.support.cli import CliResult, CliWorld
+from tests.support.reporters import Collector
 
 pytestmark = pytest.mark.unit
 
 FIXED_TIME = datetime(2026, 10, 22, 10, 15, 0, tzinfo=timezone.utc)
-
-
-class _Collector:
-    """Collect every event handed to it, in order."""
-
-    def __init__(self) -> None:
-        self.events: list = []
-
-    def handle(self, event) -> None:
-        self.events.append(event)
 
 
 def _world(tmp_path: Path, name: str = "Example", **options) -> CliWorld:
@@ -215,7 +206,7 @@ def test_a_log_failure_in_the_middle_of_a_run_is_one_warning_not_a_failed_run(
             return getattr(self.handle, name)
 
     monkeypatch.setattr(logfile, "open", lambda *args, **kwargs: Disk(builtins.open(*args, **kwargs)), raising=False)
-    collector = _Collector()
+    collector = Collector()
     session = RunSession(
         command="check", argv=[], mode="user", elevated=False, version="1.0.0", reporters=[collector],
         clock=lambda: FIXED_TIME,

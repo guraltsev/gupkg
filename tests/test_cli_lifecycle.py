@@ -18,7 +18,6 @@ the reading commands (``test_cli_reading.py``).
 from __future__ import annotations
 
 import json
-import os
 import socket
 from pathlib import Path
 
@@ -28,7 +27,7 @@ from gupkg.catalog.record import read_install_record
 from gupkg.engine.locks import Holder, lock_path, render_lock
 from gupkg.system.port import Mode
 from tests.support.cli import CliWorld
-from tests.support.engine import World
+from tests.support.engine import World, current
 
 pytestmark = pytest.mark.unit
 
@@ -41,11 +40,6 @@ target = "$App\\\\app.exe"
 name = "tool"
 target = "$App\\\\app.exe"
 """
-
-
-def current(package: Path) -> str:
-    """Return the version that ``<package>/current`` points at."""
-    return Path(os.path.realpath(package / "current")).name
 
 
 def requests_made(world: World) -> int:

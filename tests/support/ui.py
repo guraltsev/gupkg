@@ -336,6 +336,19 @@ async def until(condition, what: str, timeout: float = 20.0) -> None:
         await asyncio.sleep(0.02)
 
 
+def logs_of(base: Path) -> str:
+    """Return the log folder of the root, where the double writes its events file."""
+    return str(base / "roots" / "user" / ".gupkg" / "logs")
+
+
+def schedule_run(fake: FakeGupkg, base: Path, names: list[str], *, doc_entries=None, **extra) -> None:
+    """Schedule the next ``update`` call of the double: it succeeds for *names* in the root."""
+    entries = doc_entries if doc_entries is not None else [entry(name) for name in names]
+    child = result("update", entries)
+    events = {"dir": logs_of(base), "result": child, "packages": [{"name": name, "path": str(base / "roots" / "user" / name), "records": []} for name in names], **extra}
+    fake.respond("update", doc=child, events=events)
+
+
 def unique(prefix: str = "run") -> str:
     """Return a fresh name for an events file."""
     return f"{prefix}-{uuid.uuid4().hex[:8]}.jsonl"

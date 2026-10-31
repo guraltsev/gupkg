@@ -18,8 +18,7 @@ from gupkg.services.populate import populate_git
 from gupkg.services.prepare import PrepareError
 from gupkg.services.track import TrackError, run_tracker
 from gupkg.services.unpack import UnpackError, UnpackPlan, unpack_git
-from gupkg.system.fake import FakeSystem, ProcessCall
-from gupkg.system.port import ProcessResult
+from tests.support.git import COMMIT, OTHER, FakeGit, git_machine, subcommand
 from tests.support.http_fixtures import environment
 from gupkg.scope import process_mode
 from tests.support.scope import scope_of
@@ -27,56 +26,7 @@ from gupkg.system.port import Mode
 
 pytestmark = pytest.mark.unit
 
-COMMIT = "0123456789abcdef0123456789abcdef01234567"
-OTHER = "f" * 40
 URL = "https://example.org/team/tool.git"
-EPOCH = 1728720930  # 2024-10-12 08:15:30 UTC
-
-
-def subcommand(argv: tuple[str, ...]) -> list[str]:
-    """Return the arguments after `git` and its `-c name=value` settings."""
-    words = list(argv[1:])
-    while words[:1] == ["-c"]:
-        words = words[2:]
-    return words
-
-
-class FakeGit:
-    """A scripted ``git``: records calls and answers `ls-remote`, `fetch`, `log`, `rev-parse` and `checkout`."""
-
-    def __init__(self, *, served: str = COMMIT, listed: str = COMMIT, files: dict[str, str] | None = None) -> None:
-        """Configure the commit that `fetch` serves, the one `ls-remote` lists, and the working tree `checkout` creates."""
-        self.served, self.listed = served, listed
-        self.files = files if files is not None else {"src/main.py": "print()", "README": "r"}
-        self.calls: list[ProcessCall] = []
-
-    def __call__(self, call: ProcessCall) -> ProcessResult:
-        """Answer one git command."""
-        self.calls.append(call)
-        words = subcommand(call.argv)
-        if words[0] == "ls-remote":
-            return ProcessResult(0, f"{self.listed}\t{words[-1]}\n") if self.listed else ProcessResult(2)
-        if words[0] == "log":
-            return ProcessResult(0, f"{EPOCH}\n")
-        if words[0] == "rev-parse":
-            return ProcessResult(0, f"{self.served}\n")
-        if words[0] == "checkout":
-            for name, text in self.files.items():
-                path = call.cwd / name
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(text, encoding="utf-8")
-            (call.cwd / ".git").mkdir()
-            (call.cwd / ".git" / "HEAD").write_text("ref", encoding="utf-8")
-        return ProcessResult(0)
-
-    def words(self) -> list[str]:
-        """Return the first word after `git` of each recorded call."""
-        return [subcommand(call.argv)[0] for call in self.calls]
-
-
-def machine(tmp_path: Path, git: FakeGit) -> FakeSystem:
-    """Return a FakeSystem whose only process is the scripted git."""
-    return FakeSystem(tmp_path / "machine", processes={"git": git}, real_7zip=False)
 
 
 def tracker(ref: str = "refs/heads/main") -> str:
@@ -91,7 +41,7 @@ def tracker(ref: str = "refs/heads/main") -> str:
 def test_the_git_provider_versions_a_commit_by_its_date_and_short_id(tmp_path: Path) -> None:
     """The version is `YYYYMMDD-HHMMSS-<short sha>` in UTC, the full commit is a capture, and the pinned manifest names it."""
     git = FakeGit()
-    system = machine(tmp_path, git)
+    system = git_machine(tmp_path, git)
     manifest = parse_manifest(tracker(), ManifestKind.TRACKER)
 
     result = run_tracker(manifest, environment(system, tmp_path))
@@ -105,7 +55,7 @@ def test_the_git_provider_versions_a_commit_by_its_date_and_short_id(tmp_path: P
 def test_git_runs_with_prompts_off_safe_transports_and_double_dash_before_untrusted_values(tmp_path: Path) -> None:
     """Every command has no terminal prompt and an allow-list of protocols, and the repository and ref follow `--`."""
     git = FakeGit()
-    system = machine(tmp_path, git)
+    system = git_machine(tmp_path, git)
 
     run_tracker(parse_manifest(tracker(), ManifestKind.TRACKER), environment(system, tmp_path))
 
@@ -125,7 +75,7 @@ def test_git_gets_a_scrubbed_environment_and_safe_settings_whatever_the_user_has
                         ("HTTPS_PROXY", "http://evil"), ("GITHUB_TOKEN", "t0ken"), ("USERPROFILE", "someone")):
         monkeypatch.setenv(name, value)
     git = FakeGit()
-    system = machine(tmp_path, git)
+    system = git_machine(tmp_path, git)
 
     run_tracker(parse_manifest(tracker(), ManifestKind.TRACKER), environment(system, tmp_path))
 
@@ -140,7 +90,7 @@ def test_git_gets_a_scrubbed_environment_and_safe_settings_whatever_the_user_has
 
 def test_a_ref_that_resolves_to_nothing_is_a_track_error(tmp_path: Path) -> None:
     """When `git ls-remote` finds no such ref the provider fails with a message naming the ref."""
-    system = machine(tmp_path, FakeGit(listed=""))
+    system = git_machine(tmp_path, FakeGit(listed=""))
 
     with pytest.raises(TrackError, match="ls-remote failed|no commit"):
         run_tracker(parse_manifest(tracker("refs/heads/nope"), ManifestKind.TRACKER), environment(system, tmp_path))
@@ -162,7 +112,7 @@ def pinned_git_manifest(commit: str):
 def test_a_pinned_commit_is_checked_out_without_history_and_prepared(tmp_path: Path) -> None:
     """The working tree of exactly the pinned commit lands in `App` without `.git`, and the prepare steps ran."""
     git = FakeGit()
-    system = machine(tmp_path, git)
+    system = git_machine(tmp_path, git)
     stage = tmp_path / "stage"
     stage.mkdir()
 
@@ -175,7 +125,7 @@ def test_a_pinned_commit_is_checked_out_without_history_and_prepared(tmp_path: P
 
 def test_a_server_that_serves_another_commit_than_the_pinned_one_fails_and_leaves_nothing(tmp_path: Path) -> None:
     """A pinned commit that the repository does not serve is refused: a moved branch cannot change what a version installs."""
-    system = machine(tmp_path, FakeGit(served=OTHER))
+    system = git_machine(tmp_path, FakeGit(served=OTHER))
     stage = tmp_path / "stage"
     stage.mkdir()
 
@@ -188,7 +138,7 @@ def test_a_server_that_serves_another_commit_than_the_pinned_one_fails_and_leave
 def test_an_unpinned_ref_resolves_to_one_commit_that_is_then_fetched(tmp_path: Path) -> None:
     """With only a ref, the commit `ls-remote` reports is the one fetched and returned."""
     git = FakeGit()
-    system = machine(tmp_path, git)
+    system = git_machine(tmp_path, git)
     stage = tmp_path / "stage"
     stage.mkdir()
 
@@ -202,7 +152,7 @@ def test_a_failing_prepare_step_after_checkout_removes_the_app(tmp_path: Path) -
     manifest = parse_manifest(
         f'format = 2\n[source]\ndownload_url = "{URL}"\nkind = "git"\n[source.git]\ncommit = "{COMMIT}"\n'
         '[[prepare]]\nrename = { from = "nothing", to = "x" }\n', ManifestKind.VERSION)
-    system = machine(tmp_path, FakeGit())
+    system = git_machine(tmp_path, FakeGit())
     stage = tmp_path / "stage"
     stage.mkdir()
 
@@ -218,4 +168,4 @@ def test_an_address_starting_with_a_dash_is_refused_by_the_checkout(tmp_path: Pa
     stage.mkdir()
 
     with pytest.raises(UnpackError, match="cannot start with"):
-        unpack_git(machine(tmp_path, FakeGit()), Mode.USER, "--evil", None, COMMIT, stage / "App", UnpackPlan())
+        unpack_git(git_machine(tmp_path, FakeGit()), Mode.USER, "--evil", None, COMMIT, stage / "App", UnpackPlan())
