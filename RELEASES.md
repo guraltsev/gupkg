@@ -99,6 +99,7 @@ row.
 
 | Version | Commit | Date | SHA-256 | Notes |
 |---|---|---|---|---|
+| 1.1.5 | `5c3e29efdbdbe5a306135fed9ee7da88491301fd` | 2026-10-30 | b9f495054563dfebd89d04e96db74669244c618df2d2ec00a14e3ff7dc81cf0f | gupkg 1.1.5 |
 | 1.1.3 | `9320a3ef59bec345d150019dd1a9e99c359ceb7a` | 2026-10-30 | 80d0fc39333cbb1da5b67009e0ea69b9208d08cea6b4ddde6e4937125336c567 | Add gupkg pkg adopt - package a program an installer already unpacked |
 | 1.1.2 | `12523591e1f7f1162e9c386b63ef66ef09a4b764` | 2026-10-30 | dab70bad054fa9e73516b64afd0294849a646f53fdaa46300d8c6075903cf695 | gupkg 1.1.2 |
 | 1.1.1 | `909b8f92488d83ef46210ac1ac33cf9990375067` | 2026-10-29 | 0d2e580e3f78b1d6a27171e25a09aa002ec80f73861013f40d080ed5c262d147 | Named --overwrite kinds for unowned files - --root for the manager and TUI |
