@@ -35,6 +35,8 @@ from tests.catalog_support import (
     write_version,
 )
 
+pytestmark = pytest.mark.unit
+
 
 def test_tracker_and_two_versions_without_current_is_local_and_installs_the_newest_version(system, tmp_path: Path) -> None:
     """A package root with ``_check_updates`` and two versions is ``local``; install chooses the newer version, never the tracker."""
@@ -314,7 +316,7 @@ def test_link_to_an_entry_the_registry_does_not_have_is_a_warning(system, tmp_pa
     assert any("main/gone" in warning for warning in view.warnings)
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 def test_catalog_on_real_windows_junctions_derives_installed_and_outdated(tmp_path: Path) -> None:
     """With ``WindowsSystem`` junctions an installed package is ``installed``, ``outdated`` with a newer directory, and ``broken`` when its version vanishes."""
     real = WindowsSystem()

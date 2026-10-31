@@ -21,6 +21,9 @@ from gupkg.model.settings import RegistryEntry
 from gupkg.model.state import Effect, InstallRecord, Link
 from gupkg.report import results
 from gupkg.tomlio import read_toml
+import pytest
+
+pytestmark = pytest.mark.unit
 
 HOSTILE = 'C:\\opt\\"quoted" name\twith\ttabs\nand a line break — and ünïcode ☃'
 

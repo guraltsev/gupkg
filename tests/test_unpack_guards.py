@@ -24,6 +24,8 @@ from gupkg.system.fake import FakeSystem, ProcessCall
 from gupkg.system.port import ProcessResult
 from tests.archive_support import make_zip
 
+pytestmark = pytest.mark.unit
+
 KIB = 1024
 
 
@@ -82,7 +84,7 @@ def test_the_watcher_is_quiet_within_the_limits(tmp_path: Path) -> None:
 MIB_TEN = 10 * 1024 * 1024
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 def test_the_watcher_does_not_follow_junctions_and_cannot_loop_on_a_cycle(tmp_path: Path, system: FakeSystem) -> None:
     """A junction back to the folder (a cycle) and a junction to a big folder outside are neither entered nor counted."""
     root = tmp_path / "w"

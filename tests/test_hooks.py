@@ -37,6 +37,8 @@ from gupkg.system.port import ProcessResult
 from tests.http_fixtures import environment
 from tests.scope_support import scope_of
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture(autouse=True)
 def not_elevated(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -287,6 +289,7 @@ def test_hooklib_fetches_through_the_context_client(tmp_path: Path, system: Fake
     assert all(request.headers["User-Agent"] == f"gupkg/{__version__}" for request in system.request_log)
 
 
+@pytest.mark.process
 def test_hooklib_extracts_flattens_and_runs_seven_zip_safely(tmp_path: Path, system: FakeSystem) -> None:
     """`extract_archive` applies the shared options, `safe_extract` refuses a hostile archive, `flatten` strips wrappers, `seven_zip` runs 7-Zip."""
     archive = tmp_path / "a.zip"

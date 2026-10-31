@@ -15,6 +15,8 @@ import pytest
 
 import test_report
 
+pytestmark = pytest.mark.release
+
 
 def _write(path: Path, text: str) -> None:
     """Write *text* (dedented) to *path*, creating its folder."""

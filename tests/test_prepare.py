@@ -28,6 +28,8 @@ from gupkg.services.prepare import PrepareError, run_prepare
 from gupkg.system.fake import FakeSystem
 from tests.scope_support import scope_of
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture(autouse=True)
 def not_marked_elevated(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -33,6 +33,8 @@ from gupkg.services.fingerprint import (
 from gupkg.system.fake import FakeSystem
 from tests.http_fixtures import FIXTURES
 
+pytestmark = pytest.mark.unit
+
 SNAPSHOT = FIXTURES / "registry_100"
 
 TREE = {"pkg.toml": b"format = 2\n", "pkg.local/hook.py": b"x = 1\n", "install.cmd": b"@echo off\r\n", "empty.txt": b""}

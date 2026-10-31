@@ -7,7 +7,7 @@ refused (a path must lie inside the scope's root); an elevated run accepts a pat
 in an admin-only folder; a package whose versions are all invalid says so instead of "no version known yet".
 
 Real: files and real junctions on pytest's temporary folder (``FakeSystem`` links are real; the
-``windows_integration`` test uses ``WindowsSystem``), the real sync, and the catalog. Mocked: elevation and the
+``process`` test uses ``WindowsSystem``), the real sync, and the catalog. Mocked: elevation and the
 admin-only answer (``FakeSystem``). Out of scope: acting on packages (issue 028).
 """
 
@@ -33,6 +33,8 @@ from tests.catalog_support import (
     write_version,
 )
 from tests.scope_support import scope_of
+
+pytestmark = pytest.mark.unit
 
 BAD_BYTES = b"\xff\xfe\x00 not utf-8 \xc3\x28"
 
@@ -145,7 +147,7 @@ def test_package_junction_is_skipped_by_scanning_and_refused_by_path(tmp_path: P
         catalog.resolve(str(roots["system"] / "foo"))
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 def test_real_junction_package_root_out_of_the_root_is_refused(tmp_path: Path) -> None:
     """With ``WindowsSystem`` junctions a package root that is a junction out of the root is refused by path."""
     real = WindowsSystem()

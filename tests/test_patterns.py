@@ -14,6 +14,8 @@ import pytest
 
 from gupkg.model.patterns import MAX_RUN, PatternError, compile_pattern, escape_template, prepare_text, scan
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.mark.parametrize(
     "pattern",

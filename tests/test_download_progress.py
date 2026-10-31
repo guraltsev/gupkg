@@ -24,6 +24,8 @@ from gupkg.system.fake import FakeResponse, FakeSystem
 from tests.cli_support import CliWorld
 from tests.mode_support import pin_no_ambient_elevation  # noqa: F401
 
+pytestmark = pytest.mark.unit
+
 
 class _Collector:
     """Collect every event handed to it, in order."""

@@ -22,6 +22,8 @@ from gupkg.model.settings import default_layer, expand_env, merge_layers
 from gupkg.system.port import Mode
 from tests.mode_support import Machine, pin_no_ambient_elevation  # noqa: F401
 
+pytestmark = pytest.mark.unit
+
 ENV = {"USERPROFILE": "C:\\Users\\pat", "APPDATA": "C:\\Users\\pat\\AppData\\Roaming", "ProgramData": "C:\\ProgramData"}
 
 

@@ -9,7 +9,7 @@ prefix, letter case, trailing dots and spaces, 8.3 names); an elevated run reads
 root, only when it is admin-only, refuses untrusted path targets and reads only the system root's
 registry cache. (A record of another mode is in ``test_catalog_one_root``.)
 
-Real: junctions (``FakeSystem`` links are real; the ``windows_integration`` test uses
+Real: junctions (``FakeSystem`` links are real; the ``process`` test uses
 ``WindowsSystem``), package roots on pytest's temporary folder, the catalog. Mocked: elevation and
 the admin-only answer (``FakeSystem(elevated=..., untrusted_dirs=...)``). Out of scope: acting on
 packages (issue 028).
@@ -36,6 +36,8 @@ from tests.catalog_support import (
     write_tracker,
     write_version,
 )
+
+pytestmark = pytest.mark.unit
 
 
 def build_escape(system, kind: str, tmp_path: Path, package: Path) -> Path:
@@ -213,7 +215,7 @@ def test_path_through_a_junction_that_leaves_the_root_is_outside(system, tmp_pat
     assert canonical_path(root / "door") == canonical_path(tmp_path / "elsewhere")
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 def test_containment_recognises_8_3_short_names(tmp_path: Path) -> None:
     """A folder named by its 8.3 short name is the same folder as its long name."""
     root = tmp_path / "a root with a long name"
@@ -227,7 +229,7 @@ def test_containment_recognises_8_3_short_names(tmp_path: Path) -> None:
     assert canonical_path(buffer.value) == canonical_path(child)
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 def test_real_junctions_are_read_the_same_way(tmp_path: Path) -> None:
     """With ``WindowsSystem`` junctions, a valid ``current`` is accepted and one that escapes is refused."""
     real = WindowsSystem()

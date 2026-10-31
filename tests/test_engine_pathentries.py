@@ -25,6 +25,8 @@ from gupkg.system.fake import FakeSystem
 from gupkg.system.port import Mode
 from tests.engine_support import World, pin_no_ambient_elevation  # noqa: F401
 
+pytestmark = pytest.mark.unit
+
 HEAD = 'format = 2\nmodes = ["system", "user"]\n[source]\ndownload_url = "https://x.test/a.zip"\n'
 
 BAD = [

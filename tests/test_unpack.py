@@ -27,6 +27,8 @@ from gupkg.system.fake import FakeSystem, ProcessCall
 from gupkg.system.port import ProcessResult
 from tests.archive_support import make_7z, make_tar, make_zip, sums_manifest, tree
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture
 def stage(tmp_path: Path) -> Path:
@@ -56,6 +58,7 @@ def test_a_zip_is_unpacked_with_its_kind_inferred_from_the_signature(system: Fak
     assert tree(stage / "App") == {"a.txt": "1", "dir/b.txt": "2"} and (stage / "App" / "empty").is_dir()
 
 
+@pytest.mark.process
 def test_a_7z_archive_is_unpacked(system: FakeSystem, tmp_path: Path, stage: Path) -> None:
     """A 7z archive made by the bundled 7-Zip unpacks to the same files, and its kind is `7z`."""
     archive = make_7z(system, tmp_path / "tool.7z", {"bin/tool.exe": "exe", "readme.txt": "hi"})
@@ -65,6 +68,7 @@ def test_a_7z_archive_is_unpacked(system: FakeSystem, tmp_path: Path, stage: Pat
     assert report.kind == "7z" and tree(stage / "App") == {"bin/tool.exe": "exe", "readme.txt": "hi"}
 
 
+@pytest.mark.process
 @pytest.mark.parametrize(
     ("name", "mode"),
     [
@@ -88,6 +92,7 @@ def test_tarballs_are_decompressed_with_a_cap_then_unpacked_by_seven_zip(system:
     assert not any(path.name.startswith(".") for path in stage.iterdir())
 
 
+@pytest.mark.process
 def test_a_compressed_file_that_is_not_a_tarball_is_kept_as_one_file(system: FakeSystem, tmp_path: Path, stage: Path) -> None:
     """A lone `.gz` of a text file unpacks to that file instead of failing."""
     source = tmp_path / "notes.txt.gz"
@@ -98,6 +103,7 @@ def test_a_compressed_file_that_is_not_a_tarball_is_kept_as_one_file(system: Fak
     assert report.kind == "tar" and list((stage / "App").iterdir())[0].read_bytes() == b"plain text"
 
 
+@pytest.mark.process
 def test_a_self_extractor_is_detected_as_sfx_and_unpacked(system: FakeSystem, tmp_path: Path, stage: Path) -> None:
     """An executable with a 7z archive appended (the layout of a real SFX) is recognised by 7-Zip's reading and unpacked."""
     archive = make_7z(system, tmp_path / "payload.7z", {"core/app.exe": "app", "setup.exe": "setup"})
@@ -109,6 +115,7 @@ def test_a_self_extractor_is_detected_as_sfx_and_unpacked(system: FakeSystem, tm
     assert report.kind == "sfx" and tree(stage / "App") == {"app.exe": "app"}
 
 
+@pytest.mark.process
 def test_a_plain_executable_is_copied_as_it_is_under_its_published_name(system: FakeSystem, tmp_path: Path, stage: Path) -> None:
     """An executable that contains no archive is the whole payload, copied under its safe published name."""
     program = tmp_path / "abc123.file"
@@ -129,6 +136,7 @@ def test_a_data_file_is_copied_as_one_file(system: FakeSystem, tmp_path: Path, s
     assert report.kind == "file" and tree(stage / "App") == {"cert.pem": "-----BEGIN-----"}
 
 
+@pytest.mark.process
 def test_a_declared_kind_that_does_not_fit_the_file_is_an_error(system: FakeSystem, tmp_path: Path, stage: Path) -> None:
     """`kind = "zip"` on a 7z file fails rather than being guessed, and leaves nothing behind."""
     archive = make_7z(system, tmp_path / "tool.7z", {"a.txt": "1"})
@@ -294,6 +302,7 @@ def test_a_missing_subdir_fails_and_leaves_nothing(system: FakeSystem, tmp_path:
     assert list(stage.iterdir()) == []
 
 
+@pytest.mark.process
 def test_extract_rules_map_globs_and_work_for_a_7z_archive_too(system: FakeSystem, tmp_path: Path, stage: Path) -> None:
     """`[[source.extract]]` copies glob matches (a trailing `/` means the folder's contents); it is not limited to zip."""
     archive = make_7z(system, tmp_path / "t.7z", {"tixati-1.2/tixati.exe": "t", "tixati-1.2/lang/en.txt": "e", "junk/x.txt": "j"})
@@ -325,6 +334,7 @@ def test_require_lists_every_missing_file_and_leaves_nothing(system: FakeSystem,
     assert sorted(path.name for path in stage.iterdir()) == ["App"]
 
 
+@pytest.mark.process
 def test_a_nested_archive_replaces_the_installer_contents(system: FakeSystem, tmp_path: Path, stage: Path) -> None:
     """With `replace = true` the inner archive's contents become the whole tree (obsidian: only `app-64.7z` matters)."""
     inner = make_7z(system, tmp_path / "app-64.7z", {"Obsidian.exe": "app", "resources/a.asar": "a"})
@@ -565,6 +575,7 @@ def test_a_corrupt_zip_is_an_unpack_error(system: FakeSystem, tmp_path: Path, st
     assert list(stage.iterdir()) == []
 
 
+@pytest.mark.process
 @pytest.mark.parametrize(
     ("members", "message"),
     [
@@ -587,6 +598,7 @@ def test_a_hostile_tarball_is_rejected_by_its_table_of_contents(
     assert not (tmp_path / "evil.txt").exists()
 
 
+@pytest.mark.process
 def test_an_encrypted_7z_is_rejected_instead_of_prompting(system: FakeSystem, tmp_path: Path, stage: Path) -> None:
     """A password-protected archive fails with a clear error; 7-Zip is never given a chance to wait for input."""
     archive = make_7z(system, tmp_path / "secret.7z", {"a.txt": "1"}, "-psecret", "-mhe=on")
@@ -597,6 +609,7 @@ def test_an_encrypted_7z_is_rejected_instead_of_prompting(system: FakeSystem, tm
     assert list(stage.iterdir()) == []
 
 
+@pytest.mark.process
 def test_a_truncated_7z_is_an_unpack_error(system: FakeSystem, tmp_path: Path, stage: Path) -> None:
     """A damaged 7z archive fails with 7-Zip's reason and leaves nothing behind."""
     good = make_7z(system, tmp_path / "good.7z", {"a.txt": "x" * 5000})

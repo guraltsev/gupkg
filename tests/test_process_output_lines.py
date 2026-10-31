@@ -16,6 +16,8 @@ import pytest
 
 from gupkg.system.windows import WindowsSystem, _output_lines
 
+pytestmark = pytest.mark.unit
+
 
 class _Chunks:
     """A binary stream that returns the scripted chunks one ``read1`` at a time, then end of stream."""
@@ -126,7 +128,7 @@ def test_hostile_bytes_without_a_newline_are_cut_into_few_pieces_quickly(payload
     assert len(pieces) <= 200_000 // (64 * 1024 - 3) + 2
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 def test_a_real_child_with_a_huge_line_and_progress_redraws_is_streamed_in_order() -> None:
     """A real child's progress redraws arrive as separate lines and its 1 MB line arrives as pieces with a continuation note."""
     program = (

@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+import pytest
+
+pytestmark = pytest.mark.unit
 
 TOOL = Path(__file__).resolve().parents[1] / "tools" / "bump_version.py"
 MANIFEST = '[[bin]]\nversion = "keep"\n'

@@ -16,6 +16,9 @@ from pathlib import Path
 from gupkg.system.port import Mode
 from tests.cli_support import CliWorld
 from tests.mode_support import pin_no_ambient_elevation  # noqa: F401
+import pytest
+
+pytestmark = pytest.mark.unit
 
 SHIM = '[[shim]]\nname = "tool"\ntarget = "$App\\\\app.exe"\n'
 

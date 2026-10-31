@@ -26,6 +26,8 @@ from gupkg.system.fake import FakeHttp, FakeSystem
 from tests.archive_support import make_zip, tree
 from tests.http_fixtures import environment, serve, tracker_manifest
 
+pytestmark = pytest.mark.unit
+
 SOURCE = Path(__file__).resolve().parents[1] / "src" / "gupkg"
 
 
@@ -59,6 +61,7 @@ def test_a_download_whose_url_ends_in_download_gets_the_real_file_name_and_the_e
     assert [path.name for path in (stage / "App").iterdir()] == ["CrystalDiskInfo9_4_2.zip"]
 
 
+@pytest.mark.process
 def test_the_redirect_provider_names_the_file_from_the_final_address(system: FakeSystem, tmp_path: Path) -> None:
     """The `file_name` capture of the crystaldiskinfo tracker is the zip, not the word `download`."""
     serve(system, "redirect_crystaldiskinfo")
@@ -91,6 +94,7 @@ def test_extract_rules_with_different_destinations_and_empty_folders_still_work(
     assert tree(stage / "App") == {"a/x.txt": "1", "b/x.txt": "2"} and (stage / "App" / "b" / "empty").is_dir()
 
 
+@pytest.mark.process
 def test_a_tarball_that_repeats_a_file_name_is_refused_by_its_table_of_contents(system: FakeSystem, tmp_path: Path) -> None:
     """Two entries for one file in a tar are refused before extraction (7-Zip would let the second overwrite the first)."""
     archive = tmp_path / "dup.tar"

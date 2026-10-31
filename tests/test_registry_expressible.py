@@ -27,6 +27,8 @@ from gupkg.system.fake import FakeSystem
 from tests.archive_support import make_7z, make_tar, make_zip, tree
 from tests.http_fixtures import REGISTRY2, environment, serve, tracker_manifest
 
+pytestmark = pytest.mark.process
+
 Built = tuple[Path, str, dict[str, str], str | None]
 
 

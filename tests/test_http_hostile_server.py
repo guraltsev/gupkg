@@ -21,6 +21,8 @@ import pytest
 from gupkg.services.http import HttpClient, HttpError
 from gupkg.system.windows import WindowsSystem
 
+pytestmark = pytest.mark.process
+
 
 class Hostile(BaseHTTPRequestHandler):
     """Write raw, misbehaving answers for the routes below."""

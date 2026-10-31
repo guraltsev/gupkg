@@ -20,6 +20,8 @@ from gupkg.report.documents import (
     DocumentError, ListDocument, ListRow, read_info, read_list, read_plan, read_registry_status, read_results,
 )
 
+pytestmark = pytest.mark.unit
+
 DOCS = Path(__file__).resolve().parent / "fixtures" / "cli_docs"
 
 

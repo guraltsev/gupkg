@@ -29,6 +29,8 @@ from gupkg.engine.locks import Holder, PackageBusy, lock_holder, lock_path, pack
 from gupkg.selfmgmt.elevation import UntrustedLocationError
 from tests.engine_support import World, pin_no_ambient_elevation  # noqa: F401
 
+pytestmark = pytest.mark.unit
+
 ENV_ONLY = '[[env]]\nname = "TOOL_HOME"\nvalue = "$App"\n'
 OTHER_PID = 424242
 

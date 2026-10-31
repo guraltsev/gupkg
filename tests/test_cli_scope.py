@@ -28,6 +28,8 @@ from tests.cli_support import CliWorld
 from tests.engine_support import zip_bytes
 from tests.mode_support import pin_no_ambient_elevation, tree_snapshot  # noqa: F401
 
+pytestmark = pytest.mark.unit
+
 
 def test_a_normal_process_installs_into_the_user_root_and_an_elevated_one_into_the_system_root(tmp_path: Path) -> None:
     """The same command, with no flag: the token alone decides the mode and so the root."""
@@ -245,6 +247,7 @@ def test_purging_the_root_its_parent_or_a_drive_is_refused_before_anything_is_de
     assert tree_snapshot(world.user) == before
 
 
+@pytest.mark.process
 def test_self_update_accepts_the_gupkgs_own_root_under_another_spelling(tmp_path: Path) -> None:
     """A root named through a junction is the same root: the refusal compares folders, not spellings."""
     world = CliWorld(tmp_path)

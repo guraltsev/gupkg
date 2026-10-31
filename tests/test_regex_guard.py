@@ -20,6 +20,8 @@ import pytest
 
 from gupkg.model.patterns import PatternError, compile_pattern
 
+pytestmark = pytest.mark.unit
+
 SOURCE = Path(__file__).resolve().parents[1] / "src"
 REAL = json.loads((Path(__file__).resolve().parent / "fixtures" / "registry_patterns.json").read_text(encoding="utf-8"))
 
@@ -90,6 +92,7 @@ BOUNDED_BLOWUPS = [
 ]
 
 
+@pytest.mark.process
 @pytest.mark.parametrize("pattern", BOUNDED_BLOWUPS)
 def test_a_bounded_repeat_that_can_blow_up_is_refused_at_validation(pattern: str) -> None:
     """Each of these hangs for tens of seconds on a short page of `a` if accepted; a child with a hard timeout proves it is refused."""

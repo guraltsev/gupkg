@@ -41,6 +41,8 @@ from gupkg.system.windows import WindowsSystem
 from tests.mode_support import Machine, pin_no_ambient_elevation  # noqa: F401
 from tests.scope_support import scope_of
 
+pytestmark = pytest.mark.unit
+
 
 # ---------------------------------------------------------------------------
 # The registry access log (D18, D38)
@@ -126,6 +128,7 @@ def test_a_url_fixture_can_fail_or_be_computed_per_request(tmp_path: Path) -> No
     assert calls == [{"X-Who": "gupkg"}]
 
 
+@pytest.mark.process
 @pytest.mark.skipif(os.name != "nt", reason="the bundled 7-Zip is a Windows executable")
 def test_a_real_seven_zip_runs_even_though_other_programs_do_not(tmp_path: Path) -> None:
     """The bundled 7-Zip executable is allowed to run for real, because extraction touches only files."""
@@ -255,6 +258,7 @@ def test_sandbox_install_follows_the_elevated_flag_in_system_json(
     assert (sandbox / "bin" / "system" / "tool.exe").is_file()
 
 
+@pytest.mark.process
 def test_a_program_outside_the_allow_list_raises_in_a_sandbox_run(tmp_path: Path) -> None:
     """In sandbox mode only git and 7-Zip may run; any other program, such as a package script, raises ``UnexpectedCall``."""
     sandbox = tmp_path / "sandbox"
@@ -310,6 +314,7 @@ def test_the_sandbox_allows_programs_by_identity_not_by_name(tmp_path: Path, nam
     assert not marker.exists()
 
 
+@pytest.mark.process
 @pytest.mark.skipif(os.name != "nt", reason="the bundled 7-Zip is a Windows executable")
 def test_the_sandbox_runs_the_real_git_and_seven_zip_by_bare_name_or_resolved_path(tmp_path: Path) -> None:
     """The git found on PATH (bare, or by its exact path) and the bundled 7-Zip (by its exact path) run for real."""
@@ -325,6 +330,7 @@ def test_the_sandbox_runs_the_real_git_and_seven_zip_by_bare_name_or_resolved_pa
         system.run(["7z", "i"])
 
 
+@pytest.mark.process
 def test_a_real_allowed_program_streams_lines_and_honours_the_timeout(tmp_path: Path) -> None:
     """An allowed real program streams its lines to ``on_line`` and is killed by ``timeout``, as ``System.run`` promises."""
     system = FakeSystem(tmp_path / "machine")

@@ -23,6 +23,8 @@ from gupkg.model.state import InstallRecord, Link
 from gupkg.system.port import Mode
 from tests.engine_support import BASE_URL, World, pin_no_ambient_elevation  # noqa: F401
 
+pytestmark = pytest.mark.unit
+
 ENV = '[[env]]\nname = "TOOL_HOME"\nvalue = "$App"\n'
 
 

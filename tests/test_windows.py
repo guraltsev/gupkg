@@ -12,6 +12,9 @@ from types import SimpleNamespace
 from unittest import mock
 
 from gupkg.system.windows import WindowsSystem
+import pytest
+
+pytestmark = pytest.mark.unit
 
 
 def test_environment_notification_uses_a_portable_pointer_sized_result() -> None:

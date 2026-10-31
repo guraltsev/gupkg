@@ -21,7 +21,7 @@ import pytest
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 STAMP = re.compile(r"\d{8}T\d{6}Z")
 
-pytestmark = [pytest.mark.skipif(os.name != "nt", reason="the launcher is a Windows cmd file"), pytest.mark.windows_integration]
+pytestmark = [pytest.mark.skipif(os.name != "nt", reason="the launcher is a Windows cmd file"), pytest.mark.process]
 
 
 def load_recorder(folder: str):

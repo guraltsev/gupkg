@@ -33,6 +33,8 @@ from gupkg_registry.layout import write_registry_file
 from tests.http_fixtures import environment, load_case, tracker_manifest
 from tests.test_registry_tool import Git, machine, registry_of, run_cli, zip_bytes
 
+pytestmark = pytest.mark.process
+
 HEADER = 'format = 2\ndescription = "d"\nmodes = ["system", "user"]\n'
 
 

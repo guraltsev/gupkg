@@ -35,6 +35,8 @@ from gupkg.system.fake import FakeHttp, FakeSystem, ProcessCall
 from gupkg.system.port import ProcessResult, WorkerDidNotStart
 from tests.http_fixtures import HTTP_CASES, environment, serve, tracker_manifest
 
+pytestmark = pytest.mark.process
+
 HERE = Path(__file__).resolve().parent
 REAL = json.loads((HERE / "fixtures" / "registry_patterns.json").read_text(encoding="utf-8"))
 DEADLINE = 0.8
@@ -226,7 +228,7 @@ def _count_processes_of(script_name: str) -> int:
     return int(listing.stdout.strip())
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 def test_no_worker_process_is_left_after_the_hostile_corpus(system: FakeSystem, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """After several kills no process of this test's own copy of the worker is running (other runs are not counted)."""
     unique = f"regex_worker_{uuid.uuid4().hex}.py"

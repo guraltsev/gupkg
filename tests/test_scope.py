@@ -33,6 +33,8 @@ from gupkg.settingsload import SOURCE_APP, SOURCE_INSTALLED_SYSTEM, SOURCE_INSTA
 from gupkg.system.fake import FakeSystem
 from gupkg.system.port import Mode
 
+pytestmark = pytest.mark.unit
+
 
 class Machine:
     """A fake machine under a temporary folder: a system root that holds the gupkg tree, a user root and an app folder."""

@@ -29,7 +29,7 @@ from gupkg.system.port import ShortcutSpec
 from gupkg.system.windows import WindowsSystem
 
 pytestmark = [
-    pytest.mark.windows_integration,
+    pytest.mark.process,
     pytest.mark.skipif(os.name != "nt", reason="shortcuts and junctions need Windows"),
 ]
 

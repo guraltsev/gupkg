@@ -24,6 +24,8 @@ from gupkg.targets import TargetRequest, resolve_target
 from tests.catalog_support import build_registry, version_text
 from tests.mode_support import Machine, pin_no_ambient_elevation, tree_snapshot  # noqa: F401
 
+pytestmark = pytest.mark.unit
+
 
 def resolve(machine: Machine, selector: str, **options):
     """Resolve *selector* on *machine* the way the engine will: inside the one scope of the run."""

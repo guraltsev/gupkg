@@ -35,6 +35,8 @@ from tests.cli_support import CliWorld
 from tests.engine_support import pkg_text, zip_bytes
 from tests.mode_support import pin_no_ambient_elevation, tree_snapshot  # noqa: F401
 
+pytestmark = pytest.mark.unit
+
 FULL = '[[shim]]\nname = "tool"\ntarget = "$App\\\\app.exe"\n'
 SOURCE = "https://example.org/main.zip"
 

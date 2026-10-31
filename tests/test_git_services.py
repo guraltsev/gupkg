@@ -25,6 +25,8 @@ from gupkg.scope import process_mode
 from tests.scope_support import scope_of
 from gupkg.system.port import Mode
 
+pytestmark = pytest.mark.unit
+
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
 OTHER = "f" * 40
 URL = "https://example.org/team/tool.git"

@@ -45,6 +45,8 @@ from gupkg_registry.validate import validate_registry
 from tests.archive_support import make_zip
 from tests.http_fixtures import FIXTURES, HTTP_CASES, load_case
 
+pytestmark = pytest.mark.process
+
 SNAPSHOT = FIXTURES / "registry_100"
 HWINFO_ZIP = {"HWiNFO64.EXE": "exe", "HWiNFO64.INI": "ini"}
 VOLTA_ZIP = {"volta.exe": "v", "volta-shim.exe": "s", "volta-migrate.exe": "m"}

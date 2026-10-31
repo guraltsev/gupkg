@@ -18,6 +18,8 @@ import pytest
 from gupkg.catalog.record import read_install_record, record_path, write_install_record
 from gupkg.model.state import Effect, InstallRecord, Link, RecordError, parse_install_record
 
+pytestmark = pytest.mark.unit
+
 SHA = "0123456789abcdef" * 4
 
 

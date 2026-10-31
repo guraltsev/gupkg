@@ -18,6 +18,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.release
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import check_release  # noqa: E402
 

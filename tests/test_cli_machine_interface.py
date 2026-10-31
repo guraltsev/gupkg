@@ -26,6 +26,8 @@ from tests.cli_support import CliWorld
 from tests.engine_support import ScriptDouble
 from tests.mode_support import pin_no_ambient_elevation, tree_snapshot  # noqa: F401
 
+pytestmark = pytest.mark.unit
+
 RESULT_KEYS = {"api", "command", "ok", "exit_code", "results", "warnings"}
 ENTRY_KEYS = {"package", "operation", "ok", "status", "version", "previous", "mode", "exit_code", "receipt", "log", "warnings"}
 # A successful entry also carries ``details``, a failed one ``error``; plans add keys that belong to their operation only.

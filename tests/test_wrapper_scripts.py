@@ -19,7 +19,7 @@ import pytest
 
 SRC_ROOT = Path(__file__).resolve().parents[1] / "src"
 
-pytestmark = pytest.mark.skipif(os.name != "nt", reason="Windows batch wrapper behavior")
+pytestmark = [pytest.mark.process, pytest.mark.skipif(os.name != "nt", reason="Windows batch wrapper behavior")]
 
 
 def tree_with(root: Path, wrapper: str, inner_exit: int = 0) -> tuple[Path, Path]:

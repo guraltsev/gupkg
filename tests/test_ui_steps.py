@@ -14,6 +14,9 @@ from pathlib import Path
 from gupkg.model.manager_policy import USER_APPROVED, skip_argument
 from gupkg_ui.steps import Subject, make_steps
 from tests.ui_support import FakeGupkg, make_env
+import pytest
+
+pytestmark = pytest.mark.unit
 
 
 def test_a_call_with_a_skip_checksum_argument_carries_it_in_its_label(tmp_path: Path) -> None:

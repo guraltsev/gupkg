@@ -16,6 +16,8 @@ from gupkg.services.checksum import ChecksumDiscoveryError, discover_checksum, f
 from gupkg.services.http import HttpClient
 from gupkg.system.fake import FakeHttp, FakeSystem
 
+pytestmark = pytest.mark.unit
+
 HEX_A, HEX_B = "a1" * 32, "b2" * 32
 VALUES = {"version": "1.2", "download_url": "https://example.org/dl/tool-1.2.zip", "page_url": "https://example.org/page"}
 
@@ -77,6 +79,7 @@ def test_a_json_document_supplies_the_digest_by_path(system: FakeSystem, tmp_pat
     assert found.sha256 == HEX_A
 
 
+@pytest.mark.process
 def test_a_page_pattern_supplies_the_digest_from_the_page_the_version_came_from(system: FakeSystem, tmp_path: Path) -> None:
     """`page_match` runs on the tracker's page with the version substituted (escaped) into the pattern."""
     system.urls["https://example.org/page"] = f"<td>tool-1.2.zip</td><td>{HEX_A}</td> <td>tool-1x2.zip</td><td>{HEX_B}</td>"

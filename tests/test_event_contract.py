@@ -22,6 +22,8 @@ from gupkg.report.events import (
     emit, emit_problems, event_to_dict, package_scope, phase, subprocess_lines, use_reporter,
 )
 
+pytestmark = pytest.mark.unit
+
 
 class _Collector:
     """Collect every event handed to it, in order."""

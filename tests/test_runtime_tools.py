@@ -22,6 +22,8 @@ import pytest
 import check_deps
 import fetch_runtime
 
+pytestmark = pytest.mark.release
+
 LOCK = f"textual==8.2.8 --hash=sha256:{'a' * 64}\nrich==15.0.0 --hash=sha256:{'b' * 64}\n"
 LIVE = [{"yanked": False}]
 

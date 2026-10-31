@@ -32,6 +32,8 @@ from tests.test_cli_tools import SOURCE, registry_zip, version_files
 from tests.test_ui_screens import screen_text, wait_for
 from tests.ui_support import FakeGupkg
 
+pytestmark = pytest.mark.unit
+
 
 class Touches:
     """Record every path a test opens, lists or inspects below one folder, while it is active."""

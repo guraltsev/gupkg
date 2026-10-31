@@ -23,6 +23,8 @@ from gupkg.model.state import Effect
 from tests.engine_support import World, pin_no_ambient_elevation  # noqa: F401
 from tests.mode_support import tree_snapshot
 
+pytestmark = pytest.mark.unit
+
 TABLES = (
     '[[shortcut]]\nname = "Tool"\ntarget = "$App\\\\app.exe"\n\n[[shim]]\nname = "tool"\ntarget = "$App\\\\app.exe"\n\n'
     '[[env]]\nname = "TOOL_HOME"\nvalue = "$App"\n'

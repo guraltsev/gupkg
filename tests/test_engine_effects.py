@@ -30,6 +30,8 @@ from gupkg.model.state import Effect
 from gupkg.system.fake import FakeSystem
 from gupkg.system.port import Mode
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture
 def system(tmp_path: Path) -> FakeSystem:

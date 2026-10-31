@@ -28,6 +28,8 @@ from gupkg.system.fake import FakeHttp, FakeSystem
 from tests.http_fixtures import HTTP_CASES, REGISTRY2, environment, serve, tracker_manifest
 from tests.scope_support import scope_of
 
+pytestmark = pytest.mark.unit
+
 
 def discover(system: FakeSystem, tmp_path: Path, package: str):
     """Run the committed tracker of *package* and render the pinned manifest it would write."""
@@ -39,6 +41,7 @@ def discover(system: FakeSystem, tmp_path: Path, package: str):
 CASES = sorted(HTTP_CASES.glob("*.json"))
 
 
+@pytest.mark.process
 @pytest.mark.parametrize("case", [pytest.param(path, id=path.stem) for path in CASES])
 def test_each_tracker_discovers_its_version_and_download_from_the_fixture_responses(
     system: FakeSystem, tmp_path: Path, case: Path
@@ -74,6 +77,7 @@ def test_synthetic_fixtures_say_so_and_no_fixture_claims_a_recording_it_does_not
         assert (REGISTRY2 / document["tracker"] / "_check_updates" / "pkg.toml").is_file(), case.name
 
 
+@pytest.mark.process
 def test_the_page_provider_sends_the_package_headers_on_its_request(system: FakeSystem, tmp_path: Path) -> None:
     """A tracker's `[track.headers]` replace the default User-Agent on the page request, and the pinned source keeps the download headers."""
     serve(system, "page_hwinfo")
@@ -85,6 +89,7 @@ def test_the_page_provider_sends_the_package_headers_on_its_request(system: Fake
     assert pinned.source.headers["Referer"] == "https://www.hwinfo.com/download/"
 
 
+@pytest.mark.process
 def test_providers_choose_among_matches_by_version_order_not_text_order(system: FakeSystem, tmp_path: Path) -> None:
     """`1.10` is newer than `1.3` and `3.0.21` newer than `3.0.9.2`: selection uses the shared version comparison."""
     serve(system, "rss_netio", "index_vlc")
@@ -95,6 +100,7 @@ def test_providers_choose_among_matches_by_version_order_not_text_order(system: 
     assert (rss.version, vlc.version) == ("1.10", "3.0.21")
 
 
+@pytest.mark.process
 def test_the_github_provider_skips_prereleases_and_releases_without_the_asset(system: FakeSystem, tmp_path: Path) -> None:
     """With `newest-matching`, the nightly prerelease and the newest tag that lacks the tarball are passed over."""
     serve(system, "github_msys2")
@@ -140,6 +146,7 @@ def test_the_github_provider_sends_the_token_only_to_github_over_https(system: F
     assert "Authorization" not in system.request_log[1].headers
 
 
+@pytest.mark.process
 @pytest.mark.parametrize(
     ("package", "case", "damage", "message"),
     [

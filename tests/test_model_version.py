@@ -26,6 +26,8 @@ from gupkg.model.version import (
 )
 from tests.catalog_support import catalog_over
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.mark.parametrize(
     ("older", "newer"),

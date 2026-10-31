@@ -22,6 +22,8 @@ from gupkg.redact import redact_text, redact_url
 from gupkg.report.events import use_reporter
 from tests.engine_support import World, pin_no_ambient_elevation, pkg_text, zip_bytes  # noqa: F401
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.mark.parametrize(
     ("url", "expected"),

@@ -1,10 +1,10 @@
-﻿"""Cover the ``[[shortcut]]`` keys ``run_as_admin`` and ``modes`` (issue 035, T08).
+"""Cover the ``[[shortcut]]`` keys ``run_as_admin`` and ``modes`` (issue 035, T08).
 
 Behaviour covered: both keys are validated; ``run_as_admin`` reaches the recorded effect, the system port and the
 drift check; a shortcut is created only in its ``modes``; gupkg's own ``src/pkg.toml`` gives the system scope the
 "gupkg manager (administrator)" entry and the user scope only "gupkg manager"; a real ``.lnk`` keeps the flag.
 
-Real: the manifest parser, the effect code, the real ``src/pkg.toml``, and (``windows_integration``) a real ``.lnk``
+Real: the manifest parser, the effect code, the real ``src/pkg.toml``, and (``process``) a real ``.lnk``
 below ``tmp_path``. Mocked: ``FakeSystem``. Out of scope: opening the link (the UAC prompt is a manual check).
 """
 
@@ -20,6 +20,8 @@ from gupkg.model.manifest import ManifestError, ManifestKind, manifest_to_toml, 
 from gupkg.system.fake import FakeSystem
 from gupkg.system.port import Mode, ShortcutSpec
 from gupkg.system.windows import WindowsSystem
+
+pytestmark = pytest.mark.unit
 
 SOURCE = '[source]\ndownload_url = "https://x.test/a.zip"\n'
 SHORTCUT = '[[shortcut]]\nname = "T"\ntarget = "a.exe"\n'
@@ -102,7 +104,7 @@ def test_gupkgs_own_package_has_the_administrator_shortcut_in_system_mode_only(t
     }
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 def test_a_real_shortcut_keeps_the_run_as_administrator_flag(tmp_path: Path) -> None:
     """A real `.lnk` below `tmp_path` written with `run_as_admin` reads back with the flag; one without it reads back without."""
     system = WindowsSystem()

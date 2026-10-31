@@ -41,6 +41,8 @@ from gupkg.model.settings import (
     merge_layers,
 )
 
+pytestmark = pytest.mark.unit
+
 HTTPS = "https://example.org/tool.zip"
 PRESENT = plan_checksum(HTTPS, "ab" * 32, url_from="pkg.toml")
 MISSING_HTTPS = plan_checksum(HTTPS, None, url_from="tracker")
@@ -212,6 +214,7 @@ def run_fake_gupkg(tmp_path: Path, argv: list[str]) -> list[str]:
     return json.loads(log.read_text(encoding="utf-8").splitlines()[-1])
 
 
+@pytest.mark.process
 @pytest.mark.parametrize(
     ("policy", "interactive", "answer", "reason"),
     [

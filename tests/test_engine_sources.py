@@ -24,6 +24,8 @@ from gupkg.system.port import Mode
 from tests.engine_support import World, pin_no_ambient_elevation  # noqa: F401
 from tests.mode_support import tree_snapshot
 
+pytestmark = pytest.mark.unit
+
 SHIM = '[[shim]]\nname = "tool"\ntarget = "$App\\\\app.exe"\n\n[[env]]\nname = "TOOL_HOME"\nvalue = "$App"\n'
 
 

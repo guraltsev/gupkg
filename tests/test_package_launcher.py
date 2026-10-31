@@ -27,7 +27,7 @@ import pytest
 
 from gupkg.launchers import LAUNCHERS, launcher_text, write_launchers
 
-pytestmark = [pytest.mark.skipif(os.name != "nt", reason="the launchers are Windows cmd files"), pytest.mark.windows_integration]
+pytestmark = [pytest.mark.skipif(os.name != "nt", reason="the launchers are Windows cmd files"), pytest.mark.process]
 
 # A fake gupkg: it prints its label, its own path and its arguments, and exits with the code the test set in the environment.
 FAKE = '@echo off\r\necho {label} %~f0 %*\r\nexit /b %{variable}%\r\n'

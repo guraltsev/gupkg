@@ -22,6 +22,8 @@ from gupkg.services.track import run_tracker
 from tests.http_fixtures import environment, tracker_manifest
 from tests.test_git_services import COMMIT, FakeGit, machine
 
+pytestmark = pytest.mark.unit
+
 GIT_TRACKED = ["latex-toolkit", "overleaf-sync", "windebloattools"]
 
 

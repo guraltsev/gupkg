@@ -33,6 +33,8 @@ from gupkg.system.fake import FakeSystem, ProcessCall
 from gupkg.system.port import ProcessResult
 from tests.scope_support import scope_of
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture(autouse=True)
 def not_marked_elevated(monkeypatch: pytest.MonkeyPatch) -> None:

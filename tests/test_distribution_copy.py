@@ -15,7 +15,7 @@ a ``DistributionRefused``; and the identity checks (open handle against the path
 exercised by lying about the identity.
 
 Real: the copy on real folders and real NTFS alternate data streams below pytest's temporary folder (the
-streams need NTFS, so the marked-source tests are ``windows_integration``), and a real junction. Out of scope:
+streams need NTFS, so the marked-source tests are ``process``), and a real junction. Out of scope:
 the engine's receipt, which records ``source_marked`` (issue 028).
 """
 
@@ -36,6 +36,8 @@ from gupkg.system.port import Mode
 from gupkg.system.fake import FakeSystem
 from tests.catalog_support import version_text
 from tests.mode_support import pin_no_ambient_elevation, tree_snapshot  # noqa: F401
+
+pytestmark = pytest.mark.unit
 
 
 EXTENDED = "\\\\?\\"  # the extended-length path prefix
@@ -80,7 +82,7 @@ def test_the_folder_is_copied_whole_into_the_root(tmp_path: Path) -> None:
     assert not (root / ".gupkg" / "work").exists() or not any((root / ".gupkg" / "work").iterdir())
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 def test_the_copies_carry_no_mark_of_the_web_and_the_result_says_the_source_was_marked(tmp_path: Path) -> None:
     """A source whose files Explorer marked is copied without any ``Zone.Identifier``, and ``source_marked`` is set (D40)."""
     source = distribution(tmp_path / "downloads")
@@ -96,7 +98,7 @@ def test_the_copies_carry_no_mark_of_the_web_and_the_result_says_the_source_was_
     assert copies and not any(is_marked(path) for path in copies)
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 def test_an_unmarked_source_is_reported_unmarked(tmp_path: Path) -> None:
     """A source with no Mark of the Web (for example from ``tar -xf``) is reported as not marked."""
     source = distribution(tmp_path / "downloads")
@@ -104,7 +106,7 @@ def test_an_unmarked_source_is_reported_unmarked(tmp_path: Path) -> None:
     assert copy_distribution(source, tmp_path / "opt").source_marked is False
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 def test_one_marked_file_is_enough_to_report_the_source_as_marked(tmp_path: Path) -> None:
     """The receipt must say so when any file of the source was marked, not only the manifest."""
     source = distribution(tmp_path / "downloads")
@@ -141,7 +143,7 @@ def test_a_differing_existing_copy_is_diverged_and_never_overwritten(tmp_path: P
     assert not (destination / "App").exists()
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 def test_a_junction_inside_the_source_is_refused_and_nothing_is_written(tmp_path: Path) -> None:
     """A link in the source could point to files the copying account can read, so the copy is refused outright."""
     source = distribution(tmp_path / "downloads")
@@ -157,7 +159,7 @@ def test_a_junction_inside_the_source_is_refused_and_nothing_is_written(tmp_path
     assert not (root / "tool").exists()
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 def test_a_root_whose_data_folder_is_a_junction_is_refused(tmp_path: Path) -> None:
     """The copy never writes through a link planted in the root."""
     source = distribution(tmp_path / "downloads")
@@ -206,7 +208,7 @@ def make_raw(path: Path, content: bytes = b"x") -> None:
         stream.write(content)
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 @pytest.mark.parametrize(
     "hostile",
     [
@@ -252,7 +254,7 @@ def test_a_refused_copy_leaves_an_existing_root_as_it_was(tmp_path: Path) -> Non
     assert tree_snapshot(root) == before
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 def test_a_directory_swapped_for_a_junction_after_the_check_is_never_copied(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """If ``App`` becomes a junction to a secret folder just before it is listed, the copy is refused and copies nothing."""
     source = distribution(tmp_path / "downloads")
@@ -280,7 +282,7 @@ def test_a_directory_swapped_for_a_junction_after_the_check_is_never_copied(tmp_
     assert swapped and not root.exists()
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 def test_a_folder_swapped_for_a_junction_just_before_a_file_is_opened_is_never_copied(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -365,7 +367,7 @@ def test_the_default_limits_are_the_unpack_limits() -> None:
     assert (limits.entries, limits.bytes) == (200_000, 8 * 1024**3) and limits.depth == 64 and limits.manifest_bytes == 1024 * 1024
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 @pytest.mark.parametrize("which", ["work", "package", "version"])
 def test_a_root_with_a_junction_where_the_copy_writes_is_refused(tmp_path: Path, which: str) -> None:
     """A junction at root\\.gupkg\\work, root\\<name> or root\\<name>\\<version> would send the copy elsewhere: it is refused."""

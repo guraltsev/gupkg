@@ -30,6 +30,8 @@ from gupkg.report.results import plan_document, result_document
 from gupkg.system.port import Mode
 from tests.engine_support import BASE_URL, World, pin_no_ambient_elevation, pkg_text  # noqa: F401
 
+pytestmark = pytest.mark.unit
+
 FULL = """
 [[shortcut]]
 name = "Tool"

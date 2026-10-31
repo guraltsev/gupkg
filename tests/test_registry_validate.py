@@ -27,6 +27,8 @@ from gupkg_registry.layout import read_registry_file, write_registry_file
 from gupkg_registry.validate import MAX_HOOK_FILES, _stray_problems, validate_registry
 from tests.http_fixtures import FIXTURES
 
+pytestmark = pytest.mark.unit
+
 SNAPSHOT = FIXTURES / "registry_100"
 HASH = "c" * 64
 

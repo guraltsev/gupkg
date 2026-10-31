@@ -10,6 +10,8 @@ import pytest
 
 from gupkg.model.jsonpath import MAX_NODES, JsonPathError, Node, condition_holds, parse_path
 
+pytestmark = pytest.mark.unit
+
 DOCUMENT = {
     "latest": "1.5.0",
     "releases": [

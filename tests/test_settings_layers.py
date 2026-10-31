@@ -8,7 +8,7 @@ refuses a settings file in a folder that is not admin-only; a user run never rea
 are reported with every problem and a hint.
 
 Real: ``gupkg.settingsload.resolve_root``, ``load_mode_settings`` and the model, on settings files written under pytest's
-temporary folder, and (one ``windows_integration`` test) the real administrator-only folder check. Fake: ``FakeSystem``
+temporary folder, and (one ``process`` test) the real administrator-only folder check. Fake: ``FakeSystem``
 answers that check in the other tests, which would otherwise need an administrator-owned folder. Out of scope: the
 ``gupkg settings show`` command itself.
 """
@@ -24,6 +24,8 @@ from gupkg.model.settings import SettingsError, default_layer, merge_layers
 from gupkg.settingsload import load_mode_settings, resolve_root, settings_file
 from gupkg.system.fake import FakeSystem
 from gupkg.system.windows import WindowsSystem
+
+pytestmark = pytest.mark.unit
 
 
 class World:
@@ -466,7 +468,7 @@ def test_invalid_toml_names_the_file(world: World) -> None:
         world.load()
 
 
-@pytest.mark.windows_integration
+@pytest.mark.process
 @pytest.mark.skipif(os.name != "nt", reason="reads Windows access-control lists")
 def test_real_admin_only_check_refuses_a_user_writable_system_layer(world: World) -> None:
     """With the real folder check, a system-mode run refuses a root layer in a folder the current user can write."""

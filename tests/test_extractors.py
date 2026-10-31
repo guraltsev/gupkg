@@ -14,6 +14,8 @@ import pytest
 
 from gupkg import extractors
 
+pytestmark = pytest.mark.unit
+
 
 def test_find_7z_prefers_the_executable_below_the_loaded_gupkg() -> None:
     """The packaged 7z executable wins even when a system command exists."""

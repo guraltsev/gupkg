@@ -21,7 +21,7 @@ import pytest
 LAUNCHER = Path(__file__).resolve().parents[1] / "src" / "gupkg" / "gupkg.cmd"
 NAMES = {"cyrillic": "жук", "cjk": "漢字パッケージ", "emoji": "tool-\U0001F600", "cp1252-only": "café"}
 
-pytestmark = pytest.mark.skipif(os.name != "nt", reason="runs the Windows launcher")
+pytestmark = [pytest.mark.process, pytest.mark.skipif(os.name != "nt", reason="runs the Windows launcher")]
 
 
 @pytest.fixture

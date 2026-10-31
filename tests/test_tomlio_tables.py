@@ -14,6 +14,9 @@ import tomli_w
 from tomli_w import _writer
 
 from gupkg.tomlio import dumps_tables
+import pytest
+
+pytestmark = pytest.mark.unit
 
 DATA = {
     "modes": ["system", "user"],

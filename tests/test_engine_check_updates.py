@@ -23,6 +23,8 @@ from gupkg.report.events import Warning, use_reporter
 from gupkg.model.checksum import parse_skip_flag
 from tests.engine_support import BASE_URL, World, pin_no_ambient_elevation  # noqa: F401
 
+pytestmark = pytest.mark.unit
+
 ENV_ONLY = '[[env]]\nname = "TOOL_HOME"\nvalue = "$App"\n'
 
 
