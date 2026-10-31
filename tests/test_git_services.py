@@ -13,13 +13,14 @@ from pathlib import Path
 
 import pytest
 
-from gupkg.model.manifest import ManifestKind, parse_manifest, render_pinned
+from gupkg.model.manifest import ManifestKind, manifest_to_toml, parse_manifest, render_pinned
+from gupkg.pkgcheck import check_directory
 from gupkg.services.populate import populate_git
 from gupkg.services.prepare import PrepareError
 from gupkg.services.track import TrackError, run_tracker
 from gupkg.services.unpack import UnpackError, UnpackPlan, unpack_git
 from tests.support.git import COMMIT, OTHER, FakeGit, git_machine, subcommand
-from tests.support.http_fixtures import environment
+from tests.support.track import environment
 from gupkg.scope import process_mode
 from tests.support.scope import scope_of
 from gupkg.system.port import Mode
@@ -50,6 +51,20 @@ def test_the_git_provider_versions_a_commit_by_its_date_and_short_id(tmp_path: P
     assert result.version == "20241012-081530-0123456"
     assert result.captures["commit"] == COMMIT and pinned.source.git.commit == COMMIT
     assert git.words() == ["ls-remote", "init", "fetch", "log"]
+
+
+def test_the_version_pinned_for_a_git_tracker_is_a_valid_version_directory(tmp_path: Path) -> None:
+    """The pinned git version keeps no tracker key and names the commit it found, so the package checker accepts it as written."""
+    system = git_machine(tmp_path, FakeGit())
+    manifest = parse_manifest(tracker(), ManifestKind.TRACKER)
+
+    result = run_tracker(manifest, environment(system, tmp_path))
+    version = tmp_path / "tool" / result.version
+    version.mkdir(parents=True)
+    (version / "pkg.toml").write_text(manifest_to_toml(render_pinned(manifest, result)), encoding="utf-8", newline="\n")
+    report = check_directory(version)
+
+    assert report.errors == () and report.warnings == ()
 
 
 def test_git_runs_with_prompts_off_safe_transports_and_double_dash_before_untrusted_values(tmp_path: Path) -> None:

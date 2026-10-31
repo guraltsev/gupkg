@@ -2,8 +2,10 @@
 
 Every case parses a tracker ``pkg.toml`` through ``parse_manifest`` (the public entry), so the
 test sees the same error text a package author sees from ``gupkg pkg check``. Covers regular
-expressions, JSONPath, templates, choices and locations for each provider. Out of scope:
-running the providers (``test_track_providers``).
+expressions, JSONPath, templates, choices and locations for each provider, and the fetch steps of a ``chain``:
+``select = "each"`` tries the page's links against the steps after it, so it is refused on the last step and on a second
+step, and an unknown ``select`` is refused. The rules are described in ``_docs/rehaul_design.md`` section 8.1. Out of scope:
+running the providers (``tests/services/test_track.py``).
 """
 
 from __future__ import annotations
@@ -98,3 +100,34 @@ def test_source_headers_must_be_plain_text_and_need_a_download_url() -> None:
         parse_manifest('format = 2\n[source]\ndownload_url = "https://e.org/t.zip"\n[source.headers]\nX = "a\\r\\nb"\n')
     with pytest.raises(ManifestError, match="needs download_url"):
         parse_manifest('format = 2\n[source]\nshipped = true\n[source.headers]\nX = "a"\n')
+
+
+CHAIN = (
+    '[track]\nprovider = "chain"\ndownload = "${link}"\n'
+    '[[track.fetch]]\nurl = "https://example.org/"\nselect = "@FIRST@"\nmatch = \'(?P<link>https://example.org/f/\\d+)\'\n'
+    '[[track.fetch]]\nurl = "${link}"\nheader = "Content-Disposition"\nmatch = \'(?P<version>\\d+\\.\\d+)\'\n@EXTRA@'
+)
+
+
+def chain(first: str = "max", extra: str = "") -> str:
+    """Return a two-step chain whose first step has the given `select` and whose last step has the extra keys."""
+    return CHAIN.replace("@FIRST@", first).replace("@EXTRA@", extra)
+
+
+def test_select_each_is_accepted_on_a_step_with_later_steps() -> None:
+    """A chain whose first step tries its candidates against the next one is valid."""
+    assert parse(chain(first="each")).track.provider == "chain"
+
+
+@pytest.mark.parametrize(
+    ("track", "message"),
+    [
+        pytest.param(chain(extra='select = "each"\n'), "last step", id="each-on-the-last-step"),
+        pytest.param(chain(first="sometimes"), "select", id="unknown-select"),
+    ],
+)
+def test_select_each_is_refused_where_it_has_nothing_to_try_and_unknown_selects_are_refused(track: str, message: str) -> None:
+    """`each` needs a later step to try its candidates against, and only max, first, unique and each are values of `select`."""
+    with pytest.raises(ManifestError, match=message):
+        parse(track)
+

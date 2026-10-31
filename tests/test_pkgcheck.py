@@ -6,7 +6,7 @@ it and otherwise fails with the exact text `App is missing and no way to recover
 version directory with `[track]`, with a `pkg.local` module that defines `track`, or
 with a templated source URL fails with an error that names `_check_updates`; a version
 hook that imports `urllib` validates without a warning (decision D28); a tracker is
-checked without needing an `App`.
+checked without needing an `App`, and its `[source]` may not name a value its provider never produces.
 
 Real: ``gupkg.pkgcheck.check_directory`` on directories built under pytest's temporary
 folder. Mocked: nothing. Out of scope: running hooks and downloading anything.
@@ -231,6 +231,18 @@ def test_tracker_directory_is_valid_without_an_app_and_with_templates(tmp_path: 
     assert report.ok, report.errors
     assert report.kind is ManifestKind.TRACKER
     assert report.app_kind is None
+
+
+def test_a_tracker_source_that_names_a_value_its_provider_never_produces_is_an_error(tmp_path: Path) -> None:
+    """A `[source]` that refers to `${nothing}`, which the provider never produces, is reported with the provider's name, before any request."""
+    folder = make_dir(
+        tmp_path, "_check_updates",
+        '[track]\nprovider = "github"\nrepo = "o/r"\nasset = "x-${version}.zip"\n[source]\ndownload_url = "${nothing}"\n',
+    )
+
+    report = check_directory(folder)
+
+    assert any("${nothing}" in error and "github" in error for error in report.errors)
 
 
 def test_tracker_with_a_module_provider_needs_its_module_file(tmp_path: Path) -> None:
