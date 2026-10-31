@@ -14,6 +14,9 @@ from typing import NamedTuple
 import pytest
 
 
+# The automatic hygiene checks (_docs/tests_hygiene.md section 6) run with every session.
+pytest_plugins = ["tests.support.hygiene"]
+
 SOURCE_ROOT = Path(__file__).resolve().parents[1] / "src"
 if str(SOURCE_ROOT) not in sys.path:
     sys.path.insert(0, str(SOURCE_ROOT))
