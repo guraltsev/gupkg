@@ -20,7 +20,7 @@ from gupkg.engine import lifecycle
 from gupkg.engine.context import stop_marker
 from gupkg.engine.receipts import read_receipt
 from gupkg.report.session import RunSession
-from tests.engine_support import ScriptDouble, World, pin_no_ambient_elevation  # noqa: F401
+from tests.support.engine import ScriptDouble, World, pin_no_ambient_elevation  # noqa: F401
 
 pytestmark = pytest.mark.unit
 

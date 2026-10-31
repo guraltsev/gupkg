@@ -21,8 +21,8 @@ import pytest
 from gupkg.model.manifest import APP_MISSING_ERROR
 from gupkg.engine.receipts import read_receipt
 from gupkg.system.port import Mode
-from tests.engine_support import World, pin_no_ambient_elevation  # noqa: F401
-from tests.mode_support import tree_snapshot
+from tests.support.engine import World, pin_no_ambient_elevation  # noqa: F401
+from tests.support.mode import tree_snapshot
 
 pytestmark = pytest.mark.unit
 

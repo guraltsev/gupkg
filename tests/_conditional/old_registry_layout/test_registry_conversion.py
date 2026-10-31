@@ -20,7 +20,7 @@ from gupkg.services.fingerprint import fingerprint_directory
 from gupkg_registry.cli import main
 from gupkg_registry.layout import read_registry_file, write_registry_file
 from gupkg_registry.validate import validate_registry
-from tests.http_fixtures import FIXTURES
+from tests.support.http_fixtures import FIXTURES
 
 VERSION = "qbittorrent/5.2.3"
 TRACKER = "gh/_check_updates"

@@ -21,7 +21,7 @@ import pytest
 from gupkg.catalog.record import read_install_record, write_install_record
 from gupkg.model.state import InstallRecord, Link
 from gupkg.system.port import Mode
-from tests.engine_support import BASE_URL, World, pin_no_ambient_elevation  # noqa: F401
+from tests.support.engine import BASE_URL, World, pin_no_ambient_elevation  # noqa: F401
 
 pytestmark = pytest.mark.unit
 

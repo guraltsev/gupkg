@@ -25,8 +25,8 @@ from gupkg.model.plan import OVERWRITE_KINDS, parse_overwrite
 from gupkg.model.state import InstallRecord
 from gupkg.report.documents import read_results
 from gupkg.system.port import Mode, ShortcutSpec
-from tests.cli_support import CliWorld
-from tests.engine_support import pin_no_ambient_elevation  # noqa: F401
+from tests.support.cli import CliWorld
+from tests.support.engine import pin_no_ambient_elevation  # noqa: F401
 from tests.test_engine_name_conflicts import ENV, SHIM, SHORTCUT, WRAPPER, state
 
 pytestmark = pytest.mark.unit

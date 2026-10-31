@@ -25,7 +25,7 @@ from gupkg.model.patterns import compile_pattern
 from gupkg.pkgcheck import check_directory
 from gupkg_registry.layout import package_dirs
 from gupkg_registry.validate import MAX_HOOK_FILES, validate_registry
-from tests.http_fixtures import FIXTURES, HTTP_CASES
+from tests.support.http_fixtures import FIXTURES, HTTP_CASES
 
 pytestmark = pytest.mark.unit
 

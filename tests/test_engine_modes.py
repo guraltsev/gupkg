@@ -21,7 +21,7 @@ import pytest
 
 from gupkg.model.scope import PORTABLE_REFUSAL, SYSTEM_ONLY_REFUSAL, USER_ONLY_REFUSAL
 from gupkg.system.port import Mode
-from tests.engine_support import World, pin_no_ambient_elevation, pkg_text  # noqa: F401
+from tests.support.engine import World, pin_no_ambient_elevation, pkg_text  # noqa: F401
 
 pytestmark = pytest.mark.unit
 

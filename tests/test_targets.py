@@ -21,8 +21,8 @@ from gupkg.catalog.catalog import CatalogError, NotFound, parse_selector
 from gupkg.model.scope import PORTABLE_REFUSAL, SYSTEM_ONLY_REFUSAL, USER_ONLY_REFUSAL, ModeRefused
 from gupkg.system.port import Mode
 from gupkg.targets import TargetRequest, resolve_target
-from tests.catalog_support import build_registry, version_text
-from tests.mode_support import Machine, pin_no_ambient_elevation, tree_snapshot  # noqa: F401
+from tests.support.catalog import build_registry, version_text
+from tests.support.mode import Machine, pin_no_ambient_elevation, tree_snapshot  # noqa: F401
 
 pytestmark = pytest.mark.unit
 

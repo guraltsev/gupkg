@@ -5,7 +5,7 @@ character that could be misread (``& | < > ^ " % !``, a control character) is re
 when it is one JSON object with ``"api": 2``, an exit code that matches the process and (when an events file was written) a ``run_end``; output beyond the cap and a program that cannot start are failures; the stop request creates the announced marker only inside the program's temporary folder, also when the
 marker is announced after the request was made.
 
-Real: the client, real subprocesses (the double of ``tests/ui_support.py`` run by the test interpreter) and real files. Mocked: the ``gupkg`` executable itself.
+Real: the client, real subprocesses (the double of ``tests/support/ui.py`` run by the test interpreter) and real files. Mocked: the ``gupkg`` executable itself.
 Out of scope: what batches do with results (``test_ui_flows.py``) and the real launcher (``test_manager_cli.py``).
 """
 
@@ -21,7 +21,7 @@ from gupkg.selfmgmt.location import RunningGupkg
 from gupkg_ui import client as client_module
 from gupkg_ui.follow import EventStream
 from gupkg_ui.client import Client, ClientError, StopRequest, check_document, refuse_unsafe, sibling_launcher, with_options
-from tests.ui_support import FakeGupkg, entry, head, result, until
+from tests.support.ui import FakeGupkg, entry, head, result, until
 
 pytestmark = pytest.mark.process
 

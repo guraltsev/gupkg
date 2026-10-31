@@ -22,8 +22,8 @@ from gupkg.report.logfile import RunLog, list_run_logs, running_gupkg_logs_base,
 from gupkg.report.session import RunSession
 from gupkg.system.fake import FakeSystem
 from gupkg.system.port import ProcessResult
-from tests.cli_support import CliResult, CliWorld
-from tests.mode_support import pin_no_ambient_elevation  # noqa: F401
+from tests.support.cli import CliResult, CliWorld
+from tests.support.mode import pin_no_ambient_elevation  # noqa: F401
 
 pytestmark = pytest.mark.unit
 

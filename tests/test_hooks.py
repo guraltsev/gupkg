@@ -34,8 +34,8 @@ from gupkg.services.populate import run_custom_populate
 from gupkg.services.track import TrackError, run_tracker
 from gupkg.system.fake import FakeHttp, FakeSystem, ProcessCall
 from gupkg.system.port import ProcessResult
-from tests.http_fixtures import environment
-from tests.scope_support import scope_of
+from tests.support.http_fixtures import environment
+from tests.support.scope import scope_of
 
 pytestmark = pytest.mark.unit
 

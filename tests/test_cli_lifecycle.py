@@ -27,9 +27,9 @@ import pytest
 from gupkg.catalog.record import read_install_record
 from gupkg.engine.locks import Holder, lock_path, render_lock
 from gupkg.system.port import Mode
-from tests.cli_support import CliWorld
-from tests.engine_support import World
-from tests.mode_support import pin_no_ambient_elevation  # noqa: F401
+from tests.support.cli import CliWorld
+from tests.support.engine import World
+from tests.support.mode import pin_no_ambient_elevation  # noqa: F401
 
 pytestmark = pytest.mark.unit
 

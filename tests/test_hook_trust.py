@@ -31,7 +31,7 @@ from gupkg.services.populate import run_custom_populate
 from gupkg.services.prepare import PrepareError, run_prepare
 from gupkg.system.fake import FakeSystem, ProcessCall
 from gupkg.system.port import ProcessResult
-from tests.scope_support import scope_of
+from tests.support.scope import scope_of
 
 pytestmark = pytest.mark.unit
 

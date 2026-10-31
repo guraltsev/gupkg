@@ -19,7 +19,7 @@ from gupkg.engine.receipts import MAX_RECEIPT_BYTES, read_receipt
 from gupkg.model.checksum import parse_skip_flag
 from gupkg.report.events import PhaseEnd, PhaseStart, Warning, use_reporter
 from gupkg.system.port import Mode
-from tests.engine_support import World, pin_no_ambient_elevation  # noqa: F401
+from tests.support.engine import World, pin_no_ambient_elevation  # noqa: F401
 
 pytestmark = pytest.mark.unit
 

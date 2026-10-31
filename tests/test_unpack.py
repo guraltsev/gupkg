@@ -25,7 +25,7 @@ from gupkg.services.unpack import Limits, UnpackError, UnpackPlan, unpack_artifa
 from gupkg.services.unpack.extract import check_tree
 from gupkg.system.fake import FakeSystem, ProcessCall
 from gupkg.system.port import ProcessResult
-from tests.archive_support import make_7z, make_tar, make_zip, sums_manifest, tree
+from tests.support.archive import make_7z, make_tar, make_zip, sums_manifest, tree
 
 pytestmark = pytest.mark.unit
 

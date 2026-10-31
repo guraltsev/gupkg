@@ -25,8 +25,8 @@ from gupkg.services.checksum import ChecksumDiscoveryError
 from gupkg.services.http import HttpClient
 from gupkg.services.track import TrackEnvironment, TrackError, run_tracker
 from gupkg.system.fake import FakeHttp, FakeSystem
-from tests.http_fixtures import HTTP_CASES, REGISTRY2, environment, serve, tracker_manifest
-from tests.scope_support import scope_of
+from tests.support.http_fixtures import HTTP_CASES, REGISTRY2, environment, serve, tracker_manifest
+from tests.support.scope import scope_of
 
 pytestmark = pytest.mark.unit
 

@@ -42,8 +42,8 @@ from gupkg_registry.layout import RegistryFileError, read_registry_file, write_r
 from gupkg_registry.publish import commit_message
 from gupkg_registry.update import Outcome, pin_version, update_registry
 from gupkg_registry.validate import validate_registry
-from tests.archive_support import make_zip
-from tests.http_fixtures import FIXTURES, HTTP_CASES, load_case
+from tests.support.archive import make_zip
+from tests.support.http_fixtures import FIXTURES, HTTP_CASES, load_case
 
 pytestmark = pytest.mark.process
 

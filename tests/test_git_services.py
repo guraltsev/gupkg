@@ -20,9 +20,9 @@ from gupkg.services.track import TrackError, run_tracker
 from gupkg.services.unpack import UnpackError, UnpackPlan, unpack_git
 from gupkg.system.fake import FakeSystem, ProcessCall
 from gupkg.system.port import ProcessResult
-from tests.http_fixtures import environment
+from tests.support.http_fixtures import environment
 from gupkg.scope import process_mode
-from tests.scope_support import scope_of
+from tests.support.scope import scope_of
 from gupkg.system.port import Mode
 
 pytestmark = pytest.mark.unit

@@ -23,9 +23,9 @@ from pathlib import Path
 import pytest
 
 from gupkg.tomlio import dumps
-from tests.cli_support import CliWorld
-from tests.engine_support import pkg_text
-from tests.mode_support import pin_no_ambient_elevation  # noqa: F401
+from tests.support.cli import CliWorld
+from tests.support.engine import pkg_text
+from tests.support.mode import pin_no_ambient_elevation  # noqa: F401
 
 pytestmark = pytest.mark.unit
 

@@ -23,8 +23,8 @@ from gupkg.services.track import run_tracker
 from gupkg.services.unpack import UnpackError, UnpackPlan, unpack_artifact
 from gupkg.services.values import file_name_from_url
 from gupkg.system.fake import FakeHttp, FakeSystem
-from tests.archive_support import make_zip, tree
-from tests.http_fixtures import environment, serve, tracker_manifest
+from tests.support.archive import make_zip, tree
+from tests.support.http_fixtures import environment, serve, tracker_manifest
 
 pytestmark = pytest.mark.unit
 

@@ -26,7 +26,7 @@ from gupkg.services.http import HttpClient
 from gupkg.services.populate import prepare_app
 from gupkg.services.prepare import PrepareError, run_prepare
 from gupkg.system.fake import FakeSystem
-from tests.scope_support import scope_of
+from tests.support.scope import scope_of
 
 pytestmark = pytest.mark.unit
 

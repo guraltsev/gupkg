@@ -21,7 +21,7 @@ from unittest import mock
 
 from gupkg import cli
 from gupkg.selfmgmt.location import RunningGupkg
-from tests.engine_support import World
+from tests.support.engine import World
 
 
 class TerminalInput(io.StringIO):

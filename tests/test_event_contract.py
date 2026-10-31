@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.cli_support import CliWorld
+from tests.support.cli import CliWorld
 from gupkg.report import events
 from gupkg.report.events import (
     EVENT_TYPES, Diagnostic, Error, MultiReporter, PackageEnd, PackageStart, PhaseEnd, PhaseStart,

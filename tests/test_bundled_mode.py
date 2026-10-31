@@ -27,7 +27,7 @@ from gupkg.catalog.record import read_install_record
 from gupkg.engine.effects import launchers_find_gupkg
 from gupkg.launchers import launcher_text
 from gupkg.system.port import ProcessResult, Mode
-from tests.engine_support import World, pin_no_ambient_elevation  # noqa: F401
+from tests.support.engine import World, pin_no_ambient_elevation  # noqa: F401
 
 pytestmark = pytest.mark.unit
 

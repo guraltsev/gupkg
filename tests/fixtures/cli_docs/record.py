@@ -20,7 +20,7 @@ REPO = HERE.parents[2]
 LAUNCHER = REPO / "src" / "gupkg" / "gupkg.cmd"
 sys.path.insert(0, str(REPO))
 
-from tests.catalog_support import build_registry  # noqa: E402
+from tests.support.catalog import build_registry  # noqa: E402
 
 
 def package(root: Path, name: str, versions: tuple[str, ...]) -> None:

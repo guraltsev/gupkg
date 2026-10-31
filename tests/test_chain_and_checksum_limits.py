@@ -30,7 +30,7 @@ from gupkg.system import regex_worker
 from gupkg.system.fake import FakeHttp, FakeSystem, ProcessCall
 from gupkg.system.port import ProcessResult
 from gupkg_registry.layout import write_registry_file
-from tests.http_fixtures import environment, load_case, tracker_manifest
+from tests.support.http_fixtures import environment, load_case, tracker_manifest
 from tests.test_registry_tool import Git, machine, registry_of, run_cli, zip_bytes
 
 pytestmark = pytest.mark.process

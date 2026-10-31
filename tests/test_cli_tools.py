@@ -31,9 +31,9 @@ from gupkg.launchers import launcher_text
 from gupkg.selfmgmt.location import RunningGupkg
 from gupkg.system.port import Mode
 from gupkg.tomlio import dumps, read_toml
-from tests.cli_support import CliWorld
-from tests.engine_support import pkg_text, zip_bytes
-from tests.mode_support import pin_no_ambient_elevation, tree_snapshot  # noqa: F401
+from tests.support.cli import CliWorld
+from tests.support.engine import pkg_text, zip_bytes
+from tests.support.mode import pin_no_ambient_elevation, tree_snapshot  # noqa: F401
 
 pytestmark = pytest.mark.unit
 

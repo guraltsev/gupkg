@@ -18,7 +18,7 @@ import pytest
 from gupkg.scope import NOT_ADMIN_ONLY_REFUSAL
 from gupkg.system.port import Mode
 from gupkg_ui.startup import StartupError, build_environment, shorten_path
-from tests.mode_support import pin_no_ambient_elevation  # noqa: F401 - autouse fixture
+from tests.support.mode import pin_no_ambient_elevation  # noqa: F401 - autouse fixture
 from gupkg.settingsload import SOURCE_ROOT_OPTION
 from tests.test_scope import Machine
 

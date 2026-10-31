@@ -4,7 +4,7 @@ Behavior covered: the trackers of latex-toolkit, overleaf-sync and windebloattoo
 the form ``YYYYMMDD-HHMMSS-<short sha>``, pin the full commit they found in the version's ``[source.git]``
 (the commit is the integrity anchor, so no ``sha256`` is expected), and render a pinned version that passes
 the package checker. The CI job of the registry runs this module against its own checkout, through the
-``GUPKG_REGISTRY_TRACKERS`` variable that ``tests/http_fixtures.py`` reads.
+``GUPKG_REGISTRY_TRACKERS`` variable that ``tests/support/http_fixtures.py`` reads.
 Real: the committed (or CI-supplied) trackers, the git provider, ``render_pinned``, the package checker.
 Mocked: ``git`` (``FakeGit`` of ``test_git_services``). Out of scope: real clones (manual) and the HTTP trackers.
 """
@@ -19,7 +19,7 @@ import pytest
 from gupkg.model.manifest import ManifestKind, manifest_to_toml, render_pinned
 from gupkg.pkgcheck import check_directory
 from gupkg.services.track import run_tracker
-from tests.http_fixtures import environment, tracker_manifest
+from tests.support.http_fixtures import environment, tracker_manifest
 from tests.test_git_services import COMMIT, FakeGit, machine
 
 pytestmark = pytest.mark.unit

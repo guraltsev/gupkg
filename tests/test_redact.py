@@ -20,7 +20,7 @@ from gupkg.engine import lifecycle
 from gupkg.model.plan import PackageResult, Request
 from gupkg.redact import redact_text, redact_url
 from gupkg.report.events import use_reporter
-from tests.engine_support import World, pin_no_ambient_elevation, pkg_text, zip_bytes  # noqa: F401
+from tests.support.engine import World, pin_no_ambient_elevation, pkg_text, zip_bytes  # noqa: F401
 
 pytestmark = pytest.mark.unit
 

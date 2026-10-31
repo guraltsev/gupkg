@@ -28,7 +28,7 @@ from gupkg.model.state import InstallRecord, Link
 from gupkg.selfmgmt.elevation import UntrustedLocationError
 from gupkg.system.fake import FakeSystem
 from gupkg.system.windows import WindowsSystem
-from tests.catalog_support import (
+from tests.support.catalog import (
     activate,
     build_registry,
     make_catalog,

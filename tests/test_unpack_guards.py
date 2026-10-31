@@ -22,7 +22,7 @@ from gupkg.services.unpack import Limits, UnpackError, UnpackPlan, unpack_artifa
 from gupkg.services.unpack.extract import XZ_MEMORY_LIMIT, _FolderWatch, check_tree, decompress_capped
 from gupkg.system.fake import FakeSystem, ProcessCall
 from gupkg.system.port import ProcessResult
-from tests.archive_support import make_zip
+from tests.support.archive import make_zip
 
 pytestmark = pytest.mark.unit
 

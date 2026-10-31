@@ -1,6 +1,6 @@
 """Build a pretend machine with published packages for the engine tests.
 
-``World`` wraps the temporary machine of ``tests.mode_support`` (two roots, an app settings file, a ``FakeSystem``) and an
+``World`` wraps the temporary machine of ``tests.support.mode`` (two roots, an app settings file, a ``FakeSystem``) and an
 ``Engine`` over the one scope of a run on it (user mode, or system mode when the fake machine is elevated). ``World.publish`` writes a pinned version directory into a root and serves its zip artifact from the
 fake's URL map, with the digest in ``pkg.toml`` when asked, so install, update, check-updates and repair run end to end on
 real folders, real ``current`` junctions and the fake registry, shortcuts and ``PATH``.
@@ -24,7 +24,7 @@ from gupkg.services.fingerprint import fingerprint_directory
 from gupkg.system.fake import FakeSystem, ProcessCall
 from gupkg.system.port import ProcessResult
 from gupkg.tomlio import write_toml
-from tests.mode_support import Machine, pin_no_ambient_elevation  # noqa: F401  (autouse fixture of every engine test)
+from tests.support.mode import Machine, pin_no_ambient_elevation  # noqa: F401  (autouse fixture of every engine test)
 
 BASE_URL = "https://example.org/files"
 

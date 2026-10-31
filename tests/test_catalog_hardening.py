@@ -25,14 +25,14 @@ from gupkg.selfmgmt.elevation import UntrustedLocationError
 from gupkg.system.fake import FakeSystem
 from gupkg.system.windows import WindowsSystem
 from gupkg.tomlio import dumps, write_toml
-from tests.catalog_support import (
+from tests.support.catalog import (
     REVISION,
     build_registry,
     make_catalog,
     version_text,
     write_version,
 )
-from tests.scope_support import scope_of
+from tests.support.scope import scope_of
 
 pytestmark = pytest.mark.unit
 

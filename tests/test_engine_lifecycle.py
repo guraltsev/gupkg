@@ -28,7 +28,7 @@ from gupkg.report.documents import read_plan, read_results
 from gupkg.report.events import Error, PackageEnd, PhaseEnd, use_reporter
 from gupkg.report.results import plan_document, result_document
 from gupkg.system.port import Mode
-from tests.engine_support import BASE_URL, World, pin_no_ambient_elevation, pkg_text  # noqa: F401
+from tests.support.engine import BASE_URL, World, pin_no_ambient_elevation, pkg_text  # noqa: F401
 
 pytestmark = pytest.mark.unit
 

@@ -20,7 +20,7 @@ from gupkg_manager.batch import check_all, check_updates_all, pick, update_all
 from gupkg_ui.interaction import Interaction
 from gupkg_ui.plans import PackageRow
 from gupkg_ui.session import BatchOutcome, BatchSession
-from tests.ui_support import FakeGupkg, ListSink, until, entry, make_env, plan_doc, plan_entry, plan_failure, result
+from tests.support.ui import FakeGupkg, ListSink, until, entry, make_env, plan_doc, plan_entry, plan_failure, result
 
 pytestmark = pytest.mark.process
 

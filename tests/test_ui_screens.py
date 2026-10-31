@@ -26,7 +26,7 @@ from gupkg_ui.client import Client
 from gupkg_ui.follow import EventStream
 from gupkg_ui.render import EventRenderer, verdict_lines
 from gupkg_ui.screens.run import MAX_LOG_LINES, RunScreen
-from tests.ui_support import FakeGupkg, entry, fixture_json, list_doc, make_env, plan_doc, plan_entry, registry_doc, result
+from tests.support.ui import FakeGupkg, entry, fixture_json, list_doc, make_env, plan_doc, plan_entry, registry_doc, result
 
 pytestmark = pytest.mark.process
 

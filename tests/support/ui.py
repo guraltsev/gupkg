@@ -29,7 +29,7 @@ from gupkg_ui.reads import Reads, one_info
 from gupkg_ui.settings import load_ui_settings
 from gupkg_ui.startup import UiEnvironment
 
-FIXTURES = Path(__file__).resolve().parent / "fixtures" / "ui"
+FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "ui"
 
 SCRIPT = r'''
 import json, os, sys, time, uuid
@@ -393,7 +393,7 @@ def make_env(base: Path, fake: FakeGupkg, *, settings: str = "", user_layer: str
 # The real command line, on a pretend machine
 # ---------------------------------------------------------------------------
 
-LAUNCHERS = Path(__file__).resolve().parents[1] / "src" / "gupkg"
+LAUNCHERS = Path(__file__).resolve().parents[2] / "src" / "gupkg"
 
 
 class RealWorld:

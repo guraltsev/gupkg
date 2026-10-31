@@ -27,10 +27,10 @@ from gupkg.services.registrysource import trusted_git
 from gupkg.system.fake import FakeSystem, ProcessCall
 from gupkg.system.port import ProcessResult
 from gupkg.tomlio import dumps
-from tests.catalog_support import version_text
-from tests.cli_support import CliWorld
-from tests.mode_support import pin_no_ambient_elevation  # noqa: F401
-from tests.scope_support import scope_of
+from tests.support.catalog import version_text
+from tests.support.cli import CliWorld
+from tests.support.mode import pin_no_ambient_elevation  # noqa: F401
+from tests.support.scope import scope_of
 
 pytestmark = pytest.mark.unit
 

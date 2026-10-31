@@ -17,7 +17,7 @@ import pytest
 import record_http_fixtures
 
 from gupkg.system.fake import FakeHttp, FakeSystem
-from tests.http_fixtures import HTTP_CASES, load_case
+from tests.support.http_fixtures import HTTP_CASES, load_case
 
 pytestmark = pytest.mark.unit
 

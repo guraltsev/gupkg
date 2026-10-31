@@ -28,7 +28,7 @@ import pytest
 from gupkg._version import __version__
 from gupkg.launchers import write_launchers
 from gupkg.model.manifest import ManifestKind, TrackResult, parse_manifest, render_pinned, manifest_to_toml
-from tests.engine_support import World, pin_no_ambient_elevation  # noqa: F401
+from tests.support.engine import World, pin_no_ambient_elevation  # noqa: F401
 
 pytestmark = pytest.mark.release
 

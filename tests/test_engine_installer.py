@@ -34,7 +34,7 @@ from gupkg.selfmgmt.elevation import UntrustedLocationError
 from gupkg.services.artifact import FetchedArtifact
 from gupkg.services.http import Download
 from gupkg.system.port import ProcessResult
-from tests.engine_support import BASE_URL, World, pin_no_ambient_elevation, pkg_text  # noqa: F401
+from tests.support.engine import BASE_URL, World, pin_no_ambient_elevation, pkg_text  # noqa: F401
 
 pytestmark = pytest.mark.unit
 

@@ -22,9 +22,9 @@ from gupkg.catalog.catalog import ListFilter, NotFound
 from gupkg.model.scope import PORTABLE_REFUSAL, SYSTEM_ONLY_REFUSAL, USER_ONLY_REFUSAL
 from gupkg.model.state import InstallRecord
 from gupkg.system.fake import FakeSystem
-from tests.catalog_support import activate, build_registry, make_catalog, version_text, write_record, write_version
-from tests.cli_support import CliWorld
-from tests.mode_support import tree_snapshot
+from tests.support.catalog import activate, build_registry, make_catalog, version_text, write_record, write_version
+from tests.support.cli import CliWorld
+from tests.support.mode import tree_snapshot
 
 pytestmark = pytest.mark.unit
 

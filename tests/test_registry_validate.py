@@ -26,7 +26,7 @@ from gupkg.system.fake import FakeSystem
 from gupkg.launchers import launcher_text, write_launchers
 from gupkg_registry.layout import TRACKER_LAUNCHER_NAME, read_registry_file, write_registry_file
 from gupkg_registry.validate import MAX_HOOK_FILES, ValidationReport, _stray_problems, validate_registry
-from tests.http_fixtures import FIXTURES
+from tests.support.http_fixtures import FIXTURES
 
 pytestmark = pytest.mark.unit
 

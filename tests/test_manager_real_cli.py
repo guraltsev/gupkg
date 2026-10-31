@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.ui_support import LAUNCHERS, RealWorld
+from tests.support.ui import LAUNCHERS, RealWorld
 
 pytestmark = pytest.mark.process
 

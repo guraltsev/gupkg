@@ -20,7 +20,7 @@ import pytest
 from gupkg.system.fake import FakeSystem
 from gupkg_manager import cli
 from tests.test_ui_flows import logs_of, schedule_run
-from tests.ui_support import FakeGupkg, entry, list_doc, make_env, plan_doc, plan_entry, result
+from tests.support.ui import FakeGupkg, entry, list_doc, make_env, plan_doc, plan_entry, result
 
 pytestmark = pytest.mark.process
 

@@ -20,8 +20,8 @@ from gupkg.engine import lifecycle
 from gupkg.engine.planner import CleanupFacts, diff_effects, plan_cleanup
 from gupkg.model.plan import INSTALL_PHASES, InstallPlan, PackageResult, Request
 from gupkg.model.state import Effect
-from tests.engine_support import World, pin_no_ambient_elevation  # noqa: F401
-from tests.mode_support import tree_snapshot
+from tests.support.engine import World, pin_no_ambient_elevation  # noqa: F401
+from tests.support.mode import tree_snapshot
 
 pytestmark = pytest.mark.unit
 

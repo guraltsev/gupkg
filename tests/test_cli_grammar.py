@@ -26,8 +26,8 @@ from gupkg.selfmgmt.location import RunningGupkg
 from gupkg.system.fake import FakeSystem
 from gupkg.system.port import ProcessResult
 from gupkg.system.windows import WindowsSystem
-from tests.cli_support import CliWorld
-from tests.mode_support import pin_no_ambient_elevation  # noqa: F401
+from tests.support.cli import CliWorld
+from tests.support.mode import pin_no_ambient_elevation  # noqa: F401
 
 pytestmark = pytest.mark.unit
 
