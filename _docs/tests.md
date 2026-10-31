@@ -200,7 +200,7 @@ machine, and a test cannot drift into the wrong tier unnoticed.
 
 | Tier | What a test in it may touch | Runs |
 | --- | --- | --- |
-| `unit` | Only the process itself: fakes of every boundary, small temporary files. No child process, real sleep, network, or system-wide state | After every edit |
+| `unit` | Only the process itself: fakes of every boundary, small temporary files. No child process, real sleep, network, or system-wide state | Whenever you like while working; always when a task is complete |
 | `process` | Real child processes, real operating-system objects (links, junctions, registry keys under a test name), loopback servers. Junctions made by the real system implementation (`WindowsSystem`) are `process`; the real junctions that `FakeSystem` makes in-process below `tmp_path` are not | Before saying a change is done |
 | `release` | Builds, unpacks or verifies the shipped product, or runs another repository's checks against this one | Before a commit to the main branch, a merge or a release; after changing the build, install or self-update |
 | manual | A person on a real machine | Before a release, as `manual_smoke.md` lists |

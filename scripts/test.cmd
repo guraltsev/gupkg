@@ -9,7 +9,7 @@ if not defined GUPKG_NO_PAUSE pause
 exit /b %GUPKG_RC%
 :main
 rem Run the test suite by tier (_docs/tests.md section 5).   scripts\test.cmd [--process | --all] [pytest arguments]
-rem   (no option)  the unit tier: nothing but the process itself. Run it after every edit.
+rem   (no option)  the unit tier: nothing but the process itself. Run it when a task is complete; while working, pass the area's path.
 rem   --process    the unit and process tiers (real child processes, links, loopback). Run it before saying a change is done.
 rem   --all        every tier, release included. Run it before a merge or a commit to main, and after a change to the build.
 rem --process and --all must be the first argument. Every other argument goes to pytest unchanged, for example:

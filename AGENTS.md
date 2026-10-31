@@ -16,8 +16,12 @@ machine state (elevated installs, junctions, PATH, shims), so a wrong guess is n
    A cause worked out only from an error message is a hypothesis. Say "hypothesis", not "root cause", until the failure is reproduced.
 2. **Prove the test.** A new regression test must fail on the code without the fix and pass with it. Run both (`git stash` the source change)
    and report both results. A test that passes either way is worthless: fix it or delete it.
-3. **Run the full suite** (`scripts/test.cmd`, or `pytest` from the repo root) after every source change and before saying "done". Report the
-   counts. Never say "should work", "fixed" or "verified" for anything that was not run.
+3. **Run the tests that match the work, when the work is done.** Not after each edit: a task may be many edits. While you work,
+   run only the tests of the area you change (`scripts\test.cmd tests\<area>`), as often as you find useful. When the task is
+   complete, run `scripts\test.cmd` (`unit`); before saying "done", run `scripts\test.cmd --process`; before a merge or a commit
+   to `main`, and after any change to the build, bootstrap, self-update or activation, run `scripts\test.cmd --all`
+   (`_docs/tests.md` section 5). Report the tiers that ran and their counts. Never say "should work", "fixed" or "verified" for
+   anything that was not run.
 4. **Smallest change.** Touch only what the bug needs. No drive-by refactors, no reordering, no new abstractions in a bug fix.
 5. **Verify claims about what a user runs.** The user runs the *installed* gupkg, not the source tree, and it may be older than HEAD. Before
    explaining what a screen shows or does, check the installed version and read the code of that version (`git show vX.Y.Z:path`). Do not
