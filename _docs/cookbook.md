@@ -169,6 +169,10 @@ gupkg pkg adopt --no-install           :: only write pkg.toml; look at it, then 
 gupkg pkg adopt --force                :: replace an old-format pkg.toml (kept as pkg.toml.old)
 ```
 
+The shortcuts go into the root's Start Menu folder, `integration.start_menu` (default `...\Start Menu\opt`). Give the games root
+its own once, `gupkg --root C:\Games settings set integration.start_menu "%APPDATA%\Microsoft\Windows\Start Menu\Games"`. A
+folder before each name is `adopt.shortcut_prefix` (empty by default) or `--prefix` for one call.
+
 The root is the folder two levels above, so nothing is copied. Uninstallers, links that point outside `App` and links to
 missing files are skipped, and each skip is listed with its reason. The root must be writable by your account, because
 gupkg keeps its state in `<root>\.gupkg`.

@@ -67,15 +67,15 @@ def test_adopt_makes_a_package_of_the_unpacked_program_and_installs_it_in_place(
     manifest = read_toml(folder / "pkg.toml")
     rows = {row["name"]: row for row in manifest["shortcut"]}
     assert manifest["format"] == 2 and manifest["source"] == {"shipped": True} and manifest["record_manifest"] is False
-    assert set(rows) == {"Games\\Game", "Games\\Editor"}
-    assert rows["Games\\Game"] == {
-        "name": "Games\\Game", "target": "$App\\game.exe", "arguments": "-windowed", "working_dir": "$App",
+    assert set(rows) == {"Game", "Editor"}
+    assert rows["Game"] == {
+        "name": "Game", "target": "$App\\game.exe", "arguments": "-windowed", "working_dir": "$App",
         "icon_location": "$App\\game.exe,0", "description": "The game",
     }
-    assert rows["Games\\Editor"]["target"] == "$App\\bin\\editor.exe" and rows["Games\\Editor"]["working_dir"] == "$App\\bin"
+    assert rows["Editor"]["target"] == "$App\\bin\\editor.exe" and rows["Editor"]["working_dir"] == "$App\\bin"
     assert "skipped Uninstall Game.lnk: it is an uninstaller" in result.out
     assert "skipped Docs\\Website.lnk: its target is outside App" in result.out
-    installed = {path.name: spec for path, spec in world.fake.shortcuts().items() if path.parent.name == "Games"}
+    installed = {path.name: spec for path, spec in world.fake.shortcuts().items() if path.parent.name == "opt"}
     current = tmp_path / "Games" / "Teardown" / "current" / "App"
     assert {name: spec.target_path for name, spec in installed.items()} == {
         "Game.lnk": str(current / "game.exe"), "Editor.lnk": str(current / "bin" / "editor.exe"),
@@ -141,7 +141,46 @@ def test_adopt_recognises_app_when_the_link_spells_the_folder_differently(world:
 
     assert result.code == 0, result.err
     rows = {row["name"]: row for row in read_toml(folder / "pkg.toml")["shortcut"]}
-    assert rows["Games\\Game"]["target"] == "$App\\game.exe" and rows["Games\\Game"]["working_dir"] == "$App"
+    assert rows["Game"]["target"] == "$App\\game.exe" and rows["Game"]["working_dir"] == "$App"
+
+
+def test_adopt_puts_no_prefix_on_shortcut_names_unless_the_roots_setting_or_the_option_gives_one(world: CliWorld, tmp_path: Path) -> None:
+    """By default a shortcut is named after its link alone; the root's `adopt.shortcut_prefix` adds a folder; `--prefix` beats it.
+
+    The prefix is always relative to the root's Start Menu folder: a full path or a `..` is refused in the option and in the
+    setting, and an empty `--prefix` means none even when the setting names one.
+    """
+    games = tmp_path / "Games"
+    folder = make_game(world, games)
+
+    def adopted(*options: str) -> list[str]:
+        """Run `adopt --no-install --force` with *options* and return the names of the shortcuts it wrote."""
+        result = world.cli("pkg", "adopt", str(folder), "--no-install", "--force", "--json", *options)
+        assert result.code == 0, result.err
+        return result.document()["shortcuts"]
+
+    assert adopted() == ["Editor", "Game"]
+    assert world.cli("--root", str(games), "settings", "set", "adopt.shortcut_prefix", "Action\\Indie").code == 0
+    assert adopted() == ["Action\\Indie\\Editor", "Action\\Indie\\Game"]
+    assert adopted("--prefix", "Other") == ["Other\\Editor", "Other\\Game"]
+    assert adopted("--prefix", "") == ["Editor", "Game"]
+    assert world.cli("pkg", "adopt", str(folder), "--no-install", "--force", "--prefix", "C:\\Menu").code == 2
+    assert world.cli("pkg", "adopt", str(folder), "--no-install", "--force", "--prefix", "..\\Menu").code == 2
+    assert world.cli("--root", str(games), "settings", "set", "adopt.shortcut_prefix", "\\Menu").code == 2
+
+
+def test_adopt_installs_the_shortcuts_into_the_start_menu_folder_of_the_root(world: CliWorld, tmp_path: Path) -> None:
+    """A root whose own settings name another `integration.start_menu` gets its shortcuts there, not in the default folder."""
+    games = tmp_path / "Games"
+    folder = make_game(world, games)
+    menu = tmp_path / "Start Menu" / "Games"
+    assert world.cli("--root", str(games), "settings", "set", "integration.start_menu", str(menu)).code == 0
+
+    result = world.cli("pkg", "adopt", str(folder))
+
+    assert result.code == 0, result.err
+    placed = {path for path in world.fake.shortcuts() if path.parent == menu}
+    assert {path.name for path in placed} == {"Game.lnk", "Editor.lnk"}
 
 
 def test_adopt_no_install_writes_the_file_and_nothing_else(world: CliWorld, tmp_path: Path) -> None:
@@ -153,6 +192,6 @@ def test_adopt_no_install_writes_the_file_and_nothing_else(world: CliWorld, tmp_
 
     assert result.code == 0, result.err
     document = result.document()
-    assert document["shortcuts"] == ["Games\\Editor", "Games\\Game"] and len(document["skipped"]) == 2
+    assert document["shortcuts"] == ["Editor", "Game"] and len(document["skipped"]) == 2
     assert set(world.fake.shortcuts()) == before
     assert not (folder.parent / ".gupkg").exists() and not (folder.parent / "current").exists()

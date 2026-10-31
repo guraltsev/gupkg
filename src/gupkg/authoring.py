@@ -187,7 +187,7 @@ def adopt_version(
     env: Mapping[str, str],
     *,
     shortcuts: Path | None = None,
-    group: str = "Games",
+    prefix: str = "",
     force: bool = False,
 ) -> AdoptResult:
     """Write the ``pkg.toml`` of a program that is already unpacked in ``<version_dir>\\App`` from the shortcuts its installer made.
@@ -208,8 +208,8 @@ def adopt_version(
         The environment used to expand ``%VAR%`` in the targets of the links.
     shortcuts : Path, optional
         The folder that holds the links (default ``<version_dir>\\shortcuts``). It is only read.
-    group : str
-        The Start Menu folder of the new shortcuts (default ``Games``); empty puts them at the top.
+    prefix : str
+        A folder put before each shortcut name, relative to the root's Start Menu folder (default empty: none).
     force : bool
         Replace an existing ``pkg.toml`` (kept as ``pkg.toml.old``) instead of refusing.
 
@@ -244,7 +244,7 @@ def adopt_version(
     rows: list[dict[str, str]] = []
     skipped: list[tuple[str, str]] = []
     for link in links:
-        absorbed = _absorb_shortcut(link, read_shortcut, app, env, group)
+        absorbed = _absorb_shortcut(link, read_shortcut, app, env, prefix)
         if isinstance(absorbed, str):
             skipped.append((str(link.relative_to(folder)), absorbed))
         else:
@@ -265,7 +265,7 @@ def adopt_version(
     return AdoptResult(manifest, tuple(names), tuple(skipped))
 
 
-def _absorb_shortcut(link: Path, read_shortcut: Callable[[Path], ShortcutSpec], app: Path, env: Mapping[str, str], group: str) -> dict[str, str] | str:
+def _absorb_shortcut(link: Path, read_shortcut: Callable[[Path], ShortcutSpec], app: Path, env: Mapping[str, str], prefix: str) -> dict[str, str] | str:
     """Decide what one installer link becomes: its ``[[shortcut]]`` row, or the reason (a string) it is left out.
 
     A link is kept only when it starts a program that exists inside *app*; unreadable links, links outside *app*, links to
@@ -288,7 +288,7 @@ def _absorb_shortcut(link: Path, read_shortcut: Callable[[Path], ShortcutSpec], 
         return "it is an uninstaller"
     if not (app / target).is_file():
         return f"its target does not exist in App ({target})"
-    return _shortcut_row(link.stem, group, target, spec, app, env)
+    return _shortcut_row(link.stem, prefix, target, spec, app, env)
 
 
 def _write_checked_manifest(version_dir: Path, text: str) -> None:
@@ -328,9 +328,9 @@ def _inside_app(text: str, app: Path, env: Mapping[str, str]) -> str | None:
     return relative
 
 
-def _shortcut_row(stem: str, group: str, target: str, spec: ShortcutSpec, app: Path, env: Mapping[str, str]) -> dict[str, str]:
+def _shortcut_row(stem: str, prefix: str, target: str, spec: ShortcutSpec, app: Path, env: Mapping[str, str]) -> dict[str, str]:
     """Return the ``[[shortcut]]`` row for one link: *target* is already relative to *app*; the other fields come from *spec*."""
-    row = {"name": f"{group}\\{stem}" if group else stem, "target": "$App\\" + target}
+    row = {"name": f"{prefix}\\{stem}" if prefix else stem, "target": "$App\\" + target}
     if spec.arguments:
         row["arguments"] = spec.arguments
 

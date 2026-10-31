@@ -80,6 +80,15 @@ def _boolean(value: Any) -> bool:
     return value
 
 
+def relative_folder(value: Any) -> str:
+    """Accept a folder path relative to a root's Start Menu folder, possibly empty: no drive, no leading separator and no ``..`` part."""
+    if not isinstance(value, str):
+        raise ValueError("must be text")
+    if re.match(r"[A-Za-z]:|[\\/]", value) or ".." in re.split(r"[\\/]+", value):
+        raise ValueError("must be a relative folder without '..' (empty for none)")
+    return value
+
+
 def _count(value: Any) -> int:
     """Accept a whole number of one or more."""
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
@@ -98,6 +107,7 @@ _SCHEMA: dict[str, Any] = {
     "ui": {"color": _choice("auto", "always", "never")},
     "hooks": {"allow_vendor_installers": _boolean},
     "install": {"record_manifest": _boolean},
+    "adopt": {"shortcut_prefix": relative_folder},
 }
 _TOP_LEVEL = ("schema", "registry", *_SCHEMA)
 
@@ -297,6 +307,7 @@ def default_layer(mode: str) -> Layer:
             "ui": {"color": "auto"},
             "hooks": {"allow_vendor_installers": True},
             "install": {"record_manifest": True},
+            "adopt": {"shortcut_prefix": ""},
         },
         origin="built-in",
     )

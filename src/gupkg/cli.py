@@ -46,7 +46,7 @@ from .engine.receipts import read_receipt, receipt_checksum
 from .model.checksum import ChecksumInvalid, parse_skip_flag
 from .model.plan import EXIT_FAILED, EXIT_INPUT, EXIT_OK, EXIT_USER, OVERWRITE_KINDS, BatchResult, Request, parse_overwrite
 from .model.scope import ModeRefused, Scope
-from .model.settings import LAYER_ROOT, Settings, SettingsError
+from .model.settings import LAYER_ROOT, Settings, SettingsError, relative_folder
 from .pinning import PinError, pin_hash
 from .pkgcheck import check_directory
 from .report import results
@@ -179,7 +179,7 @@ def _configure_streams() -> None:
 def _needs_scope(args: argparse.Namespace) -> bool:
     """Return whether the command works on a root: ``pkg new|check|export|bundle`` and ``self status`` need none, so they build no scope."""
     if args.command == "pkg":
-        return args.pkg_command == "pin" or bool(getattr(args, "install", False)) or (args.pkg_command == "adopt" and not args.no_install)
+        return args.pkg_command in ("pin", "adopt") or bool(getattr(args, "install", False))
     return not (args.command == "self" and args.self_command == "status")
 
 
@@ -201,8 +201,9 @@ def _run(args: argparse.Namespace, tokens: list[str], machine: System, env: Mapp
             machine = FakeSystem.sandbox(args.sandbox, machine)
         scope, layers = None, ()
 
-        # `pkg adopt` installs where the version directory stands: its root is two levels up unless --root says otherwise.
-        if args.command == "pkg" and args.pkg_command == "adopt" and args.root is None and not args.no_install:
+        # `pkg adopt` works on the root the version directory stands in (two levels up unless --root says otherwise): it installs
+        # there and reads that root's settings.
+        if args.command == "pkg" and args.pkg_command == "adopt" and args.root is None:
             args.root = Path(os.path.abspath(args.directory)).parent.parent
         if _needs_scope(args):
             scope, layers = build_scope_and_layers(
@@ -295,6 +296,14 @@ def _overwrite_kinds(text: str) -> tuple[str, ...]:
     """Parse the value of ``--overwrite``; a bad value is a usage error that lists the valid kinds."""
     try:
         return parse_overwrite(text)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
+
+
+def _start_menu_subfolder(text: str) -> str:
+    """Parse ``--prefix``: a folder below the root's Start Menu folder; a full path or a ``..`` is a usage error."""
+    try:
+        return relative_folder(text)
     except ValueError as error:
         raise argparse.ArgumentTypeError(str(error)) from error
 
@@ -825,9 +834,12 @@ def _pkg_adopt(run: _Run) -> int:
             f"{folder} is not inside the root of this run ({run.scope.root}), so installing it would copy it there. "
             f"Run with `--root {folder.parent.parent}`, or pass --no-install."
         )
+
+    # The prefix of the shortcut names is --prefix when given (empty: none), else the root's `adopt.shortcut_prefix`.
+    prefix = args.prefix if args.prefix is not None else run.scope.settings["adopt.shortcut_prefix"]
     adopted = authoring.adopt_version(
         folder, run.system.read_shortcut, run.env,
-        shortcuts=Path(args.shortcuts) if args.shortcuts else None, group=args.group, force=args.force,
+        shortcuts=Path(args.shortcuts) if args.shortcuts else None, prefix=prefix, force=args.force,
     )
     lines = [f"wrote {adopted.path}"] + [f"  shortcut {name}" for name in adopted.shortcuts]
     lines += [f"  skipped {name}: {reason}" for name, reason in adopted.skipped]
@@ -1304,7 +1316,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     leaf.add_argument("directory", nargs="?", default=".", metavar="VERSION-DIR", help="the version directory (default: the current folder)")
     leaf.add_argument("--shortcuts", metavar="FOLDER", help="the folder that holds the .lnk files (default: VERSION-DIR\\shortcuts)")
-    leaf.add_argument("--group", default="Games", metavar="NAME", help="the Start Menu folder of the shortcuts (default: Games; empty: none)")
+    leaf.add_argument(
+        "--prefix", metavar="FOLDER", type=_start_menu_subfolder,
+        help="a folder put before each shortcut name, relative to the root's Start Menu folder, never a full path "
+             "(default: the setting adopt.shortcut_prefix, empty by default; --prefix \"\" means none)",
+    )
     leaf.add_argument("--force", action="store_true", help="replace an existing pkg.toml (kept as pkg.toml.old)")
     leaf.add_argument("--no-install", action="store_true", help="write pkg.toml only")
     _overwrite_option(leaf)

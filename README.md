@@ -363,11 +363,13 @@ it shows the URL, the final URL, the size and the date and says that the hash co
 `pkg export VERSION-DIR -o X.zip` writes a distribution ZIP and prints its SHA-256; `pkg bundle VERSION-DIR` copies the
 running gupkg's verified bundle into a version directory.
 
-`gupkg pkg adopt [VERSION-DIR] [--shortcuts FOLDER] [--group NAME] [--force] [--no-install]` turns a program that an
+`gupkg pkg adopt [VERSION-DIR] [--shortcuts FOLDER] [--prefix FOLDER] [--force] [--no-install]` turns a program that an
 installer already unpacked into `<root>\<name>\<version>\App` into a package: it reads the `.lnk` files in
 `<version>\shortcuts` (default; the Start Menu shortcuts the installer made, moved there), writes a format 2 `pkg.toml`
-(`[source] shipped = true`, `record_manifest = false`, one `[[shortcut]]` per link, in the Start Menu folder `Games`) and
-installs it where it stands. Targets, working directory (the program's folder when the link had none), icon and description
+(`[source] shipped = true`, `record_manifest = false`, one `[[shortcut]]` per link, named after the link) and installs it where it stands. The shortcuts go into the root's
+`integration.start_menu` folder (`...\Start Menu\opt` by default; a root can set its own in `<root>\.gupkg\settings.toml`). A
+folder put before each name comes from the setting `adopt.shortcut_prefix` (empty by default) or `--prefix FOLDER` for one call;
+it is relative to `integration.start_menu`, `--prefix ""` means none, and a full path or `..` is refused. Targets, working directory (the program's folder when the link had none), icon and description
 are kept, with paths inside `App` written as `$App`; uninstallers, links to files that are not programs, links outside `App`
 and links to missing files are skipped and listed. Without `--root` the root is the folder two levels above `VERSION-DIR`; a
 `--root` that is not that folder is refused, because installing would copy the program. An existing `pkg.toml` is replaced only
