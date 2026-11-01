@@ -42,14 +42,14 @@ These are the checks that no sandbox or fake can replace.
    GitHub release and Task Scheduler. (The links and the README command list are checked by
    `tests/test_documentation.py`.)
 3. **032-3. `self check-updates` then `self update`, 1.0.0 to 1.0.1.** With 1.0.0 installed from the bootstrap, publish a
-   1.0.1 test release (a throwaway fork: `scripts\bump.cmd 1.0.1`, `scripts\release.cmd "test"`; point the tracker at the fork
+   1.0.1 test release (a throwaway fork: `_scripts\bump.cmd 1.0.1`, `_scripts\release.cmd "test"`; point the tracker at the fork
    by testing with the fork's `RELEASES.md`), run `gupkg self check-updates` and then `gupkg self update`. Expect: a `1.0.1` version
    directory with a populated `App` after the check (the ZIP was verified against its `RELEASES.md` row and the tree against
    its `MANIFEST.sha256` before anything was unpacked), `current` and `gupkg --version` still 1.0.0 until `self update`, then
    1.0.1 everywhere, the old version directory untouched, and `gupkg self status` healthy. Also confirm gupkg's own package has no
    `download_url` (`gupkg info gupkg`). Why manual: it needs two real releases, the junction switch and the real shims. (The
    verification rules are covered by `tests/test_self_release_update.py`.)
-4. **032-4. The 1.0 release itself.** After `scripts\bump.cmd 1.0.0` and `scripts\release.cmd "<notes>" --no-push`, on a clean VM
+4. **032-4. The 1.0 release itself.** After `_scripts\bump.cmd 1.0.0` and `_scripts\release.cmd "<notes>" --no-push`, on a clean VM
    run the built ZIP's `install.cmd` (or `gupkg-bootstrap.cmd -Source <zip> -Sha256 <digest>`), then `gupkg --help`, `gupkg --version`
    and `gupkg self status`. Confirm `RELEASES.md` has the new row with the digest of that exact ZIP and that nothing was pushed. Why
    manual: it publishes a real artifact and needs a clean machine.
@@ -88,7 +88,7 @@ activation.
    modified. Why manual: the automated test uses an unpacked copy, not an
    activated install with the real shims.
 5. **Publishing.** From a clean tree on a throwaway fork run
-   `scripts\release.cmd "test release"` with `gh` signed in. Confirm the tag
+   `_scripts\release.cmd "test release"` with `gh` signed in. Confirm the tag
    `v<version>` and the release asset appear, and the new `RELEASES.md` row holds
    the digest that `Get-FileHash` reports for the downloaded asset. Why manual:
    it creates a real GitHub release.
@@ -111,7 +111,7 @@ One interpreter (issue 018):
    is the bundled `...\gupkg\python\python.exe`. Run the same command from an
    elevated shell and confirm the same interpreter. Why manual: needs a real
    machine with other Pythons and a real administrator token.
-2. In a fresh clone, run `scripts\test.cmd` before creating `.venv` (expect exit
+2. In a fresh clone, run `_scripts\test.cmd` before creating `.venv` (expect exit
    9009 and the creation command), then create `.venv` from `requirements-dev.txt`
    and run it again. Why manual: needs a network install of the dev packages.
 
@@ -122,7 +122,7 @@ which the automated tests avoid: they build offline with stand-in wheels and run
 the probe on the committed runtime.
 
 1. **Real build and probe.** In a dev checkout whose `.venv` has pip, run
-   `scripts\build-standalone.cmd` (network needed for the pinned CPython and the
+   `_scripts\build-standalone.cmd` (network needed for the pinned CPython and the
    locked wheels). The build prints no probe failure and writes the ZIP. Unzip it
    into an empty folder and confirm `gupkg\python\Lib\site-packages` has no `pip*`,
    `setuptools*`, `_distutils_hack` or `bin` entry and does have `tomli_w`. Why
@@ -369,7 +369,7 @@ repository `gupkg-registry`; its README repeats the commands.
 
 ## The unified command line and machine interface (issue 029)
 
-Run these with a gupkg built by `scripts\build-standalone.cmd`, unpacked into a throwaway root (`%TEMP%\gupkg-029`), unless a step
+Run these with a gupkg built by `_scripts\build-standalone.cmd`, unpacked into a throwaway root (`%TEMP%\gupkg-029`), unless a step
 says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `FakeSystem`.
 
 1. **A real console.** In Windows Terminal and in a redirected `cmd` (`gupkg install <name> > out.txt`), run `gupkg install`,
@@ -435,7 +435,7 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
 ## Bundled mode, package launchers and bootstrap (issue 033)
 
 1. **Elevated launcher refusals and the elevated test run.** From an elevated PowerShell run
-   `scripts\test.cmd --process tests\test_package_launcher.py -v`: the twelve tests marked `needs_admin` (they skip in a standard shell) build an
+   `_scripts\test.cmd --process tests\test_package_launcher.py -v`: the twelve tests marked `needs_admin` (they skip in a standard shell) build an
    admin-only tree under the temporary folder, grant `Users` write on one object at a time (package folder, version folder, root data
    folder, `gupkg-location`, a Python file, the root itself, a file deep in the installed gupkg) and expect the launcher to refuse, and expect
    it to proceed in the untouched tree and through `current` only when `current` names a version of the same package. Then right-click
@@ -554,7 +554,7 @@ says otherwise. They repeat on a real machine what `tests/test_cli_*.py` do on `
 
 ## Launchers: bundled, then gupkg-location, then PATH (issue 035, task T11)
 
-1. **`035-T11-1` The elevated launcher tests and the elevated PATH step.** From an elevated PowerShell run `scripts\test.cmd --process tests\test_package_launcher.py -v`: the
+1. **`035-T11-1` The elevated launcher tests and the elevated PATH step.** From an elevated PowerShell run `_scripts\test.cmd --process tests\test_package_launcher.py -v`: the
    tests marked `needs_admin` (they skip in a standard shell) must pass, in particular `test_an_elevated_launcher_skips_a_user_writable_path_entry_and_names_it`
    (a `gupkg.cmd` in a user-writable `PATH` folder is skipped with the line `Skipped PATH entry <folder>` and the next admin-only entry runs) and
    `test_an_elevated_launcher_refuses_a_gupkg_exe_shim_whose_config_a_user_can_write`. Then, by hand with a real system install in `C:\opt`: from an

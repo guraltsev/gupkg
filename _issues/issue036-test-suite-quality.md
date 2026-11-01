@@ -51,7 +51,7 @@ by case.
 
 ### F1. There are no tiers, and the rules require the full suite after every edit
 
-The only marker is `windows_integration`, and nothing selects by it. `scripts\test.cmd` always runs everything. `AGENTS.md`
+The only marker is `windows_integration`, and nothing selects by it. `_scripts\test.cmd` always runs everything. `AGENTS.md`
 rule 3 requires the full suite "after every source change", so every edit waits more than 7 minutes.
 
 ### F2. A few tests waste most of the time
@@ -208,7 +208,7 @@ one of the two is outdated.
 
 ## 5. Done when
 
-- **Tiers:** every test module declares a tier. `scripts\test.cmd` runs `unit` by default. The goal is that the whole
+- **Tiers:** every test module declares a tier. `_scripts\test.cmd` runs `unit` by default. The goal is that the whole
   `unit` tier takes under 30 s, run serially. It is measured and reported, not enforced per test. `AGENTS.md` rule 3 names the tiers.
 - **Hygiene checks:** the checks of `tests_hygiene.md` §6 run with the suite, and `tests/hygiene_baseline.txt` is empty.
 - **Layout:** every permanent test lives in `tests/<area>/`. No test module imports another, and no fixture data is

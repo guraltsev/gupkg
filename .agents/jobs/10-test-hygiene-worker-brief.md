@@ -20,7 +20,7 @@ protects its behaviour afterwards. That is what the behaviour map (§3) is for. 
 
 1. Check out your branch. If it does not exist, create it from `main`: `git checkout -b i036/Txx main`.
 2. Record your baseline:
-   - run the full suite: `$env:GUPKG_NO_PAUSE='1'; .\scripts\test.cmd --all` (before T02: `.\scripts\test.cmd`);
+   - run the full suite: `$env:GUPKG_NO_PAUSE='1'; .\_scripts\test.cmd --all` (before T02: `.\_scripts\test.cmd`);
    - after T00, also run `tools\test_report.py` and keep its output;
    - for an area task, also run `pytest --collect-only -q <the area's files>` and keep the count.
 
@@ -119,7 +119,7 @@ Every area task is done only when, in addition to its own list:
       slow. A time is measured and reported, never a pass/fail limit (`tests.md` §5);
 - [ ] the counts are recorded: test functions and collected cases, lines and characters of the area's tests, before and
       after;
-- [ ] `scripts\test.cmd --all` passes.
+- [ ] `_scripts\test.cmd --all` passes.
 
 ## 5. Product code
 
@@ -152,7 +152,7 @@ Do not try a third guess.
 All of these must be true:
 
 1. Every item of the task's "Done when" list holds. You ran every command it lists, and the output is in your log.
-2. `scripts\test.cmd --all` passes (before T02: `scripts\test.cmd`).
+2. `_scripts\test.cmd --all` passes (before T02: `_scripts\test.cmd`).
 3. `git diff --check main...HEAD` prints nothing.
 4. Your commits are small and focused. Each message ends with the repository's attribution trailer.
 

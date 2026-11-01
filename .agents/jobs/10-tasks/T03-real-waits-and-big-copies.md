@@ -33,4 +33,4 @@ small registry instead of a copy of all 79 packages.
 - [ ] `test_registry_validate.py` takes under 5 s in total. Paste the time before and after.
 - [ ] Every rule case still fails when its rule is broken. For at least three rules: comment out the rule in
       `src/gupkg_registry/validate.py` in a scratch change, show the failure, and restore.
-- [ ] `scripts\test.cmd --all` passes.
+- [ ] `_scripts\test.cmd --all` passes.

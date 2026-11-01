@@ -9,11 +9,11 @@ if not defined GUPKG_NO_PAUSE pause
 exit /b %GUPKG_RC%
 :main
 rem Bump the version and commit it.
-rem   scripts\bump.cmd            raise the patch number (1.0.0 -> 1.0.1)
-rem   scripts\bump.cmd minor      raise the minor number (1.0.1 -> 1.1.0); major works the same way
-rem   scripts\bump.cmd 1.2.3      set exactly this version
-rem Updates src\gupkg\_version.py, the single source of the version. Publish with scripts\release.cmd,
-rem then confirm the published release with scripts\check-release.cmd.
+rem   _scripts\bump.cmd            raise the patch number (1.0.0 -> 1.0.1)
+rem   _scripts\bump.cmd minor      raise the minor number (1.0.1 -> 1.1.0); major works the same way
+rem   _scripts\bump.cmd 1.2.3      set exactly this version
+rem Updates src\gupkg\_version.py, the single source of the version. Publish with _scripts\release.cmd,
+rem then confirm the published release with _scripts\check-release.cmd.
 setlocal EnableExtensions
 call "%~dp0_python.cmd" || exit /b %ERRORLEVEL%
 pushd "%REPO_ROOT%"
@@ -22,6 +22,6 @@ set "NEWVERSION="
 for /f "delims=" %%V in ('%PY% tools\bump_version.py --print') do set "NEWVERSION=%%V"
 git add src\gupkg\_version.py || (popd & exit /b 1)
 git commit -m "Bump version to %NEWVERSION%" || (popd & exit /b 1)
-echo [bump] Version is now %NEWVERSION%. Publish it with: scripts\release.cmd
+echo [bump] Version is now %NEWVERSION%. Publish it with: _scripts\release.cmd
 popd
 exit /b 0

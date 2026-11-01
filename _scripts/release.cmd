@@ -8,8 +8,8 @@ rem A script a person starts waits for a key so its window stays readable; GUPKG
 if not defined GUPKG_NO_PAUSE pause
 exit /b %GUPKG_RC%
 :main
-rem Test, build, publish and record a gupkg release.   scripts\release.cmd ["one-line notes"] [--no-push]
-rem Run scripts\bump.cmd first and commit your changes. Without notes the row says "gupkg <version>".
+rem Test, build, publish and record a gupkg release.   _scripts\release.cmd ["one-line notes"] [--no-push]
+rem Run _scripts\bump.cmd first and commit your changes. Without notes the row says "gupkg <version>".
 rem This script:
 rem   1. runs the test suite,
 rem   2. builds gupkg-<version>-win-amd64.zip and tags the released commit; unless --no-push it then
@@ -17,7 +17,7 @@ rem      pushes the tag, uploads the ZIP and its .sha256 file as assets of GitHu
 rem      downloads the ZIP again and requires the same SHA-256, and adds the row (with that SHA-256)
 rem      to RELEASES.md (tools\release.py; needs the GitHub CLI, gh, signed in),
 rem   3. pushes the branch to the first Git remote (skipped with --no-push, which also skips the upload).
-rem Afterwards run scripts\check-release.cmd to confirm what the world can download.
+rem Afterwards run _scripts\check-release.cmd to confirm what the world can download.
 setlocal EnableExtensions
 set "NOTES="
 set "NOPUSH="
@@ -43,6 +43,6 @@ set "REMOTE="
 for /f "delims=" %%R in ('git remote') do if not defined REMOTE set "REMOTE=%%R"
 if not defined REMOTE (>&2 echo [release] No Git remote is configured. & popd & exit /b 1)
 git push %REMOTE% HEAD || (popd & exit /b 1)
-echo [release] Published the release and pushed HEAD to %REMOTE%. Confirm it with: scripts\check-release.cmd
+echo [release] Published the release and pushed HEAD to %REMOTE%. Confirm it with: _scripts\check-release.cmd
 popd
 exit /b 0

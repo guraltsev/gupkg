@@ -22,4 +22,4 @@ in `src/gupkg_ui/plans.py`. Remove the unused functions and what only they use.
 - [ ] `git grep -n "manager_policy.decide_targets\|manager_policy import.*command_line" -- src tests` prints nothing.
 - [ ] The UI's checksum questions still work: the owner tests of `tests/ui/test_policy.py` and `tests/ui/test_flows.py`
       pass, and one manager flow that asks a checksum question is shown rendered (`AGENTS.md` rule 8).
-- [ ] `scripts\test.cmd --all` passes.
+- [ ] `_scripts\test.cmd --all` passes.

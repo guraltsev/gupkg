@@ -5,7 +5,7 @@ Issue 036 F1, §4 decision 1; `_docs/tests.md` §5, §7.
 ## Goal
 
 Every test module declares `unit`, `process` or `release`. The `unit` tier cannot start a process, sleep or open a
-socket. `scripts\test.cmd` runs `unit` by default. `AGENTS.md` rule 3 names the tiers (after the
+socket. `_scripts\test.cmd` runs `unit` by default. `AGENTS.md` rule 3 names the tiers (after the
 owner approves the wording).
 
 ## Add or change
@@ -30,7 +30,7 @@ owner approves the wording).
 
    Existing violations of H8 go into the baseline, like those of T01 (each line removed again by the task that fixes it).
    Regenerate only the H7–H8 lines; do not touch the T01 lines.
-4. **`scripts\test.cmd`:**
+4. **`_scripts\test.cmd`:**
    - no options: `-m unit`;
    - `--process`: `-m "unit or process"`;
    - `--all`: every tier;
@@ -41,8 +41,8 @@ owner approves the wording).
 5. **`AGENTS.md` rule 3:** propose this wording in your report. Do **not** edit `AGENTS.md`; the controller asks the
    owner:
 
-   > 3. **Run the right tier** (`_docs/tests.md` §5): `scripts\test.cmd` (`unit`) after every source change;
-   > `scripts\test.cmd --process` before saying "done"; `scripts\test.cmd --all` before a merge or a commit to `main`, and
+   > 3. **Run the right tier** (`_docs/tests.md` §5): `_scripts\test.cmd` (`unit`) after every source change;
+   > `_scripts\test.cmd --process` before saying "done"; `_scripts\test.cmd --all` before a merge or a commit to `main`, and
    > after any change to the build, bootstrap, self-update or activation. Report the tiers that ran and their counts.
    > Never say "should work", "fixed" or "verified" for anything that was not run.
 
@@ -50,7 +50,7 @@ owner approves the wording).
 
 ## Done when
 
-- [ ] `scripts\test.cmd`, `scripts\test.cmd --process` and `scripts\test.cmd --all` each pass. Paste the counts and the
+- [ ] `_scripts\test.cmd`, `_scripts\test.cmd --process` and `_scripts\test.cmd --all` each pass. Paste the counts and the
       wall time of each, run serially. The `unit` time is recorded even if it is still over 30 s (later tasks bring it
       down).
 - [ ] The three tiers together collect exactly the same tests as `main` (show the counts).

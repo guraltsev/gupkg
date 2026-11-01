@@ -8,7 +8,7 @@ rem A script a person starts waits for a key so its window stays readable; GUPKG
 if not defined GUPKG_NO_PAUSE pause
 exit /b %GUPKG_RC%
 :main
-rem Check that a published release is what RELEASES.md says.   scripts\check-release.cmd [version]
+rem Check that a published release is what RELEASES.md says.   _scripts\check-release.cmd [version]
 rem Without a version it checks the one in src\gupkg\_version.py. It downloads the ZIP from the address the
 rem bootstrap uses (the GitHub release v<version>) and prints PASS or FAIL for each check:
 rem   - RELEASES.md has the row (commit and SHA-256), the local and remote tags point at that commit,

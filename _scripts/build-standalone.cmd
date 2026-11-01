@@ -8,7 +8,7 @@ rem A script a person starts waits for a key so its window stays readable; GUPKG
 if not defined GUPKG_NO_PAUSE pause
 exit /b %GUPKG_RC%
 :main
-rem Build the self-contained release ZIP.   scripts\build-standalone.cmd [output.zip]
+rem Build the self-contained release ZIP.   _scripts\build-standalone.cmd [output.zip]
 rem Fetches the pinned embeddable Python once (SHA-256 verified, kept in dist\cache), installs the
 rem hash-locked dependencies into it, writes MANIFEST.sha256, and builds
 rem dist\gupkg-<version>-win-amd64.zip unless an output path is given. The ZIP's SHA-256 is printed.

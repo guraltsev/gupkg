@@ -248,7 +248,7 @@ touched it. These rules counter that:
   | `cli` | `src/gupkg/cli.py` |
   | `ui` | `gupkg_ui`, `gupkg_tui`, `gupkg_manager` |
   | `registry` | `gupkg_registry` (the registry tool) |
-  | `project` | What is not in `src/`: `tools/`, `scripts/`, the release build, the documentation |
+  | `project` | What is not in `src/`: `tools/`, `_scripts/`, the release build, the documentation |
 
 - **Boundaries:** the `System` port (`src/gupkg/system/port.py`). Its fake is `FakeSystem`; the contract tests run the same
   checks against `FakeSystem` and the real `WindowsSystem`. Inject `sleep` and the clock through the engine context and
@@ -257,9 +257,9 @@ touched it. These rules counter that:
 
   | Command | What it runs |
   | --- | --- |
-  | `scripts\test.cmd` | `unit` |
-  | `scripts\test.cmd --process` | `unit` and `process` |
-  | `scripts\test.cmd --all` | every tier |
+  | `_scripts\test.cmd` | `unit` |
+  | `_scripts\test.cmd --process` | `unit` and `process` |
+  | `_scripts\test.cmd --all` | every tier |
 
   Set `GUPKG_NO_PAUSE=1` when a script or an agent runs them.
 - **Release tier extras:** the registry's own tests (`gupkg-registry\_scripts\test.cmd`) run against this checkout. The
@@ -269,6 +269,6 @@ touched it. These rules counter that:
   the Windows registry outside a `gupkg-test-*` key.
 - **Status (2026-10-30):**
   - The suite is still flat in `tests/`; job 10 (`.agents/jobs/10-test-hygiene-controller.md`) migrates it. Every test
-    module declares its tier and `scripts\test.cmd` selects by it.
+    module declares its tier and `_scripts\test.cmd` selects by it.
   - Until the migration is done, legacy violations are recorded in the hygiene baseline ([tests_hygiene.md](tests_hygiene.md) §5).
   - New tests follow this policy from today.

@@ -48,7 +48,7 @@ This task does not add tiers (T02 does): the tier checks are added in T02.
 
 ## Done when
 
-- [ ] `scripts\test.cmd` passes on the branch with the baseline in place. Paste the baseline's line count per rule.
+- [ ] `_scripts\test.cmd` passes on the branch with the baseline in place. Paste the baseline's line count per rule.
 - [ ] Adding a new test that imports a private name, and a new test named `test_issue_99_fix`, each fail the session
       with a message naming the rule. Show both, then remove them.
 - [ ] A folder `tests/_temp/issue999/` without a README fails, and with a README whose `ref` is a closed issue fails. Show

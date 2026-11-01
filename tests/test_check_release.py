@@ -5,7 +5,7 @@ Behavior covered: a correct release passes every check; a ZIP with other bytes t
 tag and a missing row are each reported as FAIL with a failing exit status.
 Real: the tool, a temporary Git repository with a bare remote, and real ZIP files.
 Mocked: the download (a function that serves the ZIP and its ``.sha256`` from memory).
-Out of scope: the real GitHub download, which scripts\\check-release.cmd performs.
+Out of scope: the real GitHub download, which _scripts\\check-release.cmd performs.
 """
 
 from __future__ import annotations

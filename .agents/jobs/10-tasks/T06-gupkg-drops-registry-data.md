@@ -30,7 +30,7 @@ fingerprints and the registry tool are tested on fixtures written for the test.
    `test_registry_tool`, `test_fingerprint`, `test_engine_distribution`, and `tests/support/http_fixtures.py`.
    `GUPKG_REGISTRY_TRACKERS` disappears.
 4. **The release tier runs the registry's tests against this checkout:**
-   - add a `release` test, or a step in `scripts\test.cmd --all`, that runs `gupkg-registry\_scripts\test.cmd` with
+   - add a `release` test, or a step in `_scripts\test.cmd --all`, that runs `gupkg-registry\_scripts\test.cmd` with
      `GUPKG_REPO` set to this checkout;
    - skip it with a clear reason when `gupkg-registry` is not present;
    - choose one of the two; say which and why.
@@ -41,5 +41,5 @@ fingerprints and the registry tool are tested on fixtures written for the test.
 - [ ] `git grep -n "registry_100\|registry_patterns\|GUPKG_REGISTRY_TRACKERS\|fixtures/http" -- tests src tools _docs`
       prints nothing.
 - [ ] Every provider behaviour of step 1 has an owner test, listed in your log with its proof.
-- [ ] `scripts\test.cmd --all` passes, and the release tier ran the registry's tests (paste their counts).
+- [ ] `_scripts\test.cmd --all` passes, and the release tier ran the registry's tests (paste their counts).
 - [ ] `tools\test_report.py` before and after: the size of `tests/fixtures/` and the size of the test code.

@@ -8,7 +8,7 @@ rem A script a person starts waits for a key so its window stays readable; GUPKG
 if not defined GUPKG_NO_PAUSE pause
 exit /b %GUPKG_RC%
 :main
-rem Create or repair the development environment (.venv).   scripts\setup.cmd [python.exe] [--force]
+rem Create or repair the development environment (.venv).   _scripts\setup.cmd [python.exe] [--force]
 rem .venv must contain pip (the build scripts and tools\update_deps.py use it; the release bundle has no
 rem pip) and the packages of requirements-dev.txt. This script makes sure it does:
 rem   - No .venv, or one without pip: it is removed and created again. uv is tried first
@@ -51,13 +51,13 @@ if not defined MADE (
     if exist "%VENV%" rmdir /s /q "%VENV%"
     if not defined BASE set "BASE=python"
     echo [setup] Creating %VENV% with "%BASE%" -m venv
-    call "%BASE%" -m venv "%VENV%" || (>&2 echo [setup] Could not create the environment. Install uv, or pass the path of a full Python: scripts\setup.cmd C:\path\python.exe & popd & exit /b 1)
+    call "%BASE%" -m venv "%VENV%" || (>&2 echo [setup] Could not create the environment. Install uv, or pass the path of a full Python: _scripts\setup.cmd C:\path\python.exe & popd & exit /b 1)
 )
 
 :install
 echo [setup] Installing requirements-dev.txt
 "%VENVPY%" -m pip install --disable-pip-version-check -r requirements-dev.txt || (popd & exit /b 1)
 "%VENVPY%" -c "import pip, pytest, textual, tomli_w; print('[setup] Ready: Python', __import__('sys').version.split()[0], '- pip', pip.__version__, '- pytest', pytest.__version__)" || (popd & exit /b 1)
-echo [setup] Next: scripts\test.cmd
+echo [setup] Next: _scripts\test.cmd
 popd
 exit /b 0

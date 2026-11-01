@@ -270,7 +270,7 @@ A failing package never invalidates the others in a batch, and a rerun revalidat
 
 ## Release and maintenance (development tree)
 
-Every routine job has a script in `scripts\`. None of them ships in the release ZIP. They run on the repository's `.venv` only and
+Every routine job has a script in `_scripts\`. None of them ships in the release ZIP. They run on the repository's `.venv` only and
 never search for another Python; a missing `.venv` is created first by `setup.cmd`.
 
 | Script | What it does |
@@ -292,7 +292,7 @@ Dependency maintenance runs the tools directly: `python tools\update_deps.py` an
 
 - **No `.venv`, or a `.venv` without pip** (for example one made by `uv venv` without `--seed`): it is removed and created again. uv is
   tried first with `uv venv --seed`, which includes pip; if uv is not installed or fails, `python -m venv` is used. Pass
-  `scripts\setup.cmd C:\path\python.exe` to choose the interpreter (any Python 3.11 or newer; without it uv picks one and the
+  `_scripts\setup.cmd C:\path\python.exe` to choose the interpreter (any Python 3.11 or newer; without it uv picks one and the
   fallback uses `python` from `PATH`).
 - **A good `.venv`**: `requirements-dev.txt` is installed again, which brings the packages to the pinned versions.
 - **`--force`** removes and recreates it even if it looks good. Close programs that use `.venv` first, or the removal fails.
@@ -306,9 +306,9 @@ bundle itself never contains pip, and gupkg never installs anything at run time.
 A release is three commands, run from a clean working tree on `main`, with the GitHub CLI signed in (`gh auth status`):
 
 ```bat
-scripts\bump.cmd
-scripts\release.cmd "one-line notes"
-scripts\check-release.cmd
+_scripts\bump.cmd
+_scripts\release.cmd "one-line notes"
+_scripts\check-release.cmd
 ```
 
 1. **`bump`** edits the single version line in `src\gupkg\_version.py` and commits it (`Bump version to <version>`). With no argument
@@ -336,7 +336,7 @@ scripts\check-release.cmd
    - `RELEASE.txt` inside the ZIP names this version and this commit;
    - every file listed in `MANIFEST.sha256` exists with that SHA-256, and the tree holds no file the manifest does not list.
 
-   Run it again at any time, for any version (`scripts\check-release.cmd 1.0.0`); it changes nothing.
+   Run it again at any time, for any version (`_scripts\check-release.cmd 1.0.0`); it changes nothing.
 
 Which SHA-256 protects what:
 

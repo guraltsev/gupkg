@@ -8,12 +8,12 @@ rem A script a person starts waits for a key so its window stays readable; GUPKG
 if not defined GUPKG_NO_PAUSE pause
 exit /b %GUPKG_RC%
 :main
-rem Run the test suite by tier (_docs/tests.md section 5).   scripts\test.cmd [--process | --all] [pytest arguments]
+rem Run the test suite by tier (_docs/tests.md section 5).   _scripts\test.cmd [--process | --all] [pytest arguments]
 rem   (no option)  the unit tier: nothing but the process itself. Required when a task is complete; while working, pass a path to run only the area you are changing, as an aid.
 rem   --process    the unit and process tiers (real child processes, links, loopback). Run it before saying a change is done.
 rem   --all        every tier, release included. Run it before a merge or a commit to main, and after a change to the build.
 rem --process and --all must be the first argument. Every other argument goes to pytest unchanged, for example:
-rem   scripts\test.cmd tests\catalog -x
+rem   _scripts\test.cmd tests\catalog -x
 rem A -m of your own overrides the tier selection (the last line then names the tiers the script chose, not yours).
 rem The last line printed names the tiers that ran. Exit code 5 (nothing selected) prints a note about the tier.
 setlocal EnableExtensions

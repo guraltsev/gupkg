@@ -10,9 +10,9 @@ close.
 ## Do
 
 1. **Run each tier serially, and record the counts and the wall time:**
-   - `scripts\test.cmd`;
-   - `scripts\test.cmd --process`;
-   - `scripts\test.cmd --all`.
+   - `_scripts\test.cmd`;
+   - `_scripts\test.cmd --process`;
+   - `_scripts\test.cmd --all`.
 2. **Run `tools\test_report.py --timings`** on a full run. Put it beside the baseline of the progress file in one table:
    - the size of the test code and its ratio to the source;
    - test functions and cases;
@@ -41,4 +41,4 @@ close.
 - [ ] All of the above is in your log, and the table of indicators before and after is ready for the issue.
 - [ ] `unit` takes under 30 s serially.
 - [ ] Nothing is left in `tests/_temp/`.
-- [ ] `scripts\test.cmd --all` passes.
+- [ ] `_scripts\test.cmd --all` passes.

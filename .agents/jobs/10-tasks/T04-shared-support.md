@@ -44,4 +44,4 @@ task changes no test's assertions.
 - [ ] `git grep -n "^def world(" tests` lists only the shared fixture and the justified variants, each named in your log.
 - [ ] The collected tests are exactly those of `main` (same count; show it). No assertion changed:
       `git diff main -- tests | Select-String '^[-+]\s*assert'` shows only moved lines. Explain any exception.
-- [ ] `scripts\test.cmd --all` passes.
+- [ ] `_scripts\test.cmd --all` passes.

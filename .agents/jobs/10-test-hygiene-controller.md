@@ -48,7 +48,7 @@ Do the tasks **one at a time, in the order of the table below**. Never run two w
 2. Run the full suite on `main`:
 
    ```text
-   $env:GUPKG_NO_PAUSE='1'; .\scripts\test.cmd
+   $env:GUPKG_NO_PAUSE='1'; .\_scripts\test.cmd
    ```
 
    Write the counts and the wall time under "Baseline" in the progress file. If anything fails, stop and report it to the
@@ -108,7 +108,7 @@ A task is **ready** when every task it depends on is `merged`. Even when two tas
    3. **Every new test passes the test of a test** (`tests.md` §2.1, Q1–Q6). For at least two new tests, copy only the
       test onto `main` (or revert the protected code) and see it fail.
    4. **The suite is green and no worse:**
-      - `scripts\test.cmd --all` passes on the branch;
+      - `_scripts\test.cmd --all` passes on the branch;
       - `git diff --check main...i036/Txx` is clean;
       - the hygiene baseline has no added line (`git diff main...i036/Txx -- tests/hygiene_baseline.txt` shows only
         removals).
@@ -128,7 +128,7 @@ A task is **ready** when every task it depends on is `merged`. Even when two tas
    git merge --no-ff i036/Txx -m "Issue 036 Txx: <task title>"
    ```
 
-   The message ends with the repository's attribution trailer. Then run `scripts\test.cmd --all` and
+   The message ends with the repository's attribution trailer. Then run `_scripts\test.cmd --all` and
    `git diff --check HEAD~1`. If either fails, undo with `git reset --hard ORIG_HEAD` (only for the merge you just made),
    record why, and go back to step 4.
 6. **Record.** In the progress file:
@@ -193,7 +193,7 @@ The progress file is the source of truth. For each task that is `in progress` or
 ## Rules you follow
 
 - Never push or force-push. Never rewrite `main` except to undo the merge you made in step 5 of the same cycle.
-- `main` stays green: every merge passes `scripts\test.cmd --all`.
+- `main` stays green: every merge passes `_scripts\test.cmd --all`.
 - Never touch `C:\opt`, `C:\Users\guraltsev\opt`, `C:\bin`, `%USERPROFILE%\bin`, the real Start Menu or the real `PATH`.
 - Do not release and do not bump the version.
 - Commit messages written by an agent end with the repository's attribution trailer.

@@ -1,4 +1,4 @@
-# Development environment for the scripts in scripts\. Run scripts\setup.cmd: it creates .venv (uv first, with
+# Development environment for the scripts in _scripts\. Run _scripts\setup.cmd: it creates .venv (uv first, with
 # `uv venv --seed`, then `python -m venv`, so that pip is included; the build scripts and tools\update_deps.py
 # use it, and the bundle has no pip) and installs this file. By hand:
 #   <python> -m venv .venv && .venv\Scripts\pip install -r requirements-dev.txt

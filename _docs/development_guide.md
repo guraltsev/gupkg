@@ -56,8 +56,8 @@ Dependency rules:
   double must write only under `tmp_path`, never relative to the current directory.
 - **Tiers.** Every test module declares what its tests touch (`pytest.mark.unit`, `process` or `release`; policy in
   [tests.md](tests.md) section 5), and a `unit` test that starts a process, sleeps or opens a socket fails. Run
-  `scripts\test.cmd` (`unit`, required when a task is complete; while working, running the area's tests is an aid, not a requirement), `scripts\test.cmd --process` (`unit` and `process`, before calling a
-  change done) or `scripts\test.cmd --all` (every tier, before a merge, and after a change to the build, bootstrap,
+  `_scripts\test.cmd` (`unit`, required when a task is complete; while working, running the area's tests is an aid, not a requirement), `_scripts\test.cmd --process` (`unit` and `process`, before calling a
+  change done) or `_scripts\test.cmd --all` (every tier, before a merge, and after a change to the build, bootstrap,
   self-update or activation). The option must be the first argument; every other argument goes to pytest unchanged, and a `-m` of your own overrides the
   tier selection. The last line it prints names the tiers that ran; when nothing was selected (exit 5) it says which tier ran
   and that `--process` or `--all` is needed for a process or release test.
@@ -83,19 +83,19 @@ arguments `-I -s -B -S $App\gupkg\bootstrap.py` (a `.cmd` target would run as `c
 
 gupkg is distributed as one self-contained release ZIP,
 `gupkg-<version>-win-amd64.zip`. Everything that acquires or verifies its
-contents at build time lives in `tools/` and `scripts/` of the development tree
+contents at build time lives in `tools/` and `_scripts/` of the development tree
 and is never shipped or reachable from `gupkg`; installed code only *checks*
 integrity data:
 
 | Tool | Role |
 | --- | --- |
-| `tools/fetch_runtime.py` (`scripts\fetch-runtime.cmd`) | The only place that pins the embeddable CPython URL and SHA-256. Fetches and verifies it, writes `._pth`, installs `tools/gupkg-deps.lock` with the `.venv`'s pip (`--target`, cross-targeted at the bundled CPython, `--require-hashes --only-binary=:all: --no-deps`). |
+| `tools/fetch_runtime.py` (`_scripts\fetch-runtime.cmd`) | The only place that pins the embeddable CPython URL and SHA-256. Fetches and verifies it, writes `._pth`, installs `tools/gupkg-deps.lock` with the `.venv`'s pip (`--target`, cross-targeted at the bundled CPython, `--require-hashes --only-binary=:all: --no-deps`). |
 | `tools/update_deps.py` | Resolves newer releases, shows the plan, rewrites the lock and refreshes the committed runtime's `site-packages` the same way the build installs them (`--repair` reinstalls the lock; `--python` names the interpreter whose pip does it). |
 | `tools/check_deps.py` | Compares the lock with PyPI (exit 1 when pins are stale). |
-| `tools/build_standalone.py` (`scripts\build-standalone.cmd`) | Verifies the inputs, assembles the version tree, fails if pip, setuptools or ensurepip is in it, writes `gupkg/RELEASE.txt` and `gupkg/MANIFEST.sha256`, runs the build probe on the staged tree, zips it and prints the ZIP's SHA-256. |
-| `tools/release.py` (`scripts\release.cmd`) | Builds, tags, uploads the ZIP and its `.sha256` file to GitHub release `v<version>`, checks the uploaded bytes, and records the digest in `RELEASES.md`. |
-| `tools/check_release.py` (`scripts\check-release.cmd`) | Downloads the published release and checks it against its `RELEASES.md` row (tags, SHA-256s, `RELEASE.txt`, `MANIFEST.sha256`). |
-| `tools/bump_version.py` (`scripts\bump.cmd`) | Raises or sets the version in `_version.py`. |
+| `tools/build_standalone.py` (`_scripts\build-standalone.cmd`) | Verifies the inputs, assembles the version tree, fails if pip, setuptools or ensurepip is in it, writes `gupkg/RELEASE.txt` and `gupkg/MANIFEST.sha256`, runs the build probe on the staged tree, zips it and prints the ZIP's SHA-256. |
+| `tools/release.py` (`_scripts\release.cmd`) | Builds, tags, uploads the ZIP and its `.sha256` file to GitHub release `v<version>`, checks the uploaded bytes, and records the digest in `RELEASES.md`. |
+| `tools/check_release.py` (`_scripts\check-release.cmd`) | Downloads the published release and checks it against its `RELEASES.md` row (tags, SHA-256s, `RELEASE.txt`, `MANIFEST.sha256`). |
+| `tools/bump_version.py` (`_scripts\bump.cmd`) | Raises or sets the version in `_version.py`. |
 
 **Where pip lives.** The bundled runtime (`src/gupkg/python` and every release)
 has no pip, setuptools or ensurepip, and `tools/gupkg-deps.lock` does not list
@@ -122,14 +122,14 @@ installation it relies on admin-only folder permissions.
 ## Development environment
 
 The dev tree uses one explicit interpreter and never probes for another.
-`scripts\setup.cmd` creates `.venv` (it tries `uv venv --seed`, then `python -m venv`, so pip is always present)
+`_scripts\setup.cmd` creates `.venv` (it tries `uv venv --seed`, then `python -m venv`, so pip is always present)
 and installs `requirements-dev.txt`; run it once, or let any other script run it when `.venv` is missing.
-`scripts\setup.cmd C:\path\python.exe` picks the interpreter (3.11 or newer) and `--force` recreates the environment.
+`_scripts\setup.cmd C:\path\python.exe` picks the interpreter (3.11 or newer) and `--force` recreates the environment.
 The release steps (`bump`, `release`, `check-release`) are in the Operations guide.
 
-Every script in `scripts\` uses `.venv\Scripts\python.exe` only. `requirements-dev.txt` holds pytest and the
+Every script in `_scripts\` uses `.venv\Scripts\python.exe` only. `requirements-dev.txt` holds pytest and the
 same runtime package versions as `tools/gupkg-deps.lock`. Run the tests with
-`scripts\test.cmd`. To try gupkg by hand, run `scripts\run.cmd <arguments>`: it
+`_scripts\test.cmd`. To try gupkg by hand, run `_scripts\run.cmd <arguments>`: it
 starts `src\gupkg\gupkg.cmd`, so gupkg runs on its bundled Python like it does
 for a user. `python -m gupkg` works only on the bundled Python, so tests that
 start gupkg as a process use `src\gupkg\gupkg.cmd`.

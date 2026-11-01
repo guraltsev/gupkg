@@ -105,7 +105,7 @@ package on a Python package index. Pick the route that fits:
   on the Python committed at `src\gupkg\python`, like every other launch: no
   system Python, `PATH` lookup or download is ever used. Fetching or refreshing
   that runtime, updating the locked dependencies and building the release ZIP
-  are maintainer tasks that live in `tools\` and `scripts\` (see the
+  are maintainer tasks that live in `tools\` and `_scripts\` (see the
   [development guide](_docs/development_guide.md)); none of them ships.
 
 If a release is damaged or its Python is missing, gupkg does not repair it at
@@ -338,7 +338,7 @@ after it wrote its result is stopped after 15 seconds and its result is still us
 
 gupkg runs only on its bundled Python: `python -m gupkg` or `bootstrap.py` on any other interpreter, or without `-I`, exits
 with `Start gupkg through gupkg.cmd or gupkg.exe; it runs only on its bundled Python.` In a source checkout use
-`scripts\run.cmd`. `src\gupkg\gupkg.cmd` runs only `python\python.exe` from its own folder, as
+`_scripts\run.cmd`. `src\gupkg\gupkg.cmd` runs only `python\python.exe` from its own folder, as
 `python.exe -I -s -B -S bootstrap.py`; when it is missing it exits with status 1 and tells you to reinstall gupkg from a
 release ZIP.
 

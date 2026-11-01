@@ -514,7 +514,7 @@ These are estimates, to be measured after each phase. The point is the direction
 
 ## 8. Plan
 
-Each phase leaves `main` green (`scripts/test.cmd`) and is a commit of its own, made only when the owner asks (AGENTS rule 9).
+Each phase leaves `main` green (`_scripts/test.cmd`) and is a commit of its own, made only when the owner asks (AGENTS rule 9).
 
 0. **Decisions and design note.**
    - The owner confirms D47–D55. All questions are answered (§6.2).

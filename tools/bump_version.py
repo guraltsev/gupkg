@@ -3,7 +3,7 @@
 ``tools/bump_version.py 0.14.0`` rewrites ``src/gupkg/_version.py``; the
 manifests carry no version. Instead of a version, ``patch`` (the default), ``minor``
 or ``major`` raises that part of the current version. It does not commit;
-``scripts/bump.cmd`` does.
+``_scripts/bump.cmd`` does.
 """
 
 from __future__ import annotations

@@ -1,7 +1,7 @@
 """Cover the development tree's single-interpreter rule.
 
-Behavior covered: ``scripts\\_python.cmd`` uses only the repository's ``.venv``; when it
-is missing the helper first runs ``scripts\\setup.cmd`` and stops with its status if that
+Behavior covered: ``_scripts\\_python.cmd`` uses only the repository's ``.venv``; when it
+is missing the helper first runs ``_scripts\\setup.cmd`` and stops with its status if that
 fails, even if a Python is on ``PATH``; ``setup.cmd`` tries uv before ``python -m venv``;
 ``requirements-dev.txt`` pins the runtime lock's packages; and no shipped or script file
 probes for a system Python or reads an override.
@@ -31,9 +31,9 @@ windows_only = pytest.mark.skipif(os.name != "nt", reason="Windows batch scripts
 
 def _scripts_copy(root: Path) -> Path:
     """Copy ``_python.cmd`` into ``<root>\\scripts`` so REPO_ROOT resolves to a controlled folder."""
-    (root / "scripts").mkdir(parents=True)
-    shutil.copy2(ROOT / "scripts" / "_python.cmd", root / "scripts" / "_python.cmd")
-    return root / "scripts" / "_python.cmd"
+    (root / "_scripts").mkdir(parents=True)
+    shutil.copy2(ROOT / "_scripts" / "_python.cmd", root / "_scripts" / "_python.cmd")
+    return root / "_scripts" / "_python.cmd"
 
 
 def _stand_in(path: Path, log: Path, name: str, status: int) -> Path:
@@ -72,7 +72,7 @@ def test_python_helper_without_a_venv_runs_setup_first_and_then_selects_the_new_
     result = _call(helper, os.environ.copy())
 
     assert result.returncode == 0, result.stderr
-    assert "creating it with scripts\\setup.cmd" in result.stdout
+    assert "creating it with _scripts\\setup.cmd" in result.stdout
     assert f'PY="{venv_python}"' in result.stdout
 
 
@@ -97,7 +97,7 @@ def test_python_helper_stops_with_the_status_of_a_failing_setup_even_with_python
 def test_setup_tries_uv_with_seed_first_and_falls_back_to_python_m_venv(tmp_path: Path) -> None:
     """With no .venv, setup runs ``uv venv --seed`` and, when uv fails, ``<python> -m venv``; both failing is an error."""
     helper = _scripts_copy(tmp_path)
-    shutil.copy2(ROOT / "scripts" / "setup.cmd", helper.parent / "setup.cmd")
+    shutil.copy2(ROOT / "_scripts" / "setup.cmd", helper.parent / "setup.cmd")
     (tmp_path / "requirements-dev.txt").write_text("", encoding="utf-8")
     log = tmp_path / "calls.log"
     tools = tmp_path / "tools-on-path"
@@ -139,9 +139,9 @@ def test_requirements_dev_pins_the_runtime_lock_packages_and_adds_pytest() -> No
 
 
 def test_shipped_code_and_scripts_never_probe_for_a_system_python() -> None:
-    """No file under src/ (outside the bundled runtime), scripts/ or tools/ mentions an interpreter probe or override."""
+    """No file under src/ (outside the bundled runtime), _scripts/ or tools/ mentions an interpreter probe or override."""
     offenders = []
-    for folder in ("src", "scripts", "tools"):
+    for folder in ("src", "_scripts", "tools"):
         for path in (ROOT / folder).rglob("*"):
             relative = path.relative_to(ROOT)
             if not path.is_file() or relative.parts[:3] == ("src", "gupkg", "python") or "__pycache__" in relative.parts:

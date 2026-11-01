@@ -9,7 +9,7 @@ Statuses: `waiting` (dependencies not merged), `ready`, `in progress`, `in revie
 
 ## Baseline
 
-Recorded 2026-10-31 on `main` at 33899f3 with `scripts\test.cmd` (serial): 3,760 passed, 13 skipped, 439.53 s (7 min 19 s).
+Recorded 2026-10-31 on `main` at 33899f3 with `_scripts\test.cmd` (serial): 3,760 passed, 13 skipped, 439.53 s (7 min 19 s).
 Caveat: uncommitted edits to `src/gupkg/settingsedit.py` and `tests/test_cli_tools.py` appeared in the working tree during
 the run (not from this job), so the run may include them.
 After T00, it records `tools\test_report.py --timings`.

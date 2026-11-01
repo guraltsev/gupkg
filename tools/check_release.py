@@ -1,7 +1,7 @@
 """Check that a published gupkg release is what ``RELEASES.md`` says it is.
 
 This is a maintainer tool for the development tree; it is never shipped.
-``python tools/check_release.py [version]`` (``scripts\\check-release.cmd``) downloads the
+``python tools/check_release.py [version]`` (``_scripts\\check-release.cmd``) downloads the
 release from the same address the bootstrap uses and prints one PASS or FAIL line per check;
 the exit status is 1 if any check failed.
 

@@ -40,4 +40,4 @@ Before writing a test, check whether an earlier task of this job already added i
       `tests/manual_smoke.md`, with the owner's agreement recorded by the controller.
 - [ ] Every bug found is listed with its reproduction, and nothing in `src/` changed.
 - [ ] UI tests show the rendered screen (`AGENTS.md` rule 8).
-- [ ] `scripts\test.cmd --all` passes.
+- [ ] `_scripts\test.cmd --all` passes.
