@@ -27,14 +27,8 @@ if "%GUPKG_ROOT:~-1%"=="\" set "GUPKG_ROOT=%GUPKG_ROOT:~0,-1%"
 set "GUPKG_LOCFILE=%GUPKG_ROOT%\.gupkg\gupkg-location"
 set "GUPKG_BUNDLED=%GUPKG_HERE%gupkg\gupkg.cmd"
 
-set "GUPKG_EXTRA="
-
-:collect
-if "%~1"=="" goto :collected
-set "GUPKG_EXTRA=%GUPKG_EXTRA% "%~1""
-shift
-goto :collect
-:collected
+rem The arguments are forwarded as %* (the text the caller typed), never rebuilt one by one: a loop over %~1 splits an
+rem argument at =, so --overwrite=orphaned-shortcuts would arrive as two words (as gupkg.cmd does, see its comment).
 
 rem Is this run elevated? Unknown counts as a refusal, never as "not elevated".
 set "GUPKG_ELEVATED="
@@ -63,7 +57,7 @@ if "%GUPKG_KIND%"=="location" (call :check_location) else (call :check_bundled)
 if errorlevel 1 goto :refuse_untrusted
 
 :run
-call "%GUPKG_RUN%" install "%GUPKG_HERE%."%GUPKG_EXTRA%
+call "%GUPKG_RUN%" install "%GUPKG_HERE%." %*
 set "GUPKG_EXIT=%ERRORLEVEL%"
 
 rem Exit code 6: this gupkg cannot handle the package. Try the next step.
