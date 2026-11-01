@@ -4,8 +4,9 @@ Behavior covered: the design's own examples parse; format 1 files and every 0.17
 are refused like any other invalid file; a version has one source, and the three URLs
 (`project_url`, `[source] download_url`, `[track] check_url`) are separate keys; the
 `shipped` rules; `record_manifest`; path variables and their mode-dependent validity;
-templates and their filters; `[track]` and templates only in a tracker; and
-``render_pinned`` turning a tracker plus a discovered version into an ordinary version.
+templates and their filters; `[track]` and templates only in a tracker; `[source.checksum]` with an optional flag that
+is a boolean and survives writing; and ``render_pinned`` turning a tracker plus a discovered version into an ordinary
+version that keeps the download headers.
 
 Real: the pure ``gupkg.model.manifest`` parser and writer on real TOML text. Mocked:
 nothing. Out of scope: reading files (see ``test_pkgcheck.py``) and the providers' own
@@ -13,6 +14,8 @@ validation, which a later issue adds.
 """
 
 from __future__ import annotations
+
+import tomllib
 
 import pytest
 
@@ -434,6 +437,36 @@ def test_checksum_discovery_needs_exactly_one_method() -> None:
     assert problems(base + 'sidecar = "https://x.test/a.sha256"\npage_match = "x"\n', ManifestKind.TRACKER)
     assert problems(base + 'sums_file = "https://x.test/SUMS"\n', ManifestKind.TRACKER)
     assert parse_manifest(base + 'sidecar = "https://x.test/a.sha256"\n', ManifestKind.TRACKER).source.checksum.sidecar
+
+
+def test_checksum_optional_round_trips_and_must_be_a_boolean() -> None:
+    """`optional` on `[source.checksum]` is a boolean, survives writing the manifest and is not written when false."""
+    base = (
+        'format = 2\n[track]\nprovider = "page"\ncheck_url = "https://e.org/"\nmatch = "v(?P<version>[0-9]+)"\n'
+        '[source]\ndownload_url = "https://e.org/${version}.zip"\n[source.checksum]\n'
+        'sums_file = "https://e.org/${version}.sums"\nentry = "x.zip"\n'
+    )
+    manifest = parse_manifest(base + "optional = true\n", ManifestKind.TRACKER)
+
+    assert manifest.source.checksum.optional is True
+    assert tomllib.loads(manifest_to_toml(manifest))["source"]["checksum"]["optional"] is True
+    assert "optional" not in tomllib.loads(manifest_to_toml(parse_manifest(base, ManifestKind.TRACKER)))["source"]["checksum"]
+    with pytest.raises(ManifestError, match="true or false"):
+        parse_manifest(base + 'optional = "yes"\n', ManifestKind.TRACKER)
+
+
+def test_render_pinned_keeps_the_download_headers_of_the_source() -> None:
+    """A vendor that needs a browser User-Agent and a Referer for the download keeps both in the pinned version."""
+    tracker = parse_manifest(
+        'format = 2\n[track]\nprovider = "module"\n[source]\ndownload_url = "https://x.test/${version}.zip"\n'
+        '[source.headers]\nUser-Agent = "Mozilla/5.0"\nReferer = "https://x.test/download/"\n',
+        ManifestKind.TRACKER,
+    )
+
+    pinned = render_pinned(tracker, TrackResult("1.0"))
+
+    assert pinned.source.headers == {"User-Agent": "Mozilla/5.0", "Referer": "https://x.test/download/"}
+    assert parse_manifest(manifest_to_toml(pinned)).source.headers == pinned.source.headers
 
 
 def test_a_version_directory_has_no_checksum_table() -> None:

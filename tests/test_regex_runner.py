@@ -2,13 +2,13 @@
 
 ``RegexRunner`` sends (pattern, flags, texts, operation) to ``gupkg/system/regex_worker.py`` through
 ``System.regex_worker`` and reads the matches back. Covers: identical results to in-process ``re`` for
-the 50 registry patterns over every fixture page; a hostile corpus (the reviewer's patterns of four review
+seven classes of pattern over pages written for the test; a hostile corpus (the reviewer's patterns of four review
 rounds) that must return or raise ``RegexTimeout`` within the deadline plus the start allowance (exponential patterns must raise), with the worker
 gone afterwards and no process left; the fail-closed rules (a crashed, garbled, oversized or malformed
 answer, a refused request, an exhausted total budget); the batch operations and the answer size cap.
 Real child processes are used throughout (the fake system runs the worker for real unless a double is
 registered). Out of scope: the transport and kill mechanics themselves (``test_system_contract``) and how
-providers use the matches (``test_track_providers``).
+providers use the matches (``tests/services/test_track.py``).
 """
 
 from __future__ import annotations
@@ -33,12 +33,11 @@ from gupkg.services.regexrun import RegexError, RegexRunner, RegexTimeout, Remot
 from gupkg.services.track import TrackError, run_tracker
 from gupkg.system.fake import FakeHttp, FakeSystem, ProcessCall
 from gupkg.system.port import ProcessResult, WorkerDidNotStart
-from tests.support.http_fixtures import HTTP_CASES, environment, serve, tracker_manifest
+from tests.support.track import VENDORS, environment, parse_tracker
 
 pytestmark = pytest.mark.process
 
 HERE = Path(__file__).resolve().parent
-REAL = json.loads((HERE / "fixtures" / "registry_patterns.json").read_text(encoding="utf-8"))
 DEADLINE = 0.8
 WORKER_SOURCE = HERE.parent / "src" / "gupkg" / "system" / "regex_worker.py"
 # A process start is slow on some machines (antivirus, the venv launcher) and spikes to seconds; the
@@ -46,17 +45,17 @@ WORKER_SOURCE = HERE.parent / "src" / "gupkg" / "system" / "regex_worker.py"
 START_ALLOWANCE = 3.0
 
 
-def fixture_bodies() -> list[str]:
-    """Return every response body of the recorded provider fixtures."""
-    bodies: list[str] = []
-    for path in sorted((HERE / "fixtures" / "http").glob("*.json")):
-        for response in json.loads(path.read_text(encoding="utf-8")).get("responses", []):
-            if isinstance(response.get("body"), str):
-                bodies.append(response["body"])
-    return bodies
-
-
-BODIES = fixture_bodies() + ["", "plain ascii 1.2.3", "café ☃ v2.0 \U0001f600", "a" * 5000, "line\r\nbreak\n1.0\n"]
+BODIES = [
+    '<a href="https://vendor.example/files/tool_1002.zip" class="dl">  Local</a> <a href="/files/tool_854.zip">old</a>',
+    "tool-1.10-x64.zip tool-1.9-arm64.zip tool-1.9.sig tool-2.0.zip.sig\n",
+    "Version: 3.0.21 (2024-10-11)\nVERSION: 3.0.9.2\n",
+    "key='42' other=\"7\" odd='8\"",
+    "",
+    "plain ascii 1.2.3",
+    "café ☃ v2.0 \U0001f600",
+    "a" * 5000,
+    "line\r\nbreak\n1.0\n",
+]
 
 
 def shape(match: re.Match[str] | RemoteMatch) -> tuple:
@@ -67,15 +66,27 @@ def shape(match: re.Match[str] | RemoteMatch) -> tuple:
 # -- identical results to in-process re ----------------------------------------------------------
 
 
-@pytest.mark.parametrize("row", [pytest.param(row, id=f"{index:02d}-{row['source']}") for index, row in enumerate(REAL)])
-def test_the_worker_finds_exactly_what_in_process_re_finds_for_a_real_registry_pattern(system: FakeSystem, row: dict[str, str]) -> None:
-    """Over every fixture page (and awkward texts) the spans, groups and named groups are identical, in order."""
-    compiled = re.compile(row["pattern"])
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        pytest.param(r'href="(?P<href>[^"]+tool_(?P<major>\d+?)(?P<minor>\d{2})\.zip)"[^>]*>\s*Local', id="named-groups-and-lazy-repeat"),
+        pytest.param(r"tool-(?P<version>\d+(?:\.\d+)*)-(?:x64|arm64)\.zip", id="alternation"),
+        pytest.param(r"tool-(?P<version>[0-9.]+?)(?!\.sig)\.zip", id="negative-lookahead"),
+        pytest.param(r"(?P<quote>['\"])(?P<number>\d+)(?P=quote)", id="back-reference"),
+        pytest.param(r"(?i)version: (?P<version>\d+(?:\.\d+)+)", id="inline-flag"),
+        pytest.param(r"(?s)line.*?break\s+(?P<number>[\d.]+)", id="dot-all-across-lines"),
+        pytest.param(r"(?P<word>[^\W\d_]+)\s+\S+ v(?P<version>\d+\.\d+)", id="unicode-classes"),
+    ],
+)
+def test_the_worker_finds_exactly_what_in_process_re_finds_for_a_pattern_class(system: FakeSystem, pattern: str) -> None:
+    """Over pages and awkward texts the spans, groups and named groups are identical to `re`'s, in order."""
+    compiled = re.compile(pattern)
 
-    remote = RegexRunner(system, per_call=60, total=600).finditer_many(compiled, BODIES, what="the fixtures")
+    remote = RegexRunner(system, per_call=60, total=600).finditer_many(compiled, BODIES, what="the pages")
 
     local = [[shape(match) for match in scan(compiled, body)] for body in BODIES]
     assert [[shape(match) for match in one] for one in remote] == local
+    assert any(local), "the pattern must match somewhere in the corpus, or the comparison proves nothing"
 
 
 def test_a_search_a_fullmatch_and_a_batch_agree_with_re(system: FakeSystem) -> None:
@@ -397,27 +408,22 @@ def test_the_text_size_cap_applies_before_anything_is_sent(system: FakeSystem) -
 
 # -- wiring: every provider goes through the worker, and a broken worker fails the provider --------
 
-CASES = sorted(HTTP_CASES.glob("*.json"))
-
-
-@pytest.mark.parametrize("case", [pytest.param(path, id=path.stem) for path in CASES])
+@pytest.mark.parametrize("kind", [pytest.param(name, id=name) for name, vendor in VENDORS.items() if vendor.uses_patterns])
 def test_a_provider_that_uses_a_pattern_asks_the_worker_and_fails_closed_when_the_worker_breaks(
-    system: FakeSystem, tmp_path: Path, case: Path
+    system: FakeSystem, tmp_path: Path, kind: str
 ) -> None:
     """With the real worker a tracker finds its expected version; with a crashing worker it raises, never 'no version found'."""
-    document = json.loads(case.read_text(encoding="utf-8"))
-    serve(system, case.stem)
-    manifest = tracker_manifest(document["tracker"])
+    vendor = VENDORS[kind]
+    vendor.serve(system)
+    manifest = parse_tracker(vendor.tracker_text())
 
-    result = run_tracker(manifest, environment(system, tmp_path, package=document["tracker"]))
+    result = run_tracker(manifest, environment(system, tmp_path))
 
-    assert result.version == document["expected"]["version"]
-    if not system.regex_log:
-        return  # a provider with no pattern at all (a header date, a redirect without a match)
+    assert result.version == vendor.version and system.regex_log
     broken = FakeSystem(tmp_path / "broken", processes={"regex-worker": lambda call: ProcessResult(1, "")})
-    serve(broken, case.stem)
+    vendor.serve(broken)
     with pytest.raises((TrackError, ChecksumDiscoveryError), match="regular expression"):
-        run_tracker(manifest, environment(broken, tmp_path / "again", package=document["tracker"]))
+        run_tracker(manifest, environment(broken, tmp_path / "again"))
 
 
 def test_a_json_filter_with_a_regular_expression_is_decided_by_the_worker(system: FakeSystem) -> None:

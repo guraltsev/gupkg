@@ -8,9 +8,9 @@ launcher in a tracker, a tracker that fails the package checker (an error or onl
 ``Why no service`` note, more than 13 hook files, a script-populated version, and a malformed
 ``_registry.toml``. The fingerprint check is also shown to follow a changed file.
 Real: a registry of two packages written under a temporary folder for these tests, damaged one way
-at a time, and the real checker and fingerprint code; one test validates the committed registry
-snapshot as it is, without copying it. Mocked: nothing. Out of scope: the registry tool that
-writes the files (``test_registry_tool.py``).
+at a time, and the real checker and fingerprint code. Mocked: nothing. Out of scope: the registry
+tool that writes the files (``test_registry_tool.py``) and the data of the real registry, which its
+own repository tests.
 """
 
 from __future__ import annotations
@@ -23,54 +23,20 @@ import pytest
 
 from gupkg.services.fingerprint import fingerprint_directory
 from gupkg.system.fake import FakeSystem
-from gupkg.launchers import launcher_text, write_launchers
-from gupkg_registry.layout import TRACKER_LAUNCHER_NAME, read_registry_file, write_registry_file
-from gupkg_registry.validate import MAX_HOOK_FILES, ValidationReport, _stray_problems, validate_registry
-from tests.support.http_fixtures import FIXTURES
+from gupkg.launchers import launcher_text
+from gupkg_registry.layout import read_registry_file, write_registry_file
+from gupkg_registry.validate import MAX_HOOK_FILES, _stray_problems, validate_registry
+from tests.support.registry_tool import valid_registry
 
 pytestmark = pytest.mark.unit
 
-SNAPSHOT = FIXTURES / "registry_100"
 HASH = "c" * 64
-
-# A tracker that passes the package checker with no warning, and a pinned version that validates.
-TRACKER = (
-    'format = 2\ndescription = "A command-line tool."\nmodes = ["system", "user"]\n\n'
-    '[track]\nprovider = "github"\nrepo = "owner/tool"\nasset = "tool_${version}_windows_amd64.zip"\n\n'
-    '[source]\ndownload_url = "${asset_url}"\nrequire = ["bin/tool.exe"]\n\n'
-    '[[path]]\nvalue = "$App\\\\bin"\n\n'
-    '[[shim]]\nname = "tool"\ntarget = "$App\\\\bin\\\\tool.exe"\n'
-).encode()
-VERSION = (
-    'format = 2\ndescription = "d"\nmodes = ["system", "user"]\n\n[source]\n'
-    'download_url = "https://www.hwinfo.com/files/hwi_1002.zip"\n'
-    f'sha256 = "{HASH}"\nsha256_from = "registry"\nshipped = false\n'
-).encode()
-
-
-@pytest.fixture(scope="session")
-def snapshot_report() -> ValidationReport:
-    """The report of validating the committed snapshot once for the whole session (validation writes nothing)."""
-    return validate_registry(SNAPSHOT)
 
 
 @pytest.fixture
 def registry(tmp_path: Path) -> Path:
-    """A registry of two packages that validates: ``gh`` (a tracker) and ``hwinfo`` (the fully pinned version ``10.02``)."""
-    root = tmp_path / "registry"
-    tracker = root / "gh" / "_check_updates"
-    tracker.mkdir(parents=True)
-    (tracker / "pkg.toml").write_bytes(TRACKER)
-    write_launchers(tracker, (TRACKER_LAUNCHER_NAME,))
-    version = root / "hwinfo" / "10.02"
-    version.mkdir(parents=True)
-    (version / "pkg.toml").write_bytes(VERSION)
-    write_launchers(version)
-    write_registry_file(root, {
-        "format": 2, "name": "test-registry", "description": "A registry for tests.",
-        "fingerprints": {"hwinfo/10.02": fingerprint_directory(version)},
-    })
-    return root
+    """A registry of two packages that validates: ``gh`` (a tracker) and ``gizmo`` (the fully pinned version ``10.02``)."""
+    return valid_registry(tmp_path)
 
 
 def refingerprint(root: Path, key: str) -> None:
@@ -93,20 +59,14 @@ def test_a_sound_registry_has_no_problem(registry: Path) -> None:
     assert report.packages == 2 and report.versions == 1
 
 
-def test_the_committed_registry_snapshot_has_no_problem(snapshot_report: ValidationReport) -> None:
-    """The committed snapshot of the registry passes every rule, exactly as it is (it is validated once, without being copied)."""
-    assert snapshot_report.problems == ()
-    assert snapshot_report.packages > 0
-
-
 def test_the_fingerprint_follows_every_changed_file(registry: Path) -> None:
     """Changing a byte of a pinned version is reported with the published and the actual fingerprint."""
-    manifest = registry / "hwinfo" / "10.02" / "pkg.toml"
+    manifest = registry / "gizmo" / "10.02" / "pkg.toml"
     manifest.write_bytes(manifest.read_bytes().replace(b'"d"', b'"e"'))
 
     found = problems_of(registry)
 
-    assert any(p.startswith("hwinfo/10.02: fingerprint ") and "does not match" in p for p in found)
+    assert any(p.startswith("gizmo/10.02: fingerprint ") and "does not match" in p for p in found)
 
 
 def drop_modes(root: Path) -> None:
@@ -116,44 +76,44 @@ def drop_modes(root: Path) -> None:
 
 
 def drop_sha(root: Path) -> None:
-    """Remove the ``sha256`` of ``hwinfo/10.02`` and refingerprint it."""
-    path = root / "hwinfo" / "10.02" / "pkg.toml"
+    """Remove the ``sha256`` of ``gizmo/10.02`` and refingerprint it."""
+    path = root / "gizmo" / "10.02" / "pkg.toml"
     path.write_text(path.read_text(encoding="utf-8").replace(f'sha256 = "{HASH}"\nsha256_from = "registry"\n', ""), encoding="utf-8", newline="\n")
-    refingerprint(root, "hwinfo/10.02")
+    refingerprint(root, "gizmo/10.02")
 
 
 def drop_provenance(root: Path) -> None:
-    """Remove ``sha256_from`` from ``hwinfo/10.02`` and refingerprint it."""
-    path = root / "hwinfo" / "10.02" / "pkg.toml"
+    """Remove ``sha256_from`` from ``gizmo/10.02`` and refingerprint it."""
+    path = root / "gizmo" / "10.02" / "pkg.toml"
     path.write_text(path.read_text(encoding="utf-8").replace('sha256_from = "registry"\n', ""), encoding="utf-8", newline="\n")
-    refingerprint(root, "hwinfo/10.02")
+    refingerprint(root, "gizmo/10.02")
 
 
 def drop_fingerprint(root: Path) -> None:
-    """Remove the fingerprint of ``hwinfo/10.02``."""
+    """Remove the fingerprint of ``gizmo/10.02``."""
     settings = read_registry_file(root)
-    del settings["fingerprints"]["hwinfo/10.02"]
+    del settings["fingerprints"]["gizmo/10.02"]
     write_registry_file(root, settings)
 
 
 def stale_fingerprint(root: Path) -> None:
     """Publish a fingerprint for a version that does not exist."""
     settings = read_registry_file(root)
-    settings["fingerprints"]["hwinfo/0.0"] = HASH
+    settings["fingerprints"]["gizmo/0.0"] = HASH
     write_registry_file(root, settings)
 
 
 def tamper_launcher(root: Path) -> None:
-    """Append a command to ``install.cmd`` of ``hwinfo/10.02`` and refingerprint (so only the template check can notice)."""
-    path = root / "hwinfo" / "10.02" / "install.cmd"
+    """Append a command to ``install.cmd`` of ``gizmo/10.02`` and refingerprint (so only the template check can notice)."""
+    path = root / "gizmo" / "10.02" / "install.cmd"
     path.write_bytes(path.read_bytes() + b"calc\r\n")
-    refingerprint(root, "hwinfo/10.02")
+    refingerprint(root, "gizmo/10.02")
 
 
 def remove_launcher(root: Path) -> None:
-    """Delete ``manage.cmd`` of ``hwinfo/10.02`` and refingerprint."""
-    (root / "hwinfo" / "10.02" / "manage.cmd").unlink()
-    refingerprint(root, "hwinfo/10.02")
+    """Delete ``manage.cmd`` of ``gizmo/10.02`` and refingerprint."""
+    (root / "gizmo" / "10.02" / "manage.cmd").unlink()
+    refingerprint(root, "gizmo/10.02")
 
 
 def launcher_in_tracker(root: Path) -> None:
@@ -181,7 +141,7 @@ def tracker_warning_only(root: Path) -> None:
     """Add the old HWiNFO scraper, as an API 2 module: the checker only warns that a built-in provider could do it."""
     hook = root / "gh" / "_check_updates" / "pkg.local"
     hook.mkdir()
-    original = (FIXTURES / "hints" / "hwinfo" / "check_update.py").read_text(encoding="utf-8")
+    original = (Path(__file__).resolve().parent / "fixtures" / "hints" / "hwinfo" / "check_update.py").read_text(encoding="utf-8")
     (hook / "scrape.py").write_text("PKG_MODULE_API = 2\n" + original, encoding="utf-8", newline="\n")
 
 
@@ -203,27 +163,27 @@ def backup_file(root: Path) -> None:
 
 
 def script_version(root: Path) -> None:
-    """Make ``hwinfo/10.02`` script-populated."""
-    path = root / "hwinfo" / "10.02" / "pkg.toml"
+    """Make ``gizmo/10.02`` script-populated."""
+    path = root / "gizmo" / "10.02" / "pkg.toml"
     path.write_bytes(
         b'format = 2\nmodes = ["system", "user"]\n[source]\nscript = "pkg.local/p.py"\nshipped = false\n'
     )
     (path.parent / "pkg.local").mkdir()
     (path.parent / "pkg.local" / "p.py").write_text('"""Why no service: x."""\nPKG_MODULE_API = 2\n\n\ndef populate(ctx):\n    pass\n', encoding="utf-8", newline="\n")
-    refingerprint(root, "hwinfo/10.02")
+    refingerprint(root, "gizmo/10.02")
 
 
 def unpinned_with_hash(root: Path) -> None:
     """List a version that has a hash as unpinned."""
     settings = read_registry_file(root)
-    settings["unpinned"] = ["hwinfo/10.02"]
+    settings["unpinned"] = ["gizmo/10.02"]
     write_registry_file(root, settings)
 
 
 def unpinned_nothing(root: Path) -> None:
     """List a version that does not exist as unpinned."""
     settings = read_registry_file(root)
-    settings["unpinned"] = ["hwinfo/3.0", "ghost/1.0"]
+    settings["unpinned"] = ["gizmo/3.0", "ghost/1.0"]
     write_registry_file(root, settings)
 
 
@@ -273,7 +233,7 @@ def staging_leftover(root: Path) -> None:
 def hostile_version_name(root: Path) -> None:
     """Add a version directory whose name could expand (``%TEMP%``), with a valid ``pkg.toml``."""
     target = root / "gh" / "%TEMP%"
-    shutil.copytree(root / "hwinfo" / "10.02", target)
+    shutil.copytree(root / "gizmo" / "10.02", target)
 
 
 def stray_file(root: Path) -> None:
@@ -303,12 +263,12 @@ RULES: list[tuple[str, Callable[[Path], None], str]] = [
     ("stray-file", stray_file, "gh/notes.txt: a file in a package folder"),
     ("unversioned-unknown", unversioned_unknown, "'nope' is listed as unversioned but is not a package"),
     ("missing-modes", drop_modes, "gh/_check_updates: 'modes' is not declared"),
-    ("no-sha256", drop_sha, "hwinfo/10.02: has no sha256"),
+    ("no-sha256", drop_sha, "gizmo/10.02: has no sha256"),
     ("no-provenance", drop_provenance, "sha256 has no sha256_from"),
-    ("no-fingerprint", drop_fingerprint, "hwinfo/10.02: no fingerprint"),
-    ("fingerprint-of-nothing", stale_fingerprint, "fingerprint of 'hwinfo/0.0' names no version directory"),
-    ("tampered-launcher", tamper_launcher, "hwinfo/10.02/install.cmd: differs from the launcher template"),
-    ("missing-launcher", remove_launcher, "hwinfo/10.02/manage.cmd: launcher is missing"),
+    ("no-fingerprint", drop_fingerprint, "gizmo/10.02: no fingerprint"),
+    ("fingerprint-of-nothing", stale_fingerprint, "fingerprint of 'gizmo/0.0' names no version directory"),
+    ("tampered-launcher", tamper_launcher, "gizmo/10.02/install.cmd: differs from the launcher template"),
+    ("missing-launcher", remove_launcher, "gizmo/10.02/manage.cmd: launcher is missing"),
     ("launcher-in-tracker", launcher_in_tracker, "a tracker never installs, so it carries no install.cmd"),
     ("missing-check-updates-launcher", remove_tracker_launcher, "gh/_check_updates/check-updates.cmd: launcher is missing"),
     ("tampered-check-updates-launcher", tamper_tracker_launcher, "gh/_check_updates/check-updates.cmd: differs from the launcher template"),
@@ -319,7 +279,7 @@ RULES: list[tuple[str, Callable[[Path], None], str]] = [
     ("backup-file", backup_file, "backup files do not belong"),
     ("script-populated-version", script_version, "populated by the built-in download, not a script"),
     ("unpinned-but-hashed", unpinned_with_hash, "still listed as unpinned"),
-    ("unpinned-nothing", unpinned_nothing, "'hwinfo/3.0' is listed as unpinned but is not a version directory"),
+    ("unpinned-nothing", unpinned_nothing, "'gizmo/3.0' is listed as unpinned but is not a version directory"),
     ("hook-without-note", hook_without_note, "has no 'Why no service"),
     ("too-many-hooks", too_many_hooks, f"{MAX_HOOK_FILES + 1} hook files remain"),
     ("link", link_in_tracker, "is a link or junction"),
@@ -345,7 +305,7 @@ def test_a_version_listed_as_unpinned_is_accepted_while_it_has_no_hash(registry:
     assert any("has no sha256" in p for p in problems_of(registry))
 
     settings = read_registry_file(registry)
-    settings["unpinned"] = ["hwinfo/10.02"]
+    settings["unpinned"] = ["gizmo/10.02"]
     write_registry_file(registry, settings)
 
     assert problems_of(registry) == []

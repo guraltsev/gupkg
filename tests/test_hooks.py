@@ -4,7 +4,7 @@ Hooks are real files in a ``pkg.local`` folder, loaded and run by the service. T
 is ``FakeSystem`` (URLs and processes). Covers the rule that every hook, including one in a
 version directory, receives gupkg's HTTP client with its User-Agent and timeout, and that
 update discovery (a ``track`` hook) is accepted only in a tracker. Out of scope: the
-built-in providers (``test_track_providers``) and the declarative steps (``test_prepare``).
+built-in providers (``tests/services/test_track.py``) and the declarative steps (``test_prepare``).
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ from gupkg.services.populate import run_custom_populate
 from gupkg.services.track import TrackError, run_tracker
 from gupkg.system.fake import FakeHttp, FakeSystem, ProcessCall
 from gupkg.system.port import ProcessResult
-from tests.support.http_fixtures import environment
+from tests.support.track import environment
 from tests.support.scope import scope_of
 
 pytestmark = pytest.mark.unit

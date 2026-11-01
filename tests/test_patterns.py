@@ -3,7 +3,7 @@
 Pure functions, no boundary: unsafe shapes are refused with a message, ordinary patterns pass, the text
 shrinking is linear, and the in-process reference ``scan`` is bounded in matches. The guard is NOT the
 safety property (the worker deadline is): see ``test_regex_runner`` and ``test_regex_guard``. Out of scope:
-how providers use the matches (``test_track_providers``).
+how providers use the matches (``tests/services/test_track.py``).
 """
 
 from __future__ import annotations

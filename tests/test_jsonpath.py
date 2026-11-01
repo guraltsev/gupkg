@@ -1,7 +1,7 @@
 """Cover the JSONPath subset: keys, positions, wildcards, filters, key selection and the refusals.
 
 Pure functions over parsed JSON, no boundary. Out of scope: the ``json`` provider that uses
-the paths (``test_track_providers``).
+the paths (``tests/services/test_track.py``).
 """
 
 from __future__ import annotations

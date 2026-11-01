@@ -29,8 +29,8 @@ For reference, issue 036 §2 measured on 2026-10-30:
 | T03 | Real waits and big copies | T02 | merged | | df4fc2b | unit 2,777 (67 s); --all 3,816 passed, 13 skipped, 5:59 | 167 | registry tool has no injectable sleep: 3 tests serve a 404 instead (owner may want a sleep parameter); rule 'neither tracker nor pinned version' has no test (for T06); 3 tests still copy the whole snapshot |
 | T04 | Shared support | T03 | merged | | 4e1b09f | --all 3,818 passed, 13 skipped, 7:50 | 158 | all H1 gone; node ids and asserts identical to base; conflict with the adopt work (6f4e226) resolved by hand in test_cli_adopt.py; many helpers still copied (Collect 4x, make_client 3x, two zip_bytes) |
 | T05 | Registry receives its tests (gupkg-registry) | T04 | merged | | registry 5ce5201 | registry 473 passed (was 212) | n/a | OWNER MUST PUSH gupkg-registry main before T06; 92 fixture cases are synthetic (recorded: null), owner records them with python _tools\record_http_fixtures.py; fabe2a6 (serviwin-portable unversioned) kept |
-| T06 | gupkg drops registry data | T05 | ready | | | | | T05 is on github/main (fbf7e1a, with the owner's 92 recorded fixtures); T05b merged in the registry as a6748ee - owner must push it |
-| T07 | Area engine | T06 | waiting | | | | | |
+| T06 | gupkg drops registry data | T05 | merged | | | | | T05 is on github/main (fbf7e1a, with the owner's 92 recorded fixtures); T05b merged in the registry as a6748ee - owner must push it |
+| T07 | Area engine | T06 | ready | | | | | |
 | T08 | Area catalog (with scope and settings) | T07 | waiting | | | | | |
 | T09 | Area cli | T08 | waiting | | | | | |
 | T10 | Area ui (with tui and manager) | T09 | waiting | | | | | |
@@ -68,3 +68,4 @@ None yet.
 - 2026-10-31: owner approved T18 (remove the unused manager_policy code and its tests); it still runs after T10. AGENTS rule 3 reworded by the owner's direction (e2ced7a, 2b9d13a).
 - 2026-10-31: owner pushed T05 and recorded the 92 fixtures (fbf7e1a); 11 registry tests failed against real data. T05b (tests follow the real data; no tracker bug found) merged in the registry as a6748ee, 474 passed. T06 is ready. Note: uncommitted work in the gupkg checkout changes src/templates and registry_100 launchers, so the registry's launcher-template test fails against it.
 - 2026-10-31: owner committed the launcher-template change in gupkg (703cde5, 1.1.12); registry launchers regenerated with registry_tool.py launchers (289 files, 97 fingerprints) as registry 2f1e3c3, 474 passed, validate OK. Owner must push gupkg-registry main again. T06 dispatched.
+- 2026-11-01: T06 reviewed and merged (main merged into the branch, registry_100 conflicts resolved as deletions); --all 3485 passed, 13 skipped, 6:55, release tier ran the registry's 474 tests. Only a sample of the new tests was proven by mutation (see the T06 log). T07 is ready.

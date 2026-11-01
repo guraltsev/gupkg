@@ -24,7 +24,7 @@ from gupkg.services.unpack import UnpackError, UnpackPlan, unpack_artifact
 from gupkg.services.values import file_name_from_url
 from gupkg.system.fake import FakeHttp, FakeSystem
 from tests.support.archive import make_zip, tree
-from tests.support.http_fixtures import environment, serve, tracker_manifest
+from tests.support.track import environment, parse_tracker
 
 pytestmark = pytest.mark.unit
 
@@ -63,12 +63,18 @@ def test_a_download_whose_url_ends_in_download_gets_the_real_file_name_and_the_e
 
 @pytest.mark.process
 def test_the_redirect_provider_names_the_file_from_the_final_address(system: FakeSystem, tmp_path: Path) -> None:
-    """The `file_name` capture of the crystaldiskinfo tracker is the zip, not the word `download`."""
-    serve(system, "redirect_crystaldiskinfo")
+    """When the final address ends in `/download`, the `file_name` capture is the file before it, not the word `download`."""
+    tracker = (
+        'format = 2\n[track]\nprovider = "redirect"\ncheck_url = "https://vendor.example/latest"\n'
+        "match = '/files/(?P<version>\\d+(?:\\.\\d+)+)/'\n[source]\ndownload_url = \"${download_url}\"\n"
+    )
+    system.urls["https://vendor.example/latest"] = FakeHttp(
+        "", 302, {"Location": "https://files.example/projects/tool/files/9.4.2/Tool9_4_2.zip/download"})
+    system.urls["https://files.example/projects/tool/files/9.4.2/Tool9_4_2.zip/download"] = FakeHttp("")
 
-    result = run_tracker(tracker_manifest("crystaldiskinfo"), environment(system, tmp_path, package="crystaldiskinfo"))
+    result = run_tracker(parse_tracker(tracker), environment(system, tmp_path, package="tool"))
 
-    assert result.captures["file_name"] == "CrystalDiskInfo9_4_2.zip"
+    assert result.captures["file_name"] == "Tool9_4_2.zip"
 
 
 def test_two_extract_rules_that_map_to_one_destination_are_an_error(system: FakeSystem, tmp_path: Path) -> None:

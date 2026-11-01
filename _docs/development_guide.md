@@ -46,7 +46,12 @@ Dependency rules:
   environment, shortcut records and receipts. Nothing patches module attributes.
 - **Sandbox mode.** `gupkg --sandbox DIR ...` runs the real command line with `FakeSystem` persisted under `DIR`; manual checks and `pkg check
   --install` use it.
-- **Fixtures** (archives, HTTP pages) are built or recorded; no test uses the network. Tests that need real Windows are marked
+- **Fixtures** (archives, HTTP pages, trackers) are built or written for the test and kept small; no test uses the network and no test
+  copies another repository's data. The packages of the real registry are tested in the registry repository (`gupkg-registry`); its
+  own tests run gupkg's code against its data, and the release tier runs them against this checkout
+  (`tests/project/test_registry_checks.py`: `gupkg-registry\_scripts\test.cmd` with `GUPKG_REPO` set to this checkout; the registry
+  folder is found through `GUPKG_REGISTRY_REPO`, or as `gupkg-registry` in the checkout or in a folder above it, and the test is
+  skipped when there is none). Tests that need real Windows are marked
   `process`, and the `WindowsSystem` contract tests also run against `FakeSystem` so the two cannot drift. A test
   double must write only under `tmp_path`, never relative to the current directory.
 - **Tiers.** Every test module declares what its tests touch (`pytest.mark.unit`, `process` or `release`; policy in

@@ -13,7 +13,6 @@ Out of scope: bundled launchers and the bootstrap (issue 033), publishing finger
 from __future__ import annotations
 
 import shutil
-import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -21,6 +20,7 @@ import pytest
 
 from gupkg.catalog.record import read_install_record
 from gupkg.engine.receipts import read_receipt
+from gupkg.launchers import write_launchers
 from gupkg.services.fingerprint import fingerprint_directory
 from gupkg.system.port import Mode
 from tests.support.engine import World
@@ -62,27 +62,26 @@ def test_a_distribution_with_a_matching_fingerprint_is_verified_against_the_regi
     assert not [note for note in world.one("check", "tool").details["notes"] if note["kind"] == "unverified"]
 
 
-def test_the_real_registrys_published_fingerprint_is_accepted_and_one_changed_byte_is_refused(world: World) -> None:
-    """qbittorrent 5.2.3 of the real registry snapshot, with the fingerprint the registry tool published for it.
+def test_a_published_fingerprint_is_accepted_for_a_version_without_a_hash_and_one_changed_byte_is_refused(world: World) -> None:
+    """A registry version that has no sha256, with the fingerprint the registry published for it.
 
     The engine computes the same value (`gupkg.services.fingerprint`, one implementation): the copy passes verification (the install
     then stops at the checksum rules, because this version is unpinned and has no sha256), and a copy with one byte changed is refused,
     naming the file, with nothing left in the root.
     """
-    snapshot = Path(__file__).parent / "fixtures" / "registry_100"
-    published = tomllib.loads((snapshot / "_registry.toml").read_text(encoding="utf-8"))["fingerprints"]["qbittorrent/5.2.3"]
-    version = snapshot / "qbittorrent" / "5.2.3"
-    world.registry({"qbittorrent": {"versions": {"5.2.3": version}}}, published_raw={"qbittorrent/5.2.3": published})
-    good = world.base / "downloads" / "qbittorrent" / "5.2.3"
+    version = world.publish("tool", "1.0.0", hashed=False, root=world.base / "registry-src", tables=SHIM)
+    write_launchers(version)
+    world.registry({"tool": {"versions": {"1.0.0": version}}}, published_raw={"tool/1.0.0": fingerprint_directory(version)})
+    good = world.base / "downloads" / "tool" / "1.0.0"
     shutil.copytree(version, good)
 
     accepted = world.one("install", str(good))
 
     assert not accepted.ok and accepted.error["code"] == "checksum-missing"
-    assert (world.user / "qbittorrent" / "5.2.3" / "install.cmd").read_bytes() == (version / "install.cmd").read_bytes()
-    shutil.rmtree(world.user / "qbittorrent")
+    assert (world.user / "tool" / "1.0.0" / "install.cmd").read_bytes() == (version / "install.cmd").read_bytes()
+    shutil.rmtree(world.user / "tool")
 
-    bad = world.base / "downloads2" / "qbittorrent" / "5.2.3"
+    bad = world.base / "downloads2" / "tool" / "1.0.0"
     shutil.copytree(version, bad)
     launcher = bad / "install.cmd"
     launcher.write_bytes(launcher.read_bytes() + b" ")
@@ -90,7 +89,7 @@ def test_the_real_registrys_published_fingerprint_is_accepted_and_one_changed_by
     refused = world.one("install", str(bad))
 
     assert not refused.ok and refused.error["code"] == "registry-fingerprint-mismatch" and "install.cmd (changed)" in refused.error["message"]
-    assert not (world.user / "qbittorrent" / "5.2.3").exists()
+    assert not (world.user / "tool" / "1.0.0").exists()
 
 
 def test_a_bundled_install_verifies_a_registry_copy_before_it_adds_the_bundled_gupkg(world: World) -> None:

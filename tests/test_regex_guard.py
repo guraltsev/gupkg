@@ -1,7 +1,7 @@
-"""Cover the static regex guard (the cheap first filter) against the registry's own patterns and nasty shapes.
+"""Cover the static regex guard (the cheap first filter) against ordinary tracker patterns and nasty shapes.
 
-The 50 distinct regular expressions that the 0.17 registry hooks use (extracted once into
-``tests/fixtures/registry_patterns.json``) must all pass validation. The refusals pin each rule: wildcards
+The patterns that trackers ordinarily write (a version capture, an attribute capture, anchored alternatives) pass
+validation; the patterns of the real registry are checked in the registry repository. The refusals pin each rule: wildcards
 hidden in groups, bounded repeats that can blow up (checked in a child with a hard timeout, so a
 regression fails instead of hanging), delimiters compared by character sets, alternatives that start
 alike. The guard is not the safety property, the worker deadline is (``test_regex_runner``). Out of
@@ -10,7 +10,6 @@ scope: how providers use the matches.
 
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
 import textwrap
@@ -23,18 +22,21 @@ from gupkg.model.patterns import PatternError, compile_pattern
 pytestmark = pytest.mark.unit
 
 SOURCE = Path(__file__).resolve().parents[1] / "src"
-REAL = json.loads((Path(__file__).resolve().parent / "fixtures" / "registry_patterns.json").read_text(encoding="utf-8"))
 
 
-@pytest.mark.parametrize("row", [pytest.param(row, id=f"{index:02d}-{row['source']}") for index, row in enumerate(REAL)])
-def test_every_regular_expression_of_the_real_registry_passes_validation(row: dict[str, str]) -> None:
-    """A pattern that a real registry hook uses today is not refused by the guard."""
-    assert compile_pattern(row["pattern"]).pattern == row["pattern"]
-
-
-def test_the_real_pattern_list_is_the_one_the_registry_has() -> None:
-    """The fixture holds the 50 distinct patterns of the 62 committed registry hooks."""
-    assert len(REAL) == 50 and len({row["pattern"] for row in REAL}) == 50
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        pytest.param(r"(?P<version>\d+(?:\.\d+)+)", id="dotted-version"),
+        pytest.param(r'href="(?P<href>[^"]+/tool_(?P<major>\d+?)(?P<minor>\d{2})\.zip)"', id="attribute-with-a-negated-class"),
+        pytest.param(r"release/v(?P<version>\d+(?:\.\d+)*)", id="anchored-prefix"),
+        pytest.param(r"tool-(?:x64|arm64)-(?P<version>\d+(?:\.\d+)+)\.zip", id="alternatives-with-different-first-characters"),
+        pytest.param(r"(?P<name>tool-(?P<version>[0-9.]+)\.zip)(?!\.sig)", id="lookahead-after-the-name"),
+    ],
+)
+def test_the_patterns_that_trackers_ordinarily_use_are_accepted(pattern: str) -> None:
+    """A version capture, an attribute capture, anchored alternatives and a lookahead are not refused by the guard."""
+    assert compile_pattern(pattern).pattern == pattern
 
 
 @pytest.mark.parametrize(

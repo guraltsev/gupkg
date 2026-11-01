@@ -1,6 +1,6 @@
 """Cover the registry tool: new version directories with hashes and fingerprints, and what it must never do.
 
-Behavior covered: from a tracker and recorded vendor responses, ``update`` writes exactly the new
+Behavior covered: from a tracker and the answers of the vendor, ``update`` writes exactly the new
 ``<name>/<version>/`` directory (``pkg.toml`` with its ``sha256``, the tracker's support files without
 update-check code, the launchers) and records its fingerprint in ``_registry.toml``, and that
 fingerprint matches the files; a hash the vendor publishes is verified (a wrong artifact is fatal
@@ -19,7 +19,6 @@ live vendors (a manual step) and the install engine (issue 028).
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import re
 import shutil
@@ -41,13 +40,12 @@ from gupkg_registry.layout import RegistryFileError, read_registry_file, write_r
 from gupkg_registry.publish import commit_message
 from gupkg_registry.update import Outcome, pin_version, update_registry
 from gupkg_registry.validate import validate_registry
-from tests.support.registry_tool import SNAPSHOT, Git, machine, registry_of, run_cli, zip_bytes
-from tests.support.http_fixtures import HTTP_CASES, load_case
+from tests.support.registry_tool import ANSWERS, Git, machine, registry_of, run_cli, valid_registry, zip_bytes
 
 pytestmark = pytest.mark.process
 
-HWINFO_ZIP = {"HWiNFO64.EXE": "exe", "HWiNFO64.INI": "ini"}
-VOLTA_ZIP = {"volta.exe": "v", "volta-shim.exe": "s", "volta-migrate.exe": "m"}
+GADGET_ZIP = {"Gadget64.EXE": "exe", "Gadget64.INI": "ini"}
+WIDGET_ZIP = {"widget.exe": "v", "widget-shim.exe": "s", "widget-migrate.exe": "m"}
 
 
 class Collect:
@@ -62,12 +60,12 @@ class Collect:
 
 
 def vendor_page_gone(tmp_path: Path, case: str) -> FakeSystem:
-    """A FakeSystem on which every page of fixture *case* answers 404, a permanent failure the HTTP client does not retry.
+    """A FakeSystem on which every page of the vendor answers of *case* answers 404, a permanent failure the HTTP client does not retry.
 
     A page that is simply not served makes the client retry with its real delays (1 + 2 + 4 s); a 404 fails at once.
     """
     system = machine(tmp_path)
-    for url in load_case(case):
+    for url in ANSWERS[case]:
         system.urls[url] = FakeHttp("", 404)
     return system
 
@@ -90,73 +88,73 @@ def run_update(root: Path, system: FakeSystem, tmp_path: Path, *names: str):
 
 
 def test_a_hash_the_vendor_does_not_publish_is_computed_marked_and_fingerprinted(tmp_path: Path) -> None:
-    """HWiNFO publishes no checksum: the new version carries the tool's own hash, flagged for review, with a matching fingerprint."""
-    body = zip_bytes(tmp_path, "h.zip", HWINFO_ZIP)
-    root = registry_of(tmp_path, "hwinfo")
-    system = machine(tmp_path, "page_hwinfo", artifacts={"https://www.hwinfo.com/files/hwi_1002.zip": body})
+    """Gadget publishes no checksum: the new version carries the tool's own hash, flagged for review, with a matching fingerprint."""
+    body = zip_bytes(tmp_path, "h.zip", GADGET_ZIP)
+    root = registry_of(tmp_path, "gadget")
+    system = machine(tmp_path, "page_gadget", artifacts={"https://vendor.example/files/gadget_1002.zip": body})
 
-    report = run_update(root, system, tmp_path, "hwinfo")
+    report = run_update(root, system, tmp_path, "gadget")
 
     outcome = report.outcomes[0]
     assert (outcome.status, outcome.version, outcome.review) == ("added", "10.02", True)
-    version = root / "hwinfo" / "10.02"
+    version = root / "gadget" / "10.02"
     manifest = parse_manifest((version / "pkg.toml").read_text(encoding="utf-8"), ManifestKind.VERSION)
     assert manifest.source.sha256 == hashlib.sha256(body).hexdigest()
     assert manifest.source.sha256_from == "registry"
-    assert manifest.source.download_url == "https://www.hwinfo.com/files/hwi_1002.zip"
+    assert manifest.source.download_url == "https://vendor.example/files/gadget_1002.zip"
     assert sorted(p.name for p in version.iterdir()) == ["install.cmd", "manage.cmd", "pkg.toml"]
     settings = read_registry_file(root)
-    assert settings["fingerprints"]["hwinfo/10.02"] == fingerprint_directory(version)
+    assert settings["fingerprints"]["gadget/10.02"] == fingerprint_directory(version)
     assert check_directory(version).ok and not check_directory(version).warnings
     assert validate_registry(root).problems == ()
 
 
 def test_a_discovered_checksum_is_verified_and_recorded_as_the_vendors(tmp_path: Path) -> None:
     """With a GitHub digest the artifact is verified against it and ``sha256_from`` stays ``github-digest``; nothing is flagged."""
-    body = zip_bytes(tmp_path, "v.zip", VOLTA_ZIP)
+    body = zip_bytes(tmp_path, "v.zip", WIDGET_ZIP)
     digest = hashlib.sha256(body).hexdigest()
-    root = registry_of(tmp_path, "volta")
-    system = machine(tmp_path, "github_volta", artifacts={"https://github.com/o/r/releases/download/v2.0.1/volta-2.0.1-windows.zip": body})
+    root = registry_of(tmp_path, "widget")
+    system = machine(tmp_path, "github_widget", artifacts={"https://github.com/o/widget/releases/download/v2.0.1/widget-2.0.1-windows.zip": body})
     patch_digest(system, "9ce45e2deeb806d62a504075f992a4c5de66873173c2e403a49a3de9126fa5d3", digest)
 
-    outcome = run_update(root, system, tmp_path, "volta").outcomes[0]
+    outcome = run_update(root, system, tmp_path, "widget").outcomes[0]
 
     assert (outcome.status, outcome.review) == ("added", False)
-    manifest = parse_manifest((root / "volta" / "2.0.1" / "pkg.toml").read_text(encoding="utf-8"), ManifestKind.VERSION)
+    manifest = parse_manifest((root / "widget" / "2.0.1" / "pkg.toml").read_text(encoding="utf-8"), ManifestKind.VERSION)
     assert (manifest.source.sha256, manifest.source.sha256_from) == (digest, "github-digest")
 
 
 def test_an_artifact_that_does_not_match_the_published_digest_writes_nothing(tmp_path: Path) -> None:
     """A wrong artifact is a failed outcome with no new directory, no leftover and an untouched ``_registry.toml``."""
-    root = registry_of(tmp_path, "volta")
-    system = machine(tmp_path, "github_volta", artifacts={
-        "https://github.com/o/r/releases/download/v2.0.1/volta-2.0.1-windows.zip": zip_bytes(tmp_path, "v.zip", VOLTA_ZIP)
+    root = registry_of(tmp_path, "widget")
+    system = machine(tmp_path, "github_widget", artifacts={
+        "https://github.com/o/widget/releases/download/v2.0.1/widget-2.0.1-windows.zip": zip_bytes(tmp_path, "v.zip", WIDGET_ZIP)
     })
     before = snapshot_files(root)
 
-    outcome = run_update(root, system, tmp_path, "volta").outcomes[0]
+    outcome = run_update(root, system, tmp_path, "widget").outcomes[0]
 
     assert outcome.status == "failed" and "SHA-256" in outcome.message
     assert snapshot_files(root) == before
-    assert sorted(p.name for p in (root / "volta").iterdir()) == ["_check_updates"]
+    assert sorted(p.name for p in (root / "widget").iterdir()) == ["_check_updates"]
 
 
 def test_every_older_version_is_kept_and_a_known_version_is_left_alone(tmp_path: Path) -> None:
     """An existing version directory stays byte for byte; a second run finds the version current and changes nothing."""
-    body = zip_bytes(tmp_path, "h.zip", HWINFO_ZIP)
-    root = registry_of(tmp_path, "hwinfo")
-    old = root / "hwinfo" / "9.99"
+    body = zip_bytes(tmp_path, "h.zip", GADGET_ZIP)
+    root = registry_of(tmp_path, "gadget")
+    old = root / "gadget" / "9.99"
     old.mkdir()
     (old / "pkg.toml").write_text(
-        'format = 2\nmodes = ["system", "user"]\n[source]\ndownload_url = "https://www.hwinfo.com/files/hwi_999.zip"\n'
+        'format = 2\nmodes = ["system", "user"]\n[source]\ndownload_url = "https://vendor.example/files/hwi_999.zip"\n'
         f'sha256 = "{"a" * 64}"\nsha256_from = "manual"\nshipped = false\n', encoding="utf-8", newline="\n",
     )
     kept = (old / "pkg.toml").read_bytes()
-    system = machine(tmp_path, "page_hwinfo", artifacts={"https://www.hwinfo.com/files/hwi_1002.zip": body})
+    system = machine(tmp_path, "page_gadget", artifacts={"https://vendor.example/files/gadget_1002.zip": body})
 
-    first = run_update(root, system, tmp_path, "hwinfo")
+    first = run_update(root, system, tmp_path, "gadget")
     after_first = snapshot_files(root)
-    second = run_update(root, system, tmp_path, "hwinfo")
+    second = run_update(root, system, tmp_path, "gadget")
 
     assert first.outcomes[0].status == "added" and (old / "pkg.toml").read_bytes() == kept
     assert second.outcomes[0].status == "current"
@@ -165,10 +163,10 @@ def test_every_older_version_is_kept_and_a_known_version_is_left_alone(tmp_path:
 
 def test_the_staged_app_lives_in_the_sandbox_and_is_gone_afterwards(tmp_path: Path) -> None:
     """Unpack and prepare run below the sandbox folder; the registry never holds an ``App`` and the stage is removed."""
-    root = registry_of(tmp_path, "hwinfo")
-    system = machine(tmp_path, "page_hwinfo", artifacts={"https://www.hwinfo.com/files/hwi_1002.zip": zip_bytes(tmp_path, "h.zip", HWINFO_ZIP)})
+    root = registry_of(tmp_path, "gadget")
+    system = machine(tmp_path, "page_gadget", artifacts={"https://vendor.example/files/gadget_1002.zip": zip_bytes(tmp_path, "h.zip", GADGET_ZIP)})
 
-    run_update(root, system, tmp_path, "hwinfo")
+    run_update(root, system, tmp_path, "gadget")
 
     assert not list(root.rglob("App"))
     stage = tmp_path / "sandbox" / "stage"
@@ -178,24 +176,24 @@ def test_the_staged_app_lives_in_the_sandbox_and_is_gone_afterwards(tmp_path: Pa
 
 def test_a_package_that_fails_does_not_block_the_others(tmp_path: Path) -> None:
     """One package's unpack failure is reported for it alone; the other package is written."""
-    root = registry_of(tmp_path, "hwinfo", "volta")
-    good = zip_bytes(tmp_path, "h.zip", HWINFO_ZIP)
-    system = machine(tmp_path, "page_hwinfo", "github_volta", artifacts={
-        "https://www.hwinfo.com/files/hwi_1002.zip": good,
-        "https://github.com/o/r/releases/download/v2.0.1/volta-2.0.1-windows.zip": b"this is not an archive",
+    root = registry_of(tmp_path, "gadget", "widget")
+    good = zip_bytes(tmp_path, "h.zip", GADGET_ZIP)
+    system = machine(tmp_path, "page_gadget", "github_widget", artifacts={
+        "https://vendor.example/files/gadget_1002.zip": good,
+        "https://github.com/o/widget/releases/download/v2.0.1/widget-2.0.1-windows.zip": b"this is not an archive",
     })
     patch_digest(system, "9ce45e2deeb806d62a504075f992a4c5de66873173c2e403a49a3de9126fa5d3", hashlib.sha256(b"this is not an archive").hexdigest())
 
     report = run_update(root, system, tmp_path)
 
     status = {o.package: o.status for o in report.outcomes}
-    assert status == {"hwinfo": "added", "volta": "failed"} and not report.ok
-    assert not (root / "volta" / "2.0.1").exists()
+    assert status == {"gadget": "added", "widget": "failed"} and not report.ok
+    assert not (root / "widget" / "2.0.1").exists()
 
 
 def test_an_unknown_package_name_is_a_failed_outcome(tmp_path: Path) -> None:
     """Naming a package the registry does not have fails that name only."""
-    root = registry_of(tmp_path, "hwinfo")
+    root = registry_of(tmp_path, "gadget")
 
     outcome = run_update(root, machine(tmp_path), tmp_path, "nope").outcomes[0]
 
@@ -222,15 +220,15 @@ def test_a_download_over_plain_http_without_a_published_hash_is_refused(tmp_path
 
 def test_a_redirect_to_plain_http_is_refused_when_the_tool_computes_the_hash(tmp_path: Path) -> None:
     """A computed hash needs every hop to be https: an https address that redirects to http fails."""
-    root = registry_of(tmp_path, "hwinfo")
-    system = machine(tmp_path, "page_hwinfo")
-    system.urls["https://www.hwinfo.com/files/hwi_1002.zip"] = FakeHttp(b"", 302, {"Location": "http://evil.example/hwi.zip"})
-    system.urls["http://evil.example/hwi.zip"] = FakeHttp(zip_bytes(tmp_path, "h.zip", HWINFO_ZIP))
+    root = registry_of(tmp_path, "gadget")
+    system = machine(tmp_path, "page_gadget")
+    system.urls["https://vendor.example/files/gadget_1002.zip"] = FakeHttp(b"", 302, {"Location": "http://evil.example/hwi.zip"})
+    system.urls["http://evil.example/hwi.zip"] = FakeHttp(zip_bytes(tmp_path, "h.zip", GADGET_ZIP))
 
-    outcome = run_update(root, system, tmp_path, "hwinfo").outcomes[0]
+    outcome = run_update(root, system, tmp_path, "gadget").outcomes[0]
 
     assert outcome.status == "failed"
-    assert not (root / "hwinfo" / "10.02").exists()
+    assert not (root / "gadget" / "10.02").exists()
 
 
 def test_support_files_are_copied_but_no_update_check_code_launcher_or_backup(tmp_path: Path) -> None:
@@ -272,17 +270,17 @@ def test_a_tracker_that_does_not_validate_is_reported_and_skipped(tmp_path: Path
 
 def test_a_written_version_directory_verifies_as_a_distribution_copy_and_is_refused_once_changed(tmp_path: Path) -> None:
     """A copy of the tool's output matches the published fingerprint; changing one file of the copy is detected and named."""
-    root = registry_of(tmp_path, "hwinfo")
-    system = machine(tmp_path, "page_hwinfo", artifacts={"https://www.hwinfo.com/files/hwi_1002.zip": zip_bytes(tmp_path, "h.zip", HWINFO_ZIP)})
-    run_update(root, system, tmp_path, "hwinfo")
-    published = read_registry_file(root)["fingerprints"]["hwinfo/10.02"]
-    copy = tmp_path / "dist" / "hwinfo" / "10.02"
-    shutil.copytree(root / "hwinfo" / "10.02", copy)
+    root = registry_of(tmp_path, "gadget")
+    system = machine(tmp_path, "page_gadget", artifacts={"https://vendor.example/files/gadget_1002.zip": zip_bytes(tmp_path, "h.zip", GADGET_ZIP)})
+    run_update(root, system, tmp_path, "gadget")
+    published = read_registry_file(root)["fingerprints"]["gadget/10.02"]
+    copy = tmp_path / "dist" / "gadget" / "10.02"
+    shutil.copytree(root / "gadget" / "10.02", copy)
 
-    assert verify_directory(copy, published, reference=root / "hwinfo" / "10.02") == []
+    assert verify_directory(copy, published, reference=root / "gadget" / "10.02") == []
 
-    (copy / "pkg.toml").write_bytes((copy / "pkg.toml").read_bytes().replace(b"HWiNFO64.exe", b"evil.exe"))
-    problems = verify_directory(copy, published, reference=root / "hwinfo" / "10.02")
+    (copy / "pkg.toml").write_bytes((copy / "pkg.toml").read_bytes().replace(b"Gadget64.exe", b"evil.exe"))
+    problems = verify_directory(copy, published, reference=root / "gadget" / "10.02")
 
     assert "differs: pkg.toml (changed)" in problems
 
@@ -357,11 +355,11 @@ def git_words(git: Git) -> list[list[str]]:
 
 def test_without_auto_push_the_tool_starts_no_git_process(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """``update`` writes the version, says it is uncommitted, and no process named git is ever started."""
-    root = registry_of(tmp_path, "hwinfo")
+    root = registry_of(tmp_path, "gadget")
     git = Git()
-    system = machine(tmp_path, "page_hwinfo", artifacts={"https://www.hwinfo.com/files/hwi_1002.zip": zip_bytes(tmp_path, "h.zip", HWINFO_ZIP)}, git=git)
+    system = machine(tmp_path, "page_gadget", artifacts={"https://vendor.example/files/gadget_1002.zip": zip_bytes(tmp_path, "h.zip", GADGET_ZIP)}, git=git)
 
-    status = run_cli(root, system, tmp_path, "update", "hwinfo")
+    status = run_cli(root, system, tmp_path, "update", "gadget")
 
     assert status == 0 and git.calls == []
     assert not any("git" in Path(command[0]).name.lower() for command in system.process_log)
@@ -369,29 +367,29 @@ def test_without_auto_push_the_tool_starts_no_git_process(tmp_path: Path, capsys
     assert "not committed" in output and "[REVIEW]" in output
 
 
-def hwinfo_world(tmp_path: Path, git: Git) -> tuple[Path, FakeSystem]:
-    """A registry with the HWiNFO tracker (its hash is computed by the tool) and a system that serves it, with *git* as the only git."""
-    root = registry_of(tmp_path, "hwinfo")
-    body = zip_bytes(tmp_path, "h.zip", HWINFO_ZIP)
-    return root, machine(tmp_path, "page_hwinfo", artifacts={"https://www.hwinfo.com/files/hwi_1002.zip": body}, git=git)
+def gadget_world(tmp_path: Path, git: Git) -> tuple[Path, FakeSystem]:
+    """A registry with the Gadget tracker (its hash is computed by the tool) and a system that serves it, with *git* as the only git."""
+    root = registry_of(tmp_path, "gadget")
+    body = zip_bytes(tmp_path, "h.zip", GADGET_ZIP)
+    return root, machine(tmp_path, "page_gadget", artifacts={"https://vendor.example/files/gadget_1002.zip": body}, git=git)
 
 
 def test_auto_push_commits_only_what_the_run_wrote_and_pushes_once(tmp_path: Path) -> None:
     """With ``--auto-push --allow-computed``: add and commit name the new directory and ``_registry.toml`` as pathspecs, then one plain push."""
     git = Git()
-    root, system = hwinfo_world(tmp_path, git)
+    root, system = gadget_world(tmp_path, git)
 
-    status = run_cli(root, system, tmp_path, "update", "hwinfo", "--auto-push", "--allow-computed")
+    status = run_cli(root, system, tmp_path, "update", "gadget", "--auto-push", "--allow-computed")
 
     assert status == 0
     words = git_words(git)
     assert [w[0] for w in words] == ["add", "commit", "push"]
-    literal = [":(literal)hwinfo/10.02", ":(literal)_registry.toml"]  # a version name is never read as a pattern
+    literal = [":(literal)gadget/10.02", ":(literal)_registry.toml"]  # a version name is never read as a pattern
     assert words[0] == ["add", "--", *literal]
     assert words[1][:2] == ["commit", "-m"] and words[1][3:] == ["--", *literal]
     assert words[2] == ["push"]
     assert all(call.cwd == root for call in git.calls)
-    assert "hwinfo 10.02" in words[1][2] and "computed by the registry tool" in words[1][2]
+    assert "gadget 10.02" in words[1][2] and "computed by the registry tool" in words[1][2]
     flat = sum(words, [])
     assert not {"--no-verify", "--force", "-f", "--force-with-lease", "-A", "--all"} & set(flat)
 
@@ -399,24 +397,24 @@ def test_auto_push_commits_only_what_the_run_wrote_and_pushes_once(tmp_path: Pat
 def test_auto_push_refuses_hashes_the_tool_computed_itself_unless_allowed(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """Trust-on-first-use hashes are never published unreviewed: no git process starts, the status is 1, the version stays written."""
     git = Git()
-    root, system = hwinfo_world(tmp_path, git)
+    root, system = gadget_world(tmp_path, git)
 
-    status = run_cli(root, system, tmp_path, "update", "hwinfo", "--auto-push")
+    status = run_cli(root, system, tmp_path, "update", "gadget", "--auto-push")
 
     assert status == 1 and git.calls == []
     assert "refusing to publish hashes the registry tool computed itself" in capsys.readouterr().err
-    assert (root / "hwinfo" / "10.02" / "pkg.toml").is_file()
+    assert (root / "gadget" / "10.02" / "pkg.toml").is_file()
 
 
 def test_auto_push_publishes_vendor_verified_hashes_without_the_flag(tmp_path: Path) -> None:
     """A version whose hash was verified against the vendor's checksum needs no ``--allow-computed``."""
     git = Git()
-    root = registry_of(tmp_path, "volta")
-    body = zip_bytes(tmp_path, "v.zip", VOLTA_ZIP)
-    system = machine(tmp_path, "github_volta", artifacts={"https://github.com/o/r/releases/download/v2.0.1/volta-2.0.1-windows.zip": body}, git=git)
+    root = registry_of(tmp_path, "widget")
+    body = zip_bytes(tmp_path, "v.zip", WIDGET_ZIP)
+    system = machine(tmp_path, "github_widget", artifacts={"https://github.com/o/widget/releases/download/v2.0.1/widget-2.0.1-windows.zip": body}, git=git)
     patch_digest(system, "9ce45e2deeb806d62a504075f992a4c5de66873173c2e403a49a3de9126fa5d3", hashlib.sha256(body).hexdigest())
 
-    status = run_cli(root, system, tmp_path, "update", "volta", "--auto-push")
+    status = run_cli(root, system, tmp_path, "update", "widget", "--auto-push")
 
     assert status == 0 and [w[0] for w in git_words(git)] == ["add", "commit", "push"]
 
@@ -432,9 +430,9 @@ def test_auto_push_publishes_vendor_verified_hashes_without_the_flag(tmp_path: P
 def test_the_push_goes_where_it_is_told_and_never_forces(tmp_path: Path, options: list[str], expected: list[str]) -> None:
     """``--remote`` and ``--branch`` choose the push target; the push has no force option."""
     git = Git()
-    root, system = hwinfo_world(tmp_path, git)
+    root, system = gadget_world(tmp_path, git)
 
-    status = run_cli(root, system, tmp_path, "update", "hwinfo", "--auto-push", "--allow-computed", *options)
+    status = run_cli(root, system, tmp_path, "update", "gadget", "--auto-push", "--allow-computed", *options)
 
     assert status == 0 and git_words(git)[2] == expected
 
@@ -451,9 +449,9 @@ def test_the_push_goes_where_it_is_told_and_never_forces(tmp_path: Path, options
 def test_an_unsafe_remote_or_branch_name_is_refused_before_git_starts(tmp_path: Path, option: str, value: str) -> None:
     """A name that git could read as an option is refused; nothing is added, committed or pushed."""
     git = Git()
-    root, system = hwinfo_world(tmp_path, git)
+    root, system = gadget_world(tmp_path, git)
 
-    status = run_cli(root, system, tmp_path, "update", "hwinfo", "--auto-push", "--allow-computed", f"{option}={value}")
+    status = run_cli(root, system, tmp_path, "update", "gadget", "--auto-push", "--allow-computed", f"{option}={value}")
 
     assert status == 1 and git.calls == []
 
@@ -461,14 +459,14 @@ def test_an_unsafe_remote_or_branch_name_is_refused_before_git_starts(tmp_path: 
 def test_a_branch_may_not_be_a_full_reference_but_ordinary_names_pass(tmp_path: Path) -> None:
     """``refs/heads/x`` is not a branch name for ``--branch`` (it would name another namespace); ``release/1.x`` is fine."""
     git = Git()
-    root, system = hwinfo_world(tmp_path, git)
-    assert run_cli(root, system, tmp_path, "update", "hwinfo", "--auto-push", "--allow-computed", "--branch=refs/heads/x") == 1
+    root, system = gadget_world(tmp_path, git)
+    assert run_cli(root, system, tmp_path, "update", "gadget", "--auto-push", "--allow-computed", "--branch=refs/heads/x") == 1
     assert git.calls == []
 
     (tmp_path / "again").mkdir()
     git = Git()
-    root, system = hwinfo_world(tmp_path / "again", git)
-    status = run_cli(root, system, tmp_path / "again", "update", "hwinfo", "--auto-push", "--allow-computed", "--branch=release/1.x", "--remote=my-mirror_2")
+    root, system = gadget_world(tmp_path / "again", git)
+    status = run_cli(root, system, tmp_path / "again", "update", "gadget", "--auto-push", "--allow-computed", "--branch=release/1.x", "--remote=my-mirror_2")
 
     assert status == 0 and git_words(git)[2] == ["push", "my-mirror_2", "HEAD:release/1.x"]
 
@@ -476,10 +474,10 @@ def test_a_branch_may_not_be_a_full_reference_but_ordinary_names_pass(tmp_path: 
 def test_auto_push_with_nothing_new_runs_no_git(tmp_path: Path) -> None:
     """When every version is current there is nothing to commit and git is not started."""
     git = Git()
-    root, system = hwinfo_world(tmp_path, git)
-    run_cli(root, system, tmp_path, "update", "hwinfo")
+    root, system = gadget_world(tmp_path, git)
+    run_cli(root, system, tmp_path, "update", "gadget")
 
-    status = run_cli(root, system, tmp_path, "update", "hwinfo", "--auto-push", "--allow-computed")
+    status = run_cli(root, system, tmp_path, "update", "gadget", "--auto-push", "--allow-computed")
 
     assert status == 0 and git.calls == []
 
@@ -488,9 +486,9 @@ def test_auto_push_with_nothing_new_runs_no_git(tmp_path: Path) -> None:
 def test_a_failing_git_step_fails_the_run_and_stops_there(tmp_path: Path, failing: str, capsys: pytest.CaptureFixture[str]) -> None:
     """If add, commit or push exits non-zero the status is 1, the error is printed and later steps do not run."""
     git = Git(fail=failing)
-    root, system = hwinfo_world(tmp_path, git)
+    root, system = gadget_world(tmp_path, git)
 
-    status = run_cli(root, system, tmp_path, "update", "hwinfo", "--auto-push", "--allow-computed")
+    status = run_cli(root, system, tmp_path, "update", "gadget", "--auto-push", "--allow-computed")
 
     assert status == 1
     assert [w[0] for w in git_words(git)] == ["add", "commit", "push"][: ["add", "commit", "push"].index(failing) + 1]
@@ -499,8 +497,8 @@ def test_a_failing_git_step_fails_the_run_and_stops_there(tmp_path: Path, failin
 
 def test_the_exit_status_is_one_when_a_package_fails_and_two_without_a_registry_file(tmp_path: Path) -> None:
     """A failing package makes status 1; a folder with no ``_registry.toml`` is a usage error (2) that writes nothing."""
-    root = registry_of(tmp_path, "hwinfo")
-    assert run_cli(root, vendor_page_gone(tmp_path, "page_hwinfo"), tmp_path, "update", "hwinfo") == 1
+    root = registry_of(tmp_path, "gadget")
+    assert run_cli(root, vendor_page_gone(tmp_path, "page_gadget"), tmp_path, "update", "gadget") == 1
 
     bare = tmp_path / "bare"
     (bare / "x").mkdir(parents=True)
@@ -517,37 +515,30 @@ def test_the_commit_message_names_every_hash_the_tool_computed(tmp_path: Path) -
     assert "Every hash was verified" in commit_message([verified])
 
 
-def test_every_fixture_case_names_a_tracker_that_exists() -> None:
-    """The fixture cases this module relies on are present (a renamed case fails here, not in a distant test)."""
-    for name in ("page_hwinfo", "github_volta"):
-        document = json.loads((HTTP_CASES / f"{name}.json").read_text(encoding="utf-8"))
-        assert (SNAPSHOT / document["tracker"] / "_check_updates" / "pkg.toml").is_file()
-
-
 # -- housekeeping ---------------------------------------------------------------------------------------------
 
 
 def test_a_run_removes_the_staging_folders_an_interrupted_run_left_but_nothing_else(tmp_path: Path) -> None:
     """Old folders named exactly ``.new-`` and eight hex digits are the tool's own and are removed; young ones (another run) and other names stay."""
-    root = registry_of(tmp_path, "hwinfo")
-    old = root / "hwinfo" / ".new-0123abcd"
+    root = registry_of(tmp_path, "gadget")
+    old = root / "gadget" / ".new-0123abcd"
     old.mkdir()
     (old / "pkg.toml").write_text("x", encoding="utf-8")
     long_ago = time.time() - 2 * 3600
     os.utime(old, (long_ago, long_ago))
-    (root / "hwinfo" / ".new-fedcba98").mkdir()  # a live run's folder: created just now
-    (root / "hwinfo" / ".new-keep").mkdir()
-    (root / "hwinfo" / ".new-0123abcdef").mkdir()
+    (root / "gadget" / ".new-fedcba98").mkdir()  # a live run's folder: created just now
+    (root / "gadget" / ".new-keep").mkdir()
+    (root / "gadget" / ".new-0123abcdef").mkdir()
 
-    run_update(root, vendor_page_gone(tmp_path, "page_hwinfo"), tmp_path, "hwinfo")
+    run_update(root, vendor_page_gone(tmp_path, "page_gadget"), tmp_path, "gadget")
 
-    assert sorted(p.name for p in (root / "hwinfo").iterdir()) == [".new-0123abcdef", ".new-fedcba98", ".new-keep", "_check_updates"]
+    assert sorted(p.name for p in (root / "gadget").iterdir()) == [".new-0123abcdef", ".new-fedcba98", ".new-keep", "_check_updates"]
 
 
 def test_a_staging_folder_that_cannot_be_removed_is_a_warning_not_a_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """An error while cleaning one folder is reported and the run goes on with the packages."""
-    root = registry_of(tmp_path, "hwinfo")
-    stale = root / "hwinfo" / ".new-0123abcd"
+    root = registry_of(tmp_path, "gadget")
+    stale = root / "gadget" / ".new-0123abcd"
     stale.mkdir()
     os.utime(stale, (1_000_000, 1_000_000))
 
@@ -557,9 +548,9 @@ def test_a_staging_folder_that_cannot_be_removed_is_a_warning_not_a_failure(tmp_
     monkeypatch.setattr("gupkg_registry.update.remove_tree", refuse)
     reporter = Collect()
     with use_reporter(reporter):
-        report = run_update(root, vendor_page_gone(tmp_path, "page_hwinfo"), tmp_path, "hwinfo")
+        report = run_update(root, vendor_page_gone(tmp_path, "page_gadget"), tmp_path, "gadget")
 
-    assert stale.is_dir() and [o.package for o in report.outcomes] == ["hwinfo"]
+    assert stale.is_dir() and [o.package for o in report.outcomes] == ["gadget"]
     assert any(isinstance(e, Warning) and "in use" in e.text for e in reporter.events)
 
 
@@ -581,9 +572,8 @@ def test_registry_files_are_written_atomically(tmp_path: Path, monkeypatch: pyte
 
 def test_the_launchers_command_brings_a_registry_to_the_current_template_and_refreshes_fingerprints(tmp_path: Path) -> None:
     """`launchers` rewrites a stale version launcher, adds the tracker's check-updates.cmd, drops a tracker's install.cmd, fixes the fingerprint, and a second run changes nothing."""
-    root = tmp_path / "registry"
-    shutil.copytree(SNAPSHOT, root)
-    version = root / "qbittorrent" / "5.2.3"
+    root = valid_registry(tmp_path)
+    version = root / "gizmo" / "10.02"
     tracker = root / "gh" / "_check_updates"
     (version / "install.cmd").write_bytes(b"@echo off\r\nrem the 0.17 launcher\r\n")
     (tracker / "check-updates.cmd").unlink()
@@ -596,7 +586,7 @@ def test_the_launchers_command_brings_a_registry_to_the_current_template_and_ref
     assert (version / "install.cmd").read_bytes() == launcher_text("install").encode("ascii")
     assert (tracker / "check-updates.cmd").read_bytes() == launcher_text("check-updates").encode("ascii")
     assert not (tracker / "install.cmd").exists()
-    assert read_registry_file(root)["fingerprints"]["qbittorrent/5.2.3"] == fingerprint_directory(version)
+    assert read_registry_file(root)["fingerprints"]["gizmo/10.02"] == fingerprint_directory(version)
     before = (root / "_registry.toml").read_bytes()
     assert main(["launchers", "--registry", str(root)]) == 0
     assert (root / "_registry.toml").read_bytes() == before
@@ -604,11 +594,11 @@ def test_the_launchers_command_brings_a_registry_to_the_current_template_and_ref
 
 def test_update_prints_a_progress_line_per_package_and_a_summary(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """Each package gets ``[n/total] name ... <outcome>`` on one line as it finishes, and the run ends with a summary."""
-    root = registry_of(tmp_path, "hwinfo", "volta")
-    good = zip_bytes(tmp_path, "h.zip", HWINFO_ZIP)
-    system = machine(tmp_path, "page_hwinfo", "github_volta", artifacts={
-        "https://www.hwinfo.com/files/hwi_1002.zip": good,
-        "https://github.com/o/r/releases/download/v2.0.1/volta-2.0.1-windows.zip": b"this is not an archive",
+    root = registry_of(tmp_path, "gadget", "widget")
+    good = zip_bytes(tmp_path, "h.zip", GADGET_ZIP)
+    system = machine(tmp_path, "page_gadget", "github_widget", artifacts={
+        "https://vendor.example/files/gadget_1002.zip": good,
+        "https://github.com/o/widget/releases/download/v2.0.1/widget-2.0.1-windows.zip": b"this is not an archive",
     })
     patch_digest(system, "9ce45e2deeb806d62a504075f992a4c5de66873173c2e403a49a3de9126fa5d3", hashlib.sha256(b"this is not an archive").hexdigest())
 
@@ -616,7 +606,7 @@ def test_update_prints_a_progress_line_per_package_and_a_summary(tmp_path: Path,
 
     lines = capsys.readouterr().out.splitlines()
     assert status == 1
-    assert lines[0].startswith("[1/2] hwinfo ... added") and lines[1].startswith("[2/2] volta ... failed")
+    assert lines[0].startswith("[1/2] gadget ... added") and lines[1].startswith("[2/2] widget ... failed")
     assert "summary: 1 added, 1 failed of 2 packages" in lines
 
 
@@ -641,7 +631,7 @@ def _write_lock(root: Path, pid: int, *, operation: str = "registry tool update"
 
 def test_a_second_run_is_refused_while_a_live_run_holds_the_lock_and_the_message_names_it(tmp_path: Path) -> None:
     """A live holder stops the run before anything is written, and the error names its process, operation and start time."""
-    root, system = hwinfo_world(tmp_path, Git())
+    root, system = gadget_world(tmp_path, Git())
     system.live_pids.add(4242)
     lock = _write_lock(root, 4242)
 
@@ -649,12 +639,12 @@ def test_a_second_run_is_refused_while_a_live_run_holds_the_lock_and_the_message
         run_update(root, system, tmp_path)
 
     assert "process 4242" in str(error.value) and "registry tool update" in str(error.value) and "2026-10-25T01:02:03" in str(error.value)
-    assert lock.is_file() and not (root / "hwinfo" / "1.0.0").exists()
+    assert lock.is_file() and not (root / "gadget" / "1.0.0").exists()
 
 
 def test_a_lock_left_by_a_run_that_has_ended_is_taken_over(tmp_path: Path) -> None:
     """A lock whose process is gone (a crash) is replaced and the run goes ahead, with nothing to delete by hand."""
-    root, system = hwinfo_world(tmp_path, Git())
+    root, system = gadget_world(tmp_path, Git())
     _write_lock(root, 999999)
 
     report = run_update(root, system, tmp_path)
@@ -665,35 +655,35 @@ def test_a_lock_left_by_a_run_that_has_ended_is_taken_over(tmp_path: Path) -> No
 
 def test_pin_takes_the_same_lock_as_update(tmp_path: Path) -> None:
     """``pin`` is refused while a live run holds the registry lock."""
-    root, system = hwinfo_world(tmp_path, Git())
+    root, system = gadget_world(tmp_path, Git())
     system.live_pids.add(4242)
     _write_lock(root, 4242, operation="registry tool update")
 
     with pytest.raises(RegistryFileError, match="in use by process 4242"):
-        pin_version(root, system, "hwinfo/1.0.0", sandbox=tmp_path / "sb")
+        pin_version(root, system, "gadget/1.0.0", sandbox=tmp_path / "sb")
 
 
 def test_the_summary_lists_the_packages_by_outcome(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """After the progress lines the run prints who was updated, who needs review and who failed with the reason."""
-    root = registry_of(tmp_path, "hwinfo", "volta")
-    good = zip_bytes(tmp_path, "h.zip", HWINFO_ZIP)
-    system = machine(tmp_path, "page_hwinfo", "github_volta", artifacts={
-        "https://www.hwinfo.com/files/hwi_1002.zip": good,
-        "https://github.com/o/r/releases/download/v2.0.1/volta-2.0.1-windows.zip": b"this is not an archive",
+    root = registry_of(tmp_path, "gadget", "widget")
+    good = zip_bytes(tmp_path, "h.zip", GADGET_ZIP)
+    system = machine(tmp_path, "page_gadget", "github_widget", artifacts={
+        "https://vendor.example/files/gadget_1002.zip": good,
+        "https://github.com/o/widget/releases/download/v2.0.1/widget-2.0.1-windows.zip": b"this is not an archive",
     })
     patch_digest(system, "9ce45e2deeb806d62a504075f992a4c5de66873173c2e403a49a3de9126fa5d3", hashlib.sha256(b"this is not an archive").hexdigest())
 
     run_cli(root, system, tmp_path, "update")
 
     lines = capsys.readouterr().out.splitlines()
-    assert any(line.startswith("updated (1): hwinfo ") for line in lines)
-    assert any(line.startswith("hash computed by the registry tool, review before pushing (1): hwinfo") for line in lines)
-    assert "failed (1):" in lines and any(line.startswith("  volta: ") for line in lines)
+    assert any(line.startswith("updated (1): gadget ") for line in lines)
+    assert any(line.startswith("hash computed by the registry tool, review before pushing (1): gadget") for line in lines)
+    assert "failed (1):" in lines and any(line.startswith("  widget: ") for line in lines)
 
 
 def test_the_lock_is_released_after_a_run(tmp_path: Path) -> None:
     """After a run, normal or failed, the lock file is gone so the next run can start."""
-    root, system = hwinfo_world(tmp_path, Git())
+    root, system = gadget_world(tmp_path, Git())
 
     run_update(root, system, tmp_path)
 
