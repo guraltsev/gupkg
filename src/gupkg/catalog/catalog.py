@@ -51,6 +51,7 @@ from ..model.state import (
     known_candidates,
 )
 from ..model.version import MANIFEST_NAME, TRACKER_DIR_NAME, compare_versions, is_version_name
+from ..model.plan import normalize_entry
 from ..model.scope import ModeRefused, Scope, check_supported
 from ..selfmgmt.elevation import UntrustedLocationError
 from ..system.port import Mode, System
@@ -756,8 +757,8 @@ class Catalog:
                     if stored is None or stored.value != str(fields["value"]):
                         drift.append(f"environment variable {fields['name']} differs")
                 elif effect.kind == "path":
-                    entries = [item.casefold().rstrip("\\") for item in self.system.get_path(self.scope.mode)]
-                    if str(fields["entry"]).casefold().rstrip("\\") not in entries:
+                    entries = [normalize_entry(item) for item in self.system.get_path(self.scope.mode)]
+                    if normalize_entry(str(fields["entry"])) not in entries:
                         drift.append(f"PATH entry missing: {fields['entry']}")
                 else:
                     unverified.append(effect.kind)
