@@ -73,7 +73,9 @@ def test_run_as_admin_reaches_the_recorded_effect_and_the_machine(tmp_path: Path
     assert system.read_shortcut(Path(str(plain.fields["path"]))).run_as_admin is False
     assert [item for item in verify_each(system, [admin, plain], mode=Mode.USER) if item[1]] == []
     system.write_shortcut(admin_path, replace(system.read_shortcut(admin_path), run_as_admin=False))
-    assert [item[1] for item in verify_each(system, [admin], mode=Mode.USER)] == [f"shortcut differs: {admin_path}"]
+    assert [item[1] for item in verify_each(system, [admin], mode=Mode.USER)] == [
+        f"shortcut differs: {admin_path} (run as administrator is off but would be on)"
+    ]
 
 
 def test_a_shortcut_is_created_only_in_its_modes(tmp_path: Path) -> None:

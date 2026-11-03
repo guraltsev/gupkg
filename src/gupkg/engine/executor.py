@@ -233,7 +233,7 @@ def _recheck_unowned(engine: Engine, run: ExecutionInput, effects: Sequence[Effe
     own = {key: run.plan.package for key in provided_names(record)}
     verb = "installed" if run.plan.operation != "repair" else "repaired"
     now = check_unowned(run.plan.package, find_unowned(engine.system, effects, own), run.request.overwrite, verb=verb, state=state)
-    return tuple({item.path.casefold(): item for item in (*run.replacing, *now)}.values())
+    return tuple({name_key("file", item.path): item for item in (*run.replacing, *now)}.values())
 
 
 @contextmanager

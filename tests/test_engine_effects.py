@@ -123,6 +123,23 @@ def test_every_kind_is_applied_verified_and_removed(tmp_path: Path, system: Fake
     assert [item[0].kind for item in verify_each(system, applied, mode=Mode.USER) if item[1]] == ["shortcut", "shim", "file", "env", "path"]
 
 
+def test_shortcut_drift_names_the_field_that_differs_and_ignores_letter_case_in_paths(tmp_path: Path, system: FakeSystem) -> None:
+    """A shortcut with another icon or description is drift and the message says which; one that only spells a path differently is not."""
+    ctx = context(tmp_path)
+    effects, _ = desired_effects(manifest('[[shortcut]]\nname = "T"\ntarget = "$App\\\\a.exe"\ndescription = "Tool"\n'), ctx)
+    effect = apply_effect(system, effects[0], ctx)
+    path = Path(str(effect.fields["path"]))
+    stored = system.read_shortcut(path)
+
+    system.write_shortcut(path, replace(stored, target_path=stored.target_path.upper()))
+    assert [row for row in verify_each(system, [effect], mode=Mode.USER) if row[1] or row[2]] == []
+
+    system.write_shortcut(path, replace(stored, icon_location="C:\\other.ico,0", description="Other"))
+    drift = [row[1] for row in verify_each(system, [effect], mode=Mode.USER) if row[1]]
+    assert len(drift) == 1 and drift[0].startswith(f"shortcut differs: {path} (icon is 'C:\\other.ico,0' but would be ''; ")
+    assert "description is 'Other' but would be 'Tool'" in drift[0]
+
+
 def test_a_path_entry_that_was_already_there_is_never_removed(tmp_path: Path, system: FakeSystem) -> None:
     """Only an entry this install added is removed; one that was on PATH before stays when the package goes."""
     ctx = context(tmp_path)

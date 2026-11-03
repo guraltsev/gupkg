@@ -243,6 +243,7 @@ class UnownedFile:
 
     path: str
     kind: str
+    reason: str = ""
 
 
 class FileExists(PlanError):
@@ -279,9 +280,10 @@ def check_unowned(
         many = len(refused) > 1
         shown = ", ".join(f"'{item.path}'" for item in refused[:5]) + (f" and {len(refused) - 5} more" if len(refused) > 5 else "")
         way = f"`{command}{value}`" if command else f"the command again with --overwrite={value}"
+        why = "".join(f" '{item.path}': {item.reason}." for item in refused[:5] if item.reason)
         raise FileExists(
             f"{package} cannot be {verb}: {shown} already exist{'' if many else 's'} and no installed package owns "
-            f"{'them' if many else 'it'}. Move or delete {'those files' if many else 'that file'}, or run {way} to replace "
+            f"{'them' if many else 'it'}.{why} Move or delete {'those files' if many else 'that file'}, or run {way} to replace "
             f"{'them' if many else 'it'}.{state}",
             paths=[item.path for item in refused], overwrite=value,
         )

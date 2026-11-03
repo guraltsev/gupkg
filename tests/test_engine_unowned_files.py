@@ -15,6 +15,7 @@ Real: the command line, the engine, the catalog, real folders. Mocked: ``FakeSys
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -86,10 +87,15 @@ def test_an_unowned_file_is_refused_before_anything_is_fetched_or_changed(
 
     assert not result.ok and result.exit_code == 2 and result.error["code"] == "file-exists"
     # The path is the one the package would write, in its own letter case (``tool.exe`` against a ``Tool.exe`` on disk).
-    assert result.error["message"].lower() == (
-        f"first cannot be installed: '{path}' already exists and no installed package owns it. Move or delete that file, or run "
-        f"the command again with --overwrite={kind} to replace it."
-    ).lower()
+    message = result.error["message"].lower()
+    assert message.startswith(f"first cannot be installed: '{path}' already exists and no installed package owns it. ".lower())
+    assert message.endswith(f" move or delete that file, or run the command again with --overwrite={kind} to replace it.")
+    # It also says why the file is not the package's own: a shortcut names the field that differs, a file its content.
+    if kind == SHORTCUTS:
+        reason = f"'{path}': it differs from the shortcut this package would write: target is 'C:\\hand\\made.exe' but would be"
+    else:
+        reason = f"'{path}': it holds different content than the file this package would write."
+    assert reason.lower() in message
     assert state(cli_world) == before and content(path, cli_world) == kept and cli_world.fake.fetch_log == []
     assert not (cli_world.user / "first" / "current").exists()
 
@@ -148,7 +154,8 @@ def test_many_paths_are_listed_in_one_message_five_at_most(cli_world: CliWorld) 
 
     message = result.error["message"]
     assert result.error["code"] == "file-exists" and message.count("w") >= 5 and "and 2 more already exist" in message
-    assert "no installed package owns them. Move or delete those files, or run the command again with --overwrite=orphaned-bin-files to replace them." in message
+    assert "no installed package owns them. " in message and "holds different content" in message
+    assert message.endswith(" Move or delete those files, or run the command again with --overwrite=orphaned-bin-files to replace them.")
 
 
 def test_overwrite_never_lifts_a_name_conflict_with_another_package(cli_world: CliWorld) -> None:
@@ -177,6 +184,21 @@ def test_a_file_that_holds_what_would_be_written_is_not_a_conflict(cli_world: Cl
     for path, spec in links.items():
         cli_world.fake.write_shortcut(path, spec)
     assert files or links
+
+    result = cli_world.one("install", "first")
+
+    assert result.ok, result.error
+
+
+def test_a_shortcut_that_differs_only_in_path_letter_case_is_not_a_conflict(cli_world: CliWorld) -> None:
+    """Windows paths ignore letter case: a leftover shortcut whose target spells the folders differently is the same shortcut."""
+    cli_world.publish("first", "1.0.0", tables=SHORTCUT.format(name="Tool"))
+    assert cli_world.one("install", "first").ok
+    links = {path: cli_world.fake.read_shortcut(path) for path in cli_world.fake.shortcuts()}
+    assert cli_world.one("uninstall", "first").ok
+    for path, spec in links.items():
+        cli_world.fake.write_shortcut(path, replace(spec, target_path=spec.target_path.upper()))
+    assert links
 
     result = cli_world.one("install", "first")
 

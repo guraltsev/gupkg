@@ -522,8 +522,8 @@ def find_unowned(
         fields = effect.fields
         if effect.kind == "shortcut":
             path = str(fields["path"])
-            if name_key("shortcut", path) not in owners and _shortcut_conflicts(system, Path(path), fields):
-                found.append(UnownedFile(path, OVERWRITE_SHORTCUTS))
+            if name_key("shortcut", path) not in owners and (reason := _shortcut_conflict(system, Path(path), fields)):
+                found.append(UnownedFile(path, OVERWRITE_SHORTCUTS, reason))
         elif effect.kind in ("shim", "file"):
             path = str(fields["path"])
             if effect.kind == "file":
@@ -534,7 +534,7 @@ def find_unowned(
                     writes.append((str(fields["config"]), shim_config_text(fields).encode("utf-8")))
             for path, data in writes:
                 if name_key("file", path) not in owners and os.path.lexists(path) and not _file_is(Path(path), data):
-                    found.append(UnownedFile(path, OVERWRITE_BIN_FILES))
+                    found.append(UnownedFile(path, OVERWRITE_BIN_FILES, "it holds different content than the file this package would write"))
     return tuple(found)
 
 
@@ -546,18 +546,45 @@ def _file_is(path: Path, data: bytes) -> bool:
         return False
 
 
-def _shortcut_conflicts(system: System, path: Path, fields: Mapping[str, Any]) -> bool:
-    """Return whether a shortcut exists at *path* and differs from the one *fields* describe (or cannot be read)."""
+def _shortcut_conflict(system: System, path: Path, fields: Mapping[str, Any]) -> str:
+    """Return why a shortcut at *path* differs from the one *fields* describe, or ``""`` when none exists or it is the same."""
     try:
         stored = system.read_shortcut(path)
     except (OSError, ValueError):
-        return os.path.lexists(path)
-    wanted = ShortcutSpec(
-        target_path=str(fields["target"]), arguments=str(fields.get("arguments", "")),
-        working_directory=str(fields.get("working_dir", "")), icon_location=str(fields.get("icon_location", "")),
-        description=str(fields.get("description", "")), run_as_admin=bool(fields.get("run_as_admin", False)),
-    )
-    return stored != wanted
+        return "it cannot be read as a shortcut" if os.path.lexists(path) else ""
+    differences = shortcut_differences(stored, fields)
+    return "it differs from the shortcut this package would write: " + "; ".join(differences) if differences else ""
+
+
+def shortcut_differences(stored: ShortcutSpec, fields: Mapping[str, Any]) -> list[str]:
+    """Return what differs between the shortcut *stored* and the one the effect *fields* describe, one phrase per field.
+
+    This is the one comparison of a shortcut, used to tell an unowned shortcut from one that is already right and to find
+    drift. Paths (target, working directory, icon) ignore letter case; arguments and description are compared exactly.
+    """
+    found: list[str] = []
+    for label, have, want, is_path in (
+        ("target", stored.target_path, str(fields["target"]), True),
+        ("arguments", stored.arguments, str(fields.get("arguments", "")), False),
+        ("working directory", stored.working_directory, str(fields.get("working_dir", "")), True),
+        ("icon", stored.icon_location, str(fields.get("icon_location", "")), True),
+        ("description", stored.description, str(fields.get("description", "")), False),
+    ):
+        if not (same_path(have, want) if is_path else have == want):
+            found.append(f"{label} is '{have}' but would be '{want}'")
+    if stored.run_as_admin != bool(fields.get("run_as_admin", False)):
+        found.append(f"run as administrator is {'on' if stored.run_as_admin else 'off'} but would be {'off' if stored.run_as_admin else 'on'}")
+    return found
+
+
+def same_path(left: str, right: str) -> bool:
+    """Return whether two path texts name the same place on Windows: letter case, ``/`` against ``\\`` and ``..`` are ignored.
+
+    This is the one comparison of a shortcut's paths, the same normalisation as :func:`name_key`; an empty text equals only an empty text.
+    """
+    if not left or not right:
+        return left == right
+    return name_key("file", left)[1] == name_key("file", right)[1]
 
 
 def changes_environment(effect: Effect) -> bool:
@@ -645,10 +672,8 @@ def verify_each(system: System, effects: Sequence[Effect], *, mode: Mode) -> lis
                 except OSError:
                     drift = f"shortcut missing: {fields['path']}"
                 else:
-                    wanted = (str(fields["target"]), str(fields.get("arguments", "")), str(fields.get("working_dir", "")),
-                              bool(fields.get("run_as_admin", False)))
-                    if (stored.target_path, stored.arguments, stored.working_directory, stored.run_as_admin) != wanted:
-                        drift = f"shortcut differs: {fields['path']}"
+                    if differences := shortcut_differences(stored, fields):
+                        drift = f"shortcut differs: {fields['path']} ({'; '.join(differences)})"
             elif effect.kind == "shim":
                 if not Path(str(fields["path"])).is_file():
                     drift = f"shim missing: {fields['path']}"
