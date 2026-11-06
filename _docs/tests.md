@@ -262,7 +262,8 @@ touched it. These rules counter that:
   | `_scripts\test.cmd --all` | every tier |
 
   Set `GUPKG_NO_PAUSE=1` when a script or an agent runs them.
-- **Release tier extras:** the registry's own tests (`gupkg-registry\_scripts\test.cmd`) run against this checkout. The
+- **Release tier extras:** the registry's own tests (`gupkg-registry\_scripts\test.cmd`) run against this checkout, on a
+  temporary clone of the registry's committed `HEAD`, so edits in the registry folder do not change the result. The
   registry's data is never copied into `tests/fixtures/`.
 - **Manual checks:** `tests/manual_smoke.md`, with entries numbered `<issue>-<task>-<n>`.
 - **Machine safety** (`AGENTS.md`): no test touches `C:\opt`, the user's real roots, the real `PATH`, the Start Menu or
