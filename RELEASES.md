@@ -99,6 +99,7 @@ row.
 
 | Version | Commit | Date | SHA-256 | Notes |
 |---|---|---|---|---|
+| 1.1.15 | `f8455813e15c5f50c7036ac8f7ec95660e0a9631` | 2026-11-06 | df1e260bfd1feeb3f998a6b0ded00afff8042c66fabeb26f7c6fb9ebe36598c0 | check-updates: registry and upstream are separate sources, chosen per root (check_updates.sources); --check-only; an empty package or a version without App is never reported as up to date |
 | 1.1.14 | `23dffbaf7e5404de7cfbd30026225781926a92e0` | 2026-11-05 | 64ce9adeb5c0398510cee9ae177571c5942c1cca6e811652dcd1f5a7e323117c | gupkg 1.1.14 |
 | 1.1.13 | `4cd484684de8b8c633ce82bbb917adf432bb64b5` | 2026-11-01 | 85910f282e8601107d5c3a885b914ee9fb99af84f163a892dc84f04e3493d476 | "Maintainer scripts folder renamed to _scripts; test-suite rework: registry data and tests moved to the registry repository" |
 | 1.1.12 | `ce4a452049a5de8fa7988c751f299a0bd7876eec` | 2026-10-31 | 52f9fdec69778796f702ec232dffa80b3ec944f167ec864a98d42a9a402a4248 | Package launchers keep option=value arguments intact |
