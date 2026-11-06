@@ -140,7 +140,7 @@ async def _batch_command(args: argparse.Namespace, environment: UiEnvironment, s
     if command == "update":
         outcome = await update_all(environment, rows, session=session, sink=sink, interaction=interaction)
     elif command == "check-updates":
-        outcome = await check_updates_all(environment, rows, session=session, interaction=interaction, options=["--no-download"] if args.no_download else [])
+        outcome = await check_updates_all(environment, rows, session=session, interaction=interaction, options=_check_options(args))
     elif command == "repair":
         outcome = await _repair(args, environment, rows, session, stdin, stream)
     else:
@@ -205,6 +205,13 @@ def _tui(environment: UiEnvironment, stdin: TextIO, stdout: TextIO, stderr: Text
 # ---------------------------------------------------------------------------
 
 
+def _check_options(args: argparse.Namespace) -> list[str]:
+    """Return the options that ``check-updates --all`` relays to ``gupkg check-updates``."""
+    relayed = ["--no-download"] if args.no_download else []
+    relayed += [f"--check-{source}={value}" for source in ("registry", "upstream") if (value := getattr(args, f"check_{source}")) is not None]
+    return relayed
+
+
 def _parser() -> argparse.ArgumentParser:
     """Build the grammar: root options, then ``tui``, ``check-updates --all``, ``update --all`` or ``check``."""
     parser = argparse.ArgumentParser(prog=PROGRAM, description="The general gupkg manager: a browser over every package, and batch commands for schedules.")
@@ -228,8 +235,10 @@ def _parser() -> argparse.ArgumentParser:
         leaf.add_argument("--yes", action="store_true", help="answer the confirmation (and run without any question)")
         if name == "check-updates":
             leaf.add_argument("--no-download", action="store_true", help="write the version directories only; download nothing")
+            for source, text in (("registry", "ask the followed registries (the default)"), ("upstream", "run the trackers (by default only where the registry pins nothing)")):
+                leaf.add_argument(f"--check-{source}", nargs="?", const="true", choices=("true", "false"), help=text)
         if name == "check":
             leaf.add_argument("--fix", action="store_true", help="re-apply the integration and rebuild a missing App")
     # Defaults for options that only some commands define, so every command can read them.
-    parser.set_defaults(all=False, json=False, yes=False, no_download=False, fix=False)
+    parser.set_defaults(all=False, json=False, yes=False, no_download=False, fix=False, check_registry=None, check_upstream=None)
     return parser

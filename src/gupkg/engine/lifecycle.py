@@ -110,9 +110,10 @@ WORK_MIN_AGE = timedelta(hours=24)
 
 
 def check_updates(
-    engine: Engine, selectors: Sequence[str], *, no_download: bool = False, skip: str | None = None
+    engine: Engine, selectors: Sequence[str], *, no_download: bool = False, skip: str | None = None,
+    check_registry: bool | None = None, check_upstream: bool | None = None, check_only: bool = False,
 ) -> BatchResult:
-    """Run the trackers of the named packages and write (and by default populate) their new versions; activate nothing.
+    """Ask the sources of the named packages and write (and by default populate) their new versions; activate nothing.
 
     Parameters
     ----------
@@ -124,13 +125,23 @@ def check_updates(
         Write the new version directory but do not populate it.
     skip : str or None
         The checksum-skip option of the command line.
+    check_registry : bool or None
+        Whether the followed registry is a source (``None``: yes).
+    check_upstream : bool or None
+        Whether the tracker is a source (``None``: only when the registry is not one).
+    check_only : bool
+        Report what the sources offer and write no version.
 
     Returns
     -------
     BatchResult
         One ``PackageResult`` per target, in order.
     """
-    return run_batch(engine, [Request("check-updates", item, no_download=no_download, skip=skip) for item in selectors])
+    return run_batch(engine, [
+        Request("check-updates", item, no_download=no_download, skip=skip, check_registry=check_registry,
+                check_upstream=check_upstream, check_only=check_only)
+        for item in selectors
+    ])
 
 
 def install(

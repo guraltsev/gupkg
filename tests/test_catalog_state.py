@@ -221,18 +221,18 @@ def test_list_filters_by_status_name_and_registry(system, tmp_path: Path) -> Non
 @pytest.mark.parametrize(
     ("found", "expected", "newest"),
     [
-        pytest.param("1.6", "newer", "1.5", id="newer-than-every-known"),
-        pytest.param("1.2", "known", "1.5", id="already-a-valid-local-directory"),
-        pytest.param("1.4", "known", "1.5", id="already-an-invalid-local-directory"),
-        pytest.param("1.5", "known", "1.5", id="already-in-the-registry"),
-        pytest.param("1.3", "older", "1.5", id="older-than-the-newest"),
+        pytest.param("1.6", "newer", "1.4", id="newer-than-every-local-directory"),
+        pytest.param("1.2", "known", "1.4", id="already-a-valid-local-directory"),
+        pytest.param("1.4", "known", "1.4", id="already-an-invalid-local-directory"),
+        pytest.param("1.5", "newer", "1.4", id="pinned-by-the-registry-but-not-local"),
+        pytest.param("1.3", "older", "1.4", id="older-than-the-newest"),
         pytest.param("2.0.", "older", None, id="not-a-version-name"),
     ],
 )
-def test_compare_decides_whether_a_tracker_result_is_newer_than_every_known_version(
+def test_compare_decides_whether_a_tracker_result_is_newer_than_every_local_version(
     system, tmp_path: Path, found: str, expected: str, newest: str | None
 ) -> None:
-    """A result is ``newer`` only above every local directory (even an invalid one) and every registry version."""
+    """A result is ``newer`` only above every local directory, even an invalid one; a version the registry pins does not count."""
     build_registry(make_catalog(system, tmp_path)[1]["user"], {"foo": {"versions": ["1.5"]}})
     package = tmp_path / "user" / "foo"
     write_version(package, "1.2")

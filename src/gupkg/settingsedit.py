@@ -272,6 +272,11 @@ schema = {SCHEMA}
 # (never a full path). Empty means none. `gupkg pkg adopt --prefix FOLDER` overrides it for one call.
 # shortcut_prefix = ""
 
+# [check_updates]
+# Where `check-updates` looks for new versions in this root: "registry", "upstream" (each package's tracker) or "both".
+# `--check-registry` and `--check-upstream` override it for one call.
+# sources = "registry"
+
 # [install]
 # Record a fingerprint of every file of App after an install, so `gupkg check` can notice changes. Turn it off for
 # very large programs such as games; a package can also say `record_manifest = false` in its pkg.toml.

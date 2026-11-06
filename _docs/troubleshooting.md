@@ -43,7 +43,7 @@ gupkg self status               :: is gupkg's own installation healthy?
 | `'x' is not a local package, so there is nothing to check; use gupkg install x` | `not-installed` | `check-updates` needs a package folder with a tracker. |
 | `'x' has no tracker to run` | `cannot-plan` | The package has no `_check_updates\pkg.toml`. Add one, or use `install` for a version that is already there. |
 | The name matches several registries | `ambiguous` | Use `registry/name` (`main/firefox`). |
-| `no version known` / `no valid version` | `no-version-known`, `no-valid-version` | Nothing newer is known locally or in the registry: run `gupkg check-updates x`. Or every known version is invalid: see `gupkg info x`. |
+| `no version known` / `no valid version` | `no-version-known`, `no-valid-version` | Nothing newer is known locally or in the registry: run `gupkg check-updates x`. If that fails the same way, the package root has no version and no source offers one: try `gupkg check-updates x --check-upstream`. Or every known version is invalid: see `gupkg info x`. |
 | `needs repair` | `needs-repair` | The active version's integration or `current` is broken. Run `gupkg install x` or `gupkg check x --fix`. |
 | `registry entry 'x' was not found` | `not-found` | `gupkg link` names an entry that is not in any synced registry. |
 

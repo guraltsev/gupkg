@@ -40,6 +40,7 @@ from .catalog.catalog import Catalog, CatalogError, ListFilter, parse_selector
 from .catalog.local import canonical_path
 from .catalog.registry import cache_state, registry_cache_dir, sync_registry
 from .engine import lifecycle
+from .engine.checkupdates import asked_sources
 from .engine.context import Engine, stop_marker
 from .engine.errors import describe
 from .engine.receipts import read_receipt, receipt_checksum
@@ -146,6 +147,8 @@ def main(
     parser = _build_parser()
     try:
         args = parser.parse_args(_normalise(tokens))
+        if getattr(args, "check_registry", None) is False and getattr(args, "check_upstream", None) is False:
+            parser.error("--check-registry=false and --check-upstream=false leave nothing to check")
     except UsageError as error:
         return _usage_error(tokens, str(error))
     except SystemExit as stop:
@@ -410,6 +413,10 @@ def _execute(
         if not _ask(question):
             return _declined(command, "Declined. Nothing was changed.")
 
+    # A registry that is asked for updates is synchronised first, so the answer is not an old one.
+    if command == "check-updates" and asked_sources(args.check_registry, args.check_upstream, run.scope.settings["check_updates.sources"]).registry:
+        _refresh_registries(run)
+
     # Run the batch and build the machine document; a root-wide cleanup also prunes the root's logs and registry trees.
     engine = _engine(run, session, stop_path)
     batch = lifecycle.run_batch(engine, [replace(make(item), skip=skip) for item in targets])
@@ -417,6 +424,18 @@ def _execute(
     if sweep:
         document["root_cleanup"] = _prune_roots(run, session, command=command)
     return document["exit_code"], document, batch.summary().strip()
+
+
+def _refresh_registries(run: _Run) -> None:
+    """Synchronise the registries of the run's root once; one that cannot be reached is warned about and its cached copy is used."""
+    for registry in run.scope.settings.registries:
+        try:
+            outcome = sync_registry(registry_cache_dir(run.scope.root, registry.name), run.scope, name=registry.name, source=registry.source)
+            problem = None if outcome.ok else outcome.error
+        except OSError as error:
+            problem = str(error)
+        if problem is not None:
+            emit(Warning(f"registry {registry.name} could not be synchronised, so its last synchronised copy is used: {problem}"))
 
 
 def _declined(command: str, message: str) -> tuple[int, dict[str, Any], str]:
@@ -429,7 +448,10 @@ def _requests(args: argparse.Namespace, command: str) -> Callable[[str], Request
     """Return the function that turns one target into the ``Request`` of *command* from the parsed options."""
     # One request shape per command, each carrying only the options that command has.
     if command == "check-updates":
-        return lambda target: Request("check-updates", target, no_download=args.no_download)
+        return lambda target: Request(
+            "check-updates", target, no_download=args.no_download, check_registry=args.check_registry,
+            check_upstream=args.check_upstream, check_only=args.check_only,
+        )
     if command == "install":
         return lambda target: Request("install", target, refresh=args.refresh, overwrite=args.overwrite)
     if command == "update":
@@ -1231,9 +1253,42 @@ class _Parser(argparse.ArgumentParser):
 def _normalise(tokens: Sequence[str]) -> list[str]:
     """Spell a bare ``--skip-checksum`` as ``--skip-checksum=`` so that it never takes the next word (a target) as its reason.
 
-    A bare ``--overwrite`` becomes ``--overwrite=`` the same way, so that its usage error names the valid kinds.
+    A bare ``--overwrite`` becomes ``--overwrite=`` the same way, so that its usage error names the valid kinds. A bare
+    ``--check-registry`` or ``--check-upstream`` means ``=true`` and never takes a target as its value; only a following
+    ``true`` or ``false`` is its value.
     """
-    return [{"--skip-checksum": "--skip-checksum=", "--overwrite": "--overwrite="}.get(token, token) for token in tokens]
+    spelled = {"--skip-checksum": "--skip-checksum=", "--overwrite": "--overwrite="}
+    switches = {"--check-registry": "--check-registry=true", "--check-upstream": "--check-upstream=true"}
+    result = []
+    for token, following in zip(tokens, [*tokens[1:], ""]):
+        valued = following.casefold() in ("true", "false")
+        result.append(spelled.get(token, token) if valued else {**spelled, **switches}.get(token, token))
+    return result
+
+
+def _switch(text: str) -> bool:
+    """Read the value of a ``--check-registry=`` or ``--check-upstream=`` option; anything but true or false is a usage error."""
+    value = {"true": True, "false": False}.get(text.casefold())
+    if value is None:
+        raise argparse.ArgumentTypeError(f"expected true or false, not {text!r}")
+    return value
+
+
+def _check_options(parser: argparse.ArgumentParser) -> None:
+    """Add the options of ``check-updates``; of ``--check-registry`` and ``--check-upstream`` the last one given counts."""
+    parser.add_argument("--no-download", action="store_true", help="write the version directory only; download nothing")
+    parser.add_argument("--check-only", action="store_true", help="report what the sources offer; write no version directory")
+    parser.add_argument(
+        "--check-registry", type=_switch, default=None, metavar="true|false",
+        help="ask the followed registry, synchronised first (default: the setting check_updates.sources, which is registry "
+             "unless the root says otherwise; a bare --check-registry means true)",
+    )
+    parser.add_argument(
+        "--check-upstream", type=_switch, default=None, metavar="true|false",
+        help="run the tracker (default: the setting check_updates.sources, and always when the registry pins nothing; a bare "
+             "--check-upstream means true); if both "
+             "sources offer different versions you are asked, and --no-input or --yes takes the registry's",
+    )
 
 
 def _events_file_name(text: str) -> str:
@@ -1341,10 +1396,10 @@ def _build_parser() -> argparse.ArgumentParser:
         return command
 
     # The lifecycle commands, in the order of a task.
-    sub = _add("check-updates", "Run the trackers of the named packages and write (and by default populate) their new versions.",
-              "gupkg check-updates firefox --no-download")
+    sub = _add("check-updates", "Ask the registry (and upstream, with --check-upstream) for new versions and write (and by default populate) them.",
+              "gupkg check-updates firefox --check-upstream --no-download")
     sub.add_argument("targets", nargs="+", metavar="TARGET")
-    sub.add_argument("--no-download", action="store_true", help="write the version directory only; download nothing")
+    _check_options(sub)
     _options(sub, mutating=True, plan=True, skip=True, events=True)
 
     # Install and update share the questions about the package's other versions.
@@ -1540,10 +1595,10 @@ def _build_parser() -> argparse.ArgumentParser:
                        ("update", "activate the newest known gupkg")):
         leaf = actions.add_parser(name, help=text, description=text.capitalize() + ".", epilog=f"example:\n  gupkg self {name}")
         if name == "check-updates":
-            leaf.add_argument("--no-download", action="store_true", help="write the version directory only")
+            _check_options(leaf)
         if name != "check-updates":
             _overwrite_option(leaf)
-        # Only ``check-updates`` takes ``--no-download``; the others take ``--overwrite``.
+        # Only ``check-updates`` takes its own options; the others take ``--overwrite``.
         _options(leaf, mutating=True, plan=True, skip=name != "repair", events=True)
         if name != "check-updates":
             leaf.set_defaults(no_download=False)

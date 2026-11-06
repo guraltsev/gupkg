@@ -105,7 +105,13 @@ record_manifest = true        # false: no package records the SHA-256 of every A
 
 [adopt]
 shortcut_prefix = ""          # `gupkg pkg adopt`: a folder put before each shortcut name, relative to integration.start_menu; "" for none
+
+[check_updates]
+sources = "registry"          # registry | upstream | both: where check-updates looks in this root; --check-registry and --check-upstream override it
 ```
+
+`check_updates.sources` applies to every way of running a check in that root: `gupkg check-updates`, `gupkg-manager check-updates
+--all` and the `c` key of the TUI. Set it with `gupkg settings set check_updates.sources both`.
 
 `shortcut_prefix` is relative to `integration.start_menu`, never a full path, and may not contain `..`; `pkg adopt --prefix`
 overrides it for one call. Where a root's shortcuts go is `integration.start_menu`. Put it in the root's own

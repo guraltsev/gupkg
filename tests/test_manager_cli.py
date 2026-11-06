@@ -140,6 +140,18 @@ def test_check_updates_all_is_one_call_without_questions(fake: FakeGupkg, tmp_pa
     assert code == 0 and call["targets"] == ["a", "b"] and not [item for item in fake.calls() if item["key"] == "update"]
 
 
+def test_check_updates_all_relays_the_choice_of_sources(fake: FakeGupkg, tmp_path: Path) -> None:
+    """A scheduled ``check-updates --all`` can ask upstream too: ``--check-registry`` and ``--check-upstream`` reach the CLI with their values."""
+    fake.respond("list", doc=list_doc([("a", "user", "installed", "1.0.0", None, str(tmp_path / "roots" / "user" / "a"))]))
+    doc = result("check-updates", [entry("a", "check-updates", status="no-new-version")])
+    fake.respond("check-updates", doc=doc, events={"dir": logs_of(tmp_path), "result": doc, "packages": [{"name": "a", "path": str(tmp_path / "roots" / "user" / "a"), "records": []}]})
+
+    code, _, _ = manager(tmp_path, fake, "check-updates", "--all", "--check-upstream", "--check-registry=false")
+
+    (call,) = [item for item in fake.calls() if item["key"] == "check-updates"]
+    assert code == 0 and "--check-upstream=true" in call["argv"] and "--check-registry=false" in call["argv"]
+
+
 def test_check_is_one_read_only_call(fake: FakeGupkg, tmp_path: Path) -> None:
     """The health check lists every package and asks the CLI once; without ``--fix`` it changes nothing and needs no confirmation."""
     fake.respond("list", doc=list_doc([("a", "user", "installed", "1.0.0", None, str(tmp_path / "roots" / "user" / "a"))]))

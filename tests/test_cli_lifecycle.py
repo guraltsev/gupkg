@@ -135,7 +135,7 @@ def test_check_updates_writes_a_prepared_version_and_changes_nothing_else(cli_wo
 
 
 def test_check_updates_no_download_writes_no_app_and_asks_only_the_tracker(cli_world: CliWorld) -> None:
-    """With --no-download the directory has pkg.toml and no App, and only the tracker's own URL was requested."""
+    """With --no-download and the registry off the directory has pkg.toml and no App, and only the tracker's own URL was requested."""
     # Arrange: an installed package and a vendor that announces a newer version.
     cli_world.tracker("tool")
     cli_world.announce("tool", "1.0.0")
@@ -147,7 +147,7 @@ def test_check_updates_no_download_writes_no_app_and_asks_only_the_tracker(cli_w
     cli_world.fake.request_log.clear()
 
     # Act: check for updates without downloading.
-    result = cli_world.cli("check-updates", "tool", "--no-download")
+    result = cli_world.cli("check-updates", "tool", "--no-download", "--check-registry=false")
 
     # Assert: no App was written, and only the tracker's addresses were asked for.
     package = cli_world.user / "tool"
@@ -449,3 +449,134 @@ def test_a_populate_hook_that_needs_an_unavailable_module_fails_naming_it_and_st
     entry = result.document()["results"][0]
     assert result.code == 3 and entry["error"]["code"] == "hook-error" and "gupkg_absent_module_for_tests" in entry["error"]["message"]
     assert cli_world.fake.process_log == [] and not (cli_world.user / "tool" / "current").exists()
+
+
+def tracked_with_registry(world: CliWorld) -> None:
+    """Make a package root that holds only its tracker, following a registry that pins 1.0.0 while upstream offers 2.0.0."""
+    world.tracker("tool")
+    world.registry({"tool": {"versions": {"1.0.0": {"app.exe": "x"}}}})
+    world.announce("tool", "2.0.0")
+
+
+def root_setting(world: CliWorld, sources: str) -> None:
+    """Write the setting check_updates.sources into the root's own settings file."""
+    file = world.user / ".gupkg" / "settings.toml"
+    file.parent.mkdir(parents=True, exist_ok=True)
+    file.write_text(f'schema = 4\n[check_updates]\nsources = "{sources}"\n', encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("sources", "options", "expected"),
+    [
+        pytest.param("upstream", (), "2.0.0", id="the-root-says-upstream"),
+        pytest.param("registry", (), "1.0.0", id="the-root-says-registry"),
+        pytest.param("both", (), "1.0.0", id="the-root-says-both-and-nobody-can-answer"),
+        pytest.param("upstream", ("--check-upstream=false",), "1.0.0", id="switching-off-the-configured-source-leaves-the-other"),
+        pytest.param("both", ("--check-registry=false",), "2.0.0", id="an-option-overrides-the-root"),
+    ],
+)
+def test_the_root_chooses_the_default_sources_and_the_options_override_it(
+    cli_world: CliWorld, sources: str, options: tuple[str, ...], expected: str
+) -> None:
+    """check_updates.sources in the root's settings.toml is the default of every check in that root."""
+    tracked_with_registry(cli_world)
+    root_setting(cli_world, sources)
+
+    result = cli_world.cli("check-updates", *options, "tool", "--no-input", stdin=None)
+
+    assert result.code == 0 and (cli_world.user / "tool" / expected).is_dir()
+
+
+def test_a_root_set_to_both_asks_about_a_disagreement(cli_world: CliWorld) -> None:
+    """With both sources on in the root, the run compares them and the user decides, with no option given."""
+    tracked_with_registry(cli_world)
+    root_setting(cli_world, "both")
+
+    result = cli_world.cli("check-updates", "tool", stdin="y\n")
+
+    assert result.code == 0 and "upstream offers 2.0.0" in result.out + result.err and (cli_world.user / "tool" / "2.0.0").is_dir()
+
+
+def test_a_root_set_to_upstream_still_serves_a_package_with_no_tracker_from_the_registry(cli_world: CliWorld) -> None:
+    """A source the package does not have is no reason to find nothing: it falls back to the other one."""
+    cli_world.publish("tool", "0.9.0")
+    cli_world.registry({"tool": {"versions": {"1.0.0": {"app.exe": "x"}}}})
+    root_setting(cli_world, "upstream")
+
+    result = cli_world.cli("check-updates", "tool")
+
+    assert result.code == 0 and (cli_world.user / "tool" / "1.0.0").is_dir()
+
+
+def test_a_bad_value_for_the_sources_setting_is_refused_before_it_is_written(cli_world: CliWorld) -> None:
+    """The schema checks the value, so a typo cannot silently leave a root on the default."""
+    refused = cli_world.cli("settings", "set", "check_updates.sources", "everywhere")
+    accepted = cli_world.cli("settings", "set", "check_updates.sources", "both")
+
+    assert refused.code == 2 and "registry, upstream, both" in refused.out + refused.err
+    assert accepted.code == 0 and "both" in (cli_world.user / ".gupkg" / "settings.toml").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("options", "expected"),
+    [
+        pytest.param((), "1.0.0", id="the-registry-by-default"),
+        pytest.param(("--check-upstream", "--check-registry=false"), "2.0.0", id="bare-switch-does-not-take-the-target"),
+        pytest.param(("--check-registry=false", "--check-registry=true"), "1.0.0", id="the-later-option-overrides-the-former"),
+        pytest.param(("--check-registry", "false"), "2.0.0", id="a-value-after-a-space-is-the-value"),
+    ],
+)
+def test_the_check_options_choose_the_source_and_a_later_one_overrides(cli_world: CliWorld, options: tuple[str, ...], expected: str) -> None:
+    """--check-registry and --check-upstream take =true or =false, mean true when bare, and the last one given counts."""
+    tracked_with_registry(cli_world)
+
+    result = cli_world.cli("check-updates", *options, "tool", "--no-input", stdin=None)
+
+    assert result.code == 0 and (cli_world.user / "tool" / expected).is_dir()
+
+
+def test_switching_off_both_sources_is_a_usage_error(cli_world: CliWorld) -> None:
+    """A check with no source at all is refused before anything runs."""
+    result = cli_world.cli("check-updates", "tool", "--check-registry=false", "--check-upstream=false")
+
+    assert result.code == 2 and "nothing to check" in result.err
+
+
+def test_the_user_is_asked_when_the_sources_disagree_and_can_choose_upstream(cli_world: CliWorld) -> None:
+    """With both sources on and different versions the terminal asks, and yes takes upstream's version."""
+    tracked_with_registry(cli_world)
+
+    result = cli_world.cli("check-updates", "tool", "--check-upstream", stdin="y\n")
+
+    assert result.code == 0 and "upstream offers 2.0.0" in result.out + result.err and (cli_world.user / "tool" / "2.0.0").is_dir()
+
+
+def test_a_registry_that_cannot_be_reached_is_warned_about_and_its_copy_is_used(cli_world: CliWorld) -> None:
+    """The registry is synchronised before it is asked; when that fails the user is told and the cached copy still serves."""
+    tracked_with_registry(cli_world)
+
+    result = cli_world.cli("check-updates", "tool")
+
+    assert result.code == 0 and "could not be synchronised" in result.err and (cli_world.user / "tool" / "1.0.0").is_dir()
+
+
+def test_a_root_that_does_not_ask_the_registry_does_not_synchronise_it(cli_world: CliWorld) -> None:
+    """A root set to upstream makes no registry request, so an unreachable registry is no warning there."""
+    tracked_with_registry(cli_world)
+    root_setting(cli_world, "upstream")
+
+    result = cli_world.cli("check-updates", "tool")
+
+    assert result.code == 0 and "could not be synchronised" not in result.err
+
+
+def test_check_only_writes_no_version_and_plan_shows_the_sources(cli_world: CliWorld) -> None:
+    """--check-only exits 0 with the versions on offer and an empty package root; --plan names the registry step without syncing."""
+    tracked_with_registry(cli_world)
+
+    result = cli_world.cli("check-updates", "tool", "--check-only", "--check-upstream")
+    planned = cli_world.cli("check-updates", "tool", "--plan")
+
+    assert result.code == 0 and "registry offers 1.0.0, upstream offers 2.0.0" in result.out
+    assert not (cli_world.user / "tool" / "1.0.0").exists() and not (cli_world.user / "tool" / "2.0.0").exists()
+    assert planned.code == 0 and "registry's newest pinned version" in planned.err + planned.out and "synchronised" not in planned.err

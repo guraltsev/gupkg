@@ -437,16 +437,16 @@ one.
 | Case | `list` shows | `check-updates <name>` | `install <name>` | `update <name>` |
 | --- | --- | --- | --- | --- |
 | **R** registry only | `available` (with `--available`) | Error: not local (hint: `install`). | Create `<root>\<name>`. Copy the newest registry pinned version, plus the registry tracker if there is one. Install. If the registry has only a tracker: copy it, and stop with "no version known yet; run `gupkg check-updates <name>`". | Error: not installed (hint: `install`). |
-| **V** local versions, no tracker, not installed | `local` | Nothing to check (no tracker). | Install the newest valid local version. `name@ver` picks another. | Error: not installed. |
+| **V** local versions, no tracker, not installed | `local` | Nothing to check (no tracker), or the registry's newer version when it follows one (D56). | Install the newest valid local version. `name@ver` picks another. | Error: not installed. |
 | **V** installed | `installed` / `outdated` | Nothing to check (no tracker). | Repair (re-apply integration; populate `App` if empty). | Activate the newest local version newer than `current`, populating it first if needed. Otherwise "up to date". |
-| **T** local tracker (± versions), not installed | `local` | Run the tracker. If the result is newer than every local version, write the version directory and, unless `--no-download`, populate it. Activate nothing. | Install the newest valid local version. If there is none yet: "no version known yet; run `gupkg check-updates <name>`". The tracker is never run. | Error: not installed. |
+| **T** local tracker (± versions), not installed | `local` | Ask the sources (D56). If one offers a version newer than every local version, write the version directory and, unless `--no-download`, populate it. Activate nothing. A run that would leave no version directory fails, except under `--check-only`. | Install the newest valid local version. If there is none yet: "no version known yet; run `gupkg check-updates <name>`". The tracker is never run. | Error: not installed. |
 | **T** installed | `installed` / `outdated` | As above. The package becomes `outdated` if a newer directory was written. | Repair. | Activate the newest local version newer than `current`. The tracker is never run. |
-| **R+V/T, linked** (the default for the same name) | as V/T, with a `registry` column | Runs the local `_check_updates` (copied from the registry if absent, rule 2). | as V/T | Install the newest of: the local version directories, and the registry's pinned versions (copied in when chosen). |
+| **R+V/T, linked** (the default for the same name) | as V/T, with a `registry` column | Asks the synchronised registry; with `--check-upstream` also runs the local `_check_updates` (copied from the registry if absent, rule 2). | as V/T | Install the newest of: the local version directories, and the registry's pinned versions (copied in when chosen). |
 | **R+V/T, opted out** (`gupkg link --unlink`) | as V/T, marked `same name in registry: main (not followed)` | as V/T | as V/T | Local sources only. `gupkg link <name>` follows the registry again. |
 | **Broken** | `broken` | as V/T | Repair: re-populate `App` from the active version's `[source]`; re-apply integration. | Refuses until repaired (hint: `check --fix` / `install`). |
 
 **Checking for updates and installing are separate operations** (owner's
-decisions, 2026-10-22: D11, D21, D23). `check-updates` is the only
+decisions, 2026-10-22: D11, D21, D23, D56). `check-updates` is the only
 operation that runs a tracker. It writes the new version directories, by
 default downloads and populates them, reports them, and stops. `install`
 and `update` never run a tracker. They activate only versions that are
@@ -459,7 +459,8 @@ directories can be reviewed, edited or deleted.
 Rules that apply to every case:
 
 1. **Copying a version in.** A registry pinned version is copied into the
-   local package root only when it is selected for install. If a local
+   local package root only when it is selected for install or by
+   `check-updates` (D56). If a local
    directory of the same name exists and its `pkg.toml` differs from the
    registry copy, the local one is kept and the package is reported as
    `diverged`. Local files are never overwritten. In a root with no
@@ -1578,6 +1579,9 @@ allow_vendor_installers = true
 
 [install]
 record_manifest = true        # false: no package records the SHA-256 of every App file (D41)
+
+[check_updates]
+sources = "registry"          # registry | upstream | both: the sources of check-updates in this root (D56)
 ```
 
 Removed from schema 3: the default-mode key, the portable root key, and the tables
@@ -1726,9 +1730,9 @@ are skipped when the chosen version is already populated, for example by
 
 | Check-updates phase | Work |
 | --- | --- |
-| **Resolve** | Selector → `PackageView`; the package must have a tracker (local, or copied in from the linked registry). It acts on the run's own root: system packages in an elevated run, user packages in a normal one (section 9.3). |
-| **Track** | Run the provider; the catalog compares the result with the known versions. |
-| **Write** | Render and validate the pinned `pkg.toml`, and write the version directory (section 7.4). |
+| **Resolve** | Selector → `PackageView`; the tracker, when upstream is asked, is local or copied in from the linked registry. It acts on the run's own root: system packages in an elevated run, user packages in a normal one (section 9.3). |
+| **Track** | Ask the sources that are on (D56): the registry's newest pinned version, and the provider's result; the catalog compares each with the local versions. |
+| **Write** | Copy the registry's version in, or render and validate the pinned `pkg.toml` and write the version directory (section 7.4). Skipped under `--check-only`. |
 | **Fetch, Verify, Unpack, Prepare** | As above, into the new version directory, unless `--no-download`. |
 | **Finish** | Record the result in `.gupkg\state\track.toml`; report the new versions. Nothing is activated or integrated. |
 
@@ -2315,6 +2319,7 @@ old text stays in those rows.
 | D53 | One manager scope per run. Elevated is allowed. Reads happen in-process through a shared typed reader. Operations go through the CLI. | Replaces: D44 (amended), design §13.2 step 4, §15 "Scheduled runs" |
 | D54 | No migration code in the repository, core or not. A package folder without an install record is `broken`, with "reinstall" as the fix (Q13). | Replaces: D33, D45 (`migrate` command), design §18 |
 | D55 | A package declares the modes it may be installed in: system only (drivers, services, machine-wide state), user only, or both (the default). A portable package is user only. The planner refuses a version on a mode it does not allow, before any work, and the message never names the other mode's locations. `list --available` and `a` show packages the mode cannot install, marked, with the reason (Q14). `uninstall`, `check` and `cleanup` are never refused by it. | Replaces: the mode part of `modes` in design §6.2 |
+| D56 | **`check-updates` has two sources, and the registry is authoritative** (owner's decision, 2026-11-06). `--check-registry` is on by default and synchronises the registry first; `--check-upstream` is off by default, except for a package with nothing pinned in the registry. Each source is compared with the local version directories only. When both are on and offer different versions the user is asked; `--no-input` and `--yes` take the registry's. A run may not end with a package root that has no version directory, except under `--check-only`, which writes no version. The default sources are the setting `check_updates.sources` of the root (`registry`, `upstream`, `both`); the options override it, and an option that switches one source off leaves the other on. With nothing newer on offer, a check populates a newest version that has no `App`, and a run that may not download warns about it. | The tracker is always run and its result is compared with local and registry versions, so a version the registry pins but the root lacks reports `no-new-version` and leaves the root empty; `--prefer-registry` and `--prefer-upstream` |
 
 There are no open questions. The six questions of the first draft were
 answered by the owner on 2026-10-22: the default portable root (D42), the

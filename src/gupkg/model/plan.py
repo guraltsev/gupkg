@@ -157,6 +157,12 @@ class Request:
         ``cleanup --bundled``: drop bundled gupkg copies where a launcher would find a gupkg through gupkg-location or PATH.
     no_download : bool
         ``check-updates --no-download``: write the version directory only.
+    check_registry : bool, optional
+        ``check-updates --check-registry``: whether the followed registry is a source (``None``: yes).
+    check_upstream : bool, optional
+        ``check-updates --check-upstream``: whether the tracker is a source (``None``: only when the registry is not one).
+    check_only : bool
+        ``check-updates --check-only``: report what the sources offer and write no version.
     skip : str, optional
         The decision of ``--skip-checksum`` (``gupkg.model.checksum.parse_skip_flag``).
     fix : bool
@@ -184,6 +190,9 @@ class Request:
     keep: int = 1
     bundled: bool = False
     no_download: bool = False
+    check_registry: bool | None = None
+    check_upstream: bool | None = None
+    check_only: bool = False
     skip: str | None = None
     fix: bool = False
     download_only: bool = False
@@ -570,7 +579,7 @@ class PackageResult:
         Whether it succeeded.
     status : str
         ``installed``, ``repaired``, ``updated``, ``up-to-date``, ``switched``, ``uninstalled``,
-        ``purged``, ``cleaned``, ``checked``, ``new-version``, ``no-new-version``, ``skipped`` or ``failed``.
+        ``purged``, ``cleaned``, ``checked``, ``new-version``, ``update-available``, ``no-new-version``, ``skipped`` or ``failed``.
     version : str, optional
         The version now active (or found, for ``check-updates``).
     previous : str, optional

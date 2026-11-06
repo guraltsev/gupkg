@@ -138,8 +138,8 @@ application whose files are already there, and `check` finds what drifted.
   (`modes = ["portable"]`, state kept in the package folder) is its own package and installs for a single user only.
 - **Format 2 `pkg.toml`.** One `[source]` per version, a separate `[track]` table in a tracker folder, built-in services
   instead of scripts (version discovery, unpacking, checksum discovery, post-unpack steps), and `snake_case` everywhere.
-- **Checking and installing are separate.** `check-updates` runs a package's tracker and writes (and by default prepares) a
-  new pinned version; `update` activates it. Nothing is ever activated by a check.
+- **Checking and installing are separate.** `check-updates` asks the registry (and, on request, upstream through the package's
+  tracker) and writes (and by default prepares) a new pinned version; `update` activates it. Nothing is ever activated by a check.
 - **Checksums.** A declared SHA-256 is always verified, and a mismatch is always fatal. A download with no declared hash is
   refused unless the call carries `--skip-checksum` (https only, never for vendor installers).
 - **One command line, three programs.** `gupkg` (no screens, no `--all`), `gupkg-tui` (one package) and `gupkg-manager`
@@ -205,7 +205,7 @@ before it are `--version`, `--help`, `--settings PATH`, `--root DIR` and `--sand
 no `--all` and no interactive screen: `gupkg-manager` is the program for batches and interactive use.
 
 ```text
-gupkg check-updates <target>... [--no-download] [--skip-checksum]   run trackers; write and prepare new versions; activate nothing
+gupkg check-updates <target>... [--check-registry[=true|false]] [--check-upstream[=true|false]] [--check-only] [--no-download] [--skip-checksum]   ask the sources; write and prepare new versions; activate nothing
 gupkg install  <target>... [--skip-checksum] [--refresh] [--yes] [--allow-downgrade] [--allow-other-broken-versions]
 gupkg update   <target>... [--skip-checksum] [--yes] [--allow-downgrade] [--allow-other-broken-versions]   activate the newest KNOWN version; never runs a tracker
 gupkg switch   <target> <version>                       activate another local version (rollback)
@@ -225,11 +225,33 @@ gupkg self status|repair|check-updates|update
 gupkg tui <target> | gupkg manager ...     start gupkg-tui, gupkg-manager of this gupkg
 ```
 
-Checking and installing are separate operations. `check-updates` runs a package's tracker and writes the new
+Checking and installing are separate operations. `check-updates` asks the package's sources and writes the new
 version as a pinned directory (`<root>\<name>\<version>\`), by default with its `App` downloaded, verified and
 unpacked; it never activates anything. `update` then activates the newest version that is already known, locally or in
 the followed registry, and prepares its `App` first if it has none. `install` and `update` never run a tracker, so
 `update` of a package with nothing newer says "up to date" and makes no request.
+
+A package has two sources of new versions, and each is compared with the local version directories only:
+
+- **The registry** (`--check-registry`, on by default) is authoritative. It is synchronised first; if that fails, a warning says
+  so and the cached copy is used. Its newest pinned version is copied into the package root.
+- **Upstream** (`--check-upstream`, off by default) is what the package's tracker finds. A package with nothing pinned in the
+  registry, gupkg itself for one, uses its tracker anyway, unless `--check-upstream=false` is given.
+
+Each root chooses its default with the setting `check_updates.sources` (`registry`, the default, `upstream` or `both`), for
+example `gupkg settings set check_updates.sources both`. It also applies to `gupkg-manager check-updates --all` and the TUI.
+
+Both options override that setting, take `=true` or `=false`, a bare option means `=true`, and the last one given counts.
+Switching one source off leaves the other on; switching both off is a usage error. When both sources are on and offer different
+versions, gupkg asks which to use. With `--no-input` or `--yes` it asks nothing and takes the registry's.
+
+`check-updates` never leaves a package root without a version directory and reports success: that run fails with
+`no-version-known`. The exception is `--check-only`, which reports what each source offers (status `update-available`), asks
+nothing and writes no version directory.
+
+A version whose download failed, was refused or was skipped with `--no-download` stays written without its `App`. When nothing
+newer is on offer, the next `check-updates` downloads it (and fails if it still cannot); under `--check-only` or `--no-download` it
+warns that the version has no `App`.
 
 Every command takes `--json`. Every mutating command takes `--yes`. The mode comes from the process and from nothing
 else: an elevated process is in `system` mode and works on the system root, any other process is in `user` mode and works on
@@ -309,7 +331,7 @@ prompt that switches scope, and the programs never ask for administrator rights.
 ```text
 gupkg-tui PATH|NAME                        the package view of one package (versions, link, data folder, receipt, log)
 gupkg-manager [tui]                        the browser over every package
-gupkg-manager check-updates --all [--no-download] [--yes] [--json]
+gupkg-manager check-updates --all [--check-registry[=true|false]] [--check-upstream[=true|false]] [--no-download] [--yes] [--json]
 gupkg-manager update --all [--yes] [--json]
 gupkg-manager repair --all [--yes] [--json]
 gupkg-manager check [--fix] [--yes] [--json]
@@ -559,7 +581,8 @@ In `content` shims an unbraced token such as `%NAME%` stays literal; elsewhere a
 ## Trackers and checking for updates
 
 A package that can discover newer versions has a `_check_updates` folder holding a tracker: a `pkg.toml` that is a template
-for new versions plus a `[track]` table. A tracker is never installed. `gupkg check-updates NAME` runs it:
+for new versions plus a `[track]` table. A tracker is never installed. `gupkg check-updates NAME --check-upstream` runs it, and
+so does a plain `gupkg check-updates NAME` when the registry pins nothing for the package:
 
 ```toml
 format = 2
@@ -585,7 +608,7 @@ target = "$App\\pandoc.exe"
 ```
 
 1. **Check.** The `[track]` provider returns a version and captures (for example the asset URL and its digest).
-2. **Compare.** gupkg compares the version with `current` and the local versions; a hook never decides whether
+2. **Compare.** gupkg compares the version with the local versions, not with the registry's; a hook never decides whether
    something is current.
 3. **Write the version directory** `<package>\<version>\`: the support files are copied (never update-check code), `pkg.toml`
    is rendered with every template expanded and `[track]` removed, `sha256` is filled only from a hash the tracker

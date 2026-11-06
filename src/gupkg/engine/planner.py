@@ -1055,9 +1055,10 @@ def plan_cleanup(request: Request, view: PackageView, facts: CleanupFacts) -> Cl
 
 
 def plan_check_updates(
-    request: Request, view: PackageView, context: Scope, *, tracker_action: str, download: bool
+    request: Request, view: PackageView, context: Scope, *, tracker_action: str, download: bool, registry: bool = False,
+    upstream: bool = True, unfinished: str | None = None,
 ) -> InstallPlan:
-    """Plan ``check-updates`` (design 13.1, second table): run the tracker, write the version, populate it, stop.
+    """Plan ``check-updates`` (design 13.1, second table): ask the sources, write the version, populate it, stop.
 
     Parameters
     ----------
@@ -1071,6 +1072,12 @@ def plan_check_updates(
         What happens to the tracker first: ``none``, ``copy``, ``refresh`` or ``keep`` (``Catalog.tracker_sync``).
     download : bool
         Whether the new version is populated (no ``--no-download``).
+    registry : bool
+        Whether the followed registry is asked.
+    upstream : bool
+        Whether the tracker is run.
+    unfinished : str or None
+        The newest local version when it has no ``App``: with nothing newer on offer, it is the one populated.
 
     Returns
     -------
@@ -1080,11 +1087,17 @@ def plan_check_updates(
     # Fill the steps of each check-updates phase; the populate phases appear only when downloading.
     steps: dict[str, list[PlanStep]] = {name: [] for name in CHECK_UPDATES_PHASES}
     steps["Resolve"] = [PlanStep(f"{view.name}: check for updates"), PlanStep(context.describe())]
-    if tracker_action in ("copy", "refresh"):
+    if upstream and tracker_action in ("copy", "refresh"):
         steps["Resolve"].append(PlanStep(f"{tracker_action} the registry's tracker into the package root"))
-    # The tracker runs and a pinned version directory is written, with or without a download.
-    steps["Track"] = [PlanStep("run the tracker's [track] provider; compare with the known versions")]
-    steps["Write"] = [PlanStep("render the pinned pkg.toml and write the version directory")]
+    # Each source that is on is asked, and each has its own way of writing a version, with or without a download.
+    if registry:
+        steps["Track"].append(PlanStep("compare the registry's newest pinned version with the local versions"))
+        steps["Write"].append(PlanStep("copy the registry's pinned version into the package root"))
+    if upstream:
+        steps["Track"].append(PlanStep("run the tracker's [track] provider; compare with the local versions"))
+        steps["Write"].append(PlanStep("render the pinned pkg.toml and write the version directory"))
+    if unfinished is not None:
+        steps["Track"].append(PlanStep(f"version {unfinished} has no App: with nothing newer on offer, it is the one to download"))
     # Populating the new version adds the fetch, verify, unpack and prepare steps.
     if download:
         steps["Fetch"] = [PlanStep("download the new version")]
@@ -1092,10 +1105,13 @@ def plan_check_updates(
         steps["Unpack"] = [PlanStep("unpack into a staged App")]
         steps["Prepare"] = [PlanStep("prepare and rename into place; nothing is activated")]
     steps["Finish"] = [PlanStep("record the result in .gupkg\\state\\track.toml")]
-    # Phases that need a download are shown as skipped under ``--no-download``.
+    # Phases that need a download are shown as skipped under ``--no-download``; ``--check-only`` also writes nothing.
     off = {"Fetch", "Verify", "Unpack", "Prepare"} if not download else set()
+    flag = "--no-download"
+    if request.check_only:
+        off, flag = off | {"Write"}, "--check-only"
     phases = tuple(
-        Phase(name, tuple(steps[name]), name in off, ("--no-download" if name in off else ""))
+        Phase(name, tuple(steps[name]), name in off, (flag if name in off else ""))
         for name in CHECK_UPDATES_PHASES
     )
     # The plan never activates or integrates, so those parts of the record are empty.

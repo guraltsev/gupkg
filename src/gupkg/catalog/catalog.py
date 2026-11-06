@@ -47,7 +47,9 @@ from ..model.state import (
     PackageView,
     RegistryEntry,
     RegistryTracker,
+    RegistryVersion,
     Root,
+    VersionState,
     known_candidates,
 )
 from ..model.version import MANIFEST_NAME, TRACKER_DIR_NAME, compare_versions, is_version_name
@@ -84,12 +86,14 @@ class NoVersionKnown(CatalogError):
     ----------
     name : str
         The package that has no version.
+    message : str, optional
+        What to say instead of the message of design 5.3.
     """
 
-    def __init__(self, name: str) -> None:
-        """Build the message of design 5.3 for package *name*."""
+    def __init__(self, name: str, message: str | None = None) -> None:
+        """Build the message of design 5.3 for package *name*, unless *message* says more."""
         self.name = name
-        super().__init__(f"no version known yet; run `gupkg check-updates {name}`")
+        super().__init__(message or f"no version known yet; run `gupkg check-updates {name}`")
 
 
 class NoValidVersion(CatalogError):
@@ -840,7 +844,7 @@ class Catalog:
         return CheckPlan("run" if has_tracker else "nothing", sync)
 
     def compare(self, view: PackageView, result: TrackResult) -> Comparison:
-        """Decide whether a tracker result is newer than every known version (decision D21).
+        """Decide whether a tracker result is newer than every local version directory (decision D21).
 
         Parameters
         ----------
@@ -852,21 +856,18 @@ class Catalog:
         Returns
         -------
         Comparison
-            ``newer`` (write a new version directory), ``known`` (a directory or registry version
-            of that name exists) or ``older``. Every local directory counts as known, valid or
-            not, because a new directory must never overwrite one.
+            ``newer`` (write a new version directory), ``known`` (a directory of that name exists)
+            or ``older``. Every local directory counts as known, valid or not, because a new
+            directory must never overwrite one. The registry is a source of its own
+            (``registry_update``) and takes no part here.
         """
         # A version that cannot name a directory is never newer.
         version = result.version
         if not is_version_name(version):
             return Comparison("older", version, reason=f"'{version}' cannot name a version directory")
 
-        # Every local directory and every registry version counts as known.
-        known: list[str] = []
-        if view.local is not None:
-            known.extend(item.name for item in view.local.versions)
-        if view.registry is not None:
-            known.extend(item.name for item in view.registry.versions)
+        # Every local directory counts as known.
+        known = [item.name for item in view.local.versions] if view.local is not None else []
 
         # Find the newest known version, then classify the result against it.
         newest = None
@@ -878,6 +879,47 @@ class Catalog:
         if newest is not None and compare_versions(version, newest) <= 0:
             return Comparison("older", version, newest, f"version {version} is not newer than {newest}")
         return Comparison("newer", version, newest, "newer than every known version")
+
+    def registry_update(self, view: PackageView) -> RegistryVersion | None:
+        """Return the newest pinned version of the followed registry entry when it is newer than every local directory.
+
+        Parameters
+        ----------
+        view : PackageView
+            The package that is checked.
+
+        Returns
+        -------
+        RegistryVersion or None
+            The version the registry offers, or ``None`` when it has nothing newer.
+        """
+        if view.registry is None or not view.registry.versions:
+            return None
+        newest = view.registry.versions[-1]
+        local = view.local.versions if view.local is not None else ()
+        return None if any(compare_versions(item.name, newest.name) >= 0 for item in local) else newest
+
+    def unfinished_version(self, view: PackageView) -> VersionState | None:
+        """Return the newest local version when it is valid, has no ``App`` and has something to populate one from.
+
+        Parameters
+        ----------
+        view : PackageView
+            The package that is checked.
+
+        Returns
+        -------
+        VersionState or None
+            The version a failed, refused or skipped download left without its ``App``, or ``None``. A version that ships its
+            ``App`` has no download to repeat, and only the newest version counts: an older one is not on the way to ``update``.
+        """
+        newest = None
+        for item in view.local.versions if view.local is not None else ():
+            if newest is None or compare_versions(item.name, newest.name) > 0:
+                newest = item
+        if newest is None or newest.populated or newest.manifest is None or newest.problems:
+            return None
+        return None if newest.manifest.source.populate == "none" else newest
 
     # -- internals ------------------------------------------------------------
 

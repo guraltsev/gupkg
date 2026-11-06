@@ -162,6 +162,7 @@ _SCHEMA: dict[str, Any] = {
     "hooks": {"allow_vendor_installers": _boolean},
     "install": {"record_manifest": _boolean},
     "adopt": {"shortcut_prefix": relative_folder},
+    "check_updates": {"sources": _choice("registry", "upstream", "both")},
 }
 # The top-level keys a settings file may hold.
 _TOP_LEVEL = ("schema", "registry", *_SCHEMA)
@@ -473,6 +474,7 @@ def default_layer(mode: str) -> Layer:
             "hooks": {"allow_vendor_installers": True},
             "install": {"record_manifest": True},
             "adopt": {"shortcut_prefix": ""},
+            "check_updates": {"sources": "registry"},
         },
         origin="built-in",
     )
