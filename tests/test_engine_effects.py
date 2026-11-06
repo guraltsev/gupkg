@@ -23,12 +23,13 @@ from gupkg.engine.effects import (
     apply_effect,
     desired_effects,
     remove_effect,
+    shortcut_differences,
     verify_each,
 )
 from gupkg.model.manifest import EnvVar, Shim, Shortcut, parse_manifest
 from gupkg.model.state import Effect
 from gupkg.system.fake import FakeSystem
-from gupkg.system.port import Mode
+from gupkg.system.port import Mode, ShortcutSpec
 
 pytestmark = pytest.mark.unit
 
@@ -138,6 +139,15 @@ def test_shortcut_drift_names_the_field_that_differs_and_ignores_letter_case_in_
     drift = [row[1] for row in verify_each(system, [effect], mode=Mode.USER) if row[1]]
     assert len(drift) == 1 and drift[0].startswith(f"shortcut differs: {path} (icon is 'C:\\other.ico,0' but would be ''; ")
     assert "description is 'Other' but would be 'Tool'" in drift[0]
+
+
+def test_a_shortcut_as_windows_reads_it_back_has_no_differences() -> None:
+    """Windows returns an icon as ``path,index`` and cuts a description at 260 characters; another icon index is still a difference."""
+    fields = {"target": "C:\\a.exe", "icon_location": "C:\\a.exe", "description": "d" * 300}
+    stored = ShortcutSpec("C:\\a.exe", icon_location="C:\\a.exe,0", description="d" * 260)
+
+    assert shortcut_differences(stored, fields) == []
+    assert shortcut_differences(replace(stored, icon_location="C:\\a.exe,1"), fields) == ["icon is 'C:\\a.exe,1' but would be 'C:\\a.exe'"]
 
 
 def test_a_path_entry_that_was_already_there_is_never_removed(tmp_path: Path, system: FakeSystem) -> None:

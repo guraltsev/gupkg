@@ -560,21 +560,31 @@ def shortcut_differences(stored: ShortcutSpec, fields: Mapping[str, Any]) -> lis
     """Return what differs between the shortcut *stored* and the one the effect *fields* describe, one phrase per field.
 
     This is the one comparison of a shortcut, used to tell an unowned shortcut from one that is already right and to find
-    drift. Paths (target, working directory, icon) ignore letter case; arguments and description are compared exactly.
+    drift. Paths (target, working directory, icon) ignore letter case; arguments and description are compared exactly. The
+    wanted icon and description are compared as Windows reads them back: an icon has an index, a description at most 260 characters.
     """
     found: list[str] = []
-    for label, have, want, is_path in (
-        ("target", stored.target_path, str(fields["target"]), True),
-        ("arguments", stored.arguments, str(fields.get("arguments", "")), False),
-        ("working directory", stored.working_directory, str(fields.get("working_dir", "")), True),
-        ("icon", stored.icon_location, str(fields.get("icon_location", "")), True),
-        ("description", stored.description, str(fields.get("description", "")), False),
+    icon = str(fields.get("icon_location", ""))
+    description = str(fields.get("description", ""))
+    for label, have, want, compared, is_path in (
+        ("target", stored.target_path, str(fields["target"]), None, True),
+        ("arguments", stored.arguments, str(fields.get("arguments", "")), None, False),
+        ("working directory", stored.working_directory, str(fields.get("working_dir", "")), None, True),
+        ("icon", stored.icon_location, icon, _with_icon_index(icon), True),
+        ("description", stored.description, description, description[:260], False),
     ):
-        if not (same_path(have, want) if is_path else have == want):
+        wanted = want if compared is None else compared
+        if not (same_path(have, wanted) if is_path else have == wanted):
             found.append(f"{label} is '{have}' but would be '{want}'")
     if stored.run_as_admin != bool(fields.get("run_as_admin", False)):
         found.append(f"run as administrator is {'on' if stored.run_as_admin else 'off'} but would be {'off' if stored.run_as_admin else 'on'}")
     return found
+
+
+def _with_icon_index(location: str) -> str:
+    """Return an icon location with its index, which is ``0`` when *location* names none; an empty text stays empty."""
+    index = location.rpartition(",")[2].strip()
+    return location if not location or ("," in location and index.lstrip("-").isdigit()) else f"{location},0"
 
 
 def same_path(left: str, right: str) -> bool:
