@@ -99,6 +99,7 @@ row.
 
 | Version | Commit | Date | SHA-256 | Notes |
 |---|---|---|---|---|
+| 1.1.14 | `23dffbaf7e5404de7cfbd30026225781926a92e0` | 2026-11-05 | 64ce9adeb5c0398510cee9ae177571c5942c1cca6e811652dcd1f5a7e323117c | gupkg 1.1.14 |
 | 1.1.13 | `4cd484684de8b8c633ce82bbb917adf432bb64b5` | 2026-11-01 | 85910f282e8601107d5c3a885b914ee9fb99af84f163a892dc84f04e3493d476 | "Maintainer scripts folder renamed to _scripts; test-suite rework: registry data and tests moved to the registry repository" |
 | 1.1.12 | `ce4a452049a5de8fa7988c751f299a0bd7876eec` | 2026-10-31 | 52f9fdec69778796f702ec232dffa80b3ec944f167ec864a98d42a9a402a4248 | Package launchers keep option=value arguments intact |
 | 1.1.11 | `3b79c38fba0bdf8abc27d534849297c820f2b04b` | 2026-10-31 | cb102ee26be5dab73068fa9333c4eec380e8952af36e9eace055f2b7614000fe | gupkg 1.1.11 |
