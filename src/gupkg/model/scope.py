@@ -1,7 +1,7 @@
 """The scope of one gupkg run: its mode, its root and the machine folders it touches (design sections 6.1, 6.2 and 12).
 
 A run has exactly one ``Scope``. The mode is the mode of the process token (an elevated run is ``system``, any other
-run is ``user``), the root is found by ``gupkg.settingsload.resolve_root`` and the settings are read for that mode and
+run is ``user``), the root is found by ``gupkg.settingsload.resolve_root`` and the settings are loaded for that mode and
 root only. Everything that works on a package (the catalog, the planner, the executor, the health check) receives the
 ``Scope`` and never selects a mode itself.
 
@@ -40,13 +40,14 @@ from .manifest import PORTABLE
 from .settings import LAYER_DEFAULTS, Settings, expand_env
 
 # Exit codes of design 10.1 that mode handling can return.
-EXIT_REFUSED = 2
-EXIT_NEEDS_INPUT = 5
+EXIT_REFUSED = 2  # the install mode does not allow the operation
+EXIT_NEEDS_INPUT = 5  # an answer was needed and could not be given
 
 # Environment targets of a scope: the machine or the user environment of the registry, or none.
-ENV_MACHINE = "HKLM"
-ENV_USER = "HKCU"
+ENV_MACHINE = "HKLM"  # the machine environment (system mode)
+ENV_USER = "HKCU"  # the user environment (user mode)
 
+# Characters Windows does not allow in a folder name, which a package name must not contain.
 _UNSAFE_PART = re.compile(r'[<>:"|?*\\]')
 
 # The refusals of a package whose ``modes`` lack the scope's mode (issue 035, D55, owner answer Q12). ``<command> <name>`` is
@@ -55,7 +56,9 @@ SYSTEM_ONLY_REFUSAL = (
     'This package installs only system-wide. Run gupkg as administrator: use the Start Menu entry "gupkg manager '
     '(administrator)", or run in an administrator shell: gupkg <command> <name>'
 )
+# The refusal of a user-only package run in system mode.
 USER_ONLY_REFUSAL = "This package installs only for a single user. Run gupkg without administrator rights."
+# The refusal of a portable package run in system mode.
 PORTABLE_REFUSAL = "This is a portable package: it installs only for a single user. Run gupkg without administrator rights."
 
 
@@ -73,7 +76,15 @@ class InputNeeded(ValueError):
 
 @dataclass(frozen=True)
 class DefaultFolders:
-    """The machine's own default Start Menu ``opt`` folder and ``bin`` folder for one mode."""
+    """The machine's own default Start Menu ``opt`` folder and ``bin`` folder for one mode.
+
+    Attributes
+    ----------
+    start_menu : Path
+        The default Start Menu ``opt`` folder.
+    bin_dir : Path
+        The default ``bin`` folder.
+    """
 
     start_menu: Path
     bin_dir: Path
@@ -82,6 +93,24 @@ class DefaultFolders:
 @dataclass(frozen=True)
 class Scope:
     """Everything a subsystem needs to know about the one mode and root of a run.
+
+    Methods
+    -------
+    require_trusted
+        Refuse, in system mode, a *path* that standard users can change: the one trust check of an
+        elevated run (T1, D19).
+    package_dir
+        Return the package root of *name* in this scope's root.
+    package_log_dir
+        Return the log folder of one package, ``<root>\\<name>\\.gupkg\\logs`` (D26).
+    package_data_dir
+        Return ``<package>\\data``, where a portable package keeps its settings and state (design
+        6.3).
+    path_line
+        Return the ``PATH`` line to use for a root that does not touch the environment, else
+        ``None``.
+    describe
+        Return the text of the Resolve phase and the run log: ``<mode> root <path> (<source>)``.
 
     Attributes
     ----------
@@ -135,6 +164,7 @@ class Scope:
             If the mode is ``system`` and *path* or one of its parents can be changed by anyone but administrators, or its
             permissions cannot be read.
         """
+        # User mode trusts every location; system mode must be able to judge it.
         if self.mode is not Mode.SYSTEM:
             return
         if self.system is None:
@@ -145,16 +175,38 @@ class Scope:
 
     @property
     def data_dir(self) -> Path:
-        """Return gupkg's data folder of the root, ``<root>\\.gupkg`` (settings, state, registry cache)."""
+        """Return gupkg's data folder of the root, ``<root>\\.gupkg`` (settings, state, registry cache).
+
+        Returns
+        -------
+        Path
+            The data folder.
+        """
         return self.root / ".gupkg"
 
     @property
     def log_dir(self) -> Path:
-        """Return the root's log folder, ``<root>\\.gupkg\\logs``, which holds global run information only (D26)."""
+        """Return the root's log folder, ``<root>\\.gupkg\\logs``, which holds global run information only (D26).
+
+        Returns
+        -------
+        Path
+            The log folder.
+        """
         return self.data_dir / "logs"
 
     def package_dir(self, name: str) -> Path:
         """Return the package root of *name* in this scope's root.
+
+        Parameters
+        ----------
+        name : str
+            The package name; folders are joined by ``/``.
+
+        Returns
+        -------
+        Path
+            The package folder inside the root.
 
         Raises
         ------
@@ -162,6 +214,7 @@ class Scope:
             If a part of *name* (folders are joined by ``/``) is empty, ``.`` or ``..``, or holds a path
             separator, a drive colon or another character Windows does not allow in a name.
         """
+        # Reject any part that could leave the root or is not a valid Windows folder name.
         parts = name.split("/")
         for part in parts:
             if part in ("", ".", "..") or _UNSAFE_PART.search(part) or part != part.rstrip(" ."):
@@ -169,11 +222,43 @@ class Scope:
         return self.root.joinpath(*parts)
 
     def package_log_dir(self, name: str) -> Path:
-        """Return the log folder of one package, ``<root>\\<name>\\.gupkg\\logs`` (D26)."""
+        """Return the log folder of one package, ``<root>\\<name>\\.gupkg\\logs`` (D26).
+
+        Parameters
+        ----------
+        name : str
+            The package name.
+
+        Returns
+        -------
+        Path
+            The package's log folder.
+
+        Raises
+        ------
+        ValueError
+            If *name* is not a safe package name (see ``package_dir``).
+        """
         return self.package_dir(name) / ".gupkg" / "logs"
 
     def package_data_dir(self, name: str) -> Path:
-        """Return ``<package>\\data``, where a portable package keeps its settings and state (design 6.3)."""
+        """Return ``<package>\\data``, where a portable package keeps its settings and state (design 6.3).
+
+        Parameters
+        ----------
+        name : str
+            The package name.
+
+        Returns
+        -------
+        Path
+            The package's data folder.
+
+        Raises
+        ------
+        ValueError
+            If *name* is not a safe package name (see ``package_dir``).
+        """
         return self.package_dir(name) / "data"
 
     def path_line(self) -> str | None:
@@ -181,13 +266,24 @@ class Scope:
 
         With ``integrate = "none"`` shims go to ``<root>\bin`` and nothing adds that folder to ``PATH``;
         ``gupkg shell`` prints this line instead.
+
+        Returns
+        -------
+        str or None
+            A ``set "PATH=..."`` command, or ``None`` when the environment is managed.
         """
         if self.env_target is not None:
             return None
         return f'set "PATH={self.bin_dir};%PATH%"'
 
     def describe(self) -> str:
-        """Return the text of the Resolve phase and the run log: ``<mode> root <path> (<source>)``."""
+        """Return the text of the Resolve phase and the run log: ``<mode> root <path> (<source>)``.
+
+        Returns
+        -------
+        str
+            The description line.
+        """
         return f"{self.mode.value} root {self.root} ({self.root_source})"
 
 
@@ -221,6 +317,7 @@ def check_supported(
     ModeRefused
         If the package cannot be installed in the mode; the message says how to run gupkg instead.
     """
+    # A portable package needs user mode; any other package needs its mode in the list.
     mode = scope.mode
     if PORTABLE in supported:
         if mode is not Mode.USER:
@@ -228,24 +325,19 @@ def check_supported(
         return
     if mode.value in supported:
         return
+    # The mode is refused: in user mode the package is system-only, otherwise it is user-only.
     if mode is Mode.USER:
         if command == "update" and name is not None and version is not None and installed is not None:
             raise ModeRefused(
                 f"{name} {version} installs only system-wide, so it cannot be installed in this user root. "
                 f"The installed version {installed} keeps working."
             )
+        # Fill the hint with the caller's command and package when they are known.
         text = SYSTEM_ONLY_REFUSAL
         if command is not None and name is not None:
             text = text.replace("<command> <name>", f"{command} {name}")
         raise ModeRefused(text)
     raise ModeRefused(USER_ONLY_REFUSAL)
-
-
-def _folder(settings: Settings, key: str, env: Mapping[str, str], known: Path | None) -> Path:
-    """Return a configured folder: the machine's own default when no layer set *key*, else the expanded value."""
-    if known is not None and settings.source_of(key) == LAYER_DEFAULTS:
-        return Path(known)
-    return Path(expand_env(settings[key], env))
 
 
 def make_scope(
@@ -298,3 +390,13 @@ def make_scope(
         _folder(settings, "integration.start_menu", env, defaults.start_menu if defaults else None),
         ENV_MACHINE if mode is Mode.SYSTEM else ENV_USER, integrate, settings, system,
     )
+
+
+# --- supporting helpers ---
+
+
+def _folder(settings: Settings, key: str, env: Mapping[str, str], known: Path | None) -> Path:
+    """Return a configured folder: the machine's own default when no layer set *key*, else the expanded value."""
+    if known is not None and settings.source_of(key) == LAYER_DEFAULTS:
+        return Path(known)
+    return Path(expand_env(settings[key], env))

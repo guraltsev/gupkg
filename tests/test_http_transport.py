@@ -1,6 +1,6 @@
 """Cover the HTTP transport contract: the real ``WindowsSystem`` and ``FakeSystem`` give the same answers.
 
-The real transport talks to a local loopback server (a thread on 127.0.0.1 with scripted
+The real transport talks to a local loopback server (a background server on 127.0.0.1 with scripted
 routes; nothing leaves the machine). ``FakeSystem`` serves the same routes from fixtures. The
 contract tests run on both, so a fixture cannot promise behavior that the real stack lacks, and
 the shared client is also run end to end over real sockets. Out of scope: TLS (no certificate is
@@ -42,12 +42,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def route(self, *, send_body: bool) -> None:
         """Dispatch on the path."""
+        # Remember the request, then answer by path.
         self.server.seen.append((self.command, self.path, dict(self.headers)))
         path = self.path.split("?")[0]
         if path == "/redirect":
             self.send_response(302)
             self.send_header("Location", "/data")
             self.end_headers()
+        # A missing file answers 404 with a short body.
         elif path == "/missing":
             body = b"not here"
             self.send_response(404)
@@ -55,6 +57,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             if send_body:
                 self.wfile.write(body)
+        # A data file carries its length, tag and download name.
         elif path == "/data":
             self.send_response(200)
             self.send_header("Content-Length", str(len(PAYLOAD)))
@@ -63,11 +66,13 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             if send_body:
                 self.wfile.write(PAYLOAD)
+        # Resume from the offset the request names.
         elif path == "/ranged":
             start = 0
             header = self.headers.get("Range")
             if header and header.startswith("bytes=") and header.endswith("-"):
                 start = int(header[6:-1])
+            # Send the part of the payload after the offset.
             self.send_response(206 if start else 200)
             self.send_header("Content-Length", str(len(PAYLOAD) - start))
             self.send_header("ETag", '"abc"')
@@ -97,6 +102,7 @@ def base(server: ThreadingHTTPServer) -> str:
     return f"http://127.0.0.1:{server.server_address[1]}"
 
 
+# Base address of the fake transport.
 FAKE_BASE = "http://fake.test"
 
 

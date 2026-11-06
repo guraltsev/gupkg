@@ -10,7 +10,7 @@ and fail with a clear message when the program is not there.
 
 Real: the argument parser and (for the pass-through commands) a real child process running fake ``.cmd`` launchers. Mocked: ``FakeSystem``
 for everything else.
-Out of scope: what each command does (the other ``test_cli_*`` modules) and the programs behind the pass-through commands (issue 030).
+Out of scope: what each command does (the other ``test_cli_*`` modules) and the programs behind the pass-through commands.
 """
 
 from __future__ import annotations
@@ -30,10 +30,12 @@ from tests.support.cli import CliWorld
 
 pytestmark = pytest.mark.unit
 
+# Every command that the help lists.
 COMMANDS = [
     "check-updates", "install", "update", "switch", "uninstall", "check", "list", "info", "search", "cleanup", "link", "logs",
     "shell", "registry", "settings", "pkg", "self", "tui", "manager",
 ]
+# The subcommands of the commands that have them.
 SUBCOMMANDS = [
     ("registry", "sync"), ("registry", "status"), ("registry", "list"), ("registry", "add"), ("registry", "remove"),
     ("pkg", "new"), ("pkg", "check"), ("pkg", "adopt"), ("pkg", "pin"), ("pkg", "bundle"), ("pkg", "launchers"), ("pkg", "export"),
@@ -94,7 +96,7 @@ def test_every_group_help_lists_its_actions(cli_world: CliWorld, group: str) -> 
 
 @pytest.mark.parametrize("word", [pytest.param(word, id=word.replace("-", "_")) for word in ("config-check", "config-fix", "doctor", "repair-deps", "update-deps")])
 def test_the_old_commands_are_unknown(cli_world: CliWorld, word: str) -> None:
-    """0.17 command names are not aliases (D33): argparse reports an invalid choice and nothing runs."""
+    """0.17 command names are not aliases: argparse reports an invalid choice and nothing runs."""
     result = cli_world.cli(word, ".")
 
     assert result.code == 2 and "invalid choice" in result.err and word in result.err
@@ -104,7 +106,7 @@ def test_the_old_commands_are_unknown(cli_world: CliWorld, word: str) -> None:
     "option", ["--all", "--check", "--check-only", "--scope", "--no-checksum", "--refresh-app", "--shim-linkage", "--format", "--pause", "--download-only"]
 )
 def test_the_other_removed_options_are_plain_unrecognized_arguments(cli_world: CliWorld, option: str) -> None:
-    """Core keeps no legacy-specific code (D33): every removed spelling is argparse's own error."""
+    """Core keeps no legacy-specific code: every removed spelling is argparse's own error."""
     result = cli_world.cli("install", "tool", option)
 
     assert result.code == 2 and "unrecognized arguments" in result.err and option in result.err
@@ -253,7 +255,7 @@ def test_a_sandbox_that_is_an_existing_file_is_a_usage_error_not_a_traceback(cli
 
 @pytest.mark.parametrize("word", ["tui", "manager"])
 def test_each_ui_pass_through_command_starts_from_an_elevated_shell_and_does_not_refuse(tmp_path: Path, capsys: pytest.CaptureFixture[str], word: str) -> None:
-    """An elevated shell runs the program in system mode (issue 035): the pass-through command starts the launcher and passes its exit code on."""
+    """An elevated shell runs the program in system mode: the pass-through command starts the launcher and passes its exit code on."""
     location, _ = stand_in(tmp_path, **{f"gupkg-{word}": 0})
     system = FakeSystem(tmp_path / "machine", elevated=True, processes={f"gupkg-{word}.cmd": lambda call: ProcessResult(7)})
 

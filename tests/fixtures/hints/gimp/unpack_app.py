@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 
+# Version of the update-check module interface that this script implements.
 PKG_MODULE_API = 1
 
 
@@ -36,9 +37,11 @@ def unpack_app(context: dict[str, Any]) -> None:
         Update context containing the downloaded artifact and staging paths.
     """
     paths = context["paths"]
+    # Locate the downloaded installer and the staging folder.
     artifact = Path(paths["artifact"])
     stage_app = Path(paths["stageApp"])
 
+    # Run the installer silently, for the current user only, into the staging folder.
     command = [
         str(artifact),
         "/VERYSILENT",
@@ -49,6 +52,8 @@ def unpack_app(context: dict[str, Any]) -> None:
         "/NOICONS",
         f"/DIR={stage_app}",
     ]
+    # Run the installer; a failing exit status aborts the unpack.
     subprocess.run(command, check=True)
+    # Fail unless the installer produced the application executable.
     if not (stage_app / "bin" / "gimp-3.exe").is_file():
         raise RuntimeError("The GIMP installer did not produce bin/gimp-3.exe")

@@ -1,9 +1,9 @@
 """Scan roots and package roots on disk and build their ``LocalState``.
 
-The module reads a root's packages (grouping folders marked by ``gupkg-dir.toml``), each package's version directories and tracker, and what ``current`` is. It
+The module lists a root's packages (grouping folders marked by ``gupkg-dir.toml``), each package's version directories and tracker, and what ``current`` is. It
 never changes anything and prints nothing. Nothing inside a package root is followed out of
 it: a version directory, tracker, ``App`` or ``pkg.toml`` that is a link is reported as
-invalid instead of being read, and ``current`` must be a junction to a direct child of its
+invalid instead of being opened, and ``current`` must be a junction to a direct child of its
 own package root, whatever spelling (letter case, ``..``, ``\\\\?\\`` prefix, 8.3 names,
 trailing dots or spaces) the junction target uses.
 
@@ -50,9 +50,6 @@ from ..model.version import (
 from ..pkgcheck import check_directory
 from ..system.port import System
 
-# Windows marks junctions and symbolic links with this file attribute.
-_REPARSE_POINT = 0x400
-
 # The marker file that turns a folder into a grouping folder.
 GROUP_MARKER = "gupkg-dir.toml"
 
@@ -62,7 +59,15 @@ DATA_DIR_NAME = ".gupkg"
 
 @dataclass(frozen=True)
 class RootScan:
-    """The packages found in one root: ``(name, path)`` pairs, and what could not be read."""
+    """The packages found in one root: ``(name, path)`` pairs, and what could not be read.
+
+    Attributes
+    ----------
+    packages : tuple[tuple[str, Path], ...]
+        ``(name, path)`` pairs of the packages found.
+    diagnostics : tuple[str, ...]
+        Messages about folders that could not be read.
+    """
 
     packages: tuple[tuple[str, Path], ...]
     diagnostics: tuple[str, ...] = ()
@@ -74,7 +79,18 @@ class RootScan:
 
 
 def strip_extended_prefix(text: str) -> str:
-    """Return *text* without a leading extended-length prefix (the ``?`` device prefix, also for UNC paths)."""
+    """Return *text* without a leading extended-length prefix (the ``?`` device prefix, also for UNC paths).
+
+    Parameters
+    ----------
+    text : str
+        A path that may start with ``\\\\?\\`` or ``\\\\?\\UNC\\``.
+
+    Returns
+    -------
+    str
+        The path with the prefix removed; a UNC path becomes ``\\\\server\\share``.
+    """
     if text.startswith("\\\\?\\UNC\\"):
         return "\\\\" + text[8:]
     if text.startswith("\\\\?\\"):
@@ -83,7 +99,18 @@ def strip_extended_prefix(text: str) -> str:
 
 
 def real_path(path: str | os.PathLike[str]) -> str:
-    """Return the real path of *path* (links resolved) without an extended-length prefix, keeping letter case."""
+    """Return the real path of *path* (links resolved) without an extended-length prefix, keeping letter case.
+
+    Parameters
+    ----------
+    path : str or path-like
+        Any path; it need not exist.
+
+    Returns
+    -------
+    str
+        The resolved path as text.
+    """
     return strip_extended_prefix(os.path.realpath(os.fspath(path)))
 
 
@@ -127,7 +154,18 @@ def is_inside(path: str | os.PathLike[str], root: str | os.PathLike[str]) -> boo
 
 
 def is_reparse_point(path: Path) -> bool:
-    """Return whether the directory entry *path* itself is a link or junction (it is not followed)."""
+    """Return whether the directory entry *path* itself is a link or junction (it is not followed).
+
+    Parameters
+    ----------
+    path : Path
+        The directory entry to test.
+
+    Returns
+    -------
+    bool
+        ``True`` for a symbolic link or junction; ``False`` for anything else, including a missing entry.
+    """
     try:
         info = os.lstat(path)
     except OSError:
@@ -136,8 +174,21 @@ def is_reparse_point(path: Path) -> bool:
 
 
 def is_link_info(info: os.stat_result) -> bool:
-    """Return whether the ``lstat`` result *info* describes a link or junction."""
-    return stat.S_ISLNK(info.st_mode) or bool(getattr(info, "st_file_attributes", 0) & _REPARSE_POINT)
+    """Return whether the ``lstat`` result *info* describes a link or junction.
+
+    Parameters
+    ----------
+    info : os.stat_result
+        Result of ``os.lstat`` on a directory entry.
+
+    Returns
+    -------
+    bool
+        ``True`` for a symbolic link or a Windows reparse point.
+    """
+    # Windows marks junctions and symbolic links with the reparse-point file attribute.
+    reparse_point = 0x400
+    return stat.S_ISLNK(info.st_mode) or bool(getattr(info, "st_file_attributes", 0) & reparse_point)
 
 
 def _non_empty_dir(path: Path) -> bool:
@@ -170,6 +221,8 @@ def tree_hash(path: Path) -> str:
     digest = hashlib.sha256()
     stack = [Path(path)]
     entries: list[tuple[str, Path]] = []
+
+    # Walk the tree without following links, collecting one labelled entry per file or link.
     while stack:
         folder = stack.pop()
         for child in folder.iterdir():
@@ -218,13 +271,16 @@ def scan_root(root: Root, *, max_depth: int = 8) -> RootScan:
     if not root.path.is_dir():
         return RootScan((), ())
 
-    def scan(folder: Path, prefix: str, depth: int) -> None:
+    def _scan(folder: Path, prefix: str, depth: int) -> None:
         """List one folder, descending only through marked grouping folders."""
+        # Sorted listing keeps results deterministic; an unreadable folder is a diagnostic, not a failure.
         try:
             children = sorted(os.scandir(folder), key=lambda item: (item.name.casefold(), item.name))
         except OSError as exc:
             diagnostics.append(f"Could not scan {folder}: {exc}")
             return
+
+        # Classify each child: skip dot folders and links, record packages, recurse into marked grouping folders.
         for entry in children:
             child = Path(entry.path)
             name = f"{prefix}{entry.name}"
@@ -237,6 +293,8 @@ def scan_root(root: Root, *, max_depth: int = 8) -> RootScan:
                 continue
             if not entry.is_dir(follow_symlinks=False):
                 continue
+
+            # A folder with package content is a package root, even when it also has the grouping marker.
             try:
                 marker = (child / GROUP_MARKER).is_file()
                 # An install record alone makes a package root (looks_like_package says so too); one stat spares listing the folder.
@@ -248,19 +306,24 @@ def scan_root(root: Root, *, max_depth: int = 8) -> RootScan:
             except OSError as exc:
                 diagnostics.append(f"Could not inspect {child}: {exc}")
                 continue
+
+            # Only marked grouping folders are descended, bounded by depth and by a visited set against loops.
             if not marker:
                 continue
             if depth >= max_depth:
                 diagnostics.append(f"Maximum depth reached at grouping folder: {child}")
                 continue
+
+            # Descend once per real folder, so a loop of grouping folders ends.
             key = canonical_path(child)
             if key in visited:
                 diagnostics.append(f"Skipped already visited grouping folder: {child}")
                 continue
             visited.add(key)
-            scan(child, f"{name}/", depth + 1)
+            _scan(child, f"{name}/", depth + 1)
 
-    scan(root.path, "", 0)
+    # Start at the root itself with an empty name prefix.
+    _scan(root.path, "", 0)
     return RootScan(tuple(packages), tuple(diagnostics))
 
 
@@ -270,15 +333,29 @@ def looks_like_package(path: Path) -> bool:
     A package root holds a version directory (a valid version name with a ``pkg.toml``), a
     tracker, a ``current`` entry or an install record. ``_bootstrap`` is reserved
     and counts for nothing.
+
+    Parameters
+    ----------
+    path : Path
+        The folder to classify.
+
+    Returns
+    -------
+    bool
+        ``True`` when the folder has any of those marks; ``False`` also when it cannot be listed.
     """
     try:
         names = {entry.name: entry for entry in os.scandir(path)}
     except OSError:
         return False
+
+    # A ``current`` entry or an install record is enough to mark a package root.
     if any(name.casefold() == CURRENT_DIR_NAME for name in names):
         return True
     if (path / DATA_DIR_NAME / "package.toml").is_file():
         return True
+
+    # Otherwise a real version directory or tracker with a manifest marks it.
     for name, entry in names.items():
         if (is_version_name(name) or name == TRACKER_DIR_NAME) and entry.is_dir(follow_symlinks=False):
             if (path / name / MANIFEST_NAME).is_file():
@@ -371,7 +448,18 @@ def scan_package(path: Path, system: System) -> LocalState:
 
 
 def manifest_text_hash(manifest: Path) -> str | None:
-    """Return the SHA-256 of a ``pkg.toml`` with line endings normalised, or ``None`` if unreadable."""
+    """Return the SHA-256 of a ``pkg.toml`` with line endings normalised, or ``None`` if unreadable.
+
+    Parameters
+    ----------
+    manifest : Path
+        The ``pkg.toml`` file.
+
+    Returns
+    -------
+    str or None
+        Lower-case hexadecimal digest, so a checkout with different line endings hashes alike.
+    """
     try:
         text = manifest.read_bytes().decode("utf-8-sig")
     except (OSError, UnicodeDecodeError):
@@ -386,6 +474,7 @@ def _link_problems(directory: Path, names: tuple[str, ...]) -> list[str]:
 
 def _scan_version(directory: Path) -> VersionState:
     """Validate one version directory; a link inside it is a problem and is never read."""
+    # Links among the files gupkg reads are problems; only a link-free directory is checked further.
     problems = _link_problems(directory, (MANIFEST_NAME, "App", "App.info", "pkg.local"))
     manifest = None
     if not problems:
@@ -396,6 +485,8 @@ def _scan_version(directory: Path) -> VersionState:
         else:
             problems = list(report.errors)
             manifest = report.manifest
+
+    # Pinned means the manifest parsed; populated means ``App`` holds something.
     return VersionState(
         directory.name,
         directory,
@@ -409,10 +500,12 @@ def _scan_version(directory: Path) -> VersionState:
 
 def _scan_tracker(directory: Path) -> TrackerState:
     """Validate the tracker directory; its content hash is the one the install record compares."""
+    # A linked or manifest-less tracker is invalid without further checks.
     if is_reparse_point(directory):
         return TrackerState(directory, (f"{TRACKER_DIR_NAME} is a link and is not followed",))
     if not (directory / MANIFEST_NAME).is_file():
         return TrackerState(directory, (f"{TRACKER_DIR_NAME} has no {MANIFEST_NAME}",))
+    # Same link-then-check validation as a version directory.
     problems = _link_problems(directory, (MANIFEST_NAME, "pkg.local"))
     manifest = None
     if not problems:
@@ -423,6 +516,8 @@ def _scan_tracker(directory: Path) -> TrackerState:
         else:
             problems = list(report.errors)
             manifest = report.manifest
+
+    # The content hash lets the install record detect edits to a copied tracker.
     try:
         digest = tree_hash(directory)
     except OSError:

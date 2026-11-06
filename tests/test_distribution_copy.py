@@ -1,4 +1,4 @@
-"""Cover the copy of a distribution folder into a root (design 21.4, D17, D40).
+"""Cover the copy of a distribution folder into a root (design 21.4).
 
 Behavior covered: the folder is copied whole into ``<root>\\<name>\\<version>``; the copies carry no Mark of the Web
 (``Zone.Identifier``) and the result says whether the source was marked; an existing destination is never changed
@@ -9,14 +9,14 @@ Also: a name that Windows cannot hold (reserved device names, trailing dots) is 
 swapped for a junction between the check and the use is never copied; a refused copy leaves the root as it was; and
 the package's ``modes`` are checked on the staged copy before anything is moved into the root.
 
-Bounds (issue 028): a source with too many entries, bytes, folder levels or a huge ``pkg.toml`` is refused; a junction at
-``root\\.gupkg\\work``, ``root\\<name>`` or ``root\\<name>\\<version>`` is refused; a file that vanishes while the source is read is
+Bounds: a source with too many entries, bytes, folder levels or a huge ``pkg.toml`` is refused; a junction at
+``root\\.gupkg\\work``, ``root\\<name>`` or ``root\\<name>\\<version>`` is refused; a file that vanishes while the source is being copied is
 a ``DistributionRefused``; and the identity checks (open handle against the path, folder before and after its listing) are
 exercised by lying about the identity.
 
 Real: the copy on real folders and real NTFS alternate data streams below pytest's temporary folder (the
 streams need NTFS, so the marked-source tests are ``process``), and a real junction. Out of scope:
-the engine's receipt, which records ``source_marked`` (issue 028).
+the engine's receipt, which records ``source_marked``.
 """
 
 from __future__ import annotations
@@ -84,7 +84,7 @@ def test_the_folder_is_copied_whole_into_the_root(tmp_path: Path) -> None:
 
 @pytest.mark.process
 def test_the_copies_carry_no_mark_of_the_web_and_the_result_says_the_source_was_marked(tmp_path: Path) -> None:
-    """A source whose files Explorer marked is copied without any ``Zone.Identifier``, and ``source_marked`` is set (D40)."""
+    """A source whose files Explorer marked is copied without any ``Zone.Identifier``, and ``source_marked`` is set."""
     source = distribution(tmp_path / "downloads")
     for path in source.rglob("*"):
         if path.is_file():
@@ -222,23 +222,27 @@ def make_raw(path: Path, content: bytes = b"x") -> None:
 )
 def test_a_hostile_file_name_is_refused_up_front_and_the_root_is_unchanged(tmp_path: Path, hostile: str) -> None:
     """A name that Windows cannot hold is a refusal with exit code 2 (not a raw OSError), and nothing is left in the root."""
+    # Arrange: a distribution with a file whose name Windows cannot hold.
     source = distribution(tmp_path / "downloads")
     make_raw(source / hostile)
     root = tmp_path / "opt"
     before = tree_snapshot(tmp_path / "opt")
 
+    # Act: copy it, and remove the hostile file afterwards through its extended path.
     try:
         with pytest.raises(DistributionRefused) as raised:
             copy_distribution(source, root)
     finally:
         shutil.rmtree(EXTENDED + str(tmp_path / "downloads"), ignore_errors=True)
 
+    # Assert: the copy is refused and the root was never created.
     assert raised.value.exit_code == 2
     assert tree_snapshot(root) == before and not root.exists()
 
 
 def test_a_refused_copy_leaves_an_existing_root_as_it_was(tmp_path: Path) -> None:
     """A refusal after the work folder was made removes it again; an existing root keeps exactly its content."""
+    # Arrange: a distribution with a junction, and a root that already exists.
     source = distribution(tmp_path / "downloads")
     (source / "App" / "link").write_text("x", encoding="utf-8")
     secret = tmp_path / "secret"
@@ -248,15 +252,18 @@ def test_a_refused_copy_leaves_an_existing_root_as_it_was(tmp_path: Path) -> Non
     (root / "other").mkdir(parents=True)
     before = tree_snapshot(root)
 
+    # Act: copy the distribution.
     with pytest.raises(DistributionRefused):
         copy_distribution(source, root)
 
+    # Assert: the root is exactly as it was.
     assert tree_snapshot(root) == before
 
 
 @pytest.mark.process
 def test_a_directory_swapped_for_a_junction_after_the_check_is_never_copied(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """If ``App`` becomes a junction to a secret folder just before it is listed, the copy is refused and copies nothing."""
+    # Arrange: a distribution, a secret folder and a scan that swaps ``App`` for a junction.
     source = distribution(tmp_path / "downloads")
     secret = tmp_path / "secret"
     secret.mkdir()
@@ -265,6 +272,7 @@ def test_a_directory_swapped_for_a_junction_after_the_check_is_never_copied(tmp_
     fake = FakeSystem(tmp_path / "machine")
     swapped: list[bool] = []
 
+    # Swap ``App`` for a junction the first time it is listed.
     def swapping_scandir(path):
         """List *path*, after replacing ``App`` by a junction the first time it is listed."""
         if Path(path).name == "App" and not swapped:
@@ -273,12 +281,15 @@ def test_a_directory_swapped_for_a_junction_after_the_check_is_never_copied(tmp_
             fake.create_junction(Path(path), secret)
         return real_scandir(path)
 
+    # Install the swapping scan.
     monkeypatch.setattr(distcopy.os, "scandir", swapping_scandir)
     root = tmp_path / "opt"
 
+    # Act: copy the distribution.
     with pytest.raises(DistributionRefused, match="link or junction|changed while"):
         copy_distribution(source, root)
 
+    # Assert: the swap was noticed and nothing was written.
     assert swapped and not root.exists()
 
 
@@ -287,6 +298,7 @@ def test_a_folder_swapped_for_a_junction_just_before_a_file_is_opened_is_never_c
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """If a parent folder becomes a junction between the listing and the open, the outside file is not copied."""
+    # Arrange: a distribution, a secret folder and an open that swaps a folder for a junction.
     source = distribution(tmp_path / "downloads")
     secret = tmp_path / "secret"
     secret.mkdir()
@@ -295,6 +307,7 @@ def test_a_folder_swapped_for_a_junction_just_before_a_file_is_opened_is_never_c
     fake = FakeSystem(tmp_path / "machine")
     swapped: list[bool] = []
 
+    # Swap the parent of the file for a junction the first time the file is opened.
     def swapping_open(path, *args, **kwargs):
         """Open *path*, after swapping its parent for a junction to the secret folder the first time."""
         if Path(path).name == "tool.exe" and not swapped:
@@ -304,12 +317,15 @@ def test_a_folder_swapped_for_a_junction_just_before_a_file_is_opened_is_never_c
             fake.create_junction(parent, secret)
         return real_open(path, *args, **kwargs)
 
+    # Install the swapping open.
     monkeypatch.setattr(distcopy.os, "open", swapping_open)
     root = tmp_path / "opt"
 
+    # Act: copy the distribution.
     with pytest.raises(DistributionRefused, match="leads outside"):
         copy_distribution(source, root)
 
+    # Assert: the swap was noticed and nothing was written.
     assert swapped and not root.exists()
 
 
@@ -335,7 +351,7 @@ def test_the_packages_modes_are_checked_on_the_staged_copy_before_anything_reach
 
 
 # ---------------------------------------------------------------------------
-# Resource bounds, links in the root, and a source that changes while it is read (issue 028 handoff)
+# Resource bounds, links in the root, and a source that changes while it is read
 # ---------------------------------------------------------------------------
 
 
@@ -371,6 +387,7 @@ def test_the_default_limits_are_the_unpack_limits() -> None:
 @pytest.mark.parametrize("which", ["work", "package", "version"])
 def test_a_root_with_a_junction_where_the_copy_writes_is_refused(tmp_path: Path, which: str) -> None:
     """A junction at root\\.gupkg\\work, root\\<name> or root\\<name>\\<version> would send the copy elsewhere: it is refused."""
+    # Arrange: a distribution, and a junction at the place under test.
     source = distribution(tmp_path / "downloads")
     root = tmp_path / "opt"
     elsewhere = tmp_path / "elsewhere"
@@ -380,62 +397,76 @@ def test_a_root_with_a_junction_where_the_copy_writes_is_refused(tmp_path: Path,
     place.parent.mkdir(parents=True, exist_ok=True)
     fake.create_junction(place, elsewhere)
 
+    # Act: copy the distribution.
     with pytest.raises(DistributionRefused, match="link"):
         copy_distribution(source, root)
 
+    # Assert: the junction is refused and its target stays empty.
     assert list(elsewhere.iterdir()) == []
 
 
 def test_a_source_that_loses_a_file_while_it_is_read_is_refused_not_a_raw_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A file that disappears between the listing and the open is a DistributionRefused (the source changed), not FileNotFoundError."""
+    # Arrange: a distribution and an open that deletes the file first.
     source = distribution(tmp_path / "downloads")
     real_open = os.open
 
+    # Delete the file just before it is opened.
     def vanishing_open(path, *args, **kwargs):
         """Delete the file just before it is opened."""
         if Path(path).name == "tool.exe":
             Path(path).unlink()
         return real_open(path, *args, **kwargs)
 
+    # Install the vanishing open.
     monkeypatch.setattr(distcopy.os, "open", vanishing_open)
     root = tmp_path / "opt"
 
+    # Act: copy the distribution.
     with pytest.raises(DistributionRefused, match="changed while it was being read"):
         copy_distribution(source, root)
 
+    # Assert: the copy is refused and nothing was written.
     assert not root.exists()
 
 
 def test_a_path_that_names_another_file_than_the_one_opened_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The open handle must be the file the path names: when the path's identity differs (a swap), the copy stops."""
+    # Arrange: a distribution, a decoy file and a lstat that lies about the opened file.
     source = distribution(tmp_path / "downloads")
     decoy = tmp_path / "decoy.bin"
     decoy.write_bytes(b"decoy")
     real_lstat = os.lstat
 
+    # Report the decoy's identity for the file that was opened.
     def lying_lstat(path, *args, **kwargs):
         """Report the decoy's identity for the file that was opened, as if the path had been swapped."""
         if Path(path).name == "tool.exe":
             return real_lstat(decoy, *args, **kwargs)
         return real_lstat(path, *args, **kwargs)
 
+    # Install the lying lstat.
     monkeypatch.setattr(distcopy.os, "lstat", lying_lstat)
     root = tmp_path / "opt"
 
+    # Act: copy the distribution.
     with pytest.raises(DistributionRefused, match="not the file that was checked"):
         copy_distribution(source, root)
 
+    # Assert: the copy is refused and nothing was written.
     assert not root.exists()
 
 
 def test_a_listing_taken_while_the_folder_changed_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A folder whose identity differs before and after it is listed is refused (it was replaced while read)."""
+    # Arrange: a distribution and an lstat that gives the folder a different identity on every other look.
     source = distribution(tmp_path / "downloads")
     other = tmp_path / "other"
     other.mkdir()
     real_lstat = os.lstat
     calls: list[int] = []
 
+    # Change the identity of the folder between the looks before and after its listing.
     def changing_lstat(path, *args, **kwargs):
         """Give the folder a different identity on every other look, so the look before and after the listing disagree."""
         if Path(path).name == "bin":
@@ -443,10 +474,13 @@ def test_a_listing_taken_while_the_folder_changed_is_refused(tmp_path: Path, mon
             return real_lstat(other if len(calls) % 2 == 0 else path, *args, **kwargs)
         return real_lstat(path, *args, **kwargs)
 
+    # Install the changing lstat.
     monkeypatch.setattr(distcopy.os, "lstat", changing_lstat)
     root = tmp_path / "opt"
 
+    # Act: copy the distribution.
     with pytest.raises(DistributionRefused, match="changed while it was being read"):
         copy_distribution(source, root)
 
+    # Assert: the copy is refused and nothing was written.
     assert len(calls) >= 2 and not root.exists()

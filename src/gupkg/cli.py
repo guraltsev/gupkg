@@ -2,7 +2,7 @@
 
 Every command takes explicit targets (names or paths, design section 10.1) and options after the command. The lifecycle
 commands (``check-updates``, ``install``, ``update``, ``switch``, ``uninstall``, ``check``, ``cleanup``, ``link`` and the
-``self`` aliases) call ``gupkg.engine.lifecycle``; ``list``, ``info``, ``search``, ``logs`` and ``shell`` read the catalog;
+``self`` aliases) call ``gupkg.engine.lifecycle``; ``list``, ``info``, ``search``, ``logs`` and ``shell`` query the catalog;
 ``registry``, ``settings`` and ``pkg`` work on registries, settings files and package definitions; ``tui`` and ``manager``
 start the separate programs of the same gupkg tree and pass their exit code through. The command line has no
 interactive screen and no ``--all`` (decisions D11, D12): batches and interactive use belong to ``gupkg-manager``.
@@ -51,6 +51,7 @@ from .pinning import PinError, pin_hash
 from .pkgcheck import check_directory
 from .report import results
 from .report.console import ConsoleReporter
+from .report.documents import ListDocument
 from .report.events import Prompt, Step, Warning, emit
 from .report.logfile import list_run_logs, running_gupkg_logs_base, validate_log_file_name
 from .report.session import RunSession
@@ -62,7 +63,6 @@ from .system.fake import FakeSystem
 from .system.port import Mode, System
 from .system.windows import WindowsSystem
 from .tls import enable_partial_chain_verification
-from .report.documents import ListDocument
 from .viewdata import info_document, list_row, list_views, package_data, registry_status
 
 # The commands that are programs of their own: ``gupkg <word> ...`` starts the launcher in the same gupkg tree.
@@ -150,6 +150,7 @@ def main(
         return _usage_error(tokens, str(error))
     except SystemExit as stop:
         return int(stop.code or 0)
+    # No command given: show the help on standard error and report a usage problem.
     if args.command is None:
         parser.print_help(sys.stderr)
         return EXIT_USER
@@ -163,11 +164,13 @@ def _configure_streams() -> None:
     the ANSI code page. A redirected stream is therefore UTF-8 (the UI programs read it as UTF-8); a console keeps its own
     code page. Either way a character that cannot be encoded (a lone surrogate from a file name) is replaced, never raised.
     """
+    # Reconfigure each stream if it supports it: a console keeps its code page, a redirect becomes UTF-8.
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
         if reconfigure is None:
             continue
         try:
+            # A console keeps its code page; a redirect becomes UTF-8. Either way unencodable text is replaced.
             if stream.isatty():
                 reconfigure(errors="replace")
             else:
@@ -189,6 +192,7 @@ def _root_of_version_folders(targets: list[str]) -> Path | None:
     A folder two levels above a version folder is a root only when it holds a ``.gupkg`` folder; a download folder is not one,
     so such a target is copied into the run's own root as before. Targets that are names, or that disagree, infer nothing.
     """
+    # Collect the root implied by every path target; any name or unparsable target means nothing can be inferred.
     roots: set[Path] = set()
     for target in targets:
         try:
@@ -198,6 +202,7 @@ def _root_of_version_folders(targets: list[str]) -> Path | None:
         if selector.kind != "path":
             return None
         roots.add(Path(os.path.abspath(selector.path)).parent.parent)
+    # Only a single agreed root counts, and only when it really is a root (it holds a ``.gupkg`` folder).
     if len(roots) != 1:
         return None
     root = roots.pop()
@@ -206,6 +211,7 @@ def _root_of_version_folders(targets: list[str]) -> Path | None:
 
 def _run(args: argparse.Namespace, tokens: list[str], machine: System, env: Mapping[str, str], where: RunningGupkg) -> int:
     """Run a parsed command on the real or sandboxed machine and turn what goes wrong into an exit code."""
+    # Refuse a malformed --skip-checksum before touching the machine.
     try:
         parse_skip_flag(getattr(args, "skip_checksum", None))
     except ChecksumInvalid as error:
@@ -216,6 +222,7 @@ def _run(args: argparse.Namespace, tokens: list[str], machine: System, env: Mapp
             parse_selector(target)
         except CatalogError as error:
             return _usage_error(tokens, str(error))
+    # Build the machine (real or sandboxed) and the one scope of the run, unless the command needs no root.
     try:
         if args.sandbox is not None:
             args.sandbox.mkdir(parents=True, exist_ok=True)
@@ -226,14 +233,18 @@ def _run(args: argparse.Namespace, tokens: list[str], machine: System, env: Mapp
         # there and reads that root's settings.
         if args.command == "pkg" and args.pkg_command == "adopt" and args.root is None:
             args.root = Path(os.path.abspath(args.directory)).parent.parent
+        # A path install infers the root its version folders stand in.
         if args.command == "install" and args.root is None:
             args.root = _root_of_version_folders(args.targets)
+        # Commands that work on a root get their scope and the settings layers behind it.
         if _needs_scope(args):
             scope, layers = build_scope_and_layers(
                 system=machine, env=env, location=where, root_option=args.root, settings_path=args.settings,
             )
     except (OSError, ValueError) as error:
         return _usage_error(tokens, f"cannot set up the run{f' in --sandbox {args.sandbox}' if args.sandbox is not None else ''}: {error}")
+
+    # Bundle everything the handler needs into one object.
     run = _Run(args, machine, env, where, scope, layers)
 
     # Dispatch; a settings or usage problem is the caller's to fix, anything else unexpected is exit code 4.
@@ -399,6 +410,7 @@ def _execute(
         if not _ask(question):
             return _declined(command, "Declined. Nothing was changed.")
 
+    # Run the batch and build the machine document; a root-wide cleanup also prunes the root's logs and registry trees.
     engine = _engine(run, session, stop_path)
     batch = lifecycle.run_batch(engine, [replace(make(item), skip=skip) for item in targets])
     document = results.result_document(command, batch)
@@ -415,6 +427,7 @@ def _declined(command: str, message: str) -> tuple[int, dict[str, Any], str]:
 
 def _requests(args: argparse.Namespace, command: str) -> Callable[[str], Request]:
     """Return the function that turns one target into the ``Request`` of *command* from the parsed options."""
+    # One request shape per command, each carrying only the options that command has.
     if command == "check-updates":
         return lambda target: Request("check-updates", target, no_download=args.no_download)
     if command == "install":
@@ -423,6 +436,7 @@ def _requests(args: argparse.Namespace, command: str) -> Callable[[str], Request
         return lambda target: Request("update", target, overwrite=args.overwrite)
     if command == "switch":
         return lambda target: Request("switch", target, version=args.version, overwrite=args.overwrite)
+    # Commands that remove or tidy up.
     if command == "uninstall":
         return lambda target: Request("uninstall", target, purge=args.purge)
     if command == "cleanup":
@@ -485,7 +499,10 @@ def _session(run: _Run, command: str, stop_path: Path | None) -> RunSession:
     """Build the run's session: the console, the log files (retention from the settings) and the events file."""
     args = run.args
     settings = run.scope.settings
+
+    # Human output goes to the console reporter; with --json it moves to standard error.
     console = ConsoleReporter(sys.stderr if run.json else None, problems_to_stderr=not run.json, color=settings["ui.color"])
+    # The session records the run's header, retention and stop marker for the log files.
     return RunSession(
         command=command,
         argv=_argv_text(run),
@@ -494,6 +511,7 @@ def _session(run: _Run, command: str, stop_path: Path | None) -> RunSession:
         elevated=run.elevated,
         version=__version__,
         reporters=[console],
+        # Log retention comes from the settings; the stop marker lets a caller end the run.
         events_name=getattr(args, "events_file", None),
         keep_runs=settings["logs.keep_runs"],
         keep_days=settings["logs.keep_days"],
@@ -515,16 +533,17 @@ def _engine(run: _Run, session: RunSession, stop_path: Path | None) -> Engine:
     args = run.args
     log = session.log
 
-    def log_path(package: Path) -> str | None:
+    def _log_path(package: Path) -> str | None:
         """Return the package's log file of this run, stored in its receipt (design 14.3)."""
         found = log.package_log(package) if log is not None else None
         return str(found) if found is not None else None
 
+    # The engine gets the machine, the answers to questions (--yes, --no-input) and the cancel hook.
     return Engine(
         system=run.system, env=run.env, scope=run.scope, confirm=_ask, yes=bool(args.yes), no_input=bool(args.no_input),
         allow_downgrade=bool(getattr(args, "allow_downgrade", False)),
         allow_other_broken_versions=bool(getattr(args, "allow_other_broken_versions", False)),
-        cancel=stop_marker(stop_path) if stop_path is not None else (lambda: False), log_path=log_path,
+        cancel=stop_marker(stop_path) if stop_path is not None else (lambda: False), log_path=_log_path,
     )
 
 
@@ -543,10 +562,12 @@ def _cmd_list(run: _Run) -> int:
     args = run.args
     chosen = next((name for name in ("installed", "available", "outdated", "broken", "local") if getattr(args, name)), None)
     views, warnings = list_views(_catalog(run), chosen)
+    # Select the packages by status and show any warnings the catalog produced.
     rows = [package_data(view, details=args.details) for view in views]
     for warning in warnings:
         print(f"warning: {warning}", file=sys.stderr)
     document = ListDocument(str(run.scope.mode), str(run.scope.root), tuple(list_row(view) for view in views), warnings)
+    # --names prints only the names; otherwise the full listing is shown.
     if args.names:
         names = [row["name"] for row in rows]
         if run.json:
@@ -554,6 +575,7 @@ def _cmd_list(run: _Run) -> int:
         else:
             print("\n".join(names))
         return EXIT_OK
+    # The full listing: the machine document, or the formatted table.
     if run.json:
         _document(run, {**document.to_data(), "packages": rows} if args.details else document.to_data())
     else:
@@ -579,6 +601,7 @@ def _cmd_search(run: _Run) -> int:
     args = run.args
     if not args.offline:
         _sync_missing(run, run.scope.settings, run.scope)
+    # Keep only packages that a registry offers, then flatten each into a row.
     catalog = _catalog(run)
     views = [
         view for view in catalog.list(ListFilter(query=args.query, registry=args.registry, include_available=True)).views
@@ -588,6 +611,7 @@ def _cmd_search(run: _Run) -> int:
         {**package_data(view), "registry": view.registry.registry, "registry_version": view.registry.versions[-1].name if view.registry.versions else None}
         for view in views
     ]
+    # JSON gets the rows; the text form aligns the columns.
     if run.json:
         _document(run, results.envelope("search", ok=True, exit_code=EXIT_OK, **results.scope_fields(run.scope), query=args.query, packages=rows))
     else:
@@ -614,6 +638,8 @@ def _sync_missing(run: _Run, settings: Settings, context: Scope) -> None:
 def _cmd_logs(run: _Run) -> int:
     """List the run logs of a package (or of the root), print the newest path, or open the newest log."""
     args = run.args
+
+    # Logs of one package when a target is named, else the logs of the root.
     if args.target:
         found = _catalog(run).resolve(args.target)
         if found.view.path is None:
@@ -624,10 +650,12 @@ def _cmd_logs(run: _Run) -> int:
         context = run.scope
         logs = list_run_logs(context.root)
         owner = f"the {context.mode} root"
+    # Asking for a path or to open a log when there is none is an error.
     if (args.open or args.path) and not logs:
         print(f"error: {owner} has no run logs", file=sys.stderr)
         _document(run, results.error_document("logs", "no-logs", f"{owner} has no run logs", EXIT_USER))
         return EXIT_USER
+    # Open the newest log if asked, then report it in the requested form.
     if args.open:
         run.system.open_path(logs[0])
     if run.json:
@@ -662,6 +690,8 @@ def _cmd_registry(run: _Run) -> int:
     args = run.args
     settings, context = run.scope.settings, run.scope
     action = args.registry_command
+
+    # Sync and edits have their own handlers; status and list are rendered here.
     if action == "sync":
         return _registry_sync(run, settings, context)
     if action == "add" or action == "remove":
@@ -672,9 +702,11 @@ def _cmd_registry(run: _Run) -> int:
     else:
         status = None
         rows = [{"name": registry.name, "source": registry.source} for registry in settings.registries]
+    # Machine form first; the text form prints each registry and, for ``status``, its cache state.
     if run.json:
         _document(run, status.to_data() if status is not None else results.envelope(f"registry {action}", ok=True, exit_code=EXIT_OK, mode=context.mode, registries=rows))
     else:
+        # Text form: one line per registry, plus the cache state for ``status``.
         for row in rows:
             print(f"{row['name']}  {row['source']}")
             if action == "status":
@@ -683,6 +715,7 @@ def _cmd_registry(run: _Run) -> int:
                     print(f"    last failure: {row['last_failure']}")
                 for problem in row["problems"]:
                     print(f"    problem: {problem}")
+        # An empty configuration gets an explicit message.
         if not rows:
             print("No registries are configured.")
     return EXIT_OK
@@ -695,20 +728,25 @@ def _registry_sync(run: _Run, settings: Settings, context: Scope) -> int:
     unknown = {n.casefold() for n in args.names} - {item.name.casefold() for item in wanted}
     if unknown:
         return _fail(run, "registry sync", ModeRefused(f"no registry is configured with the name {', '.join(sorted(unknown))}"))
+
+    # Synchronise inside a session so the run is logged; one outcome row per registry.
     session = _session(run, "registry-sync", None)
     rows: list[dict[str, Any]] = []
     code = EXIT_OK
     with session:
         session.bind(context.root)
+        # A failure of one registry is reported and does not stop the others.
         for registry in wanted:
             outcome = sync_registry(
                 registry_cache_dir(context.root, registry.name), run.scope, name=registry.name, source=registry.source,
                 offline=args.offline,
             )
+            # Keep the outcome for the document, then tell the user what happened.
             rows.append({
                 "name": registry.name, "ok": outcome.ok, "status": outcome.status, "revision": outcome.revision,
                 "problems": list(outcome.problems), "error": outcome.error,
             })
+            # Report each outcome as it happens; a failure sets the exit code but does not stop the loop.
             if outcome.ok:
                 emit(Step(f"registry {registry.name}: {outcome.status} (revision {(outcome.revision or '')[:12]})", "ok"))
                 if outcome.problems:
@@ -716,6 +754,8 @@ def _registry_sync(run: _Run, settings: Settings, context: Scope) -> int:
             else:
                 code = EXIT_FAILED
                 emit(Warning(f"registry {registry.name}: {outcome.error}"))
+
+        # Close the session with a one-line summary per registry.
         document = results.envelope("registry sync", ok=code == EXIT_OK, exit_code=code, mode=context.mode, registries=rows)
         session.finish("\n".join(f"{row['name']}: {row['status'] or 'failed'}" for row in rows), code, document)
     _document(run, document)
@@ -725,6 +765,8 @@ def _registry_sync(run: _Run, settings: Settings, context: Scope) -> int:
 def _registry_edit(run: _Run, settings: Settings, context: Scope) -> int:
     """Add or remove a ``[[registry]]`` entry in the settings file of the chosen layer."""
     args = run.args
+
+    # Edit the root's settings file; the schema rejects invalid results before anything is written.
     layer, path = _layer_file(context)
     try:
         if args.registry_command == "add":
@@ -733,6 +775,8 @@ def _registry_edit(run: _Run, settings: Settings, context: Scope) -> int:
             settingsedit.remove_registry(path, layer, args.name, settings.registries)
     except settingsedit.SettingsEditError as error:
         return _fail(run, f"registry {args.registry_command}", SettingsError(str(error)))
+
+    # Say what changed and where, in text and in the document.
     _human(run, f"{args.registry_command}: {args.name} ({path})")
     _document(run, results.envelope(f"registry {args.registry_command}", ok=True, exit_code=EXIT_OK, file=str(path), name=args.name))
     return EXIT_OK
@@ -747,6 +791,8 @@ def _cmd_settings(run: _Run) -> int:
     """Run ``settings show|path|init|set``: read the layers, or change the file of one layer."""
     args = run.args
     action = args.settings_command
+
+    # ``show`` lists every effective value with its layer.
     if action == "show":
         rows = [{"key": item.key, "value": item.value, "layer": item.layer} for item in run.scope.settings.effective()]
         if run.json:
@@ -754,6 +800,8 @@ def _cmd_settings(run: _Run) -> int:
         else:
             print("\n".join(f"{row['key']} = {row['value']!r}    ({row['layer']})" for row in rows))
         return EXIT_OK
+
+    # ``path`` lists the settings files of every layer and whether each was applied.
     if action == "path":
         layers = [
             {"layer": item.name, "path": str(item.path) if item.path is not None else None, "status": item.status, "reason": item.reason}
@@ -774,6 +822,8 @@ def _cmd_settings(run: _Run) -> int:
             settingsedit.set_setting(path, layer, args.key, args.value)
     except settingsedit.SettingsEditError as error:
         return _fail(run, f"settings {action}", SettingsError(str(error)))
+
+    # Say what was written and that comments are not kept.
     _human(run, f"{action}: {path}" + ("" if action == "init" else f" ({args.key} set; comments in the file are not kept)"))
     _document(run, results.envelope(f"settings {action}", ok=True, exit_code=EXIT_OK, file=str(path), layer=layer))
     return EXIT_OK
@@ -789,6 +839,8 @@ def _cmd_pkg(run: _Run) -> int:
     args = run.args
     action = args.pkg_command
     command = f"pkg {action}"
+
+    # Dispatch the authoring action; a refusal is reported as exit code 2 with a document.
     try:
         if action == "new":
             name, _, version = args.name.partition("@")
@@ -796,23 +848,27 @@ def _cmd_pkg(run: _Run) -> int:
             _human(run, "\n".join(f"wrote {item}" for item in written))
             _document(run, results.envelope(command, ok=True, exit_code=EXIT_OK, files=[str(item) for item in written]))
             return EXIT_OK
+        # The larger actions have handlers of their own.
         if action == "check":
             return _pkg_check(run)
         if action == "adopt":
             return _pkg_adopt(run)
         if action == "pin":
             return _pkg_pin(run)
+        # ``launchers`` and ``export`` are short enough to run here.
         if action == "launchers":
             written = authoring.add_launchers(Path(args.directory))
             _human(run, "\n".join(f"wrote {Path(args.directory) / name}" for name in written))
             _document(run, results.envelope(command, ok=True, exit_code=EXIT_OK, launchers=written))
             return EXIT_OK
+        # Export prints the SHA-256 of the ZIP it wrote.
         if action == "export":
             exported = authoring.export_distribution(Path(args.directory), Path(args.output))
             print(exported.sha256, file=sys.stderr if run.json else sys.stdout)
             _document(run, results.envelope(
                 command, ok=True, exit_code=EXIT_OK, file=str(exported.path), sha256=exported.sha256, entries=exported.entries))
             return EXIT_OK
+        # Whatever remains is ``bundle``.
         return _pkg_bundle(run)
     except (AuthoringError, PinError) as error:
         print(f"error: {error}", file=sys.stderr)
@@ -824,15 +880,21 @@ def _pkg_check(run: _Run) -> int:
     """Validate a version directory, a tracker or a whole package root; ``--install`` also runs a sandboxed install."""
     args = run.args
     path = Path(args.path)
+
+    # A folder without its own pkg.toml is treated as a package folder: check each version directory inside it.
     folders = [path]
     if not (path / "pkg.toml").is_file() and path.is_dir():
         folders = sorted(item for item in path.iterdir() if item.is_dir() and (item / "pkg.toml").is_file())
+
+    # Check every folder and build one row per report for the document.
     reports = [check_directory(folder) for folder in folders]
     rows = [
         {"path": str(item.path), "kind": item.kind.value if item.kind is not None else None, "ok": item.ok,
          "errors": list(item.errors), "warnings": list(item.warnings)}
         for item in reports
     ]
+
+    # Print every problem; no folder to check is itself a failure.
     code = EXIT_OK if reports and all(item.ok for item in reports) else EXIT_USER
     for item in reports:
         for line in item.errors:
@@ -841,6 +903,8 @@ def _pkg_check(run: _Run) -> int:
             print(f"warning: {item.path}: {line}", file=sys.stderr)
     if not reports:
         print(f"error: {path} holds no pkg.toml", file=sys.stderr)
+
+    # ``--install`` additionally runs a sandboxed install of the first checked folder when the checks passed.
     extra: dict[str, Any] = {}
     if args.install and code == EXIT_OK:
         installed = _sandbox_install(run, reports[0].path)
@@ -867,10 +931,14 @@ def _pkg_adopt(run: _Run) -> int:
     prefix = args.prefix if args.prefix is not None else run.scope.settings["adopt.shortcut_prefix"]
     # Without a shortcuts folder the links are looked for in the user's and the machine's Start Menu (the folder above `opt`).
     menus = [found.start_menu.parent for found in (default_folders(run.system, mode) for mode in (Mode.USER, Mode.SYSTEM)) if found]
+
+    # Write pkg.toml from the shortcuts (or the Start Menu links into App).
     adopted = authoring.adopt_version(
         folder, run.system.read_shortcut, run.env,
         shortcuts=Path(args.shortcuts) if args.shortcuts else None, start_menus=menus, prefix=prefix, force=args.force,
     )
+
+    # Report what was written, kept and skipped.
     lines = [f"searched the Start Menu: {', '.join(map(str, adopted.searched))}"] if adopted.searched else []
     lines += [f"wrote {adopted.path}"] + [
         f"  shortcut {name} (its link points into {adopted.read_from[name]}: read as this version's App)"
@@ -881,6 +949,8 @@ def _pkg_adopt(run: _Run) -> int:
     lines += [f"  launcher {name}" for name in adopted.launchers]
     lines += [f"  skipped {name}: {reason}" for name, reason in adopted.skipped]
     _human(run, "\n".join(lines))
+
+    # ``--no-install`` stops here with the adopt document.
     if args.no_install:
         _document(run, results.envelope(
             "pkg adopt", ok=True, exit_code=EXIT_OK, file=str(adopted.path), shortcuts=list(adopted.shortcuts),
@@ -902,6 +972,8 @@ def _sandbox_install(run: _Run, version_dir: Path) -> dict[str, Any]:
     """
     if run.elevated:
         raise ModeRefused("`pkg check --install` runs the package's own code: run it from a normal shell.")
+
+    # Build a scratch root, a settings file that names it and a pretend machine, then install into that.
     with run.system.scratch_directory("gupkg-pkgcheck-") as scratch:
         scratch = Path(scratch)
         roots = {name: scratch / name for name in ("system", "user")}
@@ -910,6 +982,8 @@ def _sandbox_install(run: _Run, version_dir: Path) -> dict[str, Any]:
             f"[roots]\nsystem = '{roots['system']}'\nuser = '{roots['user']}'\n"
             f"[integration]\nbin = '{scratch / 'bin'}'\nstart_menu = '{scratch / 'menu'}'\n"
         )
+
+        # The scratch settings are fed to the scope loader directly, so no real file is consulted.
         settings_path = scratch / "settings.toml"
         settings_path.write_text(text, encoding="utf-8")
         pretend = FakeSystem.sandbox(scratch / "machine", run.system)
@@ -917,6 +991,8 @@ def _sandbox_install(run: _Run, version_dir: Path) -> dict[str, Any]:
             system=pretend, env=run.env, location=RunningGupkg("source", run.location.package_dir, ()), settings_path=settings_path,
             read_text=lambda path: text if Path(path) == settings_path else None,
         )
+
+        # Install with every question answered and none asked.
         engine = Engine(system=pretend, env=run.env, scope=scope, yes=True, no_input=True)
         batch = lifecycle.run_batch(engine, [Request("install", str(version_dir), skip=parse_skip_flag(run.args.skip_checksum))])
     return results.result_document("install", batch)
@@ -925,6 +1001,8 @@ def _sandbox_install(run: _Run, version_dir: Path) -> dict[str, Any]:
 def _pkg_pin(run: _Run) -> int:
     """Show where a receipt's hash came from and, once confirmed, copy it into the version's ``pkg.toml``."""
     args = run.args
+
+    # Find the local version and its receipt; a version without an observed hash has nothing to pin.
     resolved = _catalog(run).resolve(args.target)
     view = resolved.view
     version = resolved.version or (view.installed.version if view.installed is not None else None)
@@ -947,6 +1025,7 @@ def _pkg_pin(run: _Run) -> int:
 
     # Show the facts the user is about to rely on, and say plainly that the hash is only what one unverified download produced.
     built = (receipt.data or {}).get("built", {})
+    # Gather the facts to display.
     facts = [
         f"package {view.name} {version}",
         f"url:       {record.url or '-'}",
@@ -957,19 +1036,25 @@ def _pkg_pin(run: _Run) -> int:
         "This hash comes from a download that was NOT verified. Pinning it makes later installs fail if the file changes, "
         "but it proves nothing about the file you got the first time.",
     ]
+
+    # Show the facts, then ask for confirmation unless --yes was given.
     for line in facts:
         print(line, file=sys.stderr if run.json else sys.stdout)
+    # Ask before writing unless --yes was given; --no-input turns the question into exit code 5.
     if not args.yes:
         question = f"Write this hash into {folder / 'pkg.toml'}?"
         if args.no_input:
             print(f"error: {question} Pass --yes to confirm. Nothing was changed.", file=sys.stderr)
             _document(run, results.error_document("pkg pin", "input-needed", question, EXIT_INPUT))
             return EXIT_INPUT
+        # Without --no-input, ask on the terminal; no answer is no.
         print(question, file=sys.stderr)
         if not _ask(question):
             print("Declined. Nothing was changed.", file=sys.stderr)
             _document(run, results.error_document("pkg pin", "input-needed", "Declined. Nothing was changed.", EXIT_INPUT))
             return EXIT_INPUT
+
+    # Copy the hash into pkg.toml and report whether the file changed.
     outcome = pin_hash(folder, record)
     _human(run, "pinned" if outcome.changed else "already pinned")
     _document(run, results.envelope(
@@ -981,12 +1066,15 @@ def _pkg_pin(run: _Run) -> int:
 
 def _pkg_bundle(run: _Run) -> int:
     """Copy the verified bundle of the running gupkg into a version directory and write the version's launchers beside it."""
+    # Only a verified bundle may be copied; a source checkout or a damaged install is refused.
     status = self_status(run.location)
     if status.version_root is None or status.integrity is None or not status.integrity.ok:
         raise AuthoringError(
             "the running gupkg has no verified bundle to copy: "
             + ("; ".join(status.integrity.problems()) if status.integrity is not None else "it is a source checkout or its manifest is unreadable")
         )
+
+    # Copy the bundle and report the number of files.
     copied = authoring.bundle_gupkg(Path(run.args.directory), Path(status.version_root) / "gupkg")
     _human(run, f"copied {copied} files into {Path(run.args.directory) / 'gupkg'} and wrote install.cmd and manage.cmd")
     _document(run, results.envelope(
@@ -999,11 +1087,14 @@ def _cmd_self(run: _Run) -> int:
     """Run ``self status|repair|check-updates|update``; the last three are the lifecycle commands applied to ``gupkg``."""
     args = run.args
     action = args.self_command
+
+    # ``status`` reports the interpreter and the manifest check without needing a root.
     if action == "status":
         status = self_status(run.location)
         if run.json:
             _document(run, results.envelope("self status", ok=status.ok, exit_code=EXIT_OK if status.ok else EXIT_FAILED, **status.to_data()))
         else:
+            # Text form: version, interpreter, then every note and problem.
             print(f"gupkg {status.version} ({status.kind}) at {status.location}")
             print(f"interpreter: {status.interpreter} ({'bundled' if status.interpreter_bundled else 'NOT the bundled Python'})")
             for note in status.notes:
@@ -1017,6 +1108,8 @@ def _cmd_self(run: _Run) -> int:
     # The aliases are exactly the lifecycle commands on the package ``gupkg``, in the scope of this run.
     command = {"repair": "repair", "check-updates": "check-updates", "update": "update"}[action]
     root, scope = run.location.root, run.scope
+
+    # Refuse when this gupkg is installed in a different root than the run's: the alias would look for it in the wrong place.
     if run.location.kind == "installed" and root is not None and canonical_path(root) != canonical_path(scope.root):
         if scope.mode is Mode.SYSTEM:
             hint = "the gupkg that is installed in that root"
@@ -1027,6 +1120,8 @@ def _cmd_self(run: _Run) -> int:
         return _fail(run, f"self {action}", ModeRefused(
             f"This gupkg is installed in {root}, but the {scope.mode} root of this run is {scope.root}, so `gupkg {command} gupkg` "
             f"would look for it there. Run it from {hint}."))
+
+    # Run the lifecycle command on the package ``gupkg``.
     args.command = command
     return _lifecycle(run, command, ["gupkg"], _requests(args, command))
 
@@ -1043,17 +1138,21 @@ def _pass_through(tokens: Sequence[str]) -> tuple[str, list[str], list[str]] | N
     the program and is passed on unchanged, ``--help`` included. ``--root`` is passed on (it goes first in the program's arguments);
     ``--settings`` and ``--sandbox`` are refused by ``_forward``.
     """
+    # Collect the root options that precede the command word.
     index, root_options = 0, []
     while index < len(tokens):
         token = tokens[index]
         if token in _ROOT_OPTIONS:
             root_options += tokens[index:index + 2]
             index += 2
+        # The ``--name=value`` spelling is a single token.
         elif token.startswith(("--settings=", "--root=", "--sandbox=")):
             root_options.append(token)
             index += 1
         else:
             break
+
+    # The next word decides: a separate program, or an ordinary command.
     if index < len(tokens) and tokens[index] in PASS_THROUGH:
         return tokens[index], list(tokens[index + 1:]), root_options
     return None
@@ -1061,6 +1160,7 @@ def _pass_through(tokens: Sequence[str]) -> tuple[str, list[str], list[str]] | N
 
 def _forward(program: str, rest: list[str], root_options: list[str], system: System, location: RunningGupkg) -> int:
     """Start the program of the same gupkg tree with *root_options*' ``--root`` and *rest*; return its exit code."""
+    # Only --root is passed on; --settings and --sandbox cannot be forwarded and are refused.
     forwarded: list[str] = []
     index = 0
     while index < len(root_options):
@@ -1068,6 +1168,7 @@ def _forward(program: str, rest: list[str], root_options: list[str], system: Sys
         if token == "--root":
             forwarded += root_options[index:index + 2]
             index += 2
+        # Normalise ``--root=DIR`` to the two-token spelling.
         elif token.startswith("--root="):
             forwarded += ["--root", token[len("--root="):]]
             index += 1
@@ -1082,6 +1183,7 @@ def _forward(program: str, rest: list[str], root_options: list[str], system: Sys
             f"{location.package_dir}).", file=sys.stderr,
         )
         return EXIT_USER
+    # Start the program and pass its exit code through.
     try:
         return system.run_foreground([str(launcher), *forwarded, *rest])
     except OSError as error:
@@ -1094,6 +1196,7 @@ def _forward(program: str, rest: list[str], root_options: list[str], system: Sys
 # ---------------------------------------------------------------------------
 
 
+# The handler of each command word, called with the run once the arguments are parsed.
 _HANDLERS: dict[str, Callable[[_Run], int]] = {
     **{name: _engine_command for name in _ENGINE_COMMANDS},
     "list": _cmd_list, "info": _cmd_info, "search": _cmd_search, "logs": _cmd_logs, "shell": _cmd_shell,
@@ -1110,7 +1213,18 @@ class _Parser(argparse.ArgumentParser):
         super().__init__(*args, **kwargs)
 
     def error(self, message: str) -> Any:  # type: ignore[override]
-        """Raise the usage error; ``main`` prints it and returns exit code 2."""
+        """Raise the usage error; ``main`` prints it and returns exit code 2.
+
+        Parameters
+        ----------
+        message : str
+            The parser's message.
+
+        Raises
+        ------
+        UsageError
+            Always.
+        """
         raise UsageError(message)
 
 
@@ -1134,23 +1248,26 @@ def _options(
     parser: argparse.ArgumentParser, *, mutating: bool = False, plan: bool = False, skip: bool = False,
     events: bool = False,
 ) -> None:
-    """Add the options a command shares: ``--json``, ``--no-input``, ``--yes``, ``--plan``, ``--skip-checksum``.
-
-    """
+    """Add the options a command shares: ``--json``, ``--no-input``, ``--yes``, ``--plan``, ``--skip-checksum``."""
+    # Options every command that uses this helper has.
     parser.add_argument("--json", action="store_true", help="print one JSON result document on standard output; human text goes to standard error")
     parser.add_argument("--no-input", action="store_true", help="never ask: a question that would be asked is exit code 5")
+
+    # Switches that only some commands take.
     if mutating:
         parser.add_argument("--yes", action="store_true", help="answer the confirmations (several targets, --purge) with yes")
     else:
         parser.set_defaults(yes=False)
     if plan:
         parser.add_argument("--plan", action="store_true", help="resolve and plan without changing anything")
+    # Optional switches, each present only for the commands that take it.
     if skip:
         parser.add_argument(
             "--skip-checksum", nargs="?", const="", default=None, metavar="REASON",
             help="install a download that has no SHA-256 (https:// URLs only); the manager relays --skip-checksum=setting "
                  "or =user-approved",
         )
+    # ``--events-file`` is offered only where the command writes an event stream.
     if events:
         parser.add_argument(
             "--events-file", metavar="NAME", type=_events_file_name,
@@ -1158,6 +1275,7 @@ def _options(
         )
 
 
+# The command overview shown at the end of ``gupkg --help``.
 HELP_EPILOG = """\
 commands, in the order of a task:
   check-updates  find new versions and prepare them (activates nothing)
@@ -1200,8 +1318,10 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Package manager for Windows applications that need no installer (gupkg).",
         epilog=HELP_EPILOG,
     )
+    # Global options come before the command word; they choose the root, the settings file and a pretend machine.
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("--settings", type=Path, metavar="PATH", help="read this settings file as the highest layer (user mode only)")
+    # --root and --sandbox change where the run works, not what it does.
     parser.add_argument(
         "--root", type=Path, metavar="DIR",
         help="work on this root instead of the default one (in system mode it must be admin-only); the mode is still the mode of "
@@ -1212,20 +1332,23 @@ def _build_parser() -> argparse.ArgumentParser:
         help="run against a pretend machine kept in DIR: environment variables, PATH, shortcuts and elevation are recorded "
              "in DIR instead of the registry and Start Menu; files and downloads are real",
     )
+    # Every command is a sub-parser; the grammar below is the single place where commands and options are declared.
     commands = parser.add_subparsers(dest="command", metavar="<command>", parser_class=_Parser)
 
-    def add(name: str, text: str, example: str, **options: Any) -> argparse.ArgumentParser:
+    def _add(name: str, text: str, example: str, **options: Any) -> argparse.ArgumentParser:
         """Add one command with its description and an example."""
         command = commands.add_parser(name, description=text, epilog=f"example:\n  {example}", **options)
         return command
 
-    sub = add("check-updates", "Run the trackers of the named packages and write (and by default populate) their new versions.",
+    # The lifecycle commands, in the order of a task.
+    sub = _add("check-updates", "Run the trackers of the named packages and write (and by default populate) their new versions.",
               "gupkg check-updates firefox --no-download")
     sub.add_argument("targets", nargs="+", metavar="TARGET")
     sub.add_argument("--no-download", action="store_true", help="write the version directory only; download nothing")
     _options(sub, mutating=True, plan=True, skip=True, events=True)
 
-    sub = add("install", "Install (or repair) packages: download App if missing, then create shortcuts, PATH entries and shims.",
+    # Install and update share the questions about the package's other versions.
+    sub = _add("install", "Install (or repair) packages: download App if missing, then create shortcuts, PATH entries and shims.",
               "gupkg install firefox")
     sub.add_argument("targets", nargs="+", metavar="TARGET")
     sub.add_argument("--refresh", action="store_true", help="rebuild an App that can be rebuilt")
@@ -1233,33 +1356,38 @@ def _build_parser() -> argparse.ArgumentParser:
     _overwrite_option(sub)
     _options(sub, mutating=True, plan=True, skip=True, events=True)
 
-    sub = add("update", "Activate the newest known version of each installed package; never runs a tracker.",
+    # Update activates already-known versions and never runs a tracker.
+    sub = _add("update", "Activate the newest known version of each installed package; never runs a tracker.",
               "gupkg update firefox")
     sub.add_argument("targets", nargs="+", metavar="TARGET")
     _version_questions(sub)
     _overwrite_option(sub)
     _options(sub, mutating=True, plan=True, skip=True, events=True)
 
-    sub = add("switch", "Activate another local version of an installed package (the way back).",
+    # Switch, uninstall and check act on installed packages.
+    sub = _add("switch", "Activate another local version of an installed package (the way back).",
               "gupkg switch firefox 134.0")
     sub.add_argument("targets", nargs=1, metavar="TARGET")
     sub.add_argument("version")
     _overwrite_option(sub)
     _options(sub, mutating=True, plan=True, events=True)
 
-    sub = add("uninstall", "Remove the integration of packages; --purge also deletes the package folder and its data.",
+    # Uninstall removes the integration; ``--purge`` also deletes the package.
+    sub = _add("uninstall", "Remove the integration of packages; --purge also deletes the package folder and its data.",
               "gupkg uninstall firefox --purge")
     sub.add_argument("targets", nargs="+", metavar="TARGET")
     sub.add_argument("--purge", action="store_true", help="also delete the package folder, including its data")
     _options(sub, mutating=True, plan=True, events=True)
 
-    sub = add("check", "Health check: drift, App and registry fingerprints, unverified installs. Changes nothing without --fix.",
+    # Check is the health check; ``--fix`` is its only change.
+    sub = _add("check", "Health check: drift, App and registry fingerprints, unverified installs. Changes nothing without --fix.",
               "gupkg check firefox --fix")
     sub.add_argument("targets", nargs="*", metavar="TARGET", help="packages to check (default: every package)")
     sub.add_argument("--fix", action="store_true", help="re-apply the integration and rebuild a missing App")
     _options(sub, mutating=True, events=True)
 
-    sub = add("list", "List the packages of the run's root with their status; nothing is checked over the network.",
+    # The commands that report: list, info, search, logs, shell.
+    sub = _add("list", "List the packages of the run's root with their status; nothing is checked over the network.",
               "gupkg list --outdated --names")
     kinds = sub.add_mutually_exclusive_group()
     for name, text in (("installed", "installed packages"), ("available", "registry packages that are not installed"),
@@ -1270,32 +1398,36 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_argument("--names", action="store_true", help="print only the names, one per line (for scripts)")
     _options(sub)
 
-    sub = add("info", "Show everything known about each package: versions, link, tracker, last check, receipts and log.",
+    # Info and search report on packages without changing anything.
+    sub = _add("info", "Show everything known about each package: versions, link, tracker, last check, receipts and log.",
               "gupkg info firefox")
     sub.add_argument("targets", nargs="+", metavar="TARGET")
     _options(sub)
 
-    sub = add("search", "Find registry packages by name.", "gupkg search editor")
+    sub = _add("search", "Find registry packages by name.", "gupkg search editor")
     sub.add_argument("query", nargs="?", default="")
     sub.add_argument("--registry", metavar="NAME", help="only this registry")
     sub.add_argument("--offline", action="store_true", help="read the cache only; never use the network")
     _options(sub)
 
-    sub = add("cleanup", "Remove old Apps, receipts, work folders, registry trees and logs; never runs by itself.",
+    # Maintenance commands: cleanup and link.
+    sub = _add("cleanup", "Remove old Apps, receipts, work folders, registry trees and logs; never runs by itself.",
               "gupkg cleanup --keep 1")
     sub.add_argument("targets", nargs="*", metavar="TARGET", help="packages to clean (default: every package of the root)")
     sub.add_argument("--keep", type=int, default=1, metavar="N", help="older Apps to keep (default: 1)")
     sub.add_argument("--bundled", action="store_true", help="also drop bundled gupkg copies where a launcher would find another gupkg (gupkg-location or PATH)")
     _options(sub, mutating=True, plan=True, events=True)
 
-    sub = add("link", "Follow another registry entry (registry/name), the entry of the same name, or none (--unlink).",
+    # Link chooses which registry entry a package follows.
+    sub = _add("link", "Follow another registry entry (registry/name), the entry of the same name, or none (--unlink).",
               "gupkg link firefox main/firefox-esr")
     sub.add_argument("target", metavar="TARGET")
     sub.add_argument("entry", nargs="?", metavar="REGISTRY/NAME")
     sub.add_argument("--unlink", action="store_true", help="follow no registry entry")
     _options(sub, mutating=True, plan=True, events=True)
 
-    sub = add("logs", "List the run logs of a package (or of the root); --path prints the newest, --open opens it.",
+    # Logs and shell take a target or a root and print or open.
+    sub = _add("logs", "List the run logs of a package (or of the root); --path prints the newest, --open opens it.",
               "gupkg logs firefox --path")
     sub.add_argument("target", nargs="?", metavar="TARGET")
     group = sub.add_mutually_exclusive_group()
@@ -1303,14 +1435,16 @@ def _build_parser() -> argparse.ArgumentParser:
     group.add_argument("--path", action="store_true", help="print the path of the newest log")
     _options(sub)
 
-    sub = add("shell", "Print the PATH line for a root that does not touch the environment (integrate = \"none\").",
+    sub = _add("shell", "Print the PATH line for a root that does not touch the environment (integrate = \"none\").",
               "gupkg shell")
     _options(sub)
 
-    sub = add("registry", "Synchronise, inspect and configure the registries.", "gupkg registry sync")
+    # The registry command and its actions.
+    sub = _add("registry", "Synchronise, inspect and configure the registries.", "gupkg registry sync")
     actions = sub.add_subparsers(dest="registry_command", required=True, metavar="<action>", parser_class=_Parser)
     for name, text in (("sync", "download the registries"), ("status", "show each cache's revision"),
                        ("list", "list the configured registries"), ("add", "add a registry"), ("remove", "remove a registry")):
+        # Each registry action is a leaf; only some take arguments.
         leaf = actions.add_parser(name, help=text, description=text.capitalize() + ".", epilog=f"example:\n  gupkg registry {name}" + (" main" if name == "remove" else (" extra https://example.org/registry.zip" if name == "add" else "")))
         if name == "sync":
             leaf.add_argument("names", nargs="*", metavar="NAME")
@@ -1322,10 +1456,12 @@ def _build_parser() -> argparse.ArgumentParser:
             leaf.add_argument("name")
         _options(leaf, events=name == "sync")
 
-    sub = add("settings", "Show, locate, create and change settings files.", "gupkg settings show")
+    # The settings command and its actions.
+    sub = _add("settings", "Show, locate, create and change settings files.", "gupkg settings show")
     actions = sub.add_subparsers(dest="settings_command", required=True, metavar="<action>", parser_class=_Parser)
     for name, text in (("show", "show every effective setting and its layer"), ("path", "show the settings files of every layer"),
                        ("init", "create a settings file"), ("set", "set one value")):
+        # Each settings action is a leaf; only some take arguments.
         leaf = actions.add_parser(name, help=text, description=text.capitalize() + ".", epilog=f"example:\n  gupkg settings {name}" + (" logs.keep_runs 20" if name == "set" else ""))
         if name == "init":
             leaf.add_argument("--force", action="store_true", help="replace an existing file")
@@ -1334,17 +1470,21 @@ def _build_parser() -> argparse.ArgumentParser:
             leaf.add_argument("value")
         _options(leaf)
 
-    sub = add("pkg", "Authoring: create, validate, pin, bundle and export package definitions.", "gupkg pkg check .")
+    # The authoring commands of the ``pkg`` group.
+    sub = _add("pkg", "Authoring: create, validate, pin, bundle and export package definitions.", "gupkg pkg check .")
     actions = sub.add_subparsers(dest="pkg_command", required=True, metavar="<action>", parser_class=_Parser)
+    # Each ``pkg`` action is a leaf parser; new and check come first.
     leaf = actions.add_parser("new", help="write a starter package definition", description="Write a starter package definition.", epilog="example:\n  gupkg pkg new mytool --track github:owner/mytool")
     leaf.add_argument("name", metavar="NAME[@VERSION]")
     leaf.add_argument("--track", metavar="github:OWNER/REPO", help="write a tracker that follows the releases of a GitHub repository")
     leaf.add_argument("--dir", metavar="FOLDER", help="the folder that receives the package (default: the current folder)")
     _options(leaf)
+    # Check validates definitions and can run a sandboxed install.
     leaf = actions.add_parser("check", help="validate a version directory, a tracker or a package folder", description="Validate a version directory, a tracker or a package folder.", epilog="example:\n  gupkg pkg check .\\mytool\\1.0 --install")
     leaf.add_argument("path")
     leaf.add_argument("--install", action="store_true", help="also run a sandboxed install (files and downloads are real)")
     _options(leaf, skip=True)
+    # Adopt writes ``pkg.toml`` from an installer's shortcuts.
     leaf = actions.add_parser(
         "adopt",
         help="write the pkg.toml of a program already unpacked in App, then install it",
@@ -1355,6 +1495,7 @@ def _build_parser() -> argparse.ArgumentParser:
         epilog="example:\n  cd C:\\Games\\Teardown\\v1.0\n  gupkg pkg adopt",
     )
     leaf.add_argument("directory", nargs="?", default=".", metavar="VERSION-DIR", help="the version directory (default: the current folder)")
+    # Adopt reads the links from a folder and can replace or skip the install step.
     leaf.add_argument("--shortcuts", metavar="FOLDER", help="the folder that holds the .lnk files (default: VERSION-DIR\\shortcuts)")
     leaf.add_argument(
         "--prefix", metavar="FOLDER", type=_start_menu_subfolder,
@@ -1365,12 +1506,15 @@ def _build_parser() -> argparse.ArgumentParser:
     leaf.add_argument("--no-install", action="store_true", help="write pkg.toml and the launchers only")
     _overwrite_option(leaf)
     _options(leaf, mutating=True)
+    # Pin and bundle work with receipts and the running gupkg.
     leaf = actions.add_parser("pin", help="pin the hash of an install without a checksum", description="Copy the hash of an install without a checksum into the version's pkg.toml.", epilog="example:\n  gupkg pkg pin mytool@1.0")
     leaf.add_argument("target", metavar="TARGET")
     _options(leaf, mutating=True)
+    # Bundle copies the running gupkg into a version directory.
     leaf = actions.add_parser("bundle", help="copy the running gupkg into a version directory", description="Copy the running gupkg's verified bundle into a version directory.", epilog="example:\n  gupkg pkg bundle .\\mytool\\1.0")
     leaf.add_argument("directory", metavar="VERSION-DIR")
     _options(leaf)
+    # Launchers copies ``install.cmd`` and ``manage.cmd`` into a version directory.
     leaf = actions.add_parser(
         "launchers", help="write install.cmd and manage.cmd into a version directory", description="Copy install.cmd and manage.cmd into a version directory (replacing the ones there), so the package "
                                  "can be installed and managed from a double-click.",
@@ -1378,16 +1522,20 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     leaf.add_argument("directory", nargs="?", default=".", metavar="VERSION-DIR", help="the version directory (default: the current folder)")
     _options(leaf)
+    # Export writes a distribution ZIP of a version directory.
     leaf = actions.add_parser("export", help="write a distribution ZIP of a version directory", description="Write a distribution ZIP of a version directory and print its SHA-256.", epilog="example:\n  gupkg pkg export .\\mytool\\1.0 -o mytool-1.0.zip")
     leaf.add_argument("directory", metavar="VERSION-DIR")
     leaf.add_argument("-o", "--output", required=True, metavar="X.zip")
     _options(leaf)
 
-    sub = add("self", "Check and maintain gupkg itself; check-updates and update are `gupkg check-updates gupkg` and `gupkg update gupkg`.",
+    # The ``self`` aliases for gupkg's own maintenance.
+    sub = _add("self", "Check and maintain gupkg itself; check-updates and update are `gupkg check-updates gupkg` and `gupkg update gupkg`.",
               "gupkg self status")
     actions = sub.add_subparsers(dest="self_command", required=True, metavar="<action>", parser_class=_Parser)
+    # Status reports the interpreter and the manifest check.
     leaf = actions.add_parser("status", help="report the interpreter and the MANIFEST.sha256 check", description="Report the interpreter and the MANIFEST.sha256 check.", epilog="example:\n  gupkg self status")
     _options(leaf)
+    # Repair, check-updates and update are the lifecycle commands on the package ``gupkg``.
     for name, text in (("repair", "re-apply gupkg's own integration"), ("check-updates", "look for a new gupkg release"),
                        ("update", "activate the newest known gupkg")):
         leaf = actions.add_parser(name, help=text, description=text.capitalize() + ".", epilog=f"example:\n  gupkg self {name}")
@@ -1395,6 +1543,7 @@ def _build_parser() -> argparse.ArgumentParser:
             leaf.add_argument("--no-download", action="store_true", help="write the version directory only")
         if name != "check-updates":
             _overwrite_option(leaf)
+        # Only ``check-updates`` takes ``--no-download``; the others take ``--overwrite``.
         _options(leaf, mutating=True, plan=True, skip=name != "repair", events=True)
         if name != "check-updates":
             leaf.set_defaults(no_download=False)

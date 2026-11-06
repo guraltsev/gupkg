@@ -14,7 +14,7 @@ Implementation Approach
 -----------------------
 The checker accepts only numeric release-directory names, compares their
 dotted version components, and constructs the publisher's stable archive
-paths. The SHA-256 value is read from the matching sidecar before staging.
+paths. The SHA-256 value is taken from the matching sidecar before staging.
 """
 
 from __future__ import annotations
@@ -25,11 +25,14 @@ from html.parser import HTMLParser
 from typing import Any
 
 
+# Version of the update-check module interface that this script implements.
 PKG_MODULE_API = 1
 
 # VideoLAN's directory index is the authoritative list of stable VLC releases.
 _RELEASE_INDEX = "https://download.videolan.org/pub/videolan/vlc/"
+# Pattern that extracts the version (and file address, where captured) from the response.
 _VERSION_DIRECTORY = re.compile(r"^(?P<version>\d+(?:\.\d+)+)/$")
+# Pattern matching a SHA-256 digest in the published checksum text.
 _SHA256 = re.compile(r"\b(?P<digest>[0-9a-fA-F]{64})\b")
 
 
@@ -78,6 +81,7 @@ def check_update(context: dict[str, Any]) -> dict[str, str] | None:
 
     # Keep only numeric version folders, excluding directory aliases such as
     # ``last/`` and distribution-specific folders.
+    # Choose the highest numeric version directory in the index.
     parser = _DirectoryLinkParser()
     parser.feed(index)
     versions = {
@@ -89,6 +93,7 @@ def check_update(context: dict[str, Any]) -> dict[str, str] | None:
         raise RuntimeError("VideoLAN VLC release index contains no numeric versions")
     version = max(versions, key=_version_key)
 
+    # Report no candidate when this version is not newer than the installed one.
     current_version = context.get("current", {}).get("version")
     if (
         isinstance(current_version, str)
@@ -99,6 +104,7 @@ def check_update(context: dict[str, Any]) -> dict[str, str] | None:
 
     # Fetch the sidecar matching the exact archive that will be downloaded so
     # the package manager can verify the publisher-provided SHA-256 digest.
+    # Fetch the checksum sidecar of the 64-bit ZIP and extract its digest.
     filename = f"vlc-{version}-win64.zip"
     archive_url = f"{_RELEASE_INDEX}{version}/win64/{filename}"
     try:
@@ -106,6 +112,7 @@ def check_update(context: dict[str, Any]) -> dict[str, str] | None:
             checksum_text = response.read().decode("utf-8")
     except (OSError, UnicodeDecodeError) as exc:
         raise RuntimeError(f"Could not read the VLC archive checksum: {exc}") from exc
+    # Take the digest from the sidecar text.
     match = _SHA256.search(checksum_text)
     if match is None:
         raise RuntimeError("VLC archive checksum does not contain a SHA-256 digest")

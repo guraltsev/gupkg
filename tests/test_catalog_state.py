@@ -3,14 +3,14 @@
 Behavior covered: a root with a tracker and several versions is ``local`` and installs its newest
 valid version, never ``_check_updates``; an invalid tracker or version invalidates only itself and
 leaves the other candidates; a local package follows the same-name registry entry automatically,
-opts out with ``unlink`` and follows another entry when linked (decision D2); every pinned registry
-version is a candidate (D36); a registry tracker is copied, refreshed or kept by the recorded hash;
+opts out with ``unlink`` and follows another entry when linked; every pinned registry
+version is a candidate; a registry tracker is copied, refreshed or kept by the recorded hash;
 a package with only a tracker reports "no version known yet" without any network request; ``compare`` decides whether a tracker result is newer than every
 known version; install-record effects are compared with the system only on request.
 
 Real: package roots, junctions (``FakeSystem`` links are real), registry caches and the catalog.
 Mocked: the machine boundary (``FakeSystem``; its registry access log shows what was read).
-Out of scope: executing installs (issue 028), running trackers, and path-safety (``test_catalog_security``).
+Out of scope: executing installs, running trackers, and path-safety (``test_catalog_security``).
 """
 
 from __future__ import annotations
@@ -56,6 +56,7 @@ def test_tracker_and_two_versions_without_current_is_local_and_installs_the_newe
 
 def test_invalid_tracker_marks_only_the_tracker_and_update_candidates_survive(system, tmp_path: Path) -> None:
     """An invalid ``_check_updates`` is invalid by itself; an installed package still sees newer local and registry versions."""
+    # Arrange: a registry with newer versions, an installed package, a newer local version and an invalid tracker.
     catalog, roots = make_catalog(system, tmp_path)
     build_registry(roots["user"], {"foo": {"versions": ["1.0", "1.3"]}})
     package = roots["user"] / "foo"
@@ -65,8 +66,10 @@ def test_invalid_tracker_marks_only_the_tracker_and_update_candidates_survive(sy
     (tracker / "pkg.toml").write_text("format = 2\n[track]\nprovider = 'nonsense'\n", encoding="utf-8")
     activate(system, package, "1.0")
 
+    # Act: describe the package.
     view = make_catalog(system, tmp_path)[0].describe("foo")
 
+    # Assert: only the tracker is invalid and both newer versions are still candidates.
     assert not view.local.tracker.valid and view.local.tracker.problems
     assert all(item.valid for item in view.local.versions)
     assert [(item.version, item.source) for item in catalog.candidates(view)] == [("1.3", "registry"), ("1.2", "local")]
@@ -98,7 +101,8 @@ def test_invalid_version_is_invalid_alone_and_never_a_candidate(system, tmp_path
 def test_local_package_follows_the_registry_by_name_unless_it_opted_out(
     system, tmp_path: Path, record, following, note, update
 ) -> None:
-    """Decision D2: the same-name entry is followed by default, ``unlink`` stops it and shows a note, a link follows another entry."""
+    """The same-name entry is followed by default, ``unlink`` stops it and shows a note, a link follows another entry."""
+    # Arrange: a registry that has the package and another one, an installed package and its record.
     catalog, roots = make_catalog(system, tmp_path)
     build_registry(roots["user"], {"foo": {"versions": ["1.0", "1.3"]}, "bar": {"versions": ["2.0"]}})
     package = roots["user"] / "foo"
@@ -107,9 +111,11 @@ def test_local_package_follows_the_registry_by_name_unless_it_opted_out(
     if record is not None:
         write_record(package, record)
 
+    # Act: describe the package and pick its update.
     view = make_catalog(system, tmp_path)[0].describe("foo")
     chosen = catalog.update_candidate(view)
 
+    # Assert: the followed entry, the note and the update match the record.
     assert view.following == following
     assert view.note == note
     assert (chosen.version if chosen else None) == update
@@ -118,7 +124,7 @@ def test_local_package_follows_the_registry_by_name_unless_it_opted_out(
 
 
 def test_registry_entry_with_three_pinned_versions_offers_all_three(system, tmp_path: Path) -> None:
-    """Every pinned version the registry holds is a candidate (decision D36)."""
+    """Every pinned version the registry holds is a candidate."""
     catalog, roots = make_catalog(system, tmp_path)
     build_registry(roots["user"], {"foo": {"versions": ["1.0", "1.1", "1.2"]}})
 
@@ -194,6 +200,7 @@ def test_package_with_only_a_tracker_reports_no_version_known_and_makes_no_reque
 
 def test_list_filters_by_status_name_and_registry(system, tmp_path: Path) -> None:
     """``list`` filters by status, name fragment and followed registry, and adds available entries on request."""
+    # Arrange: a registry with two packages, an installed one and a local one.
     catalog, roots = make_catalog(system, tmp_path)
     build_registry(roots["user"], {"alpha": {"versions": ["1.0"]}, "zeta": {"versions": ["2.0"]}})
     write_version(roots["user"] / "alpha", "1.0", populated=True)
@@ -201,8 +208,10 @@ def test_list_filters_by_status_name_and_registry(system, tmp_path: Path) -> Non
     write_version(roots["user"] / "beta", "1.0")
     catalog = make_catalog(system, tmp_path)[0]
 
+    # Act: list everything.
     everything = catalog.list(ListFilter(include_available=True)).views
 
+    # Assert: each filter narrows the listing as asked.
     assert [(view.name, view.status) for view in everything] == [("alpha", "installed"), ("beta", "local"), ("zeta", "available")]
     assert [view.name for view in catalog.list(ListFilter(statuses=frozenset({"local"}))).views] == ["beta"]
     assert [view.name for view in catalog.list(ListFilter(query="LPH")).views] == ["alpha"]
@@ -268,15 +277,18 @@ def test_unreadable_install_record_breaks_the_package(system, tmp_path: Path) ->
 
 def test_effects_are_compared_with_the_system_only_when_asked(system, tmp_path: Path) -> None:
     """Recorded effects that the system lost make the package broken when verified; ``list`` reads nothing from the environment."""
+    # Arrange: an installed package.
     catalog, roots = make_catalog(system, tmp_path)
     package = roots["user"] / "foo"
     write_version(package, "1.0", populated=True)
     activate(system, package, "1.0")
+    # Record effects that the system lost, as a shortcut, a variable, a PATH entry and a shim would be.
     shortcut = tmp_path / "menu" / "Foo.lnk"
     system.write_shortcut(shortcut, ShortcutSpec(target_path=str(package / "current" / "App" / "foo.exe")))
     system.set_env(Mode.USER, "FOO_HOME", "C:\\foo", False)
     system.set_path(Mode.USER, ["C:\\bin"])
     (tmp_path / "bin").mkdir()
+    # The record also holds an effect of a kind this version does not know.
     effects = (
         Effect("shortcut", {"path": str(shortcut)}),
         Effect("env", {"scope": "user", "name": "FOO_HOME", "value": "C:\\foo"}),
@@ -287,14 +299,17 @@ def test_effects_are_compared_with_the_system_only_when_asked(system, tmp_path: 
     write_record(package, InstallRecord(mode="user", effects=effects))
     system.registry_log.clear()
 
+    # Act: list without verifying, which touches nothing.
     plain = make_catalog(system, tmp_path)[0].list().views[0]
     assert system.registry_log == [] and plain.status == "installed"
 
+    # Verify, which compares the recorded effects with the system.
     verified = make_catalog(system, tmp_path, verify=True)[0].describe("foo")
     assert verified.status == "broken"
     assert verified.installed.drift == (f"shim missing: {tmp_path / 'bin' / 'foo.exe'}",)
     assert verified.installed.unverified == ("something-new",)
 
+    # Repair one effect and change another, then verify again.
     (tmp_path / "bin" / "foo.exe").write_text("x", encoding="utf-8")
     system.set_env(Mode.USER, "FOO_HOME", "C:\\elsewhere", False)
     again = make_catalog(system, tmp_path, verify=True)[0].describe("foo")
@@ -319,6 +334,7 @@ def test_link_to_an_entry_the_registry_does_not_have_is_a_warning(system, tmp_pa
 @pytest.mark.process
 def test_catalog_on_real_windows_junctions_derives_installed_and_outdated(tmp_path: Path) -> None:
     """With ``WindowsSystem`` junctions an installed package is ``installed``, ``outdated`` with a newer directory, and ``broken`` when its version vanishes."""
+    # Arrange: an installed package on real junctions.
     real = WindowsSystem()
     roots = make_catalog(real, tmp_path)[1]
     package = roots["user"] / "foo"
@@ -326,8 +342,10 @@ def test_catalog_on_real_windows_junctions_derives_installed_and_outdated(tmp_pa
     activate(real, package, "1.0")
     statuses = [make_catalog(real, tmp_path)[0].describe("foo").status]
 
+    # A newer directory makes the package outdated.
     write_version(package, "1.1")
     statuses.append(make_catalog(real, tmp_path)[0].describe("foo").status)
+    # Removing the installed version makes it broken.
     (package / "1.0" / "pkg.toml").unlink()
     for child in (package / "1.0" / "App").iterdir():
         child.unlink()

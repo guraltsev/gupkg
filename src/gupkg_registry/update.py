@@ -65,7 +65,9 @@ from gupkg.launchers import write_launchers
 
 from .layout import LAUNCHER_NAMES, RETIRED_LAUNCHER_NAMES, TRACKER_LAUNCHER_NAME, RegistryFileError, package_dirs, read_registry_file, write_registry_file, write_text_bytes
 
+# Value of ``sha256_from`` marking a hash the registry tool computed itself.
 REGISTRY_SHA256_FROM = "registry"
+# Lock file in the registry root that allows one tool run per checkout.
 LOCK_NAME = ".registry-tool.lock"
 
 
@@ -75,6 +77,23 @@ class Outcome:
 
     ``review`` is true when the version's hash was computed by this tool (the vendor published
     none), which a maintainer must look at before pushing.
+
+    Attributes
+    ----------
+    package : str
+        The package name.
+    status : str
+        ``added``, ``current``, ``pinned`` or ``failed``.
+    version : str or None
+        The version concerned.
+    message : str
+        What happened, in a sentence.
+    review : bool
+        Whether a maintainer must review the computed hash.
+    path : Path or None
+        The version directory that was created or changed.
+    unversioned : bool
+        Whether the registry lists the package as unversioned.
     """
 
     package: str
@@ -88,7 +107,17 @@ class Outcome:
 
 @dataclass(frozen=True)
 class UpdateReport:
-    """The outcomes of one run, in package order."""
+    """The outcomes of one run, in package order.
+
+    Attributes
+    ----------
+    outcomes : tuple of Outcome
+        One outcome per package, in package order.
+    ok : bool
+        Return whether no package failed.
+    written : tuple[Outcome, ...]
+        Return the outcomes that created or changed a version directory.
+    """
 
     outcomes: tuple[Outcome, ...] = ()
 
@@ -101,30 +130,6 @@ class UpdateReport:
     def written(self) -> tuple[Outcome, ...]:
         """Return the outcomes that created or changed a version directory."""
         return tuple(o for o in self.outcomes if o.status in ("added", "pinned"))
-
-
-@dataclass
-class _Run:
-    """Shared state of one run: the boundary, the sandbox and the one HTTP client."""
-
-    root: Path
-    system: System
-    sandbox: Path
-    client: HttpClient
-    settings: dict = field(default_factory=dict)
-    scope: Scope | None = None
-
-
-def _scope(system: System, root: Path) -> Scope:
-    """Return the scope of the tool run: the mode of its own token on the registry checkout (it installs nothing)."""
-    mode = process_mode(system)
-    layer = Layer(LAYER_APP, {"schema": 4, "integration": {"integrate": "none"}})
-    return make_scope(mode, root, "gupkg-registry", merge_layers([default_layer(mode.value), layer]), {}, system=system)
-
-
-def _client(scope: Scope, sandbox: Path, environ: Mapping[str, str] | None) -> HttpClient:
-    """Return the shared client: its cache is in the sandbox, its only credential is ``GITHUB_TOKEN``."""
-    return HttpClient(scope.system, cache_dir=sandbox / "cache", env=github_environment(scope.mode, environ or {}))
 
 
 def update_registry(
@@ -166,6 +171,7 @@ def update_registry(
     RegistryFileError
         If ``_registry.toml`` is missing or malformed (nothing is written).
     """
+    # Validate the registry file before anything is created, then run under the lock.
     root, sandbox = Path(root), Path(sandbox)
     settings = read_registry_file(root)
     sandbox.mkdir(parents=True, exist_ok=True)
@@ -180,6 +186,15 @@ def registry_lock(root: Path, system: System, operation: str) -> Iterator[None]:
     A lock whose process has ended (a crash, Ctrl+C that was not caught, a closed window) is taken over, so nothing has to be
     deleted by hand; a live run is named in the message (process, host, operation, start time).
 
+    Parameters
+    ----------
+    root : Path
+        Registry checkout that holds the lock file.
+    system : System
+        The machine boundary used to inspect the lock owner.
+    operation : str
+        Name of the operation, shown to a second run that finds the lock held.
+
     Raises
     ------
     RegistryFileError
@@ -192,8 +207,129 @@ def registry_lock(root: Path, system: System, operation: str) -> Iterator[None]:
         raise RegistryFileError(f"{busy} {busy.hint}") from None
 
 
+def pin_version(
+    root: Path, system: System, key: str, *, sandbox: Path, environ: Mapping[str, str] | None = None
+) -> Outcome:
+    """Give the existing version ``name/version`` that has no ``sha256`` its first hash.
+
+    The artifact is downloaded over ``https://`` only, unpacked in the sandbox to prove the version
+    installs, and the observed hash is written with ``sha256_from = "registry"``. The fingerprint
+    is recomputed (``pkg.toml`` changed) and the version leaves the ``unpinned`` list. It takes the
+    registry lock like ``update_registry``.
+
+    Parameters
+    ----------
+    root : Path
+        Registry checkout.
+    system : System
+        The machine boundary (network, processes).
+    key : str
+        The version directory as ``name/version``.
+    sandbox : Path
+        Scratch folder for downloads and the staged ``App``.
+    environ : mapping, optional
+        Environment passed explicitly; only ``GITHUB_TOKEN`` is used.
+
+    Returns
+    -------
+    Outcome
+        ``pinned`` with the computed hash to review, or ``failed`` with the reason.
+
+    Raises
+    ------
+    RegistryFileError
+        If a live run holds the registry lock or ``_registry.toml`` is missing or malformed.
+    """
+    with registry_lock(Path(root), system, "pin"):
+        return _pin_version(root, system, key, sandbox=sandbox, environ=environ)
+
+
+def sync_launchers(root: Path) -> list[str]:
+    """Write the generated launchers into the whole registry at *root*; return one line per file changed.
+
+    Every pinned version directory gets ``install.cmd`` and ``manage.cmd`` and loses a retired ``gupkg-tui.cmd``, every tracker
+    folder gets ``check-updates.cmd`` and loses a stale ``install.cmd``, ``manage.cmd`` or ``gupkg-tui.cmd`` (a tracker never
+    installs). Because the fingerprint of a version covers its launchers, the fingerprint of each version that changed is
+    recomputed in ``_registry.toml``. A registry that is already in step is left byte for byte as it was.
+
+    Parameters
+    ----------
+    root : Path
+        Registry checkout.
+
+    Returns
+    -------
+    list of str
+        One line per launcher file written or removed.
+
+    Raises
+    ------
+    RegistryFileError
+        If ``_registry.toml`` is missing or malformed.
+    """
+    root = Path(root)
+    data = read_registry_file(root)
+    fingerprints = dict(data.get("fingerprints", {}))
+    changed: list[str] = []
+    # Walk every package folder: trackers get their own launcher, versions get install and manage launchers.
+    for package in package_dirs(root):
+        for child in sorted(item for item in package.iterdir() if item.is_dir()):
+            # A tracker keeps only ``check-updates.cmd``; stale version launchers are removed from it.
+            if child.name == TRACKER_DIR_NAME:
+                tracker = child
+                for stale in (*LAUNCHER_NAMES, *RETIRED_LAUNCHER_NAMES):
+                    if (tracker / stale).is_file():
+                        (tracker / stale).unlink()
+                        changed.append(f"{package.name}/{TRACKER_DIR_NAME}/{stale}: removed (a tracker never installs)")
+                if _write_if_different(tracker, (TRACKER_LAUNCHER_NAME,)):
+                    changed.append(f"{package.name}/{TRACKER_DIR_NAME}/{TRACKER_LAUNCHER_NAME}: written")
+            # A version gets its launchers written when they differ, loses a retired name and is fingerprinted again.
+            elif (child / MANIFEST_NAME).is_file():
+                written = _write_if_different(child, LAUNCHER_NAMES)
+                retired = [name for name in RETIRED_LAUNCHER_NAMES if (child / name).is_file()]
+                for name in retired:
+                    (child / name).unlink()
+                if written or retired:
+                    changed.extend(f"{package.name}/{child.name}/{name}: written" for name in written)
+                    changed.extend(f"{package.name}/{child.name}/{name}: removed (renamed to manage.cmd)" for name in retired)
+                    key = f"{package.name}/{child.name}"
+                    fingerprints[key] = fingerprint_directory(child)
+    # Store new fingerprints only when a version directory changed (tracker changes are not fingerprinted).
+    if any((line.endswith(": written") or "(renamed to" in line) and f"/{TRACKER_DIR_NAME}/" not in line for line in changed):
+        write_registry_file(root, {**data, "fingerprints": fingerprints})
+    return changed
+
+
+# --- supporting helpers ---
+
+
+@dataclass
+class _Run:
+    """Shared state of one run: the boundary, the sandbox and the one HTTP client."""
+
+    root: Path
+    system: System
+    sandbox: Path
+    client: HttpClient
+    settings: dict = field(default_factory=dict)
+    scope: Scope | None = None
+
+
+def _scope(system: System, root: Path) -> Scope:
+    """Return the scope of the tool run: the mode of its own token on the registry checkout (it installs nothing)."""
+    mode = process_mode(system)
+    layer = Layer(LAYER_APP, {"schema": 4, "integration": {"integrate": "none"}})
+    return make_scope(mode, root, "gupkg-registry", merge_layers([default_layer(mode.value), layer]), {}, system=system)
+
+
+def _client(scope: Scope, sandbox: Path, environ: Mapping[str, str] | None) -> HttpClient:
+    """Return the shared client: its cache is in the sandbox, its only credential is ``GITHUB_TOKEN``."""
+    return HttpClient(scope.system, cache_dir=sandbox / "cache", env=github_environment(scope.mode, environ or {}))
+
+
 def _update_all(root, system, sandbox, names, environ, on_start, on_outcome, settings) -> UpdateReport:
     """Run the trackers of *names* while the caller holds the lock (see ``update_registry``)."""
+    # Shared run state, the packages present, and the packages to visit in order.
     scope = _scope(system, root)
     run = _Run(root, system, sandbox, _client(scope, sandbox, environ), settings, scope)
     available = {p.name: p for p in package_dirs(root)}
@@ -201,12 +337,20 @@ def _update_all(root, system, sandbox, names, environ, on_start, on_outcome, set
     wanted = list(dict.fromkeys(names)) if names else sorted(available)
     outcomes: list[Outcome] = []
 
+    # Local sink that both keeps each outcome and reports it to the caller.
     def record(outcome: Outcome) -> None:
-        """Keep *outcome* and tell the caller at once."""
+        """Keep *outcome* and tell the caller at once.
+
+        Parameters
+        ----------
+        outcome : Outcome
+            Result for one package.
+        """
         outcomes.append(outcome)
         if on_outcome is not None:
             on_outcome(outcome)
 
+    # Visit each package; one failure is recorded and the run goes on.
     for number, name in enumerate(wanted, start=1):
         if on_start is not None:
             on_start(name, number, len(wanted))
@@ -224,7 +368,9 @@ def _update_all(root, system, sandbox, names, environ, on_start, on_outcome, set
     return UpdateReport(tuple(outcomes))
 
 
+# Age after which a leftover staging folder is considered abandoned.
 STALE_STAGING_SECONDS = 3600
+# Whole-name pattern of the staging folders this tool creates.
 _STAGING = re.compile(r"\.new-[0-9a-f]{8}")
 
 
@@ -247,44 +393,29 @@ def _remove_stale_staging(packages) -> None:
                 emit(Warning(f"Could not remove the leftover staging folder {entry}: {error}"))
 
 
-def pin_version(
-    root: Path, system: System, key: str, *, sandbox: Path, environ: Mapping[str, str] | None = None
-) -> Outcome:
-    """Give the existing version ``name/version`` that has no ``sha256`` its first hash.
-
-    The artifact is downloaded over ``https://`` only, unpacked in the sandbox to prove the version
-    installs, and the observed hash is written with ``sha256_from = "registry"``. The fingerprint
-    is recomputed (``pkg.toml`` changed) and the version leaves the ``unpinned`` list. It takes the
-    registry lock like ``update_registry``.
-
-    Raises
-    ------
-    RegistryFileError
-        If a live run holds the registry lock or ``_registry.toml`` is missing or malformed.
-    """
-    with registry_lock(Path(root), system, "pin"):
-        return _pin_version(root, system, key, sandbox=sandbox, environ=environ)
-
-
 def _pin_version(
     root: Path, system: System, key: str, *, sandbox: Path, environ: Mapping[str, str] | None = None
 ) -> Outcome:
     """Pin one version while the caller holds the lock (see ``pin_version``)."""
+    # Load the registry file and locate the version directory named by the key.
     root, sandbox = Path(root), Path(sandbox)
     settings = read_registry_file(root)
     name, _, version = key.partition("/")
     directory = root / name / version
+    # Validate that the version can be pinned: it exists, checks clean, has a download and no hash.
     try:
         if not name or not version or not (directory / MANIFEST_NAME).is_file():
             raise ValueError(f"{key} is not a version directory of this registry")
         report = check_directory(directory)
         if not report.ok or report.manifest is None:
             raise ValueError("; ".join(report.errors) or "invalid version")
+        # Only an unhashed, downloaded source can be pinned; a git source is anchored by its commit.
         manifest = report.manifest
         if manifest.source.download_url is None or manifest.source.git is not None:
             raise ValueError("only a version with a download_url can be pinned")
         if manifest.source.sha256 is not None:
             raise ValueError("the version already has a sha256; the registry never replaces one")
+        # Download and prove the version installs, then write the observed hash into its manifest.
         sandbox.mkdir(parents=True, exist_ok=True)
         scope = _scope(system, root)
         run = _Run(root, system, sandbox, _client(scope, sandbox, environ), settings, scope)
@@ -293,6 +424,7 @@ def _pin_version(
             manifest, source=dataclasses.replace(manifest.source, sha256=digest, sha256_from=REGISTRY_SHA256_FROM)
         )
         write_text_bytes(directory / MANIFEST_NAME, manifest_to_toml(pinned, explicit_modes=True))
+        # Re-check the changed directory, then record its new fingerprint and drop it from ``unpinned``.
         after = check_directory(directory)
         if not after.ok or after.warnings:
             raise ValueError("; ".join((*after.errors, *after.warnings)))
@@ -312,9 +444,11 @@ def _fetch_and_prove(run: _Run, name: str, version: str, manifest, expected: str
     nothing is downloaded: the pinned commit is the anchor and ``None`` is returned. A source that runs a vendor installer
     (``[source.installer]``) is downloaded and hashed but not unpacked or run.
     """
+    # Unpack into a throwaway stage inside the sandbox; it is removed whatever happens.
     stage = run.sandbox / "stage" / f"{name}-{version}-{uuid.uuid4().hex[:8]}"
     stage.mkdir(parents=True)
     try:
+        # Build the hook context, then take the git path (nothing to download) if the source is git.
         context = HookContext(
             package=name, version=version, system=run.system, scope=run.scope, http=run.client,
             paths=HookPaths(run.root / name, run.root / name / version, stage / "App", None, stage / "work", run.sandbox / "cache"),
@@ -324,6 +458,7 @@ def _fetch_and_prove(run: _Run, name: str, version: str, manifest, expected: str
         if source.git is not None:
             populate_git(run.scope, manifest, stage / "App", context=context)
             return None
+        # Download under the checksum policy and verify again before using the file.
         fetched = fetch_artifact(
             run.client, source.download_url, expected_sha256=expected,
             skip=SKIPPED_CLI if expected is None else None,
@@ -343,12 +478,14 @@ def _fetch_and_prove(run: _Run, name: str, version: str, manifest, expected: str
 
 def _update_package(run: _Run, package: Path) -> Outcome:
     """Check one package's tracker and write its new version, if there is one."""
+    # Validate the tracker before running any of its code.
     name = package.name
     tracker = package / TRACKER_DIR_NAME
     report = check_directory(tracker)
     if not report.ok or report.warnings:
         return Outcome(name, "failed", message="the tracker does not validate: " + "; ".join((*report.errors, *report.warnings)))
     manifest = parse_manifest((tracker / MANIFEST_NAME).read_text(encoding="utf-8-sig"), ManifestKind.TRACKER)
+    # Run the tracker and stop early if the version is already present (any letter case).
     environment = TrackEnvironment(
         run.system, run.scope, run.client, work_dir=run.sandbox / "track" / name, directory=tracker, package=name
     )
@@ -357,6 +494,7 @@ def _update_package(run: _Run, package: Path) -> Outcome:
     destination = package / result.version
     if destination.exists() or any(c.name.casefold() == result.version.casefold() for c in package.iterdir()):
         return Outcome(name, "current", result.version, "already in the registry", path=destination)
+    # Turn the tracker result into a pinned manifest.
     pinned = render_pinned(manifest, result)
     if pinned.source.populate != "download" and pinned.source.git is None:
         return Outcome(name, "failed", result.version, "only downloaded or git sources can be pinned by the registry tool")
@@ -372,6 +510,7 @@ def _update_package(run: _Run, package: Path) -> Outcome:
             ),
         )
 
+    # Build the directory under a staging name and rename it into place only when complete.
     staging = package / f".new-{uuid.uuid4().hex[:8]}"
     try:
         staging.mkdir()
@@ -383,6 +522,7 @@ def _update_package(run: _Run, package: Path) -> Outcome:
     except BaseException:
         remove_tree(staging)
         raise
+    # Validate the final directory and record its fingerprint; a failure removes it again.
     try:
         after = check_directory(destination)
         if not after.ok or after.warnings:
@@ -391,6 +531,7 @@ def _update_package(run: _Run, package: Path) -> Outcome:
     except BaseException:
         remove_tree(destination)
         raise
+    # Describe the result for the report: how the hash was obtained and any warnings.
     note = "sha256 computed by the registry tool: review it" if computed else "verified against the discovered checksum"
     if result.notes:
         note += "; " + "; ".join(result.notes)
@@ -398,43 +539,6 @@ def _update_package(run: _Run, package: Path) -> Outcome:
     if unversioned:
         note += "; the download address has no version in it, so this version stops verifying when the vendor replaces the file"
     return Outcome(name, "added", result.version, note, computed, destination, unversioned)
-
-
-def sync_launchers(root: Path) -> list[str]:
-    """Write the generated launchers into the whole registry at *root*; return one line per file changed.
-
-    Every pinned version directory gets ``install.cmd`` and ``manage.cmd`` and loses a retired ``gupkg-tui.cmd``, every tracker
-    folder gets ``check-updates.cmd`` and loses a stale ``install.cmd``, ``manage.cmd`` or ``gupkg-tui.cmd`` (a tracker never
-    installs). Because the fingerprint of a version covers its launchers, the fingerprint of each version that changed is
-    recomputed in ``_registry.toml``. A registry that is already in step is left byte for byte as it was.
-    """
-    root = Path(root)
-    data = read_registry_file(root)
-    fingerprints = dict(data.get("fingerprints", {}))
-    changed: list[str] = []
-    for package in package_dirs(root):
-        for child in sorted(item for item in package.iterdir() if item.is_dir()):
-            if child.name == TRACKER_DIR_NAME:
-                tracker = child
-                for stale in (*LAUNCHER_NAMES, *RETIRED_LAUNCHER_NAMES):
-                    if (tracker / stale).is_file():
-                        (tracker / stale).unlink()
-                        changed.append(f"{package.name}/{TRACKER_DIR_NAME}/{stale}: removed (a tracker never installs)")
-                if _write_if_different(tracker, (TRACKER_LAUNCHER_NAME,)):
-                    changed.append(f"{package.name}/{TRACKER_DIR_NAME}/{TRACKER_LAUNCHER_NAME}: written")
-            elif (child / MANIFEST_NAME).is_file():
-                written = _write_if_different(child, LAUNCHER_NAMES)
-                retired = [name for name in RETIRED_LAUNCHER_NAMES if (child / name).is_file()]
-                for name in retired:
-                    (child / name).unlink()
-                if written or retired:
-                    changed.extend(f"{package.name}/{child.name}/{name}: written" for name in written)
-                    changed.extend(f"{package.name}/{child.name}/{name}: removed (renamed to manage.cmd)" for name in retired)
-                    key = f"{package.name}/{child.name}"
-                    fingerprints[key] = fingerprint_directory(child)
-    if any((line.endswith(": written") or "(renamed to" in line) and f"/{TRACKER_DIR_NAME}/" not in line for line in changed):
-        write_registry_file(root, {**data, "fingerprints": fingerprints})
-    return changed
 
 
 def _write_if_different(folder: Path, names: tuple[str, ...]) -> tuple[str, ...]:
@@ -456,16 +560,20 @@ def _copy_support_files(tracker: Path, destination: Path) -> None:
 
     A Python module that defines ``track`` is never copied (design 9.3). A link is refused.
     """
+    # Copy every plain support file, skipping generated, cached and update-check files.
     for path in sorted(tracker.rglob("*")):
+        # Refuse links, then skip folders, the manifest and launchers.
         relative = path.relative_to(tracker)
         if is_reparse_point(path):
             raise ValueError(f"{relative.as_posix()} in the tracker is a link; refused")
         if path.is_dir() or relative.as_posix() == MANIFEST_NAME or relative.name in (*LAUNCHER_NAMES, TRACKER_LAUNCHER_NAME):
             continue
+        # Skip caches and backups, and update-check code (a module that defines ``track``).
         if "__pycache__" in relative.parts or path.suffix.lower() in (".pyc", ".bak"):
             continue
         if path.suffix.lower() == ".py" and defines_track(path.read_text(encoding="utf-8-sig")):
             continue
+        # Copy the file, creating its folder first.
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(path, target)

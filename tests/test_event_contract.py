@@ -146,8 +146,10 @@ def test_a_problem_is_delivered_once_per_package_and_once_in_the_run_summary() -
 
 def test_phase_reports_start_end_status_and_elapsed_time() -> None:
     """A phase ends ok by default, failed when its body raises or is marked, and skipped when it says so."""
+    # Arrange: a reporter that collects events.
     collector = Collector()
 
+    # Act: report four phases, one failing by call, one skipped and one failing by exception.
     with use_reporter(collector):
         with phase("One"):
             pass
@@ -159,6 +161,7 @@ def test_phase_reports_start_end_status_and_elapsed_time() -> None:
             with phase("Four"):
                 raise RuntimeError("stop")
 
+    # Assert: each phase ends with the right status and a non-negative time.
     ends = [e for e in collector.events if isinstance(e, PhaseEnd)]
     assert [(e.phase, e.status) for e in ends] == [
         ("One", "ok"), ("Two", "failed"), ("Three", "skipped"), ("Four", "failed")
@@ -169,7 +172,9 @@ def test_phase_reports_start_end_status_and_elapsed_time() -> None:
 def test_a_failing_reporter_is_dropped_with_one_warning_and_the_others_continue() -> None:
     """A reporter that raises stops reporting, the rest still receive every event, and they are told once."""
     class Broken:
+        """Report nothing and fail on every event."""
         def handle(self, event) -> None:
+            """Fail like a full disk."""
             raise OSError("disk full")
 
     good = Collector()
@@ -204,20 +209,26 @@ def test_events_are_silently_dropped_without_a_reporter() -> None:
 
 def test_a_real_cli_run_writes_only_contract_records_to_its_event_file(cli_world: CliWorld) -> None:
     """A real install through the CLI leaves JSON Lines in which every record is a pinned event (or the log link) with a timestamp."""
+    # Arrange: a published package.
     cli_world.publish("example", "1.0.0")
 
+    # Act: install it with an events file.
     result = cli_world.cli("install", "example", "--events-file", "events.jsonl")
 
+    # Assert: the run and the package wrote the same kinds of record.
     assert result.code == 0, result.err
     run_events = (cli_world.user / ".gupkg" / "logs" / "events.jsonl").read_text(encoding="utf-8").splitlines()
     package_events = (cli_world.user / "example" / ".gupkg" / "logs" / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    # Every record is a contract record with a UTC time.
     wire_names = {event_to_dict(param.values[0])["event"] for param in CONTRACT} | {"log_link"}
     for line in run_events + package_events:
         record = json.loads(line)
         assert record["event"] in wire_names
         assert record["ts"].endswith("+00:00")
+    # The run starts and ends with its documented records.
     assert json.loads(run_events[0])["event"] == "run_start" and json.loads(run_events[0])["api"] == 2
     assert json.loads(run_events[-1])["event"] == "run_end" and json.loads(run_events[-1])["result"]["api"] == 2
+    # The log link names the package and its logs.
     [link] = [json.loads(line) for line in run_events if json.loads(line)["event"] == "log_link"]
     assert set(link) == {"event", "package", "log", "events", "events_file", "ts"}
     assert link["package"] == "example"

@@ -2,11 +2,11 @@
 
 Behaviour covered: an administrator on a system package writes and populates the version in the system root; a normal shell
 on a user package with ``--no-download`` writes only ``pkg.toml`` and the support files; the version directory is rendered from the tracker without any update-check code and with the pinned digest the
-tracker discovered; a download the checksum rules refuse leaves the version written without ``App`` (decision D46) and
+tracker discovered; a download the checksum rules refuse leaves the version written without ``App`` and
 ``update`` can then populate it; the tracker of a followed registry is copied in; a bundled install carries its gupkg forward.
 
 Real: the engine, the json tracker provider, the catalog and real folders. Mocked: ``FakeSystem`` (URL fixtures, elevation flag).
-Out of scope: the other providers (issue 026), the command line (issue 029).
+Out of scope: the other providers, the command line.
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ from tests.support.engine import BASE_URL, World
 
 pytestmark = pytest.mark.unit
 
+# Table that declares an environment variable pointing at ``App``.
 ENV_ONLY = '[[env]]\nname = "TOOL_HOME"\nvalue = "$App"\n'
 
 
@@ -66,6 +67,7 @@ def test_a_normal_shell_with_no_download_writes_only_the_manifest_and_support_fi
 
 def test_the_new_version_directory_is_pinned_and_carries_no_update_check_code(world: World) -> None:
     """The version is rendered from the tracker: concrete URL, discovered digest, no [track], no track hook, support files kept."""
+    # Arrange: an installed package whose tracker has update-check code, and a newer version at the vendor.
     installed(world)
     local = world.user / "tool" / "_check_updates" / "pkg.local"
     local.mkdir()
@@ -73,8 +75,10 @@ def test_the_new_version_directory_is_pinned_and_carries_no_update_check_code(wo
     (local / "helper.py").write_text("PKG_MODULE_API = 2\nVALUE = 1\n", encoding="utf-8")
     world.announce("tool", "1.1.0")
 
+    # Act: check for updates without downloading.
     result = world.one("check-updates", "tool", no_download=True)
 
+    # Assert: the new version is pinned and carries only the helper, not the update-check code.
     text = (world.user / "tool" / "1.1.0" / "pkg.toml").read_text()
     assert result.ok and "[track]" not in text and "${" not in text
     assert f'download_url = "{BASE_URL}/tool-1.1.0.zip"' in text and 'sha256_from = "vendor-sums"' in text
@@ -82,20 +86,24 @@ def test_the_new_version_directory_is_pinned_and_carries_no_update_check_code(wo
 
 
 def test_a_download_the_checksum_rules_refuse_leaves_the_version_without_app(world: World) -> None:
-    """With no digest and no --skip-checksum the directory stays written without App and the refusal is reported (D46); update can populate it with the flag."""
+    """With no digest and no --skip-checksum the directory stays written without App and the refusal is reported; update can populate it with the flag."""
+    # Arrange: an installed package whose tracker has no checksum source, and a newer version without a sidecar.
     world.publish("tool", "1.0.0", tables=ENV_ONLY)
     world.tracker("tool", tables=ENV_ONLY, checksum=False)
     assert world.one("install", "tool").ok
     world.announce("tool", "1.1.0", sidecar=False)
 
+    # Act: check for updates.
     result = world.one("check-updates", "tool")
 
+    # Assert: the checksum rules refuse the download and the version stays without ``App``.
     package = world.user / "tool"
     assert not result.ok and result.exit_code == 3 and result.version == "1.1.0"
     assert result.error["code"] == "checksum-missing" and result.error["skippable"] is True
     assert (package / "1.1.0" / "pkg.toml").is_file() and not (package / "1.1.0" / "App").exists()
     assert read_track_state(package)["refused"] == "checksum-missing"
 
+    # Update is refused the same way, and skipping the checksum allows it.
     refused = world.one("update", "tool")
     assert not refused.ok and refused.error["code"] == "checksum-missing" and not (package / "1.1.0" / "App").exists()
     allowed = world.one("update", "tool", skip=parse_skip_flag(""))
@@ -104,7 +112,7 @@ def test_a_download_the_checksum_rules_refuse_leaves_the_version_without_app(wor
 
 
 def test_check_updates_with_skip_checksum_populates_a_version_that_has_no_hash(world: World) -> None:
-    """With the flag the unhashed https download is populated and the receipt records the skip; without it D46 applies."""
+    """With the flag the unhashed https download is populated and the receipt records the skip; without it the checksum rules refuse the download."""
     world.publish("tool", "1.0.0", tables=ENV_ONLY)
     world.tracker("tool", tables=ENV_ONLY, checksum=False)
     world.one("install", "tool")
@@ -154,7 +162,7 @@ def test_the_registrys_tracker_is_copied_in_and_run(tmp_path: Path, world: World
 
 
 def test_a_bundled_install_carries_its_own_gupkg_into_the_new_version(world: World) -> None:
-    """In a root with no gupkg-location the package's bundled gupkg is copied into the new directory, next to launchers written fresh (decision D32)."""
+    """In a root with no gupkg-location the package's bundled gupkg is copied into the new directory, next to launchers written fresh."""
     installed(world)
     version = world.user / "tool" / "1.0.0"
     (version / "gupkg").mkdir()
@@ -197,22 +205,27 @@ def test_the_trackers_launcher_is_never_copied_into_a_version_directory(world: W
 
 def test_a_waived_optional_checksum_source_is_shown_returned_and_recorded(world: World) -> None:
     """`[source.checksum] optional = true` with nothing behind it: the version is written unpinned and the note reaches the events, the result and the receipt."""
+    # Arrange: an installed package whose tracker may waive its checksum source, and a newer version without one.
     world.publish("tool", "1.0.0", tables=ENV_ONLY)
     world.tracker("tool", tables="optional = true\n" + ENV_ONLY)
     assert world.one("install", "tool").ok
     world.announce("tool", "1.1.0", sidecar=False)
     seen: list[str] = []
 
+    # A reporter that keeps the warnings.
     class Collect:
         """Keep the warnings."""
 
         def handle(self, event: object) -> None:
+            """Keep the text of one warning."""
             if isinstance(event, Warning):
                 seen.append(event.text)
 
+    # Act: check for updates without downloading.
     with use_reporter(Collect()):
         result = world.one("check-updates", "tool", no_download=True)
 
+    # Assert: the waiver is shown, returned and recorded, and no App was written.
     text = (world.user / "tool" / "1.1.0" / "pkg.toml").read_text(encoding="utf-8")
     assert result.ok and result.version == "1.1.0" and "sha256" not in text and "[source.checksum]" not in text
     assert len(result.warnings) == 1 and "optional checksum source" in result.warnings[0] and result.details["notes"] == list(result.warnings)

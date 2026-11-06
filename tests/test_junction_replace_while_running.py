@@ -19,6 +19,7 @@ import pytest
 
 pytestmark = [pytest.mark.process, pytest.mark.skipif(os.name != "nt", reason="NTFS junctions")]
 
+# Directory that holds the importable gupkg source packages.
 _SRC = Path(__file__).resolve().parents[1] / "src"
 
 

@@ -38,6 +38,29 @@ class UiApp(App[int]):
     ----------
     env : UiEnvironment
         The client, the settings and the scope of the program; the title and the status line say which scope it manages.
+
+    Methods
+    -------
+    status_parts
+        Return the program's own pieces of the status line (counts, registry); the subclass overrides this.
+    status_line
+        Return the status line: the run's scope, the program's counts and registry, then where the latest log is.
+    refresh_status
+        Show the current hints and status on every screen of the stack.
+    help_lines
+        Return the lines of the help screen; the subclass overrides this.
+    action_help
+        Show the keys of the program.
+    action_ctrl_c
+        Ctrl-C never abandons a call that is running (decision D37): it asks the cancel question, or is ignored while a dialog is
+        open.
+    start_run
+        Push a run screen for *job* and return its outcome when the person leaves it (call from a worker).
+
+    Attributes
+    ----------
+    BINDINGS : list of Binding
+        The keys of the screen, as ``key`` (label): ``ctrl+c`` (Quit).
     """
 
     CSS = FRAME_CSS
@@ -54,7 +77,13 @@ class UiApp(App[int]):
     # -- the status line -----------------------------------------------------------
 
     def status_parts(self) -> list[str]:
-        """Return the program's own pieces of the status line (counts, registry); the subclass overrides this."""
+        """Return the program's own pieces of the status line (counts, registry); the subclass overrides this.
+
+        Returns
+        -------
+        list[str]
+            The pieces, in display order; empty in the base application.
+        """
         return []
 
     def status_line(self, own: str = "", *, own_first: bool = False) -> str:
@@ -64,6 +93,18 @@ class UiApp(App[int]):
         so it is visible at 80 columns; a narrow terminal then clips the tail (the registry state), never the scope. The window title (``sub_title``)
         carries the full root. *own* is what a screen adds about itself (the package view: the package and its status), right after the scope. The run view
         passes ``own_first=True``: the state of the run (``Synchronise the registry: Failed``) then comes before the scope, so a long root never pushes it out of an 80-column line.
+
+        Parameters
+        ----------
+        own : str
+            What the calling screen adds about itself; empty for none.
+        own_first : bool
+            Put *own* before the scope instead of after it.
+
+        Returns
+        -------
+        str
+            The pieces joined with `` · ``.
         """
         scope = literal(self.env.scope_text, limit=80)
         parts = [own, scope, *self.status_parts()] if own_first else [scope, own, *self.status_parts()]
@@ -81,7 +122,13 @@ class UiApp(App[int]):
     # -- help and running ----------------------------------------------------------
 
     def help_lines(self) -> list[str]:
-        """Return the lines of the help screen; the subclass overrides this."""
+        """Return the lines of the help screen; the subclass overrides this.
+
+        Returns
+        -------
+        list[str]
+            The help lines; empty in the base application.
+        """
         return []
 
     def action_help(self) -> None:
@@ -104,7 +151,20 @@ class UiApp(App[int]):
             busy[-1].action_leave()
 
     async def start_run(self, title: str, job: Job) -> BatchOutcome | None:
-        """Push a run screen for *job* and return its outcome when the person leaves it (call from a worker)."""
+        """Push a run screen for *job* and return its outcome when the person leaves it (call from a worker).
+
+        Parameters
+        ----------
+        title : str
+            The title shown on the run screen.
+        job : Job
+            The work to run, called with the run's session.
+
+        Returns
+        -------
+        BatchOutcome | None
+            The outcome of the run, or ``None`` when the screen was left without one.
+        """
         outcome = await self.push_screen_wait(RunScreen(self.env, title, job))
         self.refresh_status()
         return outcome

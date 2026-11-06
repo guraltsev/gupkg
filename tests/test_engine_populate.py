@@ -12,6 +12,7 @@ Out of scope: the lifecycle around it.
 
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 
@@ -21,7 +22,8 @@ from gupkg.engine.appbuild import AppBuildError, populate_version
 from gupkg.model.checksum import ChecksumMismatch
 from gupkg.model.manifest import parse_manifest
 from gupkg.report.events import PhaseStart, use_reporter
-from tests.support.engine import World
+from gupkg.system.fake import FakeHttp
+from tests.support.engine import World, pkg_text
 
 pytestmark = pytest.mark.unit
 
@@ -60,6 +62,38 @@ def test_a_cached_file_replaced_after_its_verification_stops_the_population(worl
     assert not (folder / "App").exists()
     work = folder.parent / ".gupkg" / "work"
     assert not work.exists() or list(work.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    ("final_url", "headers"),
+    [
+        pytest.param("https://cdn.example.net/asset/9853cec6", {"Content-Disposition": "attachment; filename=tool-1.0p.exe"}, id="named-by-the-server"),
+        pytest.param("https://cdn.example.net/files/tool-1.0p.exe", {}, id="named-by-the-final-address"),
+    ],
+)
+def test_a_plain_file_gets_the_name_it_is_served_under(world: World, final_url: str, headers: dict[str, str]) -> None:
+    """A redirected download keeps the name the server gives it, so a `[[prepare]]` rename of that name finds the file."""
+    # Arrange: a vendor that redirects a download to a file name that differs from the served one.
+    body = b"MZ a program"
+    url = "https://vendor.example/releases/download/tool-1.0p.exe"
+    world.fake.add_url(url, FakeHttp("", 302, {"Location": final_url}))
+    world.fake.add_url(final_url, FakeHttp(body, headers=headers))
+    # A manifest that pins the digest and renames the file after the download.
+    version_dir = world.user / "tool" / "1.0"
+    version_dir.mkdir(parents=True)
+    (version_dir / "pkg.toml").write_text(
+        pkg_text(
+            url, sha256=hashlib.sha256(body).hexdigest(), source='kind = "exe"',
+            tables='[[prepare]]\nrename = { from = "tool-1.0p.exe", to = "tool.exe" }\n',
+        ),
+        encoding="utf-8",
+    )
+
+    # Act: build the app.
+    build(world, version_dir)
+
+    # Assert: the file has the name the manifest gives it.
+    assert [item.name for item in (version_dir / "App").iterdir()] == ["tool.exe"]
 
 
 def test_an_elevated_run_refuses_a_seven_zip_in_an_untrusted_folder_before_any_download(tmp_path: Path) -> None:
@@ -106,12 +140,14 @@ def test_an_existing_app_is_replaced_only_on_request(world: World) -> None:
 
 def test_the_old_app_is_put_back_when_the_new_one_cannot_be_moved_into_place(world: World) -> None:
     """If the final rename fails the previous App is restored, the failure is reported and no scratch folder is left."""
+    # Arrange: a built app with a file of the previous version.
     folder = world.publish("tool", "1.0.0")
     build(world, folder)
     (folder / "App" / "keep.txt").write_text("previous", encoding="utf-8")
     real_replace = os.replace
     failed: list[bool] = []
 
+    # Let the old app be moved aside, then fail the move of the new one.
     def failing_replace(source, destination, *arguments, **options):
         """Let the old App be moved aside, then fail (once) the move of the new one to its final place."""
         if Path(destination) == folder / "App" and not failed:
@@ -119,11 +155,14 @@ def test_the_old_app_is_put_back_when_the_new_one_cannot_be_moved_into_place(wor
             raise PermissionError("locked")
         return real_replace(source, destination, *arguments, **options)
 
+    # Install the failing move.
     world.engine.replace = failing_replace
 
+    # Act: rebuild the app and replace the previous one.
     with pytest.raises(AppBuildError, match="cannot be moved into place"):
         build(world, folder, replace=True)
 
+    # Assert: the previous app is back and no work folder is left.
     assert (folder / "App" / "keep.txt").read_text() == "previous"
     work = folder.parent / ".gupkg" / "work"
     assert not work.exists() or list(work.iterdir()) == []
@@ -131,21 +170,26 @@ def test_the_old_app_is_put_back_when_the_new_one_cannot_be_moved_into_place(wor
 
 def test_when_the_old_app_cannot_be_put_back_it_is_kept_and_named(world: World) -> None:
     """If even the restore fails, the previous App is not deleted: it stays in the work folder and the error says where."""
+    # Arrange: a built app with a file of the previous version.
     folder = world.publish("tool", "1.0.0")
     build(world, folder)
     (folder / "App" / "keep.txt").write_text("previous", encoding="utf-8")
     real_replace = os.replace
 
+    # Fail every move to the final app folder.
     def failing_replace(source, destination, *arguments, **options):
         """Fail every move that targets the final App folder."""
         if Path(destination) == folder / "App":
             raise PermissionError("locked")
         return real_replace(source, destination, *arguments, **options)
 
+    # Install the failing move.
     world.engine.replace = failing_replace
 
+    # Act: rebuild the app and replace the previous one.
     with pytest.raises(AppBuildError, match="previous App is kept in"):
         build(world, folder, replace=True)
 
+    # Assert: the previous app is kept in the work folder and named.
     kept = list((folder.parent / ".gupkg" / "work").glob("old-App-*"))
     assert len(kept) == 1 and (kept[0] / "keep.txt").read_text() == "previous"

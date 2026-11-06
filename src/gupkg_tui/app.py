@@ -18,6 +18,7 @@ from gupkg_ui.app import UiApp
 from gupkg_ui.screens.package import PackageScreen
 from gupkg_ui.startup import UiEnvironment
 
+# Help text shown by the ``?`` key, one line per entry.
 HELP = [
     "Package view",
     "  c checks the package for updates (writes and populates new versions, activates nothing); u updates it (one plan, one confirmation).",
@@ -30,7 +31,22 @@ HELP = [
 
 
 class TuiApp(UiApp):
-    """The single-package application of ``gupkg-tui``."""
+    """The single-package application of ``gupkg-tui``.
+
+    Parameters
+    ----------
+    env : UiEnvironment
+        The client, the settings and the scope of the program.
+    target : str
+        The package name or folder to show.
+
+    Methods
+    -------
+    on_mount
+        Open the package view.
+    help_lines
+        Return the help text.
+    """
 
     TITLE = "gupkg-tui"
 
@@ -43,5 +59,11 @@ class TuiApp(UiApp):
         self.push_screen(PackageScreen(self._target, root=True))
 
     def help_lines(self) -> list[str]:
-        """Return the help text."""
+        """Return the help text.
+
+        Returns
+        -------
+        list of str
+            The lines of the help screen.
+        """
         return HELP

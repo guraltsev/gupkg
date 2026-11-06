@@ -20,9 +20,12 @@ from pathlib import Path
 from typing import Any
 
 
+# Version of the update-check module interface that this script implements.
 PKG_MODULE_API = 1
 
+# Installer file name pattern or the stable name it is renamed to.
 _PATTERN = "lockhuntersetup_portable_*.exe"
+# Installer file name pattern or the stable name it is renamed to.
 _STABLE_NAME = "LockHunter.exe"
 
 

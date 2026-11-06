@@ -1,14 +1,14 @@
 """Cover the manager's missing-checksum policy: reading the setting, deciding each target, relaying the flag.
 
-Behaviour covered: `[manager] checksum_missing` read with its default, ignored when it comes from a
+Behaviour covered: `[manager] checksum_missing` loaded with its default, ignored when it comes from a
 user layer in an elevated run, and fail-closed for any odd value; the matrix of `ask`, `refuse` and
 `skip` against interactive and non-interactive runs and against hash present, missing over https and
 missing over http; one question per package and a *Cancel* that lets the batch continue; the exact
 `--skip-checksum=<reason>` argument; and that the argument survives a real subprocess boundary and is
-read back by the CLI's own flag parser.
+parsed back by the CLI's own flag parser.
 
 Real: the pure ``gupkg.model.manager_policy``, the settings merge, and a child process (a stand-in
-`gupkg` script that records its argv). Mocked: the manager program itself does not exist yet (issue 030),
+`gupkg` script that records its argv). Mocked: the manager program itself does not exist yet,
 so these tests drive the policy functions it will call. Out of scope: the UI and the real CLI.
 """
 
@@ -43,10 +43,15 @@ from gupkg.model.settings import (
 
 pytestmark = pytest.mark.unit
 
+# Download address shared by the checksum-plan cases.
 HTTPS = "https://example.org/tool.zip"
+# Plan for an address whose checksum is declared in the package file.
 PRESENT = plan_checksum(HTTPS, "ab" * 32, url_from="pkg.toml")
+# Plan for an HTTPS address whose checksum is missing.
 MISSING_HTTPS = plan_checksum(HTTPS, None, url_from="tracker")
+# Plan for a plain HTTP address whose checksum is missing.
 MISSING_HTTP = plan_checksum("http://example.org/tool.zip", None, url_from="tracker")
+# Plan for a declared checksum that is not a valid digest.
 INVALID = plan_checksum(HTTPS, "not-a-digest", url_from="pkg.toml")
 
 
@@ -77,6 +82,7 @@ def test_an_unknown_policy_value_is_a_refusal_for_a_target() -> None:
     assert decision.run is False and decision.message.startswith(REFUSED_NO_CHECKSUM)
 
 
+# Table of policy cases, one row per combination under test.
 MATRIX = [
     pytest.param("skip", True, None, PRESENT, True, (), id="skip-interactive-hash-present"),
     pytest.param("skip", True, None, MISSING_HTTPS, True, ("--skip-checksum=setting",), id="skip-interactive-missing-https"),
@@ -100,6 +106,7 @@ def test_the_manager_policy_matrix(
     """Each policy, with and without someone to answer, runs the target with the right relayed flag or not at all."""
     asked: list[ChecksumPlan] = []
 
+    # A scripted answerer records every question it is asked.
     def ask(entry: ChecksumPlan) -> bool:
         """Record the question and give the scripted answer."""
         asked.append(entry)
@@ -107,6 +114,7 @@ def test_the_manager_policy_matrix(
 
     decision = decide_target(plan, policy, interactive=interactive, ask=ask)
 
+    # Check the decision against the expectation for this policy and run mode.
     assert decision.run is runs and decision.arguments == arguments
     expect_question = policy == "ask" and interactive and plan is MISSING_HTTPS
     assert len(asked) == (1 if expect_question else 0)
@@ -142,13 +150,16 @@ def test_a_batch_asks_once_per_package_and_cancel_lets_the_next_package_run() ->
     plans = {"present": PRESENT, "cancelled": MISSING_HTTPS, "approved": plan_checksum(HTTPS + "2", None, url_from="registry main")}
     questions: list[str] = []
 
+    # A scripted answerer that approves only one package.
     def ask(name: str, plan: ChecksumPlan) -> bool:
         """Answer yes only for the package named approved."""
         questions.append(name)
         return name == "approved"
 
+    # Act: decide the targets of the whole batch.
     decisions = decide_targets(plans, "ask", interactive=True, ask=ask)
 
+    # Check who was asked and what each package decided.
     assert questions == ["cancelled", "approved"]
     assert [(name, d.run, d.status) for name, d in decisions.items()] == [
         ("present", True, "run"), ("cancelled", False, "cancelled"), ("approved", True, "run"),
@@ -198,6 +209,7 @@ def test_a_target_that_is_not_run_has_no_command_line() -> None:
         command_line(["gupkg", "update", "x"], decide_target(MISSING_HTTP, "skip", interactive=False))
 
 
+# Stand-in launcher script that records how it was started.
 FAKE_GUPKG = """\
 import json, sys
 with open(sys.argv[1], "a", encoding="utf-8") as record:

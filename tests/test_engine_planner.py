@@ -25,10 +25,12 @@ from tests.support.mode import tree_snapshot
 
 pytestmark = pytest.mark.unit
 
+# Tables that declare a shortcut, a shim and an environment variable.
 TABLES = (
     '[[shortcut]]\nname = "Tool"\ntarget = "$App\\\\app.exe"\n\n[[shim]]\nname = "tool"\ntarget = "$App\\\\app.exe"\n\n'
     '[[env]]\nname = "TOOL_HOME"\nvalue = "$App"\n'
 )
+# Table that declares an environment variable pointing at ``App``.
 ENV = '[[env]]\nname = "TOOL_HOME"\nvalue = "$App"\n'
 
 
@@ -107,7 +109,7 @@ def test_installing_an_installed_populated_package_skips_fetch_and_activate(worl
 
 
 def test_an_install_plan_never_contains_a_tracker_step(world: World) -> None:
-    """No phase and no step of an install or update plan runs a tracker (decision D11)."""
+    """No phase and no step of an install or update plan runs a tracker."""
     world.publish("tool", "1.0.0", tables=ENV)
     world.tracker("tool")
     world.one("install", "tool")
@@ -160,17 +162,21 @@ def test_the_uninstall_plan_lists_every_recorded_effect_and_what_purge_destroys(
 
 def test_the_cleanup_plan_keeps_shipped_apps_updates_that_are_ready_and_the_newest_previous(world: World) -> None:
     """Shipped, newer-than-current and the newest `--keep` older Apps stay; the others are dropped."""
+    # Arrange: an installed package, three updates, a downloaded newer version and an older shipped one.
     world.publish("tool", "1.0.0", tables=ENV)
     world.one("install", "tool")
     for version in ("1.1.0", "1.2.0", "1.3.0"):
         world.publish("tool", version, tables=ENV)
         world.one("update", "tool")
+    # A newer version that is prepared but not yet current.
     world.publish("tool", "2.0.0", tables=ENV)
     world.one("update", "tool", download_only=True)
     world.publish_shipped("tool", "0.9.0", tables=ENV)
 
+    # Act: plan the cleanup.
     plan = planned(world, "cleanup", "tool").extra["cleanup"]
 
+    # Assert: the oldest apps are dropped, and the others are kept for the stated reasons.
     kept = {item["version"]: item["why"] for item in plan["kept_apps"]}
     assert sorted(plan["drop_apps"]) == ["1.0.0", "1.1.0"]
     assert kept["1.3.0"] == "current" and kept["2.0.0"].startswith("newer than current") and "shipped" in kept["0.9.0"]

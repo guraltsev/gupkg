@@ -23,7 +23,7 @@ resolved ``git.exe`` found on ``PATH``) and the bundled 7-Zip (the exact path
 Implementation Approach
 -----------------------
 Every registry read, write and delete is appended to ``registry_log`` in order,
-so a behavior test can assert that an install read nothing but ``PATH`` (D18,
+so a behavior test can assert that an install touched nothing but ``PATH`` (D18,
 D38). Anything the fixtures do not cover raises ``UnexpectedCall`` (an
 ``OSError``), so a test that forgets a fixture fails loudly instead of reaching
 the machine.
@@ -61,17 +61,6 @@ from .port import (
 from .windows import WindowsLinks, WindowsSystem
 
 
-def _find_on_path(name: str) -> Path | None:
-    """Return the executable *name* on ``PATH`` (never the working directory), fully resolved."""
-    for entry in os.environ.get("PATH", "").split(os.pathsep):
-        folder = entry.strip().strip('"')
-        for candidate in (name + ".exe", name):
-            path = Path(folder) / candidate if folder else None
-            if path is not None and path.is_file():
-                return Path(os.path.realpath(path))
-    return None
-
-
 class UnexpectedCall(OSError):
     """Report a URL, process or action that the fake was not set up to serve."""
 
@@ -82,7 +71,19 @@ class UnexpectedProcess(UnexpectedCall, ProcessNotAllowed):
 
 @dataclass(frozen=True)
 class RegistryAccess:
-    """Record one registry read, write or delete made through a ``FakeSystem``."""
+    """Record one registry read, write or delete made through a ``FakeSystem``.
+
+    Attributes
+    ----------
+    operation : str
+        ``read``, ``write`` or ``delete``.
+    scope : str
+        The scope whose environment was touched.
+    name : str
+        The value name.
+    value : str or None
+        The value written; ``None`` for a read or delete.
+    """
 
     operation: str
     scope: str
@@ -92,7 +93,15 @@ class RegistryAccess:
 
 @dataclass(frozen=True)
 class FakeResponse:
-    """Serve a URL fixture whose size the server may or may not announce."""
+    """Serve a URL fixture whose size the server may or may not announce.
+
+    Attributes
+    ----------
+    body : bytes
+        The body served.
+    report_size : bool
+        Whether the server announces the size.
+    """
 
     body: bytes
     report_size: bool = True
@@ -107,6 +116,21 @@ class FakeHttp:
     ``fail_after`` makes ``http_download`` drop the connection (``OSError``) after that
     many body bytes, leaving the partial file behind. With ``report_size`` false the server
     does not announce the size, so ``http_download`` reports progress with an unknown total.
+
+    Attributes
+    ----------
+    body : bytes or str
+        The body served.
+    status : int
+        The HTTP status.
+    headers : mapping of str to str
+        The response headers.
+    ranges : bool
+        Whether ``Range`` requests are honoured.
+    fail_after : int or None
+        Body bytes after which a download drops the connection.
+    report_size : bool
+        Whether the server announces the size.
     """
 
     body: bytes | str = b""
@@ -119,7 +143,23 @@ class FakeHttp:
 
 @dataclass(frozen=True)
 class RecordedRequest:
-    """Record one ``http_request`` or ``http_download`` call made to a ``FakeSystem``."""
+    """Record one ``http_request`` or ``http_download`` call made to a ``FakeSystem``.
+
+    Attributes
+    ----------
+    method : str
+        The HTTP method.
+    url : str
+        The requested URL.
+    headers : mapping of str to str
+        The request headers.
+    timeout : float
+        The per-request timeout.
+    max_bytes : int or None
+        The largest body accepted.
+    total_timeout : float or None
+        The deadline for the whole call.
+    """
 
     method: str
     url: str
@@ -131,7 +171,19 @@ class RecordedRequest:
 
 @dataclass(frozen=True)
 class ProcessCall:
-    """Describe one child-process request handed to a process double."""
+    """Describe one child-process request handed to a process double.
+
+    Attributes
+    ----------
+    argv : tuple of str
+        The command line.
+    cwd : Path or None
+        The working directory.
+    env : mapping or None
+        The environment.
+    input_text : str or None
+        The text sent on standard input.
+    """
 
     argv: tuple[str, ...]
     cwd: Path | None
@@ -172,6 +224,69 @@ class FakeSystem(WindowsLinks):
     failures : dict, optional
         Method name to an exception that the next call of that method raises
         (once), to exercise failure paths.
+
+    Methods
+    -------
+    sandbox
+        Open (or start) the sandbox kept in *directory*, with network and processes real.
+    env_values
+        Return the stored environment values of *scope* by name, without logging an access.
+    shortcuts
+        Return every recorded shortcut by the path it was written to.
+    add_url
+        Serve *content* (see the ``urls`` parameter) at *url*.
+    allow_real
+        Let the named programs run for real, for example ``git`` against a local fixture repository.
+    create_junction
+        Create a real junction; see :meth:`WindowsLinks.create_junction`.
+    get_env
+        Return one stored value (logged as a registry read).
+    set_env
+        Store one value (logged as a registry write).
+    delete_env
+        Remove one value (logged as a registry delete).
+    get_path
+        Return the non-empty ``PATH`` entries (logged as one registry read of ``Path``).
+    set_path
+        Store *entries* as the expandable ``Path`` (logged as one registry write).
+    broadcast_environment_change
+        Count one broadcast instead of sending it.
+    write_shortcut
+        Record the shortcut as a ``.lnk.json`` file in place of a real ``.lnk``.
+    read_shortcut
+        Return the recorded fields; a missing record raises ``FileNotFoundError``.
+    delete_shortcut
+        Delete the record; an absent record is not an error.
+    is_elevated
+        Report the configured elevation flag.
+    scratch_directory
+        Create a private folder below the fake's own root (never the real temporary folder), yield it, delete it on exit.
+    process_id
+        Return the configured process id (the real one by default).
+    process_is_running
+        Report whether *pid* is this fake process or one of ``live_pids``; a sandbox asks the real system.
+    directory_is_admin_only
+        Report whether *path* lies outside every directory listed as untrusted.
+    directory_untrusted_reason
+        Explain why *path* is untrusted, or ``None`` when it is admin-only.
+    scope_folders
+        Return fake Start Menu and ``bin`` folders below the root.
+    run
+        Run a registered double or a real 7-Zip; any other program raises ``UnexpectedCall``.
+    run_foreground
+        Record the request and answer it with a registered double's status; any other program raises ``UnexpectedProcess``.
+    open_path
+        Record the request (nothing is opened); a path that does not exist raises ``FileNotFoundError`` like the real call.
+    regex_worker
+        Run the regex worker for real (it only computes), unless a ``regex-worker`` double is registered.
+    fetch
+        Write the fixture for *url* to *dest*, reporting progress in 64 KiB chunks.
+    fetch_text
+        Return the fixture for *url* decoded as UTF-8.
+    http_request
+        Answer from the fixture for *url* (a ``HEAD`` gets no body); no redirect is followed.
+    http_download
+        Write the fixture for *url* to *dest*, honouring ``Range`` when the fixture allows it.
     """
 
     root: Path
@@ -212,6 +327,18 @@ class FakeSystem(WindowsLinks):
 
         State persists in ``directory/system.json``; machine integration
         (environment, shortcuts, elevation) stays fake.
+
+        Parameters
+        ----------
+        directory : Path
+            Folder that holds the sandbox state and files.
+        delegate : System
+            Real system that serves network and process calls with no fixture.
+
+        Returns
+        -------
+        FakeSystem
+            The sandbox system, with ``git`` allowed to run for real.
         """
         directory = Path(directory)
         sandbox = cls(directory, delegate=delegate, state_file=directory / "system.json")
@@ -224,11 +351,28 @@ class FakeSystem(WindowsLinks):
     # -- inspection helpers for tests ---------------------------------------
 
     def env_values(self, scope: Mode) -> dict[str, EnvValue]:
-        """Return the stored environment values of *scope* by name, without logging an access."""
+        """Return the stored environment values of *scope* by name, without logging an access.
+
+        Parameters
+        ----------
+        scope : Mode
+            Whether the user or the machine store is used.
+
+        Returns
+        -------
+        dict[str, EnvValue]
+            Stored values keyed by their original name.
+        """
         return {name: value for name, value in self._env[scope.value].values()}
 
     def shortcuts(self) -> dict[Path, ShortcutSpec]:
-        """Return every recorded shortcut by the path it was written to."""
+        """Return every recorded shortcut by the path it was written to.
+
+        Returns
+        -------
+        dict[Path, ShortcutSpec]
+            Recorded shortcuts keyed by the path they were written to.
+        """
         found: dict[Path, ShortcutSpec] = {}
         for record in sorted(self.root.rglob("*.lnk.json")):
             data = json.loads(record.read_text(encoding="utf-8"))
@@ -236,7 +380,15 @@ class FakeSystem(WindowsLinks):
         return found
 
     def add_url(self, url: str, content: Any) -> None:
-        """Serve *content* (see the ``urls`` parameter) at *url*."""
+        """Serve *content* (see the ``urls`` parameter) at *url*.
+
+        Parameters
+        ----------
+        url : str
+            Address to serve.
+        content : Any
+            Fixture served at *url*.
+        """
         self.urls[url] = content
 
     def allow_real(self, *programs: str) -> None:
@@ -245,6 +397,11 @@ class FakeSystem(WindowsLinks):
         Each name is resolved once, on ``PATH`` and never in the working
         directory, to one executable file. Afterwards only that identity runs: a
         bare name, or exactly that path. A name that is not found is not allowed.
+
+        Parameters
+        ----------
+        programs : str
+            Program names to resolve and allow.
         """
         for program in programs:
             found = _find_on_path(program)
@@ -254,42 +411,102 @@ class FakeSystem(WindowsLinks):
     # -- links: real links below the temporary root (inherited) --------------
 
     def create_junction(self, link: Path, target: Path) -> None:
-        """Create a real junction; see :meth:`WindowsLinks.create_junction`."""
+        """Create a real junction; see :meth:`WindowsLinks.create_junction`.
+
+        Parameters
+        ----------
+        link : Path
+            Junction to create or replace.
+        target : Path
+            Existing directory it points to.
+        """
         self._maybe_fail("create_junction")
         super().create_junction(link, target)
 
     # -- environment ---------------------------------------------------------
 
     def get_env(self, scope: Mode, name: str) -> EnvValue | None:
-        """Return one stored value (logged as a registry read)."""
+        """Return one stored value (logged as a registry read).
+
+        Parameters
+        ----------
+        scope : Mode
+            Whether the user or the machine store is used.
+        name : str
+            Variable name (case-insensitive).
+
+        Returns
+        -------
+        EnvValue or None
+            The stored value, or ``None``.
+        """
         self._maybe_fail("get_env")
         self._log("read", scope, name)
         entry = self._env[self._scope_key(scope)].get(name.casefold())
         return entry[1] if entry else None
 
     def set_env(self, scope: Mode, name: str, value: str, expandable: bool) -> None:
-        """Store one value (logged as a registry write)."""
+        """Store one value (logged as a registry write).
+
+        Parameters
+        ----------
+        scope : Mode
+            Whether the user or the machine store is used.
+        name : str
+            Variable name.
+        value : str
+            Value to store.
+        expandable : bool
+            Whether the value expands ``%VAR%`` references.
+        """
         self._maybe_fail("set_env")
         self._log("write", scope, name, value)
         self._env[self._scope_key(scope)][name.casefold()] = (name, EnvValue(value, expandable))
         self._save()
 
     def delete_env(self, scope: Mode, name: str) -> None:
-        """Remove one value (logged as a registry delete)."""
+        """Remove one value (logged as a registry delete).
+
+        Parameters
+        ----------
+        scope : Mode
+            Whether the user or the machine store is used.
+        name : str
+            Variable name.
+        """
         self._maybe_fail("delete_env")
         self._log("delete", scope, name)
         self._env[self._scope_key(scope)].pop(name.casefold(), None)
         self._save()
 
     def get_path(self, scope: Mode) -> list[str]:
-        """Return the non-empty ``PATH`` entries (logged as one registry read of ``Path``)."""
+        """Return the non-empty ``PATH`` entries (logged as one registry read of ``Path``).
+
+        Parameters
+        ----------
+        scope : Mode
+            Whether the user or the machine store is used.
+
+        Returns
+        -------
+        list[str]
+            The stored ``PATH`` entries.
+        """
         stored = self.get_env(scope, "Path")
         if stored is None:
             return []
         return [item.strip() for item in stored.value.split(";") if item.strip()]
 
     def set_path(self, scope: Mode, entries: Sequence[str]) -> None:
-        """Store *entries* as the expandable ``Path`` (logged as one registry write)."""
+        """Store *entries* as the expandable ``Path`` (logged as one registry write).
+
+        Parameters
+        ----------
+        scope : Mode
+            Whether the user or the machine store is used.
+        entries : Sequence[str]
+            Folders to store, in order.
+        """
         self._maybe_fail("set_path")
         self.set_env(scope, "Path", ";".join(entries), True)
 
@@ -302,7 +519,15 @@ class FakeSystem(WindowsLinks):
     # -- shortcuts -----------------------------------------------------------
 
     def write_shortcut(self, path: Path, spec: ShortcutSpec) -> None:
-        """Record the shortcut as a ``.lnk.json`` file in place of a real ``.lnk``."""
+        """Record the shortcut as a ``.lnk.json`` file in place of a real ``.lnk``.
+
+        Parameters
+        ----------
+        path : Path
+            Location the shortcut stands for.
+        spec : ShortcutSpec
+            Fields to record.
+        """
         self._maybe_fail("write_shortcut")
         record = self._shortcut_record(Path(path))
         record.parent.mkdir(parents=True, exist_ok=True)
@@ -310,25 +535,59 @@ class FakeSystem(WindowsLinks):
         record.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
     def read_shortcut(self, path: Path) -> ShortcutSpec:
-        """Return the recorded fields; a missing record raises ``FileNotFoundError``."""
+        """Return the recorded fields; a missing record raises ``FileNotFoundError``.
+
+        Parameters
+        ----------
+        path : Path
+            Location the shortcut stands for.
+
+        Returns
+        -------
+        ShortcutSpec
+            The recorded fields.
+
+        Raises
+        ------
+        FileNotFoundError
+            When no record exists for *path*.
+        """
         record = self._shortcut_record(Path(path))
         if not record.is_file():
             raise FileNotFoundError(f"No shortcut recorded at {path}")
         return ShortcutSpec(**json.loads(record.read_text(encoding="utf-8"))["spec"])
 
     def delete_shortcut(self, path: Path) -> None:
-        """Delete the record; an absent record is not an error."""
+        """Delete the record; an absent record is not an error.
+
+        Parameters
+        ----------
+        path : Path
+            Location the shortcut stands for.
+        """
         self._shortcut_record(Path(path)).unlink(missing_ok=True)
 
     # -- privilege and locations ----------------------------------------------
 
     def is_elevated(self) -> bool:
-        """Report the configured elevation flag."""
+        """Report the configured elevation flag.
+
+        Returns
+        -------
+        bool
+            The configured elevation flag.
+        """
         return self.elevated
 
     @contextmanager
     def scratch_directory(self, prefix: str) -> Iterator[Path]:
-        """Create a private folder below the fake's own root (never the real temporary folder), yield it, delete it on exit."""
+        """Create a private folder below the fake's own root (never the real temporary folder), yield it, delete it on exit.
+
+        Parameters
+        ----------
+        prefix : str
+            Prefix of the folder name.
+        """
         self._maybe_fail("scratch_directory")
         folder = self.root / "scratch" / f"{prefix}{uuid.uuid4().hex[:12]}"
         folder.mkdir(parents=True)
@@ -338,21 +597,60 @@ class FakeSystem(WindowsLinks):
             shutil.rmtree(folder, ignore_errors=True)
 
     def process_id(self) -> int:
-        """Return the configured process id (the real one by default)."""
+        """Return the configured process id (the real one by default).
+
+        Returns
+        -------
+        int
+            The configured process id.
+        """
         return self.pid
 
     def process_is_running(self, pid: int) -> bool:
-        """Report whether *pid* is this fake process or one of ``live_pids``; a sandbox asks the real system."""
+        """Report whether *pid* is this fake process or one of ``live_pids``; a sandbox asks the real system.
+
+        Parameters
+        ----------
+        pid : int
+            Process id to look up.
+
+        Returns
+        -------
+        bool
+            True when *pid* is known to run.
+        """
         if pid == self.pid or pid in self.live_pids:
             return True
         return self.delegate.process_is_running(pid) if self.delegate is not None else False
 
     def directory_is_admin_only(self, path: Path) -> bool:
-        """Report whether *path* lies outside every directory listed as untrusted."""
+        """Report whether *path* lies outside every directory listed as untrusted.
+
+        Parameters
+        ----------
+        path : Path
+            Directory to judge.
+
+        Returns
+        -------
+        bool
+            True when *path* is not under an untrusted directory.
+        """
         return self.directory_untrusted_reason(path) is None
 
     def directory_untrusted_reason(self, path: Path) -> str | None:
-        """Explain why *path* is untrusted, or ``None`` when it is admin-only."""
+        """Explain why *path* is untrusted, or ``None`` when it is admin-only.
+
+        Parameters
+        ----------
+        path : Path
+            Directory to judge.
+
+        Returns
+        -------
+        str or None
+            The reason, or ``None`` when admin-only.
+        """
         candidate = Path(os.path.abspath(path))
         for untrusted in self.untrusted_dirs:
             if candidate == untrusted or untrusted in candidate.parents:
@@ -360,7 +658,18 @@ class FakeSystem(WindowsLinks):
         return None
 
     def scope_folders(self, scope: Mode) -> ScopeFolders:
-        """Return fake Start Menu and ``bin`` folders below the root."""
+        """Return fake Start Menu and ``bin`` folders below the root.
+
+        Parameters
+        ----------
+        scope : Mode
+            Whether the user or the machine store is used.
+
+        Returns
+        -------
+        ScopeFolders
+            Fake shortcut root and ``bin`` folder.
+        """
         key = self._scope_key(scope)
         return ScopeFolders(self.root / "StartMenu" / key / "opt", self.root / "bin" / key)
 
@@ -377,7 +686,37 @@ class FakeSystem(WindowsLinks):
         timeout: float | None = None,
         watch: Callable[[], str | None] | None = None,
     ) -> ProcessResult:
-        """Run a registered double or a real 7-Zip; any other program raises ``UnexpectedCall``."""
+        """Run a registered double or a real 7-Zip; any other program raises ``UnexpectedCall``.
+
+        Parameters
+        ----------
+        argv : Sequence[str]
+            Program and arguments.
+        cwd : Path or None
+            Working directory handed to the double.
+        env : Mapping[str, str] or None
+            Environment handed to the double.
+        on_line : Callable or None
+            Receiver of each output line.
+        input_text : str or None
+            Text handed to the double as standard input.
+        timeout : float or None
+            Passed on when the program runs for real.
+        watch : Callable or None
+            Abort check, asked once after a double finishes.
+
+        Returns
+        -------
+        ProcessResult
+            The double's or the real program's result.
+
+        Raises
+        ------
+        ProcessAborted
+            When *watch* returns text.
+        UnexpectedProcess
+            When the program has no double and is not an allowed real identity.
+        """
         self._maybe_fail("run")
         command = [str(part) for part in argv]
         self.process_log.append(command)
@@ -406,7 +745,27 @@ class FakeSystem(WindowsLinks):
         raise UnexpectedProcess(f"FakeSystem has no process double for {command[0]!r}: {command}")
 
     def run_foreground(self, argv: Sequence[str], cwd: Path | None = None, env: Mapping[str, str] | None = None) -> int:
-        """Record the request and answer it with a registered double's status; any other program raises ``UnexpectedProcess``."""
+        """Record the request and answer it with a registered double's status; any other program raises ``UnexpectedProcess``.
+
+        Parameters
+        ----------
+        argv : Sequence[str]
+            Program and arguments.
+        cwd : Path or None
+            Working directory handed to the double.
+        env : Mapping[str, str] or None
+            Environment handed to the double.
+
+        Returns
+        -------
+        int
+            The exit status the double returns.
+
+        Raises
+        ------
+        UnexpectedProcess
+            When the program has no registered double.
+        """
         self._maybe_fail("run_foreground")
         command = [str(part) for part in argv]
         self.foreground_log.append(command)
@@ -417,7 +776,18 @@ class FakeSystem(WindowsLinks):
         return double(ProcessCall(tuple(command), cwd, env, None)).returncode
 
     def open_path(self, path: Path) -> None:
-        """Record the request (nothing is opened); a path that does not exist raises ``FileNotFoundError`` like the real call."""
+        """Record the request (nothing is opened); a path that does not exist raises ``FileNotFoundError`` like the real call.
+
+        Parameters
+        ----------
+        path : Path
+            File or folder that would be opened.
+
+        Raises
+        ------
+        FileNotFoundError
+            When *path* does not exist.
+        """
         self._maybe_fail("open_path")
         if not Path(path).exists():
             raise FileNotFoundError(f"{path} does not exist")
@@ -435,6 +805,20 @@ class FakeSystem(WindowsLinks):
         A double receives the request as ``input_text`` and returns the :class:`ProcessResult`
         to use, so a test can simulate a crashed, garbled or oversized worker; a double that
         raises ``TimeoutError`` simulates a deadline. Every request is kept in ``regex_log``.
+
+        Parameters
+        ----------
+        request : str
+            Request text for the worker.
+        timeout : float
+            Seconds the real worker may run.
+        on_line : Callable or None
+            Receiver of each worker output line.
+
+        Returns
+        -------
+        ProcessResult
+            The double's or the real worker's result.
         """
         self._maybe_fail("regex_worker")
         self.regex_log.append(request)
@@ -454,17 +838,40 @@ class FakeSystem(WindowsLinks):
         *,
         timeout: float = 60,
     ) -> int:
-        """Write the fixture for *url* to *dest*, reporting progress in 64 KiB chunks."""
+        """Write the fixture for *url* to *dest*, reporting progress in 64 KiB chunks.
+
+        Parameters
+        ----------
+        url : str
+            Address to download.
+        headers : Mapping[str, str] or None
+            Request headers passed to a function fixture.
+        dest : Path
+            File to write.
+        on_progress : Callable or None
+            Progress receiver.
+        timeout : float
+            Passed to the delegate when one serves the URL.
+
+        Returns
+        -------
+        int
+            Number of bytes written.
+        """
         self._maybe_fail("fetch")
+
+        # A URL with no fixture goes to the delegate when there is one.
         if url not in self.urls:
             if self.delegate is not None:
                 self.fetch_log.append(url)
                 return self.delegate.fetch(url, headers, dest, on_progress, timeout=timeout)
+        # Announce the size, then write the body in chunks, reporting progress after each.
         body, report_size = self._served(url, headers)
         total = len(body) if report_size else None
         if on_progress is not None:
             on_progress(0, total)
         received = 0
+        # Write the body to the destination one 64 KiB chunk at a time.
         with open(dest, "wb") as handle:
             for start in range(0, len(body), 64 * 1024):
                 chunk = body[start : start + 64 * 1024]
@@ -477,7 +884,22 @@ class FakeSystem(WindowsLinks):
     def fetch_text(
         self, url: str, headers: Mapping[str, str] | None = None, *, timeout: float = 60
     ) -> str:
-        """Return the fixture for *url* decoded as UTF-8."""
+        """Return the fixture for *url* decoded as UTF-8.
+
+        Parameters
+        ----------
+        url : str
+            Address to read.
+        headers : Mapping[str, str] or None
+            Request headers passed to a function fixture.
+        timeout : float
+            Passed to the delegate when one serves the URL.
+
+        Returns
+        -------
+        str
+            The decoded fixture body.
+        """
         self._maybe_fail("fetch_text")
         if url not in self.urls and self.delegate is not None:
             self.fetch_log.append(url)
@@ -494,7 +916,33 @@ class FakeSystem(WindowsLinks):
         max_bytes: int | None = None,
         total_timeout: float | None = None,
     ) -> HttpResponse:
-        """Answer from the fixture for *url* (a ``HEAD`` gets no body); no redirect is followed."""
+        """Answer from the fixture for *url* (a ``HEAD`` gets no body); no redirect is followed.
+
+        Parameters
+        ----------
+        url : str
+            Address to request.
+        headers : Mapping[str, str] or None
+            Request headers.
+        method : str
+            HTTP method; ``HEAD`` gets no body.
+        timeout : float
+            Recorded in the request log.
+        max_bytes : int or None
+            Largest body to return.
+        total_timeout : float or None
+            Recorded in the request log.
+
+        Returns
+        -------
+        HttpResponse
+            Status, lower-case headers and body of the fixture.
+
+        Raises
+        ------
+        ResponseTooLarge
+            When the body is longer than *max_bytes*.
+        """
         self._maybe_fail("http_request")
         self.request_log.append(RecordedRequest(method, url, dict(headers or {}), timeout, max_bytes, total_timeout))
         if url not in self.urls and self.delegate is not None:
@@ -502,10 +950,12 @@ class FakeSystem(WindowsLinks):
             return self.delegate.http_request(
                 url, headers, method=method, timeout=timeout, max_bytes=max_bytes, total_timeout=total_timeout
             )
+        # Serve the fixture, enforcing the body limit the way the real client does.
         fixture = self._http_fixture(url, headers)
         body = fixture.body if isinstance(fixture.body, bytes) else fixture.body.encode("utf-8")
         if max_bytes is not None and len(body) > max_bytes and method != "HEAD" and max_bytes > 0:
             raise ResponseTooLarge(f"The response is larger than {max_bytes} bytes")
+        # Build the answer with lower-case headers; a HEAD or zero limit returns no body.
         answer_headers = {name.lower(): value for name, value in fixture.headers.items()}
         answer_headers.setdefault("content-length", str(len(body)))
         return HttpResponse(fixture.status, url, answer_headers, b"" if method == "HEAD" or max_bytes == 0 else body)
@@ -522,7 +972,38 @@ class FakeSystem(WindowsLinks):
         on_headers: Callable[[int, Mapping[str, str]], None] | None = None,
         total_timeout: float | None = None,
     ) -> DownloadResponse:
-        """Write the fixture for *url* to *dest*, honouring ``Range`` when the fixture allows it."""
+        """Write the fixture for *url* to *dest*, honouring ``Range`` when the fixture allows it.
+
+        Parameters
+        ----------
+        url : str
+            Address to download.
+        headers : Mapping[str, str] or None
+            Request headers, including any ``Range``.
+        dest : Path
+            File to write or append to.
+        on_progress : Callable or None
+            Progress receiver.
+        timeout : float
+            Recorded in the request log.
+        append : bool
+            Whether a satisfiable range is appended to *dest*.
+        on_headers : Callable or None
+            Receiver of the status and headers.
+        total_timeout : float or None
+            Recorded in the request log.
+
+        Returns
+        -------
+        DownloadResponse
+            Status, headers and how the file was written.
+
+        Raises
+        ------
+        ConnectionResetError
+            When the fixture's ``fail_after`` cuts the body short.
+        """
+        # Record the request, then let the delegate serve a URL that has no fixture.
         self._maybe_fail("http_download")
         self.request_log.append(RecordedRequest("GET", url, dict(headers or {}), timeout, None, total_timeout))
         if url not in self.urls and self.delegate is not None:
@@ -531,6 +1012,7 @@ class FakeSystem(WindowsLinks):
                 url, headers, dest, on_progress, timeout=timeout, append=append, on_headers=on_headers,
                 total_timeout=total_timeout,
             )
+        # Report the status and headers first; a non-2xx answer writes nothing.
         fixture = self._http_fixture(url, headers)
         body = fixture.body if isinstance(fixture.body, bytes) else fixture.body.encode("utf-8")
         answer_headers = {name.lower(): value for name, value in fixture.headers.items()}
@@ -547,10 +1029,12 @@ class FakeSystem(WindowsLinks):
             if start >= len(body):
                 return DownloadResponse(416, url, answer_headers)
             status, resumed, payload = 206, True, body[start:]
+        # Report the resumed bytes as already received before the new bytes arrive.
         total = len(body) if fixture.report_size else None
         already = len(body) - len(payload)
         if on_progress is not None:
             on_progress(already, total)
+        # Write the payload in chunks, stopping early when the fixture simulates a dropped connection.
         cut = payload if fixture.fail_after is None else payload[: fixture.fail_after]
         with open(dest, "ab" if resumed else "wb") as handle:
             for begin in range(0, len(cut), 64 * 1024):
@@ -565,7 +1049,14 @@ class FakeSystem(WindowsLinks):
     # -- internals -----------------------------------------------------------------
 
     def _http_fixture(self, url: str, headers: Mapping[str, str] | None) -> FakeHttp:
-        """Resolve a URL fixture to a :class:`FakeHttp` or raise its error."""
+        """Resolve a URL fixture to a :class:`FakeHttp` for the ``http_*`` methods.
+
+        Raises
+        ------
+        UnexpectedCall
+            When no fixture exists for *url*; a fixture that is an exception is raised.
+        """
+        # Look the fixture up (calling it when it is a function) and normalise every kind to FakeHttp.
         self.fetch_log.append(url)
         if url not in self.urls:
             raise UnexpectedCall(f"FakeSystem has no fixture for URL {url}")
@@ -574,6 +1065,7 @@ class FakeSystem(WindowsLinks):
             content = content(url, dict(headers or {}))
         if isinstance(content, BaseException):
             raise content
+        # Each accepted fixture kind maps to a FakeHttp; plain bodies use the defaults.
         if isinstance(content, FakeHttp):
             return content
         if isinstance(content, FakeResponse):
@@ -583,7 +1075,14 @@ class FakeSystem(WindowsLinks):
         return FakeHttp(bytes(content))
 
     def _served(self, url: str, headers: Mapping[str, str] | None) -> tuple[bytes, bool]:
-        """Resolve a URL fixture to ``(body, report_size)`` or raise its error."""
+        """Resolve a URL fixture to ``(body, report_size)`` for ``fetch`` and ``fetch_text``.
+
+        Raises
+        ------
+        UnexpectedCall
+            When no fixture exists for *url*; a fixture that is an exception is raised.
+        """
+        # Look the fixture up (calling it when it is a function) and reduce it to bytes plus the size flag.
         self.fetch_log.append(url)
         if url not in self.urls:
             raise UnexpectedCall(f"FakeSystem has no fixture for URL {url}")
@@ -592,6 +1091,7 @@ class FakeSystem(WindowsLinks):
             content = content(url, dict(headers or {}))
         if isinstance(content, BaseException):
             raise content
+        # Each accepted fixture kind maps to bytes; plain bodies always announce their size.
         if isinstance(content, FakeResponse):
             return content.body, content.report_size
         if isinstance(content, str):
@@ -619,14 +1119,26 @@ class FakeSystem(WindowsLinks):
         return next((path for path in allowed if os.path.normcase(str(path)) == given), None)
 
     def _maybe_fail(self, method: str) -> None:
-        """Raise (once) the exception configured for *method*."""
+        """Raise (once) the exception configured for *method*.
+
+        Raises
+        ------
+        BaseException
+            The exception stored in ``failures`` for *method*.
+        """
         failure = self.failures.pop(method, None)
         if failure is not None:
             raise failure
 
     @staticmethod
     def _scope_key(scope: Mode) -> str:
-        """Return ``"user"`` or ``"system"``; ``auto`` has no environment of its own."""
+        """Return ``"user"`` or ``"system"``; ``auto`` has no environment of its own.
+
+        Raises
+        ------
+        ValueError
+            When *scope* is neither user nor system.
+        """
         if scope not in (Mode.USER, Mode.SYSTEM):
             raise ValueError(f"Environment scope must be user or system, not {scope.value}")
         return scope.value
@@ -647,6 +1159,7 @@ class FakeSystem(WindowsLinks):
         """Persist registry state when a state file is configured."""
         if self.state_file is None:
             return
+        # Serialise the registry state, its log and the counters in one JSON document.
         state = {
             "elevated": self.elevated,
             "env": {
@@ -668,3 +1181,17 @@ class FakeSystem(WindowsLinks):
             }
         self.registry_log = [RegistryAccess(**item) for item in state.get("registry_log", [])]
         self.broadcasts = int(state.get("broadcasts", 0))
+
+
+# --- supporting helpers ---
+
+
+def _find_on_path(name: str) -> Path | None:
+    """Return the executable *name* on ``PATH`` (never the working directory), fully resolved."""
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        folder = entry.strip().strip('"')
+        for candidate in (name + ".exe", name):
+            path = Path(folder) / candidate if folder else None
+            if path is not None and path.is_file():
+                return Path(os.path.realpath(path))
+    return None

@@ -41,6 +41,7 @@ def app(tmp_path: Path) -> Path:
     (root / "bin" / "tool.exe").write_text("tool", encoding="utf-8")
     (root / "uninstall.exe").write_text("u", encoding="utf-8")
     (root / "lockhuntersetup_portable_3-4-3.exe").write_text("lh", encoding="utf-8")
+    # A folder outside the tree, which preparation must never touch.
     outside = tmp_path / "outside"
     outside.mkdir()
     (outside / "secret.txt").write_text("secret", encoding="utf-8")

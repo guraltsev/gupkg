@@ -103,6 +103,7 @@ def test_two_declarations_of_the_same_thing_are_an_error(tmp_path: Path) -> None
 
 def test_every_kind_is_applied_verified_and_removed(tmp_path: Path, system: FakeSystem) -> None:
     """apply creates the shortcut, the shim files, the environment value and the PATH entry; verify finds them; remove deletes them."""
+    # Arrange: a manifest with a shortcut, shims, a variable and a PATH entry.
     ctx = context(tmp_path)
     text = (
         '[[shortcut]]\nname = "Group\\\\T"\ntarget = "$App\\\\a.exe"\n[[shim]]\nname = "t"\ntarget = "$App\\\\a.exe"\n'
@@ -111,14 +112,17 @@ def test_every_kind_is_applied_verified_and_removed(tmp_path: Path, system: Fake
     )
     effects, _ = desired_effects(manifest(text), ctx)
 
+    # Act: apply every effect.
     applied = [apply_effect(system, effect, ctx) for effect in effects]
 
+    # Assert: the effects exist and verify.
     assert (tmp_path / "bin" / "t.exe").is_file() and (tmp_path / "bin" / "t.config.toml").is_file()
     assert (tmp_path / "bin" / "run.cmd").read_bytes() == b"@echo off\r\necho %~dp0\r\n"
     assert [item for item in verify_each(system, applied, mode=Mode.USER) if item[1] or item[2]] == []
     assert next(item for item in applied if item.kind == "path").fields["added"] is True
     removed = {(effect.kind, bool(effect.fields.get("shared"))): remove_effect(system, effect, ctx) for effect in applied}
     assert all(done for (kind, shared), done in removed.items() if not shared) and removed[("path", True)] is False
+    # Remove them again and verify that the removal is seen.
     assert not (tmp_path / "bin" / "t.exe").exists() and not (tmp_path / "menu" / "Group").exists()
     assert system.get_path(Mode.USER) == [str(tmp_path / "bin")] and "A" not in system.env_values(Mode.USER)
     assert [item[0].kind for item in verify_each(system, applied, mode=Mode.USER) if item[1]] == ["shortcut", "shim", "file", "env", "path"]
@@ -126,15 +130,18 @@ def test_every_kind_is_applied_verified_and_removed(tmp_path: Path, system: Fake
 
 def test_shortcut_drift_names_the_field_that_differs_and_ignores_letter_case_in_paths(tmp_path: Path, system: FakeSystem) -> None:
     """A shortcut with another icon or description is drift and the message says which; one that only spells a path differently is not."""
+    # Arrange: apply a shortcut.
     ctx = context(tmp_path)
     effects, _ = desired_effects(manifest('[[shortcut]]\nname = "T"\ntarget = "$App\\\\a.exe"\ndescription = "Tool"\n'), ctx)
     effect = apply_effect(system, effects[0], ctx)
     path = Path(str(effect.fields["path"]))
     stored = system.read_shortcut(path)
 
+    # Only a difference in letter case of a path is ignored.
     system.write_shortcut(path, replace(stored, target_path=stored.target_path.upper()))
     assert [row for row in verify_each(system, [effect], mode=Mode.USER) if row[1] or row[2]] == []
 
+    # Another icon and description are drift, and the message names the fields.
     system.write_shortcut(path, replace(stored, icon_location="C:\\other.ico,0", description="Other"))
     drift = [row[1] for row in verify_each(system, [effect], mode=Mode.USER) if row[1]]
     assert len(drift) == 1 and drift[0].startswith(f"shortcut differs: {path} (icon is 'C:\\other.ico,0' but would be ''; ")
@@ -277,6 +284,7 @@ def test_a_name_of_256_characters_cannot_become_an_effect(tmp_path: Path, kind: 
         desired_effects(hostile, ctx)
 
 
+# Table that declares the shim of the test package.
 SHIM = '[[shim]]\nname = "t"\ntarget = "$App\\\\a.exe"\n'
 
 

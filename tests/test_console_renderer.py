@@ -24,11 +24,13 @@ from gupkg.report.events import (
 
 pytestmark = pytest.mark.unit
 
+# One mebibyte, the unit of the sizes in the event list.
 MIB = 1024 * 1024
 
 
 def _install_events() -> list:
     """Return the events of a small install that downloads one file, warns once and fails verification."""
+    # The run starts and a download makes progress.
     events: list = [
         RunStart("update", ("update", "firefox"), "user", False, "1.0.0"),
         PackageStart({"name": "firefox", "path": "C:\\opt\\firefox"}),
@@ -36,10 +38,12 @@ def _install_events() -> list:
         Progress("setup.exe", 0, 74 * MIB),
     ]
     events += [Progress("setup.exe", done * MIB, 74 * MIB) for done in (10, 30, 50)]
+    # The download ends and verification fails after a warning.
     events += [
         Progress("setup.exe", 74 * MIB, 74 * MIB),
         Step("sha256 matches [vendor]", "ok"),
         PhaseEnd("Fetch", "ok", 1.25),
+        # Verification warns, shows a child's line, fails and ends the run.
         PhaseStart("Verify"),
         Warning("checksum came from the vendor page"),
         SubprocessLine("git", "fatal: repository 'https://example.invalid/x.git' not found"),
@@ -69,12 +73,15 @@ def terminal():
 
 def test_terminal_shows_coloured_phase_rules_marks_a_live_bar_and_ends_with_the_summary(terminal, monkeypatch) -> None:
     """On a terminal each phase has a bold coloured rule and a check or cross with its time, a live bar becomes one lasting line, and the summary is last."""
+    # Arrange: a terminal that may use colour.
     monkeypatch.delenv("NO_COLOR", raising=False)
     monkeypatch.delenv("TERM", raising=False)
     console, raw = terminal
 
+    # Act: report the events of a failed install.
     _feed(ConsoleReporter(console=console), _install_events())
 
+    # Assert: phases, marks, warnings and the hint are on screen.
     text = console.export_text()
     lines = [line.rstrip() for line in text.splitlines() if line.strip()]
     assert any(line.startswith("Fetch ") and "━━━" in line for line in lines)
@@ -98,11 +105,14 @@ def test_terminal_shows_coloured_phase_rules_marks_a_live_bar_and_ends_with_the_
 
 def test_redirected_output_is_plain_text_with_phase_headers_and_one_progress_line(monkeypatch) -> None:
     """Redirected output has ==> phase headers, no ANSI codes, no carriage returns, only the final progress line, and each warning once."""
+    # Arrange: a plain stream that may use colour.
     monkeypatch.delenv("NO_COLOR", raising=False)
     stream = io.StringIO()
 
+    # Act: report the events of a failed install.
     _feed(ConsoleReporter(stream), _install_events())
 
+    # Assert: plain headers, one progress line and the closing summary.
     output = stream.getvalue()
     lines = output.splitlines()
     assert "\x1b" not in output and "\r" not in output
@@ -177,6 +187,7 @@ def test_real_child_process_output_is_shown_line_by_line_without_control_codes(m
     """Output of a real child (carriage-return progress, colour codes, non-ASCII text, an error stream) renders as clean separate lines."""
     from gupkg.system.windows import WindowsSystem
 
+    # Arrange: a child process that writes progress with carriage returns and colour codes.
     monkeypatch.delenv("NO_COLOR", raising=False)
     program = (
         "import sys\n"
@@ -186,12 +197,15 @@ def test_real_child_process_output_is_shown_line_by_line_without_control_codes(m
         "sys.stderr.write('fatal: repository not found\\n')\n"
         "sys.exit(128)\n"
     )
+    # Capture the output of the run in a plain stream.
     stream = io.StringIO()
     argv = [sys.executable, "-c", program]
 
+    # Act: run the child through the reporter.
     with use_reporter(ConsoleReporter(stream)):
         result = WindowsSystem().run(argv, on_line=subprocess_lines(argv))
 
+    # Assert: the exit status is reported and the lines are clean.
     assert result.returncode == 128
     output = stream.getvalue()
     assert "\r" not in output and "\x1b" not in output
@@ -205,6 +219,7 @@ def test_a_terminal_that_cannot_encode_the_marks_falls_back_to_plain_text(monkey
     """A terminal stream with a legacy encoding still shows every event: the renderer drops to plain text instead of failing."""
     from rich.console import Console
 
+    # Arrange: a terminal whose code page cannot encode the marks.
     monkeypatch.delenv("NO_COLOR", raising=False)
     monkeypatch.delenv("TERM", raising=False)
     raw = io.BytesIO()
@@ -212,9 +227,11 @@ def test_a_terminal_that_cannot_encode_the_marks_falls_back_to_plain_text(monkey
     stream.isatty = lambda: True
     console = Console(file=stream, force_terminal=True, width=80, color_system=None, legacy_windows=False)
 
+    # Act: report a few events.
     reporter = ConsoleReporter(console=console)
     _feed(reporter, [PhaseStart("Fetch"), PhaseEnd("Fetch", "ok", 1.0), Warning("still visible"), RunEnd("summary", 0)])
 
+    # Assert: the warning and the summary are still plain text.
     text = raw.getvalue().decode("cp1252")
     assert "WARNING: still visible" in text
     assert text.rstrip().endswith("summary")
@@ -223,11 +240,14 @@ def test_a_terminal_that_cannot_encode_the_marks_falls_back_to_plain_text(monkey
 
 def test_warnings_and_errors_go_to_the_problem_stream_and_everything_else_to_the_main_one(monkeypatch) -> None:
     """With problems_to_stderr, plain output keeps phases and the summary on one stream and every warning and error, with its hint, on the other."""
+    # Arrange: separate streams for the main output and for problems.
     monkeypatch.delenv("NO_COLOR", raising=False)
     main, problems = io.StringIO(), io.StringIO()
 
+    # Act: report the events of a failed install.
     _feed(ConsoleReporter(main, problems_to_stderr=True, problems_stream=problems), _install_events())
 
+    # Assert: warnings and errors appear only in the problem stream.
     lines = main.getvalue().splitlines()
     assert "==> Fetch" in lines and lines[-3] == "==> Failed (exit code 3)"
     assert not any("WARNING" in line or "ERROR" in line or "hint:" in line for line in lines)
@@ -242,14 +262,17 @@ def test_problems_use_their_own_console_on_a_terminal(terminal, monkeypatch) -> 
     """On a terminal, with problems_to_stderr, warnings and errors are drawn on the problem console and the rest on the main one."""
     from rich.console import Console
 
+    # Arrange: a terminal and a separate console for problems.
     monkeypatch.delenv("NO_COLOR", raising=False)
     monkeypatch.delenv("TERM", raising=False)
     console, raw = terminal
     problem_raw = io.StringIO()
     problem_console = Console(record=True, force_terminal=True, width=100, color_system="truecolor", no_color=False, legacy_windows=False, file=problem_raw)
 
+    # Act: report the events of a failed install.
     _feed(ConsoleReporter(console=console, problems_to_stderr=True, problems_console=problem_console), _install_events())
 
+    # Assert: the warning and the error are in the problem console only.
     problem_text, main_text = problem_console.export_text(), console.export_text()
     assert "WARNING: checksum came from the vendor page" in problem_text
     assert "ERROR: verification failed" in problem_text
@@ -260,10 +283,12 @@ def test_problems_use_their_own_console_on_a_terminal(terminal, monkeypatch) -> 
 @pytest.mark.parametrize("mode", ["plain", "terminal"])
 def test_escape_sequences_in_steps_warnings_and_errors_never_reach_the_output(terminal, monkeypatch, mode) -> None:
     """Package text with colour codes, cursor movement or a window-title request is shown without the control sequences, on both render paths."""
+    # Arrange: events whose text holds escape sequences.
     monkeypatch.delenv("NO_COLOR", raising=False)
     monkeypatch.delenv("TERM", raising=False)
     hostile = "\x1b[31mred\x1b[0m \x1b]0;owned\x07title \x1b[2J gone\rtail\x00"
     events = [Step(hostile), Warning(hostile), Error(hostile, hint=hostile), RunEnd(hostile, 0)]
+    # Act: report them on a plain stream or on a terminal.
     if mode == "plain":
         stream = io.StringIO()
         _feed(ConsoleReporter(stream), events)
@@ -275,6 +300,7 @@ def test_escape_sequences_in_steps_warnings_and_errors_never_reach_the_output(te
         # Rich adds its own styling codes; none of the hostile ones may appear.
         assert "\x1b]0" not in raw.getvalue() and "\x1b[2J" not in raw.getvalue()
 
+    # Assert: no control sequence of the events reaches the output.
     assert "\x1b[31m" not in output and "\x1b]0" not in output and "\x1b[2J" not in output
     assert "\x00" not in output and "\r" not in output
     assert "red title  gonetail" in output
@@ -286,6 +312,7 @@ def test_the_text_log_is_cleaned_like_the_console_while_the_json_log_keeps_the_o
 
     from gupkg.report.session import RunSession
 
+    # Arrange and act: run a session that emits a step with an escape sequence.
     session = RunSession(
         command="check", argv=[], mode="user", elevated=False, version="1.0.0", reporters=[], fallback_base=tmp_path,
     )
@@ -295,6 +322,7 @@ def test_the_text_log_is_cleaned_like_the_console_while_the_json_log_keeps_the_o
         emit(Step("\x1b[31mred\x1b[0m step"))
         session.finish("done", 0)
 
+    # Assert: the text log is clean and the JSON log keeps the original.
     [log] = (tmp_path / ".gupkg" / "logs").glob("2*.log")
     [events] = (tmp_path / ".gupkg" / "logs").glob("2*.jsonl")
     assert "\x1b" not in log.read_text(encoding="utf-8") and "red step" in log.read_text(encoding="utf-8")
@@ -391,18 +419,21 @@ def _slowest_line(lines: list[str], *, timeout: float) -> float:
 
     import gupkg
 
+    # Run the cleaning in a child process, so that a slow one is stopped by the timeout.
     source = str(Path(gupkg.__file__).resolve().parents[1])
     try:
         done = subprocess.run(
             [sys.executable, "-c", _TIMING_CHILD.format(source=source)],
             input=json.dumps(lines), capture_output=True, text=True, timeout=timeout,
         )
+    # A timeout means the cleaning is not linear.
     except subprocess.TimeoutExpired:
         pytest.fail(f"cleaning did not finish within {timeout} s: it is not linear")
     assert done.returncode == 0, done.stderr
     return float(done.stdout)
 
 
+# Hostile inputs for the cleaning of control sequences.
 HOSTILE_LINES = {
     "dcs-openers": "\x1bPx" * 21_000,
     "doubled-dcs-openers": "\x1bP\x1bP" * 16_000,

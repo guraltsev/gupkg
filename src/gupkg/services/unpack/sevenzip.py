@@ -31,9 +31,13 @@ from ...extractors import find_7z
 from ...report.events import subprocess_lines
 from ...system.port import ProcessAborted, System
 
+# Seconds allowed for listing an archive.
 LIST_TIMEOUT = 300.0
+# Seconds allowed for extracting an archive.
 EXTRACT_TIMEOUT = 3600.0
+# One ``Key = Value`` line of 7-Zip's technical listing.
 _FIELD = re.compile(r"^(?P<key>[A-Za-z][A-Za-z ]*?) = ?(?P<value>.*)$")
+# A Unix mode string that marks a symbolic link (``lrwxrwxrwx``).
 _UNIX_LINK_MODE = re.compile(r"(?:^|\s)l[rwx-]{9}\b")
 
 
@@ -43,7 +47,21 @@ class SevenZipError(RuntimeError):
 
 @dataclass(frozen=True)
 class Entry:
-    """One item of an archive's table of contents."""
+    """One item of an archive's table of contents.
+
+    Attributes
+    ----------
+    path : str
+        The path inside the archive.
+    is_dir : bool
+        Whether the entry is a folder.
+    size : int
+        The size in bytes.
+    is_link : bool
+        Whether the entry is a link.
+    encrypted : bool
+        Whether the entry is encrypted.
+    """
 
     path: str
     is_dir: bool
@@ -54,7 +72,17 @@ class Entry:
 
 @dataclass(frozen=True)
 class Listing:
-    """An archive's type, where its data starts (``offset`` > 0 for a self-extractor) and its entries."""
+    """An archive's type, where its data starts (``offset`` > 0 for a self-extractor) and its entries.
+
+    Attributes
+    ----------
+    type : str
+        The archive type.
+    offset : int
+        Where the data starts.
+    entries : tuple of Entry
+        The table of contents.
+    """
 
     type: str
     offset: int
@@ -70,6 +98,13 @@ class SevenZip:
         The boundary every child process goes through.
     executable : Path, optional
         The 7-Zip executable; the bundled ``7z.exe`` (or a system one) when omitted.
+
+    Methods
+    -------
+    listing
+        Return the table of contents of *archive*, parsed as format *kind* when given.
+    extract
+        Unpack *archive* into the existing, empty folder *destination*.
     """
 
     def __init__(self, system: System, executable: Path | None = None) -> None:
@@ -81,13 +116,26 @@ class SevenZip:
             raise SevenZipError(str(error)) from error
 
     def listing(self, archive: Path, kind: str | None = None) -> Listing:
-        """Return the table of contents of *archive*, read as format *kind* when given.
+        """Return the table of contents of *archive*, parsed as format *kind* when given.
+
+        Parameters
+        ----------
+        archive : Path
+            The archive to list.
+        kind : str, optional
+            A 7-Zip format name that overrides detection (for example ``"Nsis"``).
+
+        Returns
+        -------
+        Listing
+            The archive type, data offset and entries.
 
         Raises
         ------
         SevenZipError
             If 7-Zip cannot open the archive.
         """
+        # Ask for the technical listing; a non-zero exit status means the archive is unusable.
         argv = [str(self.executable), "l", "-slt", "-sccUTF-8"]
         if kind:
             argv.append(f"-t{kind}")
@@ -101,13 +149,25 @@ class SevenZip:
                 watch: Callable[[], str | None] | None = None) -> None:
         """Unpack *archive* into the existing, empty folder *destination*.
 
-        *watch* is polled while 7-Zip runs; when it returns text 7-Zip is killed.
+        7-Zip is killed when *watch* returns text.
+
+        Parameters
+        ----------
+        archive : Path
+            The archive to extract.
+        destination : Path
+            The existing, empty folder that receives the files.
+        kind : str, optional
+            A 7-Zip format name that overrides detection.
+        watch : callable, optional
+            Polled while 7-Zip runs; returning text stops the extraction with that reason.
 
         Raises
         ------
         SevenZipError
             If 7-Zip exits with any status but zero, or is killed because *watch* asked.
         """
+        # Extract with overwrite allowed (the folder is empty); only a zero exit status is success.
         argv: list[str] = [str(self.executable), "x", "-y", f"-o{destination}", "-sccUTF-8"]
         if kind:
             argv.append(f"-t{kind}")
@@ -123,11 +183,30 @@ class SevenZip:
 def parse_listing(text: str) -> Listing:
     """Parse the output of ``7z l -slt`` into a ``Listing``.
 
+    Parameters
+    ----------
+    text : str
+        The standard output of ``7z l -slt``.
+
+    Returns
+    -------
+    Listing
+        The archive type, data offset and entries.
+
     Raises
     ------
     SevenZipError
         If the output has no archive header.
+
+    Examples
+    --------
+    Basic usage:
+
+    >>> t = 'Path = a.zip\\nType = zip\\n\\n----------\\nPath = x.txt\\nSize = 5\\n'
+    >>> parse_listing(t)
+    Listing(type='zip', offset=0, entries=(Entry(path='x.txt', is_dir=False, size=5, is_link=False, encrypted=False),))
     """
+    # Split the output at the dashed line into the archive header and the entry blocks.
     lines = text.splitlines()
     try:
         start = lines.index("----------")
@@ -146,6 +225,7 @@ def parse_listing(text: str) -> Listing:
     # Each following blank-line separated block is one entry.
     entries: list[Entry] = []
     block: list[str] = []
+    # A trailing blank line flushes the last block.
     for line in [*body, ""]:
         if line.strip():
             block.append(line)
@@ -159,7 +239,7 @@ def parse_listing(text: str) -> Listing:
 
 
 def _fields(lines: Sequence[str]) -> dict[str, str]:
-    """Return the ``Key = Value`` pairs of a block; the first occurrence of a key wins."""
+    """Return the ``Key = Value`` pairs of a block; the first occurrence of a key wins (internal listing parser)."""
     found: dict[str, str] = {}
     for line in lines:
         match = _FIELD.match(line)
@@ -169,7 +249,8 @@ def _fields(lines: Sequence[str]) -> dict[str, str]:
 
 
 def _entry(fields: dict[str, str]) -> Entry | None:
-    """Return an ``Entry`` for one block, or ``None`` for a block without a path (an xz stream)."""
+    """Return an ``Entry`` for one block, or ``None`` for a block without a path such as an xz stream (internal listing parser)."""
+    # A block without a path describes a stream, not an entry.
     path = fields.get("Path")
     if path is None:
         return None
@@ -189,6 +270,7 @@ def _entry(fields: dict[str, str]) -> Entry | None:
         letters = re.sub(r"[^A-Za-z]", "", token)
         is_dir = is_dir or "D" in letters
         is_link = is_link or "L" in letters
+    # The size is absent for folders and some links.
     size = int(fields["Size"]) if fields.get("Size", "").isdigit() else 0
     return Entry(path, is_dir, size, is_link, fields.get("Encrypted") == "+")
 

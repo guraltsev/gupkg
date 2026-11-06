@@ -25,9 +25,13 @@ from pathlib import Path
 
 import pytest
 
+# Root of this checkout.
 REPO = Path(__file__).resolve().parents[1]
+# The ``.cmd`` entry point that a person double-clicks.
 BOOTSTRAP = REPO / "gupkg-bootstrap.cmd"
+# The PowerShell script that the entry point runs.
 SCRIPT = REPO / "gupkg-bootstrap.ps1"
+# Windows PowerShell, which the bootstrap targets.
 POWERSHELL = Path(os.environ.get("SystemRoot", "C:\\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
 
 pytestmark = [pytest.mark.release, pytest.mark.skipif(os.name != "nt", reason="the bootstrap script targets Windows PowerShell")]
@@ -140,7 +144,7 @@ def test_system_scope_requires_an_elevated_shell(tmp_path: Path, release_bundle)
 
 
 def test_user_scope_refuses_an_elevated_shell(tmp_path: Path, release_bundle) -> None:
-    """User scope never runs as administrator: gupkg does not act on a user root elevated (D31)."""
+    """User scope never runs as administrator: gupkg does not act on a user root elevated."""
     if not _elevated():
         pytest.skip("the test process is not elevated")
 

@@ -1,4 +1,4 @@
-"""Cover installs that download nothing: distribution folders, registry copy-in and the origin label (design 9.2, 21.4, decisions D29, D40).
+"""Cover installs that download nothing: distribution folders, registry copy-in and the origin label (design 9.2, 21.4).
 
 Behaviour covered: a distribution folder with no registry fingerprint is installed and labelled *origin not verified*; with a
 matching fingerprint it is labelled *verified against registry main*; with a mismatching one the install is refused and the
@@ -7,7 +7,7 @@ never overwrites a diverging directory; the Mark of the Web is not copied and th
 copied and the install stops with a hint.
 
 Real: the engine, the distribution copy, the registry cache layout and real folders. Mocked: ``FakeSystem``.
-Out of scope: bundled launchers and the bootstrap (issue 033), publishing fingerprints (issue 031).
+Out of scope: bundled launchers and the bootstrap, publishing fingerprints.
 """
 
 from __future__ import annotations
@@ -28,6 +28,7 @@ from tests.support.mode import tree_snapshot
 
 pytestmark = pytest.mark.unit
 
+# Table that declares the shim of the test package.
 SHIM = '[[shim]]\nname = "tool"\ntarget = "$App\\\\app.exe"\n'
 
 
@@ -69,42 +70,52 @@ def test_a_published_fingerprint_is_accepted_for_a_version_without_a_hash_and_on
     then stops at the checksum rules, because this version is unpinned and has no sha256), and a copy with one byte changed is refused,
     naming the file, with nothing left in the root.
     """
+    # Arrange: a registry version that publishes a fingerprint instead of a hash, and a copy of it.
     version = world.publish("tool", "1.0.0", hashed=False, root=world.base / "registry-src", tables=SHIM)
     write_launchers(version)
     world.registry({"tool": {"versions": {"1.0.0": version}}}, published_raw={"tool/1.0.0": fingerprint_directory(version)})
     good = world.base / "downloads" / "tool" / "1.0.0"
     shutil.copytree(version, good)
 
+    # Act: install the unchanged copy.
     accepted = world.one("install", str(good))
 
+    # Assert: the fingerprint is accepted, so only the missing hash is reported, and the launchers are those of the registry.
     assert not accepted.ok and accepted.error["code"] == "checksum-missing"
     assert (world.user / "tool" / "1.0.0" / "install.cmd").read_bytes() == (version / "install.cmd").read_bytes()
     shutil.rmtree(world.user / "tool")
 
+    # Arrange: a second copy with one changed byte.
     bad = world.base / "downloads2" / "tool" / "1.0.0"
     shutil.copytree(version, bad)
     launcher = bad / "install.cmd"
     launcher.write_bytes(launcher.read_bytes() + b" ")
 
+    # Act: install the changed copy.
     refused = world.one("install", str(bad))
 
+    # Assert: the changed copy is refused and nothing is installed.
     assert not refused.ok and refused.error["code"] == "registry-fingerprint-mismatch" and "install.cmd (changed)" in refused.error["message"]
     assert not (world.user / "tool" / "1.0.0").exists()
 
 
 def test_a_bundled_install_verifies_a_registry_copy_before_it_adds_the_bundled_gupkg(world: World) -> None:
     """Carry-forward adds the bundled gupkg folder after the copy is verified: a published fingerprint still matches, and the registry's own launchers are kept."""
+    # Arrange: an installed version with a bundled gupkg.
     world.publish("tool", "1.0.0", tables=SHIM)
     assert world.one("install", "tool").ok
     installed = world.user / "tool" / "1.0.0"
     (installed / "install.cmd").write_text("@echo off\n", encoding="utf-8")
     (installed / "gupkg").mkdir()
     (installed / "gupkg" / "gupkg.cmd").write_text("@echo off\n", encoding="utf-8")
+    # A newer registry version that publishes its fingerprint.
     world.publish("tool", "1.1.0", tables=SHIM, root=world.base / "registry-src")
     world.registry({"tool": {"versions": {"1.1.0": world.base / "registry-src" / "tool" / "1.1.0"}}}, fingerprints=[("tool", "1.1.0")])
 
+    # Act: update the package.
     result = world.one("update", "tool")
 
+    # Assert: the bundled gupkg moves to the new version, and the registry copy is verified.
     assert result.ok and result.version == "1.1.0"
     assert (world.user / "tool" / "1.1.0" / "gupkg" / "gupkg.cmd").is_file()
     assert not (world.user / "tool" / "1.1.0" / "install.cmd").exists()
@@ -113,13 +124,16 @@ def test_a_bundled_install_verifies_a_registry_copy_before_it_adds_the_bundled_g
 
 def test_a_shipped_app_is_labelled_as_not_covered_by_the_registry_fingerprint(world: World) -> None:
     """Fingerprint v1 ignores the top-level App, so a match for a version that ships its App says `verified (App not covered)`."""
+    # Arrange: a shipped App whose bytes differ from the registry's fingerprint.
     world.publish_shipped("tool", "1.0.0", root=world.base / "downloads", tables=SHIM)
     folder = world.base / "downloads" / "tool" / "1.0.0"
     world.registry({"tool": {"versions": {"1.0.0": folder}}}, fingerprints=[("tool", "1.0.0")])
     (folder / "App" / "app.exe").write_text("a different shipped App with the same fingerprint\n", encoding="utf-8")
 
+    # Act: install the folder.
     result = world.one("install", str(folder))
 
+    # Assert: the receipt and the check say the App was not covered by the fingerprint.
     receipt = read_receipt(world.user / "tool", "1.0.0").data
     assert result.ok and receipt["checksum"]["decision"] == "registry-fingerprint" and receipt["origin"]["app_covered"] is False
     assert any("verified (App not covered)" in warning for warning in result.warnings)
@@ -171,6 +185,7 @@ def test_a_version_without_a_shipped_app_has_no_such_label(world: World) -> None
 
 def test_a_distribution_with_a_mismatching_fingerprint_is_refused_and_nothing_changes(world: World) -> None:
     """A different fingerprint refuses the install like a checksum mismatch, naming the files that differ."""
+    # Arrange: a distribution whose populate script differs from the one the registry published.
     folder = distribution(world)
     published = world.base / "published" / "1.0.0"
     shutil.copytree(folder, published)
@@ -178,8 +193,10 @@ def test_a_distribution_with_a_mismatching_fingerprint_is_refused_and_nothing_ch
     world.registry({"tool": {"versions": {"1.0.0": published}}}, fingerprints=[("tool", "1.0.0")])
     before = tree_snapshot(world.user / "tool")
 
+    # Act: install the distribution.
     result = world.one("install", str(folder))
 
+    # Assert: the install is refused, names the script and changes nothing.
     assert not result.ok and result.exit_code == 3 and result.error["code"] == "registry-fingerprint-mismatch"
     assert "populate.cmd" in result.error["message"] and "Nothing was installed" in result.error["message"]
     assert not (world.user / "tool" / "1.0.0").exists() and tree_snapshot(world.user / "tool") == before
@@ -217,14 +234,17 @@ def test_the_copy_never_overwrites_a_directory_that_differs(world: World) -> Non
 @pytest.mark.process
 def test_copies_of_a_marked_distribution_carry_no_mark_and_the_receipt_records_it(world: World) -> None:
     """A source whose files carry the Mark of the Web is installed from unmarked copies; the receipt says the source was marked."""
+    # Arrange: a distribution whose files all carry a download mark.
     folder = distribution(world)
     for item in folder.rglob("*"):
         if item.is_file():
             with open(f"{item}:Zone.Identifier", "w", encoding="ascii") as stream:
                 stream.write("[ZoneTransfer]\nZoneId=3\n")
 
+    # Act: install the distribution.
     result = world.one("install", str(folder))
 
+    # Assert: the receipt records the mark, and the copies carry none.
     assert result.ok and read_receipt(world.user / "tool", "1.0.0").data["origin"]["source_marked"] is True
     for item in (world.user / "tool" / "1.0.0").rglob("*"):
         if item.is_file():
@@ -256,6 +276,7 @@ def test_a_registry_only_package_is_copied_in_with_its_tracker(world: World) -> 
 
 def test_the_registrys_tracker_is_refreshed_when_it_changed_and_kept_when_the_local_copy_was_edited(world: World) -> None:
     """A copied tracker follows the registry while it is unedited (the hash recorded at copy time says so), and an edited one is never replaced."""
+    # Arrange: install from a registry that publishes a tracker for the package.
     first = world.tracker("tool", root=world.base / "scratch", tables="# first\n").joinpath("pkg.toml").read_text(encoding="utf-8")
     world.registry({"tool": {"versions": {"1.0.0": {"app.exe": "x"}}, "tracker": first, "tables": SHIM}}, revision="a" * 40)
     assert world.one("install", "tool").ok
@@ -264,11 +285,13 @@ def test_the_registrys_tracker_is_refreshed_when_it_changed_and_kept_when_the_lo
     link = read_install_record(world.user / "tool").record.link
     assert link.tracker_sha256 and link.revision == "a" * 40
 
+    # A changed registry tracker replaces the unedited local copy.
     second = first + "# second\n"
     world.registry({"tool": {"versions": {"1.0.0": {"app.exe": "x"}}, "tracker": second, "tables": SHIM}}, revision="b" * 40)
     assert world.one("install", "tool").ok
     assert local.read_text(encoding="utf-8") == second
 
+    # A local edit survives the next change of the registry tracker.
     local.write_text(second + "# my edit\n", encoding="utf-8")
     third = second + "# third\n"
     world.registry({"tool": {"versions": {"1.0.0": {"app.exe": "x"}}, "tracker": third, "tables": SHIM}}, revision="c" * 40)
@@ -279,20 +302,25 @@ def test_the_registrys_tracker_is_refreshed_when_it_changed_and_kept_when_the_lo
 
 @pytest.mark.parametrize("location", [False, True], ids=["bundled-install", "root-with-a-gupkg-location"])
 def test_a_registry_version_copied_into_a_bundled_install_carries_the_packages_own_gupkg(world: World, location: bool) -> None:
-    """Without a gupkg-location in the root the package's own gupkg goes into the version that is copied in; with one it does not (D32)."""
+    """Without a gupkg-location in the root the package's own gupkg goes into the version that is copied in; with one it does not."""
+    # Arrange: an installed version with its own gupkg and launcher.
     world.publish("tool", "1.0.0", tables=SHIM)
     world.one("install", "tool")
     active = world.user / "tool" / "1.0.0"
     (active / "gupkg").mkdir()
     (active / "gupkg" / "gupkg.cmd").write_text("@echo off\n", encoding="utf-8")
     (active / "install.cmd").write_text("@echo off\n", encoding="utf-8")
+    # A location file says whether a gupkg is installed in the root.
     if location:
         (world.user / ".gupkg").mkdir(exist_ok=True)
         (world.user / ".gupkg" / "gupkg-location").write_text("gupkg\\current\\App\n", encoding="utf-8")
+    # A newer version appears in the registry.
     world.registry({"tool": {"versions": {"1.0.0": {"app.exe": "x"}, "1.2.0": {"app.exe": "new"}}, "tables": SHIM}})
 
+    # Act: update the package.
     result = world.one("update", "tool")
 
+    # Assert: the new version carries the package's own gupkg exactly when no root gupkg exists.
     new = world.user / "tool" / "1.2.0"
     assert result.ok and result.version == "1.2.0"
     assert (new / "gupkg" / "gupkg.cmd").is_file() == (not location) and not (new / "install.cmd").exists()
@@ -337,9 +365,11 @@ def test_a_distribution_copied_by_an_elevated_run_is_taken_back_when_the_install
 
 def test_a_source_that_changes_between_the_plan_and_the_copy_is_refused_and_the_copy_removed(world: World) -> None:
     """The plan was made from the source folder; the copy is what gets installed, so a different pkg.toml in the copy stops the install."""
+    # Arrange: a distribution folder.
     folder = distribution(world)
     changed: list[bool] = []
 
+    # The executor asks for the time after the plan, so the source is changed there.
     def clock():
         """The executor reads the clock when it starts, after the plan and before the copy: change the source there, as a user could."""
         if not changed:
@@ -348,10 +378,13 @@ def test_a_source_that_changes_between_the_plan_and_the_copy_is_refused_and_the_
             (folder / "pkg.toml").write_text(text + '\n[[env]]\nname = "SNEAKY"\nvalue = "1"\n', encoding="utf-8")
         return datetime.now(timezone.utc)
 
+    # Install the changing clock.
     world.engine.clock = clock
 
+    # Act: install the distribution.
     result = world.one("install", str(folder))
 
+    # Assert: the change is noticed, the install is refused and nothing is left.
     assert not result.ok and "changed while it was being copied" in result.error["message"]
     assert not (world.user / "tool" / "1.0.0").exists() and "SNEAKY" not in world.fake.env_values(Mode.USER)
 

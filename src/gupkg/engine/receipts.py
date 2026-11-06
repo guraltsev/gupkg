@@ -1,4 +1,4 @@
-"""Write and read receipts: what one install of one version did (design sections 4 and 9.2).
+"""Persist and load receipts: what one install of one version did (design sections 4 and 9.2).
 
 A receipt is the file ``App.info`` in the version directory (``<package>\\<version>\\App.info``, beside ``App`` and ``pkg.toml``), so
 a version carries the record of how its ``App`` was built wherever it is copied. The record tells where the version came from (the
@@ -33,6 +33,7 @@ from ..catalog.local import is_reparse_point
 from ..model.checksum import ChecksumInvalid, ChecksumRecord, parse_checksum_record
 from ..tomlio import read_toml, write_toml
 
+# Schema number written into every receipt; a receipt with another number is rejected.
 RECEIPT_SCHEMA = 1
 
 # The largest receipt that is read. A receipt of a user-mode install is user-writable, so it is untrusted input: 1 MiB
@@ -44,25 +45,40 @@ MAX_RECEIPT_BYTES = 1024 * 1024
 
 @dataclass(frozen=True)
 class ReceiptRead:
-    """The outcome of reading a receipt: its data, or why there is none (``problem`` is ``None`` for a missing file)."""
+    """The outcome of reading a receipt: its data, or why there is none (``problem`` is ``None`` for a missing file).
+
+    Attributes
+    ----------
+    data : Mapping[str, Any] | None
+        The receipt data, or ``None`` when there is none.
+    problem : str | None
+        Why the receipt cannot be used, or ``None`` for a missing file.
+    """
 
     data: Mapping[str, Any] | None = None
     problem: str | None = None
 
 
+# File name of the receipt inside a version directory.
 INFO_NAME = "App.info"
 
 
 def receipt_path(package_path: Path, version: str) -> Path:
-    """Return the receipt of one version: the file ``App.info`` in the version directory, beside ``App`` and ``pkg.toml``."""
+    """Return the receipt of one version: the file ``App.info`` in the version directory, beside ``App`` and ``pkg.toml``.
+
+    Parameters
+    ----------
+    package_path : Path
+        The package root.
+    version : str
+        The version whose receipt is named.
+
+    Returns
+    -------
+    Path
+        The receipt path; the file may not exist.
+    """
     return Path(package_path) / version / INFO_NAME
-
-
-def _check_links(package_path: Path, path: Path) -> None:
-    """Refuse to write through a link: the version directory and ``App.info`` itself must not be links."""
-    for entry in (path.parent, path):
-        if is_reparse_point(entry):
-            raise ValueError(f"{entry} is a link; refusing to write the record of the App through it")
 
 
 def update_receipt(package_path: Path, version: str, sections: Mapping[str, Any]) -> Path:
@@ -99,7 +115,21 @@ def update_receipt(package_path: Path, version: str, sections: Mapping[str, Any]
 
 
 def read_receipt(package_path: Path, version: str) -> ReceiptRead:
-    """Read the receipt of *version*; a missing file is no problem, an unreadable or linked one is."""
+    """Load the receipt of *version*; a missing file is no problem, an unreadable or linked one is.
+
+    Parameters
+    ----------
+    package_path : Path
+        The package root.
+    version : str
+        The version whose receipt is loaded.
+
+    Returns
+    -------
+    ReceiptRead
+        The data, or a ``problem`` text, or neither for a missing file.
+    """
+    # Never follow a link: the version directory and the file must be real.
     path = receipt_path(package_path, version)
     for entry in (path.parent, path):
         if is_reparse_point(entry):
@@ -114,6 +144,7 @@ def read_receipt(package_path: Path, version: str) -> ReceiptRead:
         return ReceiptRead(problem=f"Cannot read the receipt {path}: {exc}")
     if size > MAX_RECEIPT_BYTES:
         return ReceiptRead(problem=f"The receipt {path} is {size} bytes; one over {MAX_RECEIPT_BYTES} is not read")
+    # Parse the file and require the supported schema.
     try:
         data = read_toml(path)
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
@@ -124,7 +155,18 @@ def read_receipt(package_path: Path, version: str) -> ReceiptRead:
 
 
 def receipt_checksum(data: Mapping[str, Any]) -> ChecksumRecord | None:
-    """Return the ``[checksum]`` record of a receipt, or ``None`` when it has none or it is not valid."""
+    """Return the ``[checksum]`` record of a receipt, or ``None`` when it has none or it is not valid.
+
+    Parameters
+    ----------
+    data : Mapping[str, Any]
+        The receipt data.
+
+    Returns
+    -------
+    ChecksumRecord or None
+        The strictly parsed record, or ``None``.
+    """
     table = data.get("checksum")
     if table is None:
         return None
@@ -135,7 +177,19 @@ def receipt_checksum(data: Mapping[str, Any]) -> ChecksumRecord | None:
 
 
 def list_receipts(package_path: Path) -> list[str]:
-    """Return the versions that have a record (an ``App.info`` in the version directory); nothing is read."""
+    """Return the versions that have a record (an ``App.info`` in the version directory); no receipt is opened.
+
+    Parameters
+    ----------
+    package_path : Path
+        The package root.
+
+    Returns
+    -------
+    list of str
+        The sorted version folder names that hold an ``App.info``.
+    """
+    # Scan the version folders only; hidden and underscore folders and ``current`` are not versions.
     found: set[str] = set()
     root = Path(package_path)
     try:
@@ -146,3 +200,13 @@ def list_receipts(package_path: Path) -> list[str]:
     except OSError:
         pass
     return sorted(found)
+
+
+# --- supporting helpers ---
+
+
+def _check_links(package_path: Path, path: Path) -> None:
+    """Refuse to write through a link: the version directory and ``App.info`` itself must not be links."""
+    for entry in (path.parent, path):
+        if is_reparse_point(entry):
+            raise ValueError(f"{entry} is a link; refusing to write the record of the App through it")

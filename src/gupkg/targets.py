@@ -40,7 +40,7 @@ from .system.port import Mode, System
 
 @dataclass(frozen=True)
 class TargetRequest:
-    """One target and how the caller wants it treated.
+    """Name one target and how the caller wants it treated.
 
     Attributes
     ----------
@@ -59,11 +59,24 @@ class TargetRequest:
 
 @dataclass(frozen=True)
 class ResolvedTarget:
-    """The outcome of ``resolve_target``.
+    """Describe the outcome of ``resolve_target``.
 
     ``source`` is set when the target is a distribution folder outside the root that has to be copied into ``scope.root``
     before the install (design 21.4); ``resolved`` is the catalog's view of the target, or ``None`` when it is not read
     (an elevated run never reads a folder that users can modify).
+
+    Attributes
+    ----------
+    scope : Scope
+        The scope of the run.
+    resolved : Resolved or None
+        The catalog's resolution, or ``None`` when the target was not read.
+    warnings : tuple[str, ...]
+        Warnings found while resolving.
+    source : Path or None
+        The distribution folder to copy into the root before installing.
+    settings : Settings
+        The effective settings of the run.
     """
 
     scope: Scope
@@ -103,6 +116,7 @@ def resolve_target(request: TargetRequest, *, scope: Scope, system: System, env:
     gupkg.catalog.catalog.CatalogError
         If the target is not found, or a path is outside the root and is not a distribution folder.
     """
+    # Set up the catalog of the run and parse the selector against the configured registries.
     elevated = scope.mode is Mode.SYSTEM
     catalog = Catalog(scope, system)
     parsed = parse_selector(request.selector, (entry.name for entry in scope.settings.registries))
@@ -122,12 +136,16 @@ def resolve_target(request: TargetRequest, *, scope: Scope, system: System, env:
             resolved = catalog.resolve_distribution(target_folder) if outside else catalog.resolve(request.selector)
         except UntrustedLocationError as exc:
             raise ModeRefused(f"{exc}. An elevated gupkg only acts on package names and paths inside the system root.") from exc
+
+        # An elevated run refuses install records of another mode, and records that users could have edited.
         view = resolved.view
         if elevated and view.record is not None and view.record.mode not in (None, Mode.SYSTEM):
             raise ModeRefused(
                 f"Refusing {view.record.mode} mode in an elevated shell: an elevated gupkg never acts on a {view.record.mode} root "
                 "(a standard user could use it to gain administrator rights). Run it from a normal (non-elevated) shell."
             )
+
+        # The install record is trusted only when its folder is admin-only.
         if view.local is not None and view.record is not None:
             try:
                 scope.require_trusted(view.local.path / DATA_DIR_NAME, "the install record of this package")
@@ -140,6 +158,7 @@ def resolve_target(request: TargetRequest, *, scope: Scope, system: System, env:
     # The package's own ``modes`` list, from the version that would be installed.
     supported = _supported_modes(resolved, target_folder if outside else None, elevated)
     if supported is not None:
+        # Check the package's modes against the scope, naming the package for the refusal message.
         name = resolved.view.name if resolved is not None else (target_folder.parent.name if target_folder is not None else None)
         installed = resolved.view.installed.version if resolved is not None and resolved.view.installed is not None else None
         check_supported(
@@ -147,6 +166,7 @@ def resolve_target(request: TargetRequest, *, scope: Scope, system: System, env:
             version=resolved.version if resolved is not None else None, installed=installed,
         )
 
+    # Name the distribution folder to copy in, when the target was one.
     folder = _copy_source(target_folder) if outside else None
     return ResolvedTarget(scope, resolved, (), folder)
 
@@ -166,6 +186,7 @@ def _supported_modes(resolved: Resolved | None, folder: Path | None, elevated: b
 
     An elevated run does not read a distribution folder before it is copied (the copy is checked instead).
     """
+    # A resolved package: use the manifest of the chosen local version, or the newest registry version.
     if resolved is not None:
         view = resolved.view
         if view.local is not None and resolved.version is not None:
@@ -176,6 +197,8 @@ def _supported_modes(resolved: Resolved | None, folder: Path | None, elevated: b
         if view.local is None and view.registry is not None and view.registry.versions:
             return manifest_modes(view.registry.versions[-1].path / MANIFEST_NAME)
         return None
+
+    # A distribution folder is read only outside an elevated run.
     if folder is not None and not elevated:
         return manifest_modes(folder / MANIFEST_NAME)
     return None

@@ -41,12 +41,26 @@ from .common import (
     ordered,
 )
 
+# Hard cap on requests in one index walk, so a hostile listing cannot run a check forever.
 MAX_REQUESTS = 60
+# HTTP statuses that ask the client to follow a ``Location`` header.
 _REDIRECT_STATUSES = (301, 302, 303, 307, 308)
 
 
 def track_index(spec: IndexSpec, env: TrackEnvironment) -> TrackResult:
     """Walk the levels of *spec* from ``check_url`` and return the version found at the bottom.
+
+    Parameters
+    ----------
+    spec : IndexSpec
+        The validated ``index`` provider specification.
+    env : TrackEnvironment
+        The boundary, shared HTTP client and regex runner.
+
+    Returns
+    -------
+    TrackResult
+        The version and captures of the deepest matching entry.
 
     Raises
     ------
@@ -54,10 +68,19 @@ def track_index(spec: IndexSpec, env: TrackEnvironment) -> TrackResult:
         If a page cannot be read, no entry leads to a complete result, or more than
         ``MAX_REQUESTS`` requests would be needed.
     """
+    # One shared request budget covers every page fetch and probe of the walk.
     budget = {"left": MAX_REQUESTS}
 
-    def request_page(url: str) -> tuple[str, str]:
-        """Fetch one listing page within the budget; return its text and final URL."""
+    # Page fetches and probes share the budget so the whole walk stays bounded.
+    def _request_page(url: str) -> tuple[str, str]:
+        """Fetch one listing page within the budget and return its text and final URL (internal to the walk).
+
+        Raises
+        ------
+        TrackError
+            If the budget is spent or the page cannot be read.
+        """
+        # Spend one unit of the budget, then fetch and decode the page.
         if budget["left"] <= 0:
             raise TrackError(f"The index walk needed more than {MAX_REQUESTS} requests")
         budget["left"] -= 1
@@ -67,8 +90,16 @@ def track_index(spec: IndexSpec, env: TrackEnvironment) -> TrackResult:
             raise TrackError(str(error)) from error
         return decode_body(response), response.url
 
-    def exists(url: str) -> bool:
-        """Return whether *url* answers with a 2xx status, within the budget."""
+    # Probe an entry file with HEAD; any failure simply means "not there".
+    def _exists(url: str) -> bool:
+        """Return whether *url* answers with a 2xx status, within the budget (internal to the walk).
+
+        Raises
+        ------
+        TrackError
+            If the budget is spent.
+        """
+        # Spend one unit of the budget, then probe; transport failures mean "not there".
         if budget["left"] <= 0:
             raise TrackError(f"The index walk needed more than {MAX_REQUESTS} requests")
         budget["left"] -= 1
@@ -77,26 +108,31 @@ def track_index(spec: IndexSpec, env: TrackEnvironment) -> TrackResult:
         except OSError:
             return False
 
-    def walk(level_number: int, url: str, captures: Mapping[str, str]) -> tuple[Mapping[str, str], str] | None:
-        """Try the entries of one level best-first; return the first complete path or ``None``."""
+    # Depth-first search over the levels, best entry first, backing out of dead ends.
+    def _walk(level_number: int, url: str, captures: Mapping[str, str]) -> tuple[Mapping[str, str], str] | None:
+        """Try the entries of one level best-first and return the first complete path, or ``None`` (internal to the walk)."""
+        # Read this level's listing and turn its matches into candidates.
         level = spec.levels[level_number]
-        text, page_url = request_page(url)
+        text, page_url = _request_page(url)
         pattern = compile_runtime(level.match_text, captures)
         found = candidates_from_text(env.regex, pattern, text, captures, page_url)
+        # An explicit key overrides the default ordering key of the entries.
         if level.key is not None:
             found = [(values, expand(level.key, values)) for values, _key in found]
+        # Try entries best-first, descending until a complete path is found; backtrack otherwise.
         for values, _key in ordered(found, level.select):
             # An entry only counts when its probe file exists.
-            if level.probe is not None and not exists(urllib.parse.urljoin(page_url, expand(level.probe, values))):
+            if level.probe is not None and not _exists(urllib.parse.urljoin(page_url, expand(level.probe, values))):
                 continue
             if level_number == len(spec.levels) - 1:
                 return values, page_url
-            deeper = walk(level_number + 1, urllib.parse.urljoin(page_url, expand(level.next or "", values)), values)
+            deeper = _walk(level_number + 1, urllib.parse.urljoin(page_url, expand(level.next or "", values)), values)
             if deeper is not None:
                 return deeper
         return None
 
-    result = walk(0, spec.check_url, {})
+    # Walk from the top level; no complete path is an error, otherwise build the result from its captures.
+    result = _walk(0, spec.check_url, {})
     if result is None:
         raise TrackError(f"The index at {spec.check_url} has no entry that matches every level")
     captures, page_url = result
@@ -106,15 +142,29 @@ def track_index(spec: IndexSpec, env: TrackEnvironment) -> TrackResult:
 def track_redirect(spec: RedirectSpec, env: TrackEnvironment) -> TrackResult:
     """Resolve ``check_url`` through its redirects and read the version from the final address.
 
+    Parameters
+    ----------
+    spec : RedirectSpec
+        The validated ``redirect`` provider specification.
+    env : TrackEnvironment
+        The boundary, shared HTTP client and regex runner.
+
+    Returns
+    -------
+    TrackResult
+        The version and captures read from the final address.
+
     Raises
     ------
     TrackError
         If a hop fails, the redirect policy refuses a hop, there are too many hops, or
         the final address does not match ``match``.
     """
+    # Follow the chain hop by hop (HEAD, redirects off) until a 2xx answer or an unwrapped address.
     url = spec.check_url
     final: str | None = None
     for _hop in range(MAX_REDIRECTS):
+        # Ask for this hop without following it, so every ``Location`` is seen.
         response = _head(env, url, spec.headers)
         if response.status in _REDIRECT_STATUSES:
             try:
@@ -130,6 +180,7 @@ def track_redirect(spec: RedirectSpec, env: TrackEnvironment) -> TrackResult:
                     break
             url = target
             continue
+        # A non-redirect answer ends the walk: only a 2xx status gives a usable final address.
         if not 200 <= response.status < 300:
             raise TrackError(f"{url} answered HTTP {response.status}")
         final = url

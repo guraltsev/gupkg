@@ -10,8 +10,8 @@ Usage and API
 
 Implementation Approach
 -----------------------
-The registry state is read in-process (the core behind ``gupkg registry status --json``); a failed read puts ``ERROR: ...`` in the status line and its full text in
-a notification and in ``problems``, so nothing the program cannot read is dropped silently.
+The registry state is queried in-process (the core behind ``gupkg registry status --json``); a failed query puts ``ERROR: ...`` in the status line and its full text in
+a notification and in ``problems``, so nothing the program cannot load is dropped silently.
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ from gupkg_ui.startup import UiEnvironment
 
 from .browser import BrowserScreen
 
+# Help text shown by the ``?`` key, one line per entry.
 HELP = [
     "Browser",
     "  The status line starts with the scope this program manages: system when it runs in an administrator shell, user otherwise.",
@@ -41,7 +42,39 @@ HELP = [
 
 
 def age(stamp: str | None, now: datetime | None = None) -> str:
-    """Return how long ago the ISO time *stamp* was (``2h ago``), ``never`` when there is none and ``?`` when it cannot be read."""
+    """Return how long ago the ISO time *stamp* was (``2h ago``), ``never`` when there is none and ``?`` when it cannot be parsed.
+
+    Parameters
+    ----------
+    stamp : str or None
+        An ISO 8601 time; a missing zone means UTC.
+    now : datetime, optional
+        The current time; the clock by default.
+
+    Returns
+    -------
+    str
+        ``<n>m ago``, ``<n>h ago`` or ``<n>d ago``, ``never`` or ``?``.
+
+    Examples
+    --------
+    Basic usage:
+
+    >>> from datetime import datetime, timezone
+    >>> now = datetime(2026, 1, 1, 12, tzinfo=timezone.utc)
+    >>> age('2026-01-01T10:00:00+00:00', now)
+    '2h ago'
+    >>> age('2025-12-30T12:00:00+00:00', now)
+    '2d ago'
+
+    Edge cases:
+
+    >>> age(None)
+    'never'
+    >>> age('garbage', now)
+    '?'
+    """
+    # Parse the stamp as an aware time.
     if not stamp:
         return "never"
     try:
@@ -50,6 +83,7 @@ def age(stamp: str | None, now: datetime | None = None) -> str:
         return "?"
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=timezone.utc)
+    # Pick the largest unit that keeps the number small.
     seconds = max(0, int(((now or datetime.now(timezone.utc)) - moment).total_seconds()))
     for limit, unit, size in ((3600, "m", 60), (86400, "h", 3600)):
         if seconds < limit:
@@ -58,7 +92,41 @@ def age(stamp: str | None, now: datetime | None = None) -> str:
 
 
 class ManagerApp(UiApp):
-    """The browser application of ``gupkg-manager``."""
+    """The browser application of ``gupkg-manager``.
+
+    Parameters
+    ----------
+    env : UiEnvironment
+        The client, the settings and the scope of the program.
+
+    Methods
+    -------
+    help_lines
+        The text of the help screen.
+    set_inventory
+        Remember the loaded inventory for the status line.
+    report_problem
+        Record and show a failed read.
+    read_registry
+        Refresh the registry state shown in the status line.
+    status_parts
+        The pieces of the status line.
+
+    Attributes
+    ----------
+    rows : list of PackageRow
+        The inventory last loaded.
+    inventory_error : str or None
+        One-line text of the last failed inventory read.
+    registry : str
+        The registry part of the status line.
+    registry_error : str or None
+        One-line text of the last failed registry read.
+    registry_unsynced : bool
+        Whether a configured registry has not been downloaded yet.
+    problems : list of str
+        Full text of every failed read in this session.
+    """
 
     TITLE = "gupkg-manager"
 
@@ -76,23 +144,52 @@ class ManagerApp(UiApp):
         self.push_screen(BrowserScreen())
 
     def help_lines(self) -> list[str]:
-        """Return the help text."""
+        """Return the help text.
+
+        Returns
+        -------
+        list of str
+            The lines of the help screen.
+        """
         return HELP
 
     def set_inventory(self, rows: list[PackageRow], error: str | None) -> None:
-        """Remember the loaded inventory for the status line."""
+        """Remember the loaded inventory for the status line.
+
+        Parameters
+        ----------
+        rows : list of PackageRow
+            The packages just loaded.
+        error : str or None
+            One-line text of a failed load, shown in the status line.
+        """
         self.rows, self.inventory_error = rows, error
         self.refresh_status()
 
     def report_problem(self, what: str, error: BaseException) -> str:
-        """Keep the full text of a failed read in ``problems``, show it in a notification and return the one-line form for the status line."""
+        """Keep the full text of a failed read in ``problems``, show it in a notification and return the one-line form for the status line.
+
+        Parameters
+        ----------
+        what : str
+            What was being read.
+        error : BaseException
+            The failure.
+
+        Returns
+        -------
+        str
+            A one-line, length-limited text for the status line.
+        """
+        # Keep the full text, show it once, and hand back the short form.
         full = f"{what}: {type(error).__name__}: {error}"
         self.problems.append(full)
         self.notify(literal(full, limit=2000), title="Read failed", severity="error", timeout=20, markup=False)
         return f"{what}: {literal(str(error), limit=100)}"
 
     async def read_registry(self) -> None:
-        """Read the registry revision and age in-process (what ``gupkg registry status`` reports); a failed read is shown in the status line, never left out silently."""
+        """Refresh the registry revision and age in-process (what ``gupkg registry status`` reports); a failed read is shown in the status line, never left out silently."""
+        # Query the registry state; a failure becomes a visible error, not a missing field.
         self.registry_error = None
         try:
             document = await self.env.source.registry()
@@ -100,8 +197,10 @@ class ManagerApp(UiApp):
             self.registry = ""
             self.registry_error = self.report_problem("registry unreadable", error)
             return
+        # One status part per configured registry, marking any that was never downloaded.
         parts = []
         unsynced = False
+        # Describe each registry by its short revision and age.
         for item in document.registries:
             name = literal(item.name, limit=30)
             unsynced = unsynced or not item.revision
@@ -109,19 +208,28 @@ class ManagerApp(UiApp):
                 f"registry {name} @ {literal(item.revision[:7], limit=12)} (synced {age(item.synchronized_at)})" if item.revision
                 else f"registry {name}: NOT DOWNLOADED, press s"
             )
+        # With no registry configured, say how to add one.
         if not parts:
             parts.append("no registry configured (gupkg registry add NAME SOURCE)")
         self.registry = " · ".join(parts)
         self.registry_unsynced = unsynced
 
     def status_parts(self) -> list[str]:
-        """Return the counts, the registry state and any inventory error."""
+        """Return the counts, the registry state and any inventory error.
+
+        Returns
+        -------
+        list of str
+            The pieces of the status line, errors first.
+        """
+        # Count the packages by status.
         outdated = sum(row.status == "outdated" for row in self.rows)
         broken = sum(row.status == "broken" for row in self.rows)
         available = sum(row.status == "available" for row in self.rows)
         parts = [f"{len(self.rows) - available} packages", f"{outdated} outdated", f"{broken} broken"]
         if available:
             parts.append(f"{available} available in the registry (i installs)")
+        # Errors lead the line so they cannot be missed.
         if self.inventory_error:
             parts.insert(0, f"ERROR: {literal(self.inventory_error, limit=120)}")
         if self.registry_error:

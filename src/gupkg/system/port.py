@@ -48,7 +48,6 @@ from pathlib import Path
 from typing import Callable, Mapping, Protocol, Sequence
 
 
-
 class Mode(StrEnum):
     """Install mode of a gupkg run: where its environment, ``PATH`` and shortcuts go.
 
@@ -63,7 +62,15 @@ class Mode(StrEnum):
 
 @dataclass(frozen=True)
 class EnvValue:
-    """Hold one stored environment value and whether it expands ``%VAR%`` references."""
+    """Hold one stored environment value and whether it expands ``%VAR%`` references.
+
+    Attributes
+    ----------
+    value : str
+        The stored text.
+    expandable : bool
+        Whether ``%VAR%`` references are expanded.
+    """
 
     value: str
     expandable: bool
@@ -72,6 +79,21 @@ class EnvValue:
 @dataclass(frozen=True)
 class ShortcutSpec:
     """Hold the fields of one Windows shortcut.
+
+    Attributes
+    ----------
+    target_path : str
+        The target, unresolved.
+    arguments : str
+        The command-line arguments.
+    working_directory : str
+        The working directory.
+    icon_location : str
+        ``path,index`` of the icon; empty for none.
+    description : str
+        The shortcut's description.
+    run_as_admin : bool
+        Whether opening the link asks for elevation.
 
     Notes
     -----
@@ -94,7 +116,15 @@ class ShortcutSpec:
 
 @dataclass(frozen=True)
 class ScopeFolders:
-    """Name where one scope's Start Menu shortcuts and command wrappers go."""
+    """Name where one scope's Start Menu shortcuts and command wrappers go.
+
+    Attributes
+    ----------
+    shortcut_root : Path
+        Where the scope's Start Menu shortcuts go.
+    bin_dir : Path
+        Where the scope's command wrappers go.
+    """
 
     shortcut_root: Path
     bin_dir: Path
@@ -102,7 +132,17 @@ class ScopeFolders:
 
 @dataclass(frozen=True)
 class ProcessResult:
-    """Report a finished child process: exit status and everything it printed."""
+    """Report a finished child process: exit status and everything it printed.
+
+    Attributes
+    ----------
+    returncode : int
+        The exit status.
+    stdout : str
+        The standard output.
+    stderr : str
+        The standard error.
+    """
 
     returncode: int
     stdout: str = ""
@@ -136,7 +176,29 @@ def unsafe_launcher_argument(value: str) -> str | None:
     stays the strict one: none of ``& | < > ^ " % ! ` ``, and no character of a Unicode category starting with ``C`` (control
     characters including C1, format characters such as the bidi overrides and isolates and the zero-width joiners, lone
     surrogates, private-use and unassigned code points) nor a line or paragraph separator (U+2028, U+2029).
+
+    Parameters
+    ----------
+    value : str
+        Candidate launcher argument.
+
+    Returns
+    -------
+    str or None
+        A short description of the first offending character, or ``None`` when *value* is plain.
+
+    Examples
+    --------
+    Basic usage:
+
+    >>> print(unsafe_launcher_argument('--version'))
+    None
+    >>> unsafe_launcher_argument('a&b')
+    "the character & in 'a&b'"
+    >>> unsafe_launcher_argument('50%')
+    "the character % in '50%'"
     """
+    # Report the first character that is a cmd.exe metacharacter, a control/format character or a line separator.
     for character in str(value):
         category = unicodedata.category(character)
         if character in UNSAFE_LAUNCHER_CHARACTERS or category[0] == "C" or category in ("Zl", "Zp"):
@@ -152,6 +214,17 @@ class HttpResponse:
     ``http_request`` never follows a redirect, so ``url`` is the URL that was
     requested and a 3xx response carries its ``location`` header. Repeated
     headers are joined with ``", "``.
+
+    Attributes
+    ----------
+    status : int
+        The HTTP status.
+    url : str
+        The URL that was requested.
+    headers : mapping of str to str
+        The lower-case response headers.
+    body : bytes
+        The response body.
     """
 
     status: int
@@ -167,6 +240,19 @@ class DownloadResponse:
     ``written`` counts the bytes this call wrote to the file. ``resumed`` is true
     only when the server answered a ``Range`` request with 206 and the bytes were
     appended. A 3xx or error status writes nothing.
+
+    Attributes
+    ----------
+    status : int
+        The HTTP status.
+    url : str
+        The URL that was requested.
+    headers : mapping of str to str
+        The lower-case response headers.
+    written : int
+        The bytes this call wrote to the file.
+    resumed : bool
+        Whether the bytes were appended to a partial file.
     """
 
     status: int
@@ -186,6 +272,67 @@ class System(Protocol):
     Implementations must be safe to call from worker threads. Methods raise
     ``OSError`` (or a subclass such as ``PermissionError``) for failures of the
     machine, and never print.
+
+    Methods
+    -------
+    create_junction
+        Create *link* as a junction to the existing directory *target*, replacing a junction.
+    read_link
+        Return the normalized target of the link at *path*, or ``None`` if it is not a readable link.
+    is_link
+        Return whether *path* is a directory link (a junction) rather than a real directory.
+    remove_link
+        Remove the link at *path* without touching its target; refuse anything that is not a link.
+    hardlink
+        Create *link* as a second name for the existing file *existing*.
+    get_env
+        Return one stored environment value, or ``None`` when it is not set (names are case-insensitive).
+    set_env
+        Store one environment value, replacing any value with the same (case-insensitive) name.
+    delete_env
+        Remove one environment value; removing an absent value is not an error.
+    get_path
+        Return the non-empty ``PATH`` entries of *scope* in stored order; a missing value is empty.
+    set_path
+        Store *entries* as the expandable ``PATH`` of *scope*.
+    broadcast_environment_change
+        Tell running programs that environment values changed; raises ``OSError`` when refused.
+    write_shortcut
+        Create or replace the shortcut at *path*, creating missing parent folders.
+    read_shortcut
+        Return the fields stored in the shortcut at *path*.
+    delete_shortcut
+        Delete the shortcut at *path*; deleting an absent shortcut is not an error.
+    is_elevated
+        Return whether this process may hold an administrator token (unknown counts as elevated).
+    directory_is_admin_only
+        Return whether only administrators can modify *path* and replace its parents.
+    directory_untrusted_reason
+        Return why *path* is not admin-only, or ``None`` when it is.
+    scratch_directory
+        Return a context manager that creates a private empty temporary folder, yields it, and deletes it on exit.
+    process_id
+        Return the id of this process (recorded in a package lock so another run can tell whether the holder lives).
+    process_is_running
+        Return whether a process with id *pid* is running; an id that cannot be judged counts as running.
+    scope_folders
+        Return the default shortcut and wrapper folders of *scope*.
+    run
+        Run a child process to completion and return its status and output.
+    run_foreground
+        Run a child process on this process's own console and return its exit status.
+    open_path
+        Open *path* with the program Windows associates with it (``gupkg logs --open`` opens a log in the editor).
+    regex_worker
+        Run the isolated regular-expression worker on *request* and return its status and output.
+    fetch
+        Download *url* to the file *dest* and return the byte count.
+    fetch_text
+        Return the UTF-8 text served at *url*.
+    http_request
+        Send one request and return the response of any status, without following redirects.
+    http_download
+        Stream one response body into *dest* and report how it went; redirects are not followed.
     """
 
     # -- links -------------------------------------------------------------
@@ -195,36 +342,131 @@ class System(Protocol):
 
         Raises ``RuntimeError`` when *target* is missing, or when *link* exists
         and is not a junction; nothing is changed in either case.
+
+        Parameters
+        ----------
+        link : Path
+            Location of the junction to create or replace.
+        target : Path
+            Existing directory the junction points to.
         """
 
     def read_link(self, path: Path) -> Path | None:
-        """Return the normalized target of the link at *path*, or ``None`` if it is not a readable link."""
+        """Return the normalized target of the link at *path*, or ``None`` if it is not a readable link.
+
+        Parameters
+        ----------
+        path : Path
+            Location to inspect.
+
+        Returns
+        -------
+        Path or None
+            Normalized link target, or ``None``.
+        """
 
     def is_link(self, path: Path) -> bool:
-        """Return whether *path* is a directory link (a junction) rather than a real directory."""
+        """Return whether *path* is a directory link (a junction) rather than a real directory.
+
+        Parameters
+        ----------
+        path : Path
+            Location to inspect.
+
+        Returns
+        -------
+        bool
+            True for a junction.
+        """
 
     def remove_link(self, path: Path) -> None:
-        """Remove the link at *path* without touching its target; refuse anything that is not a link."""
+        """Remove the link at *path* without touching its target; refuse anything that is not a link.
+
+        Parameters
+        ----------
+        path : Path
+            Link to remove.
+        """
 
     def hardlink(self, link: Path, existing: Path) -> None:
-        """Create *link* as a second name for the existing file *existing*."""
+        """Create *link* as a second name for the existing file *existing*.
+
+        Parameters
+        ----------
+        link : Path
+            New name to create.
+        existing : Path
+            File that already exists.
+        """
 
     # -- environment -------------------------------------------------------
 
     def get_env(self, scope: Mode, name: str) -> EnvValue | None:
-        """Return one stored environment value, or ``None`` when it is not set (names are case-insensitive)."""
+        """Return one stored environment value, or ``None`` when it is not set (names are case-insensitive).
+
+        Parameters
+        ----------
+        scope : Mode
+            Whether the user or the machine store is read.
+        name : str
+            Variable name.
+
+        Returns
+        -------
+        EnvValue or None
+            The stored value, or ``None``.
+        """
 
     def set_env(self, scope: Mode, name: str, value: str, expandable: bool) -> None:
-        """Store one environment value, replacing any value with the same (case-insensitive) name."""
+        """Store one environment value, replacing any value with the same (case-insensitive) name.
+
+        Parameters
+        ----------
+        scope : Mode
+            Whether the user or the machine store is written.
+        name : str
+            Variable name.
+        value : str
+            Value to store.
+        expandable : bool
+            Whether ``%VAR%`` references in the value are expanded when read.
+        """
 
     def delete_env(self, scope: Mode, name: str) -> None:
-        """Remove one environment value; removing an absent value is not an error."""
+        """Remove one environment value; removing an absent value is not an error.
+
+        Parameters
+        ----------
+        scope : Mode
+            Whether the user or the machine store is changed.
+        name : str
+            Variable name.
+        """
 
     def get_path(self, scope: Mode) -> list[str]:
-        """Return the non-empty ``PATH`` entries of *scope* in stored order; a missing value is empty."""
+        """Return the non-empty ``PATH`` entries of *scope* in stored order; a missing value is empty.
+
+        Parameters
+        ----------
+        scope : Mode
+            Whether the user or the machine ``PATH`` is read.
+
+        Returns
+        -------
+        list[str]
+            The stored entries in order.
+        """
 
     def set_path(self, scope: Mode, entries: Sequence[str]) -> None:
-        """Store *entries* as the expandable ``PATH`` of *scope*."""
+        """Store *entries* as the expandable ``PATH`` of *scope*.
+
+        Parameters
+        ----------
+        scope : Mode
+            Whether the user or the machine ``PATH`` is written.
+        entries : Sequence[str]
+            Folders to store, in order.
+        """
 
     def broadcast_environment_change(self) -> None:
         """Tell running programs that environment values changed; raises ``OSError`` when refused."""
@@ -232,44 +474,137 @@ class System(Protocol):
     # -- shortcuts ---------------------------------------------------------
 
     def write_shortcut(self, path: Path, spec: ShortcutSpec) -> None:
-        """Create or replace the shortcut at *path*, creating missing parent folders."""
+        """Create or replace the shortcut at *path*, creating missing parent folders.
+
+        Parameters
+        ----------
+        path : Path
+            Location of the shortcut file.
+        spec : ShortcutSpec
+            Fields the shortcut holds.
+        """
 
     def read_shortcut(self, path: Path) -> ShortcutSpec:
-        """Return the fields stored in the shortcut at *path*."""
+        """Return the fields stored in the shortcut at *path*.
+
+        Parameters
+        ----------
+        path : Path
+            Location of the shortcut file.
+
+        Returns
+        -------
+        ShortcutSpec
+            The stored fields.
+        """
 
     def delete_shortcut(self, path: Path) -> None:
-        """Delete the shortcut at *path*; deleting an absent shortcut is not an error."""
+        """Delete the shortcut at *path*; deleting an absent shortcut is not an error.
+
+        Parameters
+        ----------
+        path : Path
+            Location of the shortcut file.
+        """
 
     # -- privilege ---------------------------------------------------------
 
     def is_elevated(self) -> bool:
-        """Return whether this process may hold an administrator token (unknown counts as elevated)."""
+        """Return whether this process may hold an administrator token (unknown counts as elevated).
+
+        Returns
+        -------
+        bool
+            True when elevated or unknown.
+        """
 
     def directory_is_admin_only(self, path: Path) -> bool:
-        """Return whether only administrators can modify *path* and replace its parents."""
+        """Return whether only administrators can modify *path* and replace its parents.
+
+        Parameters
+        ----------
+        path : Path
+            Directory to judge.
+
+        Returns
+        -------
+        bool
+            True when the directory is admin-only.
+        """
 
     def directory_untrusted_reason(self, path: Path) -> str | None:
-        """Return why *path* is not admin-only, or ``None`` when it is."""
+        """Return why *path* is not admin-only, or ``None`` when it is.
+
+        Parameters
+        ----------
+        path : Path
+            Directory to judge.
+
+        Returns
+        -------
+        str or None
+            The reason, or ``None`` when admin-only.
+        """
 
     def scratch_directory(self, prefix: str) -> AbstractContextManager[Path]:
         """Return a context manager that creates a private empty temporary folder, yields it, and deletes it on exit.
 
         For work that must leave no trace in any root (a report-only run). A sandbox keeps it inside its own folder, so
         nothing is written to the real temporary folder.
+
+        Parameters
+        ----------
+        prefix : str
+            Prefix of the folder name.
+
+        Returns
+        -------
+        AbstractContextManager[Path]
+            Context manager yielding the folder.
         """
 
     def process_id(self) -> int:
-        """Return the id of this process (recorded in a package lock so another run can tell whether the holder lives)."""
+        """Return the id of this process (recorded in a package lock so another run can tell whether the holder lives).
+
+        Returns
+        -------
+        int
+            The process id.
+        """
 
     def process_is_running(self, pid: int) -> bool:
-        """Return whether a process with id *pid* is running; an id that cannot be judged counts as running."""
+        """Return whether a process with id *pid* is running; an id that cannot be judged counts as running.
+
+        Parameters
+        ----------
+        pid : int
+            Process id to look up.
+
+        Returns
+        -------
+        bool
+            True when the process runs or cannot be judged.
+        """
 
     # -- locations ---------------------------------------------------------
 
     def scope_folders(self, scope: Mode) -> ScopeFolders:
         """Return the default shortcut and wrapper folders of *scope*.
 
-        Raises ``ValueError`` when the machine does not identify them.
+        Parameters
+        ----------
+        scope : Mode
+            Whether the user or the machine folders are wanted.
+
+        Returns
+        -------
+        ScopeFolders
+            The shortcut root and the command wrapper folder.
+
+        Raises
+        ------
+        ValueError
+            When the machine does not identify them.
         """
 
     # -- processes ---------------------------------------------------------
@@ -293,6 +628,35 @@ class System(Protocol):
         is returned, not raised. ``watch`` is called about five times a second while the
         process runs; when it returns text the process is killed and ``ProcessAborted`` is
         raised with that text (how a caller bounds what a child writes to disk).
+
+        Parameters
+        ----------
+        argv : Sequence[str]
+            Program and arguments.
+        cwd : Path or None
+            Working directory, or the current one.
+        env : Mapping[str, str] or None
+            Complete child environment, or the inherited one.
+        on_line : Callable[[str], None] or None
+            Receiver of each output line.
+        input_text : str or None
+            Text sent on standard input.
+        timeout : float or None
+            Seconds after which the child is killed.
+        watch : Callable[[], str | None] or None
+            Abort check; returning text kills the child.
+
+        Returns
+        -------
+        ProcessResult
+            Exit status and captured output.
+
+        Raises
+        ------
+        ProcessAborted
+            When *watch* returned text.
+        TimeoutError
+            When *timeout* elapsed.
         """
 
     def run_foreground(self, argv: Sequence[str], cwd: Path | None = None, env: Mapping[str, str] | None = None) -> int:
@@ -303,13 +667,38 @@ class System(Protocol):
         be a ``.cmd`` or ``.bat`` script, which the implementation starts through its interpreter. Output is not
         captured and not reported as events.
 
-        Raises ``OSError`` when the program cannot be started.
+        Parameters
+        ----------
+        argv : Sequence[str]
+            Program and arguments.
+        cwd : Path or None
+            Working directory, or the current one.
+        env : Mapping[str, str] or None
+            Complete child environment, or the inherited one.
+
+        Returns
+        -------
+        int
+            The child's exit status.
+
+        Raises
+        ------
+        OSError
+            When the program cannot be started.
         """
 
     def open_path(self, path: Path) -> None:
         """Open *path* with the program Windows associates with it (``gupkg logs --open`` opens a log in the editor).
 
-        Raises ``OSError`` when nothing can open it.
+        Parameters
+        ----------
+        path : Path
+            File or folder to open.
+
+        Raises
+        ------
+        OSError
+            When nothing can open it.
         """
 
     def regex_worker(
@@ -329,6 +718,25 @@ class System(Protocol):
         start does not count) its whole process tree is killed and ``TimeoutError`` is raised,
         so a pattern that makes ``re`` run for ever costs the caller about *timeout* seconds. ``on_line``
         receives each line the worker writes, the first being ``pid <number>``.
+
+        Parameters
+        ----------
+        request : str
+            Request text sent on standard input.
+        timeout : float
+            Seconds the worker may run after it reported that it is up.
+        on_line : Callable[[str], None] or None
+            Receiver of each worker output line.
+
+        Returns
+        -------
+        ProcessResult
+            Exit status and output of the worker.
+
+        Raises
+        ------
+        TimeoutError
+            When the worker outlives *timeout*.
         """
 
     # -- network -----------------------------------------------------------
@@ -347,12 +755,45 @@ class System(Protocol):
         ``on_progress(received, total)`` is called with ``received == 0`` once
         before the first byte and then after each chunk; ``total`` is ``None``
         when the server gives no size.
+
+        Parameters
+        ----------
+        url : str
+            Address to download.
+        headers : Mapping[str, str] or None
+            Request headers.
+        dest : Path
+            File to write.
+        on_progress : Callable[[int, int | None], None] or None
+            Progress receiver.
+        timeout : float
+            Idle seconds allowed per socket operation.
+
+        Returns
+        -------
+        int
+            Number of bytes written.
         """
 
     def fetch_text(
         self, url: str, headers: Mapping[str, str] | None = None, *, timeout: float = 60
     ) -> str:
-        """Return the UTF-8 text served at *url*."""
+        """Return the UTF-8 text served at *url*.
+
+        Parameters
+        ----------
+        url : str
+            Address to read.
+        headers : Mapping[str, str] or None
+            Request headers.
+        timeout : float
+            Idle seconds allowed per socket operation.
+
+        Returns
+        -------
+        str
+            The decoded body.
+        """
 
     def http_request(
         self,
@@ -372,6 +813,35 @@ class System(Protocol):
         failures raise ``OSError``; *timeout* is the idle time of each socket operation and
         *total_timeout* the time the whole answer may take (``TimeoutError``). Redirect, retry and header policy belong to
         ``gupkg.services.http``, which calls this method once per hop.
+
+        Parameters
+        ----------
+        url : str
+            Address to request.
+        headers : Mapping[str, str] or None
+            Request headers.
+        method : str
+            HTTP method.
+        timeout : float
+            Idle seconds allowed per socket operation.
+        max_bytes : int or None
+            Largest body to read; ``None`` for no limit, ``0`` for headers only.
+        total_timeout : float or None
+            Seconds the whole answer may take.
+
+        Returns
+        -------
+        HttpResponse
+            Status, headers and body of the answer.
+
+        Raises
+        ------
+        ResponseTooLarge
+            When the body exceeds *max_bytes*.
+        OSError
+            On network failures.
+        TimeoutError
+            When *total_timeout* elapses.
         """
 
     def http_download(
@@ -396,6 +866,37 @@ class System(Protocol):
         headers)`` is called once, before the first body byte, for every answer, so a
         caller can remember the validators (``etag``, ``last-modified``) of a file whose
         body is then interrupted.
+
+        Parameters
+        ----------
+        url : str
+            Address to download.
+        headers : Mapping[str, str] or None
+            Request headers (a ``Range`` header when resuming).
+        dest : Path
+            File to write or append to.
+        on_progress : Callable[[int, int | None], None] or None
+            Progress receiver.
+        timeout : float
+            Idle seconds allowed per socket operation.
+        append : bool
+            Whether a 206 answer is appended to *dest*.
+        on_headers : Callable[[int, Mapping[str, str]], None] or None
+            Receiver of the status and headers before the first body byte.
+        total_timeout : float or None
+            Seconds the whole download may take.
+
+        Returns
+        -------
+        DownloadResponse
+            Status, headers and how the file was written.
+
+        Raises
+        ------
+        OSError
+            On network failures.
+        TimeoutError
+            When *total_timeout* elapses.
         """
 
 
@@ -417,7 +918,22 @@ def safe_process_environment(
     and a normal one gives a child process no more than it needs). When *system* is given and *mode* is ``Mode.SYSTEM`` (an elevated run), ``PATH``
     holds only the folders of the process ``PATH`` that only administrators can change (``trusted_path_entries``), because
     the process ``PATH`` can hold the user's own writable folders and an elevated child must not find a program there.
+
+    Parameters
+    ----------
+    extra : Mapping[str, str] or None
+        Variables added on top of the inherited machine-level ones.
+    system : System or None
+        Machine boundary used to judge folders; ``None`` skips the elevated treatment.
+    mode : Mode
+        ``Mode.SYSTEM`` selects the strict, admin-only environment.
+
+    Returns
+    -------
+    dict[str, str]
+        The environment to give the child.
     """
+    # Start from the machine-level variables of the process environment.
     kept = {name: value for name, value in os.environ.items() if name.upper() in _SAFE_ENVIRONMENT_NAMES}
     if system is not None and mode is Mode.SYSTEM:
         # Nothing here may come from the process environment, which a standard user can influence: ``PATH`` is the admin-only
@@ -438,7 +954,18 @@ def trusted_path_entries(system: System) -> list[str]:
 
     An elevated run looks tools up only here (``git``, for example), never in a folder a standard user can
     write: the process ``PATH`` can hold the user's own entries.
+
+    Parameters
+    ----------
+    system : System
+        Machine boundary that judges each folder.
+
+    Returns
+    -------
+    list[str]
+        Trusted folders in ``PATH`` order, without duplicates.
     """
+    # Walk the entries in order, keeping each distinct, existing, admin-only absolute folder once.
     trusted: list[str] = []
     seen: set[str] = set()
     for entry in os.environ.get("PATH", "").split(os.pathsep):
@@ -448,6 +975,7 @@ def trusted_path_entries(system: System) -> list[str]:
         # by whoever reads it, and a folder that is missing can be created later by anyone.
         if not folder or "%" in folder or folder.startswith(("\\\\", "//")):
             continue
+        # Judge the folder itself: skip duplicates and anything a standard user could modify.
         path = Path(folder)
         try:
             if not path.is_absolute() or not path.is_dir():
@@ -457,6 +985,7 @@ def trusted_path_entries(system: System) -> list[str]:
                 continue
         except OSError:
             continue
+        # Remember the folder so a repeated spelling of it is skipped, and keep it.
         seen.add(key)
         trusted.append(folder)
     return trusted
@@ -466,11 +995,23 @@ def trusted_system_root(system: System) -> Path | None:
     """Return the Windows folder named by ``SYSTEMROOT`` or ``WINDIR`` when it is an existing admin-only folder, else ``None``.
 
     The process environment can be set by a standard user, so the name is only a candidate: the folder itself is judged.
+
+    Parameters
+    ----------
+    system : System
+        Machine boundary that judges the folder.
+
+    Returns
+    -------
+    Path or None
+        The trusted Windows folder, or ``None`` when neither variable names one.
     """
+    # Accept the first candidate that is an existing absolute folder only administrators can change.
     for name in ("SYSTEMROOT", "WINDIR"):
         value = os.environ.get(name, "").strip()
         if not value or "%" in value:
             continue
+        # The candidate counts only when the folder itself passes the admin-only test.
         path = Path(value)
         try:
             if path.is_absolute() and path.is_dir() and system.directory_untrusted_reason(path) is None:
@@ -485,6 +1026,16 @@ def is_elevated_run(system: System) -> bool:
 
     The launcher's ``GUPKG_ELEVATED=1`` marker can only make behavior stricter,
     so it counts even when the token says otherwise.
+
+    Parameters
+    ----------
+    system : System
+        Machine boundary asked for the token's elevation.
+
+    Returns
+    -------
+    bool
+        True when the run must behave as elevated.
     """
     return os.environ.get("GUPKG_ELEVATED") == "1" or system.is_elevated()
 
@@ -500,12 +1051,33 @@ def run_checked(
 ) -> str:
     """Run a child process that must succeed and return its stripped standard output.
 
+    Parameters
+    ----------
+    system : System
+        Machine boundary that starts the process.
+    argv : Sequence[str]
+        Program and arguments.
+    cwd : Path or None
+        Working directory, or the current one.
+    env : Mapping[str, str] or None
+        Complete child environment, or the inherited one.
+    on_line : Callable[[str], None] or None
+        Receiver of each output line.
+    timeout : float or None
+        Seconds after which the child is killed.
+
+    Returns
+    -------
+    str
+        The child's standard output with surrounding whitespace removed.
+
     Raises
     ------
     ProcessFailed
         If the process exits with a non-zero status; the message names the
         command and includes its error output.
     """
+    # Run once, then turn any failure status into an exception that carries the command and its error output.
     result = system.run(argv, cwd, env, on_line, timeout=timeout)
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip()

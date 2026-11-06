@@ -25,6 +25,7 @@ from gupkg.system.fake import FakeHttp, FakeSystem
 
 pytestmark = pytest.mark.unit
 
+# Address used by the download tests.
 URL = "https://example.org/data"
 BODY = bytes(range(256)) * 600  # 153,600 bytes: more than one 64 KiB chunk
 

@@ -40,6 +40,7 @@ from gupkg_ui.startup import StartupError, UiEnvironment, add_root_options, buil
 from .app.app import ManagerApp
 from .batch import check_all, check_updates_all, load_inventory, pick, repair_all, update_all
 
+# Program name used in messages and as the parser's ``prog``.
 PROGRAM = "gupkg-manager"
 
 
@@ -75,6 +76,7 @@ def main(
     int
         The exit code (0 ok, 2 usage or configuration, 3 failed or refused, 4 internal, 5 declined or input needed).
     """
+    # Choose the streams and parse the command line; a parser exit becomes a return code.
     out, err, source = stdout or sys.stdout, stderr or sys.stderr, stdin or sys.stdin
     configure_streams(out, err)
     parser = _parser()
@@ -110,6 +112,7 @@ async def _batch_command(args: argparse.Namespace, environment: UiEnvironment, s
     stream = stderr if args.json else stdout
     sink = ConsoleSink(stream)
     command = args.command
+    # A question is asked only when a person is at a terminal and nothing answered it in advance.
     tty = bool(getattr(stdin, "isatty", lambda: False)()) and bool(getattr(stream, "isatty", lambda: False)())
     can_ask = tty and not args.yes and not args.json
     if command == "update":
@@ -132,6 +135,7 @@ async def _batch_command(args: argparse.Namespace, environment: UiEnvironment, s
             stdout.write(dumps(outcome_document(command, BatchOutcome())))
         return 0
 
+    # Run the batch command through one session.
     session = BatchSession(environment.client, sink)
     if command == "update":
         outcome = await update_all(environment, rows, session=session, sink=sink, interaction=interaction)
@@ -150,11 +154,12 @@ async def _batch_command(args: argparse.Namespace, environment: UiEnvironment, s
 
 def _no_answer(stream: TextIO, command: str):
     """Return the confirmation of a run nobody can be asked about: it declines and says how to run it without a question."""
-    def decline(lines, question: str) -> bool:
-        """Say that nothing was confirmed and decline."""
+    def _decline(lines, question: str) -> bool:
+        """Say that nothing was confirmed and decline (*lines* are unused; *question* is echoed)."""
+        # Print why nothing ran, so a schedule's log explains the refusal.
         print(f"{question} not confirmed: there is nobody to ask. Pass --yes to run it without a question; nothing was changed.", file=stream)
         return False
-    return decline
+    return _decline
 
 
 async def _check(args: argparse.Namespace, environment: UiEnvironment, rows, session: BatchSession, stdin: TextIO, stream: TextIO) -> BatchOutcome:
@@ -205,8 +210,10 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog=PROGRAM, description="The general gupkg manager: a browser over every package, and batch commands for schedules.")
     add_root_options(parser)
     commands = parser.add_subparsers(dest="command", metavar="<command>")
+    # The browser, then the batch commands, which share ``--json``, ``--yes`` and (except check) ``--all``.
     commands.add_parser("tui", help="Open the browser (the default).", description="Open the browser (the default).")
 
+    # The batch commands share one shape; only some take ``--all``, ``--no-download`` or ``--fix``.
     for name, text in (
         ("check-updates", "Write and populate the new version of every package; activate nothing."),
         ("update", "Update every package that has a newer known version."),
@@ -214,6 +221,7 @@ def _parser() -> argparse.ArgumentParser:
         ("check","Health check of every package (drift, App fingerprint, unverified installs)."),
     ):
         leaf = commands.add_parser(name, help=text, description=text)
+        # Options common to every batch command, then the ones only some take.
         if name != "check":
             leaf.add_argument("--all", action="store_true", help="act on every package (required)")
         leaf.add_argument("--json", action="store_true", help="print one JSON result document on standard output; human text goes to standard error")
@@ -222,5 +230,6 @@ def _parser() -> argparse.ArgumentParser:
             leaf.add_argument("--no-download", action="store_true", help="write the version directories only; download nothing")
         if name == "check":
             leaf.add_argument("--fix", action="store_true", help="re-apply the integration and rebuild a missing App")
+    # Defaults for options that only some commands define, so every command can read them.
     parser.set_defaults(all=False, json=False, yes=False, no_download=False, fix=False)
     return parser

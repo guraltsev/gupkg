@@ -7,13 +7,13 @@ directory for it (decision D11). The populate script of that directory fetches a
 Usage and API
 -------------
 ``track(ctx)`` returns a ``TrackResult`` with the newest version and, as captures, the commit and the SHA-256 of its row.
-It raises ``HookError`` when the table cannot be read or lists no release, when the newest row has no digest (a release that
+It raises ``HookError`` when the table cannot be fetched or lists no release, when the newest row has no digest (a release that
 could not be verified is refused, not skipped), and when the newest release has a higher major version than the running gupkg
 (that needs the bootstrap, not an update, so nothing is changed and the bootstrap is named).
 
 Implementation Approach
 -----------------------
-The table is read through the shared HTTP client of the context, parsed by ``releases.parse_releases`` and ordered numerically.
+The table is fetched through the shared HTTP client of the context, parsed by ``releases.parse_releases`` and ordered numerically.
 Comparing the result with the versions that are already known is the catalog's job, not the tracker's.
 """
 
@@ -23,6 +23,7 @@ from gupkg._version import __version__
 from gupkg.hooklib import HookError, TrackResult, fetch_text
 from .releases import REPOSITORY, RELEASES_URL, parse_releases, version_key
 
+# Version of the hook API this script is written against.
 PKG_MODULE_API = 2
 
 
@@ -42,10 +43,10 @@ def track(ctx):
     Raises
     ------
     HookError
-        If the table cannot be read, lists no release, lists the newest one without a digest, or the newest one needs
+        If the table cannot be fetched, lists no release, lists the newest one without a digest, or the newest one needs
         the bootstrap because its major version is higher than this gupkg's.
     """
-    # Read and parse the release table; a failure to read it is an error, never "no new version".
+    # Fetch and parse the release table; a failure to fetch it is an error, never "no new version".
     try:
         text = fetch_text(ctx, RELEASES_URL)
     except OSError as error:

@@ -26,9 +26,13 @@ from ...system.port import System
 from .extract import UnpackError
 from .sevenzip import SevenZip, SevenZipError
 
+# Leading bytes of a zip archive (local header, empty archive, spanned archive).
 _ZIP = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")
+# Leading bytes of a 7z archive.
 _SEVEN_ZIP = b"7z\xbc\xaf\x27\x1c"
+# Leading bytes of xz, gzip, bzip2 and zstd streams, taken to be compressed tar.
 _COMPRESSED = (b"\xfd7zXZ\x00", b"\x1f\x8b", b"BZh", b"\x28\xb5\x2f\xfd")
+# Leading bytes of an OLE compound file, the container format of ``.msi`` files.
 _OLE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 
 
@@ -46,11 +50,17 @@ def detect_kind(system: System, path: Path, filename: str | None = None, seven_z
     seven_zip : Path, optional
         The 7-Zip executable.
 
+    Returns
+    -------
+    str
+        One of ``zip``, ``7z``, ``tar``, ``sfx``, ``nsis``, ``msi``, ``exe`` or ``file``.
+
     Raises
     ------
     UnpackError
         If 7-Zip is needed and unavailable, or cannot read an executable at all.
     """
+    # Look at the first bytes only; the signature decides before the name does.
     name = (filename or path.name).lower()
     with open(path, "rb") as handle:
         head = handle.read(600)
@@ -69,10 +79,12 @@ def detect_kind(system: System, path: Path, filename: str | None = None, seven_z
 
     # An executable may carry an archive; ask 7-Zip what it sees.
     if head.startswith(b"MZ") or name.endswith(".exe"):
+        # If 7-Zip cannot list it, a PE file is a plain executable and anything else is a plain file.
         try:
             listing = SevenZip(system, seven_zip).listing(path)
         except SevenZipError:
             return "exe" if head.startswith(b"MZ") else "file"
+        # Map 7-Zip's type to ours: NSIS installers, bare executables, and everything else is a self-extractor.
         kind = listing.type.lower()
         if kind == "nsis":
             return "nsis"
@@ -85,13 +97,21 @@ def detect_kind(system: System, path: Path, filename: str | None = None, seven_z
 def require_kind(kind: str, path: Path) -> None:
     """Check that a declared *kind* fits the signature of the file at *path*.
 
-    Only the kinds with a fixed signature are checked: ``zip``, ``7z`` and ``tar``.
+    Only the kinds with a fixed signature are checked: ``zip`` and ``7z``.
+
+    Parameters
+    ----------
+    kind : str
+        The declared kind.
+    path : Path
+        The file.
 
     Raises
     ------
     UnpackError
         If the file's first bytes cannot be that kind.
     """
+    # Compare the declared kind with the file's first bytes.
     with open(path, "rb") as handle:
         head = handle.read(600)
     if kind == "zip" and not head.startswith(_ZIP):

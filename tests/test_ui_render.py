@@ -59,6 +59,7 @@ def test_text_from_a_package_is_literal_and_cleaned() -> None:
         {"event": "package_start", "view": {"name": hostile}},
     ])
 
+    # Assert: markup is shown literally and control characters are removed.
     text = "\n".join(plain(lines))
     assert "[bold red]boom[/]" in text and "[update.check]" in text
     assert "\x1b" not in text and "‮" not in text and "\x07" not in text
@@ -115,6 +116,7 @@ def test_the_summary_names_every_failed_and_skipped_target_and_the_verdict_comes
     summary = summarize_entries(entries)
     lines = plain(verdict_lines(3, summary))
 
+    # Assert: failures and skips are named, the verdict comes last and the plain form is simple.
     assert summary[0] == "ok alpha 2.0.0: updated (was 1.0.0)"
     assert "x beta: update failed: boom" in summary and "- gamma: skipped" in summary
     assert any(line.startswith("- delta: refused") for line in summary) and summary[-1] == "1 of 4 failed: beta"

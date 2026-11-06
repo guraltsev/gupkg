@@ -24,7 +24,9 @@ import pytest
 
 pytestmark = pytest.mark.process
 
+# Root of this checkout.
 ROOT = Path(__file__).resolve().parents[1]
+# Phrases that would make a script look for a system Python or the bundled runtime.
 FORBIDDEN = ("py -3", "call python", "GUPKG_PYTHON", "gupkg.python", "GUPKG_EMBEDDED", "GUPKG_BUNDLED_RUNTIME", "--embedded")
 windows_only = pytest.mark.skipif(os.name != "nt", reason="Windows batch scripts")
 
@@ -96,6 +98,7 @@ def test_python_helper_stops_with_the_status_of_a_failing_setup_even_with_python
 @windows_only
 def test_setup_tries_uv_with_seed_first_and_falls_back_to_python_m_venv(tmp_path: Path) -> None:
     """With no .venv, setup runs ``uv venv --seed`` and, when uv fails, ``<python> -m venv``; both failing is an error."""
+    # Arrange: a copy of the setup script and a requirements file.
     helper = _scripts_copy(tmp_path)
     shutil.copy2(ROOT / "_scripts" / "setup.cmd", helper.parent / "setup.cmd")
     (tmp_path / "requirements-dev.txt").write_text("", encoding="utf-8")
@@ -104,11 +107,14 @@ def test_setup_tries_uv_with_seed_first_and_falls_back_to_python_m_venv(tmp_path
     tools.mkdir()
     _stand_in(tools / "uv.cmd", log, "uv", 1)
     base = _stand_in(tmp_path / "base.cmd", log, "base", 1)
+    # Put a ``uv`` stand-in that fails on the PATH, in front of the real tools.
     env = os.environ.copy()
     env["PATH"] = f"{tools};{env['PATH']}"
 
+    # Act: run the setup script with a base interpreter that also fails.
     result = subprocess.run([str(helper.parent / "setup.cmd"), str(base)], env=env, capture_output=True, text=True, check=False)
 
+    # Assert: ``uv`` was tried first with a seeded environment, then ``venv``, and the failure is explained.
     calls = log.read_text(encoding="utf-8").splitlines()
     assert result.returncode != 0
     assert calls[0].startswith("uv venv --seed --python ")
@@ -140,6 +146,7 @@ def test_requirements_dev_pins_the_runtime_lock_packages_and_adds_pytest() -> No
 
 def test_shipped_code_and_scripts_never_probe_for_a_system_python() -> None:
     """No file under src/ (outside the bundled runtime), _scripts/ or tools/ mentions an interpreter probe or override."""
+    # Scan every shipped text file outside the bundled runtime for the forbidden phrases.
     offenders = []
     for folder in ("src", "_scripts", "tools"):
         for path in (ROOT / folder).rglob("*"):
@@ -151,4 +158,5 @@ def test_shipped_code_and_scripts_never_probe_for_a_system_python() -> None:
             text = path.read_text(encoding="utf-8", errors="replace")
             offenders += [f"{relative}: {word}" for word in FORBIDDEN if word in text]
 
+    # Assert: no file names a system Python.
     assert offenders == []

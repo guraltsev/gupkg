@@ -43,10 +43,15 @@ from ..services.values import file_name_from_url
 from ..system.port import safe_process_environment
 from .context import Engine, require_trusted_tools
 
+# A ``$Name``, ``${Name}`` or ``$$`` variable reference in an installer argument.
 _VARIABLE = re.compile(r"\$(?:\$|\{(?P<braced>[A-Za-z_][A-Za-z0-9_]*)\}|(?P<plain>[A-Za-z_][A-Za-z0-9_]*))")
+# An option with an attached value, such as ``/DIR=<value>`` or ``-dir:<value>``.
 _OPTION = re.compile(r"^(?P<flag>[/-]{1,2}[A-Za-z][\w-]*)(?P<sep>[=:])(?P<value>.*)$", re.DOTALL)
+# A short switch glued to a path-like value, such as ``-o`` followed directly by a drive path.
 _GLUED = re.compile(r"^[/-]{1,2}[A-Za-z]{1,3}(?P<value>[A-Za-z]:.*|[\\/~%].*)$", re.DOTALL)
+# A pure switch such as ``/VERYSILENT``, which carries no path.
 _SWITCH = re.compile(r"[/-]{1,2}[A-Za-z][\w!,.+-]*")
+# Windows device names that must never appear as a path segment under the stage.
 _DEVICES = frozenset(
     {"con", "prn", "aux", "nul", "conin$", "conout$", *(f"com{n}" for n in range(1, 10)), *(f"lpt{n}" for n in range(1, 10))}
 )
@@ -76,10 +81,33 @@ def expand_arguments(run: Sequence[str], stage: Path) -> list[str]:
     InstallerError
         If an argument uses an unknown variable, holds a control character, or names a path that is not inside *stage*
         (an absolute path elsewhere, a UNC path, a ``..`` segment, or a relative path with a separator).
+
+    Examples
+    --------
+    Basic usage:
+
+    >>> expanded = expand_arguments(["/VERYSILENT", "/DIR=$Stage"], Path("C:/stage"))
+    >>> expanded[0]
+    '/VERYSILENT'
+    >>> expanded[1].startswith("/DIR=") and "stage" in expanded[1]
+    True
+
+    Edge cases:
+
+    >>> expand_arguments(["/DIR=D:/other"], Path("C:/stage"))  # doctest: +ELLIPSIS
+    Traceback (most recent call last):
+        ...
+    gupkg.engine.installer.InstallerError: installer argument '/DIR=D:/other' names 'D:/other'; only a path inside the stage ...
+    >>> expand_arguments(["$Home"], Path("C:/stage"))
+    Traceback (most recent call last):
+        ...
+    gupkg.engine.installer.InstallerError: installer argument '$Home' uses $Home; only $Stage exists there
     """
+    # Expand every argument and check it before anything is started.
     expanded: list[str] = []
     for text in run:
-        def replace(match: re.Match[str]) -> str:
+        def _replace(match: re.Match[str]) -> str:
+            """Return the value of one variable reference; only ``$Stage`` (and ``$$``) exist."""
             name = match.group("braced") or match.group("plain")
             if name is None:
                 return "$"
@@ -87,57 +115,11 @@ def expand_arguments(run: Sequence[str], stage: Path) -> list[str]:
                 raise InstallerError(f"installer argument {text!r} uses ${name}; only $Stage exists there")
             return str(stage)
 
-        value = _VARIABLE.sub(replace, text)
+        # Expand the variables, then require the result to stay inside the stage.
+        value = _VARIABLE.sub(_replace, text)
         _require_inside(text, value, stage)
         expanded.append(value)
     return expanded
-
-
-def _require_inside(original: str, value: str, stage: Path) -> None:
-    """Refuse an expanded argument whose value is a path that is not inside *stage*, or a name that is not plain.
-
-    The argument is a pure switch (``/VERYSILENT``), an option with a value (``/DIR=<value>``, ``-dir:<value>``,
-    ``-o<value>``) or a bare word. A value is accepted only when it is the stage itself or a path below it, or when it is
-    a plain word: no separator, drive colon, ``~``, ``%`` or quote, no ``..`` and not a Windows device name (``con``,
-    ``nul``, ``com1``...). A value that starts with a backslash, ``/``, ``~`` or ``%``, holds a ``:`` that is not in the
-    stage path, or names a path anywhere else is refused.
-    """
-    if any(ord(char) < 32 for char in value):
-        raise InstallerError(f"installer argument {original!r} holds a control character")
-    option = _OPTION.match(value)
-    if option is not None:
-        target = option.group("value")
-    else:
-        # A bare word may still be a switch glued to a value (``-oC:\x``): look at what follows the flag characters.
-        glued = _GLUED.match(value)
-        target = glued.group("value") if glued else value
-    target = target.strip()
-    if option is not None and option.group("flag").lstrip("/-").casefold() == "d" and '"' in target:
-        raise InstallerError(f"installer argument {original!r}: NSIS reads /D= unquoted and last, so a quoted value is refused")
-    if len(target) >= 2 and target[0] == target[-1] == '"':
-        target = target[1:-1]
-    if not target:
-        return
-    here = str(stage)
-    if target == here or target.startswith(here + "\\"):
-        rest = target[len(here):]
-        segments = re.split(r"[\\/]+", rest)
-        if ".." in segments or any(char in rest for char in ':%"~'):
-            raise InstallerError(f"installer argument {original!r} leaves the stage {stage}")
-        if any(segment.split(".", 1)[0].rstrip(" ").casefold() in _DEVICES for segment in segments if segment):
-            raise InstallerError(f"installer argument {original!r} names a Windows device inside the stage")
-        return
-    if option is None and _SWITCH.fullmatch(target):
-        return
-    stripped = target
-    if any(char in stripped for char in ':\\/~%"'):
-        raise InstallerError(
-            f"installer argument {original!r} names {target!r}; only a path inside the stage {stage} or a plain word is accepted"
-        )
-    if ".." in stripped:
-        raise InstallerError(f"installer argument {original!r} has a '..' segment")
-    if stripped.split(".", 1)[0].rstrip(" ").casefold() in _DEVICES:
-        raise InstallerError(f"installer argument {original!r} names a Windows device ({target!r})")
 
 
 def run_installer(
@@ -150,7 +132,29 @@ def run_installer(
     name: str,
     version: str,
 ) -> list[str]:
-    """Run the verified installer *fetched* into *stage* and validate the result; return the arguments it ran with.
+    """Run the verified installer *fetched* into *stage* and validate the result.
+
+    Parameters
+    ----------
+    engine : Engine
+        The engine whose system runs the installer and whose scope sets the environment.
+    fetched : FetchedArtifact
+        The downloaded and verified installer.
+    run : sequence of str
+        The ``[source.installer] run`` arguments, before ``$Stage`` expansion.
+    stage : Path
+        The staging ``App`` folder the installer installs into.
+    work : Path
+        A scratch folder for the installer copy and its ``TEMP``.
+    require : sequence of str
+        Paths that must exist in *stage* after the run.
+    name, version : str
+        Package name and version, used in messages.
+
+    Returns
+    -------
+    list of str
+        The expanded arguments the installer ran with.
 
     Raises
     ------
@@ -174,6 +178,7 @@ def run_installer(
             f"({fetched.record.decision}). A vendor installer runs only from a download that matches a pinned sha256; "
             "pin one in the version's pkg.toml (`gupkg pkg pin`). --skip-checksum does not apply to installers."
         )
+    # Refuse bad arguments and non-.exe artifacts before touching the disk.
     arguments = expand_arguments(run, stage)
     filename = fetched.download.filename or file_name_from_url(fetched.download.final_url) or fetched.download.path.name
     if not filename.lower().endswith(".exe"):
@@ -185,19 +190,25 @@ def run_installer(
     folder.mkdir()
     installer = folder / ntpath.basename(filename)
     require_trusted_tools(engine, installer, fetched.download.path)
+
+    # Copy the file to the work folder and hash it once more, so what runs is what was verified.
     shutil.copyfile(fetched.download.path, installer)
     if _sha256(installer) != (fetched.record.observed_sha256 or ""):
         raise InstallerError(f"{filename} changed between the verification and the start of the installer")
+
+    # Give the child its own TEMP and make sure the stage exists.
     temp = work / "temp"
     temp.mkdir()
     stage.mkdir(exist_ok=True)
 
+    # Announce the vendor code run, then start it with a minimal environment and a hard timeout.
     command = [str(installer), *arguments]
     emit(Step(f"runs vendor installer: {filename} {' '.join(arguments)}", "info"))
     emit(Warning(
         f"{name} {version} runs a vendor installer. Anything it changes outside {stage} is outside gupkg's control "
         "and is not undone by uninstall."
     ))
+    # Run with a hard timeout; a timeout or a nonzero exit status is a failure of the whole install.
     try:
         result = engine.system.run(
             command, cwd=folder, env=safe_process_environment({"TEMP": str(temp), "TMP": str(temp)}, system=engine.system, mode=engine.scope.mode),
@@ -233,3 +244,60 @@ def _refuse_links(stage: Path) -> None:
             path = Path(folder) / entry
             if is_reparse_point(path):
                 raise InstallerError(f"The vendor installer left a link at {path}; an App with links is not accepted")
+
+
+# --- supporting helpers ---
+
+
+def _require_inside(original: str, value: str, stage: Path) -> None:
+    """Refuse an expanded argument whose value is a path that is not inside *stage*, or a name that is not plain.
+
+    The argument is a pure switch (``/VERYSILENT``), an option with a value (``/DIR=<value>``, ``-dir:<value>``,
+    ``-o<value>``) or a bare word. A value is accepted only when it is the stage itself or a path below it, or when it is
+    a plain word: no separator, drive colon, ``~``, ``%`` or quote, no ``..`` and not a Windows device name (``con``,
+    ``nul``, ``com1``...). A value that starts with a backslash, ``/``, ``~`` or ``%``, holds a ``:`` that is not in the
+    stage path, or names a path anywhere else is refused.
+    """
+    # Control characters could smuggle extra arguments, so they are refused outright.
+    if any(ord(char) < 32 for char in value):
+        raise InstallerError(f"installer argument {original!r} holds a control character")
+    # Find the part of the argument that carries a path: the option value, a glued value, or the word itself.
+    option = _OPTION.match(value)
+    if option is not None:
+        target = option.group("value")
+    else:
+        # A bare word may still be a switch glued to a value (``-oC:\x``): look at what follows the flag characters.
+        glued = _GLUED.match(value)
+        target = glued.group("value") if glued else value
+    # Normalize the value (strip, unquote) and apply the NSIS ``/D=`` quoting rule.
+    target = target.strip()
+    if option is not None and option.group("flag").lstrip("/-").casefold() == "d" and '"' in target:
+        raise InstallerError(f"installer argument {original!r}: NSIS reads /D= unquoted and last, so a quoted value is refused")
+    # Surrounding quotes do not change the path; an empty value names nothing.
+    if len(target) >= 2 and target[0] == target[-1] == '"':
+        target = target[1:-1]
+    if not target:
+        return
+    # A value inside the stage is accepted unless it uses ``..``, special characters or a device name.
+    here = str(stage)
+    if target == here or target.startswith(here + "\\"):
+        rest = target[len(here):]
+        segments = re.split(r"[\\/]+", rest)
+        if ".." in segments or any(char in rest for char in ':%"~'):
+            raise InstallerError(f"installer argument {original!r} leaves the stage {stage}")
+        if any(segment.split(".", 1)[0].rstrip(" ").casefold() in _DEVICES for segment in segments if segment):
+            raise InstallerError(f"installer argument {original!r} names a Windows device inside the stage")
+        return
+    # Anything else must be a plain word: a pure switch, or a word with no path syntax and no device name.
+    if option is None and _SWITCH.fullmatch(target):
+        return
+    stripped = target
+    # Outside the stage, only a word without path syntax, a ``..`` segment or a device name is acceptable.
+    if any(char in stripped for char in ':\\/~%"'):
+        raise InstallerError(
+            f"installer argument {original!r} names {target!r}; only a path inside the stage {stage} or a plain word is accepted"
+        )
+    if ".." in stripped:
+        raise InstallerError(f"installer argument {original!r} has a '..' segment")
+    if stripped.split(".", 1)[0].rstrip(" ").casefold() in _DEVICES:
+        raise InstallerError(f"installer argument {original!r} names a Windows device ({target!r})")

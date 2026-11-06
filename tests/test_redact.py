@@ -6,7 +6,7 @@ Behaviour covered: user information and the values of secret-looking query param
 a receipt, events, a plan and an error that never contain it.
 
 Real: the redaction, the engine, real receipts. Mocked: `FakeSystem` (the URL fixtures).
-Out of scope: how a front end prints events (issue 029).
+Out of scope: how a front end prints events.
 """
 
 from __future__ import annotations
@@ -89,8 +89,10 @@ def test_an_install_of_a_url_with_a_secret_leaves_no_secret_in_receipt_events_or
         """Keep every event."""
 
         def handle(self, event: object) -> None:
+            """Collect every event the engine emits."""
             events.append(event)
 
+    # Act: plan the install, then run it while collecting every reported event.
     plan = lifecycle.plan(world.engine, [Request("install", "tool")])[0].to_data()
     with use_reporter(Collect()):
         result = world.one("install", "tool")

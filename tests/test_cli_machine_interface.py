@@ -27,10 +27,13 @@ from tests.support.mode import tree_snapshot
 
 pytestmark = pytest.mark.unit
 
+# Keys of the document that ends a run.
 RESULT_KEYS = {"api", "command", "ok", "exit_code", "results", "warnings"}
+# Keys of every package entry of that document.
 ENTRY_KEYS = {"package", "operation", "ok", "status", "version", "previous", "mode", "exit_code", "receipt", "log", "warnings"}
 # A successful entry also carries ``details``, a failed one ``error``; plans add keys that belong to their operation only.
 SUCCESS_ENTRY_KEYS = ENTRY_KEYS | {"details"}
+# Keys of a failed package entry.
 FAILED_ENTRY_KEYS = ENTRY_KEYS | {"error"}
 ERROR_KEYS = {"code", "message"}  # plus "hint", present only when there is one
 
@@ -39,10 +42,12 @@ def assert_error_shape(error: dict) -> None:
     """Assert the pinned shape of one structured error: ``code`` and ``message``, and ``hint`` only when it has text."""
     assert set(error) in (ERROR_KEYS, ERROR_KEYS | {"hint"}) and error["code"] and error["message"]
     assert "hint" not in error or (isinstance(error["hint"], str) and error["hint"])
+# The keys that a plan of each operation adds to the common ones.
 PLAN_EXTRA: dict[str, set[str]] = {
     "check-updates": {"download"}, "install": {"populate"}, "update": {"populate"}, "switch": {"populate"},
     "uninstall": set(), "cleanup": {"cleanup"},
 }
+# Keys that every plan holds.
 PLAN_KEYS = {
     "operation", "package", "path", "mode", "version", "previous", "effects", "phases", "notes", "sha256", "url",
 }
@@ -94,14 +99,17 @@ def test_every_command_that_accepts_plan_prints_a_plan_document_and_changes_noth
     cli_world_with_tool_update: CliWorld, argv: tuple[str, ...], operation: str
 ) -> None:
     """--plan --json names the target's version, mode, checksum status and URL, and writes only the log files."""
+    # Arrange: a newer version at the vendor, and a snapshot of both roots and the machine.
     cli_world_with_tool_update.tracker("tool")
     cli_world_with_tool_update.announce("tool", "2.0.0")
     roots = [cli_world_with_tool_update.user, cli_world_with_tool_update.system_root]
     before = [tree_snapshot(root) for root in roots]
     machine_before = (len(cli_world_with_tool_update.fake.registry_log), cli_world_with_tool_update.fake.broadcasts, sorted(str(path) for path in cli_world_with_tool_update.fake.shortcuts()))
 
+    # Act: ask for the plan.
     result = cli_world_with_tool_update.cli(*argv, "--plan", "--json")
 
+    # Assert: the document is a plan and reports success.
     document = result.document()
     assert result.code == 0, result.err
     assert document["plan"] is True and document["command"] == operation and document["ok"] is True
@@ -109,6 +117,7 @@ def test_every_command_that_accepts_plan_prints_a_plan_document_and_changes_noth
     assert entry["target"] == "tool" and entry["ok"] is True
     assert set(entry) == {"target", "ok", "exit_code", "plan"} and set(entry["plan"]) == PLAN_KEYS | PLAN_EXTRA.get(operation, set()) and entry["plan"]["operation"] == operation
     assert entry["plan"]["mode"] == "user"
+    # Only run logs may differ on disk, and the machine is unchanged.
     after = [tree_snapshot(root) for root in roots]
     for old, new in zip(before, after):
         changed = {name for name in set(old) | set(new) if old.get(name) != new.get(name)}

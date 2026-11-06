@@ -89,6 +89,8 @@ async def run_update(
     entries = [*unsafe, *refused_entries(planned, {key: value for key, value in preview.items() if key not in would_ask})]
     lines, question = plan_lines(planned, preview, would_ask=would_ask)
     sink.lines(lines)
+
+    # The targets the confirmation is about: ready ones that would run, or that will be asked about a missing checksum.
     pending = [item for item in planned if item.state == "ready" and (preview.get(item.target, TargetDecision(False)).run or item.target in would_ask)]
     if pending and interaction.confirm is not None:
         answer = interaction.confirm(lines, question)
@@ -113,7 +115,21 @@ async def run_update(
 
 
 def refused_entries(planned: Sequence[PlannedTarget], decisions: dict[str, TargetDecision]) -> list[dict[str, Any]]:
-    """Return the entries of the planned targets that will not run: failed plans, refused downloads, declined questions, nothing to do."""
+    """Return the entries of the planned targets that will not run: failed plans, refused downloads, declined questions, nothing to do.
+
+    Parameters
+    ----------
+    planned : sequence of PlannedTarget
+        The targets of the plan.
+    decisions : dict of str to TargetDecision
+        What the checksum policy decided, by target.
+
+    Returns
+    -------
+    list of dict
+        One result entry per target that will not run; targets that will run have none.
+    """
+    # One entry per reason a target does not run, in the order of the plan.
     entries: list[dict[str, Any]] = []
     for item in planned:
         decision = decisions.get(item.target)
@@ -132,10 +148,25 @@ def plan_lines(
     """Return the plan table (one line per target, saying what happens to it) and the one question that confirms it.
 
     *would_ask* names the targets whose missing checksum the person will be asked about after confirming the plan.
+
+    Parameters
+    ----------
+    planned : sequence of PlannedTarget
+        The targets of the plan.
+    decisions : dict of str to TargetDecision
+        What the checksum policy would decide, by target.
+    would_ask : set of str
+        The targets whose missing checksum will be asked about.
+
+    Returns
+    -------
+    tuple of (list of Text, str)
+        The plan lines and the question that confirms them.
     """
     lines = [Text("Plan", style="bold")]
     count = 0
     for item in planned:
+        # Name the change first, then say in one note what happens to this target and how it is coloured.
         decision = decisions.get(item.target)
         name = literal(item.package or item.target, limit=60)
         change = f"{literal(item.previous or '-', limit=40)} -> {literal(item.version or '?', limit=40)}"
@@ -144,6 +175,7 @@ def plan_lines(
         elif item.target in would_ask:
             note, style = "no checksum: you will be asked", "yellow"
             count += 1
+        # A target that the policy refuses or whose plan failed is shown with the reason and is not counted.
         elif decision is not None and not decision.run:
             note, style = decision.message or decision.status, "yellow"
         elif item.state == "failed":
@@ -153,6 +185,142 @@ def plan_lines(
             count += 1
         lines.append(Text(f"  {name:<16} {change:<18} {note}", style=style))
     return lines, f"Update {count or 'no'} package{'s' if count != 1 else ''}?"
+
+
+async def run_check_updates(
+    env: UiEnvironment, rows: Sequence[PackageRow], *, session: BatchSession, interaction: Interaction, options: Sequence[str] = (),
+) -> BatchOutcome:
+    """Run ``gupkg check-updates`` for *rows*: it writes and populates new versions and activates nothing.
+
+    The whole batch is one call, in the run's scope. The checksum policy ``skip`` relays ``--skip-checksum=setting``;
+    a version the tracker found but whose download has no checksum is reported as refused, and when someone can answer (policy ``ask``) each such
+    package is offered once and re-run with ``--skip-checksum=user-approved`` when the answer is yes.
+
+    Parameters
+    ----------
+    env : UiEnvironment
+        The client, the settings and the scope of the run.
+    rows : sequence of PackageRow
+        The packages to check.
+    session : BatchSession
+        Runs the calls and writes the verdict.
+    interaction : Interaction
+        Who can answer the per-package checksum questions.
+    options : sequence of str
+        Extra options for ``check-updates``.
+
+    Returns
+    -------
+    BatchOutcome
+        The combined result of the batch, including a re-run of the approved packages.
+    """
+    subjects, unsafe = safe_subjects("check-updates", [subject_of(row) for row in rows])
+    skips = {item.target: (skip_argument(SKIPPED_SETTING),) for item in subjects if env.settings.checksum_policy == "skip"}
+
+    # One call carries the whole batch.
+    def _whole(members: Sequence[Subject], extra: dict[str, tuple[str, ...]]) -> list[Step]:
+        """Group *members* for ``check-updates`` with the skip arguments of *extra*."""
+        return make_steps("check-updates", members, settings=env.settings, options=["--yes", *options], skips=extra)
+
+    offered: set[str] = set()
+
+    async def _retry(outcome: BatchOutcome) -> FollowUp | None:
+        """Offer each target refused for a missing checksum once, and return the re-run of the approved ones (``None`` when there is none)."""
+        approved: list[Subject] = []
+
+        # Look at every refusal for a missing checksum that was not offered yet, and ask about it once.
+        for entry in outcome.entries:
+            error = entry.get("error") if isinstance(entry.get("error"), dict) else {}
+            subject = next((item for item in subjects if item.target == entry.get("package")), None)
+            if error.get("code") != "checksum-missing" or subject is None or subject.target in offered or interaction.ask_checksum is None:
+                continue
+
+            # Ask the same question as the plan would, for a candidate rebuilt from the refusal the CLI reported.
+            offered.add(subject.target)
+            candidate = PlannedTarget(
+                subject.target, "failed", subject.name, checksum=ChecksumPlan(MISSING, str(error.get("url") or ""), "tracker", error.get("skippable") is True),
+                code="checksum-missing",
+            )
+            decision = (await decide_targets([candidate], lambda item: env.settings.checksum_policy, interactive=True, ask=interaction.ask_checksum)).get(subject.target)
+            if decision is not None and decision.run and decision.arguments:
+                approved.append(subject)
+
+        # Re-run only the approved targets, each with the user's approval of the missing checksum.
+        if not approved:
+            return None
+        extra = {item.target: (skip_argument(USER_APPROVED),) for item in approved}
+        return FollowUp(tuple(_whole(approved, extra)), frozenset(item.name for item in approved))
+
+    return await session.run(_whole(subjects, skips), extra_entries=unsafe, follow_up=_retry if interaction.interactive else None)
+
+
+async def run_operation(
+    env: UiEnvironment, command: str, rows: Sequence[PackageRow], *, session: BatchSession, options: Sequence[str] = (),
+    trailing: Sequence[str] = (),
+) -> BatchOutcome:
+    """Run one more command (``check``, ``install``, ``uninstall``, ``cleanup``, ``switch`` ...) on *rows* in one call.
+
+    The caller has already asked the questions the command needs (the options carry ``--yes``), because the CLI is always called with ``--no-input``.
+
+    Parameters
+    ----------
+    env : UiEnvironment
+        The client, the settings and the scope of the run.
+    command : str
+        The command word.
+    rows : sequence of PackageRow
+        The packages to run it on.
+    session : BatchSession
+        Runs the calls and writes the verdict.
+    options : sequence of str
+        Options of the command, placed before the targets.
+    trailing : sequence of str
+        Arguments placed after the targets.
+
+    Returns
+    -------
+    BatchOutcome
+        The combined result of the call.
+    """
+    subjects, unsafe = safe_subjects(command, [subject_of(row) for row in rows])
+    steps = make_steps(command, subjects, settings=env.settings, options=options, trailing=trailing)
+    return await session.run(steps, extra_entries=unsafe)
+
+
+def cleanup_follow_up(env: UiEnvironment, subjects: Sequence[Subject]) -> Callable[[BatchOutcome], Awaitable[FollowUp | None]]:
+    """Return the follow-up that ends an update with a cleanup of the run's root when a package was updated (never after a cancel).
+
+    A run has one scope, so the cleanup is one call, made only when something was updated.
+
+    Parameters
+    ----------
+    env : UiEnvironment
+        The client, the settings and the scope of the run.
+    subjects : sequence of Subject
+        The packages of the update; the first one names the root to clean.
+
+    Returns
+    -------
+    callable
+        An async function from the ``BatchOutcome`` to the cleanup ``FollowUp``, or ``None`` when nothing was updated or the cleanup was already offered.
+    """
+    made: list[bool] = []
+
+    async def _follow(outcome: BatchOutcome) -> FollowUp | None:
+        """Return the cleanup step once, when at least one package was updated (``None`` otherwise)."""
+        if made:
+            return None
+        made.append(True)
+
+        # Clean up only when a package was really updated, never after a cancel or a failure.
+        if not subjects or not any(entry.get("ok") is True and entry.get("status") == "updated" for entry in outcome.entries):
+            return None
+        step = Step("cleanup of the root", targets_after_options("cleanup", ["--yes"], []), (), events_dir_for(subjects[0], env.settings))
+        return FollowUp((step,))
+    return _follow
+
+
+# --- supporting helpers ---
 
 
 def _checksum_note(checksum: ChecksumPlan | None, decision: TargetDecision | None) -> str:
@@ -167,81 +335,6 @@ def _checksum_note(checksum: ChecksumPlan | None, decision: TargetDecision | Non
 # ---------------------------------------------------------------------------
 
 
-async def run_check_updates(
-    env: UiEnvironment, rows: Sequence[PackageRow], *, session: BatchSession, interaction: Interaction, options: Sequence[str] = (),
-) -> BatchOutcome:
-    """Run ``gupkg check-updates`` for *rows*: it writes and populates new versions and activates nothing.
-
-    The whole batch is one call, in the run's scope. The checksum policy ``skip`` relays ``--skip-checksum=setting``;
-    a version the tracker found but whose download has no checksum is reported as refused, and when someone can answer (policy ``ask``) each such
-    package is offered once and re-run with ``--skip-checksum=user-approved`` when the answer is yes.
-    """
-    subjects, unsafe = safe_subjects("check-updates", [subject_of(row) for row in rows])
-    skips = {item.target: (skip_argument(SKIPPED_SETTING),) for item in subjects if env.settings.checksum_policy == "skip"}
-
-    # One call carries the whole batch.
-    def whole(members: Sequence[Subject], extra: dict[str, tuple[str, ...]]) -> list[Step]:
-        """Group *members* for ``check-updates`` with the skip arguments of *extra*."""
-        return make_steps("check-updates", members, settings=env.settings, options=["--yes", *options], skips=extra)
-
-    offered: set[str] = set()
-
-    async def retry(outcome: BatchOutcome) -> FollowUp | None:
-        """Offer each target refused for a missing checksum once, and re-run the approved ones with the user's approval."""
-        approved: list[Subject] = []
-        for entry in outcome.entries:
-            error = entry.get("error") if isinstance(entry.get("error"), dict) else {}
-            subject = next((item for item in subjects if item.target == entry.get("package")), None)
-            if error.get("code") != "checksum-missing" or subject is None or subject.target in offered or interaction.ask_checksum is None:
-                continue
-            offered.add(subject.target)
-            candidate = PlannedTarget(
-                subject.target, "failed", subject.name, checksum=ChecksumPlan(MISSING, str(error.get("url") or ""), "tracker", error.get("skippable") is True),
-                code="checksum-missing",
-            )
-            decision = (await decide_targets([candidate], lambda item: env.settings.checksum_policy, interactive=True, ask=interaction.ask_checksum)).get(subject.target)
-            if decision is not None and decision.run and decision.arguments:
-                approved.append(subject)
-        if not approved:
-            return None
-        extra = {item.target: (skip_argument(USER_APPROVED),) for item in approved}
-        return FollowUp(tuple(whole(approved, extra)), frozenset(item.name for item in approved))
-
-    return await session.run(whole(subjects, skips), extra_entries=unsafe, follow_up=retry if interaction.interactive else None)
-
-
 # ---------------------------------------------------------------------------
 # Other operations
 # ---------------------------------------------------------------------------
-
-
-async def run_operation(
-    env: UiEnvironment, command: str, rows: Sequence[PackageRow], *, session: BatchSession, options: Sequence[str] = (),
-    trailing: Sequence[str] = (),
-) -> BatchOutcome:
-    """Run one more command (``check``, ``install``, ``uninstall``, ``cleanup``, ``switch`` ...) on *rows* in one call.
-
-    The caller has already asked the questions the command needs (the options carry ``--yes``), because the CLI is always called with ``--no-input``.
-    """
-    subjects, unsafe = safe_subjects(command, [subject_of(row) for row in rows])
-    steps = make_steps(command, subjects, settings=env.settings, options=options, trailing=trailing)
-    return await session.run(steps, extra_entries=unsafe)
-
-
-def cleanup_follow_up(env: UiEnvironment, subjects: Sequence[Subject]) -> Callable[[BatchOutcome], Awaitable[FollowUp | None]]:
-    """Return the follow-up that ends an update with a cleanup of the run's root when a package was updated (never after a cancel).
-
-    A run has one scope, so the cleanup is one call, made only when something was updated.
-    """
-    made: list[bool] = []
-
-    async def follow(outcome: BatchOutcome) -> FollowUp | None:
-        """Return the cleanup step once, when at least one package was updated."""
-        if made:
-            return None
-        made.append(True)
-        if not subjects or not any(entry.get("ok") is True and entry.get("status") == "updated" for entry in outcome.entries):
-            return None
-        step = Step("cleanup of the root", targets_after_options("cleanup", ["--yes"], []), (), events_dir_for(subjects[0], env.settings))
-        return FollowUp((step,))
-    return follow

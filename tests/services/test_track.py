@@ -72,17 +72,21 @@ def test_each_provider_finds_the_newest_version_and_the_download_address(system:
     The pinned version is an ordinary version: no `[track]`, an address with no template left, a checksum only when the
     provider found one, and it passes the package checker as it would be written to the registry.
     """
+    # Arrange: the vendor's answers and its tracker.
     vendor = VENDORS[kind]
     vendor.serve(system)
     manifest = parse_tracker(vendor.tracker_text())
 
+    # Act: run the tracker and render the pinned version it finds.
     result = run_tracker(manifest, environment(system, tmp_path))
     pinned = render_pinned(manifest, result)
 
+    # Assert: the version, the address and the checksum are the ones the vendor gave.
     assert result.version == vendor.version
     assert pinned.source.download_url == vendor.download_url
     assert (pinned.source.sha256, pinned.source.sha256_from) == (vendor.sha256, vendor.sha256_from)
     assert pinned.kind is ManifestKind.VERSION and pinned.track is None
+    # The pinned version, written to disk, passes the package checker.
     version = tmp_path / "tool" / result.version
     version.mkdir(parents=True)
     (version / "pkg.toml").write_text(manifest_to_toml(pinned), encoding="utf-8", newline="\n")
@@ -107,6 +111,7 @@ def test_a_tracker_sends_its_own_headers_with_every_request_of_its_provider(syst
 
 # -- GitHub and GitLab releases ------------------------------------------------------------------------------
 
+# Address of the list of releases of the invented GitHub project.
 RELEASES = "https://api.github.com/repos/o/r/releases?per_page=100"
 
 
@@ -180,7 +185,9 @@ def test_the_github_provider_sends_the_token_only_to_github_over_https(system: F
 
 # -- the page provider: the select rule -----------------------------------------------------------------------
 
+# Address of the page that the page-provider trackers read.
 PAGE = "https://vendor.example/page"
+# A page tracker whose ``@SELECT@`` marker takes the tracker's select rule.
 PAGE_TRACKER = (
     'format = 2\n[track]\nprovider = "page"\ncheck_url = "https://vendor.example/page"\n'
     "match = 'tool-(?P<version>\\d+(?:\\.\\d+)+)\\.zip'\n@SELECT@[source]\ndownload_url = \"https://vendor.example/${version}.zip\"\n"
@@ -262,6 +269,7 @@ def test_the_index_walk_goes_back_to_an_older_folder_when_the_newest_has_no_file
 @pytest.mark.process
 def test_the_index_walk_stops_after_its_request_budget(system: FakeSystem, tmp_path: Path) -> None:
     """A listing of a hundred entries that all fail their probe cannot keep the check running: it stops at 60 requests."""
+    # Arrange: a hundred listed folders whose probe all fail.
     entries = " ".join(f'<a href="/releases/1.{number}/">x</a>' for number in range(100))
     system.urls["https://vendor.example/releases/"] = FakeHttp(entries)
     text = (
@@ -272,6 +280,7 @@ def test_the_index_walk_stops_after_its_request_budget(system: FakeSystem, tmp_p
     for number in range(100):
         system.urls[f"https://vendor.example/releases/1.{number}/tool.zip"] = FakeHttp("", 404)
 
+    # Act and assert: the walk stops with an error at the request budget.
     with pytest.raises(TrackError, match=f"more than {MAX_REQUESTS} requests"):
         run(system, tmp_path, text)
 
@@ -280,6 +289,7 @@ def test_the_index_walk_stops_after_its_request_budget(system: FakeSystem, tmp_p
 
 # -- the redirect provider ----------------------------------------------------------------------------------------
 
+# A redirect tracker that takes its version from the final address.
 REDIRECT = (
     'format = 2\n[track]\nprovider = "redirect"\ncheck_url = "https://vendor.example/latest"\n'
     "match = '/files/(?P<version>\\d+(?:\\.\\d+)+)/'\n[source]\ndownload_url = \"${download_url}\"\n"
@@ -324,6 +334,7 @@ def test_a_redirect_that_never_ends_is_an_error(system: FakeSystem, tmp_path: Pa
 
 # -- the chain provider: optional steps and the each step ---------------------------------------------------------
 
+# A chain whose second step is optional and finds the checksum.
 OPTIONAL_CHAIN = (
     'format = 2\n[track]\nprovider = "chain"\ndownload = "https://vendor.example/tool-${version}.zip"\n'
     "[[track.fetch]]\nurl = \"https://vendor.example/\"\nmatch = 'tool-(?P<version>\\d+\\.\\d+)\\.zip'\n"
@@ -373,6 +384,7 @@ def test_a_required_chain_step_that_matches_nothing_fails_the_check(system: Fake
         run(system, tmp_path, OPTIONAL_CHAIN)
 
 
+# A chain whose first step tries each link of the page in turn.
 EACH_CHAIN = (
     'format = 2\n[track]\nprovider = "chain"\ndownload = "${link}"\n'
     "[[track.fetch]]\nurl = \"https://vendor.example/\"\nselect = \"each\"\nmatch = '(?P<link>https://vendor.example/get/\\d+)'\n"
@@ -459,6 +471,7 @@ def test_an_each_step_stops_after_the_candidate_cap(system: FakeSystem, tmp_path
 @pytest.mark.process
 def test_a_regex_deadline_while_trying_candidates_stops_the_check(system: FakeSystem, tmp_path: Path) -> None:
     """A pattern that runs out of time is an error, never taken for "this candidate does not match" and followed by the next one."""
+    # Arrange: a page that lists two systems, and a regex worker that runs out of time on its second use.
     page_of_systems(system, ("mac", "windows"))
     calls: list[int] = []
 
@@ -471,6 +484,7 @@ def test_a_regex_deadline_while_trying_candidates_stops_the_check(system: FakeSy
 
     system.processes["regex-worker"] = worker
 
+    # Act and assert: the timeout stops the check after the first candidate.
     with pytest.raises(TrackError):
         run(system, tmp_path, EACH_CHAIN)
 
@@ -479,6 +493,7 @@ def test_a_regex_deadline_while_trying_candidates_stops_the_check(system: FakeSy
 
 # -- the checksum a tracker names ------------------------------------------------------------------------------------
 
+# A page tracker whose checksum comes from a sums file; ``@OPTIONAL@`` marks where a test adds ``optional``.
 SUMS_TRACKER = (
     'format = 2\n[track]\nprovider = "page"\ncheck_url = "https://vendor.example/page"\n'
     "match = 'tool-(?P<version>\\d+(?:\\.\\d+)+)\\.zip'\n"
@@ -511,6 +526,7 @@ def test_a_configured_checksum_source_without_a_digest_is_an_error_not_a_silent_
 @pytest.mark.process
 def test_a_regex_failure_in_an_optional_checksum_is_not_swallowed(system: FakeSystem, tmp_path: Path) -> None:
     """An optional checksum source that runs a pattern out of time stops the check instead of silently dropping the digest."""
+    # Arrange: a page and a regex worker that runs out of time on its second use.
     system.urls[PAGE] = FakeHttp("tool-2.0.zip")
     calls: list[int] = []
 
@@ -522,6 +538,7 @@ def test_a_regex_failure_in_an_optional_checksum_is_not_swallowed(system: FakeSy
         return real_regex_worker(call)
 
     system.processes["regex-worker"] = worker
+    # The tracker's checksum is read from the page with an optional pattern.
     text = (
         'format = 2\n[track]\nprovider = "page"\ncheck_url = "https://vendor.example/page"\n'
         "match = 'tool-(?P<version>\\d+(?:\\.\\d+)+)\\.zip'\n"
@@ -529,6 +546,7 @@ def test_a_regex_failure_in_an_optional_checksum_is_not_swallowed(system: FakeSy
         "[source.checksum]\npage_match = '(?P<sha256>[0-9a-f]{64})'\noptional = true\n"
     )
 
+    # Act and assert: the timeout is not swallowed by the optional checksum.
     with pytest.raises(Exception, match="was stopped"):
         run(system, tmp_path, text)
 

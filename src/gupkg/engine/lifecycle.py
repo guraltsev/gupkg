@@ -112,7 +112,24 @@ WORK_MIN_AGE = timedelta(hours=24)
 def check_updates(
     engine: Engine, selectors: Sequence[str], *, no_download: bool = False, skip: str | None = None
 ) -> BatchResult:
-    """Run the trackers of the named packages and write (and by default populate) their new versions; activate nothing."""
+    """Run the trackers of the named packages and write (and by default populate) their new versions; activate nothing.
+
+    Parameters
+    ----------
+    engine : Engine
+        The machine and the callbacks of the run.
+    selectors : sequence of str
+        The package names, paths or ``name@version`` selectors to act on.
+    no_download : bool
+        Write the new version directory but do not populate it.
+    skip : str or None
+        The checksum-skip option of the command line.
+
+    Returns
+    -------
+    BatchResult
+        One ``PackageResult`` per target, in order.
+    """
     return run_batch(engine, [Request("check-updates", item, no_download=no_download, skip=skip) for item in selectors])
 
 
@@ -121,7 +138,23 @@ def install(
 ) -> BatchResult:
     """Install the named packages (a package that is installed is repaired); a tracker is never run.
 
-    *overwrite* lists the kinds of file that no installed package owns and that may be replaced (``--overwrite=KINDS``).
+    Parameters
+    ----------
+    engine : Engine
+        The machine and the callbacks of the run.
+    selectors : sequence of str
+        The package names, paths or ``name@version`` selectors to act on.
+    refresh : bool
+        Rebuild a rebuildable ``App`` that is already populated.
+    skip : str or None
+        The checksum-skip option of the command line.
+    overwrite : sequence of str
+        The kinds of unowned file that may be replaced (``--overwrite=KINDS``).
+
+    Returns
+    -------
+    BatchResult
+        One ``PackageResult`` per target, in order.
     """
     return run_batch(engine, [
         Request("install", item, refresh=refresh, skip=skip, overwrite=tuple(overwrite)) for item in selectors
@@ -132,19 +165,70 @@ def update(
     engine: Engine, selectors: Sequence[str], *, skip: str | None = None, download_only: bool = False,
     overwrite: Sequence[str] = (),
 ) -> BatchResult:
-    """Activate the newest known version of each installed package; ``download_only`` prepares it and stops."""
+    """Activate the newest known version of each installed package; ``download_only`` prepares it and stops.
+
+    Parameters
+    ----------
+    engine : Engine
+        The machine and the callbacks of the run.
+    selectors : sequence of str
+        The package names, paths or ``name@version`` selectors to act on.
+    skip : str or None
+        The checksum-skip option of the command line.
+    download_only : bool
+        Prepare the new version without activating or integrating it.
+    overwrite : sequence of str
+        The kinds of unowned file that may be replaced (``--overwrite=KINDS``).
+
+    Returns
+    -------
+    BatchResult
+        One ``PackageResult`` per target, in order.
+    """
     return run_batch(engine, [
         Request("update", item, skip=skip, download_only=download_only, overwrite=tuple(overwrite)) for item in selectors
     ])
 
 
 def switch(engine: Engine, selector: str, version: str, *, overwrite: Sequence[str] = ()) -> BatchResult:
-    """Activate another known version of an installed package (the explicit way back)."""
+    """Activate another known version of an installed package (the explicit way back).
+
+    Parameters
+    ----------
+    engine : Engine
+        The machine and the callbacks of the run.
+    selector : str
+        The installed package.
+    version : str
+        The known version to activate.
+    overwrite : sequence of str
+        The kinds of unowned file that may be replaced (``--overwrite=KINDS``).
+
+    Returns
+    -------
+    BatchResult
+        One ``PackageResult`` per target, in order.
+    """
     return run_batch(engine, [Request("switch", selector, version=version, overwrite=tuple(overwrite))])
 
 
 def uninstall(engine: Engine, selectors: Sequence[str], *, purge: bool = False) -> BatchResult:
-    """Remove the integration of the named packages; ``purge`` also deletes the package root and its data."""
+    """Remove the integration of the named packages; ``purge`` also deletes the package root and its data.
+
+    Parameters
+    ----------
+    engine : Engine
+        The machine and the callbacks of the run.
+    selectors : sequence of str
+        The package names, paths or ``name@version`` selectors to act on.
+    purge : bool
+        Also delete the package root, including its data folder (confirmed first).
+
+    Returns
+    -------
+    BatchResult
+        One ``PackageResult`` per target, in order.
+    """
     return run_batch(engine, [Request("uninstall", item, purge=purge) for item in selectors])
 
 
@@ -155,22 +239,89 @@ def cleanup(
 
     A named package that another run holds fails with ``package-busy``; with *sweep* (a pass over every package of a root,
     not a list the user wrote) it is left alone and reported as ``locked``.
+
+    Parameters
+    ----------
+    engine : Engine
+        The machine and the callbacks of the run.
+    selectors : sequence of str
+        The package names, paths or ``name@version`` selectors to act on.
+    keep : int
+        How many older versions keep their ``App``.
+    bundled : bool
+        Also drop bundled gupkg copies inside version directories.
+    sweep : bool
+        Whether the call is a pass over a whole root.
+
+    Returns
+    -------
+    BatchResult
+        One ``PackageResult`` per target, in order.
     """
     return run_batch(engine, [Request("cleanup", item, keep=keep, bundled=bundled, sweep=sweep) for item in selectors])
 
 
 def check(engine: Engine, selectors: Sequence[str], *, fix: bool = False) -> BatchResult:
-    """Report the health of the named packages; ``fix`` re-applies integration and rebuilds a missing ``App``."""
+    """Report the health of the named packages; ``fix`` re-applies integration and rebuilds a missing ``App``.
+
+    Parameters
+    ----------
+    engine : Engine
+        The machine and the callbacks of the run.
+    selectors : sequence of str
+        The package names, paths or ``name@version`` selectors to act on.
+    fix : bool
+        Repair what can be repaired, then diagnose again.
+
+    Returns
+    -------
+    BatchResult
+        One ``PackageResult`` per target, in order.
+    """
     return run_batch(engine, [Request("check", item, fix=fix) for item in selectors])
 
 
 def link(engine: Engine, selector: str, entry: str | None = None, *, unlink: bool = False) -> BatchResult:
-    """Make a package follow the registry entry *entry* (``registry/name``), its own name's entry again, or none (*unlink*)."""
+    """Make a package follow the registry entry *entry* (``registry/name``), its own name's entry again, or none (*unlink*).
+
+    Parameters
+    ----------
+    engine : Engine
+        The machine and the callbacks of the run.
+    selector : str
+        The package.
+    entry : str or None
+        The ``registry/name`` entry to follow; ``None`` follows the entry of the package's own name.
+    unlink : bool
+        Follow no registry entry.
+
+    Returns
+    -------
+    BatchResult
+        One ``PackageResult`` per target, in order.
+    """
     return run_batch(engine, [Request("link", selector, link_to=entry, unlink=unlink)])
 
 
 def repair(engine: Engine, selectors: Sequence[str], *, skip: str | None = None, overwrite: Sequence[str] = ()) -> BatchResult:
-    """Re-apply the integration and rebuild a missing ``App`` of installed packages."""
+    """Re-apply the integration and rebuild a missing ``App`` of installed packages.
+
+    Parameters
+    ----------
+    engine : Engine
+        The machine and the callbacks of the run.
+    selectors : sequence of str
+        The package names, paths or ``name@version`` selectors to act on.
+    skip : str or None
+        The checksum-skip option of the command line.
+    overwrite : sequence of str
+        The kinds of unowned file that may be replaced (``--overwrite=KINDS``).
+
+    Returns
+    -------
+    BatchResult
+        One ``PackageResult`` per target, in order.
+    """
     return run_batch(engine, [Request("repair", item, skip=skip, overwrite=tuple(overwrite)) for item in selectors])
 
 
@@ -198,13 +349,27 @@ class _RootNames:
         self.catalog, self._index = catalog, None
 
     def index(self) -> NameIndex:
-        """Return the index, reading the root's install records the first time."""
+        """Return the index, reading the root's install records the first time.
+
+        Returns
+        -------
+        NameIndex
+            Which installed package provides each name.
+        """
         if self._index is None:
             self._index = NameIndex(self.catalog.installed_effects())
         return self._index
 
     def reload(self, scope: Scope, package: str) -> None:
-        """Read the install record of *package* again after an operation on it (the rest of the root is not read)."""
+        """Read the install record of *package* again after an operation on it (the rest of the root is not read).
+
+        Parameters
+        ----------
+        scope : Scope
+            The scope that locates the package folder.
+        package : str
+            The package whose record changed.
+        """
         if self._index is None:
             return
         try:
@@ -245,6 +410,7 @@ def run_batch(engine: Engine, requests: Sequence[Request]) -> BatchResult:
     BatchResult
         One ``PackageResult`` per request, in order.
     """
+    # Resolve every target first and refuse name clashes among them before anything is created.
     resolved: list[_Target | PackageResult] = [_resolve(engine, request) for request in requests]
     _share_names(resolved)
     _refuse_shared_names(engine, resolved)
@@ -260,17 +426,33 @@ def run_batch(engine: Engine, requests: Sequence[Request]) -> BatchResult:
         if stopped:
             results.append(PackageResult(request.selector, request.operation, True, "skipped", exit_code=EXIT_INPUT))
             continue
+        # Run the package, then refresh its names in the shared index for the packages that follow.
         results.append(_run_one(engine, item, len(requests) == 1))
         item.names.reload(item.resolved.scope, results[-1].package)
     return BatchResult(tuple(results))
 
 
 def plan(engine: Engine, requests: Sequence[Request]) -> list[InstallPlan | PackageResult]:
-    """Resolve and plan every request without changing anything; a request that cannot be planned is its failure result."""
+    """Resolve and plan every request without changing anything; a request that cannot be planned is its failure result.
+
+    Parameters
+    ----------
+    engine : Engine
+        The machine and the callbacks of the run.
+    requests : sequence of Request
+        The targets and their options.
+
+    Returns
+    -------
+    list
+        One ``InstallPlan`` or failed ``PackageResult`` per request, in order.
+    """
+    # Resolve the targets, refusing name clashes among them, as a real run would.
     found: list[InstallPlan | PackageResult] = []
     targets = [_resolve(engine, request) for request in requests]
     _share_names(targets)
     _refuse_shared_names(engine, targets)
+    # Plan each resolved target; "nothing newer" and any other planning failure become that target's result.
     for request, target in zip(requests, targets):
         if isinstance(target, PackageResult):
             found.append(target)
@@ -316,12 +498,14 @@ def _refuse_shared_names(engine: Engine, targets: list[_Target | PackageResult])
     environment variable on the machine are both replaced by their failed result, naming both. A target that cannot be planned is
     left to its own run, which reports why.
     """
+    # Only install-like targets put names on the machine, and only two or more can clash.
     installing = [
         index for index, item in enumerate(targets)
         if isinstance(item, _Target) and item.request.operation in ("install", "update", "switch", "repair")
     ]
     if len(installing) < 2:
         return
+    # Plan each target without side effects to learn the names it would provide.
     wanted: dict[str, tuple[int, Sequence]] = {}
     for index in installing:
         item = targets[index]
@@ -330,6 +514,7 @@ def _refuse_shared_names(engine: Engine, targets: list[_Target | PackageResult])
         except Exception:  # noqa: BLE001 - the real run of this target reports whatever stops it
             continue
         wanted.setdefault(planned.package, (index, tuple(change.effect for change in planned.effects if change.action != "remove")))
+    # Replace each clashing target by its failed result, naming both packages.
     refused = check_names_between({name: effects for name, (_, effects) in wanted.items()})
     for name, error in refused.items():
         index = wanted[name][0]
@@ -345,10 +530,12 @@ def _require_supported_mode(target: _Target) -> None:
     ``resolve_target`` can judge a path or a named version; for a bare name the version is chosen here. A request
     that cannot choose a version yet (nothing installed, nothing newer) is left to the operation itself.
     """
+    # Only a bare-name install-like request needs its version chosen here.
     request, resolved = target.request, target.resolved
     selection = resolved.resolved
     if request.operation not in ("install", "update", "switch", "repair") or selection is None or resolved.source is not None:
         return
+    # Choose the version without side effects and read its manifest; if that is not possible yet, leave the judgment to the operation.
     view = selection.view
     try:
         candidate, _ = _choose(None, target, view, False)
@@ -359,6 +546,7 @@ def _require_supported_mode(target: _Target) -> None:
             manifest = state.manifest if state is not None else None
     except (CatalogError, PlanError, _UpToDate, OSError, ValueError):
         return
+    # Refuse the mode when the manifest does not list it.
     if manifest is not None:
         check_supported(
             resolved.scope, manifest.modes, command=request.operation, name=view.name, version=candidate.version,
@@ -368,6 +556,7 @@ def _require_supported_mode(target: _Target) -> None:
 
 def _run_one(engine: Engine, target: _Target, sole: bool) -> PackageResult:
     """Run one resolved target inside its package scope and turn anything it raises into its failed result."""
+    # Work out the package name and folder that logs and the lock belong to.
     request, context = target.request, target.resolved.scope
     view = target.resolved.resolved.view if target.resolved.resolved is not None else None
     if view is not None:
@@ -381,6 +570,7 @@ def _run_one(engine: Engine, target: _Target, sole: bool) -> PackageResult:
         path = context.package_dir(name) if _safe_name(name) else context.root
     else:
         path = view.path if view is not None and view.path is not None else context.package_dir(name) if _safe_name(name) else context.root
+    # Run under the package's log scope and lock; every outcome, including failure, becomes the result.
     with package_scope(name, path, root=str(context.root), sole=sole) as scope:
         try:
             with _held(engine, request, context, name, path):
@@ -396,12 +586,14 @@ def _run_one(engine: Engine, target: _Target, sole: bool) -> PackageResult:
                 result = PackageResult(
                     name, "cleanup", True, "locked", mode=context.mode, warnings=(str(busy),), details={"locked": True},
                 )
+        # Nothing newer than ``current`` is a success, not a failure.
         except _UpToDate as nothing:
             emit(Step(f"{nothing.view.name} is up to date", "ok"))
             result = PackageResult(
                 name, request.operation, True, "up-to-date", nothing.view.installed.version if nothing.view.installed else None,
                 mode=context.mode, log=engine.log_path(path),
             )
+        # Any other failure is this package's result; unexpected ones also log their traceback.
         except Exception as error:  # noqa: BLE001 - one package's failure must not stop the batch
             result = failure(name, request.operation, error, mode=context.mode, log=engine.log_path(path))
             data = result.error or {}
@@ -427,9 +619,11 @@ def _safe_name(name: str) -> bool:
 
 def _dispatch(engine: Engine, target: _Target) -> PackageResult:
     """Run the operation of the request on its resolved target."""
+    # Route the request to the handler of its operation; ``check`` is the default.
     operation = target.request.operation
     if operation == "check-updates":
         return check_updates_one(engine, target.request, target.resolved, target.catalog, target.resolved.settings)
+    # The remaining operations each have their own handler.
     if operation in ("install", "update", "switch", "repair"):
         return _install_like(engine, target)
     if operation == "uninstall":
@@ -443,14 +637,18 @@ def _dispatch(engine: Engine, target: _Target) -> PackageResult:
 
 def _plan_one(engine: Engine, target: _Target) -> InstallPlan:
     """Plan one resolved target for ``--plan`` (nothing is changed)."""
+    # Operations with their own planner delegate to it.
     request, context = target.request, target.resolved.scope
     if request.operation in ("install", "update", "switch", "repair"):
         return _prepare_install(engine, target, execute=False).plan
+    # A tracker run is planned by the check-updates module.
     if request.operation == "check-updates":
         return plan_check(engine, request, target.resolved, target.catalog)
+    # The remaining operations get a one-phase plan carrying their own details.
     view = _view(target)
     if request.operation == "uninstall":
         return plan_uninstall(request, view, context)
+    # Cleanup and link add their own details to the plan.
     extra = {"cleanup": _cleanup_plan(engine, target, view).to_data()} if request.operation == "cleanup" else {}
     if request.operation == "link":
         extra = {"link": {"to": request.link_to, "unlink": request.unlink}}
@@ -508,6 +706,7 @@ def _prepare_install(
     _UpToDate
         If ``update`` found nothing newer than ``current``.
     """
+    # Start with no registry facts and no copy; the branches below fill them in.
     request, resolved = target.request, target.resolved
     context, catalog = resolved.scope, target.catalog
     selection = resolved.resolved
@@ -524,6 +723,7 @@ def _prepare_install(
         published = entry.version(version) if entry is not None else None
         if entry is not None and published is not None:
             registry = _Registry(entry.registry, published.fingerprint, published.path)
+        # A distribution folder inside a root is validated and copied by the executor.
         source_view = selection.view if selection is not None else None
         if source_view is not None and source_view.local is not None:
             state = source_view.local.version(version)
@@ -533,26 +733,31 @@ def _prepare_install(
                     f"{distribution} is not a valid version directory: {problems}", version=version,
                     problems=state.problems if state is not None else (),
                 )
+            # The source folder is valid: copy it in as it is.
             candidate, manifest = Candidate(version, "local", state.path), state.manifest
             copy_in = CopyIn("distribution", distribution, entry.registry if entry else None, published.fingerprint if published else None)
         else:
             # An elevated run reads the folder only while it copies it, so it plans from the admin-only copy.
             if not execute:
                 raise PlanError("an elevated run reads a distribution folder only while it copies it into the root")
+            # Copy now, remembering how to take the copy back if the install does not happen.
             precopied = copy_distribution(distribution, context.root, required=resolved.scope)
             if undo is not None:
                 undo.append(lambda copied=precopied: _drop_copy(catalog, name, context, copied))
+            # A different copy that already exists is never overwritten.
             if precopied.status == DIVERGED:
                 raise DistributionRefused(f"{precopied.destination} exists and differs from {distribution}; it was left alone.")
             candidate = Candidate(version, "local", precopied.destination)
             manifest = parse_manifest((precopied.destination / MANIFEST_NAME).read_text(encoding="utf-8-sig"))
             state = None
+        # Continue from the destination package, whatever it looks like now.
         view = _describe_destination(catalog, name, context)
         if state is None:
             state = view.local.version(version) if view.local is not None else None
         chosen = Chosen(candidate, manifest, state)
         package_path = context.package_dir(name)
     else:
+        # An ordinary request: choose the version, then read its manifest from the registry or the local directory.
         view = selection.view
         try:
             candidate, copy_in = _choose(engine, target, view, execute)
@@ -561,12 +766,14 @@ def _prepare_install(
             if NEEDS_NEWER_GUPKG in str(error):
                 raise NeedsNewerGupkg(str(error)) from error
             raise
+        # A registry version is parsed from its published folder; a local one from its validated version state.
         if candidate.source == "registry":
             manifest = parse_manifest((candidate.path / MANIFEST_NAME).read_text(encoding="utf-8-sig"))
             registry = _Registry(candidate.registry, candidate.fingerprint, candidate.path)
             state = None
         else:
             state = view.local.version(candidate.version) if view.local is not None else None
+            # A version for a newer gupkg is exit code 6; any other invalid version is refused with its problems.
             if state is not None and any(NEEDS_NEWER_GUPKG in problem for problem in state.problems):
                 raise NeedsNewerGupkg(f"{view.name} {candidate.version} {NEEDS_NEWER_GUPKG}: {'; '.join(state.problems)}")
             if state is None or state.manifest is None:
@@ -580,6 +787,7 @@ def _prepare_install(
             other = [problem for problem in state.problems if problem != APP_MISSING_ERROR]
             if other:
                 raise InvalidVersion(f"{view.name} {candidate.version} is not valid: {'; '.join(other)}", version=candidate.version, problems=other)
+            # Remember what the followed registry publishes for this version, for the fingerprint check.
             manifest = state.manifest
             published = view.registry.version(candidate.version) if view.registry is not None else None
             if published is not None:
@@ -603,6 +811,7 @@ def _prepare_install(
         replacing = check_unowned(view.name, find_unowned(engine.system, desired, target.names.index().owners("")), request.overwrite)
     if execute:
         _ask_about_other_versions(engine, request, view, candidate.version, context.mode)
+    # A repair of the active version finds which recorded effects are missing or changed on the machine.
     drifted: frozenset[tuple[str, ...]] = frozenset()
     repairing = (
         request.operation in ("install", "repair") and view.installed is not None and view.record is not None
@@ -611,6 +820,7 @@ def _prepare_install(
     if repairing and execute:
         rows = verify_each(engine.system, view.record.effects, mode=context.mode)
         drifted = frozenset(effect_key(effect) for effect, drift, _ in rows if drift)
+    # Say where the download URL comes from, then plan.
     url_from = "pkg.toml"
     if copy_in is not None:
         url_from = f"registry {copy_in.registry}" if copy_in.origin == "registry" else "distribution folder"
@@ -619,6 +829,7 @@ def _prepare_install(
         url_from=url_from, drifted=drifted, allow_installer=bool(resolved.settings["hooks.allow_vendor_installers"]),
         owners=owners,
     )
+    # Hand the executor the plan, the facts it needs and the tracker action.
     tracker = catalog.tracker_sync(view) if view.registry is not None else None
     return ExecutionInput(
         install_plan, context, view, chosen, request, resolved.settings, tracker, distribution, registry.fingerprint,
@@ -647,6 +858,7 @@ def _choose(engine: Engine | None, target: _Target, view: PackageView, execute: 
 
     *engine* is needed only when *execute* is true (a tracker-only registry entry is copied in before the refusal).
     """
+    # Each operation chooses differently: switch and a named version are explicit, update takes the newest, repair the active one.
     request, catalog = target.request, target.catalog
     selection = target.resolved.resolved
     named = selection.version if selection is not None and selection.named_version else None
@@ -657,6 +869,7 @@ def _choose(engine: Engine | None, target: _Target, view: PackageView, execute: 
         if not request.version:
             raise PlanError("switch needs the version to activate")
         candidate = _pick_named(catalog, view, request.version)
+    # An update takes the named version or the newest one, and stops when there is nothing newer.
     elif request.operation == "update":
         if named:
             candidate = _pick_named(catalog, view, named)
@@ -665,13 +878,16 @@ def _choose(engine: Engine | None, target: _Target, view: PackageView, execute: 
             if newest is None:
                 raise _UpToDate(view, target.resolved.scope.mode)
             candidate = newest
+    # A repair re-applies the active version.
     elif request.operation == "repair":
         if view.installed is None:
             raise NotInstalled(f"'{view.name}' is not installed; use `gupkg install {view.name}`")
         candidate = Candidate(view.installed.version, "local", view.installed.path)
+    # A bare install takes the best known version; a tracker-only registry entry is copied in before stopping.
     elif named:
         candidate = _pick_named(catalog, view, named)
     else:
+        # A tracker-only entry has no version yet; the copy of its tracker is handled in the except clause.
         try:
             candidate = catalog.install_candidate(view)
             _warn_about_newer_invalid_versions(view, candidate)
@@ -682,6 +898,7 @@ def _choose(engine: Engine | None, target: _Target, view: PackageView, execute: 
                 if sync.action == "copy":
                     sync_registry_tracker(engine, view, target.resolved.scope.package_dir(view.name), sync)
             raise
+    # A registry version also needs to be copied into the package root.
     if candidate.source == "registry":
         return candidate, CopyIn("registry", candidate.path, candidate.registry, candidate.fingerprint)
     return candidate, None
@@ -694,6 +911,7 @@ def _ask_about_other_versions(engine: Engine, request: Request, view: PackageVie
     (``--allow-downgrade``), and installing it while other version directories of the package are broken or not supported by this mode
     or this gupkg (``--allow-other-broken-versions``). ``switch`` (the explicit way back) and a repair of the active version ask nothing.
     """
+    # Only install and update ask; a downgrade needs confirmation.
     if request.operation not in ("install", "update"):
         return
     active = view.installed.version if view.installed is not None else None
@@ -702,6 +920,7 @@ def _ask_about_other_versions(engine: Engine, request: Request, view: PackageVie
             engine, f"{view.name} {version} is older than the active version {active}. Install it anyway?",
             allowed=engine.allow_downgrade, flag="--allow-downgrade",
         )
+    # Collect the other version directories that are broken or do not support this mode.
     unusable = []
     for state in view.local.versions if view.local is not None else ():
         if state.name.casefold() == version.casefold():
@@ -711,6 +930,7 @@ def _ask_about_other_versions(engine: Engine, request: Request, view: PackageVie
             unusable.append(f"{state.name} ({problems[0]})")
         elif state.manifest is not None and not state.manifest.supports(mode):
             unusable.append(f"{state.name} (does not support {mode} mode)")
+    # Installing beside unusable versions needs confirmation too.
     if unusable:
         _confirm(
             engine, f"{view.name} has other version directories that are broken or not supported: {'; '.join(unusable)}. Install {version} anyway?",
@@ -744,14 +964,17 @@ def _pick_named(catalog: Catalog, view: PackageView, version: str) -> Candidate:
 
 def _link(engine: Engine, target: _Target) -> PackageResult:
     """Record in the install record which registry entry the package follows (decision D2); nothing else changes."""
+    # Link needs a local package.
     request, context = target.request, target.resolved.scope
     view = _view(target)
 
     # The entry to follow must exist in a configured registry; no entry means the same-name entry again.
     follow: Link | None = None
+    # Decide the new link: none, a named entry, or the same-name entry.
     if request.unlink:
         follow = Link(unlinked=True)
         status = "unlinked"
+    # A named entry must exist in a configured registry.
     elif request.link_to:
         wanted = target.catalog.resolve(request.link_to)
         if wanted.view.registry is None:
@@ -764,6 +987,7 @@ def _link(engine: Engine, target: _Target) -> PackageResult:
     # Only the link changes: the mode and the recorded effects stay as the install wrote them.
     record = view.record or InstallRecord()
     write_install_record(view.path, InstallRecord(record.mode, follow, record.effects))
+    # Report the new link on screen and in the result.
     where = "no registry entry" if request.unlink else (request.link_to or f"the registry entry named {view.name}")
     emit(Step(f"{view.name} follows {where}", "ok"))
     return PackageResult(
@@ -779,10 +1003,13 @@ def _link(engine: Engine, target: _Target) -> PackageResult:
 
 def _uninstall(engine: Engine, target: _Target) -> PackageResult:
     """Plan and run ``uninstall`` for one target; ``--purge`` is confirmed first (nothing is deleted without it)."""
+    # Plan the uninstall first; the plan knows what a purge would destroy.
     request, resolved = target.request, target.resolved
     view = _view(target)
     context = resolved.scope
     uninstall_plan = plan_uninstall(request, view, context)
+
+    # Deleting the package root and its data always needs an explicit confirmation.
     if request.purge:
         purge = uninstall_plan.extra["purge"]
         lost = purge["unrecoverable_apps"]
@@ -790,6 +1017,7 @@ def _uninstall(engine: Engine, target: _Target) -> PackageResult:
         if lost:
             question += f" The App of {', '.join(lost)} cannot be rebuilt (no download_url or script): it is lost for good."
         _confirm(engine, question)
+    # Hand the executor the plan; an uninstall has no chosen manifest, so an empty one stands in.
     chosen = Chosen(Candidate(view.installed.version if view.installed else "", "local", view.path), Manifest(ManifestKind.VERSION))
     run = ExecutionInput(
         uninstall_plan, context, view, chosen, request, resolved.settings,
@@ -826,6 +1054,7 @@ def _cleanup(engine: Engine, target: _Target) -> PackageResult:
     """Plan and run ``cleanup`` for one package (never automatically, decision D43)."""
     context = target.resolved.scope
     view = _view(target)
+    # Plan the cleanup, and find how an elevated launcher would locate gupkg.
     cleanup_plan = _cleanup_plan(engine, target, view)
     path_value = next((value for name, value in engine.env.items() if name.upper() == "PATH"), None)
     judge = None
@@ -839,6 +1068,7 @@ def _old_entries(engine: Engine, folder: Path) -> list[str]:
     """Return the names in *folder* last changed more than ``WORK_MIN_AGE`` ago."""
     if not folder.is_dir():
         return []
+    # Compare each entry's modification time with the minimum age; unreadable entries are skipped.
     now = engine.now().timestamp()
     old = []
     for item in folder.iterdir():
@@ -856,6 +1086,7 @@ def _cleanup_plan(engine: Engine, target: _Target, view: PackageView) -> Cleanup
     Only work entries older than ``WORK_MIN_AGE`` are offered for removal: a run that is still going (or has just
     died) keeps its staging folder.
     """
+    # Collect the disk facts the planner cannot learn: receipts, old work entries, script inputs and bundled copies.
     path = view.path
     work = path / DATA_DIR_NAME / "work"
     facts = CleanupFacts(
@@ -868,6 +1099,7 @@ def _cleanup_plan(engine: Engine, target: _Target, view: PackageView) -> Cleanup
 
 def _inputs_present(package_path: Path, state) -> bool:
     """Return whether every recorded input of a script-populated version still exists (no record counts as gone)."""
+    # No receipt or no recorded inputs counts as gone; otherwise every input must still be inside the version directory.
     data = read_receipt(package_path, state.name).data or {}
     inputs = data.get("inputs")
     if not isinstance(inputs, list) or not inputs:
@@ -881,11 +1113,21 @@ def _inputs_present(package_path: Path, state) -> bool:
 def cleanup_root(engine: Engine, context: Scope, settings: Settings) -> dict[str, list[str]]:
     """Prune what belongs to a whole root: logs beyond ``[logs]`` retention and registry trees that are not the active one.
 
+    Parameters
+    ----------
+    engine : Engine
+        The machine and the callbacks of the run.
+    context : Scope
+        The root to prune.
+    settings : Settings
+        The settings that give the log retention and the configured registries.
+
     Returns
     -------
     dict
         ``{"logs": [...], "registry_trees": [...]}``: the folders that were pruned or removed.
     """
+    # Retention values come from the settings of the run.
     done: dict[str, list[str]] = {"logs": [], "registry_trees": []}
     keep_runs, keep_days = settings["logs.keep_runs"], settings["logs.keep_days"]
 
@@ -893,6 +1135,7 @@ def cleanup_root(engine: Engine, context: Scope, settings: Settings) -> dict[str
     folders = [context.log_dir]
     if context.root.is_dir():
         folders += [item / DATA_DIR_NAME / "logs" for item in context.root.iterdir() if item.is_dir() and not item.name.startswith(".")]
+    # Prune every existing log folder.
     for folder in folders:
         if folder.is_dir():
             # The cleanup run already has its own log in the root's folder, and pruning keeps one run less than it
@@ -902,6 +1145,7 @@ def cleanup_root(engine: Engine, context: Scope, settings: Settings) -> dict[str
 
     # Registry trees other than the active revision.
     for registry in settings.registries:
+        # Find the active revision of this registry and remove every other tree.
         cache = registry_cache_dir(context.root, registry.name)
         trees = cache / "trees"
         if not trees.is_dir():
@@ -921,6 +1165,7 @@ def cleanup_root(engine: Engine, context: Scope, settings: Settings) -> dict[str
 
 def _check(engine: Engine, target: _Target) -> PackageResult:
     """Diagnose one package; with ``--fix`` run the repair plan for what can be repaired, then diagnose again."""
+    # A check needs a package to diagnose.
     request, resolved = target.request, target.resolved
     context, settings = resolved.scope, resolved.settings
     selection = resolved.resolved
@@ -930,14 +1175,17 @@ def _check(engine: Engine, target: _Target) -> PackageResult:
     record_manifest = bool(settings["install.record_manifest"])
     owners = target.names.index().owners(view.name)
     diagnosis = diagnose(engine.system, view, mode=context.mode, record_manifest=record_manifest, owners=owners)
+    # With ``--fix``, run the repair plan for the fixable problems, then diagnose the repaired package again.
     fixed: list[str] = []
     if request.fix and diagnosis.installed and diagnosis.fixable:
         fixed = [item.message for item in diagnosis.problems if item.fixable]
+        # The repair runs as a "repair" request sharing the name index; a failed repair is the result.
         fixing = _Target(replace(request, operation="repair", fix=False), resolved, target.catalog)
         fixing.names = target.names
         outcome = _repair(engine, fixing, diagnosis)
         if not outcome.ok:
             return outcome
+        # Diagnose the repaired package again so the result shows what is left.
         view = target.catalog.describe(view.name)
         diagnosis = diagnose(engine.system, view, mode=context.mode, record_manifest=record_manifest, owners=owners)
     return _check_result(view, context, diagnosis, fixed)
@@ -945,6 +1193,7 @@ def _check(engine: Engine, target: _Target) -> PackageResult:
 
 def _repair(engine: Engine, target: _Target, diagnosis: Diagnosis) -> PackageResult:
     """Run the install repair plan for ``check --fix``: it writes every effect the package owns again, the drifted ones among them."""
+    # The active version must be a valid version directory to be repaired.
     view = target.resolved.resolved.view
     context = target.resolved.scope
     state = view.local.version(view.installed.version)
@@ -958,6 +1207,7 @@ def _repair(engine: Engine, target: _Target, diagnosis: Diagnosis) -> PackageRes
         view.name, find_unowned(engine.system, desired, target.names.index().owners("")),
         command=f"gupkg install {view.name} --overwrite=", verb="repaired",
     )
+    # Plan the repair of the active version, explaining the one error that a shipped App can produce.
     try:
         repair_plan = plan_install(
             target.request, view, context, chosen, desired, notes=notes, package_path=view.path, drifted=diagnosis.drifted,
@@ -971,6 +1221,7 @@ def _repair(engine: Engine, target: _Target, diagnosis: Diagnosis) -> PackageRes
             f"{APP_MISSING_ERROR.rstrip('.')}: its files ship with the version. Restore the App folder of {view.installed.version} "
             f"(copy the package files back), or install another version; `gupkg install {view.name}` cannot rebuild a shipped App."
         ) from error
+    # Execute the repair plan like an install.
     run = ExecutionInput(
         repair_plan, context, view, chosen, target.request, target.resolved.settings,
         warnings=list(target.resolved.warnings),
@@ -980,6 +1231,7 @@ def _repair(engine: Engine, target: _Target, diagnosis: Diagnosis) -> PackageRes
 
 def _check_result(view: PackageView, context: Scope, diagnosis: Diagnosis, fixed: Sequence[str]) -> PackageResult:
     """Build the result of ``check``: healthy or not, with every problem and note."""
+    # Describe the findings in the result and show each one on screen.
     healthy = diagnosis.healthy
     details = {
         "installed": diagnosis.installed,
@@ -987,10 +1239,12 @@ def _check_result(view: PackageView, context: Scope, diagnosis: Diagnosis, fixed
         "notes": [item.to_data() for item in diagnosis.notes],
         "fixed": list(fixed),
     }
+    # Show every problem and note on screen.
     for item in diagnosis.problems:
         emit(Warning(item.message))
     for item in diagnosis.notes:
         emit(Step(item.message, "info"))
+    # An unhealthy package exits with status 3; a package that is not installed is reported as such.
     status = "healthy" if healthy else "unhealthy"
     if not diagnosis.installed and healthy:
         status = "not-installed"

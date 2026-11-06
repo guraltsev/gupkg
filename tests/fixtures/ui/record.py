@@ -17,7 +17,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+# Directory of this recording script.
 HERE = Path(__file__).resolve().parent
+# Launcher script that the recorded screens are produced with.
 LAUNCHER = HERE.parents[2] / "src" / "gupkg" / "gupkg.cmd"
 
 
@@ -25,21 +27,25 @@ def main() -> None:
     """Build the world, run the real CLI and save the documents."""
     work = Path(tempfile.mkdtemp(prefix="gupkg-ui-record-"))
     try:
+        # Create two installed packages with two versions each.
         for name in ("alpha", "beta"):
             for version in ("1.0.0", "2.0.0"):
                 folder = work / "home" / "opt" / name / version
                 (folder / "App").mkdir(parents=True)
                 (folder / "pkg.toml").write_text(f'format = 2\ndescription = "{name}"\n[source]\nshipped = true\n', encoding="utf-8")
                 (folder / "App" / "app.exe").write_text("x", encoding="utf-8")
+        # Write settings that confine the recorded run to the temporary tree.
         (work / "temp").mkdir()
         settings = work / "settings.toml"
         settings.write_text(
             f"schema = 4\n[integration]\nbin = '{work}\\home\\bin'\nstart_menu = '{work}\\home\\sm'\n",
             encoding="utf-8",
         )
+        # Environment and options shared by every recorded command.
         env = {**os.environ, "USERPROFILE": str(work / "home"), "APPDATA": str(work / "appdata"), "TEMP": str(work / "temp")}
         root = ["--root", str(work / "home" / "opt"), "--settings", str(settings), "--sandbox", str(work / "sb")]
 
+        # Helpers that run the real CLI and save a recording with the temporary folder masked.
         def run(*args: str) -> str:
             """Run the real CLI and return standard output (the call must succeed or fail with a document)."""
             result = subprocess.run([str(LAUNCHER), *root, *args], capture_output=True, text=True, env=env, encoding="utf-8", stdin=subprocess.DEVNULL, check=False)
@@ -52,11 +58,13 @@ def main() -> None:
                 text = text.replace(variant, "@ROOT@")
             (HERE / name).write_text(text, encoding="utf-8", newline="\n")
 
+        # Record the output of each command in turn.
         run("install", "alpha@1.0.0", "beta@1.0.0", "--yes", "--no-input")
         keep("list.json", run("list", "--json"))
         keep("info_alpha.json", run("info", "alpha", "--json"))
         keep("plan_update.json", run("update", "--plan", "--json", "--", "alpha", "beta"))
         keep("update_result.json", run("update", "--yes", "--json", "--events-file", "rec.jsonl", "--", "alpha", "beta"))
+        # Collect the event logs of the update, global and per package.
         logs = work / "home" / "opt" / ".gupkg" / "logs"
         keep("events_global.jsonl", (logs / "rec.jsonl").read_text(encoding="utf-8"))
         for name in ("alpha", "beta"):

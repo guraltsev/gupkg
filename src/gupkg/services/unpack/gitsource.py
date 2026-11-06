@@ -32,11 +32,22 @@ from ..gitenv import GitUnavailable, git_command, git_environment
 from ..safepath import remove_tree
 from .extract import UnpackError
 
+# A full 40-digit lowercase commit hash.
 _SHA = re.compile(r"[0-9a-f]{40}")
 
 
 class CommitMismatch(UnpackError):
-    """Report that the repository served a commit other than the one the version pins."""
+    """Report that the repository served a commit other than the one the version pins.
+
+    Parameters
+    ----------
+    message : str
+        What was found.
+    expected : str
+        The commit the version pins.
+    observed : str
+        The commit the repository served.
+    """
 
     def __init__(self, message: str, expected: str, observed: str) -> None:
         """Build the error with the pinned and the served commit."""
@@ -75,6 +86,7 @@ def checkout_commit(system: System, mode: Mode, url: str, ref: str | None, commi
     UnpackError
         If ``git`` fails, the ref does not resolve, or the fetched commit differs from *commit*.
     """
+    # A leading dash would be read by git as an option; refuse it, then prepare a fresh checkout folder.
     if url.startswith("-"):
         raise UnpackError("A repository address cannot start with '-'")
     environment = git_environment(system, mode, Path(work))
@@ -82,8 +94,16 @@ def checkout_commit(system: System, mode: Mode, url: str, ref: str | None, commi
     remove_tree(checkout)
     checkout.mkdir(parents=True)
 
-    def git(*arguments: str, cwd: Path | None = None) -> str:
-        """Run one Git command and return its stripped output."""
+    # All Git calls share one safe environment and the same failure conversion.
+    def _git(*arguments: str, cwd: Path | None = None) -> str:
+        """Run one Git command and return its stripped output (internal to the checkout).
+
+        Raises
+        ------
+        UnpackError
+            If Git is unavailable, fails or times out.
+        """
+        # Run Git through the boundary with prompts off; every failure mode becomes an unpack error.
         try:
             command = git_command(*arguments, system=system, mode=mode)
             return run_checked(system, command, cwd=cwd, env=environment, on_line=subprocess_lines(command), timeout=1800)
@@ -94,17 +114,19 @@ def checkout_commit(system: System, mode: Mode, url: str, ref: str | None, commi
         # Resolve what to fetch: the pinned commit, or the commit the ref points at now.
         wanted = commit.lower() if commit else None
         if wanted is None:
-            listing = git("ls-remote", "--exit-code", "--", url, ref or "HEAD").split()
+            listing = _git("ls-remote", "--exit-code", "--", url, ref or "HEAD").split()
             wanted = listing[0].lower() if listing else ""
         if not _SHA.fullmatch(wanted or ""):
             raise UnpackError(f"Could not resolve a commit of {url}")
 
-        git("init", "--quiet", str(checkout))
-        git("fetch", "--quiet", "--depth", "1", "--no-tags", "--", url, wanted, cwd=checkout)
-        fetched = git("rev-parse", "FETCH_HEAD", cwd=checkout).lower()
+        # Fetch exactly that commit shallowly and make sure the repository served what was pinned.
+        _git("init", "--quiet", str(checkout))
+        _git("fetch", "--quiet", "--depth", "1", "--no-tags", "--", url, wanted, cwd=checkout)
+        fetched = _git("rev-parse", "FETCH_HEAD", cwd=checkout).lower()
         if fetched != wanted:
             raise CommitMismatch(f"The repository served commit {fetched}, not the pinned {wanted}", wanted, fetched)
-        git("checkout", "--quiet", "--detach", wanted, cwd=checkout)
+        # Check it out detached, drop the history and move the tree into place.
+        _git("checkout", "--quiet", "--detach", wanted, cwd=checkout)
         remove_tree(checkout / ".git")
         os.replace(checkout, destination)
     finally:

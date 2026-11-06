@@ -1,9 +1,9 @@
-"""Read and write the install record ``<package>\\.gupkg\\package.toml``.
+"""Load and save the install record ``<package>\\.gupkg\\package.toml``.
 
 The install record holds a package's mode, its link to a registry entry (or the opt-out
 written by ``gupkg link --unlink``, decision D2) and the integration effects last applied.
-Reading never changes anything and never follows a link: a ``.gupkg`` folder or a
-``package.toml`` that is a link is reported as a problem and not read, so an elevated run
+Loading never changes anything and never follows a link: a ``.gupkg`` folder or a
+``package.toml`` that is a link is reported as a problem and not opened, so an elevated run
 cannot be led out of a package root by a record. Writing is the one mutation of this
 package; the engine (issue 028) calls it, and the catalog's ``describe``, ``list`` and
 ``resolve`` never do.
@@ -31,19 +31,39 @@ from ..model.state import InstallRecord, RecordError, install_record_to_data, pa
 from ..tomlio import read_toml, write_toml
 from .local import DATA_DIR_NAME, is_reparse_point
 
+# File name of the install record inside a package's ``.gupkg`` folder.
 RECORD_FILE_NAME = "package.toml"
 
 
 @dataclass(frozen=True)
 class RecordRead:
-    """The outcome of reading an install record: the record, or why it cannot be used."""
+    """The outcome of reading an install record: the record, or why it cannot be used.
+
+    Attributes
+    ----------
+    record : InstallRecord | None
+        The parsed install record, or ``None`` when it cannot be used.
+    problem : str | None
+        Why the record cannot be used, or ``None``.
+    """
 
     record: InstallRecord | None = None
     problem: str | None = None
 
 
 def record_path(package_path: Path) -> Path:
-    """Return where the install record of *package_path* lives."""
+    """Return where the install record of *package_path* lives.
+
+    Parameters
+    ----------
+    package_path : Path
+        The package root.
+
+    Returns
+    -------
+    Path
+        ``<package>\\.gupkg\\package.toml``, whether or not it exists.
+    """
     return Path(package_path) / DATA_DIR_NAME / RECORD_FILE_NAME
 
 
@@ -62,6 +82,8 @@ def read_install_record(package_path: Path) -> RecordRead:
         ``problem`` names the reason when the record is a link, unreadable or invalid.
     """
     path = record_path(package_path)
+
+    # Never follow a link out of the package root.
     for entry in (path.parent, path):
         if is_reparse_point(entry):
             return RecordRead(problem=f"{entry} is a link and is not followed")
@@ -96,6 +118,8 @@ def write_install_record(package_path: Path, record: InstallRecord) -> Path:
         If the file cannot be written.
     """
     path = record_path(package_path)
+
+    # Refuse to write through a link: the record must stay inside the package.
     for entry in (path.parent, path):
         if is_reparse_point(entry):
             raise ValueError(f"{entry} is a link; refusing to write the install record through it")

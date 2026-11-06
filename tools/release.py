@@ -40,12 +40,32 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import build_standalone  # noqa: E402  (a sibling script, not an installed package)
 
+# Repository root, where ``RELEASES.md`` and the Git checkout live.
 ROOT = Path(__file__).resolve().parents[1]
-SEPARATOR = "|---|---|---|---|---|"
 
 
 def main(argv: list[str] | None = None, *, root: Path = ROOT) -> int:
-    """Build, publish and record the release of ``HEAD``."""
+    """Build, publish and record the release of ``HEAD``.
+
+    Parameters
+    ----------
+    argv : list of str, optional
+        Command-line arguments; ``sys.argv[1:]`` when omitted.
+    root : Path, default=ROOT
+        Repository root whose ``HEAD`` is released.
+
+    Returns
+    -------
+    int
+        ``0`` once the release is recorded.
+
+    Raises
+    ------
+    SystemExit
+        If changes are staged, ``RELEASES.md`` is edited, the version is
+        already listed, or the ZIP is not the release of ``HEAD``.
+    """
+    # Describe the command line from the module summary.
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("notes", help="one-line release notes for the table")
     parser.add_argument("--zip", type=Path, help="use this release ZIP instead of building one")
@@ -61,6 +81,8 @@ def main(argv: list[str] | None = None, *, root: Path = ROOT) -> int:
         raise SystemExit("Changes are staged; commit or unstage them first.")
     if _git(root, "status", "--porcelain", "--untracked-files=no", "--", "RELEASES.md"):
         raise SystemExit("RELEASES.md has uncommitted edits; commit or discard them first.")
+
+    # Read the released commit and its version, and refuse a version already listed.
     commit = _git(root, "rev-parse", "HEAD")
     version = committed_version(root, commit)
     releases = root / "RELEASES.md"
@@ -71,6 +93,7 @@ def main(argv: list[str] | None = None, *, root: Path = ROOT) -> int:
     # Build the ZIP from a worktree of HEAD (or accept one), then prove it is that release.
     archive = args.zip or root / "dist" / f"gupkg-{version}-win-amd64.zip"
     if args.zip is None:
+        # Only the committed tree is built, so working-tree edits cannot reach the ZIP.
         with _worktree(root, commit) as tree:
             build_standalone.main([
                 "--source", str(tree / "src" / "gupkg"),
@@ -80,11 +103,13 @@ def main(argv: list[str] | None = None, *, root: Path = ROOT) -> int:
                 "--commit", commit,
             ])
     check_release_zip(archive, version, commit)
+    # The digest is taken from the exact file that will be uploaded.
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
 
     # Tag the released commit, then publish the tag and the ZIP.
     _git(root, "tag", f"v{version}", commit)
     if not args.no_publish:
+        # Push the tag first, then attach the ZIP and its digest to the GitHub release.
         remote = args.remote or _git(root, "remote").splitlines()[0]
         _git(root, "push", remote, f"refs/tags/v{version}")
         sidecar = archive.with_name(archive.name + ".sha256")
@@ -94,15 +119,114 @@ def main(argv: list[str] | None = None, *, root: Path = ROOT) -> int:
             cwd=root,
             check=True,
         )
+        # Read the published asset back so a corrupted upload is caught before it is recorded.
         _verify_published(args.gh, root, f"v{version}", archive.name, digest)
 
     # Record the release, naming the released commit and the published bytes.
+    separator = "|---|---|---|---|---|"
     row = f"| {version} | `{commit}` | {date.today().isoformat()} | {digest} | {notes} |"
-    releases.write_text(text.replace(SEPARATOR, f"{SEPARATOR}\n{row}", 1), encoding="utf-8")
+    releases.write_text(text.replace(separator, f"{separator}\n{row}", 1), encoding="utf-8")
+    # Commit the new row and tell the maintainer how to publish it.
     _git(root, "add", "RELEASES.md")
     _git(root, "commit", "-m", f"Record release {version} hash in RELEASES.md")
     print(f"Released {version} at {commit}.\nsha256 {digest}\nPublish the row with:  git push origin main")
     return 0
+
+
+def check_release_zip(archive: Path, version: str, commit: str) -> None:
+    """Refuse a ZIP that is not the release of *version* built from *commit*.
+
+    Parameters
+    ----------
+    archive : Path
+        Release ZIP to inspect.
+    version : str
+        Version the ZIP must declare.
+    commit : str
+        Full commit hash the ZIP must record.
+
+    Raises
+    ------
+    SystemExit
+        If ``gupkg/RELEASE.txt`` is missing or names another version or commit.
+    """
+    with zipfile.ZipFile(archive) as zipped:
+        check_release_zip_object(zipped, archive.name, version, commit)
+
+
+def check_release_zip_object(zipped: zipfile.ZipFile, name: str, version: str, commit: str) -> None:
+    """Refuse the open ZIP *zipped* unless ``RELEASE.txt`` names *version* and *commit*.
+
+    Parameters
+    ----------
+    zipped : zipfile.ZipFile
+        Open release ZIP.
+    name : str
+        Name used for the ZIP in error messages.
+    version : str
+        Version the ZIP must declare.
+    commit : str
+        Full commit hash the ZIP must record.
+
+    Raises
+    ------
+    SystemExit
+        If ``gupkg/RELEASE.txt`` is missing or names another version or commit.
+    """
+    # Locate the single RELEASE.txt and read the version and commit it records.
+    notes = [entry for entry in zipped.namelist() if re.fullmatch(r"(?:[^/]+/){1,2}gupkg/RELEASE\.txt", entry)]
+    if len(notes) != 1:
+        raise SystemExit(f"{name} has no gupkg/RELEASE.txt; it is not a gupkg release ZIP")
+    recorded = zipped.read(notes[0]).decode("utf-8")
+    recorded_version = re.search(r"(?m)^gupkg (\S+)$", recorded)
+    recorded_commit = re.search(r"(?m)^commit ([0-9a-f]{40})$", recorded)
+    # Both recorded values must equal what the caller expects.
+    if recorded_version is None or recorded_version.group(1) != version:
+        raise SystemExit(f"{name} is for gupkg {recorded_version and recorded_version.group(1)}, not {version}")
+    if recorded_commit is None or recorded_commit.group(1) != commit:
+        raise SystemExit(
+            f"{name} was built from commit {recorded_commit and recorded_commit.group(1)}, "
+            f"not HEAD {commit}; rebuild it."
+        )
+
+
+def committed_version(root: Path, commit: str) -> str:
+    """Return ``__version__`` from ``_version.py`` as it is in *commit*, not in the working tree.
+
+    Parameters
+    ----------
+    root : Path
+        Repository root.
+    commit : str
+        Commit whose ``src/gupkg/_version.py`` is read.
+
+    Returns
+    -------
+    str
+        The declared version.
+    """
+    text = _git(root, "show", f"{commit}:src/gupkg/_version.py")
+    return _version_from(ast.parse(text), f"{commit}:src/gupkg/_version.py")
+
+
+def runtime_version(root: Path = ROOT) -> str:
+    """Return ``__version__`` from the runtime's version module in the working tree.
+
+    Parameters
+    ----------
+    root : Path, default=ROOT
+        Repository root.
+
+    Returns
+    -------
+    str
+        The declared version.
+    """
+    version_file = root / "src" / "gupkg" / "_version.py"
+    return _version_from(ast.parse(version_file.read_text(encoding="utf-8")), str(version_file))
+
+
+# --- supporting helpers ---
 
 
 def _verify_published(gh: str, root: Path, tag: str, name: str, digest: str) -> None:
@@ -121,41 +245,6 @@ def _verify_published(gh: str, root: Path, tag: str, name: str, digest: str) -> 
     print(f"Verified the published {name}: sha256 {digest}")
 
 
-def check_release_zip(archive: Path, version: str, commit: str) -> None:
-    """Refuse a ZIP that is not the release of *version* built from *commit*.
-
-    Raises
-    ------
-    SystemExit
-        If ``gupkg/RELEASE.txt`` is missing or names another version or commit.
-    """
-    with zipfile.ZipFile(archive) as zipped:
-        check_release_zip_object(zipped, archive.name, version, commit)
-
-
-def check_release_zip_object(zipped: zipfile.ZipFile, name: str, version: str, commit: str) -> None:
-    """Refuse the open ZIP *zipped* (called *name*) unless ``RELEASE.txt`` names *version* and *commit*.
-
-    Raises
-    ------
-    SystemExit
-        If ``gupkg/RELEASE.txt`` is missing or names another version or commit.
-    """
-    notes = [entry for entry in zipped.namelist() if re.fullmatch(r"(?:[^/]+/){1,2}gupkg/RELEASE\.txt", entry)]
-    if len(notes) != 1:
-        raise SystemExit(f"{name} has no gupkg/RELEASE.txt; it is not a gupkg release ZIP")
-    recorded = zipped.read(notes[0]).decode("utf-8")
-    recorded_version = re.search(r"(?m)^gupkg (\S+)$", recorded)
-    recorded_commit = re.search(r"(?m)^commit ([0-9a-f]{40})$", recorded)
-    if recorded_version is None or recorded_version.group(1) != version:
-        raise SystemExit(f"{name} is for gupkg {recorded_version and recorded_version.group(1)}, not {version}")
-    if recorded_commit is None or recorded_commit.group(1) != commit:
-        raise SystemExit(
-            f"{name} was built from commit {recorded_commit and recorded_commit.group(1)}, "
-            f"not HEAD {commit}; rebuild it."
-        )
-
-
 @contextlib.contextmanager
 def _worktree(root: Path, commit: str):
     """Check *commit* out into a temporary detached worktree of the repository, yield its path, and remove it again."""
@@ -166,18 +255,6 @@ def _worktree(root: Path, commit: str):
             yield tree
         finally:
             _git(root, "worktree", "remove", "--force", str(tree))
-
-
-def committed_version(root: Path, commit: str) -> str:
-    """Read ``__version__`` from ``_version.py`` as it is in *commit*, not in the working tree."""
-    text = _git(root, "show", f"{commit}:src/gupkg/_version.py")
-    return _version_from(ast.parse(text), f"{commit}:src/gupkg/_version.py")
-
-
-def runtime_version(root: Path = ROOT) -> str:
-    """Read ``__version__`` from the runtime's version module."""
-    version_file = root / "src" / "gupkg" / "_version.py"
-    return _version_from(ast.parse(version_file.read_text(encoding="utf-8")), str(version_file))
 
 
 def _version_from(tree: ast.Module, origin: str) -> str:

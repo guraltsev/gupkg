@@ -1,7 +1,7 @@
 """Cover the UI programs against the REAL command line: the real launchers, the real CLI behind them, real folders, a pretend machine.
 
 Behaviour covered: ``gupkg-manager update --all --yes`` updates every outdated package through the real ``gupkg`` (the version in ``current`` changes), with its events followed from the real
-log directories; without ``--yes`` and without a terminal nothing changes (exit 5); ``--json`` is one document; ``check`` is read only; with ``[cleanup] auto = true`` an update ends with a
+log directories; without ``--yes`` and without a terminal nothing changes (exit 5); ``--json`` is one document; ``check`` is read-only; with ``[cleanup] auto = true`` an update ends with a
 cleanup call and without it none is made; a package
 folder named with shell characters is refused alone; ``gupkg manager`` and ``gupkg tui`` start the programs of the same tree through the real launchers and do not loop; both programs run under the
 bundled interpreter in isolated mode and write no bytecode.
@@ -80,7 +80,7 @@ def test_check_reads_every_package_and_changes_nothing(real_world_with_alpha_and
 
 @pytest.mark.parametrize(("auto", "cleanup_calls"), [pytest.param(True, 1, id="auto-cleanup"), pytest.param(False, 0, id="no-cleanup")])
 def test_cleanup_ends_an_update_only_with_the_setting(tmp_path: Path, auto: bool, cleanup_calls: int) -> None:
-    """With ``[cleanup] auto = true`` the run includes a ``cleanup`` call for the user root and its result; without it no cleanup is made (decision D43)."""
+    """With ``[cleanup] auto = true`` the run includes a ``cleanup`` call for the user root and its result; without it no cleanup is made."""
     machine = RealWorld(tmp_path, settings=f"[cleanup]\nauto = {str(auto).lower()}")
     machine.package("alpha", ("1.0.0", "2.0.0"))
     machine.install("alpha@1.0.0")

@@ -7,8 +7,8 @@ folder path; a registry-only name resolves to an ``available`` view; unknown nam
 fail with a clear error; a version directory without ``pkg.toml`` beside others never wins.
 
 Real: package roots and junctions on pytest's temporary folder, registry caches, and the catalog.
-Mocked: the machine boundary (``FakeSystem``). Out of scope: acting on the selection (issue 028) and the
-command-line parsing (issue 029).
+Mocked: the machine boundary (``FakeSystem``). Out of scope: acting on the selection and the
+command-line parsing.
 """
 
 from __future__ import annotations
@@ -52,14 +52,17 @@ def test_malformed_selectors_are_refused(text: str) -> None:
 
 def test_name_and_version_selector_names_the_version(system, tmp_path: Path) -> None:
     """``name@version`` returns the named version, and ``pick_version`` finds it among local and registry versions."""
+    # Arrange: a registry version and a local version of the same package.
     roots = make_catalog(system, tmp_path)[1]
     build_registry(roots["user"], {"foo": {"versions": ["1.0", "1.5"]}})
     write_version(roots["user"] / "foo", "1.2")
     catalog = make_catalog(system, tmp_path)[0]
 
+    # Act: resolve a named version and pick versions among both sources.
     resolved = catalog.resolve("foo@1.5")
     picked = catalog.pick_version(resolved.view, resolved.version)
 
+    # Assert: the named version wins and an unknown one lists the known versions.
     assert resolved.version == "1.5" and resolved.named_version
     assert (picked.source, picked.version) == ("registry", "1.5")
     assert catalog.pick_version(resolved.view, "1.2").source == "local"
@@ -108,6 +111,7 @@ def test_unknown_name_and_non_package_paths_fail_clearly(system, tmp_path: Path)
 
 def test_paths_select_the_package_and_version(system, tmp_path: Path) -> None:
     """A package root, a version directory, ``current`` and ``_check_updates`` each resolve to the right package and version."""
+    # Arrange: a package with two versions and a tracker.
     roots = make_catalog(system, tmp_path)[1]
     package = roots["user"] / "foo"
     write_version(package, "1.0", populated=True)
@@ -115,6 +119,7 @@ def test_paths_select_the_package_and_version(system, tmp_path: Path) -> None:
     write_tracker(package)
     catalog = make_catalog(system, tmp_path)[0]
 
+    # Act: resolve a path to each part of the package, before and after activation.
     not_installed = catalog.resolve(str(package))
     version_dir = catalog.resolve(str(package / "1.0"))
     tracker = catalog.resolve(str(package / "_check_updates"))
@@ -122,6 +127,7 @@ def test_paths_select_the_package_and_version(system, tmp_path: Path) -> None:
     installed = make_catalog(system, tmp_path)[0].resolve(str(package))
     via_current = make_catalog(system, tmp_path)[0].resolve(str(package / "current"))
 
+    # Assert: each path selects the right package and version.
     assert (not_installed.version, not_installed.via_current) == ("1.1", False)
     assert version_dir.version == "1.0" and version_dir.version_path == package / "1.0"
     assert tracker.is_tracker and tracker.version is None
@@ -132,16 +138,19 @@ def test_paths_select_the_package_and_version(system, tmp_path: Path) -> None:
 
 def test_package_in_a_grouping_folder_is_selected_by_its_folder_path(system, tmp_path: Path) -> None:
     """A folder marked with ``gupkg-dir.toml`` groups packages: ``group/tool`` selects one, and a path under the root finds it too."""
+    # Arrange: a grouping folder that holds one package.
     roots = make_catalog(system, tmp_path)[1]
     (roots["user"] / "group").mkdir()
     (roots["user"] / "group" / "gupkg-dir.toml").write_text("", encoding="utf-8")
     write_version(roots["user"] / "group" / "tool", "1.0")
     catalog = make_catalog(system, tmp_path)[0]
 
+    # Act: list the packages and resolve them by name and by path.
     listed = [view.name for view in catalog.list().views]
     by_name = catalog.resolve("group/tool").view
     by_path = catalog.resolve(str(roots["user"] / "group" / "tool")).view
 
+    # Assert: both spellings select the same grouped package.
     assert listed == ["group/tool"]
     assert by_name.name == by_path.name == "group/tool"
     assert by_path.root.path == roots["user"]

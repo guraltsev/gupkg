@@ -24,7 +24,9 @@ import fetch_runtime
 
 pytestmark = pytest.mark.release
 
+# Dependency lock text with hashed pins.
 LOCK = f"textual==8.2.8 --hash=sha256:{'a' * 64}\nrich==15.0.0 --hash=sha256:{'b' * 64}\n"
+# Index answer for a release that is not yanked.
 LIVE = [{"yanked": False}]
 
 
@@ -43,12 +45,15 @@ def test_archive_is_downloaded_once_and_reused_from_the_cache(tmp_path: Path) ->
     calls: list[str] = []
 
     def fetch(url: str, destination: Path) -> None:
+        """Record the requested address and copy the stand-in archive to the destination."""
         calls.append(url)
         destination.write_bytes(source.read_bytes())
 
+    # Act: download twice into the same cache.
     first = fetch_runtime.download_runtime_archive(tmp_path / "cache", url="https://example.invalid/py.zip", sha256=digest, fetch=fetch)
     second = fetch_runtime.download_runtime_archive(tmp_path / "cache", url="https://example.invalid/py.zip", sha256=digest, fetch=fetch)
 
+    # The second call reuses the cached file without fetching again.
     assert first == second and first.read_bytes() == source.read_bytes()
     assert calls == ["https://example.invalid/py.zip"]
 
@@ -59,6 +64,7 @@ def test_archive_that_fails_the_pinned_digest_is_deleted_and_stops_the_tool(tmp_
     _runtime_zip(source)
 
     def fetch(url: str, destination: Path) -> None:
+        """Copy the stand-in archive to the destination."""
         destination.write_bytes(source.read_bytes())
 
     with pytest.raises(SystemExit, match="SHA-256"):
@@ -100,15 +106,19 @@ def test_check_deps_exit_status_tells_current_outdated_and_unreachable_apart(
     newer = {"textual": {"releases": {"8.2.8": LIVE, "8.3.0": LIVE}}, "rich": current["rich"]}
 
     def serve(documents):
+        """Answer the package-index queries from *documents*."""
         monkeypatch.setattr(check_deps, "_fetch_pypi", lambda name, timeout: documents[name])
 
+    # Act: an unchanged lock is current, a newer release makes it outdated.
     serve(current)
     assert check_deps.main(["--lock", str(lock)]) == 0
     serve(newer)
     assert check_deps.main(["--lock", str(lock)]) == 1
     assert "textual 8.2.8 is pinned; 8.3.0 is available" in capsys.readouterr().out
 
+    # Act: an unreachable index is reported apart from the other two outcomes.
     def offline(name: str, timeout: float) -> dict:
+        """Fail as if the package index were unreachable."""
         raise OSError("offline")
 
     monkeypatch.setattr(check_deps, "_fetch_pypi", offline)

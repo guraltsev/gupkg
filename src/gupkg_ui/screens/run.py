@@ -42,36 +42,81 @@ MAX_LOG_LINES = 5000
 
 
 class RunLog(RichLog):
-    """An append-only log that follows its tail until the person scrolls up and resumes at the bottom."""
+    """An append-only log that follows its tail until the person scrolls up and resumes at the bottom.
+
+    Methods
+    -------
+    append
+        Add *lines* at the end; stay at the tail only if the view was at the tail.
+    """
 
     def __init__(self) -> None:
         super().__init__(max_lines=MAX_LOG_LINES, wrap=True, highlight=False, markup=False, auto_scroll=False)
 
     def append(self, lines: Sequence[Text]) -> None:
-        """Add *lines* at the end; stay at the tail only if the view was at the tail."""
+        """Add *lines* at the end; stay at the tail only if the view was at the tail.
+
+        Parameters
+        ----------
+        lines : sequence of Text
+            The lines to append.
+        """
         follow = self.max_scroll_y - self.scroll_y <= 1
         for line in lines:
             self.write(line, scroll_end=follow)
 
 
 class ScreenSink:
-    """The ``Sink`` of a run screen: log lines, the live progress line and the run state."""
+    """The ``Sink`` of a run screen: log lines, the live progress line and the run state.
+
+    Parameters
+    ----------
+    screen : RunScreen
+        The run screen whose widgets the sink updates.
+
+    Methods
+    -------
+    lines
+        Append lasting lines to the log.
+    progress
+        Show or clear the live progress line.
+    status
+        Show the run state in the status line.
+    """
 
     def __init__(self, screen: "RunScreen") -> None:
         self._screen = screen
 
     def lines(self, lines: Sequence[Text]) -> None:
-        """Append lasting lines to the log."""
+        """Append lasting lines to the log.
+
+        Parameters
+        ----------
+        lines : sequence of Text
+            The lines to append; nothing happens when empty.
+        """
         if lines:
             self._screen.query_one(RunLog).append(lines)
 
     def progress(self, text: str | None) -> None:
-        """Show (or clear) the live progress line."""
+        """Show (or clear) the live progress line.
+
+        Parameters
+        ----------
+        text : str or None
+            The progress text, or ``None`` to clear the line.
+        """
         bar = self._screen.query_one("#progress", Static)
         bar.update(Text(literal(text, limit=300) if text else "", no_wrap=True, overflow="ellipsis"))
 
     def status(self, text: str) -> None:
-        """Show the run state in the status line."""
+        """Show the run state in the status line.
+
+        Parameters
+        ----------
+        text : str
+            The run state.
+        """
         self._screen.set_state(text)
 
 
@@ -86,6 +131,34 @@ class RunScreen(FrameScreen):
         What is being run, for the status line.
     job : callable
         ``job(session, sink, interaction)`` returning the ``BatchOutcome``.
+
+    Methods
+    -------
+    key_hints
+        Return the keys that work now: they differ while the job runs and after it ended.
+    status_text
+        Return the program status with this run's title and state first (before the scope), so a long root never pushes the state
+        out of the line.
+    compose_body
+        Yield the log and the live progress line.
+    set_state
+        Show the run state.
+    on_mount
+        Focus the log (so the keyboard scrolls it) and start the job.
+    action_leave
+        Escape: go back when the job ended; while it runs, ask whether to cancel after the current package.
+    action_quit_or_cancel
+        ``q``: quit when the job ended; while it runs, the same question as Escape (a run is never abandoned silently).
+    action_follow
+        Jump to the end of the log and follow it again.
+    action_help
+        Show the keys of this view.
+
+    Attributes
+    ----------
+    BINDINGS : list of Binding
+        The keys of the screen, as ``key`` (label): ``escape`` (Back / cancel), ``q`` (Quit), ``end`` (Follow), ``question_mark``
+        (Help).
     """
 
     DEFAULT_CSS = """
@@ -111,13 +184,25 @@ class RunScreen(FrameScreen):
     # -- frame ---------------------------------------------------------------------
 
     def key_hints(self) -> str:
-        """Return the keys that work now: they differ while the job runs and after it ended."""
+        """Return the keys that work now: they differ while the job runs and after it ended.
+
+        Returns
+        -------
+        str
+            The text of the top line.
+        """
         if self.outcome is None:
             return "Esc cancel after this package  ↑↓ PgUp PgDn scroll  End follow  ? help"
         return "Esc back  ↑↓ PgUp PgDn Home End scroll  q quit  ? help"
 
     def status_text(self) -> str:
-        """Return the program status with this run's title and state first (before the scope), so a long root never pushes the state out of the line."""
+        """Return the program status with this run's title and state first (before the scope), so a long root never pushes the state out of the line.
+
+        Returns
+        -------
+        str
+            The text of the bottom line.
+        """
         return str(getattr(self.app, "status_line", lambda own="", own_first=False: own)(f"{self._title}: {self.state}", own_first=True))
 
     def compose_body(self) -> ComposeResult:
@@ -126,7 +211,13 @@ class RunScreen(FrameScreen):
         yield Static("", id="progress", markup=False)
 
     def set_state(self, text: str) -> None:
-        """Show the run state."""
+        """Show the run state.
+
+        Parameters
+        ----------
+        text : str
+            The run state, shown in the status line.
+        """
         self.state = literal(text, limit=200)
         self.refresh_frame()
 
@@ -139,14 +230,18 @@ class RunScreen(FrameScreen):
 
     async def _execute(self) -> None:
         """Run the job; whatever it raises becomes a failed outcome shown in the log, never a crashed interface."""
+        # Wire the session to this screen and let the job's questions open dialogs.
         sink = ScreenSink(self)
         self.session = BatchSession(self._env.client, sink, colour=self._env.settings.colour)
         interaction = Interaction(confirm=self._confirm, ask_checksum=self._ask_checksum, interactive=True)
+        # A job that raises becomes a failed outcome shown in the log.
         try:
             outcome = await self._job(self.session, sink, interaction)
         except Exception as error:  # noqa: BLE001 - the interface must show a failure, not die with it
             sink.lines([Text(f"Error: {literal(error)}", style="bold red"), Text(f"━━ Failed (exit code {EXIT_INTERNAL}) " + "━" * 30, style="bold red")])
             outcome = BatchOutcome(problems=[str(error)], exit_code=EXIT_INTERNAL)
+
+        # Record the verdict, show it in the status line and clear the live progress line.
         self.outcome = outcome
         self.app.last_outcome = outcome
         self.set_state("Finished" if outcome.ok else f"Failed (exit code {outcome.exit_code})")

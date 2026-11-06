@@ -1,6 +1,6 @@
 """Turn a ``PackageView`` into the plain data that ``list``, ``info`` and ``--json`` show.
 
-The data is the public machine shape of a package (decision D44, ``"api": 2``): the manager and other tools read
+The data is the public machine shape of a package (decision D44, ``"api": 2``): the manager and other tools consume
 the same keys that the human output prints. Details add what only the disk knows: the versions in the package root
 with their problems and labels, the tracker, the link, the last ``check-updates`` and how the active version was
 verified. A stored ``verified`` is reported as the install's own report (``self_reported``) in user
@@ -11,11 +11,11 @@ Usage and API
 ``list_row(view)`` and ``info_row(view)`` return the typed rows of ``gupkg.report.documents``; ``package_data(view, details=False)`` returns one
 package as plain data and ``info_data(view)`` is ``package_data`` with every detail. ``list_document(catalog, scope, chosen)``,
 ``info_document(catalog, scope, targets)`` and ``registry_status(scope)`` return the typed documents that ``gupkg list``, ``info`` and
-``registry status`` write with ``--json``; the CLI and the UI programs (which read in-process) both call them. They only read.
+``registry status`` write with ``--json``; the CLI and the UI programs (which run in-process) both call them. They only inspect state and never change it.
 
 Implementation Approach
 -----------------------
-The summary comes from the view alone (no disk access), and each detail reads one small file through the same readers
+The summary comes from the view alone (no disk access), and each detail loads one small file through the same readers
 the engine uses (receipts, the last track state), so what ``info`` shows is what ``check`` and ``update`` act on. The documents are built
 from the dataclasses that the reader (``gupkg.report.documents``) returns, so writer and reader cannot drift.
 """
@@ -42,7 +42,19 @@ from .report.logfile import list_run_logs
 
 
 def list_row(view: PackageView) -> ListRow:
-    """Return the typed row of one package: name, status, active and newest known version (nothing is checked over the network)."""
+    """Return the typed row of one package: name, status, active and newest known version.
+
+    Parameters
+    ----------
+    view : PackageView
+        The package as the catalog describes it; nothing is checked over the network.
+
+    Returns
+    -------
+    ListRow
+        The summary row that ``gupkg list`` shows.
+    """
+    # Build the row from the view alone, without touching the disk.
     candidates = known_candidates(view)
     return ListRow(
         view.name, view.status, view.installed.version if view.installed is not None else None, candidates[0].version if candidates else None,
@@ -52,7 +64,19 @@ def list_row(view: PackageView) -> ListRow:
 
 
 def info_row(view: PackageView) -> InfoRow:
-    """Return the typed details of one package: the row, the versions, tracker, link, last check, receipts and verification notes (reads small files)."""
+    """Return the typed details of one package: the row, the versions, tracker, link, last check, receipts and verification notes.
+
+    Parameters
+    ----------
+    view : PackageView
+        The package as the catalog describes it.
+
+    Returns
+    -------
+    InfoRow
+        The detail row that ``gupkg info`` shows; it loads small files from the package folder.
+    """
+    # Summarize the versions, tracker and registry link that the view already holds.
     local = view.local
     versions = tuple(
         VersionRow(
@@ -97,7 +121,18 @@ def package_data(view: PackageView, *, details: bool = False) -> dict[str, Any]:
 
 
 def info_data(view: PackageView) -> dict[str, Any]:
-    """Return the full data of one package, as ``gupkg info`` shows it."""
+    """Return the full data of one package, as ``gupkg info`` shows it.
+
+    Parameters
+    ----------
+    view : PackageView
+        The package as the catalog describes it.
+
+    Returns
+    -------
+    dict
+        JSON-ready data with every detail (see ``package_data``).
+    """
     return package_data(view, details=True)
 
 
@@ -107,7 +142,21 @@ def info_data(view: PackageView) -> dict[str, Any]:
 
 
 def list_views(catalog: Catalog, chosen: str | None = None) -> tuple[list[PackageView], tuple[str, ...]]:
-    """Return the views ``gupkg list`` shows for the filter word *chosen* (``installed``, ``available``, ``outdated``, ``broken``, ``local`` or ``None``), and the listing's warnings."""
+    """Return the views ``gupkg list`` shows for the filter word *chosen*, and the listing's warnings.
+
+    Parameters
+    ----------
+    catalog : Catalog
+        The catalog of the run's scope.
+    chosen : str, optional
+        ``installed``, ``available``, ``outdated``, ``broken``, ``local`` or ``None`` for the default listing.
+
+    Returns
+    -------
+    tuple
+        The matching package views and the listing's warnings.
+    """
+    # Translate the filter word into a catalog filter; ``installed`` is applied afterwards.
     filters = ListFilter(
         statuses=frozenset({chosen}) if chosen in ("outdated", "broken", "local", "available") else None,
         include_available=chosen == "available",
@@ -117,13 +166,44 @@ def list_views(catalog: Catalog, chosen: str | None = None) -> tuple[list[Packag
 
 
 def list_document(catalog: Catalog, scope: Scope, chosen: str | None = None) -> ListDocument:
-    """Return the typed ``list`` document of the run's scope for the filter word *chosen* (the document ``gupkg list --json`` writes)."""
+    """Return the typed ``list`` document of the run's scope, as ``gupkg list --json`` writes it.
+
+    Parameters
+    ----------
+    catalog : Catalog
+        The catalog of the run's scope.
+    scope : Scope
+        The scope of the run.
+    chosen : str, optional
+        The filter word (see ``list_views``).
+
+    Returns
+    -------
+    ListDocument
+        The mode, root, rows and warnings of the listing.
+    """
     views, warnings = list_views(catalog, chosen)
     return ListDocument(str(scope.mode), str(scope.root), tuple(list_row(view) for view in views), warnings)
 
 
 def info_document(catalog: Catalog, scope: Scope, targets: Sequence[str]) -> InfoDocument:
-    """Return the typed ``info`` document for *targets*: the packages found and one error entry per target that could not be described."""
+    """Return the typed ``info`` document for *targets*, as ``gupkg info --json`` writes it.
+
+    Parameters
+    ----------
+    catalog : Catalog
+        The catalog of the run's scope.
+    scope : Scope
+        The scope of the run.
+    targets : Sequence[str]
+        Package selectors to describe.
+
+    Returns
+    -------
+    InfoDocument
+        The packages found and one error entry per target that could not be described, with the worst exit code.
+    """
+    # Describe each target independently so that one unknown target does not hide the others.
     rows: list[InfoRow] = []
     errors: list[dict[str, Any]] = []
     code = EXIT_OK
@@ -138,7 +218,19 @@ def info_document(catalog: Catalog, scope: Scope, targets: Sequence[str]) -> Inf
 
 
 def registry_status(scope: Scope) -> RegistryStatusDocument:
-    """Return the typed state of every registry configured for the run's scope (the document ``gupkg registry status --json`` writes)."""
+    """Return the typed state of every registry configured for the run's scope, as ``gupkg registry status --json`` writes it.
+
+    Parameters
+    ----------
+    scope : Scope
+        The scope of the run.
+
+    Returns
+    -------
+    RegistryStatusDocument
+        One row per configured registry: its cache state, revision and problems.
+    """
+    # Read each registry's cache state and loaded snapshot.
     rows = []
     for registry in scope.settings.registries:
         cache = registry_cache_dir(scope.root, registry.name)

@@ -21,8 +21,8 @@ The active reporter lives in a ``contextvars.ContextVar``. With no reporter
 installed ``emit`` does nothing, so library code never prints. A thread
 started with ``threading.Thread`` does not inherit the variable (only
 ``asyncio.to_thread`` and other copied-context paths do): code that emits
-from such a thread must capture the reporter first, as ``subprocess_lines``
-does for the threads that read a child's pipes. Warnings and
+from such threads must capture the reporter first, as ``subprocess_lines``
+does for the threads that consume a child's pipes. Warnings and
 errors are de-duplicated per package, so a problem that is reported live and
 again in a result is delivered once. Child-process lines are produced on
 reader threads that do not inherit the context variable, so
@@ -59,6 +59,21 @@ class RunStart:
     ``stop_file`` is the path of the stop marker of this run (decision D37): a caller that wants the run to stop after
     the package that is running creates a file there. It is unique to the run and ``None`` when the run cannot be
     stopped that way.
+
+    Attributes
+    ----------
+    command, mode, version : str
+        The command name, the install mode or scope, and the gupkg version.
+    argv : tuple of str
+        The command-line arguments.
+    elevated : bool
+        Whether the run is elevated.
+    settings_layers : tuple of str
+        Names of the settings layers in effect.
+    api : int
+        Version of the event contract.
+    stop_file : str, optional
+        Path of the stop marker.
     """
 
     command: str
@@ -77,6 +92,11 @@ class PackageStart:
 
     ``view`` is a plain description of the package; it holds at least ``name``
     and ``path`` (the package folder, which owns the package's logs).
+
+    Attributes
+    ----------
+    view : dict
+        The package description.
     """
 
     view: dict[str, Any]
@@ -84,14 +104,42 @@ class PackageStart:
 
 @dataclass(frozen=True)
 class PhaseStart:
-    """Begin a named phase of the current package's work."""
+    """Begin a named phase of the current package's work.
+
+    Attributes
+    ----------
+    phase : str
+        The phase name.
+    """
 
     phase: str
 
 
 @dataclass(frozen=True)
 class Step:
-    """Report one detail line; ``kind`` is ``info``, ``ok``, ``add`` or ``remove``."""
+    """Report one detail line; ``kind`` is ``info``, ``ok``, ``add`` or ``remove``.
+
+    Attributes
+    ----------
+    text : str
+        The line.
+    kind : str
+        How the line is marked and styled.
+
+    Examples
+    --------
+    Basic usage:
+
+    >>> Step('copied 3 files', 'ok')
+    Step(text='copied 3 files', kind='ok')
+    >>> Step('note')
+    Step(text='note', kind='info')
+
+    Edge cases:
+
+    >>> Step('x') == Step('x', 'info')
+    True
+    """
 
     text: str
     kind: str = "info"
@@ -102,6 +150,29 @@ class Progress:
     """Report transfer progress; ``total`` is ``None`` while the size is unknown.
 
     A producer sends a last event with ``done == total`` when the transfer ends.
+
+    Attributes
+    ----------
+    task : str
+        Name of the transfer.
+    done, total : int, optional
+        Amount transferred and expected; ``total`` is ``None`` when unknown.
+    unit : str
+        ``B`` for bytes, otherwise the name of the counted unit.
+
+    Examples
+    --------
+    Basic usage:
+
+    >>> Progress('download', 512, 2048)
+    Progress(task='download', done=512, total=2048, unit='B')
+    >>> print(Progress('download', 512, None).total)
+    None
+
+    Variations:
+
+    >>> Progress('files', 2, 9, unit='files').unit
+    'files'
     """
 
     task: str
@@ -117,6 +188,11 @@ class SubprocessLine:
     ``stream`` is always ``"output"`` in this release: ``System.run`` reports
     lines of both pipes through one callback that does not say which pipe a
     line came from.
+
+    Attributes
+    ----------
+    cmd, line, stream : str
+        The program name, the output line and the stream label.
     """
 
     cmd: str
@@ -126,7 +202,15 @@ class SubprocessLine:
 
 @dataclass(frozen=True)
 class Prompt:
-    """Report a question the run is about to ask, with its default answer if any."""
+    """Report a question the run is about to ask, with its default answer if any.
+
+    Attributes
+    ----------
+    text : str
+        The question.
+    default : str, optional
+        The default answer.
+    """
 
     text: str
     default: str | None = None
@@ -134,14 +218,35 @@ class Prompt:
 
 @dataclass(frozen=True)
 class Warning:  # noqa: A001 - the name is part of the documented event list
-    """Report a problem that did not stop the work."""
+    """Report a problem that did not stop the work.
+
+    Attributes
+    ----------
+    text : str
+        The warning text.
+
+    Examples
+    --------
+    Basic usage:
+
+    >>> Warning('the cache was rebuilt')
+    Warning(text='the cache was rebuilt')
+    """
 
     text: str
 
 
 @dataclass(frozen=True)
 class Error:
-    """Report a failure, with an optional hint on how to fix it."""
+    """Report a failure, with an optional hint on how to fix it.
+
+    Attributes
+    ----------
+    text : str
+        The error text.
+    hint : str, optional
+        How to fix it.
+    """
 
     text: str
     hint: str | None = None
@@ -153,6 +258,11 @@ class Diagnostic:
 
     The console renderer never shows it, so a person sees the structured error and reads the log for the cause. It is part of the
     event stream (the ``diagnostic`` record of the events file) and may be ignored by any reporter.
+
+    Attributes
+    ----------
+    text : str
+        The detail text.
     """
 
     text: str
@@ -160,7 +270,15 @@ class Diagnostic:
 
 @dataclass(frozen=True)
 class PhaseEnd:
-    """End a phase: ``status`` is ``ok``, ``failed`` or ``skipped``; ``elapsed`` is in seconds."""
+    """End a phase: ``status`` is ``ok``, ``failed`` or ``skipped``; ``elapsed`` is in seconds.
+
+    Attributes
+    ----------
+    phase, status : str
+        The phase name and how it ended.
+    elapsed : float
+        Duration in seconds.
+    """
 
     phase: str
     status: str
@@ -169,17 +287,32 @@ class PhaseEnd:
 
 @dataclass(frozen=True)
 class PackageEnd:
-    """End the part of a run that concerned one package, with its result record."""
+    """End the part of a run that concerned one package, with its result record.
+
+    Attributes
+    ----------
+    result : dict
+        The package's result record (at least ``name``).
+    """
 
     result: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
 class RunEnd:
-    """Close the run with the summary text people read last, the exit code and the result document.
+    """Close the run with the summary text people see last, the exit code and the result document.
 
     ``result`` is the document that ``--json`` prints (``"api": 2``): an events file therefore ends with the same result
     a caller reads from standard output, so a caller can follow a run without reading its pipes.
+
+    Attributes
+    ----------
+    summary : str
+        The closing text.
+    exit_code : int
+        The process exit code.
+    result : dict, optional
+        The result document of the run.
     """
 
     summary: str
@@ -199,6 +332,26 @@ def event_to_dict(event: Any) -> dict[str, Any]:
 
     Tuples become lists. The record is the public machine contract, so field
     names and the event names never change within one ``API_VERSION``.
+
+    Parameters
+    ----------
+    event : object
+        Any event dataclass of this module.
+
+    Returns
+    -------
+    dict
+        The ``event`` name followed by the event's fields.
+
+    Examples
+    --------
+    Basic usage:
+
+    >>> from gupkg.report.events import Step, Progress
+    >>> event_to_dict(Step('copied files', 'ok'))
+    {'event': 'step', 'text': 'copied files', 'kind': 'ok'}
+    >>> event_to_dict(Progress('download', 10, None))
+    {'event': 'progress', 'task': 'download', 'done': 10, 'total': None, 'unit': 'B'}
     """
     # Convert the class name to its stable snake_case wire name.
     name = type(event).__name__
@@ -216,10 +369,22 @@ def event_to_dict(event: Any) -> dict[str, Any]:
 
 
 class Reporter(Protocol):
-    """Receive every event of a run; implementations must be safe to call from several threads."""
+    """Receive every event of a run; implementations must be safe to call from several threads.
+
+    Methods
+    -------
+    handle
+        Process one event; an exception stops that reporter for the rest of the run.
+    """
 
     def handle(self, event: Any) -> None:
-        """Process one event; an exception stops that reporter for the rest of the run."""
+        """Process one event; an exception stops that reporter for the rest of the run.
+
+        Parameters
+        ----------
+        event : object
+            Any event dataclass of this module.
+        """
 
 
 class MultiReporter:
@@ -228,6 +393,18 @@ class MultiReporter:
     A reporter that raises is dropped and the others receive one ``Warning``
     naming it, so a broken log file or a closed terminal never fails the
     operation (and the failure is reported once).
+
+    Parameters
+    ----------
+    reporters : sequence of Reporter
+        The reporters that receive every event.
+
+    Methods
+    -------
+    handle
+        Deliver an event to every live reporter.
+    release_package
+        Ask reporters to close log files inside a package folder.
     """
 
     def __init__(self, reporters: Sequence[Reporter]) -> None:
@@ -235,7 +412,14 @@ class MultiReporter:
         self._lock = threading.RLock()
 
     def handle(self, event: Any) -> None:
-        """Pass *event* to every live reporter, dropping any that fail."""
+        """Pass *event* to every live reporter, dropping any that fail.
+
+        Parameters
+        ----------
+        event : object
+            Any event dataclass of this module.
+        """
+        # Deliver to each reporter, collecting those that raise.
         with self._lock:
             failed: list[tuple[Reporter, Exception]] = []
             for reporter in list(self._reporters):
@@ -243,6 +427,7 @@ class MultiReporter:
                     reporter.handle(event)
                 except Exception as exc:  # noqa: BLE001 - a reporter must never fail the run
                     failed.append((reporter, exc))
+            # Drop each failed reporter and tell the others once.
             for reporter, exc in failed:
                 self._reporters.remove(reporter)
                 notice = Warning(f"{type(reporter).__name__} stopped reporting: {exc}")
@@ -252,7 +437,13 @@ class MultiReporter:
 
 
     def release_package(self, path: str) -> None:
-        """Tell every reporter that keeps files inside the package folder *path* to close them."""
+        """Tell every reporter that keeps files inside the package folder *path* to close them.
+
+        Parameters
+        ----------
+        path : str
+            The package folder.
+        """
         with self._lock:
             for reporter in list(self._reporters):
                 release = getattr(reporter, "release_package", None)
@@ -271,13 +462,31 @@ _PACKAGE: contextvars.ContextVar[str | None] = contextvars.ContextVar("gupkg_pac
 
 
 def current_reporter() -> Reporter | None:
-    """Return the reporter installed for this context, or ``None``."""
+    """Return the reporter installed for this context, or ``None``.
+
+    Returns
+    -------
+    Reporter or None
+        The active reporter.
+    """
     return _ACTIVE.get()
 
 
 @contextlib.contextmanager
 def use_reporter(reporter: Reporter | None) -> Iterator[None]:
-    """Install *reporter* for the duration of the block, with fresh de-duplication state."""
+    """Install *reporter* for the duration of the block, with fresh de-duplication state.
+
+    Parameters
+    ----------
+    reporter : Reporter or None
+        The reporter that receives events emitted inside the block; ``None`` silences them.
+
+    Yields
+    ------
+    None
+        Control for the duration of the block.
+    """
+    # Set all three context variables, and restore them when the block ends.
     token = _ACTIVE.set(reporter)
     seen_token = _SEEN.set(set())
     package_token = _PACKAGE.set(None)
@@ -296,6 +505,11 @@ def emit(event: Any) -> None:
     dropped, so each problem is reported once: inside a package scope, a repeat
     within that package; outside any package scope (a run-level summary of
     results), a repeat of anything delivered anywhere in the run.
+
+    Parameters
+    ----------
+    event : object
+        Any event dataclass of this module.
     """
     reporter = _ACTIVE.get()
     if reporter is None:
@@ -317,8 +531,184 @@ def emit(event: Any) -> None:
     reporter.handle(event)
 
 
+def release_package_log(path: Any) -> None:
+    """Ask the active reporters to close the log files they hold open inside the package folder *path*.
+
+    A purge deletes the package folder, which holds this run's own package log; Windows cannot delete a file that is open, so
+    the producer calls this first. The rest of the package's events then go to the run log.
+
+    Parameters
+    ----------
+    path : str or Path
+        The package folder about to be deleted.
+    """
+    release = getattr(_ACTIVE.get(), "release_package", None)
+    if release is not None:
+        release(str(path))
+
+
+def emit_problems(warnings: Sequence[str], errors: Sequence[str], hint: str | None = None) -> None:
+    """Emit a ``Warning`` per warning and an ``Error`` per error, skipping any already reported.
+
+    Parameters
+    ----------
+    warnings, errors : sequence of str
+        Problem texts to report.
+    hint : str, optional
+        Hint attached to every error.
+    """
+    for text in warnings:
+        emit(Warning(text))
+    for text in errors:
+        emit(Error(text, hint))
+
+
+@contextlib.contextmanager
+def phase(name: str) -> Iterator[PhaseHandle]:
+    """Report a phase: ``PhaseStart``, then ``PhaseEnd`` with the elapsed time.
+
+    The phase ends ``failed`` when the block raises (the exception continues),
+    otherwise with the status the block set, ``ok`` by default.
+
+    Parameters
+    ----------
+    name : str
+        The phase name.
+
+    Yields
+    ------
+    PhaseHandle
+        Handle through which the block sets the ending status.
+
+    Raises
+    ------
+    BaseException
+        Whatever the block raises, after the phase is reported failed.
+    """
+    handle = PhaseHandle()
+    started = time.monotonic()
+    emit(PhaseStart(name))
+    try:
+        yield handle
+    except BaseException:
+        emit(PhaseEnd(name, "failed", time.monotonic() - started))
+        raise
+    emit(PhaseEnd(name, handle.status, time.monotonic() - started))
+
+
+@contextlib.contextmanager
+def package_scope(name: str, path: Any, **extra: Any) -> Iterator[PackageHandle]:
+    """Report the part of a run that concerns one package.
+
+    ``path`` is the package folder (it owns the package's log directory).
+    ``root`` (extra) is the root that holds the package, whose ``.gupkg\\logs``
+    receives the run log, and ``sole=True`` says the run acts on this one
+    package only. The handle's ``result`` goes into ``PackageEnd``; a block
+    that raises ends the package with ``ok = False``.
+
+    Parameters
+    ----------
+    name : str
+        The package name.
+    path : str or Path
+        The package folder.
+    **extra
+        Further facts for the ``PackageStart`` view, such as ``root`` and ``sole``.
+
+    Yields
+    ------
+    PackageHandle
+        Handle whose ``result`` is reported when the package ends.
+
+    Raises
+    ------
+    BaseException
+        Whatever the block raises, after the package is reported failed.
+    """
+    # Scope de-duplication to this package, and always report its end.
+    handle = PackageHandle()
+    package_token = _PACKAGE.set(str(path))
+    try:
+        # A block that raises still ends the package, marked as not ok.
+        emit(PackageStart({"name": name, "path": str(path), **extra}))
+        try:
+            yield handle
+        except BaseException:
+            handle.result.setdefault("ok", False)
+            raise
+        finally:
+            emit(PackageEnd({"name": name, **handle.result}))
+    finally:
+        _PACKAGE.reset(package_token)
+
+
+def clean_line(text: str) -> str:
+    """Return *text* without escape sequences, carriage returns, control characters or bidirectional overrides.
+
+    Parameters
+    ----------
+    text : str
+        Text that may come from a child process.
+
+    Returns
+    -------
+    str
+        The text that is safe to show on a terminal or write to a log.
+
+    Examples
+    --------
+    Basic usage:
+
+    >>> clean_line('\\x1b[31mred\\x1b[0m text')
+    'red text'
+    >>> clean_line('50%\\rdone')
+    '50%done'
+    """
+    return _CONTROL.sub("", _ANSI.sub("", text.replace("\r", "")))
+
+
+def subprocess_lines(argv: Sequence[Any]) -> Callable[[str], None]:
+    """Return an ``on_line`` callback that reports a child process's output as events.
+
+    The reporter is captured now, on the calling thread, because the threads
+    that drain the child's pipes do not inherit the context. Carriage returns
+    and control characters are removed from each line.
+
+    Parameters
+    ----------
+    argv : sequence
+        The child's command line; the program name is taken from its first item.
+
+    Returns
+    -------
+    callable
+        Function that takes one output line and reports it.
+    """
+    # Capture the reporter now; reader threads cannot see the context variable.
+    reporter = _ACTIVE.get()
+    program = os.path.splitext(os.path.basename(str(argv[0])))[0] if argv else "process"
+
+    # The callback the caller hands to the process runner.
+    def on_line(line: str) -> None:
+        """Report one output line.
+
+        Parameters
+        ----------
+        line : str
+            One line of the child's output.
+        """
+        if reporter is not None:
+            reporter.handle(SubprocessLine(program, clean_line(line)))
+
+    return on_line
+
+
+# --- supporting helpers ---
+
+
 def _redacted(event: Any) -> Any:
     """Return *event* with the credentials of any URL in its text removed (userinfo, ``token=`` and similar query values)."""
+    # Each event type redacts exactly its free-text fields, and is returned unchanged when nothing was removed.
     if isinstance(event, (Step, Warning, Prompt, Diagnostic)):
         text = redact_text(event.text)
         return event if text == event.text else dataclasses.replace(event, text=text)
@@ -331,32 +721,28 @@ def _redacted(event: Any) -> Any:
     return event
 
 
-def release_package_log(path: Any) -> None:
-    """Ask the active reporters to close the log files they hold open inside the package folder *path*.
-
-    A purge deletes the package folder, which holds this run's own package log; Windows cannot delete a file that is open, so
-    the producer calls this first. The rest of the package's events then go to the run log.
-    """
-    release = getattr(_ACTIVE.get(), "release_package", None)
-    if release is not None:
-        release(str(path))
-
-
-def emit_problems(warnings: Sequence[str], errors: Sequence[str], hint: str | None = None) -> None:
-    """Emit a ``Warning`` per warning and an ``Error`` per error, skipping any already reported."""
-    for text in warnings:
-        emit(Warning(text))
-    for text in errors:
-        emit(Error(text, hint))
-
-
 # ---------------------------------------------------------------------------
 # Producer helpers
 # ---------------------------------------------------------------------------
 
 
 class PhaseHandle:
-    """Let the body of a ``phase`` block set the status it ends with."""
+    """Let the body of a ``phase`` block set the status it ends with.
+
+    Attributes
+    ----------
+    status : str
+        The status the phase ends with; ``ok`` by default.
+
+    Methods
+    -------
+    fail
+        Mark the phase failed without raising.
+    skip
+        Mark the phase skipped.
+    settle
+        Mark the phase failed when a result failed.
+    """
 
     def __init__(self) -> None:
         self.status = "ok"
@@ -370,60 +756,34 @@ class PhaseHandle:
         self.status = "skipped"
 
     def settle(self, result: Any) -> Any:
-        """Mark the phase failed when *result* (an object with ``ok``) failed, and return it unchanged."""
+        """Mark the phase failed when *result* (an object with ``ok``) failed, and return it unchanged.
+
+        Parameters
+        ----------
+        result : object
+            Any object; one with a false ``ok`` attribute fails the phase.
+
+        Returns
+        -------
+        object
+            *result* itself.
+        """
         if not getattr(result, "ok", True):
             self.status = "failed"
         return result
 
 
-@contextlib.contextmanager
-def phase(name: str) -> Iterator[PhaseHandle]:
-    """Report a phase: ``PhaseStart``, then ``PhaseEnd`` with the elapsed time.
-
-    The phase ends ``failed`` when the block raises (the exception continues),
-    otherwise with the status the block set, ``ok`` by default.
-    """
-    handle = PhaseHandle()
-    started = time.monotonic()
-    emit(PhaseStart(name))
-    try:
-        yield handle
-    except BaseException:
-        emit(PhaseEnd(name, "failed", time.monotonic() - started))
-        raise
-    emit(PhaseEnd(name, handle.status, time.monotonic() - started))
-
-
 class PackageHandle:
-    """Let the body of a ``package_scope`` block record the package's result."""
+    """Let the body of a ``package_scope`` block record the package's result.
+
+    Attributes
+    ----------
+    result : dict
+        The record that goes into ``PackageEnd``.
+    """
 
     def __init__(self) -> None:
         self.result: dict[str, Any] = {}
-
-
-@contextlib.contextmanager
-def package_scope(name: str, path: Any, **extra: Any) -> Iterator[PackageHandle]:
-    """Report the part of a run that concerns one package.
-
-    ``path`` is the package folder (it owns the package's log directory).
-    ``root`` (extra) is the root that holds the package, whose ``.gupkg\\logs``
-    receives the run log, and ``sole=True`` says the run acts on this one
-    package only. The handle's ``result`` goes into ``PackageEnd``; a block
-    that raises ends the package with ``ok = False``.
-    """
-    handle = PackageHandle()
-    package_token = _PACKAGE.set(str(path))
-    try:
-        emit(PackageStart({"name": name, "path": str(path), **extra}))
-        try:
-            yield handle
-        except BaseException:
-            handle.result.setdefault("ok", False)
-            raise
-        finally:
-            emit(PackageEnd({"name": name, **handle.result}))
-    finally:
-        _PACKAGE.reset(package_token)
 
 
 # Escape sequences a child process may print: CSI (also the single-character
@@ -442,26 +802,3 @@ _ANSI = re.compile(
 # the bidirectional overrides and isolates that can make text read in another
 # order: they would let output steer a terminal or disguise a line.
 _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f‪-‮⁦-⁩]")
-
-
-def clean_line(text: str) -> str:
-    """Return *text* without escape sequences, carriage returns, control characters or bidirectional overrides."""
-    return _CONTROL.sub("", _ANSI.sub("", text.replace("\r", "")))
-
-
-def subprocess_lines(argv: Sequence[Any]) -> Callable[[str], None]:
-    """Return an ``on_line`` callback that reports a child process's output as events.
-
-    The reporter is captured now, on the calling thread, because the threads
-    that read the child's pipes do not inherit the context. Carriage returns
-    and control characters are removed from each line.
-    """
-    reporter = _ACTIVE.get()
-    program = os.path.splitext(os.path.basename(str(argv[0])))[0] if argv else "process"
-
-    def on_line(line: str) -> None:
-        """Report one output line."""
-        if reporter is not None:
-            reporter.handle(SubprocessLine(program, clean_line(line)))
-
-    return on_line

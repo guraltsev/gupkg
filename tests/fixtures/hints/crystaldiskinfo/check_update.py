@@ -24,12 +24,18 @@ import urllib.request
 from typing import Any
 
 
+# Version of the update-check module interface that this script implements.
 PKG_MODULE_API = 1
 
+# Address that publishes the current release information.
 _START_URL = "https://crystalmark.info/redirect.php?product=CrystalDiskInfo"
+# Pattern that extracts the version (and file address, where captured) from the response.
 _VERSION = re.compile(r"/files/(?P<version>\d+(?:\.\d+)+)/")
+# Request headers sent with each lookup.
 _HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) gupkg-update-check/1"}
+# Most redirects followed before the lookup gives up.
 _MAX_HOPS = 6
+# Tries per request before a server error is reported.
 _ATTEMPTS = 4
 
 
@@ -37,6 +43,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
     """Report redirects to the caller instead of following them."""
 
     def redirect_request(self, *args: Any, **kwargs: Any) -> None:
+        """Decline to follow the redirect so that the caller sees it."""
         return None
 
 
@@ -89,15 +96,18 @@ def check_update(context: dict[str, Any]) -> dict[str, str] | None:
         The download link cannot be resolved or its address carries no version.
     """
     url = _resolve(_START_URL)
+    # Take the version from the resolved file address.
     match = _VERSION.search(url)
     if match is None:
         raise RuntimeError(f"CrystalDiskInfo download address has no version: {url}")
     version = match.group("version")
 
+    # Report no candidate when this version is installed and healthy.
     current = context.get("current", {})
     if current.get("version") == version and current.get("appReady", True):
         return None
 
+    # Name the file after the last meaningful path segment of the address.
     file_name = urllib.parse.unquote(urllib.parse.urlparse(url).path.rsplit("/", 1)[-1])
     if file_name == "download":
         file_name = urllib.parse.unquote(urllib.parse.urlparse(url).path.rsplit("/", 2)[-2])

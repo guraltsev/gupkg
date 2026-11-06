@@ -48,6 +48,7 @@ from ..system.port import System, run_checked
 from .http import HttpClient
 from .safepath import UnsafePath, confine
 
+# The hook API version that a hook must declare and that ``HookContext.api`` reports.
 PKG_MODULE_API = 2
 
 
@@ -56,14 +57,36 @@ class HookError(RuntimeError):
 
 
 class HookReporter:
-    """Let a hook report what it does through the run's event stream."""
+    """Let a hook report what it does through the run's event stream.
+
+    Methods
+    -------
+    step
+        Report one detail line to the run's event stream.
+    warning
+        Report a problem that does not stop the work.
+    """
 
     def step(self, text: str, kind: str = "info") -> None:
-        """Report one detail line (*kind* is ``info``, ``ok``, ``add`` or ``remove``)."""
+        """Report one detail line to the run's event stream.
+
+        Parameters
+        ----------
+        text : str
+            The line to show.
+        kind : str, default="info"
+            One of ``info``, ``ok``, ``add`` or ``remove``.
+        """
         emit(Step(str(text), kind))
 
     def warning(self, text: str) -> None:
-        """Report a problem that does not stop the work."""
+        """Report a problem that does not stop the work.
+
+        Parameters
+        ----------
+        text : str
+            The warning to show.
+        """
         emit(Warning(str(text)))
 
 
@@ -99,6 +122,15 @@ class HookPaths:
 class HookContext:
     """Everything a hook entry point receives.
 
+    Methods
+    -------
+    run
+        Run a child process that must succeed and return its stripped standard output.
+    seven_zip
+        Return the bundled 7-Zip executable (or a system one when the bundle lacks it).
+    to_json
+        Return the context as the JSON document a non-Python populate script reads on standard input.
+
     Attributes
     ----------
     package : str
@@ -119,6 +151,8 @@ class HookContext:
         The named values found so far (the version and the provider captures).
     reporter : HookReporter
         Reports messages and warnings to the run's events.
+    api : int
+        Return the hook API version this context implements.
     """
 
     package: str
@@ -140,17 +174,51 @@ class HookContext:
             timeout: float | None = None) -> str:
         """Run a child process that must succeed and return its stripped standard output.
 
-        Its output lines are reported as events. Raises ``ProcessFailed`` on a non-zero status.
+        Its output lines are reported as events.
+
+        Parameters
+        ----------
+        argv : sequence
+            The program and its arguments; each part is converted with ``str``.
+        cwd : Path, optional
+            The working directory of the child process.
+        env : mapping, optional
+            The environment of the child process.
+        timeout : float, optional
+            Seconds after which the process is stopped.
+
+        Returns
+        -------
+        str
+            The stripped standard output.
+
+        Raises
+        ------
+        ProcessFailed
+            If the process exits with a non-zero status.
         """
         command = [str(part) for part in argv]
         return run_checked(self.system, command, cwd=cwd, env=env, on_line=subprocess_lines(command), timeout=timeout)
 
     def seven_zip(self) -> Path:
-        """Return the bundled 7-Zip executable (or a system one when the bundle lacks it)."""
+        """Return the bundled 7-Zip executable (or a system one when the bundle lacks it).
+
+        Returns
+        -------
+        Path
+            The path of ``7z.exe``.
+        """
         return find_7z()
 
     def to_json(self) -> str:
-        """Return the context as the JSON document a non-Python populate script reads on standard input."""
+        """Return the context as the JSON document a non-Python populate script reads on standard input.
+
+        Returns
+        -------
+        str
+            A JSON object with the API version, package, version, paths, options and captures.
+        """
+        # Render paths as text (or null) so the document is plain JSON.
         paths = {name: (str(value) if value is not None else None) for name, value in vars(self.paths).items()}
         return json.dumps(
             {"api": self.api, "package": self.package, "version": self.version, "paths": paths,
@@ -170,30 +238,32 @@ def require_trusted_code(scope: Scope, root: Path, script: Path | None = None) -
     restricted: the code is the user's own. Call it once with the version directory before any
     file is read, and again with *script* once its path is known.
 
+    Parameters
+    ----------
+    scope : Scope
+        The run's scope; it decides whether the check applies and judges each place.
+    root : Path
+        The version directory that owns ``pkg.local``.
+    script : Path, optional
+        The hook file, once known; it and every folder between it and *root* are judged too.
+
     Raises
     ------
     HookError
         In system mode, if any of those paths is not admin-only or cannot be judged.
     """
+    # Collect every place whose permissions decide whether the code can be trusted.
     places = [Path(root), Path(root) / LOCAL_DIR]
     if script is not None:
         script = Path(script)
         folders = [parent for parent in script.parents if _is_below(parent, Path(root))]
         places += [*reversed(folders), script]
+    # Judge each place; the scope itself ignores them in user mode.
     for place in places:
         try:
             scope.require_trusted(place, "package code")
         except UntrustedLocationError as error:
             raise HookError(f"Refusing to run code from {place} in an elevated run: {error}") from error
-
-
-def _is_below(path: Path, root: Path) -> bool:
-    """Return whether *path* is *root* or inside it (by name, no file system access)."""
-    try:
-        path.relative_to(root)
-    except ValueError:
-        return False
-    return True
 
 
 def load_hook(root: Path, reference: str, scope: Scope, *, forbid_track: bool = False) -> ModuleType:
@@ -224,6 +294,7 @@ def load_hook(root: Path, reference: str, scope: Scope, *, forbid_track: bool = 
         link, the file is missing, its top-level code raises anything, or it declares another API
         version.
     """
+    # Validate the reference and confine it to ``pkg.local`` after resolving links, before any import.
     require_trusted_code(scope, Path(root))
     normal = reference.replace("\\", "/")
     if not normal.startswith(f"{LOCAL_DIR}/") or not normal.lower().endswith(".py"):
@@ -232,6 +303,7 @@ def load_hook(root: Path, reference: str, scope: Scope, *, forbid_track: bool = 
         path = confine(Path(root), normal)
     except UnsafePath as error:
         raise HookError(f"{reference}: {error}") from error
+    # Compare real paths so a link cannot lead out of ``pkg.local``.
     local = Path(os.path.realpath(Path(root) / LOCAL_DIR))
     real = Path(os.path.realpath(path))
     try:
@@ -244,15 +316,19 @@ def load_hook(root: Path, reference: str, scope: Scope, *, forbid_track: bool = 
 
     # A unique name per file revision keeps unrelated hooks from sharing import state.
     name = "_gupkg_hook_" + hashlib.sha256(f"{real}{real.stat().st_mtime_ns}".encode()).hexdigest()[:16]
+    # Build the module spec so sibling modules in ``pkg.local`` are importable.
     spec = importlib.util.spec_from_file_location(name, real, submodule_search_locations=[str(local)])
     if spec is None or spec.loader is None:
         raise HookError(f"Cannot load {reference}")
+    # Execute the hook's top-level code without writing bytecode, turning any failure into a
+    # HookError, then drop everything it imported from ``sys.modules``.
     module = importlib.util.module_from_spec(spec)
     previous = sys.dont_write_bytecode
     sys.modules[name] = module
     try:
         sys.dont_write_bytecode = True
         spec.loader.exec_module(module)
+    # Report an unavailable import with the hook rules; let Ctrl+C through; wrap any other failure.
     except ImportError as error:
         raise HookError(
             f"{reference} cannot import {error.name or error!s}; hooks may import only the standard "
@@ -262,11 +338,13 @@ def load_hook(root: Path, reference: str, scope: Scope, *, forbid_track: bool = 
         raise
     except BaseException as error:  # noqa: BLE001 - a hook's import-time code may fail, or call sys.exit(), in any way
         raise HookError(f"{reference} failed while loading: {type(error).__name__}: {error}") from error
+    # Restore the bytecode setting and forget the hook's modules whatever happened.
     finally:
         sys.dont_write_bytecode = previous
         for imported in list(sys.modules):
             if imported == name or imported.startswith(name + "."):
                 sys.modules.pop(imported, None)
+    # Check the declared API version and, for a version directory, that no tracker entry point exists.
     if getattr(module, "PKG_MODULE_API", None) != PKG_MODULE_API:
         raise HookError(f"{reference} must declare PKG_MODULE_API = {PKG_MODULE_API}")
     if forbid_track and hasattr(module, "track"):
@@ -276,6 +354,18 @@ def load_hook(root: Path, reference: str, scope: Scope, *, forbid_track: bool = 
 
 def call_track(module: ModuleType, context: HookContext) -> TrackResult:
     """Run ``track(ctx)`` and return its ``TrackResult``.
+
+    Parameters
+    ----------
+    module : ModuleType
+        A module returned by ``load_hook``.
+    context : HookContext
+        The context passed to the entry point.
+
+    Returns
+    -------
+    TrackResult
+        What the hook returned.
 
     Raises
     ------
@@ -289,18 +379,69 @@ def call_track(module: ModuleType, context: HookContext) -> TrackResult:
 
 
 def call_unpack(module: ModuleType, context: HookContext) -> None:
-    """Run ``unpack(ctx)``, which fills ``ctx.paths.app`` from ``ctx.paths.artifact``."""
+    """Run ``unpack(ctx)``, which fills ``ctx.paths.app`` from ``ctx.paths.artifact``.
+
+    Parameters
+    ----------
+    module : ModuleType
+        A module returned by ``load_hook``.
+    context : HookContext
+        The context passed to the entry point.
+
+    Raises
+    ------
+    HookError
+        If the module has no ``unpack`` function, or it calls ``sys.exit``.
+    """
     _call(module, "unpack", context)
 
 
 def call_prepare(module: ModuleType, context: HookContext) -> None:
-    """Run ``prepare(ctx)``, which adjusts the staged ``ctx.paths.app``."""
+    """Run ``prepare(ctx)``, which adjusts the staged ``ctx.paths.app``.
+
+    Parameters
+    ----------
+    module : ModuleType
+        A module returned by ``load_hook``.
+    context : HookContext
+        The context passed to the entry point.
+
+    Raises
+    ------
+    HookError
+        If the module has no ``prepare`` function, or it calls ``sys.exit``.
+    """
     _call(module, "prepare", context)
 
 
 def call_populate(module: ModuleType, context: HookContext) -> None:
-    """Run ``populate(ctx)``, a custom populate script that fills ``ctx.paths.app`` by itself."""
+    """Run ``populate(ctx)``, a custom populate script that fills ``ctx.paths.app`` by itself.
+
+    Parameters
+    ----------
+    module : ModuleType
+        A module returned by ``load_hook``.
+    context : HookContext
+        The context passed to the entry point.
+
+    Raises
+    ------
+    HookError
+        If the module has no ``populate`` function, or it calls ``sys.exit``.
+    """
     _call(module, "populate", context)
+
+
+# --- supporting helpers ---
+
+
+def _is_below(path: Path, root: Path) -> bool:
+    """Return whether *path* is *root* or inside it (by name, no file system access)."""
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
 
 
 def _call(module: ModuleType, name: str, context: HookContext) -> Any:

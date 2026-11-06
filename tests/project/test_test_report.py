@@ -27,6 +27,7 @@ def _write(path: Path, text: str) -> None:
 @pytest.fixture
 def fake_repo(tmp_path: Path) -> Path:
     """A repository with one flat test file, one area file, a temporary folder, a baseline and a source tree."""
+    # Arrange: a flat test file with a plain test and a parametrised one.
     _write(tmp_path / "tests" / "test_flat.py", '''\
         """Flat module."""
 
@@ -41,6 +42,7 @@ def fake_repo(tmp_path: Path) -> Path:
         def test_two_cases(n):
             pass
         ''')
+    # Arrange: an area file with a test class.
     _write(tmp_path / "tests" / "engine" / "test_install.py", '''\
         """Install feature."""
 
@@ -51,6 +53,7 @@ def fake_repo(tmp_path: Path) -> Path:
             def test_a_method_counts(self):
                 """Method summary."""
         ''')
+    # Arrange: the helper, the temporary folders with and without an open reference, the baseline and the sources.
     _write(tmp_path / "tests" / "support" / "helpers.py", "def helper():\n    return 1\n")
     _write(tmp_path / "tests" / "_temp" / "job77" / "README.md", "ref: .agents/jobs/77-x-controller.md\nkind: guard\n")
     _write(tmp_path / "tests" / "_temp" / "issue5" / "README.md", "ref: _issues/issue5-gone.md\n")
@@ -99,12 +102,15 @@ def test_the_command_line_prints_text_and_json_without_changing_files(fake_repo:
 
 def test_the_time_report_lists_the_slowest_tests_and_the_share_of_the_slowest_200(tmp_path: Path) -> None:
     """From a JUnit file: total time, the 10 slowest tests in order, the share of the slowest 200, no tiers yet."""
+    # Arrange: 300 tests whose time equals their number.
     cases = "".join(f'<testcase classname="t.m" name="test_{i}" time="{i}"/>' for i in range(1, 301))
     junit = tmp_path / "junit.xml"
     junit.write_text(f'<testsuites><testsuite>{cases}</testsuite></testsuites>', encoding="utf-8")
 
+    # Act: build the time report.
     data = test_report.timings(junit)
 
+    # Assert: totals, the order of the slowest tests and the share of the slowest 200.
     assert data["tests"] == 300
     assert data["total_seconds"] == sum(range(1, 301))
     assert [s["test"] for s in data["slowest"]][:2] == ["t.m::test_300", "t.m::test_299"]

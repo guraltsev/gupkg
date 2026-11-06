@@ -47,10 +47,13 @@ def test_a_gupkg_run_creates_no_local_state_and_starts_no_pip(tmp_path: Path) ->
     world.publish("tool", "1.0.0")
     started: list[object] = []
 
+    # Any attempt to start a process is recorded and fails the test.
     def refuse(*args: object, **kwargs: object) -> None:
+        """Record the attempted process start and fail the test."""
         started.append(args[0] if args else kwargs)
         raise AssertionError("no process may be started")
 
+    # Run a command while starting processes is forbidden.
     with mock.patch("subprocess.run", side_effect=refuse), mock.patch("subprocess.Popen", side_effect=refuse):
         result = world.cli("install", "tool")
 

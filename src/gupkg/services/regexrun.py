@@ -44,11 +44,14 @@ from typing import Any
 from ..model.patterns import MAX_MATCHES, PatternError, prepare_text
 from ..system.port import System, WorkerDidNotStart
 
+# Default deadline for one worker call, in seconds.
 PER_CALL_SECONDS = 2.0
+# Default budget for the matching time of all calls of one runner, in seconds.
 TOTAL_SECONDS = 10.0
 # A separate cap on the wall-clock time of all calls of one runner, process starts included: a run over
 # many releases starts a worker per call, and this stops it with a clear error instead of running on.
 WALL_SECONDS = 120.0
+# Cap on the characters of matched text the worker may send back in one answer.
 MAX_ANSWER_CHARACTERS = 1_000_000
 _ANSWER_ALLOWANCE = 8_000_000  # the parent refuses an answer larger than this before parsing it
 
@@ -73,6 +76,21 @@ class RemoteMatch:
         that did not take part.
     names : mapping
         Group name to group number.
+
+    Methods
+    -------
+    group
+        Return one group's text (the whole match for no key), or a tuple for several keys.
+    groups
+        Return the text of every numbered group (not the whole match).
+    groupdict
+        Return the text of every named group by name.
+    start
+        Return where the whole match begins.
+    end
+        Return where the whole match ends.
+    span
+        Return where the whole match begins and ends.
     """
 
     __slots__ = ("_start", "_end", "_groups", "_names")
@@ -84,7 +102,23 @@ class RemoteMatch:
         self._names = dict(names)
 
     def group(self, *keys: int | str) -> Any:
-        """Return one group's text (the whole match for no key), or a tuple for several keys."""
+        """Return one group's text (the whole match for no key), or a tuple for several keys.
+
+        Parameters
+        ----------
+        *keys : int or str
+            Group numbers or names; none means the whole match.
+
+        Returns
+        -------
+        str, None or tuple
+            The text of one group, or a tuple of texts for several keys.
+
+        Raises
+        ------
+        IndexError
+            If a key names no group.
+        """
         if not keys:
             return self._groups[0]
         values = tuple(self._groups[self._index(key)] for key in keys)
@@ -95,23 +129,63 @@ class RemoteMatch:
         return self._groups[self._index(key)]
 
     def groups(self, default: str | None = None) -> tuple[str | None, ...]:
-        """Return the text of every numbered group (not the whole match)."""
+        """Return the text of every numbered group (not the whole match).
+
+        Parameters
+        ----------
+        default : str, optional
+            Used for a group that did not take part.
+
+        Returns
+        -------
+        tuple
+            The group texts in order.
+        """
         return tuple(default if value is None else value for value in self._groups[1:])
 
     def groupdict(self, default: str | None = None) -> dict[str, str | None]:
-        """Return the text of every named group by name."""
+        """Return the text of every named group by name.
+
+        Parameters
+        ----------
+        default : str, optional
+            Used for a group that did not take part.
+
+        Returns
+        -------
+        dict
+            Group name mapped to its text.
+        """
         return {name: default if self._groups[index] is None else self._groups[index] for name, index in self._names.items()}
 
     def start(self) -> int:
-        """Return where the whole match begins."""
+        """Return where the whole match begins.
+
+        Returns
+        -------
+        int
+            The offset of the first matched character.
+        """
         return self._start
 
     def end(self) -> int:
-        """Return where the whole match ends."""
+        """Return where the whole match ends.
+
+        Returns
+        -------
+        int
+            The offset after the last matched character.
+        """
         return self._end
 
     def span(self) -> tuple[int, int]:
-        """Return where the whole match begins and ends."""
+        """Return where the whole match begins and ends.
+
+        Returns
+        -------
+        tuple of int
+            The start and end offsets.
+        """
         return self._start, self._end
 
     def __bool__(self) -> bool:
@@ -145,6 +219,21 @@ class RegexRunner:
         Seconds of wall-clock time all calls may take together, process starts included (``WALL_SECONDS``).
     clock : callable
         Replaces ``time.monotonic`` in tests.
+
+    Methods
+    -------
+    finditer
+        Return up to *limit* matches of *compiled* in *text*.
+    finditer_many
+        Return, for every text, up to *limit* matches of *compiled*; one worker serves all the texts.
+    search
+        Return the first match of *compiled* anywhere in *text*, or ``None``.
+    fullmatch
+        Return the match of *compiled* against the whole of *text*, or ``None``.
+    fullmatch_many
+        Return, for every text, the match of *compiled* against the whole of it, or ``None``; one worker serves all.
+    fullmatches
+        Return, for every text, whether *compiled* matches the whole of it (the matcher ``jsonpath`` takes).
     """
 
     def __init__(
@@ -168,6 +257,22 @@ class RegexRunner:
     def finditer(self, compiled: re.Pattern[str], text: str, *, limit: int = MAX_MATCHES, what: str = "") -> list[RemoteMatch]:
         """Return up to *limit* matches of *compiled* in *text*.
 
+        Parameters
+        ----------
+        compiled : re.Pattern
+            The pattern to apply.
+        text : str
+            The untrusted text.
+        limit : int
+            The most matches to return.
+        what : str
+            Names the field or URL in error messages.
+
+        Returns
+        -------
+        list of RemoteMatch
+            The matches in order.
+
         Raises
         ------
         RegexTimeout
@@ -180,35 +285,111 @@ class RegexRunner:
     def finditer_many(
         self, compiled: re.Pattern[str], texts: Sequence[str], *, limit: int = MAX_MATCHES, what: str = ""
     ) -> list[list[RemoteMatch]]:
-        """Return, for every text, up to *limit* matches of *compiled*; one worker serves all the texts."""
+        """Return, for every text, up to *limit* matches of *compiled*; one worker serves all the texts.
+
+        Parameters
+        ----------
+        compiled : re.Pattern
+            The pattern to apply.
+        texts : sequence of str
+            The untrusted texts.
+        limit : int
+            The most matches to return per text.
+        what : str
+            Names the field or URL in error messages.
+
+        Returns
+        -------
+        list of list of RemoteMatch
+            One match list per text; empty when *texts* is empty.
+        """
         if not texts:
             return []
         return self._call("finditer", compiled, list(texts), limit, what)
 
     def search(self, compiled: re.Pattern[str], text: str, *, what: str = "") -> RemoteMatch | None:
-        """Return the first match of *compiled* anywhere in *text*, or ``None``."""
+        """Return the first match of *compiled* anywhere in *text*, or ``None``.
+
+        Parameters
+        ----------
+        compiled : re.Pattern
+            The pattern to apply.
+        text : str
+            The untrusted text.
+        what : str
+            Names the field or URL in error messages.
+
+        Returns
+        -------
+        RemoteMatch or None
+            The first match, if any.
+        """
         found = self._call("search", compiled, [text], 1, what)[0]
         return found[0] if found else None
 
     def fullmatch(self, compiled: re.Pattern[str], text: str, *, what: str = "") -> RemoteMatch | None:
-        """Return the match of *compiled* against the whole of *text*, or ``None``."""
+        """Return the match of *compiled* against the whole of *text*, or ``None``.
+
+        Parameters
+        ----------
+        compiled : re.Pattern
+            The pattern to apply.
+        text : str
+            The untrusted text.
+        what : str
+            Names the field or URL in error messages.
+
+        Returns
+        -------
+        RemoteMatch or None
+            The match covering all of *text*, if any.
+        """
         found = self._call("fullmatch", compiled, [text], 1, what)[0]
         return found[0] if found else None
 
     def fullmatch_many(self, compiled: re.Pattern[str], texts: Sequence[str], *, what: str = "") -> list[RemoteMatch | None]:
-        """Return, for every text, the match of *compiled* against the whole of it, or ``None``; one worker serves all."""
+        """Return, for every text, the match of *compiled* against the whole of it, or ``None``; one worker serves all.
+
+        Parameters
+        ----------
+        compiled : re.Pattern
+            The pattern to apply.
+        texts : sequence of str
+            The untrusted texts.
+        what : str
+            Names the field or URL in error messages.
+
+        Returns
+        -------
+        list of RemoteMatch or None
+            One result per text; empty when *texts* is empty.
+        """
         if not texts:
             return []
         return [found[0] if found else None for found in self._call("fullmatch", compiled, list(texts), 1, what)]
 
     def fullmatches(self, compiled: re.Pattern[str], texts: Sequence[str]) -> list[bool]:
-        """Return, for every text, whether *compiled* matches the whole of it (the matcher ``jsonpath`` takes)."""
+        """Return, for every text, whether *compiled* matches the whole of it (the matcher ``jsonpath`` takes).
+
+        Parameters
+        ----------
+        compiled : re.Pattern
+            The pattern to apply.
+        texts : sequence of str
+            The untrusted texts.
+
+        Returns
+        -------
+        list of bool
+            One flag per text.
+        """
         return [found is not None for found in self.fullmatch_many(compiled, texts, what="a JSON filter")]
 
     # -- the call --------------------------------------------------------------
 
     def _call(self, operation: str, compiled: re.Pattern[str], texts: list[str], limit: int, what: str) -> list[list[RemoteMatch]]:
         """Send one request to a worker and return its checked answer, or raise."""
+        # Refuse at once when the run's matching budget or wall-clock allowance is already spent.
         where = f" in {what}" if what else ""
         remaining = self.total - self.spent
         if remaining <= 0:
@@ -218,23 +399,28 @@ class RegexRunner:
                 f"regular expressions have taken {self.wall:g} seconds of wall-clock time for this run{where}, "
                 f"starting a worker for each call; the pattern {compiled.pattern!r} was not run"
             )
+        # Shrink the texts and encode the request as one ASCII JSON document for the worker.
         deadline = min(self.per_call, remaining)
         prepared = [prepare_text(text) for text in texts]
+        # The request carries the pattern source and flags, never a compiled object.
         request = json.dumps(
             {
                 "op": operation,
                 "pattern": compiled.pattern,
                 "flags": compiled.flags,
                 "texts": prepared,
+                # The worker stops collecting at the limit and truncates matched text to the cap.
                 "limit": limit,
                 "cap": MAX_ANSWER_CHARACTERS,
             },
             ensure_ascii=True,
             separators=(",", ":"),
         )
+        # Run the worker under its deadline, charging the time and mapping each failure to a RegexError.
         started = self._clock()
         try:
             result = self.system.regex_worker(request, deadline)
+        # A worker that never started, one that overran its deadline and an OS failure are all errors, never "no match".
         except WorkerDidNotStart as error:
             self.elapsed += self._clock() - started
             raise RegexError(f"the regular expression worker did not start{where}: {error}") from error
@@ -245,10 +431,12 @@ class RegexRunner:
                 f"the pattern {compiled.pattern!r} took longer than {deadline:g} seconds{where} and was stopped; "
                 "it is too slow on this text (a hostile page can do this to a pattern that is slow in the worst case)"
             ) from error
+        # Charge a failed start to the wall clock only; a timeout also uses up its whole deadline.
         except OSError as error:
             self.elapsed += self._clock() - started
             self.spent += self._clock() - started
             raise RegexError(f"could not run the regular expression worker{where}: {error}") from error
+        # Validate the answer and charge the budget with the matching time the worker reports.
         elapsed = self._clock() - started
         self.elapsed += elapsed
         converted, matching = self._checked(result.returncode, result.stdout, compiled, [len(text) for text in prepared], where)
@@ -262,6 +450,7 @@ class RegexRunner:
         returncode: int, stdout: str, compiled: re.Pattern[str], lengths: list[int], where: str
     ) -> tuple[list[list[RemoteMatch]], float | None]:
         """Parse and validate the worker's answer into matches and the matching time; anything unexpected is a ``RegexError``."""
+        # Reject oversized or unparseable output before trusting any field of it.
         pattern = compiled.pattern
         if len(stdout) > _ANSWER_ALLOWANCE:
             raise RegexError(f"the regular expression worker sent an oversized answer{where}")
@@ -271,17 +460,20 @@ class RegexRunner:
             raise RegexError(f"the regular expression worker for {pattern!r} gave an unreadable answer{where} (exit status {returncode})") from error
         if not isinstance(document, dict) or not isinstance(document.get("ok"), bool):
             raise RegexError(f"the regular expression worker for {pattern!r} gave an unexpected answer{where}")
+        # A worker that reported failure or exited non-zero is an error with its own reason.
         if not document["ok"] or returncode != 0:
             reason = document.get("error") if isinstance(document.get("error"), str) else f"exit status {returncode}"
             raise RegexError(f"the regular expression {pattern!r} could not be run{where}: {reason[:200]}")
+        # Check the shape of the group names and the per-text results.
         names, results = document.get("names"), document.get("results")
         if (
             not isinstance(names, dict)
             or not all(isinstance(name, str) and type(index) is int and 0 < index <= compiled.groups for name, index in names.items())
             or not isinstance(results, list)
             or len(results) != len(lengths)
-        ):
+        ):  # one result list per text sent
             raise RegexError(f"the regular expression worker for {pattern!r} gave a malformed answer{where}")
+        # Convert each reported match into a RemoteMatch after checking its offsets and group texts.
         converted: list[list[RemoteMatch]] = []
         for one_text, length in zip(results, lengths):
             if not isinstance(one_text, list):
@@ -292,18 +484,21 @@ class RegexRunner:
                     raise RegexError(f"the regular expression worker for {pattern!r} gave a malformed match{where}")
                 matches.append(RemoteMatch(item[0], item[1], item[2], names))
             converted.append(matches)
+        # The matching time is trusted only when it is a non-negative number.
         seconds = document.get("seconds")
         return converted, float(seconds) if isinstance(seconds, (int, float)) and not isinstance(seconds, bool) and seconds >= 0 else None
 
     @staticmethod
     def _well_formed(item: Any, groups: int, length: int) -> bool:
         """Return whether *item* is ``[start, end, [group texts]]`` inside a text of *length* characters, with one text per group and the whole match."""
+        # Every field is type-checked strictly: ``bool`` is not an offset, and offsets stay within the text.
         return (
             isinstance(item, list)
             and len(item) == 3
             and type(item[0]) is int
             and type(item[1]) is int
             and 0 <= item[0] <= item[1] <= length
+            # The group list holds the whole match plus one entry per numbered group.
             and isinstance(item[2], list)
             and len(item[2]) == groups + 1
             and item[2][0] is not None

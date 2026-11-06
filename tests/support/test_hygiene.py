@@ -32,9 +32,12 @@ from tests.support import hygiene
 
 pytestmark = pytest.mark.unit
 
+# Root of the real repository, used to run the checks against the product's own tree.
 REPOSITORY = Path(__file__).resolve().parents[2]
+# Minimal pytest configuration that registers the three tier marks in a fake repository.
 PYTEST_INI = "[pytest]\nmarkers =\n    unit: x\n    process: x\n    release: x\n"
 
+# A test module that follows every rule.
 CLEAN_MODULE = textwrap.dedent('''\
     """A feature as its user sees it."""
 
@@ -61,6 +64,7 @@ CLEAN_MODULE = textwrap.dedent('''\
         assert cli._asdict
 ''')
 
+# The clean module plus one change that breaks each rule.
 BROKEN_MODULES = {
     "H1": CLEAN_MODULE + "\nfrom tests.test_other import helper\n",
     "H2": CLEAN_MODULE + "\nfrom gupkg.engine import _hidden\n",
@@ -68,8 +72,11 @@ BROKEN_MODULES = {
     "H4": CLEAN_MODULE + '\n\n@pytest.mark.parametrize("n", [1, 2])\ndef test_a_case(n) -> None:\n    """A case."""\n',
     "H5": CLEAN_MODULE + "\n\ndef test_a_test_without_a_docstring() -> None:\n    pass\n",
 }
+# A self-contained module that breaks H3 and carries its own tier mark.
 SELF_CONTAINED = '"""A module."""\n\nimport pytest\n\npytestmark = pytest.mark.unit\n\n\ndef test_issue_99_fix() -> None:\n    """Fixes the old behaviour."""\n'
+# The same module without the violation.
 CLEAN_SELF_CONTAINED = '"""A module."""\n\nimport pytest\n\npytestmark = pytest.mark.unit\n\n\ndef test_it_works() -> None:\n    """It works."""\n'
+# The test each broken module is expected to be reported for ("" for a whole-module rule).
 BROKEN_NAMES = {
     "H1": "",
     "H2": "",
@@ -107,6 +114,7 @@ def _temp_folder(root: Path, name: str, readme: str | None, issue_file: str | No
 
 
 def _readme(ref: str, kind: str = "guard") -> str:
+    """Return the README text of a temporary folder that names *ref* and has the kind *kind*."""
     return f"ref: {ref}\nkind: {kind}\npurpose: Pin the behaviour during the work.\nfate: test_scaffold.py: undecided\n"
 
 
@@ -198,6 +206,7 @@ def _conditional_folder(root: Path, name: str, readme: str | None) -> None:
 
 
 def _conditional_readme(until: str = "No registry in the old layout is supported.", expires: str = "2027-04-30") -> str:
+    """Return the README text of a conditional folder with the given condition and expiry date."""
     return f"until: {until}\nexpires: {expires}\npurpose: Convert registries made in the old layout.\n"
 
 
@@ -276,6 +285,7 @@ def test_a_report_folder_runs_only_when_the_command_line_names_it(tmp_path: Path
     assert "test_scaffold" in named.stdout
 
 
+# Header of a unit-tier test module: a docstring and the module-level tier mark.
 UNIT_PREFIX = '"""A module."""\n\nimport pytest\n\npytestmark = pytest.mark.unit\n\n\n'
 
 
@@ -384,18 +394,22 @@ def test_a_baselined_unit_test_passes_until_it_stops_breaking_the_rule(tmp_path:
 @pytest.mark.process
 def test_every_test_needs_exactly_one_tier_and_the_nearest_mark_decides(tmp_path: Path) -> None:
     """A test without a tier, or with two, fails with rule H8; a mark on a test overrides its module's, and ``-m`` follows it."""
+    # Arrange a module whose only test has no tier mark, then one whose test has two.
     _tiered(tmp_path, "test_none", '"""A module."""\n\n\ndef test_a_test() -> None:\n    """Has no tier."""\n')
     none = _pytest(tmp_path, "--collect-only")
     _tiered(tmp_path, "test_none", '"""A module."""\n\nimport pytest\n\n\n@pytest.mark.unit\n@pytest.mark.process\ndef test_a_test() -> None:\n    """Has two tiers."""\n')
     two = _pytest(tmp_path, "--collect-only")
     (tmp_path / "tests" / "test_none.py").unlink()
+    # Arrange a unit module with one test that carries its own process mark.
     _tiered(tmp_path, "test_mixed", (
         UNIT_PREFIX + "def test_in_the_module_tier() -> None:\n    \"\"\"Is unit.\"\"\"\n\n\n"
         "@pytest.mark.process\ndef test_in_its_own_tier() -> None:\n    \"\"\"Is process.\"\"\"\n"
     ))
+    # Act: collect the tests of each tier.
     unit = _pytest(tmp_path, "--collect-only", "-m", "unit")
     process = _pytest(tmp_path, "--collect-only", "-m", "process")
 
+    # Assert: the missing and double tiers are named, and each mark selects its own test.
     assert none.returncode != 0 and "H8 tests/test_none.py::test_a_test" in none.stdout + none.stderr
     assert "no tier mark" in none.stdout + none.stderr
     assert two.returncode != 0 and "marked process and unit" in two.stdout + two.stderr

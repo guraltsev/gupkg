@@ -26,6 +26,7 @@ import release
 
 pytestmark = pytest.mark.release
 
+# Releases table template, filled in with a commit identifier.
 TABLE = "| Version | Commit | Date | SHA-256 | Notes |\n|---|---|---|---|---|\n| 0.0.9 | `{}` | 2026-01-01 | - | old |\n"
 
 
@@ -87,10 +88,12 @@ def test_publishing_pushes_the_tag_and_uploads_the_zip_before_recording_the_row(
         encoding="ascii",
     )
 
+    # Act: publish with a fake gh that logs its calls.
     status = release.main(["notes here", "--zip", str(archive), "--gh", str(gh)], root=repository)
 
     assert status == 0
     assert subprocess.run(["git", "--git-dir", str(remote), "rev-parse", "v0.1.0^{commit}"], capture_output=True, text=True).stdout.strip() == head
+    # Check the order of the calls and the sidecar digest.
     calls = log.read_text(encoding="utf-8").splitlines()
     sidecar = archive.with_name(archive.name + ".sha256")
     assert calls[0].startswith("release create v0.1.0 ") and str(archive) in calls[0] and str(sidecar) in calls[0]
@@ -111,6 +114,7 @@ def test_a_published_asset_that_differs_from_the_local_zip_stops_the_release(rep
     gh = tmp_path / "gh.cmd"
     gh.write_text(f'@echo off\nif "%2"=="download" copy /y "{other}" "%~7\\%~5" >nul\n', encoding="ascii")
 
+    # Act: publish, which must stop before the row is recorded.
     with pytest.raises(SystemExit, match="the row was not recorded"):
         release.main(["notes", "--zip", str(archive), "--gh", str(gh)], root=repository)
 
@@ -124,12 +128,14 @@ def test_a_published_asset_that_differs_from_the_local_zip_stops_the_release(rep
 def test_release_is_refused_before_anything_is_tagged_or_recorded(repository: Path, tmp_path: Path, problem: str) -> None:
     """Each refused situation leaves no tag, no new row and no extra commit."""
     head = _git(repository, "rev-parse", "HEAD")
+    # Create the problem that this case names.
     version, commit = "0.1.0", head
     if problem == "staged-change":
         (repository / "notes.txt").write_text("staged", encoding="utf-8")
         _git(repository, "add", "notes.txt")
     elif problem == "releases-edited":
         (repository / "RELEASES.md").write_text("edited\n", encoding="utf-8")
+    # A release already listed in the table.
     elif problem == "version-listed":
         (repository / "RELEASES.md").write_text(TABLE.format("0" * 40) + f"| 0.1.0 | `{'1' * 40}` | 2026-01-02 | {'a' * 64} | x |\n", encoding="utf-8")
         _git(repository, "commit", "-q", "-am", "list it")
@@ -138,9 +144,11 @@ def test_release_is_refused_before_anything_is_tagged_or_recorded(repository: Pa
         commit = "f" * 40
     else:
         version = "0.2.0"
+    # Build a ZIP for the chosen version and commit, and remember the table.
     archive = _release_zip(tmp_path / "release.zip", version=version, commit=commit)
     before = (repository / "RELEASES.md").read_text(encoding="utf-8")
 
+    # Act: the release is refused.
     with pytest.raises(SystemExit):
         release.main(["notes", "--zip", str(archive), "--no-publish"], root=repository)
 
@@ -153,6 +161,7 @@ def _fake_build(calls: list[dict[str, str]]):
     """A stand-in for ``build_standalone.main`` that writes the ZIP a real build of the given ``--source`` would."""
 
     def build(argv: list[str]) -> int:
+        """Record the build options and write the release ZIP that a real build would produce."""
         options = dict(zip(argv[::2], argv[1::2]))
         calls.append(options)
         source = Path(options["--source"])
@@ -173,8 +182,10 @@ def test_the_zip_is_built_from_a_worktree_of_head_not_from_the_working_tree(
     calls: list[dict[str, str]] = []
     monkeypatch.setattr(release.build_standalone, "main", _fake_build(calls))
 
+    # Act: release from HEAD without publishing.
     status = release.main(["from head", "--no-publish"], root=repository)
 
+    # Assert: the build ran in a separate worktree that is gone again, and the row is recorded.
     assert status == 0
     source = Path(calls[0]["--source"])
     assert repository not in source.parents
@@ -189,14 +200,18 @@ def test_the_worktree_is_removed_when_the_build_fails(repository: Path, monkeypa
     seen: list[Path] = []
 
     def failing(argv: list[str]) -> int:
+        """Record the source folder and fail the build."""
         seen.append(Path(argv[argv.index("--source") + 1]))
         raise SystemExit("build failed")
 
+    # Replace the build by one that fails.
     monkeypatch.setattr(release.build_standalone, "main", failing)
 
+    # Act: release; the failure propagates.
     with pytest.raises(SystemExit):
         release.main(["notes", "--no-publish"], root=repository)
 
+    # Assert: no worktree and no tag remain.
     assert not seen[0].exists()
     assert len(_git(repository, "worktree", "list").splitlines()) == 1
     assert _git(repository, "tag") == ""

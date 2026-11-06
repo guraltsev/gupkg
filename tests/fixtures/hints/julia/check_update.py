@@ -25,9 +25,12 @@ import urllib.request
 from typing import Any
 
 
+# Version of the update-check module interface that this script implements.
 PKG_MODULE_API = 1
 
+# Address that publishes the current release information.
 _INDEX_URL = "https://julialang-s3.julialang.org/bin/versions.json"
+# Pattern that extracts the version (and file address, where captured) from the response.
 _STABLE_VERSION = re.compile(r"\d+\.\d+\.\d+")
 
 
@@ -62,12 +65,14 @@ def check_update(context: dict[str, Any]) -> dict[str, str] | None:
         raise RuntimeError(f"Could not read the Julia version index: {exc}") from exc
 
     # Keep only stable releases that ship a 64-bit Windows ZIP archive.
+    # Keep, for each stable version, its Windows 64-bit ZIP archive entry.
     releases: dict[str, dict[str, Any]] = {}
     for version, entry in index.items():
         if not (isinstance(entry, dict) and entry.get("stable") is True):
             continue
         if not _STABLE_VERSION.fullmatch(version):
             continue
+        # Find the Windows 64-bit ZIP archive among the files of this version.
         for item in entry.get("files", []):
             if (
                 isinstance(item, dict)
@@ -78,16 +83,19 @@ def check_update(context: dict[str, Any]) -> dict[str, str] | None:
             ):
                 releases[version] = item
                 break
+    # Choose the highest version and build the candidate from its archive entry.
     if not releases:
         raise RuntimeError("Julia version index lists no stable win64 ZIP")
 
     version = max(releases, key=_version_key)
     item = releases[version]
 
+    # Report no candidate when this version is installed and healthy.
     current = context.get("current", {})
     if current.get("version") == version and current.get("appReady", True):
         return None
 
+    # Assemble the candidate, adding the digest when the index publishes a valid one.
     candidate = {
         "candidateId": f"julia:{version}",
         "version": version,

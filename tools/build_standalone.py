@@ -57,34 +57,35 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fetch_runtime  # noqa: E402  (a sibling script, not an installed package)
 
+# Repository root, anchor of the default source, manifest and output paths.
 ROOT = Path(__file__).resolve().parents[1]
-
-# Imported by the build probe when the bundle's dependencies are installed: the command line and every
-# module it reaches, so a module that needs something the bundle lacks fails the build. The UI programs
-# of issue 030 (``gupkg_ui``, ``gupkg_tui``, ``gupkg_manager``) are probed through their entry modules; any other
-# package directory named in ``OPTIONAL_PROBE_PACKAGES`` is probed as soon as it exists beside ``gupkg`` in the version directory.
-PROBE_MODULES = (
-    "gupkg.cli",
-    "gupkg.services.track", "gupkg.services.unpack", "gupkg.services.prepare", "gupkg.hooklib",
-    "gupkg.services.artifact", "gupkg.model.manager_policy", "gupkg.pinning",
-    "gupkg.engine.lifecycle", "gupkg.model.plan", "gupkg.engine.locks", "gupkg.engine.installer",
-    "gupkg.redact", "gupkg.authoring", "gupkg.settingsedit", "gupkg.viewdata", "gupkg.report.results",
-    "gupkg.selfmgmt.location", "gupkg.selfmgmt.status", "gupkg.services.registrysource", "gupkg.catalog.registry",
-    "gupkg_ui.client", "gupkg_ui.app", "gupkg_manager.cli", "gupkg_tui.cli",
-)
-OPTIONAL_PROBE_PACKAGES = ("gupkg_ui", "gupkg_tui", "gupkg_manager")
-# Modules of the base probe that need no third-party package (used by --skip-deps builds).
-# ``gupkg.cli`` is not among them any more: the CLI writes TOML with tomli_w (issue 023).
-BARE_PROBE_MODULES = ("gupkg.core", "gupkg.model.version", "gupkg.model.settings")
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Build the release ZIP from a checked-out source tree and report its digest."""
+    """Build the release ZIP from a checked-out source tree and report its digest.
+
+    Parameters
+    ----------
+    argv : list of str, optional
+        Command-line arguments; ``sys.argv[1:]`` when omitted.
+
+    Returns
+    -------
+    int
+        ``0`` once the ZIP and its ``.sha256`` file are written.
+
+    Raises
+    ------
+    SystemExit
+        If ``--version`` disagrees with the source's declared version.
+    """
+    # Describe the command line from the module summary.
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--runtime", type=Path, help="embeddable CPython ZIP (default: fetch the pinned one)")
     parser.add_argument("--runtime-sha256", default=fetch_runtime.PYTHON_SHA256, help="digest the runtime must have")
     parser.add_argument("--source", type=Path, default=ROOT / "src" / "gupkg")
     parser.add_argument("--manifest", type=Path, default=ROOT / "src" / "pkg.toml", help="the tracker pkg.toml of the gupkg package")
+    # Options that assert, record or redirect rather than select inputs.
     parser.add_argument("--version", help="assert the version declared in _version.py")
     parser.add_argument("--commit", help="commit recorded in RELEASE.txt (default: HEAD)")
     parser.add_argument("--output", type=Path, help="default: dist/gupkg-<version>-win-amd64.zip")
@@ -106,11 +107,13 @@ def main(argv: list[str] | None = None) -> int:
     commit = args.commit or subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, check=True
     ).stdout.strip()
+    # Assemble, probe and zip the bundle, then report where it went and its digest.
     digest = build_bundle(
         source=args.source,
         manifest=args.manifest,
         runtime_zip=runtime,
         runtime_sha256=args.runtime_sha256,
+        # Where the ZIP goes, what it records and how the dependencies are installed.
         output=output,
         commit=commit,
         deps_lock=args.deps_lock,
@@ -197,11 +200,13 @@ def build_bundle(
         # relative configurations as package-owned support files, one for each
         # command whose ``.cmd`` launcher is in the package (the UI programs of
         # issue 030 add theirs).
-        shim = source / "shim" / "shim-console.static.exe"  # static: no exe-shim-lib folder is needed beside it
+        # The shim is static, so no exe-shim-lib folder is needed beside it.
+        shim = source / "shim" / "shim-console.static.exe"
         commands = [name for name in ("gupkg", "gupkg-tui", "gupkg-manager") if (payload / f"{name}.cmd").is_file()]
         if shim.is_file():
             for command in commands:
                 shutil.copy2(shim, payload / f"{command}.exe")
+        # Each command's shim runs its ``.cmd`` launcher through ``%COMSPEC%``.
         for command in commands:
             (payload / f"{command}.config.toml").write_text(
                 'target = "%COMSPEC%"\nforward_arguments = true\nelevate = false\n\n'
@@ -232,14 +237,17 @@ def build_bundle(
         # The package files of gupkg's own package: the version is the tracker's pkg.toml without ``[track]`` (fully pinned,
         # no download_url), its populate script and the launchers; the tracker keeps its own hook and check-updates.cmd.
         tracker_text = manifest.read_text(encoding="utf-8")
+        # The version directory carries the pinned manifest; the tracker folder keeps the original.
         (root / "pkg.toml").write_text(version_manifest_text(tracker_text), encoding="utf-8", newline="\n")
         (top / "_check_updates").mkdir()
         (top / "_check_updates" / "pkg.toml").write_text(tracker_text, encoding="utf-8", newline="\n")
+        # The tracker gets every hook; the version directory gets all but the tracker's own ``track.py``.
         hooks = source.parent / "pkg.local"
         if hooks.is_dir():
             ignore_pycache = shutil.ignore_patterns("__pycache__", "*.pyc")
             shutil.copytree(hooks, top / "_check_updates" / "pkg.local", ignore=ignore_pycache)
             shutil.copytree(hooks, root / "pkg.local", ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "track.py"))
+        # Write the finished launchers beside the version and in the tracker folder.
         launchers = load_launchers(source)
         launchers.write_launchers(root)
         launchers.write_launchers(top / "_check_updates", (launchers.TRACKER_LAUNCHER,))
@@ -282,13 +290,26 @@ def build_bundle(
             for path in sorted(top.rglob("*")):
                 if path.is_file():
                     archive.write(path, path.relative_to(top.parent))
+    # Publish the digest next to the ZIP in ``sha256sum`` format.
     zip_digest = hashlib.sha256(output.read_bytes()).hexdigest()
     output.with_name(output.name + ".sha256").write_text(f"{zip_digest}  {output.name}\n", encoding="ascii")
     return zip_digest
 
 
 def import_names(site_packages: Path, lock: Path) -> list[str]:
-    """Return the top-level import names of every distribution in *lock*, read from its ``RECORD``.
+    """Return the top-level import names of every distribution in *lock*, taken from its ``RECORD``.
+
+    Parameters
+    ----------
+    site_packages : Path
+        ``Lib/site-packages`` folder that holds the installed distributions.
+    lock : Path
+        Lock file whose ``name==version`` lines name the distributions.
+
+    Returns
+    -------
+    list of str
+        Import names in lock order, sorted within each distribution.
 
     Raises
     ------
@@ -300,6 +321,7 @@ def import_names(site_packages: Path, lock: Path) -> list[str]:
         line = line.strip()
         if not line or line.startswith("#"):
             continue
+        # Find the ``.dist-info`` folder of this pin; names compare with ``-``, ``_`` and ``.`` equal.
         distribution = re.sub(r"[-_.]+", "_", line.split("==", 1)[0]).casefold()
         records = [
             folder / "RECORD"
@@ -308,6 +330,7 @@ def import_names(site_packages: Path, lock: Path) -> list[str]:
         ]
         if not records:
             raise SystemExit(f"Locked distribution {line.split('==', 1)[0]} is not installed in the bundle")
+        # Collect the importable top-level modules named by the RECORD.
         found = set()
         for entry in records[0].read_text(encoding="utf-8").splitlines():
             first = entry.replace("\\", "/").split(",", 1)[0].split("/", 1)[0]
@@ -322,12 +345,35 @@ def import_names(site_packages: Path, lock: Path) -> list[str]:
                 module = first.split(".", 1)[0]
             else:
                 continue
+            # Names that cannot be imported are ignored.
             if module.isidentifier():
                 found.add(module)
+        # A distribution that offers no module cannot be probed, which is a broken bundle.
         if not found:
             raise SystemExit(f"The RECORD of {line.split('==', 1)[0]} names no importable module")
         names.extend(sorted(found))
     return names
+
+
+# --- Build probe ---------------------------------------------------------------------------------
+
+# Imported by the build probe when the bundle's dependencies are installed: the command line and every
+# module it reaches, so a module that needs something the bundle lacks fails the build. The UI programs
+# of issue 030 (``gupkg_ui``, ``gupkg_tui``, ``gupkg_manager``) are probed through their entry modules.
+PROBE_MODULES = (
+    "gupkg.cli",
+    "gupkg.services.track", "gupkg.services.unpack", "gupkg.services.prepare", "gupkg.hooklib",
+    "gupkg.services.artifact", "gupkg.model.manager_policy", "gupkg.pinning",
+    "gupkg.engine.lifecycle", "gupkg.model.plan", "gupkg.engine.locks", "gupkg.engine.installer",
+    "gupkg.redact", "gupkg.authoring", "gupkg.settingsedit", "gupkg.viewdata", "gupkg.report.results",
+    "gupkg.selfmgmt.location", "gupkg.selfmgmt.status", "gupkg.services.registrysource", "gupkg.catalog.registry",
+    "gupkg_ui.client", "gupkg_ui.app", "gupkg_manager.cli", "gupkg_tui.cli",
+)
+# Package directories probed as soon as they exist beside ``gupkg`` in the version directory.
+OPTIONAL_PROBE_PACKAGES = ("gupkg_ui", "gupkg_tui", "gupkg_manager")
+# Modules of the base probe that need no third-party package (used by --skip-deps builds).
+# ``gupkg.cli`` is not among them any more: the CLI writes TOML with tomli_w (issue 023).
+BARE_PROBE_MODULES = ("gupkg.core", "gupkg.model.version", "gupkg.model.settings")
 
 
 def run_build_probe(
@@ -342,14 +388,27 @@ def run_build_probe(
     third-party package are imported. *modules* replaces the default gupkg module
     list. The probe must leave no bytecode behind.
 
+    Parameters
+    ----------
+    root : Path
+        Version directory that holds the bundled tree ``gupkg/``.
+    lock : Path
+        Dependency lock whose packages are imported.
+    skip_deps : bool, default=False
+        Import only the modules that need no third-party package.
+    modules : tuple of str, optional
+        Replacement for the default gupkg module list.
+
     Raises
     ------
     SystemExit
         If anything fails to import, pip or ensurepip is importable, or the probe
         wrote bytecode into the tree.
     """
+    # Choose what to import: the lock's packages plus the gupkg modules, or the bare set.
     payload = root / "gupkg"
     interpreter = payload / "python" / "python.exe"
+    # Without dependencies only the bare modules import; otherwise add the lock's packages and any UI program present.
     if skip_deps:
         names = list(BARE_PROBE_MODULES)
     else:
@@ -358,21 +417,25 @@ def run_build_probe(
             *(PROBE_MODULES if modules is None else modules),
         ]
         names += [name for name in OPTIONAL_PROBE_PACKAGES if (root / name).is_dir()]
+    # The probe program: import every name, then fail if pip or ensurepip is importable.
     code = (
         "import importlib, importlib.util, sys\n"
         "sys.path.insert(0, sys.argv[1])\n"
         "failed = []\n"
+        # Every import failure is collected, then reported at once with a non-zero exit.
         "for name in sys.argv[2:]:\n"
         "    try:\n"
         "        importlib.import_module(name)\n"
         "    except BaseException as exc:\n"
         "        failed.append(f'import {name}: {type(exc).__name__}: {exc}')\n"
+        # Finally, neither pip nor ensurepip may be importable from the bundle.
         "for banned in ('pip', 'ensurepip'):\n"
         "    if importlib.util.find_spec(banned) is not None:\n"
         "        failed.append(f'{banned} is importable')\n"
         "print('\\n'.join(failed))\n"
         "raise SystemExit(1 if failed else 0)\n"
     )
+    # Run the staged interpreter isolated from the build machine's Python and pip settings.
     environment = {key: value for key, value in os.environ.items() if not key.upper().startswith(("PYTHON", "PIP_"))}
     result = subprocess.run(
         [str(interpreter), "-I", "-s", "-B", "-c", code, str(root), *names],
@@ -381,6 +444,7 @@ def run_build_probe(
     if result.returncode != 0:
         detail = (result.stdout + result.stderr).strip() or f"exit status {result.returncode}"
         raise SystemExit(f"The build probe failed on the staged bundle:\n{detail}")
+    # The probe runs with ``-B`` and must leave no bytecode in the tree.
     stray = sorted(path.relative_to(root).as_posix() for path in root.rglob("*.pyc"))
     if stray:
         raise SystemExit(f"The build probe wrote bytecode into the bundle: {', '.join(stray[:5])}")
@@ -392,13 +456,20 @@ def write_manifest(root: Path) -> None:
     *root* is the version directory; the entries are relative to it (``gupkg/gupkg/cli.py``), so the manifest names only the
     tree. ``pkg.toml``, ``pkg.local`` and the launchers of the version directory are not listed: ``check-updates`` writes
     them itself and the registry fingerprint covers them.
+
+    Parameters
+    ----------
+    root : Path
+        Version directory that holds the bundled tree ``gupkg/``.
     """
+    # List every file of the tree except the manifest itself, with its digest.
     tree = root / "gupkg"
     manifest = tree / "MANIFEST.sha256"
     entries = []
     for path in tree.rglob("*"):
         if path.is_file() and path != manifest:
             entries.append((path.relative_to(root).as_posix(), hashlib.sha256(path.read_bytes()).hexdigest()))
+    # Sorted ``sha256sum`` lines, written last so it covers the finished tree.
     lines = [f"{digest}  {relative}" for relative, digest in sorted(entries)]
     manifest.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
 
@@ -408,7 +479,18 @@ def version_manifest_text(tracker_text: str) -> str:
 
     The tracker of gupkg's own package carries no template and no checksum, so dropping its ``[track]`` table (and the comment
     lines right above it) leaves the pinned version that ``check-updates`` would render.
+
+    Parameters
+    ----------
+    tracker_text : str
+        Text of the tracker's ``pkg.toml``.
+
+    Returns
+    -------
+    str
+        The same text without the ``[track]`` table, ending in one newline.
     """
+    # Drop the ``[track]`` table and the comments attached to it; keep every other line.
     kept: list[str] = []
     skipping = False
     for line in tracker_text.splitlines():
@@ -417,6 +499,7 @@ def version_manifest_text(tracker_text: str) -> str:
             while kept and kept[-1].startswith("#"):
                 kept.pop()
             continue
+        # The skipped table ends at the next table header.
         if skipping and re.match(r"\[", line):
             skipping = False
         if not skipping:
@@ -425,7 +508,19 @@ def version_manifest_text(tracker_text: str) -> str:
 
 
 def load_launchers(source: Path):
-    """Load ``gupkg/launchers`` of the source tree by path (it needs nothing but the standard library)."""
+    """Load ``gupkg/launchers`` of the source tree by path (it needs nothing but the standard library).
+
+    Parameters
+    ----------
+    source : Path
+        The ``gupkg`` package directory.
+
+    Returns
+    -------
+    module
+        The imported launchers module.
+    """
+    # Imported here because only the build needs it.
     import importlib.util
 
     spec = importlib.util.spec_from_file_location("gupkg_launchers_build", source / "launchers" / "__init__.py")
@@ -435,7 +530,24 @@ def load_launchers(source: Path):
 
 
 def source_version(source: Path) -> str:
-    """Read the release value from the runtime's single version module."""
+    """Read the release value from the runtime's single version module.
+
+    Parameters
+    ----------
+    source : Path
+        The ``gupkg`` package directory.
+
+    Returns
+    -------
+    str
+        The string assigned to ``__version__``.
+
+    Raises
+    ------
+    ValueError
+        If no string ``__version__`` assignment is found.
+    """
+    # Evaluate the literal without importing the module.
     version_source = source / "_version.py"
     tree = ast.parse(version_source.read_text(encoding="utf-8"))
     for node in tree.body:

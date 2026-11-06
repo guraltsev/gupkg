@@ -42,10 +42,14 @@ from .model.manifest import ManifestError, parse_manifest
 from .model.scope import ModeRefused, Scope, check_supported
 from .model.version import MANIFEST_NAME, is_version_name
 
+# Name of the alternate data stream Windows uses for the Mark of the Web.
 MARK_STREAM = "Zone.Identifier"
 
+# Values of ``CopyResult.status``: a new copy was moved into place.
 COPIED = "copied"
+# (continued) the destination already holds every file of the source.
 IDENTICAL = "identical"
+# (continued) the destination differs from the source and is left alone.
 DIVERGED = "diverged"
 
 # Windows device names are reserved with or without an extension; the superscript digits count too.
@@ -53,6 +57,7 @@ _DEVICE_NAMES = frozenset(
     {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"}
     | {f"{device}{digit}" for device in ("COM", "LPT") for digit in "123456789¹²³"}
 )
+# Characters (and control codes) that Windows forbids in a file name; ``:`` also marks stream syntax.
 _ILLEGAL_CHARACTERS = re.compile(r'[<>:"/\\|?*]|[\x00-\x1f]')
 
 
@@ -84,7 +89,19 @@ class CopyLimits:
 
 @dataclass(frozen=True)
 class CopyResult:
-    """The outcome of a copy: where it went, what happened to an existing copy, and whether the source was marked."""
+    """The outcome of a copy: where it went, what happened to an existing copy, and whether the source was marked.
+
+    Attributes
+    ----------
+    destination : Path
+        The folder the source was copied to.
+    status : str
+        What happened to an existing copy at the destination.
+    source_marked : bool
+        Whether the source folder was marked as distributed.
+    files : int
+        The number of files copied.
+    """
 
     destination: Path
     status: str
@@ -127,6 +144,7 @@ def copy_distribution(
     OSError
         If a file cannot be read or written.
     """
+    # Normalize the inputs and take the package identity from the source's folder names.
     source, root = Path(source), Path(root)
     name, version = source.parent.name, source.name
 
@@ -138,6 +156,7 @@ def copy_distribution(
                 f"{source} is not shaped <name>\\<version>: '{part}' is not a safe folder name"
                 + (f" ({problem})" if problem else "")
             )
+    # The source must be a real folder with a readable, reasonably small manifest.
     if is_reparse_point(source) or not source.is_dir() or not (source / MANIFEST_NAME).is_file():
         raise DistributionRefused(f"{source} must be a real folder with a {MANIFEST_NAME}")
     try:
@@ -154,9 +173,12 @@ def copy_distribution(
 
     # Remember what did not exist, so a refused or failed copy leaves the root as it was.
     created = [folder for folder in (root, root / DATA_DIR_NAME, root / DATA_DIR_NAME / "work") if not folder.exists()]
+
+    # Build the copy under a unique work folder so nothing half-written appears at the destination.
     work = root / DATA_DIR_NAME / "work" / f"copy-{uuid.uuid4().hex}"
     staged = work / version
     try:
+        # Copy the source tree into the staging folder, translating a mid-copy change into a refusal.
         staged.mkdir(parents=True)
         try:
             marked, count = _copy_tree(source, staged, limits)
@@ -177,6 +199,8 @@ def copy_distribution(
         if destination.exists():
             same = _contains(destination, staged)
             return CopyResult(destination, IDENTICAL if same else DIVERGED, marked, count)
+
+        # Move the finished copy into place in one step; remove a package folder this call created if that fails.
         parent_existed = destination.parent.exists()
         destination.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -187,6 +211,7 @@ def copy_distribution(
             raise
         return CopyResult(destination, COPIED, marked, count)
     finally:
+        # Always discard the staging folder, then undo whatever this call created.
         shutil.rmtree(work, ignore_errors=True)
 
         # Remove the folders this call created, innermost first, but only while they are empty.
@@ -213,6 +238,7 @@ def _copy_tree(source: Path, target: Path, limits: CopyLimits) -> tuple[bool, in
 
     The walk stops with ``DistributionRefused`` as soon as the entries, the bytes or the depth pass *limits*.
     """
+    # Running totals for the limits, and the work stack of folders still to copy.
     marked = False
     count = 0
     entries_seen = 0
@@ -233,6 +259,7 @@ def _copy_tree(source: Path, target: Path, limits: CopyLimits) -> tuple[bool, in
             raise DistributionRefused(f"{folder} changed while it was being read; refusing the copy")
         _require_plain(folder, source)
 
+        # Enforce the entry limit, then check and copy every entry of this folder.
         entries_seen += len(entries)
         if entries_seen > limits.entries:
             raise DistributionRefused(f"{source} holds more than {limits.entries} files and folders; refusing the copy")
@@ -245,6 +272,7 @@ def _copy_tree(source: Path, target: Path, limits: CopyLimits) -> tuple[bool, in
             # A link or junction in the source could point anywhere the copying account can read.
             if is_reparse_point(path):
                 raise DistributionRefused(f"{path} is a link or junction; a distribution folder must contain only real files")
+            # Folders are mirrored and queued; files are copied and counted.
             destination = mirror / entry.name
             _require_inside(mirror, target)
             if entry.is_dir(follow_symlinks=False):
@@ -263,6 +291,7 @@ def _copy_file(path: Path, destination: Path, source: Path, limits: CopyLimits, 
     swapped for a link after the check) and the path must still lead inside the source. The bytes copied are
     counted as they are read, so a file that grows while it is copied cannot pass the byte limit.
     """
+    # Read the Mark of the Web first, then open the file and verify the handle is the checked file.
     marked = _is_marked(path)
     descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0))
     try:
@@ -281,6 +310,7 @@ def _copy_file(path: Path, destination: Path, source: Path, limits: CopyLimits, 
                 writer.write(chunk)
     finally:
         os.close(descriptor)
+    # Keep the source's timestamps on the copy.
     os.utime(destination, ns=(named.st_atime_ns, named.st_mtime_ns))
     return marked
 

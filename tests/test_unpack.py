@@ -72,7 +72,7 @@ def test_a_7z_archive_is_unpacked(system: FakeSystem, tmp_path: Path, stage: Pat
     ],
 )
 def test_tarballs_are_decompressed_with_a_cap_then_unpacked_by_seven_zip(system: FakeSystem, tmp_path: Path, stage: Path, name: str, mode: str) -> None:
-    """`.tar.xz`, `.tar.gz` and the other tarballs are decompressed (capped, in process) and then unpacked by 7-Zip (D39)."""
+    """`.tar.xz`, `.tar.gz` and the other tarballs are decompressed (capped, in process) and then unpacked by 7-Zip."""
     archive = make_tar(tmp_path / name, [("msys64/usr/bin/bash.exe", b"bash", "file"), ("msys64/etc/profile", b"p", "file")], mode)
 
     report = unpack(system, archive, stage, UnpackPlan(strip=1))
@@ -153,6 +153,7 @@ def test_nsis_and_msi_run_the_bundled_seven_zip_and_never_the_installer(
     """
     calls: list[tuple[str, ...]] = []
 
+    # Scripted 7-Zip: it answers the listing query or unpacks two files.
     def seven_zip(call: ProcessCall) -> ProcessResult:
         """Answer a listing, or unpack two files into the requested folder."""
         calls.append(call.argv)
@@ -164,6 +165,7 @@ def test_nsis_and_msi_run_the_bundled_seven_zip_and_never_the_installer(
         (folder / "lib" / "a.dll").write_text("dl", encoding="utf-8")
         return ProcessResult(0)
 
+    # The installer is only ever opened by the bundled 7-Zip double, never run.
     system = FakeSystem(tmp_path / "machine", processes={"7z": seven_zip}, real_7zip=False)
     installer = tmp_path / "Setup.bin"
     installer.write_bytes(b"MZ" + b"\0" * 100)
@@ -177,6 +179,7 @@ def test_nsis_and_msi_run_the_bundled_seven_zip_and_never_the_installer(
 
 def test_an_nsis_installer_that_7zip_reads_as_something_else_is_refused(tmp_path: Path, stage: Path) -> None:
     """`kind = "nsis"` on a file that 7-Zip reads as a plain executable fails before anything is extracted."""
+    # Scripted 7-Zip double that stands in for the real tool.
     def seven_zip(call: ProcessCall) -> ProcessResult:
         """Say that the file is a plain PE."""
         return ProcessResult(0, "Path = x\nType = PE\n\n----------\nPath = .rsrc\nSize = 3\n")
@@ -195,6 +198,7 @@ def test_a_self_extractor_that_7zip_reads_as_an_executable_is_listed_again_as_a_
     """When 7-Zip says `PE` for a `sfx` file, the archive appended to the stub is read with `-t7z` (PortableGit), never by running the file."""
     calls: list[tuple[str, ...]] = []
 
+    # Scripted 7-Zip: it reports PE until the type is forced, then lists and unpacks one file.
     def seven_zip(call: ProcessCall) -> ProcessResult:
         """Say PE until the type is forced, then list one file; unpack it on request."""
         calls.append(call.argv)
@@ -206,6 +210,7 @@ def test_a_self_extractor_that_7zip_reads_as_an_executable_is_listed_again_as_a_
         (folder / "git.exe").write_text("exe", encoding="utf-8")
         return ProcessResult(0)
 
+    # The self-extractor is opened by the 7-Zip double, which first reads it as an executable.
     system = FakeSystem(tmp_path / "machine", processes={"7z": seven_zip}, real_7zip=False)
     installer = tmp_path / "PortableGit.7z.exe"
     installer.write_bytes(b"MZ" + b"\0" * 100)
@@ -235,7 +240,7 @@ def test_an_sfx_file_with_no_archive_in_it_is_still_refused(tmp_path: Path, stag
 
 
 def test_a_manifest_that_asks_for_an_inno_kind_fails_validation() -> None:
-    """There is no `inno` kind in 1.0 (decision D39): the manifest parser lists the kinds that exist."""
+    """There is no `inno` kind in 1.0: the manifest parser lists the kinds that exist."""
     with pytest.raises(ManifestError, match="kind.*must be one of zip, 7z, tar, sfx, nsis, msi, exe, file, git"):
         parse_manifest('format = 2\n[source]\ndownload_url = "https://example.org/gimp-setup.exe"\nkind = "inno"\n')
 
@@ -370,6 +375,7 @@ def test_a_nested_path_that_is_not_in_the_artifact_fails(system: FakeSystem, tmp
 # verify_manifest
 # ---------------------------------------------------------------------------
 
+# Archive members of a sample gupkg release.
 RELEASE = {"gupkg/gupkg.py": "code", "gupkg/core.py": "core", "pkg.toml": "format = 2"}
 
 

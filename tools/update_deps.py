@@ -49,8 +49,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fetch_runtime  # noqa: E402  (a sibling script, not an installed package)
 
+# Repository root, anchor of the default runtime location.
 ROOT = Path(__file__).resolve().parents[1]
+# The committed runtime whose ``Lib/site-packages`` is updated.
 DEFAULT_RUNTIME = ROOT / "src" / "gupkg" / "python"
+# The hash-pinned lock that this tool reads and rewrites.
 DEFAULT_LOCK = Path(__file__).resolve().parent / "gupkg-deps.lock"
 
 # Distributions whose closure the lock must contain: gupkg's text interface and the
@@ -61,13 +64,25 @@ LOCK_ROOTS = ("textual", "tomli_w")
 # (it becomes a namespace package), so these imports prove the install is usable.
 IMPORT_PROBES = {"textual": "textual.app"}
 
+# A distribution name that is safe to pass to pip and to print.
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+# A stable release version: plain dotted numbers, no pre-release or local part.
 _VERSION = re.compile(r"^[0-9]+(?:\.[0-9]+)*$")
 
 
 @dataclass(frozen=True)
 class LockedRequirement:
-    """Describe one pinned distribution and the hashes its wheel may have."""
+    """Describe one pinned distribution and the hashes its wheel may have.
+
+    Attributes
+    ----------
+    name : str
+        Distribution name as the index spells it.
+    version : str
+        Pinned stable version.
+    hashes : tuple of str
+        Allowed SHA-256 digests of the wheel, in hex.
+    """
 
     name: str
     version: str
@@ -76,7 +91,19 @@ class LockedRequirement:
 
 @dataclass(frozen=True)
 class PlanEntry:
-    """Describe how one distribution changes between two lock files."""
+    """Describe how one distribution changes between two lock files.
+
+    Attributes
+    ----------
+    name : str
+        Distribution name.
+    old : str or None
+        Version in the old lock; ``None`` when the distribution is added.
+    new : str or None
+        Version in the new lock; ``None`` when the distribution is removed.
+    description : str
+        One-line human description of the change.
+    """
 
     name: str
     old: str | None
@@ -93,7 +120,24 @@ class PlanEntry:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the update (or ``--repair``) against the committed runtime and lock."""
+    """Run the update (or ``--repair``) against the committed runtime and lock.
+
+    Parameters
+    ----------
+    argv : list of str, optional
+        Command-line arguments; ``sys.argv[1:]`` when omitted.
+
+    Returns
+    -------
+    int
+        ``0`` on success (including a declined plan), ``1`` when a step fails.
+
+    Raises
+    ------
+    SystemExit
+        If the plan needs confirmation, ``--yes`` is absent and there is no terminal.
+    """
+    # Describe the command line from the module summary.
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--repair", action="store_true", help="reinstall exactly the pinned set")
     parser.add_argument("--yes", action="store_true", help="apply the plan without asking")
@@ -102,8 +146,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--python", help="interpreter whose pip does the work (default: the one running this tool)")
     args = parser.parse_args(argv)
 
-    def confirm(lines: list[str]) -> bool:
-        """Show the plan and decide whether to apply it."""
+    # The plan is always shown; applying it needs ``--yes`` or an interactive answer.
+    def _confirm(lines: list[str]) -> bool:
+        """Show the plan and decide whether to apply it; raise ``SystemExit`` when no terminal can answer."""
         for line in lines:
             print(line)
         if args.yes:
@@ -112,11 +157,12 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit("Refusing to apply a plan without --yes when there is no terminal")
         return input("Apply these changes? [y/N] ").strip().casefold() in {"y", "yes"}
 
+    # Failures of either workflow are reported on stderr with status 1.
     try:
         if args.repair:
             repair_deps(args.runtime, args.lock, python=args.python)
         else:
-            update_deps(args.runtime, args.lock, confirm=confirm, python=args.python)
+            update_deps(args.runtime, args.lock, confirm=_confirm, python=args.python)
     except RuntimeError as error:
         print(f"[update-deps] {error}", file=sys.stderr)
         return 1
@@ -131,6 +177,17 @@ def repair_deps(
 ) -> list[LockedRequirement]:
     """Reinstall exactly the distributions pinned by the lock.
 
+    Parameters
+    ----------
+    runtime : Path
+        Committed runtime whose ``Lib/site-packages`` is replaced.
+    lock : Path
+        Lock file of the pinned distributions.
+    progress : callable, default=print
+        Receives one status line per step.
+    python : str, optional
+        Interpreter whose pip does the install; defaults to the running one.
+
     Returns
     -------
     list of LockedRequirement
@@ -142,10 +199,12 @@ def repair_deps(
         If the runtime is missing or any install step fails; the live
         directory and the lock are unchanged in that case.
     """
+    # Refuse an empty or unreadable lock before touching the live install.
     _require_runtime(runtime)
     requirements = read_lock(lock)
     if not requirements:
         raise RuntimeError(f"{lock} lists no distributions; nothing to install")
+    # Install into staging and swap, so a failure leaves the live install alone.
     progress(f"[update-deps] Installing {len(requirements)} locked distributions with hash verification")
     _install_and_swap(runtime, lock, python)
     progress("[update-deps] Dependencies repaired")
@@ -164,8 +223,14 @@ def update_deps(
 
     Parameters
     ----------
+    runtime : Path
+        Committed runtime whose ``Lib/site-packages`` is replaced.
+    lock : Path
+        Lock file that is rewritten after a successful update.
     confirm : callable
         Receives the plan lines and returns whether to proceed.
+    progress : callable, default=print
+        Receives one status line per step.
     python : str, optional
         Interpreter whose pip resolves and installs; defaults to the running one.
 
@@ -181,6 +246,7 @@ def update_deps(
         If versions cannot be resolved (for example, PyPI is unreachable) or an
         install step fails. The live directory and the lock are unchanged then.
     """
+    # Read the current pins first; a missing runtime or lock fails before any network use.
     _require_runtime(runtime)
     current = read_lock(lock)
 
@@ -218,6 +284,16 @@ def update_deps(
 def read_lock(path: Path) -> list[LockedRequirement]:
     """Read a lock file of ``name==version --hash=sha256:...`` lines.
 
+    Parameters
+    ----------
+    path : Path
+        Lock file to parse; comments and blank lines are skipped.
+
+    Returns
+    -------
+    list of LockedRequirement
+        One entry per pinned distribution, in file order.
+
     Raises
     ------
     RuntimeError
@@ -234,9 +310,11 @@ def read_lock(path: Path) -> list[LockedRequirement]:
         line = line.strip()
         if not line or line.startswith("#"):
             continue
+        # Split the pin from its hashes.
         parts = line.split()
         match = re.fullmatch(r"([^=\s]+)==([^=\s]+)", parts[0])
         hashes = tuple(part[len("--hash=sha256:") :] for part in parts[1:] if part.startswith("--hash=sha256:"))
+        # Valid means a safe name and version, and nothing after the pin but SHA-256 hashes.
         valid = (
             match is not None
             and _NAME.match(match.group(1))
@@ -245,6 +323,7 @@ def read_lock(path: Path) -> list[LockedRequirement]:
             and len(hashes) == len(parts) - 1
             and all(re.fullmatch(r"[0-9a-f]{64}", digest) for digest in hashes)
         )
+        # Fail loudly on the first bad line: an unhashed pin would defeat hash checking.
         if not valid:
             raise RuntimeError(f"Malformed or unhashed line in {path}: {line!r}")
         requirements.append(LockedRequirement(match.group(1), match.group(2), hashes))
@@ -252,7 +331,18 @@ def read_lock(path: Path) -> list[LockedRequirement]:
 
 
 def format_lock(requirements: list[LockedRequirement]) -> str:
-    """Render requirements in the canonical lock format, sorted by name."""
+    """Render requirements in the canonical lock format, sorted by name.
+
+    Parameters
+    ----------
+    requirements : list of LockedRequirement
+        Pins to render.
+
+    Returns
+    -------
+    str
+        Lock file text, ending in a newline.
+    """
     lines = ["# Generated by tools/update_deps.py; do not edit by hand."]
     for item in sorted(requirements, key=lambda entry: _canonical(entry.name)):
         hashes = " ".join(f"--hash=sha256:{digest}" for digest in item.hashes)
@@ -261,7 +351,18 @@ def format_lock(requirements: list[LockedRequirement]) -> str:
 
 
 def plan_changes(old: list[LockedRequirement], new: list[LockedRequirement]) -> list[PlanEntry]:
-    """Return added, removed, and re-versioned distributions between two locks."""
+    """Return added, removed, and re-versioned distributions between two locks.
+
+    Parameters
+    ----------
+    old, new : list of LockedRequirement
+        The current pins and the candidate pins.
+
+    Returns
+    -------
+    list of PlanEntry
+        One entry per changed distribution, in canonical-name order.
+    """
     before = {_canonical(item.name): item for item in old}
     after = {_canonical(item.name): item for item in new}
     plan = []
@@ -274,26 +375,20 @@ def plan_changes(old: list[LockedRequirement], new: list[LockedRequirement]) -> 
     return plan
 
 
-def _canonical(name: str) -> str:
-    """Normalize a distribution name the way package indexes compare them."""
-    return re.sub(r"[-_.]+", "-", name).lower()
-
-
-def _printable(text: str) -> str:
-    """Drop control characters from subprocess text before it reaches the terminal."""
-    return "".join(char for char in text if char == "\n" or char.isprintable())
-
-
-# ---------------------------------------------------------------------------
-# Resolution
-# ---------------------------------------------------------------------------
-
-
 def resolve_lock(runtime: Path, roots: tuple[str, ...], python: str | None = None) -> list[LockedRequirement]:
     """Resolve the newest stable wheels for *roots* and their dependencies.
 
     The build machine's pip resolves for the bundled CPython (platform and
     interpreter flags), so the runtime itself needs no pip.
+
+    Parameters
+    ----------
+    runtime : Path
+        Committed runtime that supplies the target interpreter tag.
+    roots : tuple of str
+        Top-level distributions whose closure is resolved.
+    python : str, optional
+        Interpreter whose pip resolves; defaults to the running one.
 
     Note that pip evaluates environment markers (``sys_platform``, ``python_version``
     and so on) against the *host* interpreter, not the cross-target, so a dependency
@@ -314,6 +409,7 @@ def resolve_lock(runtime: Path, roots: tuple[str, ...], python: str | None = Non
     """
     tag = fetch_runtime.runtime_tag(runtime)
     with tempfile.TemporaryDirectory(prefix="gupkg-resolve-") as scratch:
+        # Ask pip for a dry-run report cross-targeted at the bundled CPython; nothing is installed.
         report_path = Path(scratch) / "report.json"
         command = [
             python or sys.executable, "-I", "-B", "-m", "pip", "install", "--isolated",
@@ -322,6 +418,7 @@ def resolve_lock(runtime: Path, roots: tuple[str, ...], python: str | None = Non
             "--target", str(Path(scratch) / "target"), "--platform", "win_amd64", "--implementation", "cp",
             "--python-version", f"{tag[0]}.{tag[1:]}", "--abi", f"cp{tag}", *roots,
         ]
+        # Surface only pip's last line when the resolution fails, stripped of control characters.
         result = _run(command, runtime)
         if result.returncode != 0 or not report_path.is_file():
             detail = [_printable(line) for line in (result.stderr or result.stdout).strip().splitlines()[-1:]] or ["no output"]
@@ -337,6 +434,16 @@ def resolve_lock(runtime: Path, roots: tuple[str, ...], python: str | None = Non
 def requirements_from_report(report: dict) -> list[LockedRequirement]:
     """Convert a pip installation report into locked requirements.
 
+    Parameters
+    ----------
+    report : dict
+        Decoded ``pip install --report`` document.
+
+    Returns
+    -------
+    list of LockedRequirement
+        One pin per installed distribution, with the wheel's SHA-256.
+
     Raises
     ------
     RuntimeError
@@ -345,11 +452,13 @@ def requirements_from_report(report: dict) -> list[LockedRequirement]:
     """
     requirements = []
     for item in report.get("install", []):
+        # Take name, version and wheel digest from the report entry.
         metadata = item.get("metadata", {})
         name, version = str(metadata.get("name", "")), str(metadata.get("version", ""))
         digest = item.get("download_info", {}).get("archive_info", {}).get("hashes", {}).get("sha256")
         if not (_NAME.match(name) and _VERSION.match(version)):
             raise RuntimeError(f"Refusing unexpected release {name!r} {version!r} (stable releases only)")
+        # Installers are never locked, yanked releases are refused, and a hash is mandatory.
         if name.casefold().replace("_", "-") in fetch_runtime.FORBIDDEN_PREFIXES:
             raise RuntimeError(f"Refusing {name}: the bundle must not contain pip or setuptools")
         if item.get("is_yanked"):
@@ -358,6 +467,24 @@ def requirements_from_report(report: dict) -> list[LockedRequirement]:
             raise RuntimeError(f"pip reported no SHA-256 for {name} {version}")
         requirements.append(LockedRequirement(name, version, (digest,)))
     return requirements
+
+
+# --- supporting helpers ---
+
+
+def _canonical(name: str) -> str:
+    """Normalize a distribution name the way package indexes compare them."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _printable(text: str) -> str:
+    """Drop control characters from subprocess text before it reaches the terminal."""
+    return "".join(char for char in text if char == "\n" or char.isprintable())
+
+
+# ---------------------------------------------------------------------------
+# Resolution
+# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -413,8 +540,10 @@ def _install_and_swap(runtime: Path, lock_path: Path, python: str | None = None)
             if backup.exists():
                 os.replace(backup, live)
             raise
+        # The swap succeeded, so the backup is no longer needed.
         shutil.rmtree(backup, ignore_errors=True)
     finally:
+        # Staging is gone after a swap and discarded after a failure.
         shutil.rmtree(staging, ignore_errors=True)
 
 
@@ -426,17 +555,20 @@ def _probe_staging(runtime: Path, staging: Path) -> None:
         "import importlib, importlib.machinery, sys\n"
         "sys.path.insert(0, sys.argv[1])\n"
         "failed = []\n"
+        # Every import failure is collected, then reported at once with a non-zero exit.
         "for name in sys.argv[2:]:\n"
         "    try:\n"
         "        importlib.import_module(name)\n"
         "    except Exception as exc:\n"
         "        failed.append(f'{name}: {exc}')\n"
+        # Finally, neither pip nor ensurepip may be importable from the bundle.
         "for banned in ('pip', 'ensurepip'):\n"
         "    if importlib.machinery.PathFinder.find_spec(banned, [sys.argv[1]]) is not None:\n"
         "        failed.append(f'{banned} is importable')\n"
         "print('; '.join(failed))\n"
         "raise SystemExit(1 if failed else 0)\n"
     )
+    # Run the bundled interpreter, isolated, against the staging directory only.
     result = _run([_python(runtime), "-I", "-B", "-c", code, str(staging), *names], runtime)
     if result.returncode != 0:
         raise RuntimeError(

@@ -7,7 +7,7 @@ and coming back never restarts the program: the browser stays below, so its filt
 
 Usage and API
 -------------
-``BrowserScreen`` is the first screen of ``ManagerApp``; it reads the inventory in-process (the core behind ``gupkg list --json``) through ``load_inventory``.
+``BrowserScreen`` is the first screen of ``ManagerApp``; it loads the inventory in-process (the core behind ``gupkg list --json``) through ``load_inventory``.
 
 Implementation Approach
 -----------------------
@@ -35,7 +35,21 @@ from ..batch import load_inventory
 
 
 class BrowserScreen(PackageActions, FrameScreen):
-    """The table of every package."""
+    """The table of every package.
+
+    Methods
+    -------
+    key_hints
+        The key hints of the top line.
+    status_text
+        The status line, with the restriction of the selected package.
+    reload
+        Load the inventory again.
+    selected_target
+        The target under the cursor.
+    selected_row
+        The package under the cursor.
+    """
 
     DEFAULT_CSS = """
     BrowserScreen #filter { height: 1; padding: 0 1; display: none; }
@@ -61,14 +75,26 @@ class BrowserScreen(PackageActions, FrameScreen):
     # -- frame ---------------------------------------------------------------------
 
     def key_hints(self) -> str:
-        """Return the keys of the browser."""
+        """Return the keys of the browser.
+
+        Returns
+        -------
+        str
+            The hint line; it points at the registry download when none was downloaded.
+        """
         shown = "a hide" if self.available else "a avail"
         if getattr(self.app, "registry_unsynced", False):
             return f"s DOWNLOAD THE REGISTRY  {shown}  c check  u update  ? help  q quit"
         return f"Enter open  / find  {shown}  c check  u update  U all  s sync  ? help  q quit"
 
     def status_text(self) -> str:
-        """Return the program's scope, counts and registry state; on a package this mode cannot install, its restriction and the reason follow the scope."""
+        """Return the program's scope, counts and registry state; on a package this mode cannot install, its restriction and the reason follow the scope.
+
+        Returns
+        -------
+        str
+            The status line text.
+        """
         row = self.selected_row() if self.loaded else None
         own = f"{literal(row.name, limit=60)} is {literal(row.restriction, limit=20)}: {literal(row.restriction_reason or '', limit=300)}" if row is not None and row.restriction else ""
         return str(getattr(self.app, "status_line", lambda own="": own)(own))
@@ -88,16 +114,18 @@ class BrowserScreen(PackageActions, FrameScreen):
     # -- the inventory -------------------------------------------------------------
 
     def reload(self) -> None:
-        """Read the inventory again in a worker; the selection and filter are kept."""
+        """Load the inventory again in a worker; the selection and filter are kept."""
         self.run_worker(self._load(), name="inventory", exclusive=True, exit_on_error=False)
 
     async def _load(self) -> None:
-        """Read the inventory and the registry state in-process, then show the rows; a read that fails shows ``ERROR:`` in the status line and its full text in a notification."""
+        """Load the inventory and the registry state in-process, then show the rows; a read that fails shows ``ERROR:`` in the status line and its full text in a notification."""
+        # Load the inventory; any failure is shown, never dropped.
         try:
             self.rows = await load_inventory(self.app.env, available=self.available)
             self.error = None
         except Exception as error:  # noqa: BLE001 - every failure of the read is shown, never dropped
             self.error = self.app.report_problem("package list unreadable", error)
+        # Refresh the registry state and the table, and point a new user at the registry download once.
         self.loaded = True
         await self.app.read_registry()
         self.app.set_inventory(self.rows, self.error)
@@ -116,6 +144,7 @@ class BrowserScreen(PackageActions, FrameScreen):
 
     def _fill(self) -> None:
         """Rebuild the table from the visible rows and put the cursor back on the row that was selected."""
+        # Compute every cell first so the column widths can be set from them.
         table = self.query_one(DataTable)
         keep = self.selected_target()
         cells = []
@@ -132,30 +161,55 @@ class BrowserScreen(PackageActions, FrameScreen):
             table.add_column(label, width=max([len(label), *(len(texts[index]) for _, texts in cells)]))
         for target, texts in cells:
             table.add_row(*(Text(text) for text in texts), key=target)
+        # Restore the selection when its row is still visible.
         if keep is not None and keep in [target for target, _ in cells]:
             table.move_cursor(row=table.get_row_index(keep))
         self.refresh_frame()
 
     def selected_target(self) -> str | None:
-        """Return the target of the row under the cursor, or ``None`` when the table is empty."""
+        """Return the target of the row under the cursor, or ``None`` when the table is empty.
+
+        Returns
+        -------
+        str or None
+            The qualified target of the selected row.
+        """
         table = self.query_one(DataTable)
         if table.row_count == 0:
             return None
         return table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
 
     def selected_row(self) -> PackageRow | None:
-        """Return the package under the cursor."""
+        """Return the package under the cursor.
+
+        Returns
+        -------
+        PackageRow or None
+            The selected package, or ``None`` when the table is empty.
+        """
         target = self.selected_target()
         return next((row for row in self.rows if row.target == target), None)
 
     # -- keys ----------------------------------------------------------------------
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
-        """Moving the cursor refreshes the status line (it names the restriction of a package this mode cannot install)."""
+        """Moving the cursor refreshes the status line (it names the restriction of a package this mode cannot install).
+
+        Parameters
+        ----------
+        event : DataTable.RowHighlighted
+            The Textual event (unused).
+        """
         self.refresh_frame()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        """Enter opens the package view of the selected package (the browser stays below)."""
+        """Enter opens the package view of the selected package (the browser stays below).
+
+        Parameters
+        ----------
+        event : DataTable.RowSelected
+            The Textual event (unused; the selection is read from the table).
+        """
         row = self.selected_row()
         if row is not None:
             self.app.push_screen(PackageScreen(row.target, row), lambda _result: self.reload())
@@ -167,12 +221,24 @@ class BrowserScreen(PackageActions, FrameScreen):
         box.focus()
 
     def on_input_changed(self, event: Input.Changed) -> None:
-        """Filter as the person types."""
+        """Filter as the person types.
+
+        Parameters
+        ----------
+        event : Input.Changed
+            The Textual event carrying the new filter text.
+        """
         self.filter_text = event.value
         self._fill()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        """Enter keeps the filter and returns to the table."""
+        """Enter keeps the filter and returns to the table.
+
+        Parameters
+        ----------
+        event : Input.Submitted
+            The Textual event (unused).
+        """
         self.query_one(DataTable).focus()
 
     def action_escape(self) -> None:
@@ -238,7 +304,8 @@ class BrowserScreen(PackageActions, FrameScreen):
             self.run_worker(self._show_log(row), name="logs", exit_on_error=False)
 
     async def _show_log(self, row: PackageRow) -> None:
-        """Find the package's log through the in-process ``info`` read and show it."""
+        """Find the package's log through the in-process ``info`` query and show it."""
+        # Ask for the package's info; a failure is reported, not dropped.
         try:
             info = await self.app.env.source.info(row.target)
         except Exception as error:  # noqa: BLE001 - every failure of the read is shown
@@ -256,7 +323,7 @@ class BrowserScreen(PackageActions, FrameScreen):
         self.reload()
 
     def action_reload(self) -> None:
-        """Read the inventory again."""
+        """Load the inventory again."""
         self.reload()
 
     def action_help(self) -> None:

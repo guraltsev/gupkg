@@ -3,7 +3,7 @@
 Behavior covered: Git is used only from a folder that non-administrators cannot modify, and a user-writable ``git.exe`` earlier on
 PATH is skipped; a trusted Git syncs by cloning, skips the clone when the remote revision is already cached, never publishes Git
 metadata and runs without the user's ``GIT_*`` variables; without a trusted Git a GitHub repository is downloaded as its archive;
-a Git-only source without Git is a clear failure that keeps the previous tree; an elevated run refuses to read or sync a registry
+a Git-only source without Git is a clear failure that keeps the previous tree; an elevated run refuses to load or sync a registry
 cache in a folder non-administrators can modify (also through ``gupkg registry status``), an ordinary run is unaffected.
 
 Real: the PATH search for ``git.exe`` stubs, the cache layout and validation, the command line. Stood in by ``FakeSystem``: which
@@ -33,8 +33,11 @@ from tests.support.scope import scope_of
 
 pytestmark = pytest.mark.unit
 
+# Address of the sample registry repository.
 SOURCE = "https://github.com/example/gupkg-registry.git"
+# Commit identifier of the sample registry checkout.
 REVISION = "a" * 40
+# Contents of the registry file in the sample checkout.
 REGISTRY_FILE = dumps({"format": 2, "name": "main"})
 
 
@@ -46,8 +49,10 @@ def _git_double(revision: str = REVISION, calls: list[ProcessCall] | None = None
         command = list(call.argv)
         if calls is not None:
             calls.append(call)
+        # Answer each git sub-command that a registry sync issues.
         if "ls-remote" in command:
             return ProcessResult(0, f"{revision}\tHEAD\n")
+        # A clone creates a checkout holding a registry file and one package.
         if "clone" in command:
             destination = Path(command[-1])
             (destination / ".git").mkdir(parents=True)
@@ -56,6 +61,7 @@ def _git_double(revision: str = REVISION, calls: list[ProcessCall] | None = None
             (destination / "tool" / "1.0.0").mkdir(parents=True)
             (destination / "tool" / "1.0.0" / "pkg.toml").write_text(version_text("1.0.0"), encoding="utf-8")
             return ProcessResult(0)
+        # Report the revision of the fresh checkout.
         if "rev-parse" in command:
             return ProcessResult(0, revision + "\n")
         raise AssertionError(f"unexpected command {command}")
@@ -100,13 +106,16 @@ def test_trusted_git_clones_publishes_packages_only_and_skips_an_unchanged_revis
     system = FakeSystem(tmp_path / "machine", processes={"git": _git_double(calls=calls)})
     cache = registry_cache_dir(tmp_path / "root", "main")
 
+    # Act: sync twice; the second sync sees the same remote revision.
     first = sync_registry(cache, scope_of(system), name="main", source=SOURCE)
     clones_after_first = sum("clone" in call.argv for call in calls)
     second = sync_registry(cache, scope_of(system), name="main", source=SOURCE)
 
+    # Check the sync results and that the second sync did not clone again.
     assert first.ok and first.status == "synced", first.error
     assert second.ok and second.status == "current"
     assert clones_after_first == 1 and sum("clone" in call.argv for call in calls) == 1
+    # Inspect the cached state and the published tree.
     state = cache_state(cache, scope_of(system))
     assert state.revision == REVISION and state.tree_dir == cache / "trees" / REVISION
     published = {path.name for path in (state.tree_dir / "pkgs").iterdir()}
@@ -139,11 +148,14 @@ def test_without_trusted_git_a_github_repository_is_downloaded_as_its_archive(tm
         archive.writestr("gupkg-registry-main/README.md", "registry")
         archive.writestr("gupkg-registry-main/_registry.toml", REGISTRY_FILE)
         archive.writestr("gupkg-registry-main/tool/1.0.0/pkg.toml", version_text("1.0.0"))
+    # Serve that archive as the only way to obtain the registry.
     system = FakeSystem(tmp_path / "machine", urls={"https://github.com/example/gupkg-registry/archive/HEAD.zip": buffer.getvalue()})
     cache = registry_cache_dir(tmp_path / "root", "main")
 
+    # Act: sync a registry when no trusted Git exists.
     result = sync_registry(cache, scope_of(system), name="main", source=SOURCE)
 
+    # The archive was fetched once and its revision is recorded.
     assert result.ok, result.error
     assert system.fetch_log == ["https://github.com/example/gupkg-registry/archive/HEAD.zip"]
     assert cache_state(cache, scope_of(system)).revision == REVISION
@@ -203,6 +215,7 @@ def test_the_registry_status_command_reports_the_refusal_as_an_error(cli_elevate
 # The archive route: what an archive may contain, and which sources are accepted
 # ---------------------------------------------------------------------------
 
+# Address of the sample registry archive.
 ARCHIVE_URL = "https://registry.example/registry.zip"
 
 
@@ -233,6 +246,7 @@ def _symlink(name: str) -> zipfile.ZipInfo:
     return info
 
 
+# Archives with hostile contents that must be refused.
 HOSTILE_ARCHIVES = {
     "dot-dot": [("wrap/../../escape.txt", "x")],
     "absolute": [("/escape.txt", "x")],

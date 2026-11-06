@@ -40,6 +40,175 @@ class PortableError(ValueError):
     """Report a persisted path or marker that would leave ``App`` or ``data``."""
 
 
+def hand_back(system: System, app: Path, data_dir: Path, persist: Sequence[str]) -> list[str]:
+    """Copy persisted state from the outgoing *app* into *data_dir*, and return what was saved.
+
+    A persisted file is copied (replacing the saved one). A persisted folder that is a real folder (the application
+    replaced the junction) is copied into ``data`` when ``data`` has none, and otherwise merged: a file is copied when
+    ``data`` lacks it or the application's is newer, and nothing in ``data`` is deleted. A junction needs nothing: it
+    already is the saved state.
+
+    Parameters
+    ----------
+    system : System
+        The system port (unused here; kept for symmetry with ``hand_over``).
+    app : Path
+        The outgoing ``App`` folder.
+    data_dir : Path
+        The package ``data`` folder that holds the saved state.
+    persist : sequence of str
+        The ``[portable] persist`` items, relative to ``App``.
+
+    Returns
+    -------
+    list of str
+        A description of each item that was saved.
+
+    Raises
+    ------
+    PortableError
+        If an item would leave ``App`` or ``data``, or is a file on one side and a folder on the other.
+    """
+    # Handle each persisted item: skip what is absent or already a junction, otherwise save it.
+    saved: list[str] = []
+    for item in persist:
+        source = _confined(app, item)
+        target = _confined(data_dir, item)
+        if not os.path.lexists(source) or is_reparse_point(source):
+            continue
+        # A file is replaced atomically; a new folder is copied whole; an existing folder is merged by age.
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if source.is_file():
+            if os.path.lexists(target) and (target.is_dir() or is_reparse_point(target)):
+                raise PortableError(f"'{item}' is a file in the application but a folder in {data_dir}; nothing was changed")
+            write_bytes_atomic(target, source.read_bytes())
+            saved.append(item)
+        # A folder the data folder lacks is copied whole.
+        elif source.is_dir() and not target.exists():
+            shutil.copytree(source, target, symlinks=True)
+            saved.append(item)
+        # An existing folder is merged, refusing a type clash first.
+        elif source.is_dir():
+            if not target.is_dir() or is_reparse_point(target):
+                raise PortableError(f"'{item}' is a folder in the application but not a folder in {data_dir}; nothing was changed")
+            merged = _merge_newer(source, target)
+            if merged:
+                saved.append(f"{item} ({merged} newer file{'s' if merged != 1 else ''} merged)")
+    return saved
+
+
+def hand_over(system: System, app: Path, data_dir: Path, persist: Sequence[str]) -> list[str]:
+    """Make *app* use the saved state in *data_dir*, and return what was linked or copied in.
+
+    The first population migrates the vendor's default: an item that exists in ``app`` and not in ``data`` moves
+    into ``data``. An item that exists in both keeps the saved state (the one in ``app`` is replaced). A saved
+    folder becomes a junction inside ``app``, a saved file is copied in.
+
+    Parameters
+    ----------
+    system : System
+        The system port used to read, create and remove junctions.
+    app : Path
+        The incoming ``App`` folder.
+    data_dir : Path
+        The package ``data`` folder that holds the saved state.
+    persist : sequence of str
+        The ``[portable] persist`` items, relative to ``App``.
+
+    Returns
+    -------
+    list of str
+        The items that are now linked or copied into ``app``.
+
+    Raises
+    ------
+    PortableError
+        If an item would leave ``App`` or ``data``.
+    """
+    handled: list[str] = []
+    for item in persist:
+        link = _confined(app, item)
+        saved = _confined(data_dir, item)
+
+        # First population: the vendor's default configuration becomes the saved state.
+        if os.path.lexists(link) and not is_reparse_point(link) and not os.path.lexists(saved):
+            saved.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(link), str(saved))
+        if not os.path.lexists(saved):
+            continue
+
+        # Saved state wins over whatever the new App brought: an already correct junction stays, anything else goes.
+        if os.path.lexists(link):
+            if is_reparse_point(link):
+                if saved.is_dir() and canonical_path(system.read_link(link) or link) == canonical_path(saved):
+                    handled.append(item)
+                    continue
+                system.remove_link(link)
+            else:
+                remove_tree(link)
+        # Link a saved folder, or copy a saved file, into the incoming App.
+        link.parent.mkdir(parents=True, exist_ok=True)
+        if saved.is_dir():
+            system.create_junction(link, saved)
+        else:
+            write_bytes_atomic(link, saved.read_bytes())
+        handled.append(item)
+    return handled
+
+
+def create_markers(app: Path, manifest: Manifest) -> list[str]:
+    """Create the ``[portable] markers`` of a portable package in the staged *app*, and return what was created.
+
+    A package that is not portable has none. A marker that already exists is kept.
+
+    Parameters
+    ----------
+    app : Path
+        The staged ``App`` folder.
+    manifest : Manifest
+        The package manifest whose ``[portable] markers`` are created.
+
+    Returns
+    -------
+    list of str
+        One ``marker <path>`` entry per marker created.
+
+    Raises
+    ------
+    PortableError
+        If a marker path would leave ``App``.
+    """
+    # Create each missing marker file with its declared content.
+    done: list[str] = []
+    for marker in manifest.portable.markers if manifest.portable else ():
+        path = _confined(app, marker.path)
+        if os.path.lexists(path):
+            continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(marker.content or "", encoding="utf-8", newline="")
+        done.append(f"marker {marker.path}")
+    return done
+
+
+def scratch_name(prefix: str) -> str:
+    """Return a unique folder name for a staging or backup folder.
+
+    Parameters
+    ----------
+    prefix : str
+        The leading part of the name.
+
+    Returns
+    -------
+    str
+        ``<prefix>-<12 hex digits>``.
+    """
+    return f"{prefix}-{uuid.uuid4().hex[:12]}"
+
+
+# --- supporting helpers ---
+
+
 def _confined(base: Path, relative: str) -> Path:
     """Return ``base\\relative`` after requiring it to stay inside *base* (no ``..``, no drive, no link in between)."""
     parts = [part for part in relative.replace("\\", "/").split("/") if part not in ("", ".")]
@@ -59,52 +228,23 @@ def _confined(base: Path, relative: str) -> Path:
     return path
 
 
-def hand_back(system: System, app: Path, data_dir: Path, persist: Sequence[str]) -> list[str]:
-    """Copy persisted state from the outgoing *app* into *data_dir*, and return what was saved.
-
-    A persisted file is copied (replacing the saved one). A persisted folder that is a real folder (the application
-    replaced the junction) is copied into ``data`` when ``data`` has none, and otherwise merged: a file is copied when
-    ``data`` lacks it or the application's is newer, and nothing in ``data`` is deleted. A junction needs nothing: it
-    already is the saved state.
-    """
-    saved: list[str] = []
-    for item in persist:
-        source = _confined(app, item)
-        target = _confined(data_dir, item)
-        if not os.path.lexists(source) or is_reparse_point(source):
-            continue
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if source.is_file():
-            if os.path.lexists(target) and (target.is_dir() or is_reparse_point(target)):
-                raise PortableError(f"'{item}' is a file in the application but a folder in {data_dir}; nothing was changed")
-            write_bytes_atomic(target, source.read_bytes())
-            saved.append(item)
-        elif source.is_dir() and not target.exists():
-            shutil.copytree(source, target, symlinks=True)
-            saved.append(item)
-        elif source.is_dir():
-            if not target.is_dir() or is_reparse_point(target):
-                raise PortableError(f"'{item}' is a folder in the application but not a folder in {data_dir}; nothing was changed")
-            merged = _merge_newer(source, target)
-            if merged:
-                saved.append(f"{item} ({merged} newer file{'s' if merged != 1 else ''} merged)")
-    return saved
-
-
 def _merge_newer(source: Path, target: Path) -> int:
     """Copy the files of *source* into *target* when they are missing there or newer; return how many were copied.
 
     Nothing in *target* is deleted or replaced by an older file, so state that only *target* has stays. A link in
     *source* is skipped, and a name that is a folder on one side and a file on the other stops the merge before it writes.
     """
+    # Plan every copy first and check every file/folder conflict, so a refusal leaves *target* untouched.
     plan: list[tuple[Path, Path]] = []
     for folder, directories, files in os.walk(source):
         relative = Path(folder).relative_to(source)
         directories[:] = [name for name in directories if not is_reparse_point(Path(folder) / name)]
+        # A folder in the application must not collide with a file in the data.
         for name in directories:
             other = target / relative / name
             if os.path.lexists(other) and (not other.is_dir() or is_reparse_point(other)):
                 raise PortableError(f"'{relative / name}' is a folder in the application but a file in {target}; nothing was changed")
+        # A file is planned when it is missing in the data or newer; links are skipped.
         for name in files:
             origin, other = Path(folder) / name, target / relative / name
             if is_reparse_point(origin):
@@ -113,66 +253,9 @@ def _merge_newer(source: Path, target: Path) -> int:
                 raise PortableError(f"'{relative / name}' is a file in the application but a folder in {target}; nothing was changed")
             if not os.path.lexists(other) or origin.stat().st_mtime > other.stat().st_mtime:
                 plan.append((origin, other))
+    # Write the planned copies, keeping the original timestamps so later merges compare correctly.
     for origin, other in plan:
         other.parent.mkdir(parents=True, exist_ok=True)
         write_bytes_atomic(other, origin.read_bytes())
         os.utime(other, ns=(origin.stat().st_atime_ns, origin.stat().st_mtime_ns))
     return len(plan)
-
-
-def hand_over(system: System, app: Path, data_dir: Path, persist: Sequence[str]) -> list[str]:
-    """Make *app* use the saved state in *data_dir*, and return what was linked or copied in.
-
-    The first population migrates the vendor's default: an item that exists in ``app`` and not in ``data`` moves
-    into ``data``. An item that exists in both keeps the saved state (the one in ``app`` is replaced). A saved
-    folder becomes a junction inside ``app``, a saved file is copied in.
-    """
-    handled: list[str] = []
-    for item in persist:
-        link = _confined(app, item)
-        saved = _confined(data_dir, item)
-
-        # First population: the vendor's default configuration becomes the saved state.
-        if os.path.lexists(link) and not is_reparse_point(link) and not os.path.lexists(saved):
-            saved.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(link), str(saved))
-        if not os.path.lexists(saved):
-            continue
-
-        # Saved state wins over whatever the new App brought.
-        if os.path.lexists(link):
-            if is_reparse_point(link):
-                if saved.is_dir() and canonical_path(system.read_link(link) or link) == canonical_path(saved):
-                    handled.append(item)
-                    continue
-                system.remove_link(link)
-            else:
-                remove_tree(link)
-        link.parent.mkdir(parents=True, exist_ok=True)
-        if saved.is_dir():
-            system.create_junction(link, saved)
-        else:
-            write_bytes_atomic(link, saved.read_bytes())
-        handled.append(item)
-    return handled
-
-
-def create_markers(app: Path, manifest: Manifest) -> list[str]:
-    """Create the ``[portable] markers`` of a portable package in the staged *app*, and return what was created.
-
-    A package that is not portable has none. A marker that already exists is kept.
-    """
-    done: list[str] = []
-    for marker in manifest.portable.markers if manifest.portable else ():
-        path = _confined(app, marker.path)
-        if os.path.lexists(path):
-            continue
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(marker.content or "", encoding="utf-8", newline="")
-        done.append(f"marker {marker.path}")
-    return done
-
-
-def scratch_name(prefix: str) -> str:
-    """Return a unique folder name for a staging or backup folder."""
-    return f"{prefix}-{uuid.uuid4().hex[:12]}"

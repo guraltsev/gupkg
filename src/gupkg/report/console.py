@@ -47,7 +47,36 @@ from .events import (
 
 
 def format_bytes(value: int) -> str:
-    """Render a byte count compactly, for example ``74.0 MiB``."""
+    """Render a byte count compactly, for example ``74.0 MiB``.
+
+    Parameters
+    ----------
+    value : int
+        Number of bytes.
+
+    Returns
+    -------
+    str
+        The count with a binary unit.
+
+    Examples
+    --------
+    Basic usage:
+
+    >>> format_bytes(512)
+    '512 B'
+    >>> format_bytes(2048)
+    '2.0 KiB'
+    >>> format_bytes(74 * 1024 * 1024)
+    '74.0 MiB'
+
+    Edge cases:
+
+    >>> format_bytes(0)
+    '0 B'
+    >>> format_bytes(1024 ** 4)
+    '1.0 TiB'
+    """
     if value < 1024:
         return f"{value} B"
     amount = float(value)
@@ -59,7 +88,33 @@ def format_bytes(value: int) -> str:
 
 
 def format_progress(event: Progress) -> str:
-    """Render one progress event as the text line shown for a finished or plain transfer."""
+    """Render one progress event as the text line shown for a finished or plain transfer.
+
+    Parameters
+    ----------
+    event : Progress
+        The progress event to describe.
+
+    Returns
+    -------
+    str
+        The task name with the amount done, the total and the percentage.
+
+    Examples
+    --------
+    Basic usage:
+
+    >>> from gupkg.report.events import Progress
+    >>> format_progress(Progress('download', 1024, 4096))
+    'download: 1.0 KiB / 4.0 KiB (25%)'
+    >>> format_progress(Progress('download', 2048, None))
+    'download: 2.0 KiB received'
+
+    Variations:
+
+    >>> format_progress(Progress('files', 3, 12, unit='files'))
+    'files: 3 files / 12 files (25%)'
+    """
     # Byte transfers read as sizes; any other unit is shown as plain counts.
     show = format_bytes if event.unit == "B" else (lambda n: f"{n} {event.unit}")
     if event.total is None:
@@ -69,18 +124,21 @@ def format_progress(event: Progress) -> str:
 
 
 def _clean_event(event: Any) -> Any:
-    """Return *event* with the text a person reads stripped of terminal escape sequences and control characters.
+    """Return *event* with its displayed text stripped of terminal escapes and control characters.
 
     Package output must never steer a terminal or a text log, so every
     renderer cleans what it displays. The JSON logs keep the original text
     (JSON escapes it, so it is inert there).
     """
+    # Each event type cleans exactly the fields that are shown to a person.
     if isinstance(event, (Step, Warning, Prompt)):
         return dataclasses.replace(event, text=clean_line(event.text))
+    # An error carries an optional hint that is displayed as well.
     if isinstance(event, Error):
         return dataclasses.replace(event, text=clean_line(event.text), hint=clean_line(event.hint) if event.hint else event.hint)
     if isinstance(event, RunEnd):
         return dataclasses.replace(event, summary=clean_line(event.summary))
+    # Child-process output and transfer names come from outside gupkg.
     if isinstance(event, SubprocessLine):
         return dataclasses.replace(event, cmd=clean_line(event.cmd), line=clean_line(event.line))
     if isinstance(event, Progress):
@@ -98,19 +156,38 @@ class PlainFormatter:
 
     Progress events are held back and only the last one of each transfer is
     produced: when the transfer completes, or when any other event follows it.
+
+    Methods
+    -------
+    feed
+        Return the lines *event* adds, including any held progress line it releases.
+    finish
+        Release every held progress line, for a transfer that ended without completing.
     """
 
     def __init__(self) -> None:
         self._pending: dict[str, Progress] = {}
 
     def feed(self, event: Any) -> list[str]:
-        """Return the lines *event* adds (including any held progress line it releases)."""
-        # A held progress line is final as soon as anything else is reported.
+        """Return the lines *event* adds, including any held progress line it releases.
+
+        Parameters
+        ----------
+        event : object
+            Any report event.
+
+        Returns
+        -------
+        list of str
+            The plain text lines for the event, possibly empty.
+        """
+        # Progress is held back; any other event makes held lines final.
         event = _clean_event(event)
         if isinstance(event, Progress):
             return self._feed_progress(event)
         lines = self.finish()
 
+        # Run and phase structure.
         if isinstance(event, RunStart):
             lines.append(f"gupkg {event.command} ({event.mode}{', elevated' if event.elevated else ''})")
         elif isinstance(event, PackageStart):
@@ -119,19 +196,23 @@ class PlainFormatter:
             lines.append(f"==> {event.phase}")
         elif isinstance(event, PhaseEnd):
             lines.append(f"    {event.phase}: {event.status} ({_elapsed(event.elapsed)})")
+        # Steps and subprocess output, indented under their phase.
         elif isinstance(event, Step):
             prefix = {"ok": "ok: ", "add": "+ ", "remove": "- "}.get(event.kind, "")
             lines.extend(f"    {prefix if index == 0 else ''}{text}" for index, text in enumerate(event.text.splitlines() or [""]))
         elif isinstance(event, SubprocessLine):
             lines.append(f"      [{event.cmd}] {event.line}")
+        # Prompts, problems and the outcome of the package and the run.
         elif isinstance(event, Prompt):
             lines.append(f"? {event.text}")
         elif isinstance(event, Warning):
             lines.append(f"WARNING: {event.text}")
+        # An error is followed by its hint, when it has one.
         elif isinstance(event, Error):
             lines.append(f"ERROR: {event.text}")
             if event.hint:
                 lines.append(f"  hint: {event.hint}")
+        # A package ends with its status; the run ends with a verdict and its summary.
         elif isinstance(event, PackageEnd):
             result = event.result
             status = result.get("status") or ("ok" if result.get("ok", True) else "failed")
@@ -142,7 +223,13 @@ class PlainFormatter:
         return lines
 
     def finish(self) -> list[str]:
-        """Release every held progress line (a transfer that ended without completing)."""
+        """Release every held progress line, for a transfer that ended without completing.
+
+        Returns
+        -------
+        list of str
+            The released lines.
+        """
         lines = [format_progress(item) for item in self._pending.values()]
         self._pending.clear()
         return lines
@@ -182,6 +269,11 @@ class ConsoleReporter:
     color : str, default="auto"
         The ``[ui] color`` setting: ``never`` prints plain text even on a terminal, ``always`` draws with Rich even when
         output is redirected, ``auto`` decides by the terminal. ``NO_COLOR`` and ``TERM=dumb`` still turn colour off for ``auto``.
+
+    Methods
+    -------
+    handle
+        Render one event.
     """
 
     def __init__(
@@ -218,7 +310,13 @@ class ConsoleReporter:
             self._console = console or Console(file=stream, highlight=False)
 
     def handle(self, event: Any) -> None:
-        """Render one event."""
+        """Render one event.
+
+        Parameters
+        ----------
+        event : object
+            Any report event.
+        """
         with self._lock:
             # A terminal whose encoding cannot draw the marks falls back to
             # plain text for the rest of the run instead of losing output.
@@ -229,12 +327,15 @@ class ConsoleReporter:
                 except UnicodeEncodeError:
                     self.fancy = False
                     self._drop_unfinished_progress()
+            # Problems go to their own stream, after the held progress lines.
             if self._problems_to_stderr and isinstance(event, (Warning, Error)):
                 for line in self._plain.finish():
                     self._write_plain(line)
                 for line in self._plain.feed(event):
                     self._write_plain(line, problem=True)
                 return
+
+            # Everything else goes to the main stream.
             for line in self._plain.feed(event):
                 self._write_plain(line)
 
@@ -242,11 +343,13 @@ class ConsoleReporter:
 
     def _write_plain(self, line: str, *, problem: bool = False) -> None:
         """Write one line, replacing characters the stream cannot encode, and flush."""
+        # Choose the stream; ordering with the main stream is kept by flushing it first.
         if problem:
             stream = self._problems_stream or sys.stderr
             (self._stream or sys.stdout).flush()
         else:
             stream = self._stream or sys.stdout
+        # Never fail on text the stream cannot encode.
         text = line + "\n"
         try:
             stream.write(text)
@@ -277,6 +380,7 @@ class ConsoleReporter:
                 self._problems_console = Console(stderr=True, highlight=False)
             console = self._problems_console
 
+        # Run and phase structure, drawn as rules and marks.
         if isinstance(event, RunStart):
             console.print(Text(f"gupkg {event.command}  ·  {event.mode}" + ("  ·  elevated" if event.elevated else ""), style="bold"))
         elif isinstance(event, PackageStart):
@@ -287,6 +391,7 @@ class ConsoleReporter:
             mark, style = {"ok": ("✓", "bold green"), "failed": ("✗", "bold red")}.get(event.status, ("–", "dim"))
             label = event.phase if event.status == "ok" else f"{event.phase} {event.status}"
             console.print(Text(f"  {mark} {label}  {_elapsed(event.elapsed)}", style=style))
+        # Steps and subprocess output, styled by kind.
         elif isinstance(event, Step):
             mark, style = {
                 "ok": ("✓ ", "green"), "add": ("+ ", "green"), "remove": ("− ", "red"),
@@ -295,19 +400,23 @@ class ConsoleReporter:
                 console.print(Text(f"    {mark if index == 0 else ''}{text}", style=style))
         elif isinstance(event, SubprocessLine):
             console.print(Text(f"      │ {event.line}", style="dim"))
+        # Prompts, problems and the outcome of the package and the run.
         elif isinstance(event, Prompt):
             console.print(Text(f"? {event.text}", style="bold"))
         elif isinstance(event, Warning):
             console.print(Text(f"WARNING: {event.text}", style="yellow"))
+        # An error is followed by its hint, when it has one.
         elif isinstance(event, Error):
             console.print(Text(f"ERROR: {event.text}", style="bold red"))
             if event.hint:
                 console.print(Text(f"  hint: {event.hint}", style="dim"))
+        # A package ends with its status; the run ends with a closing rule and its summary.
         elif isinstance(event, PackageEnd):
             result = event.result
             status = result.get("status") or ("ok" if result.get("ok", True) else "failed")
             style = "green" if result.get("ok", True) else "red"
             console.print(Text(f"Package {result.get('name', '?')}: {status}", style=style))
+        # The closing rule is green or red by exit code, followed by the summary.
         elif isinstance(event, RunEnd):
             succeeded = event.exit_code == 0
             title = "Done" if succeeded else f"Failed (exit code {event.exit_code})"
@@ -331,6 +440,7 @@ class ConsoleReporter:
                 columns.append(TransferSpeedColumn())
             self._progress = RichProgress(*columns, console=self._console, transient=True, auto_refresh=False)
             self._progress.start()
+        # Register the task on first sight, then move its bar to the new position.
         if event.task not in self._tasks:
             self._tasks[event.task] = self._progress.add_task(event.task, total=event.total)
         task_id = self._tasks[event.task]
@@ -364,6 +474,11 @@ class LineReporter:
         Receives the latest text of a transfer that is still running, which a
         UI shows in place and replaces; the transfer's final line arrives
         through ``on_line``.
+
+    Methods
+    -------
+    handle
+        Pass the lines (or the transient text) that *event* produces to the callbacks.
     """
 
     def __init__(self, on_line: Callable[[str], None], on_transient: Callable[[str], None] | None = None) -> None:
@@ -373,7 +488,13 @@ class LineReporter:
         self._lock = threading.RLock()
 
     def handle(self, event: Any) -> None:
-        """Pass the lines (or the transient text) that *event* produces to the callbacks."""
+        """Pass the lines (or the transient text) that *event* produces to the callbacks.
+
+        Parameters
+        ----------
+        event : object
+            Any report event.
+        """
         with self._lock:
             lines = self._plain.feed(event)
             for line in lines:

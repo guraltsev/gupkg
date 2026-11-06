@@ -1,7 +1,7 @@
 """Discover the newest commit of a Git ref as a version, and run a package's own ``track`` hook.
 
 ``track_git`` resolves a ref to a commit with ``git ls-remote``, fetches that one commit
-shallowly to read its date, and returns ``YYYYMMDD-HHMMSS-<short sha>`` (UTC) as the
+shallowly to obtain its date, and returns ``YYYYMMDD-HHMMSS-<short sha>`` (UTC) as the
 version with the full commit as a capture. The commit is the integrity anchor of such a
 package: the pinned version writes it into ``[source.git] commit``. ``track_module`` calls
 the ``track(ctx)`` function of a ``pkg.local`` module with a typed ``HookContext``.
@@ -35,23 +35,44 @@ from ..hooks import HookContext, HookPaths, call_track, load_hook
 from ..safepath import remove_tree
 from .common import TrackEnvironment, TrackError, valid_version
 
+# A full 40-digit lowercase commit hash.
 _SHA = re.compile(r"[0-9a-f]{40}")
 
 
 def track_git(spec: GitSpec, env: TrackEnvironment) -> TrackResult:
     """Return the newest commit of ``spec.ref`` as a dated version.
 
+    Parameters
+    ----------
+    spec : GitSpec
+        The validated ``git`` provider specification.
+    env : TrackEnvironment
+        The boundary and scratch folder; ``work_dir`` is required.
+
+    Returns
+    -------
+    TrackResult
+        The dated version with the commit, short commit, ref and commit date as captures.
+
     Raises
     ------
     TrackError
         If ``git`` fails, the ref does not exist, or the environment has no scratch folder.
     """
+    # The shallow fetch below needs a scratch folder, and every git call shares one safe environment.
     if env.work_dir is None:
         raise TrackError("The git provider needs a scratch folder")
     environment = git_environment(env.system, env.scope.mode, env.work_dir)
 
-    def git(*arguments: str, cwd: Path | None = None) -> str:
-        """Run one Git command and return its stripped output."""
+    def _git(*arguments: str, cwd: Path | None = None) -> str:
+        """Run one Git command and return its stripped output (internal to the provider).
+
+        Raises
+        ------
+        TrackError
+            If Git is unavailable, fails or times out.
+        """
+        # Run Git through the boundary with prompts off; every failure mode becomes a tracker error.
         try:
             command = git_command(*arguments, system=env.system, mode=env.scope.mode)
             return run_checked(env.system, command, cwd=cwd, env=environment, on_line=subprocess_lines(command), timeout=120)
@@ -59,7 +80,7 @@ def track_git(spec: GitSpec, env: TrackEnvironment) -> TrackResult:
             raise TrackError(f"git {arguments[0]} failed: {error}") from error
 
     # Resolve the ref to one commit; the option separator keeps a hostile URL from being a flag.
-    listing = git("ls-remote", "--exit-code", "--", spec.repo_url, spec.ref)
+    listing = _git("ls-remote", "--exit-code", "--", spec.repo_url, spec.ref)
     commit = listing.split()[0].lower() if listing.split() else ""
     if not _SHA.fullmatch(commit):
         raise TrackError(f"git ls-remote returned no commit for {spec.ref} of {spec.repo_url}")
@@ -69,11 +90,12 @@ def track_git(spec: GitSpec, env: TrackEnvironment) -> TrackResult:
     remove_tree(scratch)
     scratch.mkdir(parents=True)
     try:
-        git("init", "--quiet", str(scratch))
-        git("fetch", "--quiet", "--depth", "1", "--no-tags", "--", spec.repo_url, commit, cwd=scratch)
-        stamp = git("log", "-1", "--format=%ct", "FETCH_HEAD", cwd=scratch)
+        _git("init", "--quiet", str(scratch))
+        _git("fetch", "--quiet", "--depth", "1", "--no-tags", "--", spec.repo_url, commit, cwd=scratch)
+        stamp = _git("log", "-1", "--format=%ct", "FETCH_HEAD", cwd=scratch)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
+    # Turn the commit timestamp into the dated version and its captures.
     if not stamp.isdigit():
         raise TrackError(f"git returned no commit date for {commit}")
     moment = datetime.fromtimestamp(int(stamp), tz=timezone.utc)
@@ -88,12 +110,25 @@ def track_git(spec: GitSpec, env: TrackEnvironment) -> TrackResult:
 def track_module(spec: ModuleSpec, env: TrackEnvironment) -> TrackResult:
     """Run ``track(ctx)`` of the module *spec* names, from the tracker directory.
 
+    Parameters
+    ----------
+    spec : ModuleSpec
+        The validated ``module`` provider specification.
+    env : TrackEnvironment
+        The boundary and folders; ``directory`` is required.
+
+    Returns
+    -------
+    TrackResult
+        The hook's result, whose version has been validated.
+
     Raises
     ------
     TrackError
         If the module cannot be loaded, declares another API, lacks ``track``, fails, or
         returns anything but a ``TrackResult`` with a usable version.
     """
+    # Build the typed hook context from the environment; a module needs the tracker directory.
     if env.directory is None:
         raise TrackError("The module provider needs the tracker directory")
     context = HookContext(
@@ -102,6 +137,7 @@ def track_module(spec: ModuleSpec, env: TrackEnvironment) -> TrackResult:
                         work=Path(env.work_dir) if env.work_dir else None),
         options=dict(env.extra),
     )
+    # Run the hook; any failure inside it is reported as this check's failure.
     try:
         module = load_hook(Path(env.directory), spec.module, env.scope)
         result = call_track(module, context)

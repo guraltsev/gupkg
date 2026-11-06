@@ -44,12 +44,31 @@ from .transform import keep_subdir, map_extract, merge_into, require_paths, stri
 
 __all__ = ["Budget", "Limits", "UnpackError", "UnpackPlan", "UnpackReport", "plan_from_source", "unpack_artifact", "unpack_git"]
 
+# The kinds that are extracted with an archive reader (the others are copied as plain files).
 _ARCHIVE_KINDS = ("zip", "7z", "tar", "sfx", "nsis", "msi")
 
 
 @dataclass(frozen=True)
 class UnpackPlan:
-    """The unpack options of one ``[source]``, with templates already expanded."""
+    """The unpack options of one ``[source]``, with templates already expanded.
+
+    Attributes
+    ----------
+    kind : str or None
+        The archive kind; ``None`` to detect it.
+    strip : int or str or None
+        How many leading path components to drop; ``None`` or ``0`` drops none.
+    subdir : str or None
+        The folder inside the archive to take.
+    nested : tuple of NestedArchive
+        Archives inside the archive to unpack as well.
+    extract : tuple of ExtractRule
+        Rules that select which entries are extracted.
+    require : tuple of str
+        Paths that must exist after unpacking.
+    verify_manifest : str or None
+        A manifest file that lists the expected files.
+    """
 
     kind: str | None = None
     strip: int | str | None = None
@@ -62,7 +81,19 @@ class UnpackPlan:
 
 @dataclass(frozen=True)
 class UnpackReport:
-    """What an unpack produced: its kind, file count, byte count and, for ``git``, the commit."""
+    """What an unpack produced: its kind, file count, byte count and, for ``git``, the commit.
+
+    Attributes
+    ----------
+    kind : str
+        The kind of the archive.
+    files : int
+        How many files were written.
+    bytes : int
+        How many bytes were written.
+    commit : str or None
+        The commit checked out, for ``git``.
+    """
 
     kind: str
     files: int
@@ -71,7 +102,18 @@ class UnpackReport:
 
 
 def plan_from_source(source: Source) -> UnpackPlan:
-    """Return the ``UnpackPlan`` described by a pinned version's ``[source]``."""
+    """Return the ``UnpackPlan`` described by a pinned version's ``[source]``.
+
+    Parameters
+    ----------
+    source : Source
+        The version's ``[source]`` table, with templates already expanded.
+
+    Returns
+    -------
+    UnpackPlan
+        The kind and the shared unpack options of *source*.
+    """
     return UnpackPlan(
         source.kind, source.strip, source.subdir, source.nested, source.extract, source.require,
         source.verify_manifest,
@@ -118,6 +160,7 @@ def unpack_artifact(
     UnpackError
         If the archive or an option is unsafe, a check fails, or the kind is wrong.
     """
+    # Refuse an existing destination, then work only inside a private scratch folder beside it.
     if destination.exists():
         raise UnpackError(f"{destination} already exists")
     scratch = destination.parent / f".unpack-{uuid.uuid4().hex[:10]}"
@@ -138,6 +181,7 @@ def unpack_artifact(
         # Apply the shared options in their documented order.
         for position, inner in enumerate(plan.nested):
             _nested(system, raw, scratch / f"nested-{position}", inner, seven_zip, budget)
+        # Reshape the tree, then check the required paths and the manifest.
         if plan.strip not in (None, 0):
             strip_levels(raw, plan.strip)
         if plan.subdir:
@@ -161,11 +205,36 @@ def unpack_git(system: System, mode: Mode, url: str, ref: str | None, commit: st
                *, limits: Limits = Limits()) -> UnpackReport:
     """Check out a repository commit into the new folder *destination*, then apply the shared options.
 
+    Parameters
+    ----------
+    system : System
+        The boundary that runs ``git``.
+    mode : Mode
+        The run's mode; system mode runs only a trusted ``git``.
+    url : str
+        The repository address.
+    ref : str or None
+        A full ``refs/...`` name, used when *commit* is not given.
+    commit : str or None
+        The pinned 40-digit commit id.
+    destination : Path
+        A folder that must not exist; it appears complete or not at all.
+    plan : UnpackPlan
+        The shared options (``strip``, ``subdir``, ``extract``, ``require``, ``verify_manifest``).
+    limits : Limits
+        Bounds on entries and sizes for the final tree check.
+
+    Returns
+    -------
+    UnpackReport
+        Kind ``git``, the size of the result and the resolved commit.
+
     Raises
     ------
     UnpackError
         If ``git`` fails, the pinned commit is not what the repository serves, or an option fails.
     """
+    # Refuse an existing destination, then check out inside a private scratch folder beside it.
     if destination.exists():
         raise UnpackError(f"{destination} already exists")
     scratch = destination.parent / f".unpack-{uuid.uuid4().hex[:10]}"
@@ -174,6 +243,8 @@ def unpack_git(system: System, mode: Mode, url: str, ref: str | None, commit: st
         raw = scratch / "raw"
         emit(Step(f"Checking out {url}"))
         resolved = checkout_commit(system, mode, url, ref, commit, raw, scratch)
+
+        # Apply the shared options in their documented order (a git checkout has no nested archives).
         if plan.strip not in (None, 0):
             strip_levels(raw, plan.strip)
         if plan.subdir:
@@ -184,6 +255,8 @@ def unpack_git(system: System, mode: Mode, url: str, ref: str | None, commit: st
             require_paths(raw, plan.require)
         if plan.verify_manifest:
             verify_manifest(raw, plan.verify_manifest)
+
+        # One last walk, then the tree appears under its final name in one rename.
         files, size = check_tree(raw, limits)
         os.replace(raw, destination)
     finally:
@@ -198,7 +271,13 @@ def unpack_git(system: System, mode: Mode, url: str, ref: str | None, commit: st
 
 def _fill(system: System, artifact: Path, raw: Path, kind: str, filename: str | None,
           seven_zip: Path | None, budget: Budget) -> None:
-    """Fill the empty folder *raw* from the artifact: extract an archive or copy a plain file."""
+    """Fill the empty folder *raw* from the artifact: extract an archive or copy a plain file.
+
+    Raises
+    ------
+    UnpackError
+        If *kind* is not one gupkg can extract.
+    """
     if kind in ("exe", "file"):
         shutil.copyfile(artifact, raw / safe_file_name(filename or artifact.name))
         return
@@ -209,7 +288,14 @@ def _fill(system: System, artifact: Path, raw: Path, kind: str, filename: str | 
 
 def _nested(system: System, raw: Path, holding: Path, inner: NestedArchive, seven_zip: Path | None,
             budget: Budget) -> None:
-    """Unpack the inner archive *inner.path* of *raw* and merge or substitute it at *inner.dest*."""
+    """Unpack the inner archive *inner.path* of *raw* and merge or substitute it at *inner.dest*.
+
+    Raises
+    ------
+    UnpackError
+        If a path escapes the tree, the archive is missing, or it is not an archive.
+    """
+    # Confine both paths to the extracted tree before touching anything.
     try:
         archive = confine(raw, inner.path)
         destination = raw if inner.dest == "" else confine(raw, inner.dest)
@@ -217,6 +303,7 @@ def _nested(system: System, raw: Path, holding: Path, inner: NestedArchive, seve
         raise UnpackError(f"nested {inner.path!r}: {error}") from error
     if not archive.is_file():
         raise UnpackError(f"nested archive {inner.path!r} is not in the unpacked artifact")
+    # The inner file must really be an archive; unpack it into its own holding folder.
     kind = detect_kind(system, archive, archive.name, seven_zip)
     if kind not in _ARCHIVE_KINDS:
         raise UnpackError(f"nested {inner.path!r} is not an archive")

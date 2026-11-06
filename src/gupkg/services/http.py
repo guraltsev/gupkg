@@ -11,7 +11,7 @@ downloads into a cache keyed by URL and expected SHA-256.
 Usage and API
 -------------
 Build ``HttpClient(system, cache_dir=..., env=...)`` once per run. ``text(url)``,
-``json(url)`` and ``request(url, method="HEAD")`` read small answers;
+``json(url)`` and ``request(url, method="HEAD")`` fetch small answers;
 ``resolve(url)`` follows redirects without downloading the body;
 ``download(url, expected_sha256=...)`` returns a ``Download`` describing a verified
 cached file. ``derive(headers=...)`` returns a client for one package whose headers
@@ -55,14 +55,23 @@ from ..system.port import HttpResponse, Mode, ResponseTooLarge, System
 from .safepath import safe_file_name
 from .values import file_name_from_url
 
+# Default seconds one request may take before it fails.
 DEFAULT_TIMEOUT = 30.0
+# Default number of retries after a retryable failure.
 DEFAULT_RETRIES = 3
+# Default seconds before the first retry; each further retry doubles it.
 DEFAULT_BACKOFF = 1.0
+# Most redirect hops followed for one request.
 MAX_REDIRECTS = 10
+# Default largest accepted body of a text or JSON request.
 MAX_TEXT_BYTES = 8 * 1024 * 1024
+# Default largest accepted download.
 MAX_DOWNLOAD_BYTES = 8 * 1024 * 1024 * 1024
+# Longest wait honoured from a ``Retry-After`` header, in seconds.
 _MAX_RETRY_AFTER = 30.0
+# Statuses that are followed as redirects.
 _REDIRECT_STATUSES = (301, 302, 303, 307, 308)
+# Statuses that are retried with backoff.
 _RETRY_STATUSES = (429, 500, 502, 503, 504)
 
 # Headers that carry credentials and must not follow a redirect to another host.
@@ -71,12 +80,22 @@ _CREDENTIAL_HEADERS = frozenset({"authorization", "cookie", "proxy-authorization
 _GITHUB_HOSTS = frozenset({"api.github.com", "github.com", "uploads.github.com"})
 # Names that carry secrets in practice; they are dropped on a cross-host redirect like Authorization.
 _SECRET_WORDS = ("auth", "key", "token", "secret", "password", "cookie", "session", "credential")
+# Default seconds a whole request (all hops and retries) may take.
 DEFAULT_REQUEST_DEADLINE = 120.0
+# Default seconds a whole download may take.
 DEFAULT_DOWNLOAD_DEADLINE = 3600.0
 
 
 class HttpError(OSError):
-    """Report a request that failed; ``status`` is the HTTP status, or ``None`` for a network failure."""
+    """Report a request that failed; ``status`` is the HTTP status, or ``None`` for a network failure.
+
+    Parameters
+    ----------
+    message : str
+        What failed.
+    status : int or None
+        The HTTP status; ``None`` for a network failure.
+    """
 
     def __init__(self, message: str, status: int | None = None) -> None:
         """Build the error from a readable message and an optional HTTP status."""
@@ -125,6 +144,32 @@ def parse_content_disposition(value: str | None) -> str | None:
 
     ``filename*=UTF-8''...`` (RFC 5987) wins over ``filename=``. The result is
     only decoded, not yet made safe: pass it to ``safe_file_name``.
+
+    Parameters
+    ----------
+    value : str or None
+        The header value.
+
+    Returns
+    -------
+    str or None
+        The decoded file name, or ``None`` when there is none or it is malformed.
+
+    Examples
+    --------
+    Basic usage:
+
+    >>> parse_content_disposition('attachment; filename="app.zip"')
+    'app.zip'
+    >>> parse_content_disposition("attachment; filename*=UTF-8''na%C3%AFve.zip")
+    'naïve.zip'
+
+    Edge cases:
+
+    >>> print(parse_content_disposition(None))
+    None
+    >>> print(parse_content_disposition('inline'))
+    None
     """
     if not value:
         return None
@@ -143,10 +188,72 @@ def github_environment(mode: Mode, environ: Mapping[str, str]) -> dict[str, str]
 
     An elevated gupkg ignores the user's environment (decision D19), so the token is dropped there.
     The caller passes the mapping explicitly; the services never read ``os.environ`` themselves.
+
+    Parameters
+    ----------
+    mode : Mode
+        The run's mode; system mode yields nothing.
+    environ : mapping
+        The environment to take the token from.
+
+    Returns
+    -------
+    dict of str to str
+        ``{"GITHUB_TOKEN": ...}`` or an empty dict.
     """
     if mode is Mode.SYSTEM or not environ.get("GITHUB_TOKEN"):
         return {}
     return {"GITHUB_TOKEN": environ["GITHUB_TOKEN"]}
+
+
+def decode_body(response: HttpResponse) -> str:
+    """Return the body of *response* as text, using the charset of ``Content-Type`` (UTF-8 by default).
+
+    Undecodable bytes become U+FFFD and a leading byte-order mark is dropped, so a
+    hostile page can never raise from here.
+
+    Parameters
+    ----------
+    response : HttpResponse
+        The answer whose body is decoded.
+
+    Returns
+    -------
+    str
+        The decoded text.
+    """
+    match = re.search(r"charset=\"?([\w.-]+)", response.headers.get("content-type", ""), re.IGNORECASE)
+    charset = match.group(1) if match else "utf-8"
+    try:
+        text = response.body.decode(charset, errors="replace")
+    except LookupError:
+        text = response.body.decode("utf-8", errors="replace")
+    return text.lstrip("﻿")
+
+
+def file_digest(path: Path) -> tuple[str, int]:
+    """Return ``(lower-case SHA-256, size)`` of a file, read in 1 MiB blocks.
+
+    Parameters
+    ----------
+    path : Path
+        The file to hash.
+
+    Returns
+    -------
+    tuple of str and int
+        The lower-case SHA-256 digest and the size in bytes.
+    """
+    digest = hashlib.sha256()
+    size = 0
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+            size += len(block)
+    return digest.hexdigest(), size
+
+
+# --- supporting helpers ---
 
 
 def _looks_secret(name: str) -> bool:
@@ -193,6 +300,27 @@ class HttpClient:
     allow_unc_file_urls : bool
         Whether ``file:`` URLs that name a network host or a UNC share may be fetched. Off by
         default: reading one makes Windows authenticate to that server (decision for 027/028).
+
+    Methods
+    -------
+    derive
+        Return a client with the same policy whose default headers also include *headers*.
+    request
+        Send one request and return the answer of any status; ``url`` of the result is the final one.
+    get
+        Return the 2xx answer for *url*, raising ``HttpError`` (with ``status``) for any other status.
+    text
+        Return the text served at *url*, decoded with the declared charset (UTF-8 by default).
+    json
+        Return the JSON document served at *url*.
+    head
+        Return the headers for *url*, asking again with ``GET`` when the server refuses ``HEAD``.
+    resolve
+        Follow *url* through its redirects and return the final answer without a body.
+    download
+        Download *url* into the cache, resuming an interrupted attempt, and return the file.
+    redirect_target
+        Return the redirect target of *response*, or raise when the policy refuses it.
     """
 
     def __init__(
@@ -213,12 +341,14 @@ class HttpClient:
         allow_unc_file_urls: bool = False,
     ) -> None:
         """Store the policy; no request is made."""
+        # Keep the transport and the policy knobs; header maps are validated up front.
         self.system = system
         self.user_agent = user_agent or f"gupkg/{__version__}"
         self.timeout = timeout
         self.retries = retries
         self.backoff = backoff
         self.headers = check_header_map(headers)
+        # Storage and limits: the cache folder, the body cap, the token source and the deadlines.
         self.cache_dir = Path(cache_dir) if cache_dir is not None else None
         self.max_text_bytes = max_text_bytes
         self._env = env if env is not None else {}
@@ -228,7 +358,18 @@ class HttpClient:
         self.allow_unc_file_urls = allow_unc_file_urls
 
     def derive(self, headers: Mapping[str, str] | None = None) -> "HttpClient":
-        """Return a client with the same policy whose default headers also include *headers*."""
+        """Return a client with the same policy whose default headers also include *headers*.
+
+        Parameters
+        ----------
+        headers : mapping, optional
+            Headers added to (and replacing the same names in) this client's defaults.
+
+        Returns
+        -------
+        HttpClient
+            A new client; this one is unchanged.
+        """
         merged = {**self.headers, **check_header_map(headers)}
         clone = HttpClient(
             self.system, user_agent=self.user_agent, timeout=self.timeout, retries=self.retries,
@@ -265,18 +406,25 @@ class HttpClient:
         max_bytes : int, optional
             Largest accepted body; ``max_text_bytes`` when omitted.
 
+        Returns
+        -------
+        HttpResponse
+            The answer of any status, with the final URL.
+
         Raises
         ------
         HttpError
             On a network failure after the retries, a refused redirect, or a body
             larger than allowed.
         """
+        # Validate the address and headers, and fix the overall deadline, before any hop is sent.
         limit = self.max_text_bytes if max_bytes is None else max_bytes
         self._refuse_unc(url)
         current = url
         extra = check_header_map(headers)
         origin = _host(url)
         deadline = time.monotonic() + self.request_deadline
+        # Follow redirects hop by hop so the policy can judge each one.
         for _hop in range(MAX_REDIRECTS + 1):
             response = self._attempt(current, extra, method, limit, _host(current) != origin, deadline)
             if not follow or response.status not in _REDIRECT_STATUSES:
@@ -285,19 +433,68 @@ class HttpClient:
         raise HttpError(f"More than {MAX_REDIRECTS} redirects from {url}")
 
     def get(self, url: str, headers: Mapping[str, str] | None = None, *, max_bytes: int | None = None) -> HttpResponse:
-        """Return the 2xx answer for *url*, raising ``HttpError`` (with ``status``) for any other status."""
+        """Return the 2xx answer for *url*, raising ``HttpError`` (with ``status``) for any other status.
+
+        Parameters
+        ----------
+        url : str
+            The address to fetch.
+        headers : mapping, optional
+            Extra headers for this request.
+        max_bytes : int, optional
+            Largest accepted body.
+
+        Returns
+        -------
+        HttpResponse
+            The successful answer.
+
+        Raises
+        ------
+        HttpError
+            On a network failure, a refused redirect, an oversized body or a non-2xx status.
+        """
         response = self.request(url, headers, max_bytes=max_bytes)
         if not 200 <= response.status < 300:
             raise HttpError(f"{response.url} answered HTTP {response.status}", response.status)
         return response
 
     def text(self, url: str, headers: Mapping[str, str] | None = None, *, max_bytes: int | None = None) -> str:
-        """Return the text served at *url*, decoded with the declared charset (UTF-8 by default)."""
+        """Return the text served at *url*, decoded with the declared charset (UTF-8 by default).
+
+        Parameters
+        ----------
+        url : str
+            The address to fetch.
+        headers : mapping, optional
+            Extra headers for this request.
+        max_bytes : int, optional
+            Largest accepted body.
+
+        Returns
+        -------
+        str
+            The decoded body.
+        """
         response = self.get(url, headers, max_bytes=max_bytes)
         return decode_body(response)
 
     def json(self, url: str, headers: Mapping[str, str] | None = None, *, max_bytes: int | None = None) -> Any:
         """Return the JSON document served at *url*.
+
+        Parameters
+        ----------
+        url : str
+            The address to fetch.
+        headers : mapping, optional
+            Extra headers for this request.
+        max_bytes : int, optional
+            Largest accepted body.
+
+        Returns
+        -------
+        object
+            The parsed document.
 
         Raises
         ------
@@ -311,14 +508,40 @@ class HttpClient:
             raise HttpError(f"{url} did not serve valid JSON: {error}") from error
 
     def head(self, url: str, headers: Mapping[str, str] | None = None) -> HttpResponse:
-        """Return the headers for *url*, asking again with ``GET`` when the server refuses ``HEAD``."""
+        """Return the headers for *url*, asking again with ``GET`` when the server refuses ``HEAD``.
+
+        Parameters
+        ----------
+        url : str
+            The address to examine.
+        headers : mapping, optional
+            Extra headers for this request.
+
+        Returns
+        -------
+        HttpResponse
+            The answer, with an empty body.
+        """
         response = self.request(url, headers, method="HEAD")
         if response.status in (405, 501):
             response = self.request(url, headers, method="GET", max_bytes=0)
         return response
 
     def resolve(self, url: str, headers: Mapping[str, str] | None = None) -> HttpResponse:
-        """Follow *url* through its redirects and return the final answer without a body."""
+        """Follow *url* through its redirects and return the final answer without a body.
+
+        Parameters
+        ----------
+        url : str
+            The address to follow.
+        headers : mapping, optional
+            Extra headers for this request.
+
+        Returns
+        -------
+        HttpResponse
+            The final answer; its ``url`` is where the redirects ended.
+        """
         return self.head(url, headers)
 
     # -- downloads -----------------------------------------------------------
@@ -355,6 +578,11 @@ class HttpClient:
             redirect hop must be ``https://`` on their *parsed* form (``gupkg.model.checksum.is_https_url``),
             otherwise the download stops before that hop is requested.
 
+        Returns
+        -------
+        Download
+            The verified cached file and how it was obtained.
+
         Raises
         ------
         HttpError
@@ -363,6 +591,7 @@ class HttpClient:
         DownloadMismatch
             If *expected_sha256* is given and the file's digest differs.
         """
+        # Derive the cache entry for exactly this URL and expected digest.
         if self.cache_dir is None:
             raise HttpError("This client has no cache directory, so it cannot download")
         self._refuse_unc(url)
@@ -395,6 +624,7 @@ class HttpClient:
         # Hash the finished file, check its size and expected digest, then publish it.
         info = _read_meta(meta)
         digest, size = file_digest(part)
+        # Refuse an oversized or mismatching file, deleting it, so only a verified file is published.
         if size > max_bytes:
             part.unlink(missing_ok=True)
             raise HttpError(f"{url} is larger than the allowed {max_bytes} bytes")
@@ -402,6 +632,7 @@ class HttpClient:
             part.unlink(missing_ok=True)
             meta.unlink(missing_ok=True)
             raise DownloadMismatch(f"{info.get('filename', shown)} has SHA-256 {digest}, expected {expected}")
+        # Publish the verified file atomically under its final cache name.
         os.replace(part, final)
         return Download(final, size, digest, final_url, info.get("filename", shown), resumed, False)
 
@@ -434,9 +665,11 @@ class HttpClient:
     def _attempt(self, url: str, extra: Mapping[str, str], method: str, max_bytes: int, foreign: bool = False,
                  deadline: float | None = None) -> HttpResponse:
         """Send one hop, retrying a 5xx, 429 or network failure with doubling backoff, within *deadline*."""
+        # Try the hop up to ``retries + 1`` times, giving up once the overall deadline has passed.
         delay = self.backoff
         last_error: HttpError | None = None
         for attempt in range(self.retries + 1):
+            # Stop at once when the overall deadline has passed; otherwise bound this try by what is left.
             remaining = None if deadline is None else deadline - time.monotonic()
             if remaining is not None and remaining <= 0:
                 raise HttpError(f"{url} took longer than the allowed {self.request_deadline:g} seconds in total")
@@ -446,15 +679,18 @@ class HttpClient:
                     timeout=self.timeout if remaining is None else min(self.timeout, remaining),
                     max_bytes=max_bytes, total_timeout=remaining,
                 )
+            # An oversized body is final; a network failure or retryable status is retried with backoff.
             except ResponseTooLarge as error:
                 raise HttpError(f"{url} is larger than the allowed {max_bytes} bytes") from error
             except OSError as error:
                 last_error = HttpError(f"Could not read {url}: {error}")
+            # A retryable status becomes the pending error; any other answer is returned as it is.
             else:
                 if response.status not in _RETRY_STATUSES or attempt == self.retries:
                     return response
                 last_error = HttpError(f"{url} answered HTTP {response.status}", response.status)
                 delay = self._retry_delay(response, delay)
+            # Back off before the next try, doubling the wait each time.
             if attempt < self.retries:
                 self._sleep(delay)
                 delay *= 2
@@ -493,7 +729,26 @@ class HttpClient:
 
 
     def redirect_target(self, url: str, response: HttpResponse) -> str:
-        """Return the redirect target of *response*, or raise when the policy refuses it."""
+        """Return the redirect target of *response*, or raise when the policy refuses it.
+
+        Parameters
+        ----------
+        url : str
+            The address that answered with a redirect.
+        response : HttpResponse
+            The redirecting answer.
+
+        Returns
+        -------
+        str
+            The absolute address to request next.
+
+        Raises
+        ------
+        HttpError
+            If there is no ``Location``, the target is not http or https, or the hop downgrades HTTPS to HTTP.
+        """
+        # Resolve the target against the current address and enforce the scheme rules.
         location = response.headers.get("location")
         if not location:
             raise HttpError(f"{url} redirected without a Location", response.status)
@@ -514,12 +769,20 @@ class HttpClient:
         Returns ``None`` when the server refuses the range of a resume (416), so the
         caller can start again from the first byte.
         """
+        # State shared with the progress callback, and the overall deadline of the whole download.
         current = url
         throttle: dict[str, Any] = {"last": time.monotonic(), "final": None}
         deadline = time.monotonic() + self.download_deadline
 
-        def on_progress(received: int, total: int | None) -> None:
-            """Cap the file size, and report progress at most five times a second."""
+        def _on_progress(received: int, total: int | None) -> None:
+            """Cap the file size, and report progress at most five times a second.
+
+            Raises
+            ------
+            HttpError
+                If more than *max_bytes* have been received.
+            """
+            # Fail as soon as the stream exceeds the cap, then throttle the progress events.
             if received > max_bytes:
                 raise HttpError(f"{url} is larger than the allowed {max_bytes} bytes")
             now = time.monotonic()
@@ -529,13 +792,16 @@ class HttpClient:
                 if total == received:
                     throttle["final"] = received
 
-        def remember(status: int, headers: Mapping[str, str]) -> None:
+        # Callback that records the validators of each accepted answer next to the partial file.
+        def _remember(status: int, headers: Mapping[str, str]) -> None:
             """Store the validators and file name of an accepted answer, so an interruption can resume."""
+            # Only an accepted answer says anything about the file; the name comes from the headers or the URL.
             if not 200 <= status < 300:
                 return
             old = _read_meta(meta)
             name = parse_content_disposition(headers.get("content-disposition"))
             filename = safe_file_name(name or "", "") or file_name_from_url(current)
+            # A partial (206) answer keeps earlier values for anything it does not repeat.
             fresh = {
                 "url": url, "final_url": current, "filename": filename if name or "filename" not in old else old["filename"],
                 "etag": headers.get("etag", ""), "last_modified": headers.get("last-modified", ""),
@@ -544,6 +810,7 @@ class HttpClient:
                 fresh = {key: value or old.get(key, "") for key, value in fresh.items()}
             _write_meta(meta, fresh)
 
+        # Follow redirects hop by hop, retrying each hop with backoff within the overall deadline.
         for _hop in range(MAX_REDIRECTS + 1):
             if require_https and not is_https_url(current):
                 part.unlink(missing_ok=True)
@@ -559,15 +826,17 @@ class HttpClient:
                 if not offset:
                     part.unlink(missing_ok=True)
                 extra = {**wanted, "Range": f"bytes={offset}-", "If-Range": validator} if offset else dict(wanted)
+                # Bound this try by the time left, then stream the body into the partial file.
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise HttpError(f"{url} took longer than the allowed {self.download_deadline:g} seconds in total")
                 try:
                     response = self.system.http_download(
-                        current, self._policy_headers(current, extra, _host(current) != _host(url)), part, on_progress,
-                        timeout=min(self.timeout, remaining), append=bool(offset), on_headers=remember,
+                        current, self._policy_headers(current, extra, _host(current) != _host(url)), part, _on_progress,
+                        timeout=min(self.timeout, remaining), append=bool(offset), on_headers=_remember,
                         total_timeout=remaining,
                     )
+                # Policy errors end the hop; an I/O failure is retried with backoff until the tries run out.
                 except HttpError:
                     raise
                 except OSError as error:
@@ -578,12 +847,14 @@ class HttpClient:
                     self._sleep(delay)
                     delay *= 2
                     continue
+                # A retryable status waits (honouring Retry-After) and tries again; anything else ends the loop.
                 if response.status in _RETRY_STATUSES and attempt < self.retries:
                     delay = self._retry_delay(HttpResponse(response.status, current, response.headers), delay)
                     self._sleep(delay)
                     delay *= 2
                     continue
                 break
+            # Classify the final answer: follow a redirect, report a refused range, fail on non-2xx.
             assert response is not None
             if response.status in _REDIRECT_STATUSES:
                 current = self.redirect_target(current, HttpResponse(response.status, current, response.headers))
@@ -603,32 +874,6 @@ class HttpClient:
 # ---------------------------------------------------------------------------
 # Helpers shared with the other services
 # ---------------------------------------------------------------------------
-
-
-def decode_body(response: HttpResponse) -> str:
-    """Return the body of *response* as text, using the charset of ``Content-Type`` (UTF-8 by default).
-
-    Undecodable bytes become U+FFFD and a leading byte-order mark is dropped, so a
-    hostile page can never raise from here.
-    """
-    match = re.search(r"charset=\"?([\w.-]+)", response.headers.get("content-type", ""), re.IGNORECASE)
-    charset = match.group(1) if match else "utf-8"
-    try:
-        text = response.body.decode(charset, errors="replace")
-    except LookupError:
-        text = response.body.decode("utf-8", errors="replace")
-    return text.lstrip("﻿")
-
-
-def file_digest(path: Path) -> tuple[str, int]:
-    """Return ``(lower-case SHA-256, size)`` of a file, read in 1 MiB blocks."""
-    digest = hashlib.sha256()
-    size = 0
-    with open(path, "rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-            size += len(block)
-    return digest.hexdigest(), size
 
 
 def _read_meta(path: Path) -> dict[str, str]:

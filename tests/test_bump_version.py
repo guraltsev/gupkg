@@ -14,7 +14,9 @@ import pytest
 
 pytestmark = pytest.mark.unit
 
+# The maintainer tool under test, a plain script.
 TOOL = Path(__file__).resolve().parents[1] / "tools" / "bump_version.py"
+# A manifest whose ``[[bin]]`` version must stay untouched.
 MANIFEST = '[[bin]]\nversion = "keep"\n'
 
 

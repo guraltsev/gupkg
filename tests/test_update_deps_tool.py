@@ -28,9 +28,13 @@ from update_deps import LockedRequirement
 
 pytestmark = pytest.mark.release
 
+# Digest used for the first sample package.
 HASH_A = "a" * 64
+# Digest used for the second sample package.
 HASH_B = "b" * 64
+# Digest used for the third sample package.
 HASH_C = "c" * 64
+# Dependency lock text before the update.
 OLD_LOCK = f"textual==1.0.0 --hash=sha256:{HASH_A}\ntomli_w==1.2.0 --hash=sha256:{HASH_B}\n"
 
 
@@ -57,6 +61,7 @@ class FakePip:
                 json.dumps({"install": self.report}), encoding="utf-8"
             )
             return ok
+        # An install request writes the pinned lock into the target folder.
         if "--target" in command:
             if self.fail_install:
                 return types.SimpleNamespace(returncode=1, stdout="", stderr="hash mismatch")
@@ -67,6 +72,7 @@ class FakePip:
                 (target / self.plant).mkdir()
                 (target / self.plant / "__init__.py").write_text("", encoding="utf-8")
             return ok
+        # A probe request succeeds unless it is told to fail.
         if "-c" in command:
             if self.fail_probe:
                 return types.SimpleNamespace(returncode=1, stdout="textual.app: boom", stderr="")
@@ -116,9 +122,11 @@ def test_repair_installs_only_the_pinned_hashed_wheels_and_replaces_the_live_dir
     with mock.patch.object(update_deps.subprocess, "run", pip):
         update_deps.repair_deps(runtime, lock, progress=lambda line: None)
 
+    # Assert: the install command is hashed, wheel-only and dependency-free.
     install = next(command for command in pip.commands if "--target" in command)
     for required in ("--require-hashes", "--only-binary=:all:", "--no-deps", "-I"):
         assert required in install
+    # Assert: the live directory was replaced and no staging folders remain.
     live = runtime / "Lib" / "site-packages"
     assert (live / "installed.lock").read_text(encoding="utf-8") == OLD_LOCK
     assert not (live / "old.txt").exists()
@@ -155,12 +163,15 @@ def test_update_shows_the_plan_and_changes_nothing_when_declined(checkout) -> No
     shown: list[list[str]] = []
 
     def decline(lines: list[str]) -> bool:
+        """Record the shown lines and decline the confirmation."""
         shown.append(lines)
         return False
 
+    # Act: update with a confirmation that is declined.
     with mock.patch.object(update_deps.subprocess, "run", pip):
         applied = update_deps.update_deps(runtime, lock, confirm=decline, progress=lambda line: None)
 
+    # Assert: nothing changed.
     assert applied == []
     assert any("textual 1.0.0 -> 2.0.0" in line for line in shown[0])
     assert lock.read_text(encoding="utf-8") == OLD_LOCK
@@ -251,6 +262,7 @@ def test_the_installing_interpreter_runs_pip_and_the_runtime_only_probes(checkou
     with mock.patch.object(update_deps.subprocess, "run", pip):
         update_deps.repair_deps(runtime, lock, progress=lambda line: None, python="C:/dev/.venv/python.exe")
 
+    # Assert: the installing interpreter ran pip for the Windows target and the runtime only probed.
     runtime_python = str(runtime / "python.exe")
     install = next(command for command in pip.commands if "--target" in command)
     assert install[0] == "C:/dev/.venv/python.exe"

@@ -32,7 +32,9 @@ from gupkg.launchers import LAUNCHERS, launcher_text
 
 from .layout import LAUNCHER_NAMES, RETIRED_LAUNCHER_NAMES, TRACKER_LAUNCHER_NAME, RegistryFileError, package_dirs, read_registry_file
 
+# Most hook files a registry may carry before CI refuses it.
 MAX_HOOK_FILES = 13
+# Marker every hook module docstring must contain, followed by the reason it is not a service.
 WHY_NO_SERVICE = "Why no service"
 # Everything except launchers (.cmd) is stored with LF, so one fingerprint is the same on every checkout.
 _LF_SUFFIXES = frozenset({".toml", ".py", ".json", ".md", ".txt", ".yml", ".yaml", ".ini", ".xml"})
@@ -40,7 +42,23 @@ _LF_SUFFIXES = frozenset({".toml", ".py", ".json", ".md", ".txt", ".yml", ".yaml
 
 @dataclass(frozen=True)
 class ValidationReport:
-    """The outcome of ``validate_registry``: every problem found, and counts for the summary."""
+    """The outcome of ``validate_registry``: every problem found, and counts for the summary.
+
+    Attributes
+    ----------
+    problems : tuple of str
+        Every problem found.
+    packages : int
+        How many packages were checked.
+    versions : int
+        How many versions were checked.
+    hook_files : tuple of str
+        The hook files found.
+    unpinned : tuple of str
+        The packages the registry lists as unpinned.
+    ok : bool
+        Return whether no problem was found.
+    """
 
     problems: tuple[str, ...] = ()
     packages: int = 0
@@ -52,6 +70,118 @@ class ValidationReport:
     def ok(self) -> bool:
         """Return whether no problem was found."""
         return not self.problems
+
+
+def validate_registry(root: Path) -> ValidationReport:
+    """Validate the registry at *root* and report every problem (nothing is changed).
+
+    Parameters
+    ----------
+    root : Path
+        The registry checkout.
+
+    Returns
+    -------
+    ValidationReport
+        The problems, the number of packages and pinned versions, the hook files and the unpinned
+        versions. An unreadable ``_registry.toml`` stops the check after its own problem.
+    """
+    # Read the registry file first: without it nothing else can be judged.
+    root = Path(root)
+    try:
+        settings = read_registry_file(root)
+    except RegistryFileError as error:
+        return ValidationReport((str(error),))
+    # Collect what the registry file declares, and the findings of the walk below.
+    fingerprints: dict[str, str] = settings.get("fingerprints", {})
+    unpinned = set(settings.get("unpinned", []))
+    problems: list[str] = []
+    hooks: list[Path] = []
+    seen_versions: set[str] = set()
+    versions = 0
+
+    # Check each package: its tree, its tracker, then every pinned version.
+    for package in package_dirs(root):
+        name = package.name
+        # Whole-package checks: links, stray entries, and that something is published.
+        problems.extend(_tree_problems(name, package))
+        tracker = package / TRACKER_DIR_NAME
+        children = [c for c in sorted(package.iterdir()) if c.is_dir()]
+        problems.extend(_stray_problems(name, package))
+        if not (tracker / MANIFEST_NAME).is_file() and not any((c / MANIFEST_NAME).is_file() for c in children):
+            problems.append(f"{name}: has neither a tracker nor a pinned version")
+        # The tracker must validate, declare its modes and carry only its own launcher.
+        if (tracker / MANIFEST_NAME).is_file():
+            label = f"{name}/{TRACKER_DIR_NAME}"
+            problems.extend(_report_problems(label, check_directory(tracker)))
+            mode_problem = _modes_problem(label, tracker)
+            problems.extend([mode_problem] if mode_problem else [])
+            problems.extend(f"{label}/{n}: a tracker never installs, so it carries no {n}" for n in (*LAUNCHER_NAMES, *RETIRED_LAUNCHER_NAMES) if (tracker / n).exists())
+            problems.extend(_tracker_launcher_problems(label, tracker))
+        # Each version needs a clean check, a hash with provenance, its launchers and a matching fingerprint.
+        for child in children:
+            if child.name == TRACKER_DIR_NAME or not (child / MANIFEST_NAME).is_file():
+                continue
+            versions += 1
+            key = f"{name}/{child.name}"
+            seen_versions.add(key)
+            report = check_directory(child)
+            problems.extend(_report_problems(key, report))
+            mode_problem = _modes_problem(key, child)
+            problems.extend([mode_problem] if mode_problem else [])
+            # A downloaded version needs a hash with provenance (unless listed unpinned); scripts are not allowed.
+            manifest = report.manifest
+            if manifest is not None and manifest.kind is ManifestKind.VERSION:
+                source = manifest.source
+                if source.populate == "download" and source.git is None:
+                    # The hash and the unpinned list must agree, and a hash must say where it came from.
+                    if source.sha256 is None and key not in unpinned:
+                        problems.append(f"{key}: has no sha256 (run the registry tool: pin {key})")
+                    if source.sha256 is not None and key in unpinned:
+                        problems.append(f"{key}: has a sha256 but is still listed as unpinned in _registry.toml")
+                    if source.sha256 is not None and source.sha256_from is None:
+                        problems.append(f"{key}: sha256 has no sha256_from provenance")
+                elif source.populate == "script":
+                    problems.append(f"{key}: a registry version is populated by the built-in download, not a script")
+            problems.extend(_launcher_problems(key, child))
+            # The fingerprint stored in the registry file must match the files on disk.
+            published = fingerprints.get(key)
+            if published is None:
+                problems.append(f"{key}: no fingerprint in {'_registry.toml'}")
+            else:
+                # Recompute the fingerprint and compare it with the published one.
+                try:
+                    actual = fingerprint_directory(child)
+                except FingerprintError as error:
+                    problems.append(f"{key}: cannot be fingerprinted ({error})")
+                else:
+                    if actual != published:
+                        problems.append(f"{key}: fingerprint {actual} does not match the published {published}")
+        hooks.extend(_hook_files(package))
+
+    # Cross-check the registry file's lists against the directories found.
+    problems.extend(f"fingerprint of '{key}' names no version directory" for key in sorted(set(fingerprints) - seen_versions))
+    package_names = {p.name for p in package_dirs(root)}
+    for name in sorted(settings.get("unversioned", [])):
+        if name not in package_names:
+            problems.append(f"'{name}' is listed as unversioned but is not a package")
+    for key in sorted(unpinned):
+        if key not in seen_versions:
+            problems.append(f"'{key}' is listed as unpinned but is not a version directory")
+    # Bound the number of hook files and require the explanatory note in each.
+    if len(hooks) > MAX_HOOK_FILES:
+        problems.append(f"{len(hooks)} hook files remain; at most {MAX_HOOK_FILES} are allowed")
+    for hook in hooks:
+        note = _hook_note_problem(hook.relative_to(root).as_posix(), hook)
+        if note:
+            problems.append(note)
+    return ValidationReport(
+        tuple(problems), len(package_dirs(root)), versions,
+        tuple(h.relative_to(root).as_posix() for h in hooks), tuple(sorted(unpinned)),
+    )
+
+
+# --- Checks of one registry area -------------------------------------------------------------
 
 
 def _report_problems(label: str, report: CheckReport) -> list[str]:
@@ -94,8 +224,10 @@ def _stray_problems(name: str, package: Path) -> list[str]:
     leading dash...) and a ``pkg.toml``; two versions that differ only in letter case cannot both be
     checked out on Windows; a stray file or a leftover ``.new-*`` staging folder is never expected.
     """
+    # Check every entry in name order; folded names detect case-only duplicates.
     problems: list[str] = []
     seen: dict[str, str] = {}
+    # Anything that is not a directory is stray; directories need a manifest and a safe, unique name.
     for entry in sorted(package.iterdir(), key=lambda item: item.name):
         label = f"{name}/{entry.name}"
         if not entry.is_dir():
@@ -103,10 +235,12 @@ def _stray_problems(name: str, package: Path) -> list[str]:
             continue
         if entry.name == TRACKER_DIR_NAME:
             continue
+        # A version directory needs a manifest and a safe name.
         if not (entry / MANIFEST_NAME).is_file():
             problems.append(f"{label}: a directory without {MANIFEST_NAME} (stray or leftover staging folder)")
         if not is_version_name(entry.name):
             problems.append(f"{label}: not a usable version name (reserved, device or unsafe)")
+        # Two names that differ only in letter case cannot both exist on Windows.
         folded = entry.name.casefold()
         if folded in seen:
             problems.append(f"{label}: differs only in letter case from {name}/{seen[folded]}")
@@ -125,7 +259,9 @@ def _modes_problem(label: str, directory: Path) -> str | None:
 
 def _launcher_problems(label: str, version: Path) -> list[str]:
     """Return a problem for each launcher that is missing or differs from the template."""
+    # Compare each expected launcher with the template, then flag retired names.
     problems = []
+    # Each expected launcher must exist and equal the template byte for byte.
     for name in LAUNCHER_NAMES:
         target = version / name
         expected = launcher_text(LAUNCHERS[name]).encode("ascii")
@@ -146,100 +282,3 @@ def _tracker_launcher_problems(label: str, tracker: Path) -> list[str]:
     if target.read_bytes() != launcher_text(LAUNCHERS[TRACKER_LAUNCHER_NAME]).encode("ascii"):
         return [f"{label}/{TRACKER_LAUNCHER_NAME}: differs from the launcher template"]
     return []
-
-
-def validate_registry(root: Path) -> ValidationReport:
-    """Validate the registry at *root* and report every problem (nothing is changed).
-
-    Parameters
-    ----------
-    root : Path
-        The registry checkout.
-
-    Returns
-    -------
-    ValidationReport
-        The problems, the number of packages and pinned versions, the hook files and the unpinned
-        versions. An unreadable ``_registry.toml`` stops the check after its own problem.
-    """
-    root = Path(root)
-    try:
-        settings = read_registry_file(root)
-    except RegistryFileError as error:
-        return ValidationReport((str(error),))
-    fingerprints: dict[str, str] = settings.get("fingerprints", {})
-    unpinned = set(settings.get("unpinned", []))
-    problems: list[str] = []
-    hooks: list[Path] = []
-    seen_versions: set[str] = set()
-    versions = 0
-
-    for package in package_dirs(root):
-        name = package.name
-        problems.extend(_tree_problems(name, package))
-        tracker = package / TRACKER_DIR_NAME
-        children = [c for c in sorted(package.iterdir()) if c.is_dir()]
-        problems.extend(_stray_problems(name, package))
-        if not (tracker / MANIFEST_NAME).is_file() and not any((c / MANIFEST_NAME).is_file() for c in children):
-            problems.append(f"{name}: has neither a tracker nor a pinned version")
-        if (tracker / MANIFEST_NAME).is_file():
-            label = f"{name}/{TRACKER_DIR_NAME}"
-            problems.extend(_report_problems(label, check_directory(tracker)))
-            mode_problem = _modes_problem(label, tracker)
-            problems.extend([mode_problem] if mode_problem else [])
-            problems.extend(f"{label}/{n}: a tracker never installs, so it carries no {n}" for n in (*LAUNCHER_NAMES, *RETIRED_LAUNCHER_NAMES) if (tracker / n).exists())
-            problems.extend(_tracker_launcher_problems(label, tracker))
-        for child in children:
-            if child.name == TRACKER_DIR_NAME or not (child / MANIFEST_NAME).is_file():
-                continue
-            versions += 1
-            key = f"{name}/{child.name}"
-            seen_versions.add(key)
-            report = check_directory(child)
-            problems.extend(_report_problems(key, report))
-            mode_problem = _modes_problem(key, child)
-            problems.extend([mode_problem] if mode_problem else [])
-            manifest = report.manifest
-            if manifest is not None and manifest.kind is ManifestKind.VERSION:
-                source = manifest.source
-                if source.populate == "download" and source.git is None:
-                    if source.sha256 is None and key not in unpinned:
-                        problems.append(f"{key}: has no sha256 (run the registry tool: pin {key})")
-                    if source.sha256 is not None and key in unpinned:
-                        problems.append(f"{key}: has a sha256 but is still listed as unpinned in _registry.toml")
-                    if source.sha256 is not None and source.sha256_from is None:
-                        problems.append(f"{key}: sha256 has no sha256_from provenance")
-                elif source.populate == "script":
-                    problems.append(f"{key}: a registry version is populated by the built-in download, not a script")
-            problems.extend(_launcher_problems(key, child))
-            published = fingerprints.get(key)
-            if published is None:
-                problems.append(f"{key}: no fingerprint in {'_registry.toml'}")
-            else:
-                try:
-                    actual = fingerprint_directory(child)
-                except FingerprintError as error:
-                    problems.append(f"{key}: cannot be fingerprinted ({error})")
-                else:
-                    if actual != published:
-                        problems.append(f"{key}: fingerprint {actual} does not match the published {published}")
-        hooks.extend(_hook_files(package))
-
-    problems.extend(f"fingerprint of '{key}' names no version directory" for key in sorted(set(fingerprints) - seen_versions))
-    package_names = {p.name for p in package_dirs(root)}
-    for name in sorted(settings.get("unversioned", [])):
-        if name not in package_names:
-            problems.append(f"'{name}' is listed as unversioned but is not a package")
-    for key in sorted(unpinned):
-        if key not in seen_versions:
-            problems.append(f"'{key}' is listed as unpinned but is not a version directory")
-    if len(hooks) > MAX_HOOK_FILES:
-        problems.append(f"{len(hooks)} hook files remain; at most {MAX_HOOK_FILES} are allowed")
-    for hook in hooks:
-        note = _hook_note_problem(hook.relative_to(root).as_posix(), hook)
-        if note:
-            problems.append(note)
-    return ValidationReport(
-        tuple(problems), len(package_dirs(root)), versions,
-        tuple(h.relative_to(root).as_posix() for h in hooks), tuple(sorted(unpinned)),
-    )

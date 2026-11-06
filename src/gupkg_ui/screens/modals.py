@@ -39,6 +39,22 @@ class ConfirmScreen(ModalFrame):
         The question, always visible at the top.
     lines : sequence of Text, optional
         Supporting lines (the plan table, the package's details) in a scrolling area under the question.
+
+    Methods
+    -------
+    key_hints
+        Return the keys of the dialog.
+    status_text
+        Return the program's status line.
+    compose_body
+        Yield the question and the scrolling details.
+    action_answer
+        Close the dialog with the answer.
+
+    Attributes
+    ----------
+    BINDINGS : list of Binding
+        The keys of the screen, as ``key`` (label): ``y`` (Yes), ``n`` (No), ``escape`` (No).
     """
 
     DEFAULT_CSS = """
@@ -53,11 +69,23 @@ class ConfirmScreen(ModalFrame):
         self._lines = list(lines)
 
     def key_hints(self) -> str:
-        """Return the keys of the dialog."""
+        """Return the keys of the dialog.
+
+        Returns
+        -------
+        str
+            The text of the top line.
+        """
         return "y yes   n no   Esc no   ↑↓ PgUp PgDn scroll"
 
     def status_text(self) -> str:
-        """Return the program's status line."""
+        """Return the program's status line.
+
+        Returns
+        -------
+        str
+            The text of the bottom line.
+        """
         return str(getattr(self.app, "status_line", lambda: "")())
 
     def compose_body(self) -> ComposeResult:
@@ -69,12 +97,30 @@ class ConfirmScreen(ModalFrame):
                 yield Static(body, markup=False)
 
     def action_answer(self, value: bool) -> None:
-        """Close the dialog with the answer."""
+        """Close the dialog with the answer.
+
+        Parameters
+        ----------
+        value : bool
+            The answer to return: ``True`` for yes.
+        """
         self.dismiss(value)
 
 
 def checksum_dialog(item: PlannedTarget) -> ConfirmScreen:
-    """Return the question for a package whose checksum is missing: package, version, URL and where the URL came from (the answer is never stored)."""
+    """Return the question for a package whose checksum is missing: package, version, URL and where the URL came from (the answer is never stored).
+
+    Parameters
+    ----------
+    item : PlannedTarget
+        The planned target that has no checksum.
+
+    Returns
+    -------
+    ConfirmScreen
+        The dialog to push; it returns ``True`` when the person agrees to install without a checksum once.
+    """
+    # Show where the download comes from, then why it cannot be checked.
     checksum = item.checksum
     lines = [
         Text(f"package: {literal(item.package or item.target, limit=120)} {literal(item.version or '?', limit=60)}"),
@@ -87,7 +133,13 @@ def checksum_dialog(item: PlannedTarget) -> ConfirmScreen:
 
 
 def cancel_dialog() -> ConfirmScreen:
-    """Return the question that Escape asks during a run (decision D37): cancelling never leaves a package half-done."""
+    """Return the question that Escape asks during a run (decision D37): cancelling never leaves a package half-done.
+
+    Returns
+    -------
+    ConfirmScreen
+        The dialog to push; it returns ``True`` when the person wants to cancel after the current package.
+    """
     return ConfirmScreen("Cancel after the current package?", [
         Text("The package that is running now finishes cleanly; the packages after it are skipped and left unchanged."),
     ])
@@ -102,6 +154,22 @@ class HelpScreen(ModalFrame):
         The heading of the help.
     lines : sequence of str
         The help text, one line per item.
+
+    Methods
+    -------
+    key_hints
+        Return the keys of the help screen.
+    status_text
+        Return the program's status line.
+    compose_body
+        Yield the help text in a scrolling area.
+    action_close
+        Return to the screen below.
+
+    Attributes
+    ----------
+    BINDINGS : list of Binding
+        The keys of the screen, as ``key`` (label): ``escape`` (Close), ``q`` (Close), ``question_mark`` (Close).
     """
 
     DEFAULT_CSS = "HelpScreen #help { padding: 0 1; }"
@@ -113,11 +181,23 @@ class HelpScreen(ModalFrame):
         self._lines = [literal(line) for line in lines]
 
     def key_hints(self) -> str:
-        """Return the keys of the help screen."""
+        """Return the keys of the help screen.
+
+        Returns
+        -------
+        str
+            The text of the top line.
+        """
         return "Esc close   ↑↓ PgUp PgDn scroll"
 
     def status_text(self) -> str:
-        """Return the program's status line."""
+        """Return the program's status line.
+
+        Returns
+        -------
+        str
+            The text of the bottom line.
+        """
         return str(getattr(self.app, "status_line", lambda: "")())
 
     def compose_body(self) -> ComposeResult:

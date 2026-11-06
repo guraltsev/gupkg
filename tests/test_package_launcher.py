@@ -1,7 +1,7 @@
 r"""Cover the package launchers (`install.cmd`, `manage.cmd`, `check-updates.cmd`): which gupkg runs and when elevated runs refuse.
 
 Behavior covered: a launcher runs the gupkg bundled in its folder first, then the folder named by the first line of
-`<root>\.gupkg\gupkg-location` (absolute, or relative to the root; read as data), then the first `gupkg.cmd` or `gupkg.exe` on
+`<root>\.gupkg\gupkg-location` (absolute, or relative to the root; treated as data), then the first `gupkg.cmd` or `gupkg.exe` on
 `PATH`, and exits 9009 with the way to get gupkg when none exists; a missing or empty `gupkg-location`, or one naming a folder
 without `gupkg.cmd`, is skipped with one line naming the file; exit code 6 from a gupkg moves on to the next step, and the
 launcher exits 6 when no step is left; the exit code of gupkg is the launcher's own; the current directory is never searched;
@@ -31,6 +31,7 @@ pytestmark = [pytest.mark.skipif(os.name != "nt", reason="the launchers are Wind
 
 # A fake gupkg: it prints its label, its own path and its arguments, and exits with the code the test set in the environment.
 FAKE = '@echo off\r\necho {label} %~f0 %*\r\nexit /b %{variable}%\r\n'
+# System32 directory, where the stock Windows tools live.
 SYSTEM32 = os.environ.get("SystemRoot", "C:\\Windows") + "\\System32"
 
 
@@ -72,11 +73,13 @@ def run(
         "BUNDLED_EXIT": str(bundled_exit), "LOCATION_EXIT": str(location_exit), "PATH_EXIT": str(path_exit),
         "PATH": path or SYSTEM32,
     }
+    # Include the caller's environment only when asked to.
     if inherit:
         environment = {**os.environ, **environment}
     if pause:
         environment.pop("GUPKG_NO_PAUSE")
     environment.update(extra_env or {})
+    # Run the launcher through cmd, answering a pause prompt when it is expected.
     return subprocess.run(
         [os.environ["ComSpec"], "/d", "/c", str(launcher), *args],
         capture_output=True, text=True, env=environment, check=False, cwd=str(cwd or launcher.parent),
@@ -95,14 +98,14 @@ def test_all_launchers_come_from_one_template_with_different_commands() -> None:
 
     assert set(LAUNCHERS) == {"install.cmd", "manage.cmd", "check-updates.cmd"}
     differing = ("if not defined GUPKG_NO_PAUSE pause", 'if not "%GUPKG_EXIT%"=="0" if not defined GUPKG_NO_PAUSE pause')
-    # Line 4 names the file itself (issue 037); the rest differs only in the command and the pause rule.
+    # Line 4 names the file itself; the rest differs only in the command and the pause rule.
     assert install.replace(" install ", " tui ").replace(*differing, 1).splitlines()[4:] == tui.splitlines()[4:]
     assert "(install.cmd)" in install.splitlines()[3] and "(manage.cmd)" in tui.splitlines()[3]
     assert "\r\n" in install
 
 
 def test_the_launcher_template_has_no_root_forwarder_and_no_system_gupkg_option() -> None:
-    """The root forwarder files and the option that skipped them are gone from the launcher (issue 035, D52)."""
+    """The root forwarder files and the option that skipped them are gone from the launcher."""
     text = launcher_text("install").lower()
 
     assert "forwarder" not in text and "system-gupkg" not in text
@@ -374,9 +377,11 @@ def marker_tree(root: Path, *, location: bool) -> tuple[Path, Path]:
     version = root / "tool" / "1.0"
     version.mkdir(parents=True)
     write_launchers(version)
+    # Place a marker-writing gupkg.cmd where the launcher must find it.
     target = root / "gupkg" / "1.0" / "App" if location else version / "gupkg"
     target.mkdir(parents=True)
     (target / "gupkg.cmd").write_text(MARKER.format(marker=marker), encoding="ascii")
+    # Point the location file at the current junction when requested.
     if location:
         (root / ".gupkg").mkdir()
         (root / ".gupkg" / "gupkg-location").write_text("gupkg\\current\\App", encoding="ascii")
@@ -641,13 +646,16 @@ def test_an_elevated_launcher_skips_a_user_writable_path_entry_and_names_it(tmp_
     """A gupkg.cmd in a user-writable folder on PATH is skipped (and named); the next admin-only entry's gupkg runs."""
     root, version, marker = admin_tree(tmp_path, location=False)
     (version / "gupkg" / "gupkg.cmd").unlink()
+    # A user-writable folder holds a decoy gupkg.cmd.
     user_folder = tmp_path / "user-bin"
     user_folder.mkdir()
     (user_folder / "gupkg.cmd").write_text(MARKER.format(marker=tmp_path / "user-ran.txt"), encoding="ascii")
+    # An admin-only folder holds the genuine one.
     admin_folder = root / "admin-bin"
     lock_down(admin_folder)
     (admin_folder / "gupkg.cmd").write_text(MARKER.format(marker=marker), encoding="ascii")
 
+    # Act: run the launcher elevated with both folders on PATH.
     result = run(version / "install.cmd", inherit=True, path=f"{user_folder};{admin_folder};{SYSTEM32}")
 
     assert result.returncode == 0, result.stderr
@@ -660,6 +668,7 @@ def test_an_elevated_launcher_refuses_a_gupkg_exe_shim_whose_config_a_user_can_w
     """For a gupkg.exe shim the check covers the shim, its config and the target; a user-writable config skips the entry."""
     root, version, marker = admin_tree(tmp_path, location=False)
     (version / "gupkg" / "gupkg.cmd").unlink()
+    # A shim in an admin-only folder, pointing at a gupkg.cmd that records its run.
     folder = root / "shims"
     lock_down(folder)
     shim = folder / "gupkg.exe"
@@ -667,6 +676,7 @@ def test_an_elevated_launcher_refuses_a_gupkg_exe_shim_whose_config_a_user_can_w
     target = root / "gupkg" / "1.0" / "App" / "gupkg.cmd"
     target.parent.mkdir(parents=True)
     target.write_text(MARKER.format(marker=marker), encoding="ascii")
+    # Make the shim's config file writable by users, which an elevated launcher must refuse.
     config = folder / "gupkg.config.toml"
     config.write_text('target = "' + str(target).replace("\\", "\\\\") + '"\n', encoding="utf-8")
     grant_users_write(config)

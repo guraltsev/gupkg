@@ -9,6 +9,12 @@ Usage and API
 ``update`` takes the package names to check (default: all), ``--registry PATH`` (default: the
 current folder), ``--sandbox DIR`` (default: a temporary folder removed afterwards) and
 ``--auto-push``.
+
+Implementation Approach
+-----------------------
+Each command is a small handler that resolves its sandbox, delegates the real work to the update,
+validate and publish modules, and turns their reports and errors into printed lines and an exit
+status. Progress is printed as packages are checked so a long run shows where it is.
 """
 
 from __future__ import annotations
@@ -31,7 +37,23 @@ from .validate import validate_registry
 
 
 def main(argv: Sequence[str] | None = None, *, system: System | None = None, environ: Mapping[str, str] | None = None) -> int:
-    """Run one command and return its exit status (see the module docstring)."""
+    """Run one command and return its exit status (see the module docstring).
+
+    Parameters
+    ----------
+    argv : Sequence[str] or None
+        Command-line arguments without the program name; ``None`` reads ``sys.argv``.
+    system : System or None
+        Machine access used by the commands; ``None`` uses the real Windows system.
+    environ : Mapping[str, str] or None
+        Environment passed to trackers; ``None`` uses ``os.environ``.
+
+    Returns
+    -------
+    int
+        0 on success, 1 when a package failed or the registry has problems, 2 for a usage or
+        registry-file error.
+    """
     args = _parser().parse_args(list(sys.argv[1:] if argv is None else argv))
     system = system if system is not None else WindowsSystem()
     environ = os.environ if environ is None else environ
@@ -58,8 +80,10 @@ def _print(outcome: Outcome) -> None:
 
 def _print_summary(outcomes: Sequence[Outcome]) -> None:
     """Print the counts, then the packages by outcome: updated, to review, failed (with the reason) and current."""
+    # One summary line with the non-zero status counts.
     counts = {status: sum(1 for o in outcomes if o.status == status) for status in ("added", "pinned", "current", "failed")}
     print("summary: " + ", ".join(f"{count} {status}" for status, count in counts.items() if count) + f" of {len(outcomes)} packages", flush=True)
+    # Packages that changed the registry, with the subsets that need a human look.
     written = [o for o in outcomes if o.status in ("added", "pinned")]
     if written:
         print(f"updated ({len(written)}): " + ", ".join(f"{o.package} {o.version}" for o in written))
@@ -69,6 +93,7 @@ def _print_summary(outcomes: Sequence[Outcome]) -> None:
     unversioned = [o for o in written if o.unversioned]
     if unversioned:
         print(f"download address has no version in it ({len(unversioned)}): " + ", ".join(o.package for o in unversioned))
+    # Failures are listed with their reasons; unchanged packages come last.
     failed = [o for o in outcomes if o.status == "failed"]
     if failed:
         print(f"failed ({len(failed)}):")
@@ -86,14 +111,30 @@ class _Progress:
         self.open = False
 
     def start(self, name: str, number: int, total: int) -> None:
-        """Announce the package being checked (the outcome line completes it)."""
+        """Announce the package being checked (the outcome line completes it).
+
+        Parameters
+        ----------
+        name : str
+            Package name.
+        number : int
+            One-based position of the package in this run.
+        total : int
+            Number of packages in this run.
+        """
         if self.open:
             print(flush=True)
         print(f"[{number}/{total}] {name} ... ", end="", flush=True)
         self.open = True
 
     def outcome(self, outcome: Outcome) -> None:
-        """Print the outcome, finishing the open line."""
+        """Print the outcome, finishing the open line.
+
+        Parameters
+        ----------
+        outcome : Outcome
+            Result for the package just announced.
+        """
         self.open = False
         _print(outcome)
 
@@ -106,8 +147,10 @@ class _Progress:
 
 def _run_update(args: argparse.Namespace, system: System, environ: Mapping[str, str]) -> int:
     """Run the trackers; commit and push only with ``--auto-push``."""
+    # Run the trackers in a sandbox that is removed afterwards if this run created it.
     sandbox, temporary = _sandbox(args)
     progress = _Progress()
+    # Check the packages; a malformed registry file is a usage error, and the sandbox goes either way.
     try:
         report = update_registry(
             args.registry,
@@ -115,6 +158,7 @@ def _run_update(args: argparse.Namespace, system: System, environ: Mapping[str, 
             sandbox=sandbox,
             names=args.packages or None,
             environ=environ,
+            # Progress lines are printed as each package starts and finishes.
             on_start=progress.start,
             on_outcome=progress.outcome,
         )
@@ -123,8 +167,10 @@ def _run_update(args: argparse.Namespace, system: System, environ: Mapping[str, 
         print(f"error: {error}", file=sys.stderr)
         return 2
     finally:
+        # Remove the sandbox only when this run created it.
         if temporary:
             shutil.rmtree(sandbox, ignore_errors=True)
+    # Report, then publish only when the user asked for it and something was written.
     progress.finish()
     _print_summary(report.outcomes)
     if args.auto_push and report.written:
@@ -134,6 +180,7 @@ def _run_update(args: argparse.Namespace, system: System, environ: Mapping[str, 
             print(f"error: {error}", file=sys.stderr)
             return 1
         print("committed and pushed")
+    # Without --auto-push the maintainer reviews and commits by hand.
     elif report.written:
         print("new versions are written but not committed: review them, then commit and push (or use --auto-push).")
     return 0 if report.ok else 1
@@ -141,6 +188,7 @@ def _run_update(args: argparse.Namespace, system: System, environ: Mapping[str, 
 
 def _run_pin(args: argparse.Namespace, system: System, environ: Mapping[str, str]) -> int:
     """Give a version its first hash; commit and push only with ``--auto-push``."""
+    # Pin in a sandbox that is removed afterwards if this run created it.
     sandbox, temporary = _sandbox(args)
     try:
         outcome = pin_version(args.registry, system, args.version, sandbox=sandbox, environ=environ)
@@ -150,6 +198,7 @@ def _run_pin(args: argparse.Namespace, system: System, environ: Mapping[str, str
     finally:
         if temporary:
             shutil.rmtree(sandbox, ignore_errors=True)
+    # A failed pin is never published; otherwise push only on request.
     _print(outcome)
     if outcome.status == "failed":
         return 1
@@ -192,28 +241,48 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="gupkg-registry", description="Keep a gupkg registry's pinned versions current.")
     commands = parser.add_subparsers(dest="command", required=True)
 
+    # Option groups shared by several subcommands.
     def common(sub: argparse.ArgumentParser) -> None:
+        """Add the option every command shares.
+
+        Parameters
+        ----------
+        sub : argparse.ArgumentParser
+            The subparser to extend.
+        """
         sub.add_argument("--registry", type=Path, default=Path.cwd(), help="the registry checkout (default: current folder)")
 
+    # The download and publish options belong to the commands that fetch artifacts.
     def network(sub: argparse.ArgumentParser) -> None:
+        """Add the options of commands that download and may publish.
+
+        Parameters
+        ----------
+        sub : argparse.ArgumentParser
+            The subparser to extend.
+        """
+        # Where downloads go, then whether and where to publish.
         sub.add_argument("--sandbox", type=Path, metavar="DIR", help="scratch folder for downloads and staging (default: temporary)")
         sub.add_argument("--auto-push", action="store_true", help="commit the written versions and push (default: write only)")
         sub.add_argument("--allow-computed", action="store_true", help="with --auto-push, also publish hashes the tool computed itself (trust on first use)")
         sub.add_argument("--remote", help="with --auto-push, the remote to push to (default: the branch's upstream)")
         sub.add_argument("--branch", help="with --auto-push, the branch to push to (default: the branch's upstream)")
 
+    # One subparser per command, each bound to its handler through ``run``.
     update = commands.add_parser("update", help="run trackers and write new pinned versions")
     update.add_argument("packages", nargs="*", help="only these packages (default: all)")
     common(update)
     network(update)
     update.set_defaults(run=_run_update)
 
+    # ``pin`` shares the download and publish options with ``update``.
     pin = commands.add_parser("pin", help="give a version without a hash its first one (NAME/VERSION)")
     pin.add_argument("version", help="the version directory, as name/version")
     common(pin)
     network(pin)
     pin.set_defaults(run=_run_pin)
 
+    # ``launchers`` and ``validate`` work on the checkout alone and never touch the network.
     launchers = commands.add_parser("launchers", help="write install.cmd and manage.cmd into every version and check-updates.cmd into every tracker")
     common(launchers)
     launchers.set_defaults(run=_run_launchers)

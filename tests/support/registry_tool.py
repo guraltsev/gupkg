@@ -4,6 +4,16 @@
 GitHub, a ``Last-Modified`` and an index provider), ``machine`` a ``FakeSystem`` that serves the vendor answers of those
 packages and their artifacts, ``valid_registry`` a registry with one tracker and one pinned version that passes every rule,
 ``Git`` is a ``git`` double and ``run_cli`` runs the tool's command line. Nothing here is copied from a real registry.
+
+Usage and API
+-------------
+Call ``registry_of`` or ``valid_registry`` for a registry folder, ``machine`` for the pretend machine that serves the
+vendors, and ``run_cli`` to run the tool against them.
+
+Implementation Approach
+-----------------------
+Trackers and vendor answers are small invented documents kept in two tables keyed by package name, so a test chooses
+its world by naming packages, and the tool runs on real folders with a fake network.
 """
 
 from __future__ import annotations
@@ -61,6 +71,7 @@ TRACKERS = {
     ),
 }
 
+# Address of the checksum list that the ``index_editor`` case serves.
 SUMS = "https://ftp.example/editor/editor-30/editor-30.2-sha256sums.txt"
 # What the vendors of those packages answer, by case name: {address: answer}.
 ANSWERS: dict[str, dict[str, FakeHttp]] = {
@@ -85,7 +96,13 @@ ANSWERS: dict[str, dict[str, FakeHttp]] = {
 
 
 class Git:
-    """A ``git`` double that records every command and can fail one subcommand."""
+    """A ``git`` double that records every command and can fail one subcommand.
+
+    Parameters
+    ----------
+    fail : str | None, optional
+        Subcommand (``add``, ``commit`` or ``push``) that exits non-zero; none fails when ``None``.
+    """
 
     def __init__(self, fail: str | None = None) -> None:
         """Remember which subcommand (``add``, ``commit`` or ``push``) should exit non-zero."""
@@ -99,13 +116,30 @@ class Git:
 
 
 def registry_of(tmp_path: Path, *packages: str, extra: dict[str, str] | None = None) -> Path:
-    """Build a registry in ``tmp_path/registry`` holding the trackers of *packages* (names of ``TRACKERS``) and a fresh ``_registry.toml``."""
+    """Build a registry in ``tmp_path/registry`` holding the trackers of *packages* (names of ``TRACKERS``) and a fresh ``_registry.toml``.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Temporary folder that receives ``registry``.
+    *packages : str
+        Names from ``TRACKERS`` whose trackers are written.
+    extra : dict[str, str] | None, optional
+        Additional files written as given, as ``{path: text}``.
+
+    Returns
+    -------
+    Path
+        The registry folder.
+    """
+    # Start from an empty registry folder and write each requested tracker with its launcher.
     root = registry_without_file(tmp_path)
     for package in packages:
         tracker = root / package / "_check_updates"
         tracker.mkdir(parents=True)
         (tracker / "pkg.toml").write_text(TRACKERS[package], encoding="utf-8", newline="\n")
         write_launchers(tracker, (TRACKER_LAUNCHER_NAME,))
+    # Add the extra files verbatim, then the registry file that fingerprints nothing.
     for name, text in (extra or {}).items():
         target = root / name
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -115,14 +149,42 @@ def registry_of(tmp_path: Path, *packages: str, extra: dict[str, str] | None = N
 
 
 def registry_without_file(tmp_path: Path) -> Path:
-    """Create and return the empty folder ``tmp_path/registry``."""
+    """Create and return the empty folder ``tmp_path/registry``.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Temporary folder that receives ``registry``.
+
+    Returns
+    -------
+    Path
+        The empty registry folder.
+    """
     root = tmp_path / "registry"
     root.mkdir()
     return root
 
 
 def machine(tmp_path: Path, *cases: str, artifacts: dict[str, bytes] | None = None, git: Git | None = None) -> FakeSystem:
-    """A FakeSystem serving the vendor answers of *cases* (names of ``ANSWERS``) and the *artifacts* ``{url: bytes}``, with *git* as the only ``git``."""
+    """A FakeSystem serving the vendor answers of *cases* (names of ``ANSWERS``) and the *artifacts* ``{url: bytes}``, with *git* as the only ``git``.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Temporary folder that holds the machine.
+    *cases : str
+        Names from ``ANSWERS`` whose vendor answers are served.
+    artifacts : dict[str, bytes] | None, optional
+        Additional ``{url: bytes}`` downloads to serve.
+    git : Git | None, optional
+        Scripted git that is the only ``git`` process.
+
+    Returns
+    -------
+    FakeSystem
+        The fake machine.
+    """
     system = FakeSystem(tmp_path / "machine", processes={"git": git} if git else {})
     for case in cases:
         system.urls.update(ANSWERS[case])
@@ -132,12 +194,44 @@ def machine(tmp_path: Path, *cases: str, artifacts: dict[str, bytes] | None = No
 
 
 def zip_bytes(tmp_path: Path, name: str, members: dict[str, str]) -> bytes:
-    """Return the bytes of a zip archive of *members*."""
+    """Return the bytes of a zip archive of *members*.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Temporary folder where the archive is staged.
+    name : str
+        File name of the archive.
+    members : dict[str, str]
+        Archive members as ``{name: text}``.
+
+    Returns
+    -------
+    bytes
+        Bytes of the archive.
+    """
     return make_zip(tmp_path / name, members).read_bytes()
 
 
 def run_cli(root: Path, system: FakeSystem, tmp_path: Path, *arguments: str) -> int:
-    """Run the command line against *root* with the given system and an empty environment."""
+    """Run the command line against *root* with the given system and an empty environment.
+
+    Parameters
+    ----------
+    root : Path
+        Registry folder to check.
+    system : FakeSystem
+        Fake machine to run against.
+    tmp_path : Path
+        Temporary folder that holds the sandbox.
+    *arguments : str
+        Command words before the registry and sandbox options.
+
+    Returns
+    -------
+    int
+        The exit code of the command.
+    """
     return main([*arguments, "--registry", str(root), "--sandbox", str(tmp_path / "sandbox")], system=system, environ={})
 
 
@@ -149,6 +243,7 @@ VALID_TRACKER = (
     '[[path]]\nvalue = "$App\\\\bin"\n\n'
     '[[shim]]\nname = "tool"\ntarget = "$App\\\\bin\\\\tool.exe"\n'
 ).encode()
+# A pinned version that validates: its digest comes from the registry's fingerprints.
 VALID_VERSION = (
     'format = 2\ndescription = "d"\nmodes = ["system", "user"]\n\n[source]\n'
     'download_url = "https://vendor.example/files/gizmo_1002.zip"\n'
@@ -157,7 +252,19 @@ VALID_VERSION = (
 
 
 def valid_registry(tmp_path: Path) -> Path:
-    """A registry of two packages that passes every rule: ``gh`` (a tracker) and ``gizmo`` (the fully pinned version ``10.02``)."""
+    """A registry of two packages that passes every rule: ``gh`` (a tracker) and ``gizmo`` (the fully pinned version ``10.02``).
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Temporary folder that receives ``registry``.
+
+    Returns
+    -------
+    Path
+        The registry folder.
+    """
+    # Write the tracker and the pinned version, each with its launchers.
     root = registry_without_file(tmp_path)
     tracker = root / "gh" / "_check_updates"
     tracker.mkdir(parents=True)
@@ -167,6 +274,7 @@ def valid_registry(tmp_path: Path) -> Path:
     version.mkdir(parents=True)
     (version / "pkg.toml").write_bytes(VALID_VERSION)
     write_launchers(version)
+    # Publish the version's fingerprint so the registry file agrees with the files on disk.
     write_registry_file(root, {
         "format": 2, "name": "test-registry", "description": "A registry for tests.",
         "fingerprints": {"gizmo/10.02": fingerprint_directory(version)},

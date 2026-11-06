@@ -26,9 +26,12 @@ import urllib.request
 from typing import Any
 
 
+# Version of the update-check module interface that this script implements.
 PKG_MODULE_API = 1
 
+# Address that publishes the current release information.
 _ROOT = "https://www.python.org/ftp/python/"
+# Pattern that extracts the version (and file address, where captured) from the response.
 _VERSION_DIRECTORY = re.compile(r'href="(?P<version>3\.\d+\.\d+)/"')
 
 
@@ -74,12 +77,14 @@ def check_update(context: dict[str, Any]) -> dict[str, str] | None:
 
     # Walk from the newest folder down; the newest folders may hold only
     # pre-release files or no Windows build at all.
+    # Take the newest version whose directory holds the embeddable ZIP.
     for version in versions:
         file_name = f"python-{version}-embed-amd64.zip"
         directory = f"{_ROOT}{version}/"
         if f'href="{file_name}"' not in _read(directory):
             continue
 
+        # Report no candidate when this version is installed and healthy.
         current = context.get("current", {})
         if current.get("version") == version and current.get("appReady", True):
             return None

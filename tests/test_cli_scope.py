@@ -2,7 +2,7 @@
 
 Behavior covered: a normal process installs into the user root and an elevated one into the system root, neither run taking a
 flag; ``--mode`` in any position and ``system:`` / ``user:`` target prefixes are usage errors (exit code 2) and change nothing; an
-elevated run whose gupkg tree standard users can change fails at start with exit code 2, before any root is read or written;
+elevated run whose gupkg tree standard users can change fails at launch with exit code 2, before any root is opened or written;
 ``--root`` names the root and is reported as the source; the Resolve phase, the run log and the package log name the mode, the
 root and the source (``<mode> root <path> (<source>)``); a root-wide ``cleanup`` prunes the run's root only; an elevated run writes its
 events file into the system root and may copy a distribution folder in; a gupkg installed in another root than the run's is refused by ``self update`` with a clear
@@ -164,15 +164,19 @@ def test_self_update_in_a_run_whose_root_is_not_the_gupkgs_own_is_refused_with_a
 
 def test_an_elevated_install_writes_the_events_file_into_the_system_root(cli_elevated_world: CliWorld) -> None:
     """The events file named by ``--events-file`` is written into the system root's log folders and ends with the result document."""
+    # Arrange: a published system package on an elevated machine.
     cli_elevated_world.publish("tool", "1.0.0", mode="system")
 
+    # Act: install it with an events file.
     result = cli_elevated_world.cli("install", "tool", "--events-file", "run.jsonl", "--yes")
 
+    # Assert: the package installed and both events files exist.
     assert result.code == 0, result.err
     assert (cli_elevated_world.system_root / "tool" / "current").is_dir()
     run_events = cli_elevated_world.system_root / ".gupkg" / "logs" / "run.jsonl"
     package_events = cli_elevated_world.system_root / "tool" / ".gupkg" / "logs" / "run.jsonl"
     assert run_events.is_file() and package_events.is_file()
+    # The events file holds the run's records, ending with the result.
     records = [json.loads(line) for line in run_events.read_text(encoding="utf-8").splitlines()]
     assert records[-1]["event"] == "run_end" and records[-1]["exit_code"] == 0
     assert records[-1]["result"]["api"] == 2 and records[-1]["result"]["results"][0]["package"] == "tool"
@@ -192,6 +196,7 @@ def test_an_administrator_shell_may_copy_a_distribution_folder_into_the_system_r
 
 def test_the_elevated_sweep_leaves_a_busy_system_package_alone(cli_elevated_world: CliWorld) -> None:
     """A root-wide cleanup skips a package another run holds (it does not fail package-busy) and prunes the root."""
+    # Arrange: two system packages, one of them installed and locked by a live process.
     cli_elevated_world.publish("tool", "1.0.0", mode="system")
     cli_elevated_world.publish("other", "1.0.0", mode="system")
     assert cli_elevated_world.cli("install", "tool", "--yes").code == 0
@@ -200,8 +205,10 @@ def test_the_elevated_sweep_leaves_a_busy_system_package_alone(cli_elevated_worl
     lock.write_text(render_lock(Holder(424242, socket.gethostname(), "update", "2026-10-24T10:00:00", "othertoken")), encoding="utf-8")
     cli_elevated_world.fake.live_pids.add(424242)
 
+    # Act: sweep the root with ``cleanup``.
     result = cli_elevated_world.cli("cleanup", "--yes", "--json")
 
+    # Assert: the busy package is left alone and the other one is cleaned.
     document = result.document()
     assert result.code == 0, result.err
     assert {item["package"]: item["status"] for item in document["results"]} == {"other": "cleaned", "tool": "locked"}

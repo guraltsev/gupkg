@@ -10,7 +10,7 @@ pinned, mismatching and unpinned; and the proof that no setting or environment v
 reach the rule.
 
 Real: ``HttpClient``, the policy, the cache files and, in the loopback tests, the Windows
-transport against a thread on 127.0.0.1. Mocked: ``FakeSystem`` serves the https fixtures and
+transport against a background server on 127.0.0.1. Mocked: ``FakeSystem`` serves the https fixtures and
 plays ``git``. Out of scope: the engine and the CLI flag (issues 028 and 029), the manager.
 """
 
@@ -50,10 +50,15 @@ from gupkg.system.port import Mode
 
 pytestmark = pytest.mark.unit
 
+# The artifact bytes, large enough to be streamed in several chunks.
 BODY = bytes(range(256)) * 700
+# The correct digest of the artifact.
 GOOD = hashlib.sha256(BODY).hexdigest()
+# A well-formed digest that does not match the artifact.
 WRONG = hashlib.sha256(b"something else").hexdigest()
+# An https address of the artifact.
 HTTPS = "https://example.org/tool.zip"
+# An http address of the artifact.
 HTTP = "http://example.org/tool.zip"
 
 
@@ -91,6 +96,7 @@ def serve_both(system: FakeSystem, body: bytes = BODY) -> None:
 # The behaviour matrix
 # ---------------------------------------------------------------------------
 
+# The policy matrix: hash state, flag, scheme and the outcome each combination must end in.
 MATRIX = [
     pytest.param("present", None, HTTPS, "verified", id="hash-present-https-no-flag-verified"),
     pytest.param("present", SKIPPED_CLI, HTTPS, "verified", id="hash-present-https-flag-still-verified"),
@@ -114,10 +120,12 @@ def test_the_policy_matrix_over_fetch_artifact(
     system: FakeSystem, tmp_path: Path, hash_state: str, skip: str | None, url: str, outcome: str
 ) -> None:
     """Each hash state, flag and scheme ends as the policy table says; refusals never touch the network."""
+    # Arrange: serve the artifact and choose the expected digest of the case.
     serve_both(system)
     expected = {"present": GOOD, "missing": None, "wrong": WRONG}[hash_state]
     client = make_client(system, tmp_path)
 
+    # A missing hash is refused before any request, and only a skippable refusal names the flag.
     if outcome in ("missing-skippable", "missing-unskippable"):
         with pytest.raises(ChecksumMissing) as raised:
             fetch_artifact(client, url, expected_sha256=expected, skip=skip)
@@ -126,12 +134,14 @@ def test_the_policy_matrix_over_fetch_artifact(
         assert ("--skip-checksum" in str(raised.value)) is True
         assert system.request_log == [], "the download must never be started"
         assert cached_files(tmp_path) == []
+    # A wrong hash is refused and leaves nothing in the cache.
     elif outcome == "mismatch":
         with pytest.raises(ChecksumMismatch) as raised:
             fetch_artifact(client, url, expected_sha256=expected, skip=skip)
         assert raised.value.exit_code == 3 and raised.value.code == "checksum-mismatch"
         assert cached_files(tmp_path) == [], "a file that failed verification must not stay in the cache"
     else:
+        # Every other case ends in a downloaded file with the receipt the policy calls for.
         fetched = fetch_artifact(client, url, expected_sha256=expected, skip=skip)
         assert fetched.record.decision == outcome
         assert fetched.record.observed_sha256 == GOOD
@@ -391,17 +401,20 @@ class Loopback(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802 - the name is the HTTP method
         """Answer by path."""
+        # Count the request, then answer by path.
         type(self).hits.append(self.path)
         if self.path == "/good":
             body = BODY
         elif self.path == "/modified":
             body = BODY[:-1] + bytes([BODY[-1] ^ 1])
+        # A short body promises more bytes than it sends.
         elif self.path == "/short":
             self.wfile.write(b"HTTP/1.0 200 OK\r\nContent-Length: %d\r\n\r\n" % len(BODY) + BODY[:1000])
             return
         else:
             self.send_error(404)
             return
+        # Send the full body.
         self.send_response(200)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -491,13 +504,16 @@ def test_a_checksum_missing_skip_setting_has_no_effect_on_the_download_rule(
     assert system.request_log == []
 
 
+# The product's source folder, whose modules are inspected.
 SOURCE_ROOT = Path(__file__).resolve().parents[1] / "src" / "gupkg"
 # The roots of the download rule: the gate, the fetch, the client it downloads through, and the git checkout.
 RULE_ROOTS = ("gupkg.model.checksum", "gupkg.services.artifact", "gupkg.services.http", "gupkg.services." + "unpack.git" + "source")
 # Modules that read the environment, and why that cannot weaken a check: they only detect an elevated run
 # (``GUPKG_ELEVATED``), and an elevated run is stricter.
 ENVIRONMENT_READERS = {"gupkg.system.port"}
+# Attributes whose use means a module reads the environment or loads code by name.
 FORBIDDEN_ATTRIBUTES = {"environ", "environb", "getenv", "argv", "import_module"}
+# Names whose use means the same.
 FORBIDDEN_NAMES = {"__import__", "getenv"}
 
 
@@ -530,6 +546,7 @@ def rule_closure() -> dict[str, Path]:
     The parent packages of a module count too: importing ``gupkg.services.http`` runs ``gupkg/__init__.py`` and
     ``gupkg/services/__init__.py`` first.
     """
+    # Walk the imports of the rule's modules, adding each parent package too.
     seen: dict[str, Path] = {}
     pending = list(RULE_ROOTS)
     while pending:
@@ -538,6 +555,7 @@ def rule_closure() -> dict[str, Path]:
         if name not in seen and path is not None:
             seen[name] = path
             pending += gupkg_imports(name, path)
+            # A module's parent packages run their ``__init__`` first, so they belong to the closure.
             parts = name.split(".")
             pending += [".".join(parts[:count]) for count in range(1, len(parts))]
     return seen
@@ -563,14 +581,17 @@ def test_the_download_rule_and_everything_it_imports_read_neither_settings_nor_t
 
     Flags `os.environ`, `os.environb`, `os.getenv`, `sys.argv`, `__import__` and `importlib.import_module`.
     """
+    # Compute the closure and check it is not empty.
     closure = rule_closure()
     assert {"gupkg.model.checksum", "gupkg.services.http", "gupkg.system.port"} <= set(closure), "the closure was not computed"
+    # Find the modules of the closure that read the environment.
     readers: set[str] = set()
     for name, path in closure.items():
         if reads_the_environment(ast.parse(path.read_text(encoding="utf-8"))):
             readers.add(name)
         assert "settings" not in name and "manager" not in name, f"{name} is part of the download rule's imports"
     assert readers == ENVIRONMENT_READERS, f"unexpected readers of the environment: {sorted(readers ^ ENVIRONMENT_READERS)}"
+    # The gate and the fetch import neither ``os`` nor ``sys``.
     for name in ("gupkg.model.checksum", "gupkg.services.artifact"):
         tree = ast.parse(closure[name].read_text(encoding="utf-8"))
         direct = {alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names}
@@ -597,6 +618,7 @@ def test_the_closure_includes_the_parent_packages_of_every_module() -> None:
 # Git sources
 # ---------------------------------------------------------------------------
 
+# Address of the git repository the checkout tests use.
 GIT_URL = "https://example.org/team/tool.git"
 
 
@@ -674,6 +696,7 @@ def test_fetch_result_type_is_frozen(system: FakeSystem, tmp_path: Path) -> None
 # Near misses: digests and commits that differ only late, or only early
 # ---------------------------------------------------------------------------
 
+# Digit positions at which a near-miss digest differs from the right one.
 POSITIONS = [
     pytest.param(0, id="first-character"),
     pytest.param(31, id="last-of-the-first-half"),
@@ -720,6 +743,7 @@ def test_a_cached_file_is_reused_only_for_the_exact_digest(system: FakeSystem, t
     The entry is planted under the key of the near-miss digest; the server now serves other bytes, so the only
     way to succeed would be to accept the planted file.
     """
+    # Arrange: a file cached under a near-miss digest, and a server that now serves other bytes.
     near = flip(GOOD, position)
     cache = tmp_path / "cache"
     cache.mkdir()
@@ -727,11 +751,13 @@ def test_a_cached_file_is_reused_only_for_the_exact_digest(system: FakeSystem, t
     (cache / f"{key}.file").write_bytes(BODY)
     system.urls[HTTPS] = FakeHttp(b"the server serves something else now")
 
+    # Act: the near-miss digest must not be satisfied from the cache.
     with pytest.raises(ChecksumMismatch):
         fetch_artifact(make_client(system, tmp_path), HTTPS, expected_sha256=near)
     with pytest.raises(HttpMismatch):
         make_client(system, tmp_path).download(HTTPS, expected_sha256=near)
 
+    # Assert: a request was made, so the planted file was not accepted.
     assert system.request_log, "the planted file must not have been accepted without a request"
 
 

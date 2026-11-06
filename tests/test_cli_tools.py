@@ -2,7 +2,7 @@
 
 Behaviour covered: ``registry sync`` publishes a cache (and a failure is exit 3 that keeps the previous tree), ``status`` and
 ``list`` report it, ``add`` and ``remove`` edit ``[[registry]]`` in the settings file of the chosen layer, and the system root
-is written only from an administrator shell; ``settings show|path|init|set`` read the layers and write one file after the schema
+is written only from an administrator shell; ``settings show|path|init|set`` load the layers and write one file after the schema
 accepted the value; ``link`` follows another registry entry, none, or the same-name entry again; ``pkg new`` writes starters that
 ``pkg check`` accepts, ``pkg check`` reports every problem and ``--install`` installs into a throw-away root on a pretend
 machine, ``pkg pin`` shows where a hash came from and asks before it writes, ``pkg export`` writes a ZIP and prints its SHA-256,
@@ -37,6 +37,7 @@ from tests.support.mode import tree_snapshot
 
 pytestmark = pytest.mark.unit
 
+# Table that declares the shim of the test package.
 FULL = '[[shim]]\nname = "tool"\ntarget = "$App\\\\app.exe"\n'
 
 
@@ -149,16 +150,20 @@ def test_settings_init_then_set_writes_the_user_file_after_validation(cli_world:
 
 def test_settings_init_writes_commented_entries_that_are_valid_once_switched_on(cli_world: CliWorld) -> None:
     """The new file explains the common settings in comments; switching every entry on keeps the defaults and the schema accepts it."""
+    # Arrange: the root's settings file and the default values that ``settings show`` reports.
     path = cli_world.user / ".gupkg" / "settings.toml"
     defaults = {row["key"]: row["value"] for row in cli_world.cli("settings", "show", "--json").document()["settings"]}
     assert cli_world.cli("settings", "init").code == 0
     text = path.read_text(encoding="utf-8")
 
+    # Assert: the template documents the optional entries.
     assert "shortcut_prefix" in text and "relative to the Start Menu folder" in text
 
+    # Switch every entry on by uncommenting it, then show the settings again.
     path.write_text(re.sub(r"^# (\[\w+\]|\w+ = .*)$", r"\1", text, flags=re.MULTILINE), encoding="utf-8")
     shown = cli_world.cli("settings", "show", "--json")
 
+    # Assert: the entries now come from the root and keep their default values.
     assert shown.code == 0, shown.err
     rows = {row["key"]: row for row in shown.document()["settings"]}
     switched = {key for key, row in rows.items() if row["layer"] == "root"}
@@ -263,12 +268,15 @@ def test_link_to_an_entry_that_does_not_exist_is_refused(cli_world: CliWorld) ->
 
 def test_pkg_new_writes_starters_that_pkg_check_accepts_and_never_overwrites(cli_world: CliWorld, tmp_path: Path) -> None:
     """A tracker and a pinned version are written, pass `pkg check`, and a second `pkg new` refuses to replace them."""
+    # Arrange: a folder for the authoring files.
     base = tmp_path / "authoring"
 
+    # Act: write the starters and check them.
     version = cli_world.cli("pkg", "new", "mine@1.0", "--dir", str(base), "--json")
     tracker = cli_world.cli("pkg", "new", "mine", "--track", "github:owner/mine", "--dir", str(base))
     checked = cli_world.cli("pkg", "check", str(base / "mine"), "--json")
 
+    # Assert: the starters pass the check, an existing folder is never overwritten and bad requests are refused.
     assert version.code == 0 and tracker.code == 0, (version.err, tracker.err)
     assert version.document()["files"] == [str(base / "mine" / "1.0" / name) for name in ("pkg.toml", "install.cmd", "manage.cmd")]
     assert (base / "mine" / "_check_updates" / "check-updates.cmd").is_file()
@@ -309,16 +317,19 @@ def test_pkg_check_install_installs_into_a_throwaway_root_and_changes_nothing_re
 
 def test_pkg_check_install_reports_a_missing_checksum_and_refuses_elevation(cli_world: CliWorld, tmp_path: Path) -> None:
     """A version with no hash fails its sandboxed install (exit 3, checksum-missing); an elevated run does not run package code."""
+    # Arrange: a version folder whose artifact has no checksum.
     url, _ = cli_world.serve("mine", "1.0")
     folder = tmp_path / "authoring" / "mine" / "1.0"
     folder.mkdir(parents=True)
     folder.joinpath("pkg.toml").write_text(pkg_text(url), encoding="utf-8")
 
+    # Act: check it with installation, then without the checksum rule, then as an elevated user.
     failed = cli_world.cli("pkg", "check", str(folder), "--install", "--json")
     skipped = cli_world.cli("pkg", "check", str(folder), "--install", "--skip-checksum")
     cli_world.fake.elevated = True
     elevated = cli_world.cli("pkg", "check", str(folder), "--install")
 
+    # Assert: the missing checksum is reported, can be skipped, and an elevated run is refused.
     assert failed.code == 3 and failed.document()["install"]["results"][0]["error"]["code"] == "checksum-missing"
     assert skipped.code == 0
     assert elevated.code == 2 and "normal shell" in elevated.err
@@ -326,19 +337,23 @@ def test_pkg_check_install_reports_a_missing_checksum_and_refuses_elevation(cli_
 
 def test_pkg_pin_shows_where_the_hash_came_from_and_asks_before_writing(cli_world: CliWorld) -> None:
     """The facts (URL, final URL, size, date, hash) and the warning are shown; no answer, --no-input or "n" write nothing."""
+    # Arrange: an installed package without a checksum.
     cli_world.publish("loose", "1.0.0", hashed=False)
     assert cli_world.cli("install", "loose", "--skip-checksum").code == 0
     manifest = cli_world.user / "loose" / "1.0.0" / "pkg.toml"
     before = manifest.read_text(encoding="utf-8")
 
+    # Act: decline to pin, once without input and once by answering no.
     refused = cli_world.cli("pkg", "pin", "loose", "--no-input")
     declined = cli_world.cli("pkg", "pin", "loose", stdin="n\n")
 
+    # Assert: both are refused with the facts about the download and nothing is written.
     for result in (refused, declined):
         assert result.code == 5 and manifest.read_text(encoding="utf-8") == before
         text = result.out + result.err
         assert "https://example.org/files/loose-1.0.0.zip" in text and "final url:" in text and "size:" in text
         assert "date:" in text and "NOT verified" in text
+    # Accepting writes the pinned hash and a receipt that records it.
     accepted = cli_world.cli("pkg", "pin", "loose", stdin="y\n")
     assert accepted.code == 0, accepted.err
     pinned = manifest.read_text(encoding="utf-8")
@@ -362,13 +377,16 @@ def test_pkg_pin_with_yes_pins_and_a_verified_install_has_nothing_to_pin(cli_wor
 
 
 def test_pkg_export_writes_a_distribution_zip_and_prints_its_sha256(cli_world: CliWorld, tmp_path: Path) -> None:
-    """The ZIP holds <name>/<version>/... and the tracker, the printed digest is the file's, the same input gives the same bytes."""
+    """The ZIP holds the version folder and the tracker, the printed digest is the file's, and the same input gives the same bytes."""
+    # Arrange: a starter package with a tracker.
     base = tmp_path / "authoring"
     assert cli_world.cli("pkg", "new", "mine@1.0", "--track", "github:owner/mine", "--dir", str(base)).code == 0
     output = tmp_path / "mine-1.0.zip"
 
+    # Act: export the version.
     result = cli_world.cli("pkg", "export", str(base / "mine" / "1.0"), "-o", str(output), "--json")
 
+    # Assert: the digest is the file's, and the ZIP holds the version and the tracker.
     document = result.document()
     assert result.code == 0 and document["sha256"] == hashlib.sha256(output.read_bytes()).hexdigest()
     assert result.err.strip() == document["sha256"]
@@ -378,6 +396,7 @@ def test_pkg_export_writes_a_distribution_zip_and_prints_its_sha256(cli_world: C
             "mine/_check_updates/check-updates.cmd", "mine/_check_updates/pkg.toml",
         ]
         assert archive.read("mine/1.0/install.cmd") == launcher_text("install").encode("ascii")
+    # Exporting twice gives the same bytes, and an existing output file is refused.
     second = tmp_path / "again.zip"
     assert cli_world.cli("pkg", "export", str(base / "mine" / "1.0"), "-o", str(second)).code == 0
     assert second.read_bytes() == output.read_bytes()
@@ -401,6 +420,7 @@ def test_pkg_export_adds_the_launchers_that_a_hand_made_folder_lacks(cli_world: 
 
 def make_bundle(root: Path, *, tamper: bool = False) -> RunningGupkg:
     """Write a version directory with a ``gupkg`` bundle and its ``MANIFEST.sha256`` and describe the gupkg that runs from it."""
+    # Lay out a version directory that holds a gupkg bundle.
     version = root / "bundle" / "1.0.0"
     package = version / "gupkg"
     package.mkdir(parents=True)
@@ -408,11 +428,13 @@ def make_bundle(root: Path, *, tamper: bool = False) -> RunningGupkg:
     (package / "cli.py").write_text("print('hi')\n", encoding="utf-8")
     (package / "python").mkdir()
     (package / "python" / "python.exe").write_bytes(b"MZ")
+    # List every file with its digest, as the manifest does.
     lines = []
     for path in sorted(version.rglob("*")):
         if path.is_file():
             lines.append(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.relative_to(version).as_posix()}")
     (package / "MANIFEST.sha256").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    # A damaged bundle has a file changed after the manifest was written.
     if tamper:
         (package / "cli.py").write_text("print('evil')\n", encoding="utf-8")
     return RunningGupkg("source", package, (package,))
@@ -420,18 +442,22 @@ def make_bundle(root: Path, *, tamper: bool = False) -> RunningGupkg:
 
 def test_pkg_bundle_copies_the_verified_bundle_and_refuses_a_damaged_one(cli_world: CliWorld, tmp_path: Path) -> None:
     """The bundle of a gupkg whose files match their manifest is copied to <version-dir>\\gupkg; a tampered one is refused."""
+    # Arrange: a starter package.
     base = tmp_path / "authoring"
     assert cli_world.cli("pkg", "new", "mine@1.0", "--dir", str(base)).code == 0
     target = base / "mine" / "1.0"
 
+    # Act: bundle a verified gupkg into the version.
     good = cli_world.cli("pkg", "bundle", str(target), location=make_bundle(tmp_path / "good"))
 
+    # Assert: the bundle and the launchers are copied, and a second bundle is refused.
     assert good.code == 0, good.err
     assert (target / "gupkg" / "cli.py").is_file() and (target / "gupkg" / "python" / "python.exe").is_file()
     assert (target / "install.cmd").read_bytes() == launcher_text("install").encode("ascii")
     assert (target / "manage.cmd").read_bytes() == launcher_text("tui").encode("ascii")
     assert cli_world.cli("pkg", "bundle", str(target), location=make_bundle(tmp_path / "again")).code == 2
 
+    # A bundle with a damaged file is refused and copies nothing.
     other = base / "mine" / "2.0"
     other.mkdir()
     other.joinpath("pkg.toml").write_text((target / "pkg.toml").read_text(encoding="utf-8"), encoding="utf-8")
@@ -441,14 +467,17 @@ def test_pkg_bundle_copies_the_verified_bundle_and_refuses_a_damaged_one(cli_wor
 
 def test_pkg_launchers_copies_the_templates_into_a_version_directory_and_replaces_old_ones(cli_world: CliWorld, tmp_path: Path) -> None:
     """`pkg launchers` writes install.cmd and manage.cmd (byte for byte the templates), replacing a stale one; a non-version folder is refused."""
+    # Arrange: a starter package with a missing and a stale launcher.
     base = tmp_path / "authoring"
     assert cli_world.cli("pkg", "new", "mine@1.0", "--dir", str(base)).code == 0
     target = base / "mine" / "1.0"
     (target / "install.cmd").unlink()
     (target / "manage.cmd").write_bytes(b"@echo stale\r\n")
 
+    # Act: replace the launchers.
     result = cli_world.cli("pkg", "launchers", str(target), "--json")
 
+    # Assert: both launchers are the current templates, and a folder that is not a version is refused.
     assert result.code == 0, result.err
     assert result.document()["launchers"] == ["install.cmd", "manage.cmd"]
     assert (target / "install.cmd").read_bytes() == launcher_text("install").encode("ascii")
@@ -482,6 +511,7 @@ def test_self_status_reports_an_interpreter_that_is_not_the_bundled_one(cli_worl
 
 def test_self_repair_check_updates_and_update_are_the_lifecycle_on_the_package_gupkg(cli_elevated_world: CliWorld) -> None:
     """In the root where this gupkg is installed, `self repair` restores a deleted shim and the other two check and activate."""
+    # Arrange: an installed gupkg with a deleted shim and a newer version at the vendor.
     cli_elevated_world.tracker("gupkg", mode="system")
     cli_elevated_world.announce("gupkg", "1.0.0")
     cli_elevated_world.publish("gupkg", "1.0.0", mode="system", tables=FULL)
@@ -490,11 +520,13 @@ def test_self_repair_check_updates_and_update_are_the_lifecycle_on_the_package_g
     shim.unlink()
     cli_elevated_world.announce("gupkg", "1.1.0")
 
+    # Act: repair, check for updates and update gupkg through ``self``.
     repaired = cli_elevated_world.cli("self", "repair")
     shim_after_repair = shim.is_file()
     checked = cli_elevated_world.cli("self", "check-updates", "--json")
     updated = cli_elevated_world.cli("self", "update", "--json")
 
+    # Assert: the shim is back and the update is the current version.
     assert repaired.code == 0 and shim_after_repair, repaired.err
     assert checked.document()["results"][0]["status"] == "new-version"
     assert updated.document()["results"][0]["status"] == "updated"

@@ -22,7 +22,9 @@ from gupkg_registry.layout import read_registry_file, write_registry_file
 from gupkg_registry.validate import validate_registry
 from tests.support.registry_tool import valid_registry
 
+# Package version directory used by the sample registry.
 VERSION = "gizmo/10.02"
+# Tracker address used by the sample registry.
 TRACKER = "gh/_check_updates"
 
 pytestmark = pytest.mark.unit

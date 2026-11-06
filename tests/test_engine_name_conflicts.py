@@ -106,6 +106,7 @@ def test_the_configuration_file_of_a_shim_is_a_name_too(world: World) -> None:
 
 def test_a_refused_install_does_not_ask_the_downgrade_question(world: World) -> None:
     """The name check comes before the questions: nothing is asked of a user whose install is then refused."""
+    # Arrange: an installed package, and another one whose older version provides the same name as the first.
     install_first(world, SHIM, "tool")
     world.publish("second", "1.0.0", tables=SHIM.format(name="other"))
     assert world.one("install", "second").ok
@@ -115,8 +116,10 @@ def test_a_refused_install_does_not_ask_the_downgrade_question(world: World) -> 
     asked: list[str] = []
     world.engine.confirm = lambda question: asked.append(question) or True
 
+    # Act: install the older version of the second package.
     result = world.one("install", "second@1.0.0")
 
+    # Assert: it is refused, and the downgrade question is never asked.
     assert not result.ok and result.error["code"] == "name-conflict"
     assert asked == []
 
@@ -127,6 +130,7 @@ def count_scans(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     original = Catalog.installed_effects
 
     def counting(self: Catalog):
+        """Count the call and delegate to the real scan."""
         calls.append(1)
         return original(self)
 
@@ -182,14 +186,17 @@ def test_a_shared_path_entry_is_not_a_name(world: World) -> None:
 
 def test_two_targets_of_one_command_that_provide_one_name_are_both_refused_before_anything_is_created(world: World) -> None:
     """``install first second`` with a shared shim: both targets fail naming both packages, and nothing of either is installed."""
+    # Arrange: three packages, two of which provide the same name.
     world.publish("first", "1.0.0", tables=SHIM.format(name="tool"))
     world.publish("second", "1.0.0", tables=SHIM.format(name="tool"))
     world.publish("third", "1.0.0", tables=SHIM.format(name="other"))
     before = state(world)
     world.fake.fetch_log.clear()
 
+    # Act: install all three in one command.
     batch = world.run("install", "first", "second", "third")
 
+    # Assert: the two that clash are refused, with a message that names both.
     first, second, third = batch.results
     for result in (first, second):
         assert not result.ok and result.exit_code == 2 and result.error["code"] == "name-conflict"
@@ -197,6 +204,7 @@ def test_two_targets_of_one_command_that_provide_one_name_are_both_refused_befor
             f"first and second both provide the shim 'tool.exe' ({world.fake.scope_folders(Mode.USER).bin_dir / 'tool.exe'}). "
             "Install one of them, or give one of them a package definition with a different name."
         )
+    # The third package installs and nothing of the first two was created.
     assert third.ok, third.error
     assert not (world.user / "first" / "current").exists() and not (world.user / "second" / "current").exists()
     assert not (world.fake.scope_folders(Mode.USER).bin_dir / "tool.exe").exists()
@@ -205,6 +213,7 @@ def test_two_targets_of_one_command_that_provide_one_name_are_both_refused_befor
 
 def test_an_update_that_takes_a_name_of_another_package_is_refused_and_the_package_stays_outdated(world: World) -> None:
     """The installed version keeps working; the update fails with the refusal; the package is listed as outdated."""
+    # Arrange: an installed package, and a newer version of another that takes its name.
     install_first(world, SHIM, "tool")
     world.publish("second", "1.0.0", tables=SHIM.format(name="other"))
     assert world.one("install", "second").ok
@@ -212,10 +221,13 @@ def test_an_update_that_takes_a_name_of_another_package_is_refused_and_the_packa
     before = state(world)
     world.fake.fetch_log.clear()
 
+    # Act: update the second package.
     result = world.one("update", "second")
 
+    # Assert: the update is refused before anything is fetched.
     assert not result.ok and result.exit_code == 2 and result.error["code"] == "name-conflict"
     assert "second cannot be installed: it would provide the shim 'tool.exe'" in result.error["message"]
+    # The package stays installed and outdated, and the machine is as it was.
     view = Catalog(world.scope, world.fake).describe("second")
     assert view.status == "outdated" and view.installed.version == "1.0.0"
     assert (world.user / "second" / "current" / "App" / "app.exe").is_file()
@@ -225,6 +237,7 @@ def test_an_update_that_takes_a_name_of_another_package_is_refused_and_the_packa
 
 def test_check_updates_writes_a_version_that_takes_a_name_but_does_not_download_it(world: World) -> None:
     """The new version stays on disk without App (the package is outdated); the result carries the refusal, and update refuses too."""
+    # Arrange: an installed package, and a tracker whose newer version takes its name.
     install_first(world, SHIM, "tool")
     world.publish("second", "1.0.0", tables=SHIM.format(name="other"))
     world.tracker("second", tables=SHIM.format(name="tool"))
@@ -232,8 +245,10 @@ def test_check_updates_writes_a_version_that_takes_a_name_but_does_not_download_
     world.announce("second", "1.1.0")
     world.fake.fetch_log.clear()
 
+    # Act: check for updates.
     result = world.one("check-updates", "second")
 
+    # Assert: the version is written without its app, the conflict is reported and an update refuses it.
     assert not result.ok and result.error["code"] == "name-conflict" and result.details["populated"] is False
     assert (world.user / "second" / "1.1.0" / "pkg.toml").is_file() and not (world.user / "second" / "1.1.0" / "App").exists()
     assert not any(url.endswith("second-1.1.0.zip") for url in world.fake.fetch_log)
@@ -261,9 +276,11 @@ def clashing(world: World) -> World:
 
 def test_check_reports_a_name_that_two_records_claim_as_a_problem_of_both_and_changes_nothing(clashing: World) -> None:
     """``check`` of either package names both, with the way out; the exit status is unhealthy and the state is unchanged."""
+    # Arrange: two records that claim one name, and a snapshot of the machine.
     before = state(clashing)
     path = clashing.fake.scope_folders(Mode.USER).bin_dir / "tool.exe"
 
+    # Act and assert: the check of each package reports the conflict and changes nothing.
     for package, other in (("first", "second"), ("second", "first")):
         result = clashing.one("check", package)
         problems = [item for item in result.details["problems"] if item["kind"] == "name-conflict"]
@@ -272,6 +289,7 @@ def test_check_reports_a_name_that_two_records_claim_as_a_problem_of_both_and_ch
             f"{package} and {other} both provide the shim 'tool.exe' ({path}). Uninstall one of them, or use a package "
             "definition with a different name."
         )
+    # Assert: nothing on the machine changed.
     assert state(clashing) == before
 
 
@@ -298,16 +316,20 @@ def test_a_package_that_is_installed_and_conflicting_is_not_refused_when_it_is_u
 
 def test_a_pair_of_registry_packages_with_the_same_names_is_refused(world: World) -> None:
     """``copyq`` then ``copyq-portable`` from a registry, both declaring shim ``copyq`` and shortcut ``CopyQ``: the second is refused."""
+    # Arrange: two registry packages that provide the same names.
     tables = SHIM.format(name="copyq") + SHORTCUT.format(name="CopyQ")
     world.registry({
         "copyq": {"versions": {"1.0.0": {"app.exe": "app"}}, "tables": tables},
         "copyq-portable": {"versions": {"1.0.0": {"app.exe": "app"}}, "tables": tables},
     })
+    # Install the first one.
     assert world.one("install", "copyq").ok
     before = state(world)
 
+    # Act: install the second one.
     result = world.one("install", "copyq-portable")
 
+    # Assert: it is refused with the name and the owner, and nothing changed.
     assert not result.ok and result.error["code"] == "name-conflict"
     assert result.error["message"].startswith("copyq-portable cannot be installed: it would provide the shortcut 'CopyQ.lnk' (")
     assert "which the installed package 'copyq' already provides" in result.error["message"]

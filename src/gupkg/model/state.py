@@ -11,7 +11,7 @@ data. It does no input or output and never looks at a disk.
 
 Usage and API
 -------------
-``gupkg.catalog`` builds the views; callers read ``PackageView.status``,
+``gupkg.catalog`` builds the views; callers consume ``PackageView.status``,
 ``PackageView.local``, ``PackageView.registry`` and friends. ``parse_install_record(data)``
 and ``install_record_to_data(record)`` convert between the TOML data of an install record
 and ``InstallRecord``.
@@ -37,6 +37,7 @@ from typing import Any
 from .manifest import Manifest
 from .version import compare_versions
 
+# The install modes an install record may name.
 MODES = ("system", "user")
 
 # The statuses of design 5.2 that describe a whole package; ``invalid`` belongs to one version.
@@ -44,11 +45,18 @@ STATUSES = ("available", "local", "installed", "outdated", "broken")
 
 # The schema number written into every install record.
 RECORD_SCHEMA = 1
+# A tracker content hash: 64 lower-case hexadecimal digits.
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
 class RecordError(ValueError):
-    """Report an install record or ``state.toml`` that is not valid, listing every problem."""
+    """Report an install record or ``state.toml`` that is not valid, listing every problem.
+
+    Parameters
+    ----------
+    problems : str | list[str] | tuple[str, ...]
+        One message or a list of messages.
+    """
 
     def __init__(self, problems: str | list[str] | tuple[str, ...]) -> None:
         """Build the error from one message or a list of messages."""
@@ -63,7 +71,13 @@ class RecordError(ValueError):
 
 @dataclass(frozen=True)
 class Root:
-    """The directory that holds the packages of the run (its scope's root)."""
+    """The directory that holds the packages of the run (its scope's root).
+
+    Attributes
+    ----------
+    path : Path
+        The root directory.
+    """
 
     path: Path
 
@@ -76,6 +90,19 @@ class Link:
     the entry with its own name (decision D2). ``unlinked`` is the opt-out written by
     ``gupkg link --unlink``. ``revision`` and ``tracker_sha256`` remember which registry
     revision and which tracker content were last copied in.
+
+    Attributes
+    ----------
+    registry : str | None
+        The registry the package follows.
+    name : str | None
+        The registry entry the package follows.
+    revision : str | None
+        The registry revision last copied in.
+    tracker_sha256 : str | None
+        The hash of the tracker last copied in.
+    unlinked : bool
+        Whether the package opted out of following an entry.
     """
 
     registry: str | None = None
@@ -87,7 +114,17 @@ class Link:
 
 @dataclass(frozen=True)
 class Effect:
-    """One integration effect applied by an install (written by the engine, issue 028)."""
+    """One integration effect applied by an install (written by the engine, issue 028).
+
+    Attributes
+    ----------
+    kind : str
+        The effect kind, such as ``shim`` or ``shortcut``.
+    fields : Mapping[str, Any]
+        The effect's fields.
+    adopted : bool
+        Whether the effect adopted an existing item.
+    """
 
     kind: str
     fields: Mapping[str, Any] = field(default_factory=dict)
@@ -96,7 +133,17 @@ class Effect:
 
 @dataclass(frozen=True)
 class InstallRecord:
-    """The content of ``<package>\\.gupkg\\package.toml``: mode, link and applied effects."""
+    """The content of ``<package>\\.gupkg\\package.toml``: mode, link and applied effects.
+
+    Attributes
+    ----------
+    mode : str | None
+        The mode that installed the package.
+    link : Link | None
+        The registry link.
+    effects : tuple[Effect, ...]
+        The applied effects.
+    """
 
     mode: str | None = None
     link: Link | None = None
@@ -138,7 +185,30 @@ def parse_install_record(data: Mapping[str, Any]) -> InstallRecord:
     ------
     RecordError
         If the schema, a key or a value is not valid; the error lists every problem.
+
+    Examples
+    --------
+    Basic usage:
+
+    >>> record = parse_install_record({
+    ...     "schema": RECORD_SCHEMA,
+    ...     "mode": "user",
+    ...     "link": {"registry": "main", "name": "tool"},
+    ...     "effect": [{"kind": "shim", "path": "C:/b/tool.cmd"}],
+    ... })
+    >>> record.mode, record.link.registry
+    ('user', 'main')
+    >>> [(effect.kind, effect.fields["path"]) for effect in record.effects]
+    [('shim', 'C:/b/tool.cmd')]
+
+    Edge cases:
+
+    >>> parse_install_record({"schema": 99, "mode": "bogus"})
+    Traceback (most recent call last):
+        ...
+    gupkg.model.state.RecordError: unsupported install record schema (99); expected 1; mode must be one of system, user
     """
+    # Check the top-level keys and schema first; every problem is collected before anything is raised.
     problems: list[str] = []
     _check_keys(data, ("schema", "mode", "link", "effect"), "", problems)
     if data.get("schema") != RECORD_SCHEMA:
@@ -146,6 +216,7 @@ def parse_install_record(data: Mapping[str, Any]) -> InstallRecord:
 
     # The install mode that the package was installed with.
     mode = _string(data, "mode", "", problems)
+    # An unknown mode is reported and dropped rather than carried forward.
     if mode is not None and mode not in MODES:
         problems.append(f"mode must be one of {', '.join(MODES)}")
         mode = None
@@ -157,11 +228,13 @@ def parse_install_record(data: Mapping[str, Any]) -> InstallRecord:
         if not isinstance(table, dict):
             problems.append("link must be a table")
         else:
+            # The opt-out flag must be a boolean; the other keys are strings checked below.
             _check_keys(table, ("registry", "name", "revision", "tracker_sha256", "unlinked"), "link.", problems)
             unlinked = table.get("unlinked", False)
             if not isinstance(unlinked, bool):
                 problems.append("link.unlinked must be true or false")
                 unlinked = False
+            # Build the link from its validated strings, then check the combinations.
             link = Link(
                 registry=_string(table, "registry", "link.", problems),
                 name=_string(table, "name", "link.", problems),
@@ -169,6 +242,7 @@ def parse_install_record(data: Mapping[str, Any]) -> InstallRecord:
                 tracker_sha256=_string(table, "tracker_sha256", "link.", problems),
                 unlinked=unlinked,
             )
+            # The tracker hash must be well formed, and an opt-out excludes a followed entry.
             if link.tracker_sha256 is not None and not _SHA256.fullmatch(link.tracker_sha256):
                 problems.append("link.tracker_sha256 must be 64 lower-case hexadecimal digits")
             if link.unlinked and (link.registry or link.name):
@@ -177,9 +251,11 @@ def parse_install_record(data: Mapping[str, Any]) -> InstallRecord:
     # The applied effects: free-form tables with a kind, kept as written.
     effects: list[Effect] = []
     raw_effects = data.get("effect", [])
+    # The effects must be an array of tables.
     if not isinstance(raw_effects, list) or any(not isinstance(item, dict) for item in raw_effects):
         problems.append("effect must be an array of tables ([[effect]])")
         raw_effects = []
+    # Every effect needs a kind; its other fields are kept exactly as written.
     for index, item in enumerate(raw_effects):
         kind = item.get("kind")
         if not isinstance(kind, str) or not kind.strip():
@@ -189,8 +265,10 @@ def parse_install_record(data: Mapping[str, Any]) -> InstallRecord:
         if not isinstance(adopted, bool):
             problems.append(f"effect[{index}].adopted must be true or false")
             adopted = False
+        # Everything except the two known keys is kept as the effect's fields.
         extra = {key: value for key, value in item.items() if key not in ("kind", "adopted")}
         effects.append(Effect(kind, extra, adopted))
+    # Raise one error listing everything that was wrong.
     if problems:
         raise RecordError(problems)
     return InstallRecord(mode, link, tuple(effects))
@@ -208,14 +286,27 @@ def install_record_to_data(record: InstallRecord) -> dict[str, Any]:
     -------
     dict
         Plain data for ``gupkg.tomlio``; unset values are left out.
+
+    Examples
+    --------
+    Basic usage:
+
+    >>> record = parse_install_record({"schema": RECORD_SCHEMA, "mode": "user", "link": {"registry": "main"}})
+    >>> install_record_to_data(record)
+    {'schema': 1, 'mode': 'user', 'link': {'registry': 'main'}}
+    >>> parse_install_record(install_record_to_data(record)) == record
+    True
     """
+    # Write only what is set, so a round trip through TOML adds nothing.
     data: dict[str, Any] = {"schema": RECORD_SCHEMA}
     if record.mode is not None:
         data["mode"] = record.mode
+    # The link keeps only its set strings, plus the opt-out flag when true.
     if record.link is not None:
         link = {
             key: value
             for key, value in (
+                # The string fields of the link, in file order.
                 ("registry", record.link.registry),
                 ("name", record.link.name),
                 ("revision", record.link.revision),
@@ -226,6 +317,7 @@ def install_record_to_data(record: InstallRecord) -> dict[str, Any]:
         if record.link.unlinked:
             link["unlinked"] = True
         data["link"] = link
+    # Effects keep their free-form fields; ``adopted`` is written only when true.
     if record.effects:
         data["effect"] = [
             {"kind": effect.kind, **({"adopted": True} if effect.adopted else {}), **dict(effect.fields)}
@@ -246,6 +338,27 @@ class VersionState:
     ``pinned`` says that its ``pkg.toml`` is a valid format 2 version manifest (a concrete
     source). ``problems`` is empty exactly when the version is valid; a version with
     problems is ``invalid`` and takes no part in installs and updates.
+
+    Attributes
+    ----------
+    name : str
+        The version name.
+    path : Path
+        The version directory.
+    pinned : bool
+        Whether its ``pkg.toml`` is a valid version manifest.
+    populated : bool
+        Whether ``App`` holds files.
+    problems : tuple[str, ...]
+        Why the version is invalid, empty when valid.
+    manifest : Manifest | None
+        The parsed manifest, or ``None``.
+    pkg_toml_sha256 : str | None
+        The hash of ``pkg.toml``.
+    valid : bool
+        Return whether the version directory passes validation.
+    status : str
+        Return ``invalid``, ``available`` (valid, no ``App`` yet) or ``populated``.
     """
 
     name: str
@@ -271,7 +384,21 @@ class VersionState:
 
 @dataclass(frozen=True)
 class TrackerState:
-    """The tracker ``_check_updates``; ``sha256`` is the content hash of the whole directory."""
+    """The tracker ``_check_updates``; ``sha256`` is the content hash of the whole directory.
+
+    Attributes
+    ----------
+    path : Path
+        The tracker directory.
+    problems : tuple[str, ...]
+        Why the tracker is invalid.
+    manifest : Manifest | None
+        The parsed manifest, or ``None``.
+    sha256 : str | None
+        The content hash of the directory.
+    valid : bool
+        Return whether the tracker passes validation.
+    """
 
     path: Path
     problems: tuple[str, ...] = ()
@@ -292,6 +419,17 @@ class CurrentState:
     of this package root), ``not-a-link``, ``dangling`` (the target is missing),
     ``escapes`` (the target lies outside the package root or is not one of its direct
     children) or ``bad-target`` (not a version directory with a ``pkg.toml``).
+
+    Attributes
+    ----------
+    status : str
+        ``absent``, ``valid``, ``not-a-link``, ``dangling``, ``escapes`` or ``bad-target``.
+    version : str | None
+        The version it points to, when valid.
+    target : Path | None
+        Where it points.
+    problem : str | None
+        What is wrong, or ``None``.
     """
 
     status: str
@@ -302,7 +440,26 @@ class CurrentState:
 
 @dataclass(frozen=True)
 class LocalState:
-    """A package root on disk: version directories (oldest first), tracker and ``current``."""
+    """A package root on disk: version directories (oldest first), tracker and ``current``.
+
+    Methods
+    -------
+    version
+        Return the version directory called *name* (letter case ignored), or ``None``.
+
+    Attributes
+    ----------
+    path : Path
+        The package root.
+    versions : tuple[VersionState, ...]
+        The version directories, oldest first.
+    tracker : TrackerState | None
+        The tracker, if any.
+    current : CurrentState
+        The state of ``current``.
+    valid_versions : tuple[VersionState, ...]
+        Return the valid version directories, oldest first.
+    """
 
     path: Path
     versions: tuple[VersionState, ...] = ()
@@ -310,7 +467,18 @@ class LocalState:
     current: CurrentState = CurrentState("absent")
 
     def version(self, name: str) -> VersionState | None:
-        """Return the version directory called *name* (letter case ignored), or ``None``."""
+        """Return the version directory called *name* (letter case ignored), or ``None``.
+
+        Parameters
+        ----------
+        name : str
+            The version name.
+
+        Returns
+        -------
+        VersionState or None
+            The matching version directory, or ``None`` when there is none.
+        """
         folded = name.casefold()
         return next((item for item in self.versions if item.name.casefold() == folded), None)
 
@@ -327,6 +495,23 @@ class InstalledState:
     ``drift`` lists install-record effects that the system no longer has, and
     ``unverified`` the effect kinds that could not be verified (both are only filled in
     when the catalog is asked to verify effects).
+
+    Attributes
+    ----------
+    version : str
+        The active version.
+    path : Path
+        Its directory.
+    app_populated : bool
+        Whether its ``App`` has files.
+    app_problem : str | None
+        What is wrong with ``App``, or ``None``.
+    effects : tuple[Effect, ...]
+        The recorded effects.
+    drift : tuple[str, ...]
+        Recorded effects the system no longer has.
+    unverified : tuple[str, ...]
+        Effect kinds that could not be verified.
     """
 
     version: str
@@ -345,7 +530,19 @@ class InstalledState:
 
 @dataclass(frozen=True)
 class RegistryVersion:
-    """One pinned version of a registry entry, with its fingerprint when the registry publishes one."""
+    """One pinned version of a registry entry, with its fingerprint when the registry publishes one.
+
+    Attributes
+    ----------
+    name : str
+        The version name.
+    path : Path
+        Its directory in the registry.
+    fingerprint : str | None
+        The published fingerprint, or ``None``.
+    pkg_toml_sha256 : str | None
+        The hash of its ``pkg.toml``.
+    """
 
     name: str
     path: Path
@@ -355,7 +552,15 @@ class RegistryVersion:
 
 @dataclass(frozen=True)
 class RegistryTracker:
-    """The tracker of a registry entry; ``sha256`` is the content hash of its directory."""
+    """The tracker of a registry entry; ``sha256`` is the content hash of its directory.
+
+    Attributes
+    ----------
+    path : Path
+        The tracker directory.
+    sha256 : str
+        Its content hash.
+    """
 
     path: Path
     sha256: str
@@ -363,7 +568,28 @@ class RegistryTracker:
 
 @dataclass(frozen=True)
 class RegistryEntry:
-    """One package of a registry: its valid pinned versions (oldest first), tracker and revision."""
+    """One package of a registry: its valid pinned versions (oldest first), tracker and revision.
+
+    Methods
+    -------
+    version
+        Return the pinned version called *name* (letter case ignored), or ``None``.
+
+    Attributes
+    ----------
+    registry : str
+        The registry name.
+    name : str
+        The package name.
+    revision : str | None
+        The registry revision.
+    path : Path
+        The entry directory.
+    versions : tuple[RegistryVersion, ...]
+        The pinned versions, oldest first.
+    tracker : RegistryTracker | None
+        The tracker, if any.
+    """
 
     registry: str
     name: str
@@ -373,7 +599,18 @@ class RegistryEntry:
     tracker: RegistryTracker | None = None
 
     def version(self, name: str) -> RegistryVersion | None:
-        """Return the pinned version called *name* (letter case ignored), or ``None``."""
+        """Return the pinned version called *name* (letter case ignored), or ``None``.
+
+        Parameters
+        ----------
+        name : str
+            The version name.
+
+        Returns
+        -------
+        RegistryVersion or None
+            The matching pinned version, or ``None`` when there is none.
+        """
         folded = name.casefold()
         return next((item for item in self.versions if item.name.casefold() == folded), None)
 
@@ -384,6 +621,19 @@ class Candidate:
 
     ``source`` is ``local`` (a version directory in the package root) or ``registry``
     (a pinned version that would be copied in from ``registry``).
+
+    Attributes
+    ----------
+    version : str
+        The version name.
+    source : str
+        ``local`` or ``registry``.
+    path : Path
+        The directory it comes from.
+    registry : str | None
+        The registry it comes from, if any.
+    fingerprint : str | None
+        The published fingerprint, if any.
     """
 
     version: str
@@ -471,11 +721,13 @@ class PackageView:
     @property
     def broken_reasons(self) -> tuple[str, ...]:
         """Return why the package is ``broken``: ``current``, the active ``App``, drift or the record."""
+        # Collect problems with ``current``, then with the active ``App`` and its drift, then the record's own.
         reasons: list[str] = []
         if self.local is not None:
             current = self.local.current
             if current.status not in ("absent", "valid"):
                 reasons.append(current.problem or f"current is {current.status}")
+        # An installed package is also broken when its active App is missing or its integration drifted.
         if self.installed is not None:
             if not self.installed.app_populated:
                 reasons.append(self.installed.app_problem or f"the App of {self.installed.version} is missing or empty")

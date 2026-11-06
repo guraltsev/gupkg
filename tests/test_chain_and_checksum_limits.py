@@ -32,6 +32,7 @@ from tests.support.track import environment, parse_tracker, real_regex_worker
 
 pytestmark = pytest.mark.process
 
+# Top-level keys that every tracker of this file starts with.
 HEADER = 'format = 2\ndescription = "d"\nmodes = ["system", "user"]\n'
 
 
@@ -53,6 +54,7 @@ def run(text: str, system: FakeSystem, tmp_path: Path):
 
 # -- the chain: one each, a request budget -------------------------------------------------------------------
 
+# A chain that tries each link of the page, so the request budget matters.
 BUDGET_CHAIN = (
     HEADER + '[track]\nprovider = "chain"\ndownload = "${link}"\n'
     '[[track.fetch]]\nurl = "https://example.org/"\nselect = "each"\nmatch = \'(?P<link>https://example.org/f/\\d+)\'\n'
@@ -110,25 +112,30 @@ def test_a_chain_may_try_the_candidates_of_one_step_only() -> None:
 
 def test_an_optional_step_whose_pattern_runs_out_of_time_stops_the_check(tmp_path: Path) -> None:
     """A regex deadline in an optional step is an error, never taken for "this step has nothing"."""
+    # Arrange: an optional step that finds a second value in the next page.
     text = (
         HEADER + '[track]\nprovider = "chain"\n'
         '[[track.fetch]]\nurl = "https://example.org/"\nmatch = \'v(?P<version>\\d+)\'\n'
         '[[track.fetch]]\nurl = "https://example.org/next"\noptional = true\nmatch = \'(?P<extra>x+)\'\n'
         '[source]\ndownload_url = "https://example.org/${version}.zip"\n'
     )
+    # Serve both pages.
     system = FakeSystem(tmp_path / "machine")
     system.urls["https://example.org/"] = FakeHttp("v7")
     system.urls["https://example.org/next"] = FakeHttp("xxx")
     calls: list[int] = []
 
     def worker(call: ProcessCall) -> ProcessResult:
+        """Play the regex worker: the first pattern runs for real and the second one runs out of time."""
         calls.append(1)
         if len(calls) >= 2:
             raise TimeoutError("deadline")
         return real_regex_worker(call)
 
+    # Install the double.
     system.processes["regex-worker"] = worker
 
+    # Act and assert: the timeout stops the check.
     with pytest.raises(TrackError, match="was stopped"):
         run(text, system, tmp_path)
 
@@ -185,20 +192,24 @@ def test_a_malformed_digest_line_is_an_error_even_when_the_source_is_optional(tm
 
 def test_a_rendered_version_has_no_checksum_table_and_the_checker_refuses_one_that_has(tmp_path: Path) -> None:
     """The pinned manifest drops the tracker-only ``[source.checksum]``; a version directory that carries one is an error."""
+    # Arrange: the editor tracker and the vendor answers it reads.
     system = FakeSystem(tmp_path / "machine")
     system.urls.update(ANSWERS["index_editor"])
     manifest = parse_tracker(TRACKERS["editor"])
     result = run_tracker(manifest, environment(system, tmp_path, package="editor"))
 
+    # Act: render the pinned version.
     pinned = render_pinned(manifest, result)
     text = manifest_to_toml(pinned)
 
+    # Assert: the pinned manifest has no checksum table, and the checker rejects a version directory that has one.
     assert "checksum" not in tomllib.loads(text)["source"] and pinned.source.sha256 is not None
     version = tmp_path / "editor" / "30.2"
     version.mkdir(parents=True)
     (version / "pkg.toml").write_text(text, encoding="utf-8", newline="\n")
     assert check_directory(version).ok
 
+    # Add the tracker-only table to the version and check it again.
     (version / "pkg.toml").write_text(
         text.replace("[source]\n", '[source]\n', 1) + '\n[source.checksum]\nsums_file = "https://e.org/s"\nentry = "x"\n',
         encoding="utf-8", newline="\n",
@@ -231,6 +242,7 @@ def test_update_prints_the_unversioned_marker_and_the_commit_message_names_the_p
 
 def test_a_waived_checksum_note_reaches_the_registry_tool_output(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """When an optional checksum source held nothing, the tool's line for the version says which absence it was."""
+    # Arrange: a registry with a tracker, a sums file that is missing and the artifact.
     root = registry_of(tmp_path, "editor")
     write_registry_file(root, {"format": 2, "name": "t", "description": "t"})
     system = FakeSystem(tmp_path / "machine")
@@ -240,7 +252,9 @@ def test_a_waived_checksum_note_reaches_the_registry_tool_output(tmp_path: Path,
         zip_bytes(tmp_path, "e.zip", {"bin/editorw.exe": "r", "bin/editor.exe": "e"})
     )
 
+    # Act: update the registry with the command-line tool.
     status = run_cli(root, system, tmp_path, "update", "editor")
 
+    # Assert: the output says the checksum was not found and needs review.
     output = capsys.readouterr().out
     assert status == 0 and "(not found)" in output and "[REVIEW]" in output

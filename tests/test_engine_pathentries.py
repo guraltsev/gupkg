@@ -27,8 +27,10 @@ from tests.support.engine import World
 
 pytestmark = pytest.mark.unit
 
+# The head of a manifest whose test adds ``[[path]]`` tables.
 HEAD = 'format = 2\nmodes = ["system", "user"]\n[source]\ndownload_url = "https://x.test/a.zip"\n'
 
+# PATH entries that are refused, one for each kind of mistake.
 BAD = [
     pytest.param("..\\x", id="parent"),
     pytest.param("rel", id="bare-relative"),
@@ -110,6 +112,7 @@ def test_desired_effects_refuses_the_same_shapes_after_expansion(tmp_path: Path,
 
 def test_the_machine_path_takes_only_trusted_places(tmp_path: Path) -> None:
     """System mode: the package, the bin folder and machine-wide folders pass; a user's folder or a %VAR% prefix does not."""
+    # Arrange: a system-mode context and the folders that may go on the machine PATH.
     ctx = context(tmp_path, mode="system")
     inside = str(ctx.package_path / "current" / "App")
     program_files = str(tmp_path / "pf" / "Tool")
@@ -117,8 +120,10 @@ def test_the_machine_path_takes_only_trusted_places(tmp_path: Path) -> None:
     for folder in (program_files, system_root, ctx.bin_dir / "x"):
         Path(folder).mkdir(parents=True)
 
+    # Act: derive the effects of the trusted folders.
     effects, _ = desired_effects(with_paths(inside, program_files, system_root, str(ctx.bin_dir / "x")), ctx)
 
+    # Assert: they become PATH entries, and a hostile entry is refused.
     assert [effect.fields["entry"] for effect in effects if effect.kind == "path"] == [inside, program_files, system_root, str(ctx.bin_dir / "x")]
     for hostile in ("C:\\Users\\Public\\bin", "C:\\Temp", str(tmp_path / "pf-other"), "%LOCALAPPDATA%\\bin", "%ProgramFiles%\\Tool", "$App\\..\\x"):
         with pytest.raises(EffectError):
@@ -136,10 +141,12 @@ def test_the_user_path_takes_any_absolute_local_folder_and_a_leading_variable(tm
 
 def test_an_existing_junction_or_user_writable_folder_cannot_go_on_the_machine_path(tmp_path: Path) -> None:
     """Applying a machine PATH entry checks the folder when it exists: links and folders standard users can change are refused."""
+    # Arrange: a junction and a user-writable folder in the package.
     system = FakeSystem(tmp_path / "machine")
     ctx = context(tmp_path, mode="system")
     target = tmp_path / "elsewhere"
     target.mkdir()
+    # A package folder that holds the two bad entries.
     ctx.package_path.mkdir(parents=True)
     link = ctx.package_path / "link"
     system.create_junction(link, target)
@@ -148,11 +155,13 @@ def test_an_existing_junction_or_user_writable_folder_cannot_go_on_the_machine_p
     system.untrusted_dirs = {Path(str(writable))}
     system.set_path(Mode.SYSTEM, ["C:\\Windows"])
 
+    # Both bad entries are refused and the PATH is unchanged.
     for entry in (link, writable):
         with pytest.raises(EffectError):
             apply_effect(system, Effect("path", {"scope": "system", "entry": str(entry), "added": False}), ctx)
 
     assert system.get_path(Mode.SYSTEM) == ["C:\\Windows"]
+    # A folder that is neither a link nor user-writable is accepted.
     fine = ctx.package_path / "fine"
     fine.mkdir()
     applied = apply_effect(system, Effect("path", {"scope": "system", "entry": str(fine), "added": False}), ctx)
@@ -309,6 +318,7 @@ def test_user_mode_is_unchanged_by_the_machine_rules(tmp_path: Path) -> None:
     assert applied.fields["added"] is True and system.get_path(Mode.USER) == [str(tmp_path / "later" / "bin")]
 
 
+# Characters that must never reach a PATH entry unnoticed.
 INVISIBLE = ["\x85", "\x7f", "\u200b", "\u202e", "\u2028", "\u2029", "\ufeff", "\ue000", "\ud800", "\u0378"]
 
 

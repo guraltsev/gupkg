@@ -3,7 +3,7 @@
 Both programs (``gupkg-tui`` and ``gupkg-manager``) start the same way. A run has one scope, the mode of its token: an elevated process manages
 the system root and any other process the user's, and every call the program makes to the CLI runs in that scope. The root options
 ``--settings PATH``, ``--root DIR`` and ``--sandbox DIR`` are the CLI's own (a settings file as the highest layer, the root of the run, a pretend machine kept in a folder); the programs
-read the settings with them and relay them to every call, which is how tests and trial runs act on temporary roots.
+load the settings with them and relay them to every call, which is how tests and trial runs act on temporary roots.
 
 Usage and API
 -------------
@@ -37,15 +37,47 @@ from .reads import Reads
 from .settings import UiSettings, load_ui_settings
 
 
+# Longest root, in characters, that the status line shows before the middle is replaced by an ellipsis.
 SHORT_ROOT = 40
 
 
 def shorten_path(path: str, home: str | None = None, width: int = SHORT_ROOT) -> str:
-    """Return *path* in at most *width* characters: the home folder as ``~``, and a long path with the middle replaced by ``…`` (the drive and the last folders stay)."""
+    """Return *path* in at most *width* characters: the home folder as ``~``, and a long path with the middle replaced by ``…`` (the drive and the last folders stay).
+
+    Parameters
+    ----------
+    path : str
+        The path to shorten.
+    home : str, optional
+        The home folder, shown as ``~`` when *path* is inside it.
+    width : int
+        The most characters to return.
+
+    Returns
+    -------
+    str
+        The shortened path.
+
+    Examples
+    --------
+    Basic usage:
+
+    >>> shorten_path('C:\\\\Users\\\\me\\\\apps', home='C:\\\\Users\\\\me')
+    '~\\\\apps'
+    >>> shorten_path('C:\\\\opt\\\\gupkg')
+    'C:\\\\opt\\\\gupkg'
+
+    Edge cases:
+
+    >>> shorten_path('C:\\\\one\\\\two\\\\three\\\\four\\\\five\\\\six', width=20)
+    'C:\\\\…\\\\four\\\\five\\\\six'
+    """
+    # The home folder becomes ``~`` before the length is judged.
     text = path
     base = (home or "").rstrip("\\")
     if base and text.casefold().startswith(base.casefold()) and text[len(base):len(base) + 1] in ("", "\\"):
         text = "~" + text[len(base):]
+    # A path that fits is returned whole; otherwise it is split to keep its head and last folders.
     if len(text) <= width:
         return text
     parts = text.split("\\")
@@ -69,7 +101,15 @@ def shorten_path(path: str, home: str | None = None, width: int = SHORT_ROOT) ->
 
 
 class StartupError(Exception):
-    """Report that the program cannot start, with the exit code to return (2: the caller must change something)."""
+    """Report that the program cannot start, with the exit code to return (2: the caller must change something).
+
+    Parameters
+    ----------
+    message : str
+        Why the program cannot start.
+    code : int
+        The exit code to return.
+    """
 
     def __init__(self, message: str, code: int = 2) -> None:
         super().__init__(message)
@@ -123,7 +163,13 @@ class UiEnvironment:
 
 
 def add_root_options(parser: argparse.ArgumentParser) -> None:
-    """Add ``--settings PATH``, ``--root DIR`` and ``--sandbox DIR`` to *parser*; they are relayed to every ``gupkg`` call."""
+    """Add ``--settings PATH``, ``--root DIR`` and ``--sandbox DIR`` to *parser*; they are relayed to every ``gupkg`` call.
+
+    Parameters
+    ----------
+    parser : argparse.ArgumentParser
+        The parser of the program; the three options are added to it.
+    """
     parser.add_argument("--settings", type=Path, metavar="PATH", help="read this settings file as the highest layer (relayed to gupkg)")
     parser.add_argument("--root", type=Path, metavar="DIR", help="the root of this run (the first source of the root chain; system mode needs an admin-only root; relayed to gupkg)")
     parser.add_argument(
@@ -158,11 +204,17 @@ def build_environment(
     reads : Reads, optional
         A replacement for the in-process reads; tests pass a double that serves recorded documents.
 
+    Returns
+    -------
+    UiEnvironment
+        The client, the settings, the scope and the machine boundary of the run.
+
     Raises
     ------
     StartupError
         If ``--root`` names a folder that does not exist or is not a folder, the sibling ``gupkg`` is missing, the settings cannot be read, or an elevated run's gupkg tree is not admin-only.
     """
+    # Resolve the defaults: this gupkg's location, the environment and the (possibly sandboxed) machine.
     where = location or locate_running_gupkg()
     environment = dict(os.environ if env is None else env)
     machine = system or WindowsSystem()
@@ -179,6 +231,7 @@ def build_environment(
         program = tuple(command) if command is not None else (str(sibling_launcher(where)),)
     except ClientError as error:
         raise StartupError(str(error)) from error
+    # The root options are relayed to every call, then the settings are loaded with the same options.
     options = (*(("--settings", str(settings_path)) if settings_path is not None else ()), *(("--root", str(root_option)) if root_option is not None else ()), *(("--sandbox", str(sandbox)) if sandbox is not None else ()))
     try:
         settings = load_ui_settings(settings_path=settings_path, root_option=root_option, env=environment, location=where, system=machine)
@@ -186,4 +239,5 @@ def build_environment(
         raise StartupError(str(error)) from error
     except (SettingsError, OSError, ValueError) as error:
         raise StartupError(f"cannot read the settings: {error}") from error
+    # Everything the program needs is bundled into one environment.
     return UiEnvironment(Client(program, options, environment), settings, where, machine, environment, reads)

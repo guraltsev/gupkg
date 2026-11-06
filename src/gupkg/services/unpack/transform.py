@@ -34,7 +34,9 @@ from ...model.manifest import ExtractRule
 from ..safepath import UnsafePath, check_member_name, confine, is_reparse_point, remove_tree
 from .extract import UnpackError
 
+# Most wrapper folders ``strip = "auto"`` removes.
 _MAX_STRIP = 32
+# Most items one ``extract`` glob may match.
 _MAX_GLOB_MATCHES = 100_000
 
 
@@ -44,11 +46,19 @@ def strip_levels(root: Path, levels: int | str) -> None:
     A wrapper level is a root that holds exactly one entry, a real folder. ``"auto"``
     strips while that is true (at most 32 times); a number must find that many.
 
+    Parameters
+    ----------
+    root : Path
+        The unpacked tree, changed in place.
+    levels : int or str
+        The number of wrapper folders to remove, or ``"auto"``.
+
     Raises
     ------
     UnpackError
         If a numbered strip finds fewer wrapper folders than asked for.
     """
+    # Hoist one wrapper folder per iteration; a numbered strip must find them all, "auto" stops quietly.
     wanted = _MAX_STRIP if levels == "auto" else int(levels)
     for done in range(wanted):
         entries = list(root.iterdir())
@@ -62,11 +72,19 @@ def strip_levels(root: Path, levels: int | str) -> None:
 def keep_subdir(root: Path, subdir: str) -> None:
     """Make the folder *subdir* of *root* the new root, dropping everything else.
 
+    Parameters
+    ----------
+    root : Path
+        The unpacked tree, changed in place.
+    subdir : str
+        Relative path of the folder to keep.
+
     Raises
     ------
     UnpackError
         If *subdir* is not a folder inside *root*.
     """
+    # Confine the path to the tree and require a real folder before hoisting it.
     try:
         target = confine(root, subdir)
     except UnsafePath as error:
@@ -82,14 +100,25 @@ def map_extract(root: Path, rules: Sequence[ExtractRule], scratch: Path) -> None
     A pattern ending in ``/`` selects the contents of the matched folders, otherwise the
     matched files or folders themselves. ``dest`` is relative to the new root.
 
+    Parameters
+    ----------
+    root : Path
+        The unpacked tree, rebuilt in place.
+    rules : sequence of ExtractRule
+        The ``src`` glob and ``dest`` folder of each rule.
+    scratch : Path
+        An existing scratch folder for the rebuilt tree.
+
     Raises
     ------
     UnpackError
         If a pattern is unsafe, matches nothing, or a match is outside *root*.
     """
+    # Build the new tree beside the old one so a failing rule leaves the original intact.
     mapped = scratch / f"mapped-{uuid.uuid4().hex[:8]}"
     mapped.mkdir()
     for rule in rules:
+        # Validate the pattern and destination as confined paths (wildcards replaced by a letter).
         contents = rule.src.endswith("/") or rule.src.endswith("\\")
         pattern = rule.src.rstrip("/\\")
         try:
@@ -97,16 +126,19 @@ def map_extract(root: Path, rules: Sequence[ExtractRule], scratch: Path) -> None
             target_root = mapped if rule.dest == "" else confine(mapped, rule.dest)
         except UnsafePath as error:
             raise UnpackError(f"extract {rule.src!r}: {error}") from error
+        # Expand the glob inside the tree and bound the number of matches.
         matches = sorted(glob.glob(os.path.join(glob.escape(str(root)), pattern.replace("/", os.sep)), recursive=True))
         if not matches:
             raise UnpackError(f"extract: {rule.src!r} matched nothing in the unpacked artifact")
         if len(matches) > _MAX_GLOB_MATCHES:
             raise UnpackError(f"extract: {rule.src!r} matched too many items")
+        # Copy every match, refusing links, escapes and (for "folder/" rules) non-folders.
         target_root.mkdir(parents=True, exist_ok=True)
         for match in matches:
             source = Path(match)
             if is_reparse_point(source) or not _inside(source, root):
                 raise UnpackError(f"extract: {rule.src!r} reached outside the unpacked artifact")
+            # A "folder/" rule copies the folder's contents; any other rule copies the match itself.
             if contents:
                 if not source.is_dir():
                     raise UnpackError(f"extract: {rule.src!r} ends in '/' but {source.name!r} is not a folder")
@@ -115,6 +147,7 @@ def map_extract(root: Path, rules: Sequence[ExtractRule], scratch: Path) -> None
                 _copy_unique(source, target_root / source.name, rule.src)
             else:
                 _copy_unique(source, target_root / source.name, rule.src)
+    # Replace the old contents of the root with the mapped tree.
     for child in list(root.iterdir()):
         remove_tree(child)
     for child in list(mapped.iterdir()):
@@ -128,15 +161,26 @@ def merge_into(source: Path, destination: Path, replace: bool) -> None:
     With *replace* the destination is emptied first; otherwise an existing file of the same
     name is an error, so an inner archive can never overwrite what the outer one unpacked.
 
+    Parameters
+    ----------
+    source : Path
+        The folder whose contents are moved.
+    destination : Path
+        The folder that receives them; created when missing.
+    replace : bool
+        Whether to empty *destination* first.
+
     Raises
     ------
     UnpackError
         If *replace* is false and a file would be overwritten.
     """
+    # Optionally empty the destination, then move the files across without overwriting any.
     destination.mkdir(parents=True, exist_ok=True)
     if replace:
         for child in list(destination.iterdir()):
             remove_tree(child)
+    # Move every file across, creating folders as needed and refusing to overwrite.
     for current, folders, names in os.walk(source, followlinks=False):
         relative = Path(current).relative_to(source)
         target_dir = destination / relative
@@ -151,17 +195,26 @@ def merge_into(source: Path, destination: Path, replace: bool) -> None:
 def require_paths(root: Path, paths: Sequence[str]) -> None:
     """Check that every path (or glob) in *paths* exists in *root*.
 
+    Parameters
+    ----------
+    root : Path
+        The unpacked tree.
+    paths : sequence of str
+        Relative paths or globs that must exist.
+
     Raises
     ------
     UnpackError
         Listing every path that is missing.
     """
+    # Confine each path to the tree, then test existence (globs by expansion); collect the missing ones.
     missing: list[str] = []
     for text in paths:
         try:
             confine(root, text.replace("*", "x").replace("?", "x").replace("[", "x").replace("]", "x"))
         except UnsafePath as error:
             raise UnpackError(f"require {text!r}: {error}") from error
+        # A glob needs at least one match; a plain path must exist.
         if any(character in text for character in "*?["):
             found = glob.glob(os.path.join(glob.escape(str(root)), text.replace("/", os.sep)))
             ok = bool(found)
@@ -180,11 +233,19 @@ def verify_manifest(root: Path, manifest_path: str) -> None:
     Every other file must be listed and match; a listed file must exist; there must be no
     extra file. The manifest does not list itself.
 
+    Parameters
+    ----------
+    root : Path
+        The unpacked tree.
+    manifest_path : str
+        Relative path of the manifest inside *root*.
+
     Raises
     ------
     UnpackError
         If the manifest is missing or malformed, or any file is modified, missing or extra.
     """
+    # Locate the manifest inside the tree and parse it.
     try:
         location = confine(root, manifest_path)
     except UnsafePath as error:
@@ -205,11 +266,13 @@ def verify_manifest(root: Path, manifest_path: str) -> None:
             if os.path.normcase(os.path.normpath(path)) != own:
                 actual[path.relative_to(root).as_posix()] = path
 
+    # Compare names first, then digests of the files present on both sides.
     problems = [f"extra: {name}" for name in sorted(set(actual) - set(expected))]
     problems += [f"missing: {name}" for name in sorted(set(expected) - set(actual))]
     for name in sorted(set(expected) & set(actual)):
         if _sha256(actual[name]) != expected[name]:
             problems.append(f"modified: {name}")
+    # Report at most ten problems, with a count of the rest.
     if problems:
         shown = "; ".join(problems[:10]) + (f"; and {len(problems) - 10} more" if len(problems) > 10 else "")
         raise UnpackError(f"The artifact does not match its manifest {manifest_path}: {shown}")
@@ -221,7 +284,8 @@ def verify_manifest(root: Path, manifest_path: str) -> None:
 
 
 def _hoist(root: Path, inner: Path) -> None:
-    """Make the folder *inner* (inside *root*) the contents of *root*, dropping the rest."""
+    """Make the folder *inner* (inside *root*) the contents of *root*, dropping the rest (internal move helper)."""
+    # Move the folder aside first, since it may share a name with a child of the root.
     holding = root.parent / f".hoist-{uuid.uuid4().hex[:8]}"
     os.replace(inner, holding)
     for child in list(root.iterdir()):
@@ -243,6 +307,7 @@ def _copy_unique(source: Path, destination: Path, rule: str) -> None:
     Two rules, or two matches of one rule, that map to the same destination file are an error: the
     result must not depend on the order in which the glob matches came.
     """
+    # List the files to copy (a single file, or every file of a tree, creating its folders).
     if source.is_file():
         files = [(source, destination)]
     else:
@@ -250,10 +315,12 @@ def _copy_unique(source: Path, destination: Path, rule: str) -> None:
             (Path(current) / name, destination / Path(current).relative_to(source) / name)
             for current, _folders, names in os.walk(source, followlinks=False) for name in names
         ]
+        # Recreate empty folders too, so the copy mirrors the tree.
         destination.mkdir(parents=True, exist_ok=True)
         for current, folders, _names in os.walk(source, followlinks=False):
             for folder in folders:
                 (destination / Path(current).relative_to(source) / folder).mkdir(parents=True, exist_ok=True)
+    # Copy each file, refusing a destination an earlier rule already wrote.
     for origin, target in files:
         if os.path.lexists(target):
             raise UnpackError(f"extract: {rule!r} maps {origin.name!r} to a destination that already exists")

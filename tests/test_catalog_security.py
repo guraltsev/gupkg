@@ -12,7 +12,7 @@ registry cache. (A record of another mode is in ``test_catalog_one_root``.)
 Real: junctions (``FakeSystem`` links are real; the ``process`` test uses
 ``WindowsSystem``), package roots on pytest's temporary folder, the catalog. Mocked: elevation and
 the admin-only answer (``FakeSystem(elevated=..., untrusted_dirs=...)``). Out of scope: acting on
-packages (issue 028).
+packages.
 """
 
 from __future__ import annotations
@@ -42,17 +42,20 @@ pytestmark = pytest.mark.unit
 
 def build_escape(system, kind: str, tmp_path: Path, package: Path) -> Path:
     """Create the folder that a hostile ``current`` should point at and return it."""
+    # Build the target that each kind of hostile ``current`` points at.
     if kind == "outside-folder":
         target = tmp_path / "outside" / "1.0"
         write_version(target.parent, "1.0", populated=True)
     elif kind == "sibling-package":
         target = write_version(package.parent / "other", "1.0", populated=True)
+    # A version that is itself a junction to a folder outside the package.
     elif kind == "a-version-that-is-a-junction":
         outside = tmp_path / "outside"
         write_version(outside, "payload", populated=True)
         package.mkdir(parents=True, exist_ok=True)
         system.create_junction(package / "1.0", outside / "payload")
         target = package / "1.0"
+    # A target inside a version, or the package itself.
     elif kind == "inside-a-version":
         target = package / "1.0" / "App"
     else:
@@ -65,6 +68,7 @@ def build_escape(system, kind: str, tmp_path: Path, package: Path) -> Path:
 )
 def test_current_that_leaves_its_package_root_is_broken_and_never_followed(system, tmp_path: Path, kind: str) -> None:
     """A ``current`` junction to anything but a direct child of its package root is ``escapes``, so the package is broken."""
+    # Arrange: a package whose ``current`` points outside its root.
     roots = make_catalog(system, tmp_path)[1]
     package = roots["user"] / "foo"
     if kind != "a-version-that-is-a-junction":
@@ -72,9 +76,11 @@ def test_current_that_leaves_its_package_root_is_broken_and_never_followed(syste
     target = build_escape(system, kind, tmp_path, package)
     system.create_junction(package / "current", target)
 
+    # Act: describe the package.
     catalog = make_catalog(system, tmp_path)[0]
     view = catalog.describe("foo")
 
+    # Assert: the link is not followed and the package is broken and cannot be updated.
     assert view.local.current.status == "escapes"
     assert view.installed is None
     assert view.status == "broken"
@@ -113,6 +119,7 @@ def test_current_that_is_a_plain_folder_or_dangling_is_reported(system, tmp_path
 @pytest.mark.parametrize("name", ["1.0", "_check_updates"])
 def test_version_or_tracker_that_is_a_junction_is_invalid_and_not_read(system, tmp_path: Path, name: str) -> None:
     """A version directory or tracker that is a junction out of the package root is invalid and its ``pkg.toml`` is not parsed."""
+    # Arrange: a package with a junction in place of a version or the tracker.
     package = tmp_path / "user" / "foo"
     package.mkdir(parents=True)
     outside = tmp_path / "outside"
@@ -124,8 +131,10 @@ def test_version_or_tracker_that_is_a_junction_is_invalid_and_not_read(system, t
         outside = outside / "payload"
     system.create_junction(package / name, outside)
 
+    # Act: scan the package.
     local = scan_package(package, system)
 
+    # Assert: the entry is invalid and its ``pkg.toml`` was not parsed.
     flagged = local.tracker if name == "_check_updates" else local.version("1.0")
     assert flagged is not None and not flagged.valid
     assert "link" in flagged.problems[0]
@@ -250,7 +259,7 @@ def test_real_junctions_are_read_the_same_way(tmp_path: Path) -> None:
 
 
 def test_elevated_run_reads_only_the_system_root(tmp_path: Path) -> None:
-    """An elevated run lists only the system root (decision D31) and never touches the user root."""
+    """An elevated run lists only the system root and never touches the user root."""
     system = FakeSystem(tmp_path / "machine", elevated=True)
     catalog, roots = make_catalog(system, tmp_path, mode="system")
     write_version(roots["system"] / "sysapp", "1.0")

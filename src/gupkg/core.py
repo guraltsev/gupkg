@@ -104,6 +104,8 @@ def write_bytes_atomic(path: Path, content: bytes) -> None:
     # a failed write never leaves a truncated destination behind.
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
+    # Write, flush and fsync the staged file, then swap it in; any failure
+    # removes the staging file and re-raises, leaving the destination untouched.
     try:
         with os.fdopen(tmp_fd, "wb") as file_handle:
             file_handle.write(content)

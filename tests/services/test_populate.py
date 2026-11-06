@@ -25,6 +25,7 @@ pytestmark = pytest.mark.unit
 
 def test_the_app_is_unpacked_as_the_source_describes_and_then_prepared(system: FakeSystem, tmp_path: Path) -> None:
     """A zip with one wrapper folder and a marker folder gives an `App` without the wrapper and without what `[[prepare]]` removes."""
+    # Arrange: an archive with a wrapper folder and a marker folder, the manifest that describes both, and an empty stage.
     archive = make_zip(tmp_path / "tool-1.0.zip", {
         "tool-1.0/tool.exe": "exe", "tool-1.0/bin/helper.dll": "dll", "tool-1.0/portable/.portable": "marker",
     })
@@ -36,7 +37,9 @@ def test_the_app_is_unpacked_as_the_source_describes_and_then_prepared(system: F
     stage = tmp_path / "stage"
     stage.mkdir()
 
+    # Act: populate the app from the archive.
     populate_app(system, manifest, archive, stage / "App", filename="tool-1.0.zip")
 
+    # Assert: the wrapper and the removed folder are gone, and nothing else was left in the stage.
     assert tree(stage / "App") == {"tool.exe": "exe", "bin/helper.dll": "dll"}
     assert list(stage.iterdir()) == [stage / "App"]

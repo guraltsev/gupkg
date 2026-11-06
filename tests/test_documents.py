@@ -2,7 +2,7 @@
 
 Behaviour covered: every recorded document (``tests/fixtures/cli_docs``) reads without error, ``available`` rows (no installed version) and the
 ``system only`` mark included; a document that is not ``api`` 2, has a field of the wrong type or lacks a field raises ``DocumentError`` naming the field;
-a failed call is never read as an empty list; writer and reader agree (a typed row written with ``to_data`` reads back equal, and the recorded
+a failed call is never taken for an empty list; writer and reader agree (a typed row written with ``to_data`` reads back equal, and the recorded
 ``list`` and ``info`` documents are rebuilt byte for byte from what the reader returned).
 
 Real: the reader and the documents of the real CLI. Mocked: nothing. Out of scope: the screens (``test_ui_screens.py``) and the in-process reads (``test_ui_reads.py``).
@@ -22,6 +22,7 @@ from gupkg.report.documents import (
 
 pytestmark = pytest.mark.unit
 
+# Folder of the documents that the real CLI recorded.
 DOCS = Path(__file__).resolve().parent / "fixtures" / "cli_docs"
 
 
@@ -44,6 +45,7 @@ def test_read_list_reads_every_recorded_document_including_available_rows() -> N
 
 def test_the_other_recorded_documents_read() -> None:
     """``info``, ``registry status``, the plan, a success, a failure and ``check`` read into typed entries."""
+    # Arrange and act: read each of the other recorded documents.
     info = read_info(doc("info.json")).rows[0]
     registry = read_registry_status(doc("registry_status.json"))
     plan = read_plan(doc("install_plan.json"))
@@ -51,6 +53,7 @@ def test_the_other_recorded_documents_read() -> None:
     failure = read_results(doc("install_failure.json"))
     check = read_results(doc("check.json"))
 
+    # Assert: each document became typed entries that say what the document said.
     assert info.row.name == "alpha" and [item.name for item in info.versions] == ["1.0.0", "2.0.0"] and info.log
     assert registry.registries[0].name == "main" and registry.registries[0].revision and registry.registries[0].packages == 3
     assert plan.items[0].target == "copyq" and (plan.items[0].plan is not None or plan.items[0].result is not None)

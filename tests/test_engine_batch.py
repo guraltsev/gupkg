@@ -3,11 +3,11 @@
 Behaviour covered: a 3-package install where package 2 fails still installs package 3 and both the summary and the log name the
 failure; cancelling while package 1 runs finishes package 1 cleanly and reports packages 2 and 3 as skipped and unchanged; a stop
 marker given to an elevated batch does the same; the receipt stores the package's log path; the registry rule (design
-9.5): install, update and uninstall read nothing from the Windows registry except ``PATH``.
+9.5): install, update and uninstall consult nothing in the Windows registry except ``PATH``.
 
 Real: the engine, the run session and log files, real folders. Mocked: ``FakeSystem`` (elevation flag, process
 doubles that play populate scripts).
-Out of scope: the command-line spelling of cancel (issue 029).
+Out of scope: the command-line spelling of cancel.
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from tests.support.engine import ScriptDouble, World
 
 pytestmark = pytest.mark.unit
 
+# Table that declares an environment variable pointing at ``App``.
 ENV = '[[env]]\nname = "TOOL_HOME"\nvalue = "$App"\n'
 
 
@@ -47,17 +48,20 @@ class MarkerDouble(ScriptDouble):
 
 def test_a_failing_package_does_not_stop_the_batch_and_the_summary_and_log_name_it(world: World) -> None:
     """Package 2 fails (a missing file after unpacking); package 3 is still installed; the summary and the log both name the failure."""
+    # Arrange: three packages, the second of which requires a file its artifact lacks.
     world.publish("one", "1.0.0", tables=env_of("one"))
     world.publish("two", "1.0.0", tables=env_of("two"), source='require = ["missing.exe"]\n')
     world.publish("three", "1.0.0", tables=env_of("three"))
     root = world.user
 
+    # Act: install all three under one run session.
     with RunSession(command="install", argv=["install"], mode="user", elevated=False, version="test", reporters=[]) as run:
         run.bind(root)
         world.engine.log_path = lambda path: str(run.log.package_log(path)) if run.log.package_log(path) else None
         batch = lifecycle.install(world.engine, ["one", "two", "three"])
         run.finish(batch.summary(), batch.exit_code)
 
+    # Assert: only the second failed, the others installed, and the summary and logs name it.
     assert [item.ok for item in batch.results] == [True, False, True] and batch.exit_code == 3
     assert (root / "three" / "current").is_dir() and not (root / "two" / "current").exists()
     assert "two" in batch.summary() and "1 of 3 failed" in batch.summary()
@@ -81,6 +85,7 @@ def test_the_receipt_stores_the_log_path_of_the_package(world: World) -> None:
 
 def test_cancel_while_package_one_runs_finishes_it_and_skips_the_rest(world: World) -> None:
     """Cancelling during package 1: it finishes cleanly, packages 2 and 3 are skipped and unchanged."""
+    # Arrange: a populate script that creates the stop marker, and two more packages.
     marker = world.base / "stop.marker"
     world.fake.processes["populate.cmd"] = MarkerDouble({"app.exe": "one"}, marker)
     world.publish_script("one", "1.0.0", tables=env_of("one"))
@@ -89,8 +94,10 @@ def test_cancel_while_package_one_runs_finishes_it_and_skips_the_rest(world: Wor
     world.publish("three", "1.0.0", tables=env_of("three"))
     world.engine.cancel = stop_marker(marker)
 
+    # Act: install all three while the first one is running.
     batch = lifecycle.install(world.engine, ["one", "two", "three"])
 
+    # Assert: the first finished and the others were skipped without a trace.
     assert [item.status for item in batch.results] == ["installed", "skipped", "skipped"]
     assert (world.user / "one" / "current" / "App" / "app.exe").is_file()
     assert not (world.user / "two" / "current").exists() and not (world.user / "three" / "current").exists()
@@ -114,16 +121,19 @@ def test_a_stop_marker_given_to_an_elevated_batch_has_the_same_effect(tmp_path: 
 
 def test_install_update_and_uninstall_read_nothing_from_the_registry_but_path(world: World) -> None:
     """The registry is a write target (design 9.5): the access log shows no read other than the PATH read-modify-write."""
+    # Arrange: a package with a shortcut, a shim and a variable, and a cleared registry log.
     tables = '[[shortcut]]\nname = "Tool"\ntarget = "$App\\\\app.exe"\n\n[[shim]]\nname = "tool"\ntarget = "$App\\\\app.exe"\n\n' + ENV + '\n[[path]]\nvalue = "$App"\n'
     world.publish("tool", "1.0.0", tables=tables)
     world.fake.registry_log.clear()
 
+    # Act: install, update, switch back and uninstall.
     world.one("install", "tool")
     world.publish("tool", "1.1.0", tables=ENV)
     world.one("update", "tool")
     world.one("switch", "tool", version="1.0.0")
     world.one("uninstall", "tool")
 
+    # Assert: the registry was read only for PATH, and the variable was written.
     reads = {(item.scope, item.name) for item in world.fake.registry_log if item.operation == "read"}
     assert reads == {("user", "Path")}
     assert any(item.operation == "write" and item.name == "TOOL_HOME" for item in world.fake.registry_log)

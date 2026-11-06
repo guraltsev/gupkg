@@ -23,9 +23,13 @@ pytestmark = pytest.mark.release
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import check_release  # noqa: E402
 
+# Version of the release under test.
 VERSION = "0.1.0"
+# File name of the release ZIP.
 NAME = f"gupkg-{VERSION}-win-amd64.zip"
+# Address under which the release assets are downloaded.
 BASE = "https://example.invalid/releases/download/v0.1.0"
+# Template of the ``RELEASES.md`` table; ``{row}`` is the release row.
 TABLE = "| Version | Commit | Date | SHA-256 | Notes |\n|---|---|---|---|---|\n{row}"
 
 
@@ -36,6 +40,7 @@ def _git(repo: Path, *arguments: str) -> str:
 
 def _zip_bytes(path: Path, commit: str, *, tamper: bool = False, extra: bool = False) -> bytes:
     """Write a release ZIP with RELEASE.txt, a payload file and a MANIFEST.sha256 of the tree; return its bytes."""
+    # The payload and the manifest that lists every file of the tree with its digest.
     payload = b"payload"
     tree = {"gupkg/RELEASE.txt": f"gupkg {VERSION}\ncommit {commit}\n".encode(), "gupkg/tool.py": payload}
     manifest = "".join(f"{hashlib.sha256(data).hexdigest()}  {name}\n" for name, data in sorted(tree.items()))
@@ -44,6 +49,7 @@ def _zip_bytes(path: Path, commit: str, *, tamper: bool = False, extra: bool = F
         """A ZIP entry with a fixed time, so equal content gives equal bytes."""
         return zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0))
 
+    # Write the tree, the manifest and, when asked, a file the manifest does not list.
     with zipfile.ZipFile(path, "w") as archive:
         for name, data in tree.items():
             archive.writestr(entry(f"gupkg/{VERSION}/{name}"), b"changed" if tamper and name.endswith("tool.py") else data)
@@ -55,8 +61,10 @@ def _zip_bytes(path: Path, commit: str, *, tamper: bool = False, extra: bool = F
 
 def _setup(tmp_path: Path, *, tag: bool = True, row: bool = True, **zip_options: bool) -> tuple[Path, str, bytes]:
     """Create a repository with a pushed commit, a tag, a RELEASES.md row and the ZIP bytes."""
+    # Create the remote that the release is pushed to.
     remote = tmp_path / "remote.git"
     subprocess.run(["git", "init", "--bare", "-q", "-b", "main", str(remote)], check=True)
+    # Create the repository with a first commit that holds an empty release table.
     repo = tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init", "-q", "-b", "main")
@@ -66,13 +74,16 @@ def _setup(tmp_path: Path, *, tag: bool = True, row: bool = True, **zip_options:
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "start")
     commit = _git(repo, "rev-parse", "HEAD")
+    # Build the release ZIP for that commit, and add the table row that names its digest.
     data = _zip_bytes(tmp_path / NAME, commit, **zip_options)
     if row:
         line = f"| {VERSION} | `{commit}` | 2026-01-01 | {hashlib.sha256(_zip_bytes(tmp_path / 'good.zip', commit)).hexdigest()} | n |\n"
         (repo / "RELEASES.md").write_text(TABLE.format(row=line), encoding="utf-8")
         _git(repo, "commit", "-q", "-am", "row")
+    # Tag the commit when the release should be tagged.
     if tag:
         _git(repo, "tag", f"v{VERSION}", commit)
+    # Push the branch and the tags to the remote.
     _git(repo, "remote", "add", "origin", str(remote))
     _git(repo, "push", "-q", "origin", "main", "--tags")
     return repo, commit, data
@@ -82,6 +93,7 @@ def _fetch(assets: dict[str, bytes]):
     """Return a download function that serves *assets* by file name and fails for anything else."""
 
     def fetch(url: str) -> bytes:
+        """Serve the asset named by the last part of *url*, or fail like a missing download."""
         name = url.rsplit("/", 1)[-1]
         if name not in assets:
             raise OSError(f"HTTP Error 404: {name}")

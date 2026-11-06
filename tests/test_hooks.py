@@ -77,7 +77,7 @@ def test_a_hook_declaring_api_2_loads_and_exposes_its_entry_point(tmp_path: Path
 
 @pytest.mark.parametrize("api", [1, 3, None], ids=["api-1", "api-3", "no-declaration"])
 def test_a_hook_with_another_api_version_is_rejected_like_any_invalid_hook(tmp_path: Path, system: FakeSystem, api: int | None) -> None:
-    """Version 1 (and anything but 2) is refused with the same plain message; core says nothing about migration (D33)."""
+    """Version 1 (and anything but 2) is refused with the same plain message; core says nothing about migration."""
     reference = write_hook(tmp_path, "old.py", "def check_update(context):\n    return None\n", api=api)
 
     with pytest.raises(HookError) as raised:
@@ -145,6 +145,7 @@ def test_a_hook_that_imports_something_unavailable_fails_with_an_explanation(tmp
 
 def test_a_track_hook_must_return_a_track_result(tmp_path: Path, system: FakeSystem) -> None:
     """`track(ctx)` returning a plain dictionary (the old shape) is an error, not a guess."""
+    # Arrange: a hook that returns a result and one that returns something else.
     good = write_hook(tmp_path, "good.py", (
         "from gupkg.hooklib import TrackResult, DiscoveredChecksum\n"
         "def track(ctx):\n    return TrackResult('2.0', {'download_url': 'https://example.org/t.zip'}, DiscoveredChecksum('a' * 64, 'vendor-sums'))\n"
@@ -152,9 +153,11 @@ def test_a_track_hook_must_return_a_track_result(tmp_path: Path, system: FakeSys
     bad = write_hook(tmp_path, "bad.py", "def track(ctx):\n    return {'version': '2.0'}\n")
     context = make_context(system, tmp_path)
 
+    # A good hook returns the result unchanged.
     assert call_track(load_hook(tmp_path, good, scope_of(system)), context) == TrackResult(
         "2.0", {"download_url": "https://example.org/t.zip"}, DiscoveredChecksum("a" * 64, "vendor-sums")
     )
+    # A hook that returns something else is refused.
     with pytest.raises(HookError, match="must return a TrackResult"):
         call_track(load_hook(tmp_path, bad, scope_of(system)), context)
 
@@ -169,6 +172,7 @@ def test_a_hook_without_the_requested_entry_point_is_an_error(tmp_path: Path, sy
 
 def test_the_module_provider_runs_a_tracker_hook_through_run_tracker(tmp_path: Path, system: FakeSystem) -> None:
     """A tracker with `provider = "module"` calls the hook with a context whose options are the `[track]` keys."""
+    # Arrange: a tracker folder with a module hook that fetches the version.
     tracker = tmp_path / "pkg" / "_check_updates"
     tracker.mkdir(parents=True)
     write_hook(tracker, "track.py", (
@@ -176,13 +180,16 @@ def test_the_module_provider_runs_a_tracker_hook_through_run_tracker(tmp_path: P
         "def track(ctx):\n    version = fetch_text(ctx, 'https://example.org/version.txt').strip()\n"
         "    return TrackResult(version, {'download_url': 'https://example.org/t-' + version + '.zip'})\n"
     ))
+    # The tracker declares the ``module`` provider.
     (tracker / "pkg.toml").write_text(
         'format = 2\n[track]\nprovider = "module"\n[source]\ndownload_url = "${download_url}"\n', encoding="utf-8")
     system.urls["https://example.org/version.txt"] = "7.1\n"
     manifest = parse_manifest((tracker / "pkg.toml").read_text(encoding="utf-8"), ManifestKind.TRACKER)
 
+    # Act: run the tracker.
     result = run_tracker(manifest, environment(system, tmp_path, directory=tracker, package="pkg"))
 
+    # Assert: the version and the download address come from the hook.
     assert result.version == "7.1" and result.captures["download_url"] == "https://example.org/t-7.1.zip"
 
 
@@ -198,12 +205,13 @@ def test_a_failing_track_hook_is_reported_as_a_track_error_with_its_name(tmp_pat
 
 
 # ---------------------------------------------------------------------------
-# The shared HTTP client in every hook (D28)
+# The shared HTTP client in every hook
 # ---------------------------------------------------------------------------
 
 
 def test_a_version_directory_hook_gets_the_shared_client_with_the_user_agent_and_timeout(tmp_path: Path, system: FakeSystem) -> None:
     """A populate hook in a version directory fetches through `ctx.http`: its request carries gupkg's User-Agent and timeout."""
+    # Arrange: a version with a populate hook that fetches through the shared client.
     version = tmp_path / "pkg" / "1.0"
     (version / "App").mkdir(parents=True)
     reference = write_hook(version, "populate.py", (
@@ -214,15 +222,17 @@ def test_a_version_directory_hook_gets_the_shared_client_with_the_user_agent_and
     system.urls["https://example.org/payload.txt"] = "fetched"
     context = make_context(system, version, app=version / "App")
 
+    # Act: run the hook.
     call_populate(load_hook(version, reference, scope_of(system)), context)
 
+    # Assert: the hook wrote what it fetched, through the client's User-Agent and timeout.
     request = system.request_log[0]
     assert (version / "App" / "payload.txt").read_text() == "fetched"
     assert request.headers["User-Agent"] == f"gupkg/{__version__}" and request.timeout == 17.0
 
 
 def test_a_version_directory_hook_that_uses_the_network_directly_validates_without_a_warning(tmp_path: Path) -> None:
-    """Importing urllib, http, socket, requests or subprocess is allowed and silent in a version directory (D28)."""
+    """Importing urllib, http, socket, requests or subprocess is allowed and silent in a version directory."""
     folder = tmp_path / "pkg" / "1.0"
     (folder / "pkg.local").mkdir(parents=True)
     (folder / "pkg.toml").write_text('format = 2\n[source]\nscript = "pkg.local/populate.py"\n', encoding="utf-8")
@@ -275,6 +285,7 @@ def test_the_context_is_given_to_a_non_python_script_as_json(tmp_path: Path, sys
 
 def test_hooklib_fetches_through_the_context_client(tmp_path: Path, system: FakeSystem) -> None:
     """`fetch_text`, `fetch_json`, `resolve_redirects` and `github_release` all use the shared client and its rules."""
+    # Arrange: answers for text, JSON, a redirect and a GitHub release.
     system.urls["https://example.org/t.txt"] = "text"
     system.urls["https://example.org/j.json"] = '{"a": [1, 2]}'
     system.urls["https://example.org/go"] = FakeHttp("", 302, {"Location": "https://example.org/final.zip"})
@@ -282,6 +293,7 @@ def test_hooklib_fetches_through_the_context_client(tmp_path: Path, system: Fake
     system.urls["https://api.github.com/repos/o/r/releases/tags/v1"] = '{"tag_name": "v1", "assets": []}'
     context = make_context(system, tmp_path)
 
+    # Assert: each helper fetches through the context client with gupkg's User-Agent.
     assert hooklib.fetch_text(context, "https://example.org/t.txt") == "text"
     assert hooklib.fetch_json(context, "https://example.org/j.json") == {"a": [1, 2]}
     assert hooklib.resolve_redirects(context, "https://example.org/go") == "https://example.org/final.zip"
@@ -292,6 +304,7 @@ def test_hooklib_fetches_through_the_context_client(tmp_path: Path, system: Fake
 @pytest.mark.process
 def test_hooklib_extracts_flattens_and_runs_seven_zip_safely(tmp_path: Path, system: FakeSystem) -> None:
     """`extract_archive` applies the shared options, `safe_extract` refuses a hostile archive, `flatten` strips wrappers, `seven_zip` runs 7-Zip."""
+    # Arrange: a good archive and one with a hostile member name.
     archive = tmp_path / "a.zip"
     with zipfile.ZipFile(archive, "w") as bundle:
         bundle.writestr("wrap/bin/tool.exe", "x")
@@ -300,6 +313,7 @@ def test_hooklib_extracts_flattens_and_runs_seven_zip_safely(tmp_path: Path, sys
         bundle.writestr("../evil.txt", "x")
     context = make_context(system, tmp_path)
 
+    # Act: extract the good archive, refuse the hostile one, flatten a nested folder and run 7-Zip.
     hooklib.extract_archive(context, archive, tmp_path / "out", strip=1, require=("bin/tool.exe",))
     with pytest.raises(Exception, match="unsafe member name"):
         hooklib.safe_extract(context, hostile, tmp_path / "bad-out")
@@ -309,6 +323,7 @@ def test_hooklib_extracts_flattens_and_runs_seven_zip_safely(tmp_path: Path, sys
     hooklib.flatten(tmp_path / "nest", "auto")
     output = hooklib.seven_zip(context, "i")
 
+    # Assert: only the good archive was extracted and the helpers did their work.
     assert (tmp_path / "out" / "bin" / "tool.exe").read_text() == "x" and not (tmp_path / "bad-out").exists()
     assert (tmp_path / "nest" / "f.txt").exists()
     assert "7-Zip" in output
@@ -324,7 +339,7 @@ def test_hooklib_find_digest_reads_a_sums_file() -> None:
 
 
 def test_hooklib_run_prepare_applies_the_declarative_steps_to_the_staged_app(tmp_path: Path, system: FakeSystem) -> None:
-    """A custom populate script can use the same `[[prepare]]` steps through its context (D27)."""
+    """A custom populate script can use the same `[[prepare]]` steps through its context."""
     app = tmp_path / "App"
     app.mkdir()
     (app / "a.exe").write_text("a", encoding="utf-8")
@@ -336,27 +351,32 @@ def test_hooklib_run_prepare_applies_the_declarative_steps_to_the_staged_app(tmp
 
 
 # ---------------------------------------------------------------------------
-# Custom populate scripts (D27)
+# Custom populate scripts
 # ---------------------------------------------------------------------------
 
 
 def test_a_non_python_populate_script_receives_the_context_as_json_on_standard_input(tmp_path: Path) -> None:
     """A `.cmd` script is started in the version directory with the context JSON on stdin, and may fill `App` itself."""
+    # Arrange: a version with a populate program that records its call.
     version = tmp_path / "pkg" / "1.0"
     (version / "pkg.local").mkdir(parents=True)
     (version / "pkg.local" / "populate.cmd").write_text("@echo off\n", encoding="utf-8")
     received: list[ProcessCall] = []
 
+    # A program that records the call and succeeds.
     def script(call: ProcessCall) -> ProcessResult:
         """Record the call and pretend the script succeeded."""
         received.append(call)
         return ProcessResult(0, "downloading\n")
 
+    # A machine that runs the program double.
     system = FakeSystem(tmp_path / "machine", processes={"populate.cmd": script}, real_7zip=False)
     context = make_context(system, version, app=version / "App")
 
+    # Act: run the populate program.
     run_custom_populate(context, "pkg.local/populate.cmd")
 
+    # Assert: the program got the version folder and the context as JSON on standard input.
     call = received[0]
     assert Path(call.argv[0]) == version / "pkg.local" / "populate.cmd" and call.cwd == version
     assert json.loads(call.input_text)["paths"]["app"] == str(version / "App")

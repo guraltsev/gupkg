@@ -22,9 +22,12 @@ import urllib.request
 from typing import Any
 
 
+# Version of the update-check module interface that this script implements.
 PKG_MODULE_API = 1
 
+# Address that publishes the current release information.
 _RELEASE_URL = "https://api.github.com/repos/BCUninstaller/Bulk-Crap-Uninstaller/releases/latest"
+# Pattern that extracts the version (and file address, where captured) from the response.
 _ASSET = re.compile(r"BCUninstaller_\d+(?:\.\d+)+_portable\.7z")
 
 
@@ -56,6 +59,7 @@ def check_update(context: dict[str, Any]) -> dict[str, str] | None:
             "X-GitHub-Api-Version": "2022-11-28",
         },
     )
+    # Fetch the latest release document and report any failure with its cause.
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             release = json.load(response)
@@ -75,6 +79,7 @@ def check_update(context: dict[str, Any]) -> dict[str, str] | None:
 
     # Require one matching uploaded asset so a similarly named file cannot
     # become the application payload.
+    # Require exactly one uploaded asset that matches the portable archive name.
     assets = release.get("assets")
     matches = [
         asset
@@ -84,16 +89,19 @@ def check_update(context: dict[str, Any]) -> dict[str, str] | None:
         and isinstance(asset.get("name"), str)
         and _ASSET.fullmatch(asset["name"])
     ]
+    # Refuse a missing or ambiguous asset rather than guess one.
     if len(matches) != 1:
         raise RuntimeError(
             f"Bulk Crap Uninstaller release must contain exactly one asset matching "
             f"{_ASSET.pattern!r}; found {len(matches)}"
         )
+    # Resolve the download address of the single matching asset.
     asset = matches[0]
     url = asset.get("browser_download_url")
     if not isinstance(url, str):
         raise RuntimeError("Bulk Crap Uninstaller asset has no download URL")
 
+    # Assemble the candidate, adding the asset digest when the release publishes one.
     candidate = {
         "candidateId": f"bulkcrapuninstaller:{release_id}",
         "version": version,

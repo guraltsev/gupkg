@@ -1,4 +1,4 @@
-"""Synchronise, validate and read registry 2 caches (design section 17).
+"""Synchronise, validate and load registry 2 caches (design section 17).
 
 A registry is a Git repository or ZIP archive with a ``_registry.toml`` (``format = 2``) and
 one folder per package: pinned ``<version>\\`` directories (each with the fingerprint that
@@ -62,18 +62,35 @@ from ..model.scope import Scope
 from ..tomlio import read_toml, write_toml
 from .local import DATA_DIR_NAME, manifest_text_hash, is_reparse_point, tree_hash
 
+# The only registry layout this gupkg understands (``format = 2`` in ``_registry.toml``).
 REGISTRY_FORMAT = 2
+
+# Name of the settings file at the top of a registry tree.
 REGISTRY_FILE_NAME = "_registry.toml"
 
 # The schema number of the per-revision index, so an index of another layout is ignored.
 INDEX_SCHEMA = 1
-_SHA256 = re.compile(r"[0-9a-f]{64}")
-_REVISION = re.compile(r"[0-9a-f]{40}")
 
 
 @dataclass(frozen=True)
 class CacheState:
-    """The active cached revision of one registry and the outcome of its last sync."""
+    """The active cached revision of one registry and the outcome of its last sync.
+
+    Attributes
+    ----------
+    cache_dir : Path
+        The registry's cache folder.
+    revision : str | None
+        The active revision, or ``None`` when nothing is cached.
+    source : str | None
+        Where the active revision was fetched from.
+    synchronized_at : str | None
+        When the last successful sync finished.
+    last_failure : str | None
+        The text of the last failed sync, or ``None``.
+    tree_dir : Path | None
+        Return the folder of the active revision (``pkgs``, ``registry.toml``, index), if it exists.
+    """
 
     cache_dir: Path
     revision: str | None = None
@@ -92,7 +109,26 @@ class CacheState:
 
 @dataclass(frozen=True)
 class RegistrySnapshot:
-    """The valid entries of one registry revision, and every problem validation found."""
+    """The valid entries of one registry revision, and every problem validation found.
+
+    Methods
+    -------
+    entry
+        Return the entry called *package* (letter case ignored), or ``None``.
+
+    Attributes
+    ----------
+    name : str
+        The registry name.
+    revision : str | None
+        The revision that was read, or ``None``.
+    entries : Mapping[str, RegistryEntry]
+        The valid entries by package name.
+    problems : tuple[str, ...]
+        Every problem validation found.
+    description : str | None
+        The registry's own description, if it gives one.
+    """
 
     name: str
     revision: str | None
@@ -101,13 +137,38 @@ class RegistrySnapshot:
     description: str | None = None
 
     def entry(self, package: str) -> RegistryEntry | None:
-        """Return the entry called *package* (letter case ignored), or ``None``."""
+        """Return the entry called *package* (letter case ignored), or ``None``.
+
+        Parameters
+        ----------
+        package : str
+            The package name to look up.
+
+        Returns
+        -------
+        RegistryEntry or None
+            The matching entry, or ``None`` when the registry has no such package.
+        """
         return self.entries.get(package.casefold())
 
 
 @dataclass(frozen=True)
 class SyncResult:
-    """The outcome of a sync: ``ok``, its ``status`` (``synced``, ``current`` or ``offline``) and problems."""
+    """The outcome of a sync: ``ok``, its ``status`` (``synced``, ``current`` or ``offline``) and problems.
+
+    Attributes
+    ----------
+    ok : bool
+        Whether the sync succeeded or the cache was already current.
+    status : str
+        ``synced``, ``current`` or ``offline``.
+    revision : str | None
+        The active revision after the sync.
+    problems : tuple[str, ...]
+        Problems found in the fetched revision.
+    error : str | None
+        The error text of a failed sync, or ``None``.
+    """
 
     ok: bool
     status: str = ""
@@ -117,7 +178,20 @@ class SyncResult:
 
 
 def registry_cache_dir(root: Path, name: str) -> Path:
-    """Return the cache folder of registry *name* in the root data directory of *root*."""
+    """Return the cache folder of registry *name* in the root data directory of *root*.
+
+    Parameters
+    ----------
+    root : Path
+        The root whose ``.gupkg`` folder holds the caches.
+    name : str
+        The registry's name in the settings.
+
+    Returns
+    -------
+    Path
+        ``<root>\\.gupkg\\registry\\<name>``, whether or not it exists.
+    """
     return Path(root) / DATA_DIR_NAME / "registry" / name
 
 
@@ -141,6 +215,7 @@ def cache_state(cache_dir: Path, scope: Scope) -> CacheState:
     ConfigValidationError
         If the run is in system mode and the cache is not in an admin-only folder.
     """
+    # Refuse an untrusted cache before opening anything in it.
     require_trusted_cache(cache_dir, scope)
     state_path = Path(cache_dir) / "state.toml"
     if not state_path.is_file() or is_reparse_point(state_path):
@@ -152,7 +227,7 @@ def cache_state(cache_dir: Path, scope: Scope) -> CacheState:
 
     # The revision names a folder below ``trees``, so only a 40-digit hexadecimal revision is accepted.
     revision = values.get("revision")
-    if not isinstance(revision, str) or not _REVISION.fullmatch(revision):
+    if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
         revision = None
     return CacheState(
         Path(cache_dir),
@@ -187,6 +262,7 @@ def load_registry(name: str, cache_dir: Path, scope: Scope) -> RegistrySnapshot:
         written by the sync is used when it matches the revision; otherwise the tree is
         validated in memory (nothing is written).
     """
+    # An untrusted cache, a missing tree or a link inside the cache yields an empty snapshot with the reason.
     try:
         state = cache_state(cache_dir, scope)
     except ConfigValidationError as exc:
@@ -208,7 +284,20 @@ def load_registry(name: str, cache_dir: Path, scope: Scope) -> RegistrySnapshot:
 
 
 def search_snapshot(snapshot: RegistrySnapshot, query: str = "") -> list[RegistryEntry]:
-    """Return the entries whose name contains *query* (case-insensitive), sorted by name."""
+    """Return the entries whose name contains *query* (case-insensitive), sorted by name.
+
+    Parameters
+    ----------
+    snapshot : RegistrySnapshot
+        The registry to search.
+    query : str, default=""
+        Text a package name must contain; empty matches every entry.
+
+    Returns
+    -------
+    list of RegistryEntry
+        The matching entries in name order.
+    """
     needle = query.casefold()
     return [entry for key, entry in sorted(snapshot.entries.items()) if needle in key]
 
@@ -237,6 +326,7 @@ def build_snapshot(name: str, tree: Path, revision: str | None) -> RegistrySnaps
         If the registry as a whole is not usable: ``_registry.toml`` is missing, is not
         format 2, or its fingerprints are malformed.
     """
+    # Registry-wide checks first: the settings file, its format number and its fingerprint table.
     tree = Path(tree)
     settings_path = tree / "registry.toml"
     try:
@@ -245,13 +335,18 @@ def build_snapshot(name: str, tree: Path, revision: str | None) -> RegistrySnaps
         raise ConfigValidationError(f"{REGISTRY_FILE_NAME} is missing: unsupported registry format") from None
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
         raise ConfigValidationError(f"Cannot read {REGISTRY_FILE_NAME}: {exc}") from exc
+
+    # Refuse any other layout outright.
     if settings.get("format") != REGISTRY_FORMAT:
         raise ConfigValidationError(
             f"unsupported registry format ({settings.get('format', 'missing')!r}); this gupkg reads format {REGISTRY_FORMAT}"
         )
+
+    # The fingerprint table must map name/version to SHA-256 digests.
     fingerprints = settings.get("fingerprints", {})
+    sha256 = re.compile(r"[0-9a-f]{64}")
     if not isinstance(fingerprints, dict) or any(
-        not isinstance(key, str) or not isinstance(value, str) or not _SHA256.fullmatch(value)
+        not isinstance(key, str) or not isinstance(value, str) or not sha256.fullmatch(value)
         for key, value in fingerprints.items()
     ):
         raise ConfigValidationError(f"[fingerprints] of {REGISTRY_FILE_NAME} must map 'name/version' to a SHA-256")
@@ -265,18 +360,24 @@ def build_snapshot(name: str, tree: Path, revision: str | None) -> RegistrySnaps
     for folder in sorted(pkgs.iterdir(), key=lambda item: (item.name.casefold(), item.name)):
         if folder.name.startswith((".", "_")) or not (folder.is_dir() or is_reparse_point(folder)):
             continue
+
+        # Names that differ only in letter case would collide on Windows, so both are dropped.
         key = folder.name.casefold()
         if key in entries or key in skipped:
             entries.pop(key, None)
             skipped.add(key)
             problems.append(f"{folder.name}: duplicate registry name (letter case differs); skipped")
             continue
+
+        # Validate the folder on its own; a rejected one is remembered so a later duplicate is rejected too.
         entry, entry_problems = _build_entry(name, revision, folder, wanted)
         problems.extend(entry_problems)
         if entry is None:
             skipped.add(key)
         else:
             entries[key] = entry
+
+    # The optional free-text description is kept only when it is a string.
     description = settings.get("description")
     return RegistrySnapshot(name, revision, entries, tuple(problems), description if isinstance(description, str) else None)
 
@@ -285,6 +386,7 @@ def _build_entry(
     registry: str, revision: str | None, folder: Path, fingerprints: Mapping[str, str]
 ) -> tuple[RegistryEntry | None, list[str]]:
     """Validate one package folder; return its entry (or ``None`` when skipped) and the problems."""
+    # A folder whose name is not a usable package name, or whose tree is unsafe, is skipped whole.
     name = folder.name
     if not is_version_name(name):
         return None, [f"{name}: not a usable package name; skipped"]
@@ -299,6 +401,8 @@ def _build_entry(
     for child in sorted(folder.iterdir(), key=lambda item: item.name):
         if not child.is_dir() or not (child / MANIFEST_NAME).is_file():
             continue
+
+        # The tracker needs a valid check and a hash; a version needs a valid check and records its fingerprint.
         if child.name == TRACKER_DIR_NAME:
             report, digest = _check(child)
             if report.ok and digest is not None:
@@ -308,11 +412,14 @@ def _build_entry(
         elif is_version_name(child.name):
             report, _ = _check(child)
             if report.ok:
+                # A fingerprint from ``_registry.toml`` is attached when the registry publishes one.
                 versions.append(RegistryVersion(
                     child.name, child, fingerprints.get(f"{name}/{child.name}".casefold()), manifest_text_hash(child / MANIFEST_NAME)
                 ))
             else:
                 problems.extend(f"{name}/{child.name}: {message}; version dropped" for message in report.errors)
+
+    # Oldest first; a package with nothing valid left is skipped.
     versions.sort(key=cmp_to_key(lambda left, right: compare_versions(left.name, right.name)))
     if not versions and tracker is None:
         return None, [*problems, f"{name}: no valid version or tracker; skipped"]
@@ -331,6 +438,8 @@ def _unsafe_entry(folder: Path) -> str | None:
     """Return why the tree below *folder* cannot be trusted (a link, an unsafe name, reserved state), or ``None``."""
     if is_reparse_point(folder):
         return "it is a link"
+
+    # Walk the whole tree without following links, stopping at the first unsafe entry.
     stack = [folder]
     while stack:
         current = stack.pop()
@@ -338,6 +447,8 @@ def _unsafe_entry(folder: Path) -> str | None:
             relative = child.relative_to(folder)
             if is_reparse_point(child):
                 return f"{relative} is a link"
+
+            # Names that escape the folder or collide with gupkg's own state are never trusted.
             if any(part in {".", ".."} or ":" in part for part in relative.parts):
                 return f"unsafe path {relative}"
             if child.name.casefold() in {"current", DATA_DIR_NAME}:
@@ -354,11 +465,14 @@ def _unsafe_entry(folder: Path) -> str | None:
 
 def _write_index(tree: Path, snapshot: RegistrySnapshot) -> None:
     """Write the validated index of *snapshot* next to its tree."""
+    # One index row per entry: the tracker hash and the per-version hashes that later reads trust.
     entries = []
     for entry in snapshot.entries.values():
         item: dict[str, object] = {"name": entry.name}
         if entry.tracker is not None:
             item["tracker_sha256"] = entry.tracker.sha256
+
+        # Optional hashes are omitted rather than written empty.
         item["version"] = [
             {key: value for key, value in (
                 ("name", version.name), ("fingerprint", version.fingerprint), ("pkg_toml_sha256", version.pkg_toml_sha256),
@@ -366,6 +480,8 @@ def _write_index(tree: Path, snapshot: RegistrySnapshot) -> None:
             for version in entry.versions
         ]
         entries.append(item)
+
+    # The header ties the index to one revision and registry name, so a stale index is ignored.
     data: dict[str, object] = {
         "schema": INDEX_SCHEMA,
         "revision": snapshot.revision or "",
@@ -383,15 +499,21 @@ def _read_index(name: str, tree: Path, revision: str | None) -> RegistrySnapshot
     path = tree / "index.toml"
     if is_reparse_point(path) or not path.is_file():
         return None
+
+    # Any mismatch or malformed field makes the index unusable (``None``), so the caller revalidates the tree.
     try:
         data = read_toml(path)
         if data.get("schema") != INDEX_SCHEMA or data.get("revision") != (revision or "") or data.get("name") != name:
             return None
+
+        # Rebuild each entry from the index rows, refusing any name that is not a usable package or version name.
         entries: dict[str, RegistryEntry] = {}
         for item in data["entry"]:
             names = [item["name"], *(row["name"] for row in item["version"])]
             if not all(isinstance(name_, str) and is_version_name(name_) for name_ in names):
                 return None
+
+            # The tracker and the versions live at fixed places below the package folder.
             folder = tree / "pkgs" / item["name"]
             tracker = None
             if "tracker_sha256" in item:
@@ -401,6 +523,8 @@ def _read_index(name: str, tree: Path, revision: str | None) -> RegistrySnapshot
                 for row in item["version"]
             )
             entries[str(item["name"]).casefold()] = RegistryEntry(name, str(item["name"]), revision, folder, versions, tracker)
+
+        # Problems recorded at sync time are reported again, without revalidating.
         description = data.get("description")
         return RegistrySnapshot(
             name, revision, entries, tuple(str(problem) for problem in data["problem"]),
@@ -444,18 +568,28 @@ def sync_registry(
     SyncResult
         ``synced``, ``current`` (the fetched revision is already cached) or ``offline``.
         On failure the previous validated tree stays active and ``error`` says why.
+
+    Raises
+    ------
+    OSError
+        If the work area below *cache_dir* cannot be created. Every other failure is
+        reported in the result.
     """
+    # Start from the cache as it is; an untrusted cache fails before anything is written.
     cache_dir = Path(cache_dir)
     system = scope.system
     try:
         current = cache_state(cache_dir, scope)
     except ConfigValidationError as exc:
         return SyncResult(False, error=str(exc))
+
+    # Offline mode reports the existing validated cache and downloads nothing.
     if offline:
         if current.tree_dir is None:
             return SyncResult(False, error="No validated registry cache is available in offline mode")
         return SyncResult(True, "offline", current.revision)
 
+    # All fetching happens in a throw-away work area inside the cache folder.
     work_parent = cache_dir / ".work"
     work_parent.mkdir(parents=True, exist_ok=True)
     published: Path | None = None
@@ -471,19 +605,20 @@ def sync_registry(
                     _write_state(cache_dir, current, source=source, last_failure=None)
                     return SyncResult(True, "current", current.revision)
 
+            # Fetch the new revision; an unchanged one only refreshes the state file.
             registry, revision = _obtain(source, git, work, scope)
             if current.revision == revision and current.tree_dir is not None:
                 _write_state(cache_dir, current, source=source, last_failure=None)
                 return SyncResult(True, "current", revision)
 
             # Copy the packages and the registry file (never Git metadata or other furniture).
-            def furniture(directory: str, names: list[str]) -> list[str]:
+            def _furniture(directory: str, names: list[str]) -> list[str]:
                 """Leave out Git metadata and top-level repository furniture (names starting with "_")."""
                 top_level = Path(directory) == registry
                 return [item for item in names if item == ".git" or (top_level and item.startswith("_"))]
 
             staged = work / "tree"
-            shutil.copytree(registry, staged / "pkgs", ignore=furniture)
+            shutil.copytree(registry, staged / "pkgs", ignore=_furniture)
             registry_file = registry / REGISTRY_FILE_NAME
             if not registry_file.is_file():
                 raise ConfigValidationError(f"{REGISTRY_FILE_NAME} is missing: unsupported registry format")
@@ -493,6 +628,8 @@ def sync_registry(
             snapshot = build_snapshot(name, staged, revision)
             if not snapshot.entries:
                 raise ConfigValidationError("The registry contains no valid packages")
+
+            # Publish the tree under its revision, then index it; ``published`` lets a failure remove it.
             target = cache_dir / "trees" / revision
             if target.exists():
                 shutil.rmtree(target)
@@ -501,10 +638,13 @@ def sync_registry(
             published = target
             published_snapshot = build_snapshot(name, target, revision)
             _write_index(target, published_snapshot)
+
+        # Only now does the state file point at the new revision, so a failure above keeps the old one active.
         _write_state(cache_dir, CacheState(cache_dir, revision, source, datetime.now(timezone.utc).isoformat()),
                      source=source, last_failure=None)
         return SyncResult(True, "synced", revision, published_snapshot.problems)
     except Exception as exc:
+        # Undo a half-published tree and record the failure; the previous tree stays active.
         if published is not None:
             shutil.rmtree(published, ignore_errors=True)
         _write_state(cache_dir, current, source=current.source or source, last_failure=str(exc))
@@ -515,9 +655,12 @@ def sync_registry(
 
 def _obtain(source: str, git: str | None, work: Path, scope: Scope) -> tuple[Path, str]:
     """Fetch the registry into *work* and return its root folder and 40-hex revision."""
+    # A trusted Git does a shallow clone with protocol, symlink and hook restrictions.
     system = scope.system
     if git is not None and is_git_source(source):
         destination = work / "clone"
+
+        # Only https, no symlinks and no hooks, so a hostile repository cannot act on this machine.
         command = [
             git, "-c", "protocol.allow=never", "-c", "protocol.https.allow=always",
             "-c", "core.symlinks=false", "-c", f"core.hooksPath={os.devnull}",
@@ -526,6 +669,8 @@ def _obtain(source: str, git: str | None, work: Path, scope: Scope) -> tuple[Pat
         result = system.run(command, env=git_environment(scope), timeout=600, on_line=subprocess_lines(command))
         if result.returncode != 0:
             raise ConfigValidationError(f"git clone failed: {result.stderr.strip()}")
+
+        # The commit that was cloned names the revision.
         head = system.run(
             [git, "-C", str(destination), "rev-parse", "HEAD"], env=git_environment(scope), on_line=subprocess_lines([git]),
         )
@@ -538,6 +683,8 @@ def _obtain(source: str, git: str | None, work: Path, scope: Scope) -> tuple[Pat
     url = archive_url(source)
     if urllib.parse.urlparse(url).scheme.lower() not in {"http", "https", "file"}:
         raise ConfigValidationError(f"Registry source must be an http(s):// or file: URL to a ZIP archive: {source}")
+
+    # Download and unpack the archive; a revision is derived from the archive.
     archive_path = work / "registry.zip"
     system.fetch(url, None, archive_path)
     revision = archive_revision(archive_path)

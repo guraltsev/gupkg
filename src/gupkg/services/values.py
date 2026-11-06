@@ -28,7 +28,9 @@ from ..model.template import TemplateError, references, render
 from ..model.version import is_version_name
 from .safepath import safe_file_name
 
+# Longest version text accepted, in characters.
 MAX_VERSION_LENGTH = 64
+# Longest address accepted, in characters.
 MAX_URL_LENGTH = 4096
 
 
@@ -39,11 +41,39 @@ class TrackError(RuntimeError):
 def valid_version(text: str) -> str:
     """Return *text* stripped, after checking that it can name a version directory.
 
+    Parameters
+    ----------
+    text : str
+        The version found by a provider.
+
+    Returns
+    -------
+    str
+        The stripped version.
+
     Raises
     ------
     TrackError
         If it is empty, longer than ``MAX_VERSION_LENGTH``, contains whitespace or a
         template, or is a reserved or unsafe directory name.
+
+    Examples
+    --------
+    Basic usage:
+
+    >>> valid_version(' 1.2.3 ')
+    '1.2.3'
+
+    Edge cases:
+
+    >>> valid_version('1 2')
+    Traceback (most recent call last):
+        ...
+    gupkg.services.values.TrackError: The discovered version '1 2' is not usable: it must be 1-64 characters without spaces
+    >>> valid_version('')
+    Traceback (most recent call last):
+        ...
+    gupkg.services.values.TrackError: The discovered version '' is not usable: it must be 1-64 characters without spaces
     """
     version = text.strip()
     if not version or len(version) > MAX_VERSION_LENGTH or re.search(r"\s", version) or "${" in version:
@@ -56,10 +86,38 @@ def valid_version(text: str) -> str:
 def absolute_url(text: str, base: str | None = None) -> str:
     """Return *text* as an absolute http or https URL, resolved against *base*.
 
+    Parameters
+    ----------
+    text : str
+        The address, possibly relative.
+    base : str, optional
+        The address a relative *text* is resolved against.
+
+    Returns
+    -------
+    str
+        The absolute address.
+
     Raises
     ------
     TrackError
         If the result is not http or https, or is longer than ``MAX_URL_LENGTH``.
+
+    Examples
+    --------
+    Basic usage:
+
+    >>> absolute_url('https://example.org/a')
+    'https://example.org/a'
+    >>> absolute_url('../b.zip', 'https://example.org/x/y/')
+    'https://example.org/x/b.zip'
+
+    Edge cases:
+
+    >>> absolute_url('ftp://example.org/a')
+    Traceback (most recent call last):
+        ...
+    gupkg.services.values.TrackError: 'ftp://example.org/a' is not an http or https address
     """
     joined = urllib.parse.urljoin(base or "", text.strip())
     parts = urllib.parse.urlsplit(joined)
@@ -73,11 +131,38 @@ def absolute_url(text: str, base: str | None = None) -> str:
 def expand(template: str, values: Mapping[str, str]) -> str:
     """Expand ``${name}`` references in *template* from *values*.
 
+    Parameters
+    ----------
+    template : str
+        Text that may contain ``${name}`` references.
+    values : mapping
+        The names and their replacement text.
+
+    Returns
+    -------
+    str
+        The expanded text.
+
     Raises
     ------
     TrackError
         If the template is malformed or names something that has no value.
+
+    Examples
+    --------
+    Basic usage:
+
+    >>> expand('app-${version}.zip', {'version': '1.2'})
+    'app-1.2.zip'
+
+    Edge cases:
+
+    >>> expand('${other}', {'version': '1.2'})
+    Traceback (most recent call last):
+        ...
+    gupkg.services.values.TrackError: ${other} has no value in this check; known: version
     """
+    # Render the template, then insist that no reference is left unresolved.
     try:
         rendered = render(template, values)
         left = [reference.text for reference in references(rendered) if reference.name not in values]
@@ -89,7 +174,25 @@ def expand(template: str, values: Mapping[str, str]) -> str:
 
 
 def compile_runtime(text: str, values: Mapping[str, str]) -> re.Pattern[str]:
-    """Compile a pattern that may contain ``${name}`` references, escaping each substituted value."""
+    """Compile a pattern that may contain ``${name}`` references, escaping each substituted value.
+
+    Parameters
+    ----------
+    text : str
+        The pattern source, possibly with ``${name}`` references.
+    values : mapping
+        The names and their replacement text, escaped before substitution.
+
+    Returns
+    -------
+    re.Pattern
+        The compiled pattern.
+
+    Raises
+    ------
+    TrackError
+        If the pattern is invalid or unsafe.
+    """
     try:
         return compile_pattern(escape_template(text, values))
     except PatternError as error:
@@ -101,7 +204,32 @@ def file_name_from_url(url: str) -> str:
 
     The last path segment is used, except that a trailing ``download`` or ``dl`` marker (SourceForge
     serves ``.../CrystalDiskInfo9_4_2.zip/download``) is skipped in favour of the segment before it.
+
+    Parameters
+    ----------
+    url : str
+        The artifact address.
+
+    Returns
+    -------
+    str
+        A single safe file name, ``"download"`` when nothing usable remains.
+
+    Examples
+    --------
+    Basic usage:
+
+    >>> file_name_from_url('https://example.org/files/app-1.0.zip')
+    'app-1.0.zip'
+    >>> file_name_from_url('https://sf.example/p/Tool9.zip/download')
+    'Tool9.zip'
+
+    Edge cases:
+
+    >>> file_name_from_url('https://example.org/')
+    'download'
     """
+    # Drop trailing download markers so the real file name is the last segment.
     segments = [urllib.parse.unquote(segment) for segment in urllib.parse.urlsplit(url).path.split("/") if segment]
     while len(segments) > 1 and segments[-1].lower() in ("download", "dl"):
         segments.pop()

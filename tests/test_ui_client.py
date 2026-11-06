@@ -1,7 +1,7 @@
 """Cover the one module through which the UI programs run ``gupkg``: which command it runs, what it refuses, and how it distrusts the result.
 
 Behaviour covered: the command is the ``gupkg.cmd`` of the program's own gupkg tree, never one found on ``PATH`` and never one that resolves outside the tree; an argument with a
-character that could be misread (``& | < > ^ " % !``, a control character) is refused before anything starts; options go before ``--`` and targets after it; a result is believed only
+character that could be misinterpreted (``& | < > ^ " % !``, a control character) is refused before anything starts; options go before ``--`` and targets after it; a result is believed only
 when it is one JSON object with ``"api": 2``, an exit code that matches the process and (when an events file was written) a ``run_end``; output beyond the cap and a program that cannot start are failures; the stop request creates the announced marker only inside the program's temporary folder, also when the
 marker is announced after the request was made.
 
@@ -225,6 +225,7 @@ def test_a_stop_request_creates_the_announced_marker_and_the_run_stops(fake: Fak
 
     message, outcome = asyncio.run(scenario())
 
+    # Assert: the stop request was announced and the run ended through it.
     assert "stop request is sent" in message and outcome.ok
     assert fake.stop_events()[0]["saw_stop"] is True
     assert [item["status"] for item in outcome.entries()] == ["updated", "skipped"]
@@ -252,6 +253,7 @@ def test_a_stop_marker_outside_the_temporary_folder_is_never_created(tmp_path: P
     stream = EventStream(tmp_path / "x.jsonl")
     stop = StopRequest(folder)
     stop.stream = stream
+    # Hostile marker names must be refused without creating anything.
     for hostile in (str(tmp_path / "elsewhere" / ("gupkg-stop-" + "a" * 32)), str(folder / "other-name"), str(folder / ("gupkg-stop-" + "g" * 32))):
         stream.stop_file = hostile
         stop.created = False

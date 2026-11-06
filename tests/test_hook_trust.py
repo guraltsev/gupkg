@@ -1,11 +1,11 @@
 """Cover the trust contract of package code: an elevated run never loads or starts code a user can modify.
 
-Hooks and populate scripts are Python modules and programs read from a version directory. In an
-elevated run (decision D19) they are refused unless the directory is admin-only, before anything is
+Hooks and populate scripts are Python modules and programs loaded from a version directory. In an
+elevated run they are refused unless the directory is admin-only, before anything is
 imported or started. Covers ``load_hook``, ``run_custom_populate`` and the ``[[prepare]] module``
 step, the fail-closed marker ``GUPKG_ELEVATED``, and hooks whose import-time code raises. The
 admin-only answer is ``FakeSystem(untrusted_dirs=...)``. Out of scope: how the engine decides to
-elevate (issue 028).
+elevate.
 """
 
 from __future__ import annotations
@@ -110,18 +110,22 @@ def test_a_planted_pkg_local_folder_is_judged_too(tmp_path: Path, version: Path)
 
 def test_the_script_file_and_the_folders_between_it_and_the_version_directory_are_judged_too(tmp_path: Path, version: Path) -> None:
     """A user-writable script file, or a user-writable subfolder that holds it, is refused in an elevated run."""
+    # Arrange: a hook below a nested folder of the version directory.
     nested = version / "pkg.local" / "sub"
     nested.mkdir()
     (nested / "deep.py").write_text("PKG_MODULE_API = 2\nfrom pathlib import Path\nPath(__file__).with_name('ran.txt').write_text('x')\n", encoding="utf-8")
+    # Machines that distrust the file, the folder, or nothing.
     file_untrusted = FakeSystem(tmp_path / "m1", elevated=True, untrusted_dirs={nested / "deep.py"})
     folder_untrusted = FakeSystem(tmp_path / "m2", elevated=True, untrusted_dirs={nested})
     trusted = FakeSystem(tmp_path / "m3", elevated=True)
 
+    # An untrusted file or folder refuses the load before the hook runs.
     with pytest.raises(HookError, match=r"deep\.py"):
         load_hook(version, "pkg.local/sub/deep.py", scope_of(file_untrusted))
     with pytest.raises(HookError, match="sub"):
         load_hook(version, "pkg.local/sub/deep.py", scope_of(folder_untrusted))
     assert not (nested / "ran.txt").exists()
+    # A trusted tree loads and runs the hook.
     load_hook(version, "pkg.local/sub/deep.py", scope_of(trusted))
     assert (nested / "ran.txt").exists()
 
@@ -174,6 +178,7 @@ def test_a_keyboard_interrupt_in_a_hook_still_stops_the_run(tmp_path: Path, syst
 
 def test_an_elevated_run_refuses_a_populate_script_and_a_prepare_module_from_an_untrusted_directory(tmp_path: Path, version: Path) -> None:
     """The Python populate hook, a `.cmd` populate script and a `[[prepare]] module` step are all refused before they start."""
+    # Arrange: an elevated machine that distrusts the version directory and records started programs.
     started: list[ProcessCall] = []
     system = FakeSystem(
         tmp_path / "machine", elevated=True, untrusted_dirs={version},
@@ -182,6 +187,7 @@ def test_an_elevated_run_refuses_a_populate_script_and_a_prepare_module_from_an_
     app = version / "App"
     app.mkdir()
 
+    # Act: run an untrusted populate module, a populate program and a prepare module.
     with pytest.raises(HookError, match="not admin-only"):
         run_custom_populate(context(system, version), "pkg.local/planted.py")
     with pytest.raises(HookError, match="not admin-only"):
@@ -189,6 +195,7 @@ def test_an_elevated_run_refuses_a_populate_script_and_a_prepare_module_from_an_
     with pytest.raises(PrepareError, match="not admin-only"):
         run_prepare([PrepareModule("pkg.local/planted.py")], app, context(system, version))
 
+    # Assert: none of them started or ran.
     assert started == []
     assert not [name for name in ("executed.txt", "called.txt", "prepared.txt") if (version / "pkg.local" / name).exists()]
 

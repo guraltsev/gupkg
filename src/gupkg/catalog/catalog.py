@@ -20,7 +20,7 @@ Implementation Approach
 -----------------------
 The catalog reads one root, ``scope.root``, and joins one registry cache, ``<root>\\.gupkg\\registry``.
 A package in any other folder is not seen, and a path outside the root is refused unless it is a distribution
-folder to be copied in. Every package is scanned by ``gupkg.catalog.local``, its install record is read by ``gupkg.catalog.record``,
+folder to be copied in. Every package is scanned by ``gupkg.catalog.local``, its install record is loaded by ``gupkg.catalog.record``,
 and the registry entry it follows is joined from the cached registry snapshots: the entry with
 its own name by default (decision D2), the entry of its explicit link, or none after an opt-out.
 Status and candidates are then pure functions of the view (``gupkg.model.state``). Effects of
@@ -78,7 +78,13 @@ class NotFound(CatalogError):
 
 
 class NoVersionKnown(CatalogError):
-    """Report that a package has no version to install and only a tracker can find one."""
+    """Report that a package has no version to install and only a tracker can find one.
+
+    Parameters
+    ----------
+    name : str
+        The package that has no version.
+    """
 
     def __init__(self, name: str) -> None:
         """Build the message of design 5.3 for package *name*."""
@@ -87,7 +93,15 @@ class NoVersionKnown(CatalogError):
 
 
 class NoValidVersion(CatalogError):
-    """Report that a package has version directories but none of them is valid."""
+    """Report that a package has version directories but none of them is valid.
+
+    Parameters
+    ----------
+    name : str
+        The package whose versions are all invalid.
+    problems : Sequence[str]
+        The problems of the invalid versions, by version.
+    """
 
     def __init__(self, name: str, problems: Sequence[str]) -> None:
         """Build the message from the problems of the invalid versions."""
@@ -116,7 +130,23 @@ class NeedsRepair(CatalogError):
 
 @dataclass(frozen=True)
 class Selector:
-    """A parsed selector: ``kind`` is ``name``, ``registry`` or ``path``."""
+    """A parsed selector: ``kind`` is ``name``, ``registry`` or ``path``.
+
+    Attributes
+    ----------
+    text : str
+        The selector as the user wrote it.
+    kind : str
+        ``name``, ``registry`` or ``path``.
+    name : str | None
+        The package name, for a ``name`` or ``registry`` selector.
+    version : str | None
+        The version after ``@``, when the selector names one.
+    registry : str | None
+        The registry named by a ``registry/name`` selector.
+    path : Path | None
+        The folder named by a ``path`` selector.
+    """
 
     text: str
     kind: str
@@ -133,6 +163,21 @@ class Resolved:
     ``version`` is the version the selector names (``name@version`` or a version directory),
     the active one for ``current`` or a package root with an active version, and otherwise the
     newest valid local version, or ``None``. ``is_tracker`` is set for a path to ``_check_updates``.
+
+    Attributes
+    ----------
+    view : PackageView
+        The view of the package the selector names.
+    version : str | None
+        The version the selector selects, or ``None``.
+    via_current : bool
+        Whether the selector named ``current`` or a package root with an active version.
+    is_tracker : bool
+        Whether the selector is a path to ``_check_updates``.
+    named_version : bool
+        Whether the selector named a version explicitly.
+    version_path : Path | None
+        Return the directory of ``version`` in the package root, when there is one.
     """
 
     view: PackageView
@@ -152,7 +197,19 @@ class Resolved:
 
 @dataclass(frozen=True)
 class ListFilter:
-    """Filters of ``Catalog.list``; an empty filter lists every local package."""
+    """Filters of ``Catalog.list``; an empty filter lists every local package.
+
+    Attributes
+    ----------
+    statuses : frozenset[str] | None
+        The statuses to keep, or ``None`` for every status.
+    query : str | None
+        A text that the package name must contain, or ``None``.
+    registry : str | None
+        Keep only the packages of this registry, or ``None``.
+    include_available : bool
+        Whether packages found only in a registry are listed.
+    """
 
     statuses: frozenset[str] | None = None
     query: str | None = None
@@ -162,7 +219,15 @@ class ListFilter:
 
 @dataclass(frozen=True)
 class Listing:
-    """The views of ``Catalog.list`` and the warnings found on the way (unreadable folders)."""
+    """The views of ``Catalog.list`` and the warnings found on the way (unreadable folders).
+
+    Attributes
+    ----------
+    views : tuple[PackageView, ...]
+        The package views that passed the filter.
+    warnings : tuple[str, ...]
+        Problems found while scanning, such as unreadable folders.
+    """
 
     views: tuple[PackageView, ...]
     warnings: tuple[str, ...] = ()
@@ -170,7 +235,17 @@ class Listing:
 
 @dataclass(frozen=True)
 class TrackerSync:
-    """What to do with a linked package's tracker: ``none``, ``copy``, ``refresh`` or ``keep`` (edited locally)."""
+    """What to do with a linked package's tracker: ``none``, ``copy``, ``refresh`` or ``keep`` (edited locally).
+
+    Attributes
+    ----------
+    action : str
+        ``none``, ``copy``, ``refresh`` or ``keep``.
+    reason : str
+        Why that action was chosen.
+    registry_tracker : RegistryTracker | None
+        The registry's tracker the action refers to, if any.
+    """
 
     action: str
     reason: str
@@ -179,7 +254,15 @@ class TrackerSync:
 
 @dataclass(frozen=True)
 class CheckPlan:
-    """What ``check-updates`` does for a package: ``not-local``, ``nothing`` (no tracker) or ``run`` (run the tracker)."""
+    """What ``check-updates`` does for a package: ``not-local``, ``nothing`` (no tracker) or ``run`` (run the tracker).
+
+    Attributes
+    ----------
+    action : str
+        ``not-local``, ``nothing`` or ``run``.
+    tracker : TrackerSync
+        The tracker synchronisation that goes with the action.
+    """
 
     action: str
     tracker: TrackerSync
@@ -187,7 +270,21 @@ class CheckPlan:
 
 @dataclass(frozen=True)
 class Comparison:
-    """How a tracker result relates to the known versions: ``newer``, ``known`` or ``older``."""
+    """How a tracker result relates to the known versions: ``newer``, ``known`` or ``older``.
+
+    Attributes
+    ----------
+    status : str
+        ``newer``, ``known`` or ``older``.
+    version : str
+        The version the tracker found.
+    newest_known : str | None
+        The newest version already known, or ``None``.
+    reason : str
+        A readable explanation of the status.
+    newer : bool
+        Return whether the result is newer than every known version.
+    """
 
     status: str
     version: str
@@ -198,10 +295,6 @@ class Comparison:
     def newer(self) -> bool:
         """Return whether the result is newer than every known version."""
         return self.status == "newer"
-
-
-_DRIVE = re.compile(r"^[A-Za-z]:")
-_REMOVED_PREFIX = re.compile(r"^(system|user):(?![\\/])", re.IGNORECASE)
 
 
 def parse_selector(text: str, registry_names: Iterable[str] = ()) -> Selector:
@@ -226,19 +319,53 @@ def parse_selector(text: str, registry_names: Iterable[str] = ()) -> Selector:
     CatalogError
         If the selector is empty, or has a ``mode:`` prefix (``system:name``, ``user:name``): a run has one scope,
         so the mode is never part of a target.
+
+    Examples
+    --------
+    Basic usage:
+
+    >>> selector = parse_selector("tool@1.2")
+    >>> selector.kind, selector.name, selector.version
+    ('name', 'tool', '1.2')
+
+    A registry prefix is recognised only for a configured registry:
+
+    >>> selector = parse_selector("main/tool", registry_names=["main"])
+    >>> selector.kind, selector.registry, selector.name
+    ('registry', 'main', 'tool')
+
+    Paths:
+
+    >>> parse_selector("C:/Tools/tool").kind
+    'path'
+    >>> parse_selector("./tool").path.name
+    'tool'
+
+    Edge cases:
+
+    >>> parse_selector("tool@")
+    Traceback (most recent call last):
+        ...
+    gupkg.catalog.catalog.CatalogError: 'tool@': expected name@version
+    >>> parse_selector("system:tool")  # doctest: +ELLIPSIS
+    Traceback (most recent call last):
+        ...
+    gupkg.catalog.catalog.CatalogError: 'system:tool': a target no longer names a mode; ...
     """
+    # Reject empty selectors and the removed ``system:``/``user:`` prefixes before classifying the text.
+    removed_prefix = re.compile(r"^(system|user):(?![\\/])", re.IGNORECASE)
     text = text.strip()
     if not text:
         raise CatalogError("empty selector")
     rest = text
-    if _REMOVED_PREFIX.match(text):
+    if removed_prefix.match(text):
         raise CatalogError(
             f"'{text}': a target no longer names a mode; a run works in the mode of its own token. "
             "Run gupkg from an administrator shell for system packages, otherwise for user packages."
         )
 
     # Anything that looks like a path is a path, whatever it names.
-    if "\\" in rest or rest.startswith((".", "/")) or _DRIVE.match(rest):
+    if "\\" in rest or rest.startswith((".", "/")) or re.match(r"^[A-Za-z]:", rest):
         return Selector(text, "path", path=Path(rest))
 
     # An optional version, then the name or registry/name.
@@ -247,6 +374,8 @@ def parse_selector(text: str, registry_names: Iterable[str] = ()) -> Selector:
         name, _, version = rest.rpartition("@")
         if not name or not version:
             raise CatalogError(f"'{text}': expected name@version")
+
+    # ``registry/name`` when the first part is a configured registry; otherwise a grouped package or an existing path.
     if "/" in name:
         first, _, remainder = name.partition("/")
         if remainder and first.casefold() in {item.casefold() for item in registry_names}:
@@ -275,6 +404,37 @@ class Catalog:
     verify_effects : bool, default=False
         Whether ``describe`` compares the install record's effects with the system (it reads
         the environment and shortcuts; ``check`` turns it on, ``list`` leaves it off).
+
+    Methods
+    -------
+    describe
+        Build the view of one package.
+    list
+        List the packages of the root, with warnings.
+    installed_effects
+        Return the recorded effects of every package of the root that has any, by package name.
+    resolve
+        Resolve a selector of design 10.1 to a package.
+    resolve_distribution
+        Resolve a distribution folder outside the root (a version directory with a ``pkg.toml``), to
+        be copied in.
+    registry_entry
+        Return the entry called *name* in the first registry that has it, or ``None``.
+    candidates
+        Return the versions an install or update may choose from, newest first.
+    install_candidate
+        Choose the version that ``install`` activates (design 5.3).
+    update_candidate
+        Choose the version that ``update`` activates for an installed package.
+    pick_version
+        Return the candidate that ``name@version`` names, local first, among every known valid
+        version.
+    tracker_sync
+        Decide whether the registry's tracker is copied in, refreshed or kept (design 5.3 rule 2).
+    check_updates_plan
+        Decide what ``check-updates`` does for a package (design 5.3, third column).
+    compare
+        Decide whether a tracker result is newer than every known version (decision D21).
     """
 
     scope: Scope
@@ -348,10 +508,13 @@ class Catalog:
         Listing
             Views sorted by name, and warnings: folders that could not be read.
         """
+        # An untrusted root is skipped in an elevated run, with the reason as a warning.
         filters = filters or ListFilter()
         reason = self._untrusted_reason()
         if reason is not None:
             return Listing((), (*self.warnings, f"Skipped {self.scope.root} in an elevated run: {reason}"))
+
+        # One view per local package.
         scan = scan_root(self.root)
         views = [self._view(package, path) for package, path in scan.packages]
 
@@ -361,6 +524,7 @@ class Catalog:
             for snapshot in self._snapshots_for():
                 for entry in snapshot.entries.values():
                     if entry.name.casefold() not in local_names:
+                        # Mark entries this mode cannot install, so the manager can show why.
                         local_names.add(entry.name.casefold())
                         restriction = self._restriction(entry)
                         views.append(PackageView(
@@ -369,6 +533,7 @@ class Catalog:
                             restriction_reason=restriction[1] if restriction else None,
                         ))
 
+        # Apply the filters, then order by name.
         views = [view for view in views if _matches(view, filters)]
         views.sort(key=lambda view: view.name.casefold())
         return Listing(tuple(views), (*self.warnings, *scan.diagnostics))
@@ -377,11 +542,19 @@ class Catalog:
         """Return the recorded effects of every package of the root that has any, by package name.
 
         This is who provides which shim, wrapper, shortcut and environment variable (name ownership): nothing outside the
-        run's root is read. Only the folder names and the install records are read (no version scan, no registry join), and a
-        record that cannot be read provides nothing here (``check`` and ``list`` report it).
+        run's root is consulted. Only the folder names and the install records are loaded (no version scan, no registry join), and a
+        record that cannot be loaded provides nothing here (``check`` and ``list`` report it).
+
+        Returns
+        -------
+        dict
+            Maps each package name to the tuple of its recorded ``Effect`` values.
         """
+        # An untrusted root provides nothing to an elevated run.
         if self._untrusted_reason() is not None:
             return {}
+
+        # One cached record lookup per package; packages without effects are left out.
         found: dict[str, tuple[Effect, ...]] = {}
         for name, path in scan_root(self.root).packages:
             effects = _record_effects(path)
@@ -411,6 +584,7 @@ class Catalog:
         gupkg.selfmgmt.elevation.UntrustedLocationError
             If an elevated run is given a path in a folder that standard users can modify.
         """
+        # Parse first; a path selector has its own resolution rules.
         parsed = parse_selector(selector, (item.name for item in self.registries))
         if parsed.kind == "path":
             return self._resolve_path(parsed)
@@ -421,6 +595,8 @@ class Catalog:
             entry = snapshot.entry(parsed.name) if snapshot is not None else None
             if entry is None:
                 raise NotFound(f"registry entry '{parsed.registry}/{parsed.name}' was not found")
+
+            # A local package of that name is shown following the chosen entry.
             path = self._local_path(parsed.name)
             if path is not None:
                 view = self._view(parsed.name, path, follow=(entry.registry, entry.name))
@@ -440,7 +616,17 @@ class Catalog:
         return Resolved(view, parsed.version, named_version=parsed.version is not None)
 
     def resolve_distribution(self, folder: Path) -> Resolved:
-        """Read a distribution folder outside the root (a version directory with a ``pkg.toml``), to be copied in.
+        """Resolve a distribution folder outside the root (a version directory with a ``pkg.toml``), to be copied in.
+
+        Parameters
+        ----------
+        folder : Path
+            The distribution folder.
+
+        Returns
+        -------
+        Resolved
+            The view of the package and the version the folder holds.
 
         Raises
         ------
@@ -454,6 +640,16 @@ class Catalog:
 
         Used for a distribution folder that is not a package of the root yet: the registry may publish the
         fingerprint that verifies it (design 9.2).
+
+        Parameters
+        ----------
+        name : str
+            The package name to look up.
+
+        Returns
+        -------
+        RegistryEntry or None
+            The entry of the first configured registry that has the package.
         """
         return self._first_entry(name)
 
@@ -462,7 +658,17 @@ class Catalog:
     def candidates(self, view: PackageView) -> list[Candidate]:
         """Return the versions an install or update may choose from, newest first.
 
-        Pure: nothing is read and no tracker is run (decision D11). See ``known_candidates``.
+        Pure: no disk is consulted and no tracker is run (decision D11). See ``known_candidates``.
+
+        Parameters
+        ----------
+        view : PackageView
+            The package.
+
+        Returns
+        -------
+        list of Candidate
+            Valid local versions and the followed registry's pinned versions, newest first.
         """
         return list(known_candidates(view))
 
@@ -490,14 +696,19 @@ class Catalog:
         NoValidVersion
             If the package has version directories and every one of them is invalid.
         """
+        # An installed package with a valid ``current`` repairs the active version.
         if view.installed is not None:
             return Candidate(view.installed.version, "local", view.installed.path)
+
+        # Otherwise prefer a local directory, then the registry's newest pinned version.
         found = self.candidates(view)
         local = [item for item in found if item.source == "local"]
         if local:
             return local[0]
         if found:
             return found[0]
+
+        # Nothing usable: say whether versions exist but are all invalid, or none is known.
         if view.local is not None and view.local.versions:
             raise NoValidVersion(
                 view.name, [f"{item.name}: {', '.join(item.problems)}" for item in view.local.versions if item.problems]
@@ -506,6 +717,11 @@ class Catalog:
 
     def update_candidate(self, view: PackageView) -> Candidate | None:
         """Choose the version that ``update`` activates for an installed package.
+
+        Parameters
+        ----------
+        view : PackageView
+            The installed package.
 
         Returns
         -------
@@ -520,6 +736,7 @@ class Catalog:
         NeedsRepair
             If the package is broken; the hint names ``check --fix`` and ``install``.
         """
+        # Only a healthy installed package can be updated.
         if view.broken_reasons:
             raise NeedsRepair(
                 f"'{view.name}' is broken ({'; '.join(view.broken_reasons)}); "
@@ -527,17 +744,32 @@ class Catalog:
             )
         if view.installed is None:
             raise NotInstalled(f"'{view.name}' is not installed; use `gupkg install {view.name}`")
+
+        # Candidates are newest first, so the first one is the update, if any.
         found = self.candidates(view)
         return found[0] if found else None
 
     def pick_version(self, view: PackageView, version: str) -> Candidate:
         """Return the candidate that ``name@version`` names, local first, among every known valid version.
 
+        Parameters
+        ----------
+        view : PackageView
+            The package.
+        version : str
+            The version name asked for.
+
+        Returns
+        -------
+        Candidate
+            The local version directory when it is valid, otherwise the registry's pinned version.
+
         Raises
         ------
         NotFound
             If neither the package root nor the followed registry holds a valid such version.
         """
+        # A valid local directory wins; a registry version counts only when no local directory of that name exists.
         folded = version.casefold()
         if view.local is not None:
             state = view.local.version(version)
@@ -547,12 +779,19 @@ class Catalog:
             pinned = view.registry.version(version)
             if pinned is not None and (view.local is None or view.local.version(version) is None):
                 return Candidate(pinned.name, "registry", pinned.path, view.registry.registry, pinned.fingerprint)
+
+        # Nothing matched: list the known versions in the error.
         known = sorted({item.name for item in (view.local.valid_versions if view.local else ())}
                        | {item.name for item in (view.registry.versions if view.registry else ())})
         raise NotFound(f"'{view.name}' has no valid version {folded}; known versions: {', '.join(known) or 'none'}")
 
     def tracker_sync(self, view: PackageView) -> TrackerSync:
         """Decide whether the registry's tracker is copied in, refreshed or kept (design 5.3 rule 2).
+
+        Parameters
+        ----------
+        view : PackageView
+            The package.
 
         Returns
         -------
@@ -561,12 +800,15 @@ class Catalog:
             when the local copy still has the hash recorded at copy time and the registry's differs;
             ``keep`` when the local tracker was edited or never came from the registry; ``none`` otherwise.
         """
+        # Without a registry tracker there is nothing to copy; without a local one it is copied in.
         if view.registry is None or view.registry.tracker is None:
             return TrackerSync("none", "the followed registry has no tracker")
         registry_tracker = view.registry.tracker
         local = view.local.tracker if view.local is not None else None
         if local is None:
             return TrackerSync("copy", "the package has no tracker", registry_tracker)
+
+        # The hash recorded at copy time tells whether the local copy was edited.
         recorded = view.link.tracker_sha256 if view.link is not None else None
         if recorded is None:
             return TrackerSync("keep", "the local tracker was not copied from the registry")
@@ -578,6 +820,11 @@ class Catalog:
 
     def check_updates_plan(self, view: PackageView) -> CheckPlan:
         """Decide what ``check-updates`` does for a package (design 5.3, third column).
+
+        Parameters
+        ----------
+        view : PackageView
+            The package.
 
         Returns
         -------
@@ -609,14 +856,19 @@ class Catalog:
             of that name exists) or ``older``. Every local directory counts as known, valid or
             not, because a new directory must never overwrite one.
         """
+        # A version that cannot name a directory is never newer.
         version = result.version
         if not is_version_name(version):
             return Comparison("older", version, reason=f"'{version}' cannot name a version directory")
+
+        # Every local directory and every registry version counts as known.
         known: list[str] = []
         if view.local is not None:
             known.extend(item.name for item in view.local.versions)
         if view.registry is not None:
             known.extend(item.name for item in view.registry.versions)
+
+        # Find the newest known version, then classify the result against it.
         newest = None
         for name in known:
             if newest is None or compare_versions(name, newest) > 0:
@@ -643,6 +895,7 @@ class Catalog:
 
     def _view(self, name: str, path: Path, follow: tuple[str, str] | None = None) -> PackageView:
         """Build the view of the package root *path*; *follow* overrides which registry entry it follows."""
+        # Scan the folder and load its install record; record problems become view problems.
         local = scan_package(path, self.system)
         read = read_install_record(path)
         record = read.record
@@ -652,6 +905,8 @@ class Catalog:
             problems.append(read.problem)
         elif record is None and local.current.status != "absent":
             problems.append(f"no install record (made by an older gupkg); reinstall with: gupkg install {name}")
+
+        # A record made in the other scope means the package was moved.
         if record is not None and record.mode is not None and record.mode != self.scope.mode:
             problems.append(f"the install record says {record.mode}; this package was moved between scopes — reinstall it")
 
@@ -666,6 +921,8 @@ class Catalog:
         if local.current.status == "valid":
             active = local.version(local.current.version)
             populated = active.populated if active is not None else False
+
+            # Effects are compared with the system only when verification was requested.
             effects = record.effects if record is not None else ()
             drift, unverified = self._verify(effects) if self.verify_effects else ((), ())
             installed = InstalledState(
@@ -681,16 +938,21 @@ class Catalog:
                 item.name for item in local.versions
                 if (pinned := entry.version(item.name)) is not None and pinned.pkg_toml_sha256 != item.pkg_toml_sha256
             )
+
+        # Assemble the immutable view from everything joined above.
         return PackageView(
             name, self.root, local, entry, unfollowed, link, installed, diverged, tuple(problems), tuple(warnings), record
         )
 
     def _snapshots_for(self) -> list[RegistrySnapshot]:
         """Return the registry snapshots of the root's own cache, in configured order (none before the first sync)."""
+        # Before the first sync (or in an untrusted root) there is nothing to load.
         if self._untrusted_reason() is not None or not any(
             (registry_cache_dir(self.scope.root, config.name) / "state.toml").is_file() for config in self.registries
         ):
             return []
+
+        # Load each configured registry once per catalog and keep them in priority order.
         snapshots = []
         for config in self.registries:
             cache = registry_cache_dir(self.scope.root, config.name)
@@ -739,11 +1001,13 @@ class Catalog:
 
     def _verify(self, effects: Sequence) -> tuple[tuple[str, ...], tuple[str, ...]]:
         """Compare recorded effects with the system; return ``(drift, unverified kinds)``."""
+        # Each effect kind has its own check; unknown kinds are reported as unverified, not as drift.
         drift: list[str] = []
         unverified: list[str] = []
         for effect in effects:
             fields = effect.fields
             try:
+                # Shims and files must exist; shortcuts must still be readable.
                 if effect.kind in ("shim", "file"):
                     if not os.path.exists(str(fields["path"])):
                         drift.append(f"{effect.kind} missing: {fields['path']}")
@@ -752,10 +1016,12 @@ class Catalog:
                         self.system.read_shortcut(Path(str(fields["path"])))
                     except OSError:
                         drift.append(f"shortcut missing: {fields['path']}")
+                # Environment variables are compared through the system boundary.
                 elif effect.kind == "env":
                     stored = self.system.get_env(self.scope.mode, str(fields["name"]))
                     if stored is None or stored.value != str(fields["value"]):
                         drift.append(f"environment variable {fields['name']} differs")
+                # A PATH entry must still be present, compared in normalised spelling.
                 elif effect.kind == "path":
                     entries = [normalize_entry(item) for item in self.system.get_path(self.scope.mode)]
                     if normalize_entry(str(fields["entry"])) not in entries:
@@ -771,6 +1037,23 @@ class Catalog:
 
         The path must lie inside the root. A version directory outside it is accepted only with *distribution* (it is
         copied in); any other path outside is ``NotFound``.
+
+        Parameters
+        ----------
+        parsed : Selector
+            A selector of kind ``path``.
+        distribution : bool, default=False
+            Whether a version directory outside the root is allowed.
+
+        Returns
+        -------
+        Resolved
+            The view and the version the path names.
+
+        Raises
+        ------
+        NotFound
+            If the path does not exist, is not a package, or is outside the root.
         """
         # Normalise lexically so a trailing ``current`` is not followed before it is classified.
         candidate = Path(os.path.abspath(strip_extended_prefix(os.fspath(parsed.path.expanduser()))))
@@ -778,6 +1061,8 @@ class Catalog:
         via_current = False
         is_tracker = False
         named = False
+
+        # Classify the path: ``current``, a version or tracker directory, or a package root.
         if candidate.name.casefold() == "current":
             package_root = candidate.parent
             via_current = True
@@ -794,6 +1079,8 @@ class Catalog:
             package_root = candidate
         else:
             raise NotFound(f"Path does not exist: {candidate}")
+
+        # Containment and trust checks come before the folder is scanned.
         inside = is_inside(package_root, self.scope.root)
         if not inside and not (distribution and version is not None):
             raise NotFound(f"{candidate} is not inside this scope's root ({self.scope.root})")
@@ -802,12 +1089,16 @@ class Catalog:
         if not _is_local_package(package_root, allow_link=not elevated):
             raise NotFound(f"Not a package root, version directory or current: {candidate}")
 
+
+        # Name the package relative to the root, then settle which version the path stands for.
         name = ntpath.relpath(real_path(package_root), real_path(self.scope.root)).replace("\\", "/") if inside else package_root.name
         view = self._view(name, package_root)
         if via_current:
             if view.local.current.status != "valid":
                 raise NotFound(view.local.current.problem or f'"current" path does not exist: {candidate}')
             version = view.local.current.version
+
+        # With no version in the path: the active one, else the newest valid local one.
         elif version is None and not is_tracker:
             if view.installed is not None:
                 version, via_current = view.installed.version, True
@@ -846,6 +1137,7 @@ _RECORD_EFFECTS: dict[str, tuple[tuple[int, int, int], tuple[Effect, ...]]] = {}
 
 def _record_effects(package_path: Path) -> tuple[Effect, ...]:
     """Return the effects of the install record of *package_path*; none when it has no usable record (``describe`` reports why)."""
+    # Look at the file itself, never through a link; a missing record has no effects.
     file = record_path(package_path)
     try:
         folder_info, info = os.lstat(file.parent), os.lstat(file)
@@ -853,6 +1145,8 @@ def _record_effects(package_path: Path) -> tuple[Effect, ...]:
         return ()
     if is_link_info(folder_info) or is_link_info(info):
         return ()
+
+    # Reuse the cached parse while the file's identity, size and modification time are unchanged.
     stamp = (info.st_ino, info.st_size, info.st_mtime_ns)
     known = _RECORD_EFFECTS.get(str(file))
     if known is not None and known[0] == stamp:
@@ -864,7 +1158,18 @@ def _record_effects(package_path: Path) -> tuple[Effect, ...]:
 
 
 def manifest_modes(manifest_path: Path) -> tuple[str, ...] | None:
-    """Return the ``modes`` of the ``pkg.toml`` at *manifest_path*, or ``None`` when it cannot be read."""
+    """Return the ``modes`` of the ``pkg.toml`` at *manifest_path*, or ``None`` when it cannot be read.
+
+    Parameters
+    ----------
+    manifest_path : Path
+        The ``pkg.toml`` file.
+
+    Returns
+    -------
+    tuple of str or None
+        The modes the manifest allows, or ``None`` for an unreadable or invalid manifest.
+    """
     try:
         return parse_manifest(manifest_path.read_text(encoding="utf-8-sig")).modes
     except (OSError, UnicodeDecodeError, ManifestError, ValueError):

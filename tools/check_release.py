@@ -14,7 +14,7 @@ it checks the one in ``src/gupkg/_version.py``. ``--base-url`` replaces
 
 Implementation Approach
 -----------------------
-1. Read the ``RELEASES.md`` row of the version: the commit and the ZIP's SHA-256.
+1. Take the commit and the ZIP's SHA-256 from the ``RELEASES.md`` row of the version.
 2. Compare the local tag, the remote tag and the pushed branch with that commit.
 3. Download the ZIP and its ``.sha256`` asset and compare both digests with the row.
 4. Open the ZIP: ``RELEASE.txt`` must name the version and the commit, and every file listed in
@@ -37,19 +37,37 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import release  # noqa: E402  (a sibling script, not an installed package)
 
+# Repository root, where ``RELEASES.md`` and the Git checkout live.
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def main(argv: list[str] | None = None, *, root: Path = ROOT) -> int:
-    """Run the checks named in the module docstring and return the process status."""
+    """Run the release checks, print their report and return the process status.
+
+    Parameters
+    ----------
+    argv : list of str, optional
+        Command-line arguments; ``sys.argv[1:]`` when omitted.
+    root : Path, default=ROOT
+        Repository root whose ``RELEASES.md`` and Git checkout are checked.
+
+    Returns
+    -------
+    int
+        ``0`` when every check passed, ``1`` otherwise.
+    """
+    # Describe the command line from the module summary.
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("version", nargs="?", help="version to check (default: the one in _version.py)")
     parser.add_argument("--remote", help="Git remote (default: the first one)")
     parser.add_argument("--base-url", help="address that holds the release assets")
     args = parser.parse_args(argv)
+
+    # Resolve version, remote and download address, defaulting to this checkout.
     version = args.version or release.runtime_version(root)
     remote = args.remote or _git(root, "remote").splitlines()[0]
     base_url = args.base_url or _release_url(_git(root, "remote", "get-url", remote), version)
+    # Run every check and print one line per result, then the verdict.
     passed, lines = check(root, version, base_url, remote, _download)
     print("\n".join(lines))
     print(f"gupkg {version}: {'all checks passed' if passed else 'CHECKS FAILED'}")
@@ -57,61 +75,92 @@ def main(argv: list[str] | None = None, *, root: Path = ROOT) -> int:
 
 
 def check(root: Path, version: str, base_url: str, remote: str, fetch: Callable[[str], bytes]) -> tuple[bool, list[str]]:
-    """Return whether every check passed, and one report line per check."""
+    """Run every release check and return the verdict with one report line per check.
+
+    Parameters
+    ----------
+    root : Path
+        Repository root holding ``RELEASES.md`` and the Git checkout.
+    version : str
+        Release version to check.
+    base_url : str
+        Address that holds the release assets.
+    remote : str
+        Git remote whose tag and branch are compared.
+    fetch : callable
+        Maps a URL to the bytes served there.
+
+    Returns
+    -------
+    tuple of (bool, list of str)
+        Whether every check passed, and the ``PASS``/``FAIL`` report lines.
+    """
+    # Every check appends its verdict here, so the caller can print the whole report.
     lines: list[str] = []
 
-    def report(ok: bool, text: str) -> bool:
+    def _report(ok: bool, text: str) -> bool:
+        """Record one ``PASS`` or ``FAIL`` line for a check and return whether it passed."""
         lines.append(f"{'PASS' if ok else 'FAIL'}  {text}")
         return ok
 
+    # The RELEASES.md row is the reference every other check compares against.
     row = re.search(
         rf"^\|\s*{re.escape(version)}\s*\|\s*`([0-9a-f]{{40}})`\s*\|[^|]*\|\s*([0-9a-f]{{64}})\s*\|",
         (root / "RELEASES.md").read_text(encoding="utf-8"),
         re.MULTILINE,
     )
-    if not report(row is not None, f"RELEASES.md has a row for {version} with a commit and a SHA-256"):
+    if not _report(row is not None, f"RELEASES.md has a row for {version} with a commit and a SHA-256"):
         return False, lines
     commit, digest = row.group(1), row.group(2)
 
+    # The local tag, the remote tag and the pushed branch must all agree with the row.
     tag = f"v{version}"
+    # The release tag must exist locally at the recorded commit.
     local = _git(root, "rev-parse", "--verify", "-q", f"refs/tags/{tag}^{{commit}}", check=False)
-    ok = report(local == commit, f"local tag {tag} points at the released commit {commit[:12]}")
+    ok = _report(local == commit, f"local tag {tag} points at the released commit {commit[:12]}")
+    # The remote must carry the same tag, peeled or lightweight.
     remote_tag = _git(root, "ls-remote", remote, f"refs/tags/{tag}^{{}}", f"refs/tags/{tag}", check=False).split()
-    ok &= report(commit in remote_tag[:1] or commit in remote_tag, f"{remote} has the tag {tag} at the released commit")
+    ok &= _report(commit in remote_tag[:1] or commit in remote_tag, f"{remote} has the tag {tag} at the released commit")
+    # The row itself must be pushed, i.e. HEAD is contained in the remote main.
     pushed = _git(root, "ls-remote", remote, "refs/heads/main", check=False).split()
-    ok &= report(
+    ok &= _report(
         bool(pushed) and _git(root, "merge-base", "--is-ancestor", "HEAD", pushed[0], check=False, status=True) == 0,
         f"{remote}/main contains this checkout's HEAD (the RELEASES.md row is pushed)",
     )
 
+    # Download the ZIP and its sidecar digest; a failed ZIP download ends the checks.
     name = f"gupkg-{version}-win-amd64.zip"
     try:
         archive = fetch(f"{base_url}/{name}")
     except OSError as error:
-        report(False, f"download {base_url}/{name}: {error}")
+        _report(False, f"download {base_url}/{name}: {error}")
         return False, lines
+    # The ZIP's digest and the sidecar's digest must both equal the row's.
     actual = hashlib.sha256(archive).hexdigest()
-    ok &= report(actual == digest, f"the downloaded ZIP has the SHA-256 of the RELEASES.md row ({actual[:16]}...)")
+    ok &= _report(actual == digest, f"the downloaded ZIP has the SHA-256 of the RELEASES.md row ({actual[:16]}...)")
     try:
         sidecar = fetch(f"{base_url}/{name}.sha256").decode("ascii", "replace").split()
-        ok &= report(bool(sidecar) and sidecar[0] == digest, f"{name}.sha256 names the same SHA-256")
+        ok &= _report(bool(sidecar) and sidecar[0] == digest, f"{name}.sha256 names the same SHA-256")
     except OSError as error:
-        ok &= report(False, f"download {name}.sha256: {error}")
+        ok &= _report(False, f"download {name}.sha256: {error}")
 
+    # Inspect the ZIP contents only when its bytes are the recorded ones.
     if actual != digest:
         return False, lines
     with zipfile.ZipFile(BytesIO(archive)) as zipped:
+        # RELEASE.txt must name this version and commit; then the manifest is verified.
         try:
             release.check_release_zip_object(zipped, name, version, commit)
-            ok &= report(True, "RELEASE.txt names this version and commit")
+            ok &= _report(True, "RELEASE.txt names this version and commit")
         except SystemExit as error:
-            ok &= report(False, str(error))
-        ok &= _check_manifest(zipped, report)
+            ok &= _report(False, str(error))
+        ok &= _check_manifest(zipped, _report)
     return ok, lines
 
 
 def _check_manifest(zipped: zipfile.ZipFile, report: Callable[[bool, str], bool]) -> bool:
     """Require every file of the bundled tree to match ``MANIFEST.sha256``, with no extra file."""
+    # Locate the single manifest, then read the digests it lists.
     manifests = [name for name in zipped.namelist() if re.fullmatch(r"(?:[^/]+/){1,2}gupkg/MANIFEST\.sha256", name)]
     if len(manifests) != 1:
         return report(False, "the ZIP has exactly one gupkg/MANIFEST.sha256")
@@ -122,6 +171,7 @@ def _check_manifest(zipped: zipfile.ZipFile, report: Callable[[bool, str], bool]
         found = re.fullmatch(r"([0-9a-f]{64})  (.+)", line)
         if found:
             listed[prefix + found.group(2).replace("\\", "/")] = found.group(1)
+    # Compare the listed files with the tree: each must exist with its digest, and none may be extra.
     tree = {name for name in zipped.namelist() if name.startswith(prefix + "gupkg/") and not name.endswith("/")}
     tree.discard(manifest)
     bad = [name for name, expected in listed.items() if name not in tree or hashlib.sha256(zipped.read(name)).hexdigest() != expected]

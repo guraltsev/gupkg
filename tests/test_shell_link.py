@@ -3,7 +3,7 @@
 Real ``.lnk`` files and real NTFS junctions are created through the real
 ``WindowsSystem``, but only below pytest temporary directories. The Windows
 Shell COM interfaces and ``DeviceIoControl`` are real. An independent
-``WScript.Shell`` read (through PowerShell, used only by the test) confirms
+``WScript.Shell`` readback (through PowerShell, used only by the test) confirms
 Explorer-visible properties. The registry, the ``PATH`` and the real Start Menu
 are never touched: install runs use packages without environment or ``PATH``
 rows, with the roots, the Start Menu and ``bin`` folders given by a settings file below the temporary folder. What
@@ -33,8 +33,10 @@ pytestmark = [
     pytest.mark.skipif(os.name != "nt", reason="shortcuts and junctions need Windows"),
 ]
 
+# Windows system adapter under test.
 SYSTEM = WindowsSystem()
 
+# Text full of characters that quoting must preserve.
 AWKWARD_TEXT = "it's \"quoted\" $var `tick` %TEMP% caf\u00e9 \u4e2d\u6587"
 
 
@@ -49,6 +51,7 @@ def _write_install_package(tmp_path: Path, shortcut_count: int) -> tuple[Path, P
         f'arguments = "/k echo {index}"\ndescription = "Shortcut {index}"\n'
         for index in range(shortcut_count)
     )
+    # Write the manifest with the shortcuts; the start menu folder is returned for the checks.
     (version_dir / "pkg.toml").write_text(f"format = 2\n\n[source]\nshipped = true\n{rows}", encoding="utf-8")
     start_menu = tmp_path / "AppData" / "Microsoft" / "Windows" / "Start Menu" / "opt"
     return version_dir, start_menu
@@ -136,6 +139,7 @@ def test_shortcuts_work_on_a_thread_already_in_the_multithreaded_apartment(
     errors: list[BaseException] = []
 
     def work() -> None:
+        """Write and read back a shortcut in a multithreaded COM apartment."""
         ole32 = ctypes.windll.ole32
         ole32.CoInitializeEx(None, 0)  # COINIT_MULTITHREADED
         try:
@@ -197,7 +201,9 @@ def test_independent_wscript_reader_sees_the_declared_properties(tmp_path: Path)
     )
     if not powershell.is_file():
         pytest.skip("powershell.exe is not available as the test oracle")
+    # Write a shortcut with every declared property.
     path = tmp_path / "oracle.lnk"
+    # The spec carries a target, arguments, start-in directory, icon and a non-ASCII comment.
     SYSTEM.write_shortcut(
         path,
         ShortcutSpec(
@@ -208,6 +214,7 @@ def test_independent_wscript_reader_sees_the_declared_properties(tmp_path: Path)
             description="caf\u00e9 comment",
         ),
     )
+    # Read the shortcut back through WScript.Shell as JSON.
     script = (
         "[Console]::OutputEncoding = [Text.Encoding]::UTF8;"
         "$l = (New-Object -ComObject WScript.Shell).CreateShortcut($env:LNK_PATH);"
@@ -215,6 +222,7 @@ def test_independent_wscript_reader_sees_the_declared_properties(tmp_path: Path)
         "I=$l.IconLocation;D=$l.Description} | ConvertTo-Json -Compress"
     )
 
+    # Act: run the independent reader.
     completed = subprocess.run(
         [str(powershell), "-NoProfile", "-Command", script],
         env={**os.environ, "LNK_PATH": str(path)},
@@ -223,6 +231,7 @@ def test_independent_wscript_reader_sees_the_declared_properties(tmp_path: Path)
         check=True,
     )
 
+    # Assert: the independent reader sees every declared property.
     assert json.loads(completed.stdout) == {
         "T": "C:\\Windows\\System32\\cmd.exe",
         "A": "/k echo 'hi'",
@@ -239,11 +248,13 @@ def test_unwritable_directory_is_reported_by_install_and_names_the_shortcut(
     version_dir, start_menu = _write_install_package(tmp_path, 1)
     start_menu.mkdir(parents=True)
     user = f"{os.environ['USERDOMAIN']}\\{os.environ['USERNAME']}"
+    # Deny writing to the start menu folder.
     subprocess.run(
         ["icacls", str(start_menu), "/deny", f"{user}:(OI)(CI)(WD,AD)"],
         check=True,
         capture_output=True,
     )
+    # Install, then lift the denial even when the install fails.
     try:
         code = _install(tmp_path, version_dir)
     finally:
@@ -251,6 +262,7 @@ def test_unwritable_directory_is_reported_by_install_and_names_the_shortcut(
             ["icacls", str(start_menu), "/remove:d", user], check=True, capture_output=True
         )
 
+    # Assert: the install failed and the message names the shortcut that was denied.
     captured = capsys.readouterr()
     lines = [
         line for line in (captured.out + captured.err).splitlines() if "Short 0" in line
@@ -267,12 +279,15 @@ def test_install_creates_every_shortcut_without_powershell(
     version_dir, start_menu = _write_install_package(tmp_path, 10)
 
     def no_powershell(name: str) -> str:
+        """Fail as if the tool were not installed."""
         raise OSError(f"{name} unavailable")
 
+    # Make PowerShell unavailable, so that shortcuts can only be written directly.
     monkeypatch.setattr(windows, "_system_tool", no_powershell)
     monkeypatch.setenv("PATH", "")
     code = _install(tmp_path, version_dir)
 
+    # Assert: every shortcut exists and has the declared properties.
     assert code == 0
     links = sorted(start_menu.rglob("*.lnk"))
     assert len(links) == 10
@@ -286,6 +301,7 @@ def test_shortcuts_can_be_written_from_worker_threads(tmp_path: Path) -> None:
     errors: list[BaseException] = []
 
     def work(index: int) -> None:
+        """Create one shortcut from the thread numbered *index*."""
         try:
             path = tmp_path / f"thread{index}.lnk"
             SYSTEM.write_shortcut(path, ShortcutSpec("C:\\Windows\\notepad.exe", description=str(index)))

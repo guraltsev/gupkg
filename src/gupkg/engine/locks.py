@@ -2,8 +2,8 @@
 
 Without a lock, a second ``install`` or ``cleanup`` could delete the work folder of a run in
 progress. A run that changes a package (install, update, switch, repair, uninstall, cleanup, ``check-updates`` and
-``check --fix``) takes ``<package>\\.gupkg\\locks\\package.lock`` first; ``check``, ``list`` and ``info`` read only and take
-none.
+``check --fix``) takes ``<package>\\.gupkg\\locks\\package.lock`` first; ``check``, ``list`` and ``info`` only look at the
+package and take none.
 
 Usage and API
 -------------
@@ -47,13 +47,24 @@ from ..model.scope import Scope
 from ..system.port import System
 from .executor import prune_empty_package
 
+# File name of the package lock inside the locks folder.
 LOCK_NAME = "package.lock"
+# A lock older than this is stale whatever its process does: no operation takes that long.
 MAX_LOCK_AGE = timedelta(hours=24)
+# An unreadable lock younger than this is taken to be mid-write, not stale.
 YOUNG = timedelta(seconds=10)
 
 
 class PackageBusy(RuntimeError):
-    """Another gupkg run holds the package (exit status 3: nothing was changed)."""
+    """Another gupkg run holds the package (exit status 3: nothing was changed).
+
+    Parameters
+    ----------
+    message : str
+        The text that says which package is busy and who holds it.
+    hint : str | None
+        What the user can do next.
+    """
 
     code = "package-busy"
 
@@ -64,7 +75,26 @@ class PackageBusy(RuntimeError):
 
 @dataclass(frozen=True)
 class Holder:
-    """Who holds a package lock."""
+    """Who holds a package lock.
+
+    Methods
+    -------
+    describe
+        Return the holder in one sentence for a message.
+
+    Attributes
+    ----------
+    pid : int
+        The process id of the holder.
+    host : str
+        The machine the holder runs on.
+    operation : str
+        The operation the holder is running.
+    started : str
+        When the holder took the lock.
+    token : str
+        A random value that identifies this lock.
+    """
 
     pid: int
     host: str
@@ -73,18 +103,217 @@ class Holder:
     token: str
 
     def describe(self) -> str:
-        """Return the holder in one sentence for a message."""
+        """Return the holder in one sentence for a message.
+
+        Returns
+        -------
+        str
+            Process id, host, operation and start time of the holder.
+        """
         return f"process {self.pid} on {self.host} ({self.operation}, started {self.started})"
 
 
 def locks_dir(package_path: Path) -> Path:
-    """Return the folder that holds the lock of a package."""
+    """Return the folder that holds the lock of a package.
+
+    Parameters
+    ----------
+    package_path : Path
+        The package root.
+
+    Returns
+    -------
+    Path
+        ``<package>\\.gupkg\\locks``.
+    """
     return Path(package_path) / DATA_DIR_NAME / "locks"
 
 
 def lock_path(package_path: Path) -> Path:
-    """Return the lock file of a package."""
+    """Return the lock file of a package.
+
+    Parameters
+    ----------
+    package_path : Path
+        The package root.
+
+    Returns
+    -------
+    Path
+        The ``package.lock`` file inside the locks folder.
+    """
     return locks_dir(package_path) / LOCK_NAME
+
+
+def render_lock(holder: Holder) -> str:
+    """Return the text of a lock file.
+
+    Parameters
+    ----------
+    holder : Holder
+        The run the lock names.
+
+    Returns
+    -------
+    str
+        TOML text holding the pid, host, operation, start time and token.
+    """
+    return (
+        f"pid = {holder.pid}\nhost = {_quote(holder.host)}\noperation = {_quote(holder.operation)}\n"
+        f"started = {_quote(holder.started)}\ntoken = {_quote(holder.token)}\n"
+    )
+
+
+def lock_holder(system: System, package_path: Path, now: datetime) -> Holder | None:
+    """Return the live holder of *package_path*'s lock, or ``None`` (no lock, or a stale one).
+
+    Nothing is taken or removed, so ``cleanup`` can use it to leave an in-flight work folder alone.
+
+    Parameters
+    ----------
+    system : System
+        Judges whether the holder is alive.
+    package_path : Path
+        The package root.
+    now : datetime
+        The current time (UTC), used for the age rules.
+
+    Returns
+    -------
+    Holder or None
+        The live holder (a placeholder when the lock cannot be read yet), or ``None``.
+    """
+    # No lock file, or a link in the way, means nobody holds the package.
+    path = lock_path(package_path)
+    if is_reparse_point(path.parent) or not path.is_file():
+        return None
+    # A stale lock has no live holder; an unreadable fresh one is a run that is just starting.
+    holder, mtime = _read(path)
+    if _is_stale(system, holder, mtime, now):
+        return None
+    return holder or Holder(0, "unknown", "unknown", "just now", "")
+
+
+@contextmanager
+def package_lock(
+    system: System, package_path: Path, operation: str, now: Callable[[], datetime], *, scope: Scope
+) -> Iterator[Holder]:
+    """Hold the lock of *package_path* for the block.
+
+    Parameters
+    ----------
+    system : System
+        Judges whether the holder of an existing lock is alive.
+    package_path : Path
+        The package root (created when it does not exist yet, and removed again when the run leaves it empty).
+    operation : str
+        What the run does, written in the lock for the message of a second run.
+    now : callable
+        The clock (UTC).
+    scope : Scope
+        The run's scope (in system mode the locks folder must be admin-only).
+
+    Yields
+    ------
+    Holder
+        This run.
+
+    Raises
+    ------
+    PackageBusy
+        If a live run holds the package.
+    gupkg.selfmgmt.elevation.UntrustedLocationError
+        If the run is in system mode and the locks folder can be changed by standard users.
+    """
+    # Remember what existed so a failed or finished run removes only what it created.
+    package_path = Path(package_path)
+    existed = package_path.is_dir()
+    data_existed = (package_path / DATA_DIR_NAME).exists()
+    path = lock_path(package_path)
+    me = Holder(system.process_id(), socket.gethostname(), operation, now().isoformat(timespec="seconds"), uuid.uuid4().hex)
+    # Take the lock: create it exclusively, taking over a stale one and refusing a live one.
+    try:
+        _check_folder(scope, package_path)
+        for _attempt in range(5):
+            if _create(path, render_lock(me)):
+                break
+            holder, mtime = _read(path)
+            if mtime is None:
+                continue  # the lock was released between the two calls: try to create it again
+            if not _is_stale(system, holder, mtime, now()):
+                raise _busy(holder, package_path)
+            _reclaim(path, holder)
+        else:
+            raise _busy(None, package_path)
+    # A failed acquisition must not leave the folders it created behind.
+    except BaseException:
+        _release(path, "", drop_data=not data_existed)
+        if not existed:
+            prune_empty_package(package_path)
+        raise
+    # Hold the lock for the block and release it on every exit.
+    try:
+        yield me
+    finally:
+        _release(path, me.token, drop_data=not data_existed)
+        if not existed:
+            prune_empty_package(package_path)
+
+
+@contextmanager
+def file_lock(
+    system: System, path: Path, operation: str, now: Callable[[], datetime], *, subject: str
+) -> Iterator[Holder]:
+    """Hold an exclusive lock file at *path* for the block, with the staleness rules of the package lock.
+
+    Parameters
+    ----------
+    system : System
+        Judges whether the holder of an existing lock is alive.
+    path : Path
+        The lock file (its folder must exist). It is created exclusively and removed on every exit.
+    operation : str
+        What the run does, written in the lock for the message of a second run.
+    now : callable
+        The clock (UTC).
+    subject : str
+        What is locked, for the message ("the registry C:\\reg").
+
+    Yields
+    ------
+    Holder
+        This run.
+
+    Raises
+    ------
+    PackageBusy
+        If a live run holds the lock. A lock of a process that has ended, one older than a day, or an unreadable old one is
+        taken over without asking.
+    """
+    path = Path(path)
+    me = Holder(system.process_id(), socket.gethostname(), operation, now().isoformat(timespec="seconds"), uuid.uuid4().hex)
+
+    # Take the lock: create it exclusively, taking over a stale one and refusing a live one.
+    for _attempt in range(5):
+        if _create(path, render_lock(me)):
+            break
+        holder, mtime = _read(path)
+        if mtime is None:
+            continue  # released between the two calls: try to create it again
+        if not _is_stale(system, holder, mtime, now()):
+            raise _subject_busy(subject, path, holder)
+        _reclaim(path, holder)
+    else:
+        raise _subject_busy(subject, path, None)
+
+    # Hold the lock for the block and remove it on every exit.
+    try:
+        yield me
+    finally:
+        _remove_own_lock(path, me.token)
+
+
+# --- supporting helpers ---
 
 
 def _parse(text: str) -> Holder | None:
@@ -94,14 +323,6 @@ def _parse(text: str) -> Holder | None:
         return Holder(int(data["pid"]), str(data["host"]), str(data["operation"]), str(data["started"]), str(data["token"]))
     except (tomllib.TOMLDecodeError, KeyError, TypeError, ValueError):
         return None
-
-
-def render_lock(holder: Holder) -> str:
-    """Return the text of a lock file."""
-    return (
-        f"pid = {holder.pid}\nhost = {_quote(holder.host)}\noperation = {_quote(holder.operation)}\n"
-        f"started = {_quote(holder.started)}\ntoken = {_quote(holder.token)}\n"
-    )
 
 
 def _quote(text: str) -> str:
@@ -141,17 +362,6 @@ def _is_stale(system: System, holder: Holder | None, mtime: float | None, now: d
     return not system.process_is_running(holder.pid)
 
 
-def lock_holder(system: System, package_path: Path, now: datetime) -> Holder | None:
-    """Return the live holder of *package_path*'s lock, or ``None`` (no lock, or a stale one). Nothing is changed."""
-    path = lock_path(package_path)
-    if is_reparse_point(path.parent) or not path.is_file():
-        return None
-    holder, mtime = _read(path)
-    if _is_stale(system, holder, mtime, now):
-        return None
-    return holder or Holder(0, "unknown", "unknown", "just now", "")
-
-
 def _check_folder(scope: Scope, package_path: Path) -> Path:
     """Create the locks folder and judge it: never a link, and admin-only in system mode."""
     folder = locks_dir(package_path)
@@ -172,6 +382,15 @@ def _busy(holder: Holder | None, package_path: Path) -> PackageBusy:
     return PackageBusy(
         f"{package_path.name} is being changed by {who}. Wait for it to finish and run the command again.",
         f"If that run is gone, the lock ({lock_path(package_path)}) is removed by the next run once its process has ended.",
+    )
+
+
+def _subject_busy(subject: str, path: Path, holder: Holder | None) -> PackageBusy:
+    """Return the error for the file lock at *path* held by *holder*, worded with the locked *subject*."""
+    who = holder.describe() if holder is not None else "another run that is just starting"
+    return PackageBusy(
+        f"{subject} is in use by {who}. Wait for it to finish and run the command again.",
+        f"If that run is gone, the lock ({path}) is taken over by the next run once its process has ended.",
     )
 
 
@@ -240,122 +459,3 @@ def _release(path: Path, token: str, *, drop_data: bool) -> None:
             folder.rmdir()
         except OSError:
             pass
-
-
-@contextmanager
-def package_lock(
-    system: System, package_path: Path, operation: str, now: Callable[[], datetime], *, scope: Scope
-) -> Iterator[Holder]:
-    """Hold the lock of *package_path* for the block.
-
-    Parameters
-    ----------
-    system : System
-        Judges whether the holder of an existing lock is alive.
-    package_path : Path
-        The package root (created when it does not exist yet, and removed again when the run leaves it empty).
-    operation : str
-        What the run does, written in the lock for the message of a second run.
-    now : callable
-        The clock (UTC).
-    scope : Scope
-        The run's scope (in system mode the locks folder must be admin-only).
-
-    Yields
-    ------
-    Holder
-        This run.
-
-    Raises
-    ------
-    PackageBusy
-        If a live run holds the package.
-    gupkg.selfmgmt.elevation.UntrustedLocationError
-        If the run is in system mode and the locks folder can be changed by standard users.
-    """
-    package_path = Path(package_path)
-    existed = package_path.is_dir()
-    data_existed = (package_path / DATA_DIR_NAME).exists()
-    path = lock_path(package_path)
-    me = Holder(system.process_id(), socket.gethostname(), operation, now().isoformat(timespec="seconds"), uuid.uuid4().hex)
-    try:
-        _check_folder(scope, package_path)
-        for _attempt in range(5):
-            if _create(path, render_lock(me)):
-                break
-            holder, mtime = _read(path)
-            if mtime is None:
-                continue  # the lock was released between the two calls: try to create it again
-            if not _is_stale(system, holder, mtime, now()):
-                raise _busy(holder, package_path)
-            _reclaim(path, holder)
-        else:
-            raise _busy(None, package_path)
-    except BaseException:
-        _release(path, "", drop_data=not data_existed)
-        if not existed:
-            prune_empty_package(package_path)
-        raise
-    try:
-        yield me
-    finally:
-        _release(path, me.token, drop_data=not data_existed)
-        if not existed:
-            prune_empty_package(package_path)
-
-
-@contextmanager
-def file_lock(
-    system: System, path: Path, operation: str, now: Callable[[], datetime], *, subject: str
-) -> Iterator[Holder]:
-    """Hold an exclusive lock file at *path* for the block, with the staleness rules of the package lock.
-
-    Parameters
-    ----------
-    system : System
-        Judges whether the holder of an existing lock is alive.
-    path : Path
-        The lock file (its folder must exist). It is created exclusively and removed on every exit.
-    operation : str
-        What the run does, written in the lock for the message of a second run.
-    now : callable
-        The clock (UTC).
-    subject : str
-        What is locked, for the message ("the registry C:\\reg").
-
-    Yields
-    ------
-    Holder
-        This run.
-
-    Raises
-    ------
-    PackageBusy
-        If a live run holds the lock. A lock of a process that has ended, one older than a day, or an unreadable old one is
-        taken over without asking.
-    """
-    path = Path(path)
-    me = Holder(system.process_id(), socket.gethostname(), operation, now().isoformat(timespec="seconds"), uuid.uuid4().hex)
-
-    def busy(holder: Holder | None) -> PackageBusy:
-        who = holder.describe() if holder is not None else "another run that is just starting"
-        return PackageBusy(
-            f"{subject} is in use by {who}. Wait for it to finish and run the command again.",
-            f"If that run is gone, the lock ({path}) is taken over by the next run once its process has ended.",
-        )
-
-    for _attempt in range(5):
-        if _create(path, render_lock(me)):
-            break
-        holder, mtime = _read(path)
-        if mtime is None:
-            continue  # released between the two calls: try to create it again
-        if not _is_stale(system, holder, mtime, now()):
-            raise busy(holder)
-        _reclaim(path, holder)
-    else:
-        raise busy(None)
-    try:
-        yield me
-    finally:
-        _remove_own_lock(path, me.token)

@@ -17,9 +17,12 @@ import pytest
 
 pytestmark = pytest.mark.unit
 
+# Directory that holds the importable gupkg source packages.
 SOURCE = Path(__file__).resolve().parents[1] / "src"
+# Bundled interpreter that the import check runs under.
 PYTHON = SOURCE / "gupkg" / "python" / "python.exe"
 
+# Program run in the bundled interpreter to import every module.
 SCRIPT = r"""
 import importlib, pathlib, sys
 source = pathlib.Path(sys.argv[1])

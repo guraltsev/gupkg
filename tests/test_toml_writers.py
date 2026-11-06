@@ -25,6 +25,7 @@ import pytest
 
 pytestmark = pytest.mark.unit
 
+# Text that needs escaping in every TOML string form.
 HOSTILE = 'C:\\opt\\"quoted" name\twith\ttabs\nand a line break — and ünïcode ☃'
 
 

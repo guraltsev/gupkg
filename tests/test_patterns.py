@@ -92,6 +92,7 @@ def test_scan_returns_a_bounded_number_of_matches() -> None:
     assert len(found) == 100
 
 
+# Patterns that the guard must refuse.
 REFUSED = [
     pytest.param(r".*(?P<version>\d+\.\d+)", id="leading-dot-star-with-a-version"),
     pytest.param(r".*.*.*x", id="three-leading-wildcards"),

@@ -33,7 +33,19 @@ LABELS = {"check-updates": "check for updates"}
 
 @dataclass(frozen=True)
 class Subject:
-    """Something an operation acts on: a target, its package folder (``None`` before it exists) and its name."""
+    """Something an operation acts on: a target, its package folder (``None`` before it exists) and its name.
+
+    Attributes
+    ----------
+    target : str
+        The target text the person gave.
+    path : str or None
+        The package folder; ``None`` before it exists.
+    name : str
+        The package name.
+    package_dir : Path | None
+        The package folder, or ``None`` when the package is not in a root yet.
+    """
 
     target: str
     path: str | None
@@ -46,7 +58,18 @@ class Subject:
 
 
 def subject_of(row: PackageRow) -> Subject:
-    """Return the subject of an inventory row."""
+    """Return the subject of an inventory row.
+
+    Parameters
+    ----------
+    row : PackageRow
+        An inventory row.
+
+    Returns
+    -------
+    Subject
+        The target, folder and name of the row.
+    """
     return Subject(row.target, row.path, row.name)
 
 
@@ -55,6 +78,18 @@ def safe_subjects(command: str, subjects: Sequence[Subject]) -> tuple[list[Subje
 
     A name with a character such as ``& | < > ^ " % !`` or a control character is refused here, for every call (the launcher is a ``.cmd``
     file, and the CLI refuses the same characters): one such package never blocks the others.
+
+    Parameters
+    ----------
+    command : str
+        The CLI command word, recorded in the entries of refused subjects.
+    subjects : sequence of Subject
+        The candidates.
+
+    Returns
+    -------
+    tuple of (list of Subject, list of dict)
+        The subjects that can be passed on and the failure entries of those that cannot.
     """
     safe: list[Subject] = []
     refused: list[dict] = []
@@ -69,7 +104,20 @@ def safe_subjects(command: str, subjects: Sequence[Subject]) -> tuple[list[Subje
 
 
 def events_dir_for(subject: Subject, settings: UiSettings) -> Path:
-    """Return the ``.gupkg\\logs`` folder where a call on *subject* writes its events file: its root's, known from its folder or the settings."""
+    """Return the ``.gupkg\\logs`` folder where a call on *subject* writes its events file: its root's, known from its folder or the settings.
+
+    Parameters
+    ----------
+    subject : Subject
+        The first target of the call.
+    settings : UiSettings
+        The settings whose root is used when the subject has no folder yet.
+
+    Returns
+    -------
+    Path
+        The events folder.
+    """
     root = subject.package_dir.parent if subject.package_dir is not None else settings.root
     return root / ".gupkg" / "logs"
 
@@ -105,6 +153,7 @@ def make_steps(
     list of Step
         The calls to make, in order; empty for no subjects.
     """
+    # Group subjects by the skip arguments the policy decided for them.
     groups: dict[tuple[str, ...], list[Subject]] = {}
     for subject in subjects:
         groups.setdefault(tuple((skips or {}).get(subject.target, ())), []).append(subject)
@@ -114,6 +163,7 @@ def make_steps(
     if len(needing) == 1 and () in groups:
         groups[needing[0]] = [*groups.pop(()), *groups[needing[0]]]
 
+    # One step per group; its events folder is that of the group's first target.
     steps: list[Step] = []
     for extra, members in groups.items():
         targets = tuple(item.target for item in members)

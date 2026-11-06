@@ -28,6 +28,7 @@ from tests.support.track import environment, parse_tracker
 
 pytestmark = pytest.mark.unit
 
+# Directory of the gupkg package sources.
 SOURCE = Path(__file__).resolve().parents[1] / "src" / "gupkg"
 
 
@@ -112,6 +113,7 @@ def test_a_tarball_that_repeats_a_file_name_is_refused_by_its_table_of_contents(
     stage = tmp_path / "stage"
     stage.mkdir()
 
+    # Act: unpacking the archive is refused.
     with pytest.raises(UnpackError, match="appears more than once"):
         unpack_artifact(system, archive, stage / "App", UnpackPlan())
 
@@ -134,7 +136,7 @@ def test_a_case_only_rename_is_allowed_and_a_real_collision_is_not(tmp_path: Pat
 
 
 def test_only_the_transport_and_the_elevation_module_touch_the_registry_ctypes_the_url_opener_or_a_shell() -> None:
-    """The boundary rule of issue 021 still holds: no service or other module of gupkg uses these directly."""
+    """No service or other module of gupkg uses these directly."""
     pattern = re.compile(r"winreg|ctypes|" + "url" + r"open|powershell|subprocess\.run")
     allowed = {Path("system/windows.py"), Path("selfmgmt/elevation.py")}
     offenders = [

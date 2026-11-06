@@ -1,4 +1,4 @@
-"""Read and write gupkg's own TOML files with the one writer, ``tomli_w``.
+"""Load and write gupkg's own TOML files with the one writer, ``tomli_w``.
 
 Usage and API
 -------------
@@ -39,11 +39,26 @@ def dumps(data: dict[str, Any]) -> str:
     -------
     str
         TOML text; scalars come before tables, as TOML requires.
+
+    Examples
+    --------
+    Basic usage:
+
+    >>> print(dumps({"name": "tool", "keep": 3, "ui": {"color": "never"}}))
+    name = "tool"
+    keep = 3
+    <BLANKLINE>
+    [ui]
+    color = "never"
+    <BLANKLINE>
     """
     return tomli_w.dumps(data)
 
 
+# Serializes ``dumps_tables``, which temporarily patches ``tomli_w``'s module-level functions.
 _TABLES_LOCK = threading.Lock()
+
+# Longest line, in characters, on which a short list of plain values is still written inline.
 _COMPACT_ARRAY_WIDTH = 80
 
 
@@ -63,12 +78,25 @@ def dumps_tables(data: dict[str, Any]) -> str:
     -------
     str
         TOML text; every list of tables is a sequence of ``[[name]]`` blocks.
+
+    Examples
+    --------
+    Basic usage:
+
+    >>> print(dumps_tables({"modes": ["system", "user"], "shim": [{"name": "tool"}]}))
+    modes = ["system", "user"]
+    <BLANKLINE>
+    [[shim]]
+    name = "tool"
+    <BLANKLINE>
     """
+    # Patch ``tomli_w`` for the duration of one call, under a lock, and restore it on every path.
     with _TABLES_LOCK:
         original_table = _tomli_w_writer.is_suitable_inline_table
         original_array = _tomli_w_writer.format_inline_array
 
-        def compact_array(array: Any, context: Any, nest_level: int) -> str:
+        # Replacement array formatter: short lists of plain values stay on one line.
+        def _compact_array(array: Any, context: Any, nest_level: int) -> str:
             """Write a short list of plain values on one line; anything else as ``tomli_w`` does."""
             if array and not any(isinstance(item, (dict, list, tuple)) for item in array):
                 line = "[" + ", ".join(_tomli_w_writer.format_literal(item, context, nest_level=nest_level + 1) for item in array) + "]"
@@ -76,8 +104,10 @@ def dumps_tables(data: dict[str, Any]) -> str:
                     return line
             return original_array(array, context, nest_level)
 
+        # Never inline a table, and keep short lists of plain values on one line.
         _tomli_w_writer.is_suitable_inline_table = lambda table, context: False
-        _tomli_w_writer.format_inline_array = compact_array
+        _tomli_w_writer.format_inline_array = _compact_array
+        # Serialize with the patched writer; the ``finally`` below restores the originals.
         try:
             return tomli_w.dumps(data)
         finally:

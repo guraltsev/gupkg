@@ -30,6 +30,7 @@ from tests.support.registry_tool import valid_registry
 
 pytestmark = pytest.mark.unit
 
+# Valid SHA-256 digest used in the sample manifests.
 HASH = "c" * 64
 
 
@@ -256,6 +257,7 @@ def exactly_the_allowed_hooks(root: Path) -> None:
         (hook / f"h{index}.py").write_text('"""Why no service: test."""\nPKG_MODULE_API = 2\nVALUE = 1\n', encoding="utf-8", newline="\n")
 
 
+# Validation rules, each paired with the breakage it must report.
 RULES: list[tuple[str, Callable[[Path], None], str]] = [
     ("stray-directory", stray_directory, "gh/junk: a directory without pkg.toml"),
     ("staging-leftover", staging_leftover, "gh/.new-0123abcd: a directory without pkg.toml"),

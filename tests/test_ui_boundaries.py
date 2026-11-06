@@ -1,4 +1,4 @@
-"""Protect decision D44 for the UI programs: they read through gupkg core and perform every operation as a call to the ``gupkg`` command line.
+"""Protect the boundary of the UI programs: they obtain data through gupkg core and perform every operation as a call to the ``gupkg`` command line.
 
 Behaviour protected: no module of ``gupkg_ui``, ``gupkg_tui`` or ``gupkg_manager`` imports the engine, the services, the elevation or authoring code (an in-process operation would run with
 the user's rights where the CLI would have asked for administrator rights, and would bypass the CLI's checks); none touches the registry, ``ctypes``, the network or a shell; and
@@ -17,8 +17,11 @@ import pytest
 
 pytestmark = pytest.mark.unit
 
+# Directory that holds the importable gupkg source packages.
 SOURCE = Path(__file__).resolve().parents[1] / "src"
+# User-interface packages whose imports are checked.
 PACKAGES = ("gupkg_ui", "gupkg_tui", "gupkg_manager")
+# Every source file of those packages.
 FILES = sorted(path for package in PACKAGES for path in (SOURCE / package).rglob("*.py"))
 
 # Core modules that perform operations (or ask for rights); the programs may import the rest of core for reading and reference.
@@ -41,6 +44,7 @@ def code_names(path: Path) -> set[str]:
         elif isinstance(node, ast.ImportFrom) and node.module:
             found.add(node.module)
             found.update(f"{node.module}.{item.name}" for item in node.names)
+        # Record bare names, then dotted attribute chains such as ``os.path.join``.
         elif isinstance(node, ast.Name):
             found.add(node.id)
         elif isinstance(node, ast.Attribute):
@@ -51,6 +55,7 @@ def code_names(path: Path) -> set[str]:
             if isinstance(current, ast.Name):
                 found.add(".".join([current.id, *reversed(parts)]))
             found.add(node.attr)
+        # Keyword arguments are recorded as ``name=``.
         elif isinstance(node, ast.keyword) and node.arg:
             found.add(f"{node.arg}=")
     return found
@@ -110,6 +115,7 @@ def test_text_from_outside_is_never_parsed_as_markup(path: Path) -> None:
             continue
         name = node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id if isinstance(node.func, ast.Name) else ""
         markup_off = any(item.arg == "markup" and isinstance(item.value, ast.Constant) and item.value.value is False for item in node.keywords)
+        # Notifications, logs and static texts must switch markup off or use literal text.
         if name in ("notify", "RichLog") and not markup_off:
             bad.append(f"{name} at line {node.lineno} without markup=False")
         elif name in ("Static", "Label") and not markup_off and not (node.args and is_literal_text(node.args[0])):

@@ -27,6 +27,7 @@ from gupkg.system.port import Mode
 
 pytestmark = pytest.mark.unit
 
+# Address of the repository the tracker reads.
 URL = "https://example.org/team/tool.git"
 
 
@@ -85,15 +86,19 @@ def test_git_gets_a_scrubbed_environment_and_safe_settings_whatever_the_user_has
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """User Git variables never reach git: configuration points at the null device, hooks and helpers are off."""
+    # Arrange: hostile git and proxy variables in the process environment.
     for name, value in (("GIT_SSH_COMMAND", "evil"), ("GIT_EXEC_PATH", "evil-path"), ("GIT_DIR", "evil-path"),
                         ("GIT_TEMPLATE_DIR", "evil-path"), ("GIT_ASKPASS", "evil"), ("GIT_PROXY_COMMAND", "evil"),
                         ("HTTPS_PROXY", "http://evil"), ("GITHUB_TOKEN", "t0ken"), ("USERPROFILE", "someone")):
         monkeypatch.setenv(name, value)
+    # A scripted git.
     git = FakeGit()
     system = git_machine(tmp_path, git)
 
+    # Act: run the tracker.
     run_tracker(parse_manifest(tracker(), ManifestKind.TRACKER), environment(system, tmp_path))
 
+    # Assert: every git call has a scrubbed environment and safe settings.
     for call in git.calls:
         assert call.env["GIT_CONFIG_GLOBAL"] == "NUL" and call.env["GIT_CONFIG_SYSTEM"] == "NUL"
         assert call.env["GIT_CONFIG_NOSYSTEM"] == "1" and call.env["GIT_ASKPASS"] == ""

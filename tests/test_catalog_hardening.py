@@ -8,7 +8,7 @@ in an admin-only folder; a package whose versions are all invalid says so instea
 
 Real: files and real junctions on pytest's temporary folder (``FakeSystem`` links are real; the
 ``process`` test uses ``WindowsSystem``), the real sync, and the catalog. Mocked: elevation and the
-admin-only answer (``FakeSystem``). Out of scope: acting on packages (issue 028).
+admin-only answer (``FakeSystem``). Out of scope: acting on packages.
 """
 
 from __future__ import annotations
@@ -36,6 +36,7 @@ from tests.support.scope import scope_of
 
 pytestmark = pytest.mark.unit
 
+# Bytes that are not valid UTF-8.
 BAD_BYTES = b"\xff\xfe\x00 not utf-8 \xc3\x28"
 
 
@@ -66,10 +67,12 @@ def test_registry_listing_survives_a_damaged_cache(system, tmp_path: Path) -> No
 
 def test_version_and_tracker_files_that_are_not_utf8_are_invalid_not_fatal(system, tmp_path: Path) -> None:
     """A ``pkg.toml`` with invalid UTF-8 invalidates its version in a package root and in a registry, and nothing else."""
+    # Arrange: a local version and a local tracker with invalid UTF-8.
     roots = make_catalog(system, tmp_path)[1]
     folder = write_version(roots["user"] / "foo", "2.0")
     (folder / "pkg.toml").write_bytes(BAD_BYTES)
     write_version(roots["user"] / "foo", "1.0")
+    # Arrange: a registry archive whose version and tracker are invalid too, served by URL.
     archive = io.BytesIO()
     with zipfile.ZipFile(archive, "w") as zipped:
         zipped.writestr("r/_registry.toml", dumps({"format": 2}))
@@ -78,9 +81,11 @@ def test_version_and_tracker_files_that_are_not_utf8_are_invalid_not_fatal(syste
         zipped.writestr("r/foo/_check_updates/pkg.toml", BAD_BYTES)
     system.add_url("https://example.org/main.zip", archive.getvalue())
 
+    # Act: sync the registry and describe the package.
     result = sync_registry(registry_cache_dir(roots["user"], "main"), scope_of(system), name="main", source="https://example.org/main.zip")
     view = make_catalog(system, tmp_path)[0].describe("foo")
 
+    # Assert: the invalid versions are flagged and the valid ones survive.
     assert result.ok and any("foo/2.0" in problem for problem in result.problems)
     assert [(item.name, item.valid) for item in view.local.versions] == [("1.0", True), ("2.0", False)]
     assert [item.name for item in view.registry.versions] == ["1.0"] and view.registry.tracker is None
@@ -211,6 +216,7 @@ def test_extended_length_path_resolves_to_the_same_package(tmp_path: Path, mode:
 @pytest.mark.parametrize("child", ["version", "app"])
 def test_junction_version_or_app_inside_an_admin_only_system_package_is_a_problem(tmp_path: Path, child: str) -> None:
     """In an elevated run a version directory or ``App`` that is a junction is reported invalid and never counted as valid or populated."""
+    # Arrange: a system package with a valid version and a populated payload outside it.
     system = FakeSystem(tmp_path / "machine", elevated=True)
     catalog, roots = make_catalog(system, tmp_path, mode="system")
     package = roots["system"] / "foo"
@@ -222,8 +228,10 @@ def test_junction_version_or_app_inside_an_admin_only_system_package_is_a_proble
     else:
         system.create_junction(package / "1.0" / "App", outside / "payload" / "App")
 
+    # Act: describe the package.
     view = catalog.describe("foo")
 
+    # Assert: the junction is flagged and never counted as populated.
     flagged = view.local.version("2.0" if child == "version" else "1.0")
     assert not flagged.valid and any("link" in problem for problem in flagged.problems)
     assert not flagged.populated

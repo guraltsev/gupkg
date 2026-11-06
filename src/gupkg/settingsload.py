@@ -1,20 +1,20 @@
-"""Find, filter and read the settings layers of one run (design sections 6.1, 6.2 and 11).
+"""Find, filter and load the settings layers of one run (design sections 6.1, 6.2 and 11).
 
 Usage and API
 -------------
 ``resolve_root(mode, ...)`` returns the ``RootChoice`` of a run: the root folder and the source that named it.
 ``load_mode_settings(mode, root, ...)`` returns a ``LoadedSettings``: the merged ``Settings`` (each value knows its
 layer) and a ``LayerReport`` per layer that says whether it was applied or missing. ``settings_file(root)`` names the
-settings file of a root. ``read_root_layers`` reads the two layers that name a root before the root is known.
+settings file of a root. ``read_root_layers`` loads the two layers that name a root before the root is known.
 
 Implementation Approach
 -----------------------
-Each mode finds its root by a fixed chain of fallbacks (``resolve_root``), reads only its own keys, and never looks at the
-other mode's root. The layers are read lowest priority first: built-in defaults of the mode, ``$App\\settings.toml`` of
+Each mode finds its root by a fixed chain of fallbacks (``resolve_root``), uses only its own keys, and never looks at the
+other mode's root. The layers are loaded lowest priority first: built-in defaults of the mode, ``$App\\settings.toml`` of
 the running gupkg, ``<root>\\.gupkg\\settings.toml`` and, in user mode only, ``--settings``. ``[roots]`` is allowed in
-the second and fourth layer and refused in a root's own file. Nothing is ever read from AppData or ProgramData. In system
+the second and fourth layer and refused in a root's own file. Nothing is ever loaded from AppData or ProgramData. In system
 mode every file must sit in an admin-only folder (``System.directory_untrusted_reason``): a layer that fails that check
-stops the run, because an elevated run must not trust a folder a standard user can change. Reading goes through an
+stops the run, because an elevated run must not trust a folder a standard user can change. File access goes through an
 injectable function so that tests never touch a real machine.
 """
 
@@ -41,20 +41,41 @@ from .model.settings import (
     merge_layers,
 )
 
+# Name of the per-root folder that holds gupkg's own data.
 DATA_DIR_NAME = ".gupkg"
+# Name of the settings file inside the data folder and inside ``$App``.
 SETTINGS_FILE_NAME = "settings.toml"
 
+# Labels reported as ``RootChoice.source``: what named the root of the run.
+# The root came from the ``--root`` option.
 SOURCE_ROOT_OPTION = "--root"
+# The root is the one the installed system gupkg lives in.
 SOURCE_INSTALLED_SYSTEM = "the installed system gupkg"
+# The root is the one the running (user-mode) gupkg is installed in.
 SOURCE_INSTALLED_USER = "the root this gupkg is installed in"
+# The root came from ``[roots]`` of the ``--settings`` file.
 SOURCE_SETTINGS_OPTION = "--settings"
+# The root came from ``[roots]`` of ``$App\\settings.toml``.
 SOURCE_APP = "$App\\settings.toml"
+# No file named a root, so the built-in default applies.
 SOURCE_BUILT_IN = "built-in default"
 
 
 @dataclass(frozen=True)
 class LayerReport:
-    """What happened to one layer: ``applied``, ``missing`` or ``ignored`` (with the reason)."""
+    """What happened to one layer: ``applied``, ``missing`` or ``ignored`` (with the reason).
+
+    Attributes
+    ----------
+    name : str
+        The layer name.
+    path : Path | None
+        The file the layer was read from, if any.
+    status : str
+        ``applied``, ``missing`` or ``ignored``.
+    reason : str
+        Why the layer was ignored.
+    """
 
     name: str
     path: Path | None
@@ -64,75 +85,91 @@ class LayerReport:
 
 @dataclass(frozen=True)
 class LoadedSettings:
-    """The merged settings and a report of every layer."""
+    """The merged settings and a report of every layer.
+
+    Methods
+    -------
+    root
+        Return the expanded path of a ``roots.*`` or ``integration.*`` setting.
+
+    Attributes
+    ----------
+    settings : Settings
+        The merged settings.
+    layers : tuple[LayerReport, ...]
+        What happened to each layer.
+    """
 
     settings: Settings
     layers: tuple[LayerReport, ...]
 
     def root(self, key: str, env: Mapping[str, str]) -> Path:
-        """Return the expanded path of a ``roots.*`` or ``integration.*`` setting."""
+        """Return the expanded path of a ``roots.*`` or ``integration.*`` setting.
+
+        Parameters
+        ----------
+        key : str
+            The dotted setting name, such as ``roots.user``.
+        env : mapping of str to str
+            The environment used to expand ``%NAME%``.
+
+        Returns
+        -------
+        Path
+            The setting's value with environment references expanded.
+        """
         return Path(expand_env(self.settings[key], env))
 
 
 @dataclass(frozen=True)
 class RootChoice:
-    """The root of a run and what named it (``--root``, ``$App\\settings.toml``, ``built-in default`` ...)."""
+    """The root of a run and what named it (``--root``, ``$App\\settings.toml``, ``built-in default`` ...).
+
+    Attributes
+    ----------
+    path : Path
+        The chosen root.
+    source : str
+        What named it.
+    """
 
     path: Path
     source: str
 
 
 def settings_file(root: Path) -> Path:
-    """Return the settings file of *root*: ``<root>\\.gupkg\\settings.toml``."""
+    """Return the settings file of *root*: ``<root>\\.gupkg\\settings.toml``.
+
+    Parameters
+    ----------
+    root : Path
+        The root folder.
+
+    Returns
+    -------
+    Path
+        The path of the root's settings file; it need not exist.
+    """
     return Path(root) / DATA_DIR_NAME / SETTINGS_FILE_NAME
 
 
 def read_text_file(path: Path) -> str | None:
-    """Read a UTF-8 text file, returning ``None`` when it does not exist."""
+    """Return the text of a UTF-8 file (a byte order mark is dropped), or ``None`` when it does not exist.
+
+    Parameters
+    ----------
+    path : Path
+        The file to read.
+
+    Returns
+    -------
+    str or None
+        The file's text, or ``None`` when the file is missing.
+    """
     try:
         return Path(path).read_text(encoding="utf-8-sig")
     except FileNotFoundError:
         return None
-
-
-def _untrusted_reason(folder: Path, system: System) -> str | None:
-    """Return why *folder* (or its nearest existing parent) is not admin-only, or ``None`` when it is.
-
-    Raises
-    ------
-    OSError
-        If the folder cannot be judged.
-    """
-    while not folder.exists() and folder.parent != folder:
-        folder = folder.parent
-    return system.directory_untrusted_reason(folder)
-
-
-def _admin_only(folder: Path, system: System) -> bool:
-    """Return whether *folder* is admin-only; a folder that cannot be judged counts as not admin-only."""
-    try:
-        return _untrusted_reason(folder, system) is None
-    except OSError:
-        return False
-
-
-def _absolute(path: Path, what: str) -> Path:
-    """Return *path* when it is absolute with a drive, else refuse it."""
-    text = str(path)
-    if not ntpath.isabs(text) or not ntpath.splitdrive(text)[0]:
-        raise SettingsError(f"{what} must be an absolute path with a drive, not '{text}'")
-    return path
-
-
-def _configured_root(data: Mapping[str, Any] | None, mode: str, env: Mapping[str, str], where: str) -> Path | None:
-    """Return ``[roots].<mode>`` of a parsed layer, expanded, or ``None`` when the layer does not set it."""
-    roots = (data or {}).get("roots")
-    if not isinstance(roots, Mapping) or mode not in roots:
-        return None
-    value = roots[mode]
-    if not isinstance(value, str) or not value.strip():
-        raise SettingsError(f"{where}: roots.{mode} must be a non-empty string")
-    return _absolute(Path(expand_env(value, env)), f"roots.{mode} of {where}")
 
 
 def resolve_root(
@@ -179,8 +216,11 @@ def resolve_root(
     ValueError
         If *mode* is unknown.
     """
+    # Refuse an unknown mode before consulting any source.
     if mode not in (Mode.SYSTEM, Mode.USER):
         raise ValueError(f"unknown mode {mode!r}; use 'system' or 'user'")
+
+    # An explicit --root wins; in system mode it must also be admin-only.
     if root_option is not None:
         chosen = _absolute(Path(root_option), "--root")
         if mode == Mode.SYSTEM:
@@ -191,6 +231,8 @@ def resolve_root(
             if reason is not None:
                 raise SettingsError(f"--root {chosen} is not admin-only, so it cannot be the system root: {reason}")
         return RootChoice(chosen, SOURCE_ROOT_OPTION)
+
+    # Mode-specific sources come next: the installed system root, or --settings and the user install root.
     if mode == Mode.SYSTEM:
         if installed_root is not None and _admin_only(Path(installed_root), system):
             return RootChoice(Path(installed_root), SOURCE_INSTALLED_SYSTEM)
@@ -200,44 +242,13 @@ def resolve_root(
             return RootChoice(found, SOURCE_SETTINGS_OPTION)
         if installed_root is not None and not _admin_only(Path(installed_root), system):
             return RootChoice(Path(installed_root), SOURCE_INSTALLED_USER)
+
+    # Fall back to the running gupkg's own settings, then to the built-in default for the mode.
     found = _configured_root(app_layer, mode, env, SOURCE_APP)
     if found is not None:
         return RootChoice(found, SOURCE_APP)
     built_in = merge_layers([default_layer(mode)])[f"roots.{mode}"]
     return RootChoice(Path(expand_env(built_in, env)), SOURCE_BUILT_IN)
-
-
-def _read_layer(
-    name: str, path: Path, *, strict: bool, system: System, read_text: Callable[[Path], str | None], required: bool = False,
-) -> tuple[Layer | None, LayerReport]:
-    """Read one file layer: its ``Layer`` (``None`` when the file is missing) and its report."""
-    # A system-mode run checks the folder before it reads anything from it. A folder that does not exist
-    # yet is judged by its nearest existing parent.
-    if strict:
-        folder = path.parent
-        try:
-            reason = _untrusted_reason(folder, system)
-        except OSError as exc:
-            raise SettingsError(
-                f"Refusing the {name} settings {path} for this run: {folder} could not be judged admin-only: {exc}"
-            ) from exc
-        if reason is not None:
-            raise SettingsError(f"Refusing the {name} settings {path} for this run: {folder} is not admin-only: {reason}")
-
-    # Any failure to read is an error, never a silently skipped layer.
-    try:
-        text = read_text(path)
-    except (OSError, UnicodeDecodeError) as exc:
-        raise SettingsError(f"cannot read the {name} settings {path}: {exc}") from exc
-    if text is None:
-        if required:
-            raise SettingsError(f"the settings file {path} does not exist")
-        return None, LayerReport(name, path, "missing")
-    try:
-        data = tomllib.loads(text)
-    except tomllib.TOMLDecodeError as exc:
-        raise SettingsError(f"{name} settings {path}: not valid TOML: {exc}") from exc
-    return Layer(name, data, str(path)), LayerReport(name, path, "applied")
 
 
 def load_mode_settings(
@@ -250,7 +261,7 @@ def load_mode_settings(
     env: Mapping[str, str],
     read_text: Callable[[Path], str | None] = read_text_file,
 ) -> LoadedSettings:
-    """Read the layers of a run in *mode* on *root* and merge them (design 6.2, 11).
+    """Load the layers of a run in *mode* on *root* and merge them (design 6.2, 11).
 
     The layers, lowest priority first: the mode's built-in defaults, ``$App\\settings.toml``,
     ``<root>\\.gupkg\\settings.toml``, and ``--settings`` (user mode only).
@@ -283,6 +294,7 @@ def load_mode_settings(
         If a layer is invalid (schema 3 included), ``[roots]`` is in the root's own file, ``--settings`` is missing or
         given in system mode, or a system-mode run would read a file from a folder that is not admin-only.
     """
+    # Refuse an unknown mode, and --settings in system mode, before any file is touched.
     if mode not in (Mode.SYSTEM, Mode.USER):
         raise ValueError(f"unknown mode {mode!r}; use 'system' or 'user'")
     if mode == Mode.SYSTEM and settings_path is not None:
@@ -290,12 +302,16 @@ def load_mode_settings(
     strict = mode == Mode.SYSTEM
     layers: list[Layer] = [default_layer(mode)]
     reports: list[LayerReport] = [LayerReport(LAYER_DEFAULTS, None, "applied", "built in")]
+
+    # List the file layers lowest priority first; only --settings is required to exist.
     wanted: list[tuple[str, Path, bool]] = []
     if app_dir is not None:
         wanted.append((LAYER_APP, Path(app_dir) / SETTINGS_FILE_NAME, False))
     wanted.append((LAYER_ROOT, settings_file(root), False))
     if settings_path is not None:
         wanted.append((LAYER_CLI, Path(settings_path), True))
+
+    # Load each layer in order, keeping a report for every one and the data of those that exist.
     for name, path, required in wanted:
         layer, report = _read_layer(name, path, strict=strict, system=system, read_text=read_text, required=required)
         reports.append(report)
@@ -312,11 +328,24 @@ def read_root_layers(
     system: System,
     read_text: Callable[[Path], str | None] = read_text_file,
 ) -> tuple[Mapping[str, Any] | None, Mapping[str, Any] | None]:
-    """Read the two layers that name a root before the root is known: ``$App\\settings.toml`` and ``--settings``.
+    """Load the two layers that name a root before the root is known: ``$App\\settings.toml`` and ``--settings``.
 
     ``resolve_root`` needs their ``[roots]`` tables; ``load_mode_settings`` reads them again, together with the root's own
     file, once the root is known. A system-mode run reads ``$App\\settings.toml`` only from an admin-only folder and
     never reads ``--settings``.
+
+    Parameters
+    ----------
+    mode : str
+        ``system`` or ``user``; system mode never loads ``--settings``.
+    app_dir : Path or None
+        ``$App`` of the running gupkg, or ``None``.
+    settings_path : Path, optional
+        The ``--settings`` file.
+    system : System
+        The boundary that says whether a folder is admin-only.
+    read_text : callable, optional
+        Returns a file's text, or ``None`` when it does not exist.
 
     Returns
     -------
@@ -329,6 +358,7 @@ def read_root_layers(
         If a file cannot be read or is not valid TOML, ``--settings`` is missing, or a system-mode run would read a file
         from a folder that is not admin-only.
     """
+    # Load $App settings (strictly checked in system mode) and --settings (user mode only).
     strict = mode == Mode.SYSTEM
     app_data = None
     if app_dir is not None:
@@ -339,3 +369,90 @@ def read_root_layers(
         layer, _ = _read_layer(LAYER_CLI, Path(settings_path), strict=False, system=system, read_text=read_text, required=True)
         cli_data = layer.data if layer is not None else None
     return app_data, cli_data
+
+
+# --- supporting helpers ---
+
+
+def _untrusted_reason(folder: Path, system: System) -> str | None:
+    """Return why *folder* (or its nearest existing parent) is not admin-only, or ``None`` when it is.
+
+    Raises
+    ------
+    OSError
+        If the folder cannot be judged.
+    """
+    while not folder.exists() and folder.parent != folder:
+        folder = folder.parent
+    return system.directory_untrusted_reason(folder)
+
+
+def _admin_only(folder: Path, system: System) -> bool:
+    """Return whether *folder* is admin-only; a folder that cannot be judged counts as not admin-only."""
+    try:
+        return _untrusted_reason(folder, system) is None
+    except OSError:
+        return False
+
+
+def _absolute(path: Path, what: str) -> Path:
+    """Return *path* when it is absolute with a drive, else refuse it."""
+    text = str(path)
+    if not ntpath.isabs(text) or not ntpath.splitdrive(text)[0]:
+        raise SettingsError(f"{what} must be an absolute path with a drive, not '{text}'")
+    return path
+
+
+def _configured_root(data: Mapping[str, Any] | None, mode: str, env: Mapping[str, str], where: str) -> Path | None:
+    """Return ``[roots].<mode>`` of a parsed layer, expanded, or ``None`` when the layer does not set it."""
+    roots = (data or {}).get("roots")
+    if not isinstance(roots, Mapping) or mode not in roots:
+        return None
+    value = roots[mode]
+    if not isinstance(value, str) or not value.strip():
+        raise SettingsError(f"{where}: roots.{mode} must be a non-empty string")
+    return _absolute(Path(expand_env(value, env)), f"roots.{mode} of {where}")
+
+
+def _read_layer(
+    name: str, path: Path, *, strict: bool, system: System, read_text: Callable[[Path], str | None], required: bool = False,
+) -> tuple[Layer | None, LayerReport]:
+    """Return one file layer (``None`` when the file is missing) and its report.
+
+    Raises
+    ------
+    SettingsError
+        If a strict layer sits in a folder that is not admin-only, the file cannot be read, a required file is missing,
+        or the text is not valid TOML.
+    """
+    # A system-mode run checks the folder before it reads anything from it. A folder that does not exist
+    # yet is judged by its nearest existing parent.
+    if strict:
+        folder = path.parent
+        try:
+            reason = _untrusted_reason(folder, system)
+        except OSError as exc:
+            raise SettingsError(
+                f"Refusing the {name} settings {path} for this run: {folder} could not be judged admin-only: {exc}"
+            ) from exc
+        if reason is not None:
+            raise SettingsError(f"Refusing the {name} settings {path} for this run: {folder} is not admin-only: {reason}")
+
+    # Any failure to read is an error, never a silently skipped layer.
+    try:
+        text = read_text(path)
+    except (OSError, UnicodeDecodeError) as exc:
+        raise SettingsError(f"cannot read the {name} settings {path}: {exc}") from exc
+
+    # A missing file is a "missing" layer unless the caller required it.
+    if text is None:
+        if required:
+            raise SettingsError(f"the settings file {path} does not exist")
+        return None, LayerReport(name, path, "missing")
+
+    # Parse the text; invalid TOML is reported against the layer it came from.
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        raise SettingsError(f"{name} settings {path}: not valid TOML: {exc}") from exc
+    return Layer(name, data, str(path)), LayerReport(name, path, "applied")

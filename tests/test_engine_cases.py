@@ -25,6 +25,7 @@ from tests.support.engine import BASE_URL, World
 
 pytestmark = pytest.mark.unit
 
+# Table that declares an environment variable pointing at ``App``.
 ENV = '[[env]]\nname = "TOOL_HOME"\nvalue = "$App"\n'
 
 

@@ -24,11 +24,13 @@ import urllib.request
 from typing import Any
 
 
+# Version of the update-check module interface that this script implements.
 PKG_MODULE_API = 1
 
 # Only calendar-date tags are stable MSYS2 releases; this excludes the rolling
 # nightly-x86_64 release that GitHub otherwise reports as the latest release.
 _STABLE_TAG = re.compile(r"^(?P<date>\d{4}-\d{2}-\d{2})$")
+# Address that publishes the current release information.
 _RELEASES_URL = "https://api.github.com/repos/msys2/msys2-installer/releases?per_page=100"
 
 
@@ -70,6 +72,7 @@ def check_update(context: dict[str, Any]) -> dict[str, str]:
 
     # Examine stable tags newest-first and require the precisely named archive
     # with GitHub's published digest before exposing it to the update pipeline.
+    # Order the dated stable releases from newest to oldest.
     stable_releases = sorted(
         (
             (match.group("date"), release)
@@ -80,6 +83,7 @@ def check_update(context: dict[str, Any]) -> dict[str, str]:
         ),
         reverse=True,
     )
+    # Take the newest stable release that carries the expected installer asset.
     for tag, release in stable_releases:
         version = tag.replace("-", "")
         filename = f"msys2-base-x86_64-{version}.sfx.exe"
@@ -88,6 +92,7 @@ def check_update(context: dict[str, Any]) -> dict[str, str]:
             for asset in release.get("assets", [])
             if isinstance(asset, dict) and asset.get("name") == filename
         ]
+        # Skip releases that lack exactly one asset with a valid SHA-256 digest.
         if len(matches) != 1:
             continue
         asset = matches[0]
@@ -98,6 +103,7 @@ def check_update(context: dict[str, Any]) -> dict[str, str]:
         if not digest.startswith("sha256:") or len(digest) != 71:
             continue
 
+        # Return the newest release that passed every check.
         return {
             "candidateId": f"msys2:{tag}:{filename}",
             "version": version,

@@ -69,6 +69,22 @@ from .stateio import write_track_state
 def plan_check(engine: Engine, request, resolved: ResolvedTarget, catalog: Catalog):
     """Plan ``check-updates`` for one resolved target without running anything (``--plan``).
 
+    Parameters
+    ----------
+    engine : Engine
+        The machine and settings (unused by planning, kept for a uniform entrypoint signature).
+    request : Request
+        The ``check-updates`` request (``no_download``, ``selector``).
+    resolved : ResolvedTarget
+        The resolved target and install mode.
+    catalog : Catalog
+        Used to decide what the tracker needs.
+
+    Returns
+    -------
+    Plan
+        The planned phases and steps of the run.
+
     Raises
     ------
     NotInstalled
@@ -112,16 +128,20 @@ def check_updates_one(
     TrackError, ChecksumDiscoveryError, HookError, HttpError
         If the tracker fails; nothing was written.
     """
+    # A package without a local root cannot be written to, so it cannot be checked.
     context = resolved.scope
     view = resolved.resolved.view if resolved.resolved is not None else None
     if view is None or view.local is None:
         name = view.name if view is not None else request.selector
         raise NotInstalled(f"'{name}' is not a local package, so there is nothing to check; use `gupkg install {name}`")
+
+    # A package with no tracker has nothing to check: report that without touching the disk.
     plan = catalog.check_updates_plan(view)
     if plan.action == "nothing":
         return PackageResult(view.name, "check-updates", True, "no-new-version", view.installed.version if view.installed else None,
                              None, context.mode, details={"reason": "nothing to check: the package has no tracker"})
 
+    # Announce the planned steps so the run reports the same plan that --plan shows.
     download = not request.no_download
     package_path = view.local.path
     planned = plan_check_updates(request, view, context, tracker_action=plan.tracker.action, download=download)
@@ -140,12 +160,16 @@ def check_updates_one(
     notes = tuple(result.notes)
     for note in notes:
         emit(Warning(f"{view.name}: {note}"))
+
+    # Compare with the known versions; an old or equal result only records the check and stops.
     comparison = catalog.compare(view, result)
     if not comparison.newer:
         emit(Step(f"{view.name}: {comparison.reason}", "info"))
         write_track_state(package_path, {"checked": engine.now().isoformat(), "found": result.version, "outcome": "no-new-version"})
         return PackageResult(view.name, "check-updates", True, "no-new-version", result.version, None, context.mode,
                              warnings=notes, details={"found": result.version, "reason": comparison.reason, "notes": list(notes)})
+
+    # A newer version was found: announce it before anything is written.
     emit(Step(f"{view.name}: new version {result.version} (newest known: {comparison.newest_known or 'none'})", "add"))
 
     # Write: render the pinned pkg.toml, strip update-check code, validate, move into place atomically.
@@ -161,6 +185,8 @@ def check_updates_one(
     error: dict[str, Any] | None = None
     exit_code = 0
     populated = None
+
+    # A vendor installer the settings forbid is never run: the version stays written without its App.
     allow_installer = bool(settings["hooks.allow_vendor_installers"])
     if download and pinned.source.installer is not None and not allow_installer:
         emit(Warning(
@@ -168,12 +194,16 @@ def check_updates_one(
             "the version was written without its App."
         ))
         download = False
+
+    # A name another installed package already provides is refused before any download starts.
     refusal = _name_conflict(engine, context, catalog, view, package_path, pinned) if download else None
     if refusal is not None:
         # Like a refused checksum: the version stays written (the package is `outdated`) and its App is not downloaded.
         exit_code, error = describe(refusal)
         emit(Warning(f"{view.name} {result.version} was written without its App: {refusal}"))
         download = False
+
+    # Populate the new version's App; a refused checksum is recorded as the result's error, not raised.
     if download:
         try:
             populated = populate_version(
@@ -182,12 +212,17 @@ def check_updates_one(
                 allow_installer=allow_installer,
             )
         except ChecksumError as refusal:
+            # The refusal becomes the result's error; the written version directory stays.
             exit_code, error = describe(refusal)
             emit(Warning(f"{view.name} {result.version} was written without its App: {refusal}"))
         details["populated"] = populated is not None
+
+    # No download was wanted or allowed: show the four download phases as skipped.
     else:
         for name in ("Fetch", "Verify", "Unpack", "Prepare"):
             emit_skipped(name)
+
+    # Record what was built (receipt) and the outcome of this check (track state) for the next run and for `list`.
     with phase("Finish"):
         sections: dict[str, Any] = {} if populated is None else dict(populated.sections)
         if populated is not None and populated.checksum is not None:
@@ -282,6 +317,7 @@ def _write_version(
     work = require_work_folder(engine, package_path / DATA_DIR_NAME / "work") / scratch_name("version")
     staged = work / version
     try:
+        # Stage the support files and the pinned manifest in the work folder, away from the package.
         staged.mkdir(parents=True)
         _copy_support_files(tracker_dir, staged)
         (staged / MANIFEST_NAME).write_text(manifest_to_toml(pinned), encoding="utf-8")
@@ -294,6 +330,7 @@ def _write_version(
         if not (context.root / DATA_DIR_NAME / LOCATION_FILE).is_file():
             carry_forward(view, staged)
 
+        # Validate the staged directory like any version directory, then publish it with one rename.
         report = check_directory(staged, package=package_path.name)
         if not report.ok:
             raise ManifestError([f"the new version directory is not valid: {problem}" for problem in report.errors])
@@ -311,6 +348,7 @@ def _copy_support_files(tracker_dir: Path, staged: Path) -> None:
     A ``track`` hook is never copied into a version directory (design 9.3); links are refused. The version directory gets
     launchers of its own from ``write_launchers``, never the tracker's ``check-updates.cmd``.
     """
+    # Walk the whole tracker folder, refusing links and skipping what must not reach a version directory.
     for current, folders, files in os.walk(tracker_dir):
         here = Path(current)
         relative = here.relative_to(tracker_dir)
@@ -319,12 +357,18 @@ def _copy_support_files(tracker_dir: Path, staged: Path) -> None:
                 raise ManifestError([f"{here / name} is a link; links are not copied into a version directory"])
         for name in files:
             source = here / name
+
+            # The tracker's own manifest and launchers are replaced by freshly written ones.
             if relative == Path(".") and (name == MANIFEST_NAME or name in LAUNCHERS):
                 continue
             if is_reparse_point(source):
                 raise ManifestError([f"{source} is a link; links are not copied into a version directory"])
+
+            # Update-check code stays behind: a module that defines ``track`` is not copied.
             if source.suffix.lower() == ".py" and _defines_track(source):
                 continue
+
+            # Copy the file with its metadata, creating the folder it lives in.
             target = staged / relative / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)

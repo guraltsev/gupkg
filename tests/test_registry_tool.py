@@ -13,7 +13,7 @@ version its first hash and refuses to replace one; the tool starts no ``git`` pr
 version directory verifies against the published fingerprint and is refused after one file changes.
 Real: the services (providers, client, checksum policy, unpack, prepare, fingerprint), real files,
 real 7-Zip. Mocked: ``FakeSystem`` serves the vendor responses and plays ``git``. Out of scope: the
-live vendors (a manual step) and the install engine (issue 028).
+live vendors (a manual step) and the install engine.
 """
 
 from __future__ import annotations
@@ -44,7 +44,9 @@ from tests.support.registry_tool import ANSWERS, Git, machine, registry_of, run_
 
 pytestmark = pytest.mark.process
 
+# Files in the archive of the sample Gadget package.
 GADGET_ZIP = {"Gadget64.EXE": "exe", "Gadget64.INI": "ini"}
+# Files in the archive of the sample Widget package.
 WIDGET_ZIP = {"widget.exe": "v", "widget-shim.exe": "s", "widget-migrate.exe": "m"}
 
 
@@ -93,8 +95,10 @@ def test_a_hash_the_vendor_does_not_publish_is_computed_marked_and_fingerprinted
     root = registry_of(tmp_path, "gadget")
     system = machine(tmp_path, "page_gadget", artifacts={"https://vendor.example/files/gadget_1002.zip": body})
 
+    # Act: update the package whose vendor publishes no hash.
     report = run_update(root, system, tmp_path, "gadget")
 
+    # Check the outcome, the recorded digest and the files that were written.
     outcome = report.outcomes[0]
     assert (outcome.status, outcome.version, outcome.review) == ("added", "10.02", True)
     version = root / "gadget" / "10.02"
@@ -103,6 +107,7 @@ def test_a_hash_the_vendor_does_not_publish_is_computed_marked_and_fingerprinted
     assert manifest.source.sha256_from == "registry"
     assert manifest.source.download_url == "https://vendor.example/files/gadget_1002.zip"
     assert sorted(p.name for p in version.iterdir()) == ["install.cmd", "manage.cmd", "pkg.toml"]
+    # Check what the registry file recorded for the new version.
     settings = read_registry_file(root)
     assert settings["fingerprints"]["gadget/10.02"] == fingerprint_directory(version)
     assert check_directory(version).ok and not check_directory(version).warnings
@@ -149,9 +154,11 @@ def test_every_older_version_is_kept_and_a_known_version_is_left_alone(tmp_path:
         'format = 2\nmodes = ["system", "user"]\n[source]\ndownload_url = "https://vendor.example/files/hwi_999.zip"\n'
         f'sha256 = "{"a" * 64}"\nsha256_from = "manual"\nshipped = false\n', encoding="utf-8", newline="\n",
     )
+    # Remember the old version's bytes, to prove that it stays untouched.
     kept = (old / "pkg.toml").read_bytes()
     system = machine(tmp_path, "page_gadget", artifacts={"https://vendor.example/files/gadget_1002.zip": body})
 
+    # Act: update twice; the second run must find nothing to change.
     first = run_update(root, system, tmp_path, "gadget")
     after_first = snapshot_files(root)
     second = run_update(root, system, tmp_path, "gadget")
@@ -184,8 +191,10 @@ def test_a_package_that_fails_does_not_block_the_others(tmp_path: Path) -> None:
     })
     patch_digest(system, "9ce45e2deeb806d62a504075f992a4c5de66873173c2e403a49a3de9126fa5d3", hashlib.sha256(b"this is not an archive").hexdigest())
 
+    # Act: update every package; one of the downloads is not an archive.
     report = run_update(root, system, tmp_path)
 
+    # Assert: the good package was added, the bad one failed and left nothing behind.
     status = {o.package: o.status for o in report.outcomes}
     assert status == {"gadget": "added", "widget": "failed"} and not report.ok
     assert not (root / "widget" / "2.0.1").exists()
@@ -207,12 +216,15 @@ def test_a_download_over_plain_http_without_a_published_hash_is_refused(tmp_path
         'check_url = "https://example.org/dl"\nmatch = \'tool-(?P<version>\\d+\\.\\d+)\\.zip\'\n'
         '[source]\ndownload_url = "http://example.org/tool-${version}.zip"\n'
     )
+    # A registry with a tracker that downloads over plain HTTP, and the vendor page.
     root = registry_of(tmp_path, extra={"plain/_check_updates/pkg.toml": tracker})
     system = machine(tmp_path, artifacts={"http://example.org/tool-1.5.zip": zip_bytes(tmp_path, "t.zip", {"a.exe": "a"})})
     system.urls["https://example.org/dl"] = FakeHttp("<a>tool-1.5.zip</a>")
 
+    # Act: update the package.
     outcome = run_update(root, system, tmp_path, "plain").outcomes[0]
 
+    # Assert: the update failed and the plain HTTP address was never requested.
     assert outcome.status == "failed"
     assert not (root / "plain" / "1.5").exists()
     assert "http://example.org/tool-1.5.zip" not in [r.url for r in system.request_log]
@@ -238,6 +250,7 @@ def test_support_files_are_copied_but_no_update_check_code_launcher_or_backup(tm
         'check_url = "https://example.org/dl"\nmatch = \'tool-(?P<version>\\d+\\.\\d+)\\.zip\'\n'
         '[source]\ndownload_url = "https://example.org/tool-${version}.zip"\n'
     )
+    # A registry whose tracker folder also holds support files and stale files.
     root = registry_of(tmp_path, extra={
         "tool/_check_updates/pkg.toml": tracker,
         "tool/_check_updates/icons/tool.ico": "ico",
@@ -246,6 +259,7 @@ def test_support_files_are_copied_but_no_update_check_code_launcher_or_backup(tm
         "tool/_check_updates/manage.cmd": "stale launcher",
         "tool/_check_updates/notes.bak": "backup",
     })
+    # Serve the download and the vendor page.
     system = machine(tmp_path, artifacts={"https://example.org/tool-1.5.zip": zip_bytes(tmp_path, "t.zip", {"a.exe": "a"})})
     system.urls["https://example.org/dl"] = FakeHttp("<a>tool-1.5.zip</a>")
 
@@ -288,6 +302,7 @@ def test_a_written_version_directory_verifies_as_a_distribution_copy_and_is_refu
 # -- pin ------------------------------------------------------------------------------------------------
 
 
+# Registry text in the legacy layout.
 LEGACY = (
     'format = 2\ndescription = "d"\nmodes = ["system", "user"]\n[source]\n'
     'download_url = "https://example.org/old-1.0.zip"\nkind = "zip"\nshipped = false\n'
@@ -312,8 +327,10 @@ def test_pin_gives_a_legacy_version_its_first_hash_and_a_new_fingerprint(tmp_pat
     system = machine(tmp_path, artifacts={"https://example.org/old-1.0.zip": body})
     before = read_registry_file(root)["fingerprints"]["old/1.0"]
 
+    # Act: pin the legacy version.
     outcome = pin_version(root, system, "old/1.0", sandbox=tmp_path / "sandbox", environ={})
 
+    # Assert: pinned and marked for review, with the digest recorded and a new fingerprint.
     assert (outcome.status, outcome.review) == ("pinned", True)
     manifest = parse_manifest((root / "old" / "1.0" / "pkg.toml").read_text(encoding="utf-8"), ManifestKind.VERSION)
     assert (manifest.source.sha256, manifest.source.sha256_from) == (hashlib.sha256(body).hexdigest(), "registry")
@@ -543,8 +560,10 @@ def test_a_staging_folder_that_cannot_be_removed_is_a_warning_not_a_failure(tmp_
     os.utime(stale, (1_000_000, 1_000_000))
 
     def refuse(path: Path) -> None:
+        """Fail as if the folder were in use by another process."""
         raise PermissionError("in use")
 
+    # Removal of the stale staging folder fails; the update must warn and carry on.
     monkeypatch.setattr("gupkg_registry.update.remove_tree", refuse)
     reporter = Collect()
     with use_reporter(reporter):
@@ -560,6 +579,7 @@ def test_registry_files_are_written_atomically(tmp_path: Path, monkeypatch: pyte
     before = (root / "_registry.toml").read_bytes()
 
     def fail(source: object, destination: object) -> None:
+        """Fail as if the disk were full."""
         raise OSError("disk full")
 
     monkeypatch.setattr("gupkg_registry.layout.os.replace", fail)
@@ -580,6 +600,7 @@ def test_the_launchers_command_brings_a_registry_to_the_current_template_and_ref
     (tracker / "install.cmd").write_bytes(b"@echo off\r\n")
     assert validate_registry(root).problems
 
+    # Act: bring the registry to the current launcher template.
     assert main(["launchers", "--registry", str(root)]) == 0
 
     assert validate_registry(root).problems == ()
@@ -593,7 +614,7 @@ def test_the_launchers_command_brings_a_registry_to_the_current_template_and_ref
 
 
 def test_update_prints_a_progress_line_per_package_and_a_summary(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """Each package gets ``[n/total] name ... <outcome>`` on one line as it finishes, and the run ends with a summary."""
+    """Each package gets ``[n/total] name`` followed by its outcome on one line as it finishes, and the run ends with a summary."""
     root = registry_of(tmp_path, "gadget", "widget")
     good = zip_bytes(tmp_path, "h.zip", GADGET_ZIP)
     system = machine(tmp_path, "page_gadget", "github_widget", artifacts={
@@ -602,8 +623,10 @@ def test_update_prints_a_progress_line_per_package_and_a_summary(tmp_path: Path,
     })
     patch_digest(system, "9ce45e2deeb806d62a504075f992a4c5de66873173c2e403a49a3de9126fa5d3", hashlib.sha256(b"this is not an archive").hexdigest())
 
+    # Act: run the update through the command line.
     status = run_cli(root, system, tmp_path, "update")
 
+    # Assert: one progress line per package, then the summary.
     lines = capsys.readouterr().out.splitlines()
     assert status == 1
     assert lines[0].startswith("[1/2] gadget ... added") and lines[1].startswith("[2/2] widget ... failed")
@@ -673,8 +696,10 @@ def test_the_summary_lists_the_packages_by_outcome(tmp_path: Path, capsys: pytes
     })
     patch_digest(system, "9ce45e2deeb806d62a504075f992a4c5de66873173c2e403a49a3de9126fa5d3", hashlib.sha256(b"this is not an archive").hexdigest())
 
+    # Act: run the update command.
     run_cli(root, system, tmp_path, "update")
 
+    # Assert: the summary groups the packages by outcome.
     lines = capsys.readouterr().out.splitlines()
     assert any(line.startswith("updated (1): gadget ") for line in lines)
     assert any(line.startswith("hash computed by the registry tool, review before pushing (1): gadget") for line in lines)
@@ -702,6 +727,7 @@ def test_a_package_that_runs_a_vendor_installer_is_hashed_but_the_installer_is_n
     system = machine(tmp_path, artifacts={"https://example.org/tool_2.5_setup.exe": b"MZ not really an installer"})
     system.urls["https://example.org/dl"] = FakeHttp("<a>tool_2.5_setup.exe</a>")
 
+    # Act: update the package; the installer is only hashed.
     outcome = run_update(root, system, tmp_path, "inst").outcomes[0]
 
     text = (root / "inst" / "2.5" / "pkg.toml").read_text(encoding="utf-8")

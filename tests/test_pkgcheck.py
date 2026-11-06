@@ -5,7 +5,7 @@ it and otherwise fails with the exact text `App is missing and no way to recover
 `shipped`, download and script-populated versions are reported with their kind; a
 version directory with `[track]`, with a `pkg.local` module that defines `track`, or
 with a templated source URL fails with an error that names `_check_updates`; a version
-hook that imports `urllib` validates without a warning (decision D28); a tracker is
+hook that imports `urllib` validates without a warning; a tracker is
 checked without needing an `App`, and its `[source]` may not name a value its provider never produces.
 
 Real: ``gupkg.pkgcheck.check_directory`` on directories built under pytest's temporary
@@ -23,6 +23,7 @@ from gupkg.pkgcheck import check_directory, defines_track
 
 pytestmark = pytest.mark.unit
 
+# Download line shared by the sample manifests.
 URL = 'download_url = "https://example.org/tool-1.0.zip"'
 
 
@@ -31,9 +32,11 @@ def make_dir(root: Path, name: str, manifest: str, *, app: bool | str = False, f
     folder = root / "pkg" / name
     folder.mkdir(parents=True)
     (folder / "pkg.toml").write_text("format = 2\n" + manifest, encoding="utf-8")
+    # Optional application folder with a stand-in executable.
     if app:
         (folder / "App").mkdir()
         (folder / "App" / "tool.exe").write_text("x", encoding="utf-8")
+    # Extra files of the version folder.
     for relative, text in (files or {}).items():
         path = folder / relative
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -99,7 +102,7 @@ def test_populate_script_that_does_not_exist_is_an_error(tmp_path: Path) -> None
 
 
 def test_version_hook_that_imports_urllib_validates_without_a_warning(tmp_path: Path) -> None:
-    """Network use by a version-directory script is allowed: no error and no warning for `urllib` (decision D28)."""
+    """Network use by a version-directory script is allowed: no error and no warning for `urllib`."""
     hook = "PKG_MODULE_API = 2\nimport urllib.request\n\ndef populate(context):\n    return urllib.request.urlopen('https://example.org').read()\n"
     report = check_directory(make_dir(
         tmp_path, "1.0", '[source]\nscript = "pkg.local/populate.py"\n', files={"pkg.local/populate.py": hook},

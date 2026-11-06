@@ -11,14 +11,29 @@ from gupkg.system.port import Mode
 from tests.support.engine import World
 from tests.support.mode import tree_snapshot
 
+# Table template for a package that provides a shim.
 SHIM = '[[shim]]\nname = "{name}"\ntarget = "$App\\\\app.exe"\n'
+# Table template for a package that provides a Start Menu shortcut.
 SHORTCUT = '[[shortcut]]\nname = "{name}"\ntarget = "$App\\\\app.exe"\n'
+# Table template for a package that provides a wrapper file (a shim with content).
 WRAPPER = '[[shim]]\nname = "{name}"\ncontent = "@echo off"\n'
+# Table template for a package that provides an environment variable.
 ENV = '[[env]]\nname = "{name}"\nvalue = "$App"\n'
 
 
 def state(world: World) -> dict[str, object]:
-    """Return everything a refused run must leave alone: the root (without run logs), the bin folder, shortcuts, environment, PATH."""
+    """Return everything a refused run must leave alone: the root (without run logs), the bin folder, shortcuts, environment, PATH.
+
+    Parameters
+    ----------
+    world : World
+        The world whose user-mode state is captured.
+
+    Returns
+    -------
+    dict[str, object]
+        Snapshots of the user root, bin folder, shortcuts, environment variables and PATH.
+    """
     root = {key: value for key, value in tree_snapshot(world.user).items() if "logs" not in key}
     scope = Mode.USER
     return {

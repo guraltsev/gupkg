@@ -1,11 +1,11 @@
 """Cover the in-process reads of the UI programs (``gupkg_ui.reads.Reads``) on a real root, and that they give what the CLI's ``--json`` documents say.
 
-Behaviour covered: the inventory, the available rows (with the ``system only`` mark and its reason), one package's details and the registry state are read by
+Behaviour covered: the inventory, the available rows (with the ``system only`` mark and its reason), one package's details and the registry state are obtained by
 calling the core functions in the run's scope, and each equals what the typed reader returns for the document of the same CLI call (``to_data`` of the in-process
 result round-trips through ``read_list`` / ``read_info`` / ``read_registry_status``); a package that is not there is a ``DocumentError`` with the reason, never an empty
 answer; reading never touches the machine.
 
-Real: package roots, junctions and registry caches on pytest's temporary folder, the catalog, the core read functions. Mocked: the machine boundary (``FakeSystem``).
+Real: package roots, junctions and registry caches on pytest's temporary folder, the catalog, the core reader functions. Mocked: the machine boundary (``FakeSystem``).
 Out of scope: the screens (``test_ui_screens.py``) and the documents of the real CLI (``test_documents.py``).
 """
 

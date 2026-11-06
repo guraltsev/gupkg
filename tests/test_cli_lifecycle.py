@@ -31,6 +31,7 @@ from tests.support.engine import World, current
 
 pytestmark = pytest.mark.unit
 
+# Tables that declare a shortcut, an environment variable, a PATH entry and a shim.
 FULL = """
 [[shortcut]]
 name = "Tool"
@@ -49,9 +50,11 @@ def requests_made(world: World) -> int:
 
 def test_a_name_and_a_path_install_to_identical_destinations(cli_world: CliWorld) -> None:
     """Installing by name and by the package's path put the same shortcut, shim and PATH entries in place."""
+    # Arrange: a published package with every kind of effect.
     cli_world.publish("tool", "1.0.0", tables=FULL)
     package = cli_world.user / "tool"
 
+    # Describe what an install put on the machine.
     def destinations() -> tuple[list[str], list[str], set[tuple[str, str]]]:
         """Return where the install put its shortcuts and shims, and the effects its install record lists."""
         bin_dir = cli_world.fake.scope_folders(Mode.USER).bin_dir
@@ -61,28 +64,34 @@ def test_a_name_and_a_path_install_to_identical_destinations(cli_world: CliWorld
         }
         return sorted(str(path) for path in cli_world.fake.shortcuts()), sorted(path.name for path in bin_dir.glob("*.exe")), recorded
 
+    # Act: install by name, then uninstall.
     by_name = cli_world.cli("install", "tool")
     first = destinations()
     assert by_name.code == 0, by_name.err
     assert cli_world.cli("uninstall", "tool", "--yes").code == 0 and not cli_world.fake.shortcuts()
 
+    # Act: install the same package by its folder path.
     by_path = cli_world.cli("install", str(package))
 
+    # Assert: both installs left the same effects.
     assert by_path.code == 0, by_path.err
     assert destinations() == first and first[0] and first[1] == ["tool.exe"]
 
 
 def test_the_mode_is_the_tokens_and_the_resolve_line_names_mode_root_and_source(tmp_path: Path) -> None:
     """An elevated process installs in the system root, a normal shell in the user root; each prints ``<mode> root <path> (<source>)``."""
+    # Arrange: an elevated machine and an ordinary one, each with the package in its own root.
     elevated = CliWorld(tmp_path / "a", elevated=True)
     elevated.publish("tool", "1.0.0", mode="system")
     normal = CliWorld(tmp_path / "b")
     normal.publish("tool", "1.0.0", mode="user")
 
+    # Act: install on each machine, once without a flag and once with ``--no-input``.
     system_run = elevated.cli("install", "tool")
     auto_run = elevated.cli("install", "tool", "--no-input")
     user_run = normal.cli("install", "tool")
 
+    # Assert: the resolve line names the mode, the root and where the root came from.
     assert system_run.code == 0, system_run.err
     assert f"system root {elevated.system_root} (the installed system gupkg)" in system_run.out
     assert auto_run.code == 0 and f"system root {elevated.system_root}" in auto_run.out
@@ -103,6 +112,7 @@ def test_an_elevated_gupkg_installs_a_registry_package_in_the_system_root_and_sa
 
 def test_check_updates_writes_a_prepared_version_and_changes_nothing_else(cli_world: CliWorld) -> None:
     """check-updates writes the new version with its App; current, the install record and the integration stay as they were."""
+    # Arrange: an installed package and a record of the machine's state.
     cli_world.tracker("tool", tables=FULL)
     cli_world.announce("tool", "1.0.0")
     cli_world.publish("tool", "1.0.0", tables=FULL)
@@ -110,10 +120,13 @@ def test_check_updates_writes_a_prepared_version_and_changes_nothing_else(cli_wo
     package = cli_world.user / "tool"
     record_before = (package / ".gupkg" / "package.toml").read_text(encoding="utf-8")
     state_before = (sorted(path.name for path in cli_world.fake.shortcuts()), dict(cli_world.fake.env_values(Mode.USER)), len(cli_world.fake.registry_log))
+    # A newer version appears at the vendor.
     cli_world.announce("tool", "1.1.0")
 
+    # Act: check for updates.
     result = cli_world.cli("check-updates", "tool")
 
+    # Assert: the new version is prepared and nothing else changed.
     assert result.code == 0, result.err
     assert (package / "1.1.0" / "App" / "app.exe").is_file() and (package / "1.1.0" / "pkg.toml").is_file()
     assert current(package) == "1.0.0"
@@ -123,16 +136,20 @@ def test_check_updates_writes_a_prepared_version_and_changes_nothing_else(cli_wo
 
 def test_check_updates_no_download_writes_no_app_and_asks_only_the_tracker(cli_world: CliWorld) -> None:
     """With --no-download the directory has pkg.toml and no App, and only the tracker's own URL was requested."""
+    # Arrange: an installed package and a vendor that announces a newer version.
     cli_world.tracker("tool")
     cli_world.announce("tool", "1.0.0")
     cli_world.publish("tool", "1.0.0")
     assert cli_world.cli("install", "tool").code == 0
+    # Forget everything fetched so far, so only the next command's requests count.
     cli_world.announce("tool", "1.1.0")
     cli_world.fake.fetch_log.clear()
     cli_world.fake.request_log.clear()
 
+    # Act: check for updates without downloading.
     result = cli_world.cli("check-updates", "tool", "--no-download")
 
+    # Assert: no App was written, and only the tracker's addresses were asked for.
     package = cli_world.user / "tool"
     assert result.code == 0, result.err
     assert (package / "1.1.0" / "pkg.toml").is_file() and not (package / "1.1.0" / "App").exists()
@@ -142,17 +159,21 @@ def test_check_updates_no_download_writes_no_app_and_asks_only_the_tracker(cli_w
 
 def test_update_after_check_updates_no_download_fetches_only_what_the_new_pkg_toml_names(cli_world: CliWorld) -> None:
     """update activates the version that check-updates wrote and contacts only the download URL written in its pkg.toml."""
+    # Arrange: an installed package and a vendor that announces a newer version.
     cli_world.tracker("tool")
     cli_world.announce("tool", "1.0.0")
     cli_world.publish("tool", "1.0.0")
     assert cli_world.cli("install", "tool").code == 0
+    # A new version is announced and recorded without being downloaded.
     cli_world.announce("tool", "1.1.0")
     assert cli_world.cli("check-updates", "tool", "--no-download").code == 0
     cli_world.fake.fetch_log.clear()
     cli_world.fake.request_log.clear()
 
+    # Act: update to it.
     result = cli_world.cli("update", "tool")
 
+    # Assert: only what the new ``pkg.toml`` names was fetched.
     package = cli_world.user / "tool"
     assert result.code == 0, result.err
     assert current(package) == "1.1.0" and (package / "1.1.0" / "App" / "app.exe").is_file()
@@ -191,7 +212,9 @@ def test_update_never_runs_a_tracker(cli_world: CliWorld) -> None:
 
 def test_self_check_updates_and_check_updates_gupkg_give_the_same_result_document(tmp_path: Path) -> None:
     """The self alias is the lifecycle command applied to the package gupkg: the two result documents are equal."""
+    # Arrange: two machines, each with an installed gupkg and a newer version announced.
     first, second = CliWorld(tmp_path / "a", installed=False), CliWorld(tmp_path / "b", installed=False)
+    # Install gupkg on both machines and announce its next version.
     for world in (first, second):
         world.tracker("gupkg")
         world.announce("gupkg", "1.0.0")
@@ -199,15 +222,18 @@ def test_self_check_updates_and_check_updates_gupkg_give_the_same_result_documen
         assert world.cli("install", "gupkg").code == 0
         world.announce("gupkg", "1.1.0")
 
+    # Act: check for updates through both spellings.
     alias = first.cli("self", "check-updates", "--json")
     direct = second.cli("check-updates", "gupkg", "--json")
 
+    # Assert: the two spellings give the same result.
     assert alias.code == direct.code == 0, (alias.err, direct.err)
 
     def comparable(document: dict, base: Path) -> str:
         """Return the document as text with the test's own folder replaced, so two machines can be compared."""
         return json.dumps(document, sort_keys=True).replace(str(base).replace("\\", "\\\\"), "<base>")
 
+    # Remove the fields that differ from run to run, then compare the documents.
     one, two = alias.document(), direct.document()
     for document in (one, two):
         for item in document["results"]:
@@ -218,15 +244,18 @@ def test_self_check_updates_and_check_updates_gupkg_give_the_same_result_documen
 
 def test_check_reports_a_deleted_shim_as_drift_and_fix_restores_it(cli_world: CliWorld) -> None:
     """check names the deleted shim and changes nothing; check --fix puts it back and then reports healthy."""
+    # Arrange: an installed package.
     cli_world.publish("tool", "1.0.0", tables=FULL)
     assert cli_world.cli("install", "tool").code == 0
     shim = cli_world.fake.scope_folders(Mode.USER).bin_dir / "tool.exe"
     shim.unlink()
 
+    # Act: check after the shim was deleted.
     report = cli_world.cli("check", "tool")
 
     assert report.code == 3 and "tool.exe" in report.out + report.err
     assert not shim.exists()
+    # Repair the drift and check again.
     fixed = cli_world.cli("check", "tool", "--fix", "--yes")
     assert fixed.code == 0, fixed.err
     assert shim.is_file()

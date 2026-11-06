@@ -2,7 +2,7 @@
 
 restic-backup-gx is published as GitLab releases of the project
 ``stormking/resticguigx``. Each release links a Windows executable whose job
-artifact path changes with every build, so the link is read from the release
+artifact path changes with every build, so the link is taken from the release
 rather than constructed.
 
 Usage and API
@@ -26,9 +26,12 @@ import urllib.request
 from typing import Any
 
 
+# Version of the update-check module interface that this script implements.
 PKG_MODULE_API = 1
 
+# Address that publishes the current release information.
 _API_URL = "https://gitlab.com/api/v4/projects/stormking%2Fresticguigx/releases"
+# Pattern that extracts the version (and file address, where captured) from the response.
 _TAG = re.compile(r"v?(?P<version>\d+(?:\.\d+)*)")
 
 
@@ -61,22 +64,26 @@ def check_update(context: dict[str, Any]) -> dict[str, str] | None:
         raise RuntimeError(f"Could not read the restic-backup-gx releases: {exc}") from exc
 
     # Take the first (newest) release that links a Windows executable.
+    # Walk the releases from the newest and take the first that has a Windows executable.
     match = None
     urls: list[str] = []
     for release in releases if isinstance(releases, list) else []:
         match = _TAG.fullmatch(str(release.get("tag_name")))
         links = release.get("assets", {}).get("links", [])
+        # Collect the Windows executable links of this release.
         urls = [
             link.get("direct_asset_url") or link.get("url")
             for link in links
             if isinstance(link, dict) and link.get("name") == "Windows"
         ]
         urls = [url for url in urls if isinstance(url, str) and url.lower().endswith(".exe")]
+        # Stop at the first release that has a matching executable.
         if match and urls:
             break
     else:
         raise RuntimeError("No restic-backup-gx release provides a Windows executable")
 
+    # Report no candidate when this version is installed and healthy.
     version = match.group("version")
     current = context.get("current", {})
     if current.get("version") == version and current.get("appReady", True):

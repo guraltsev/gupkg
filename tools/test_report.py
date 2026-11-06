@@ -22,7 +22,7 @@ are the same results as functions.
 Implementation Approach
 -----------------------
 The files are parsed with ``ast``, never imported. Only ``--collect-only`` starts a child process (pytest, in ``root``,
-without a cache directory). The tool imports nothing from ``gupkg`` and uses no network. A tier is read from a
+without a cache directory). The tool imports nothing from ``gupkg`` and uses no network. A tier is taken from a
 ``tier`` property on the test cases of the JUnit file; without one the report says "no tiers".
 """
 
@@ -38,9 +38,203 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-CHARS_PER_TOKEN = 4
 # Folders of tests/ that hold no feature files of an area.
 NON_AREA_DIRS = {"_temp", "_conditional", "support", "fixtures", "__pycache__"}
+
+
+def report(root: Path, collect: bool = True) -> dict:
+    """Return the indicators of the suite below *root* as a dictionary.
+
+    Parameters
+    ----------
+    root : Path
+        Repository root that holds ``tests/`` and ``src/``.
+    collect : bool, default=True
+        Whether to run ``pytest --collect-only`` to count cases.
+
+    Returns
+    -------
+    dict
+        The ``size``, ``shape``, ``layout`` and ``hygiene`` indicators.
+    """
+    # Measure the test and source trees.
+    tests_dir = root / "tests"
+    test_files = _py_files(tests_dir)
+    source_files = _py_files(root / "src", skip=(root / "src" / "gupkg" / "python",))
+    tests_size, source_size = _size(test_files), _size(source_files)
+
+    # Count test names and docstring characters over every parsable test file.
+    names: list[str] = []
+    docstring_chars = 0
+    for path in test_files:
+        tree = _parse(path)
+        if tree is None:
+            continue
+        docstring_chars += _docstring_chars(tree)
+        if path.name.startswith("test_"):
+            names.extend(node.name for node in _test_functions(tree))
+    lengths = [len(n) for n in names]
+
+    # Layout: files still flat in tests/ against files in area folders.
+    flat = [p for p in tests_dir.glob("test_*.py")]
+    in_area = [
+        p
+        for p in tests_dir.glob("*/**/test_*.py")
+        if p.relative_to(tests_dir).parts[0] not in NON_AREA_DIRS and "__pycache__" not in p.parts
+    ]
+    # Hygiene: count the violation lines of the baseline, if there is one.
+    baseline = tests_dir / "hygiene_baseline.txt"
+    baseline_lines = None
+    if baseline.is_file():
+        baseline_lines = sum(
+            1 for line in baseline.read_text(encoding="utf-8").splitlines() if line.strip() and not line.startswith("#")
+        )
+
+    # Assemble the indicators into the report dictionary.
+    return {
+        "size": {
+            "tests": tests_size,
+            "source": source_size,
+            "ratio_chars": round(tests_size["chars"] / source_size["chars"], 2) if source_size["chars"] else None,
+        },
+        # Shape: how many tests, cases and how long their names are.
+        "shape": {
+            "test_functions": len(names),
+            "collected_cases": _collect_count(root) if collect else None,
+            "name_length_median": statistics.median(lengths) if lengths else 0,
+            "name_length_max": max(lengths, default=0),
+            "docstring_share": round(docstring_chars / tests_size["chars"], 3) if tests_size["chars"] else 0,
+        },
+        # Layout and hygiene are small counts taken above.
+        "layout": {"flat_files": len(flat), "area_files": len(in_area), "temp_folders": _temp_folders(root)},
+        "hygiene": {"baseline_lines": baseline_lines},
+    }
+
+
+def timings(junit: Path) -> dict:
+    """Return the total, per-tier and slowest-test times of a JUnit XML file written by ``pytest --junitxml``.
+
+    Parameters
+    ----------
+    junit : Path
+        JUnit XML file whose test cases carry optional ``tier`` properties.
+
+    Returns
+    -------
+    dict
+        Test count, total seconds, per-tier figures (``None`` without tiers) and the slowest tests.
+    """
+    # Read every test case with its time and optional tier.
+    cases = []
+    for case in ET.parse(junit).getroot().iter("testcase"):
+        tier = None
+        for prop in case.iter("property"):
+            if prop.get("name") == "tier":
+                tier = prop.get("value")
+        cases.append((f"{case.get('classname', '')}::{case.get('name', '')}", float(case.get("time", 0)), tier))
+    # Slowest first; the total and the per-tier sums come from the same list.
+    cases.sort(key=lambda c: c[1], reverse=True)
+    total = sum(c[1] for c in cases)
+    per_tier: dict[str, dict] = {}
+    for _, seconds, tier in cases:
+        if tier:
+            entry = per_tier.setdefault(tier, {"tests": 0, "seconds": 0.0})
+            entry["tests"] += 1
+            entry["seconds"] += seconds
+    # Summarise the slowest tests and the share of the total they take.
+    top200 = sum(c[1] for c in cases[:200])
+    return {
+        "tests": len(cases),
+        "total_seconds": round(total, 1),
+        "tiers": {k: {"tests": v["tests"], "seconds": round(v["seconds"], 1)} for k, v in per_tier.items()} or None,
+        "slowest": [{"test": c[0], "seconds": round(c[1], 2)} for c in cases[:10]],
+        "slowest_200_seconds": round(top200, 1),
+        "slowest_200_share": round(top200 / total, 3) if total else 0,
+    }
+
+
+def spec(root: Path, area: str | None = None) -> str:
+    """Return the docstrings of the test files of *area* (a folder of ``tests/`` or a file; all if ``None``) as Markdown.
+
+    Parameters
+    ----------
+    root : Path
+        Repository root that holds ``tests/``.
+    area : str, optional
+        Folder of ``tests/`` or a test file; every test file when omitted.
+
+    Returns
+    -------
+    str
+        Markdown with one section per test file and one per test.
+    """
+    # Choose the files: the named area (or file), or every test file outside ``_temp``.
+    tests_dir = root / "tests"
+    if area:
+        target = tests_dir / area
+        if not target.exists() and (root / area).exists():
+            target = root / area
+        files = [target] if target.is_file() else sorted(target.rglob("test_*.py"))
+    else:
+        files = sorted(p for p in tests_dir.rglob("test_*.py") if "_temp" not in p.relative_to(tests_dir).parts)
+    # Emit the module docstring, then the docstring of each test, per file.
+    out: list[str] = []
+    for path in files:
+        if "__pycache__" in path.parts:
+            continue
+        # Files that do not parse are left out of the specification.
+        tree = _parse(path)
+        if tree is None:
+            continue
+        out.append(f"## {path.relative_to(root).as_posix()}\n")
+        out.append((ast.get_docstring(tree) or "*(no module docstring)*") + "\n")
+        for node in _test_functions(tree):
+            out.append(f"### {node.name}\n")
+            out.append((ast.get_docstring(node) or "*(no docstring)*") + "\n")
+    return "\n".join(out)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run the command line and return the process status.
+
+    Parameters
+    ----------
+    argv : list of str, optional
+        Command-line arguments; ``sys.argv[1:]`` when omitted.
+
+    Returns
+    -------
+    int
+        Always ``0``; the report is informational.
+    """
+    # Describe the options of the report and the specification modes.
+    parser = argparse.ArgumentParser(description="Print the indicators of the test suite, or its docstrings.")
+    parser.add_argument("--json", action="store_true", help="print the indicators as JSON")
+    parser.add_argument("--timings", type=Path, metavar="JUNIT.XML", help="add the time report from a JUnit XML file")
+    parser.add_argument("--spec", nargs="?", const="", metavar="AREA", help="print the docstrings of AREA (or all) as Markdown")
+    parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1], help="repository root")
+    parser.add_argument("--no-collect", action="store_true", help="skip pytest --collect-only")
+    args = parser.parse_args(argv)
+    root = args.root.resolve()
+    # ``--spec`` prints the docstrings as UTF-8 Markdown and nothing else.
+    if args.spec is not None:
+        sys.stdout.reconfigure(encoding="utf-8")
+        print(spec(root, args.spec or None))
+        return 0
+    # Otherwise print the indicators, with the time report when a JUnit file was given.
+    data = report(root, collect=not args.no_collect)
+    if args.timings:
+        data["time"] = timings(args.timings)
+    if args.json:
+        print(json.dumps(data, indent=2))
+        return 0
+    _print_report(data)
+    if args.timings:
+        _print_timings(data["time"])
+    return 0
+
+
+# --- supporting helpers ---
 
 
 def _py_files(folder: Path, skip: tuple[Path, ...] = ()) -> list[Path]:
@@ -60,7 +254,8 @@ def _size(files: list[Path]) -> dict:
         text = path.read_text(encoding="utf-8", errors="replace")
         lines += len(text.splitlines())
         chars += len(text)
-    return {"files": len(files), "lines": lines, "chars": chars, "tokens": chars // CHARS_PER_TOKEN}
+    # One token is estimated as four characters.
+    return {"files": len(files), "lines": lines, "chars": chars, "tokens": chars // 4}
 
 
 def _parse(path: Path) -> ast.Module | None:
@@ -128,6 +323,7 @@ def _temp_folders(root: Path) -> list[dict]:
     temp = root / "tests" / "_temp"
     if not temp.is_dir():
         return folders
+    # Read the optional ``ref:`` line of each folder's README and look up its state.
     for folder in sorted(p for p in temp.iterdir() if p.is_dir() and p.name != "__pycache__"):
         readme = folder / "README.md"
         ref = None
@@ -138,111 +334,10 @@ def _temp_folders(root: Path) -> list[dict]:
     return folders
 
 
-def report(root: Path, collect: bool = True) -> dict:
-    """Return the indicators of the suite below *root* as a dictionary."""
-    tests_dir = root / "tests"
-    test_files = _py_files(tests_dir)
-    source_files = _py_files(root / "src", skip=(root / "src" / "gupkg" / "python",))
-    tests_size, source_size = _size(test_files), _size(source_files)
-
-    names: list[str] = []
-    docstring_chars = 0
-    for path in test_files:
-        tree = _parse(path)
-        if tree is None:
-            continue
-        docstring_chars += _docstring_chars(tree)
-        if path.name.startswith("test_"):
-            names.extend(node.name for node in _test_functions(tree))
-    lengths = [len(n) for n in names]
-
-    flat = [p for p in tests_dir.glob("test_*.py")]
-    in_area = [
-        p
-        for p in tests_dir.glob("*/**/test_*.py")
-        if p.relative_to(tests_dir).parts[0] not in NON_AREA_DIRS and "__pycache__" not in p.parts
-    ]
-    baseline = tests_dir / "hygiene_baseline.txt"
-    baseline_lines = None
-    if baseline.is_file():
-        baseline_lines = sum(
-            1 for line in baseline.read_text(encoding="utf-8").splitlines() if line.strip() and not line.startswith("#")
-        )
-
-    return {
-        "size": {
-            "tests": tests_size,
-            "source": source_size,
-            "ratio_chars": round(tests_size["chars"] / source_size["chars"], 2) if source_size["chars"] else None,
-        },
-        "shape": {
-            "test_functions": len(names),
-            "collected_cases": _collect_count(root) if collect else None,
-            "name_length_median": statistics.median(lengths) if lengths else 0,
-            "name_length_max": max(lengths, default=0),
-            "docstring_share": round(docstring_chars / tests_size["chars"], 3) if tests_size["chars"] else 0,
-        },
-        "layout": {"flat_files": len(flat), "area_files": len(in_area), "temp_folders": _temp_folders(root)},
-        "hygiene": {"baseline_lines": baseline_lines},
-    }
-
-
-def timings(junit: Path) -> dict:
-    """Return the total, per-tier and slowest-test times of a JUnit XML file written by ``pytest --junitxml``."""
-    cases = []
-    for case in ET.parse(junit).getroot().iter("testcase"):
-        tier = None
-        for prop in case.iter("property"):
-            if prop.get("name") == "tier":
-                tier = prop.get("value")
-        cases.append((f"{case.get('classname', '')}::{case.get('name', '')}", float(case.get("time", 0)), tier))
-    cases.sort(key=lambda c: c[1], reverse=True)
-    total = sum(c[1] for c in cases)
-    per_tier: dict[str, dict] = {}
-    for _, seconds, tier in cases:
-        if tier:
-            entry = per_tier.setdefault(tier, {"tests": 0, "seconds": 0.0})
-            entry["tests"] += 1
-            entry["seconds"] += seconds
-    top200 = sum(c[1] for c in cases[:200])
-    return {
-        "tests": len(cases),
-        "total_seconds": round(total, 1),
-        "tiers": {k: {"tests": v["tests"], "seconds": round(v["seconds"], 1)} for k, v in per_tier.items()} or None,
-        "slowest": [{"test": c[0], "seconds": round(c[1], 2)} for c in cases[:10]],
-        "slowest_200_seconds": round(top200, 1),
-        "slowest_200_share": round(top200 / total, 3) if total else 0,
-    }
-
-
-def spec(root: Path, area: str | None = None) -> str:
-    """Return the docstrings of the test files of *area* (a folder of ``tests/`` or a file; all if ``None``) as Markdown."""
-    tests_dir = root / "tests"
-    if area:
-        target = tests_dir / area
-        if not target.exists() and (root / area).exists():
-            target = root / area
-        files = [target] if target.is_file() else sorted(target.rglob("test_*.py"))
-    else:
-        files = sorted(p for p in tests_dir.rglob("test_*.py") if "_temp" not in p.relative_to(tests_dir).parts)
-    out: list[str] = []
-    for path in files:
-        if "__pycache__" in path.parts:
-            continue
-        tree = _parse(path)
-        if tree is None:
-            continue
-        out.append(f"## {path.relative_to(root).as_posix()}\n")
-        out.append((ast.get_docstring(tree) or "*(no module docstring)*") + "\n")
-        for node in _test_functions(tree):
-            out.append(f"### {node.name}\n")
-            out.append((ast.get_docstring(node) or "*(no docstring)*") + "\n")
-    return "\n".join(out)
-
-
 def _print_report(data: dict) -> None:
     """Print *data* from ``report`` as readable text."""
     size, shape, layout = data["size"], data["shape"], data["layout"]
+    # Size and shape of the suite.
     print("Size")
     for label in ("tests", "source"):
         s = size[label]
@@ -253,6 +348,7 @@ def _print_report(data: dict) -> None:
     print(f"  collected cases:       {shape['collected_cases']}")
     print(f"  test name length:      median {shape['name_length_median']}, max {shape['name_length_max']}")
     print(f"  docstring share:       {shape['docstring_share'] * 100:.1f}% of the test text")
+    # Layout of the test files and the state of the temporary-test folders.
     print("Layout")
     print(f"  flat in tests/:        {layout['flat_files']} files")
     print(f"  in tests/<area>/:      {layout['area_files']} files")
@@ -261,6 +357,7 @@ def _print_report(data: dict) -> None:
     for f in layout["temp_folders"]:
         state = {True: "open", False: "CLOSED or unknown", None: "unrecognised ref"}[f["open"]]
         print(f"  tests/_temp/{f['folder']}: ref {f['ref']} ({state})")
+    # Hygiene closes the report.
     base = data["hygiene"]["baseline_lines"]
     print("Hygiene")
     print(f"  baseline lines:        {'no baseline file' if base is None else base}")
@@ -268,6 +365,7 @@ def _print_report(data: dict) -> None:
 
 def _print_timings(data: dict) -> None:
     """Print *data* from ``timings`` as readable text."""
+    # Totals and per-tier times, then the slowest tests.
     print("Time")
     print(f"  {data['tests']} tests, total {data['total_seconds']} s")
     if data["tiers"]:
@@ -275,36 +373,11 @@ def _print_timings(data: dict) -> None:
             print(f"  tier {tier}: {v['tests']} tests, {v['seconds']} s")
     else:
         print("  per tier: no tiers")
+    # The ten slowest tests, then how much the slowest 200 contribute.
     print("  10 slowest:")
     for item in data["slowest"]:
         print(f"    {item['seconds']:8.2f} s  {item['test']}")
     print(f"  slowest 200: {data['slowest_200_seconds']} s = {data['slowest_200_share'] * 100:.1f}% of the total")
-
-
-def main(argv: list[str] | None = None) -> int:
-    """Run the command line."""
-    parser = argparse.ArgumentParser(description="Print the indicators of the test suite, or its docstrings.")
-    parser.add_argument("--json", action="store_true", help="print the indicators as JSON")
-    parser.add_argument("--timings", type=Path, metavar="JUNIT.XML", help="add the time report from a JUnit XML file")
-    parser.add_argument("--spec", nargs="?", const="", metavar="AREA", help="print the docstrings of AREA (or all) as Markdown")
-    parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1], help="repository root")
-    parser.add_argument("--no-collect", action="store_true", help="skip pytest --collect-only")
-    args = parser.parse_args(argv)
-    root = args.root.resolve()
-    if args.spec is not None:
-        sys.stdout.reconfigure(encoding="utf-8")
-        print(spec(root, args.spec or None))
-        return 0
-    data = report(root, collect=not args.no_collect)
-    if args.timings:
-        data["time"] = timings(args.timings)
-    if args.json:
-        print(json.dumps(data, indent=2))
-        return 0
-    _print_report(data)
-    if args.timings:
-        _print_timings(data["time"])
-    return 0
 
 
 if __name__ == "__main__":

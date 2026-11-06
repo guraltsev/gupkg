@@ -33,6 +33,7 @@ pytestmark = pytest.mark.unit
 
 windows_only = pytest.mark.skipif(os.name != "nt", reason="needs Windows")
 
+# Text full of characters that quoting must preserve.
 AWKWARD_TEXT = "it's \"quoted\" $var `tick` %TEMP% caf\u00e9 \u4e2d\u6587"
 
 
@@ -47,6 +48,7 @@ def _delete_key_tree(hive: object, subkey: str) -> None:
                     child = winreg.EnumKey(key, 0)
                 except OSError:
                     break
+                # Delete the children first; the key itself goes last.
                 _delete_key_tree(hive, subkey + "\\" + child)
     except FileNotFoundError:
         return
@@ -71,6 +73,7 @@ def machine(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[System]:
         return
     import winreg
 
+    # A throwaway registry area keeps the test away from the real environment.
     base = rf"Software\gupkg-test-{uuid.uuid4().hex}"
     hive = winreg.HKEY_CURRENT_USER
     try:
@@ -173,9 +176,11 @@ def test_shortcut_fields_survive_a_round_trip_and_the_folder_is_created(machine:
         description=AWKWARD_TEXT,
     )
 
+    # Write the shortcut and read it back unchanged.
     machine.write_shortcut(path, spec)
     assert machine.read_shortcut(path) == spec
 
+    # Writing again replaces the earlier shortcut.
     machine.write_shortcut(path, ShortcutSpec("C:\\new.exe"))
     assert machine.read_shortcut(path) == ShortcutSpec("C:\\new.exe")
 
@@ -516,11 +521,13 @@ def test_windows_aborted_child_is_gone_and_so_is_a_grandchild_it_started(tmp_pat
     )
     state = {"polls": 0}
 
+    # Count the watcher's polls, so that the abort comes after the helper started.
     def watch() -> str | None:
         """Let the child start its helper, then ask for the abort."""
         state["polls"] += 1
         return "stop" if state["polls"] >= 3 else None
 
+    # Abort the run once the helper has started; no process may survive.
     with pytest.raises(ProcessAborted):
         WindowsSystem().run([sys.executable, "-c", script], tmp_path, None, None, watch=watch)
     time.sleep(5)
@@ -540,6 +547,7 @@ def test_a_watcher_that_raises_stops_the_run_at_once_and_its_error_reaches_the_c
             raise RuntimeError("watcher broke")
         return None
 
+    # Act: a watcher that raises ends the run at once.
     started = time.monotonic()
 
     with pytest.raises(RuntimeError, match="watcher broke"):
@@ -548,6 +556,7 @@ def test_a_watcher_that_raises_stops_the_run_at_once_and_its_error_reaches_the_c
     assert time.monotonic() - started < 15
 
 
+# Script that starts a grandchild process.
 GRANDCHILD_SCRIPT = (
     "import subprocess, sys; "
     "subprocess.Popen([sys.executable, '-c', "
@@ -572,6 +581,7 @@ def test_a_helper_that_outlived_a_finished_child_is_killed_when_the_last_watcher
             raise RuntimeError("watcher broke")
         return "stop"
 
+    # Act: the final look at the watcher either raises or asks for a stop.
     started = time.monotonic()
     with pytest.raises(RuntimeError if how == "raises" else ProcessAborted):
         WindowsSystem().run([sys.executable, "-c", script], tmp_path, None, None, watch=watch)
@@ -609,7 +619,9 @@ def test_a_child_that_never_reads_its_input_cannot_keep_the_call_past_its_timeou
     assert time.monotonic() - started < 8
 
 
+# Worker request for a quick search.
 REQUEST = '{"op":"search","pattern":"(?P<v>\\\\d+)","flags":32,"texts":["tool 42"],"limit":1,"cap":1000}'
+# Worker request whose pattern backtracks catastrophically.
 HANGING = '{"op":"search","pattern":"(a+)+$","flags":32,"texts":["%s!"],"limit":1,"cap":1000}' % ("a" * 40)
 
 
@@ -646,6 +658,7 @@ def test_the_regex_worker_is_killed_at_its_deadline_and_is_gone(machine: System)
     assert not _alive(pid)
 
 
+# Script that probes the environment of a started process.
 PROBE = (
     "import json, os, sys\n"
     "sys.stderr.write('pid %d\\n' % os.getpid()); sys.stderr.flush()\n"
@@ -724,14 +737,18 @@ def test_the_job_handle_is_closed_on_every_path(job_closes: list[int], tmp_path:
     system = WindowsSystem()
     sleeper = [sys.executable, "-c", "import time; time.sleep(30)"]
 
+    # Each way a run can end must close the job handle.
     if path == "finishes":
         system.run([sys.executable, "-c", "pass"], tmp_path)
+    # A run that exceeds its timeout.
     elif path == "times-out":
         with pytest.raises(TimeoutError):
             system.run(sleeper, tmp_path, timeout=0.5)
+    # A watcher that raises.
     elif path == "watcher-raises":
         with pytest.raises(RuntimeError):
             system.run(sleeper, tmp_path, watch=lambda: (_ for _ in ()).throw(RuntimeError("broke")))
+    # A regex worker that hangs.
     else:
         with pytest.raises(TimeoutError):
             system.regex_worker(HANGING, 0.5)
@@ -752,6 +769,7 @@ def test_a_failure_to_create_the_job_kills_the_child_and_reaches_the_caller(monk
     monkeypatch.setattr(_ProcessJob, "around", broken)
     started = time.monotonic()
 
+    # Act: running a command fails and must not leave the child running.
     with pytest.raises(OSError, match="job objects are unavailable"):
         WindowsSystem().run(
             [sys.executable, "-c", "import os, time; print(os.getpid(), flush=True); time.sleep(30)"], tmp_path, None, lines.append
@@ -792,10 +810,12 @@ def test_closing_a_kill_on_close_job_ends_the_process_in_it(tmp_path: Path) -> N
         _ProcessJob.around(mortal, kill_on_close=True).close()
         _ProcessJob.around(spared).close()
 
+        # Assert: only the process in the kill-on-close job ended.
         assert mortal.wait(timeout=10) is not None
         time.sleep(0.5)
         assert spared.poll() is None
     finally:
+        # Clean up both processes.
         spared.kill()
         mortal.kill()
         spared.wait()

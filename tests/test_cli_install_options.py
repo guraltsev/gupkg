@@ -17,6 +17,7 @@ from tests.support.engine import replace_declared_sha256
 
 pytestmark = pytest.mark.unit
 
+# Table that declares the shim of the test package.
 SHIM = '\n[[shim]]\nname = "tool"\ntarget = "$App\\\\app.exe"\n'
 
 
@@ -42,16 +43,20 @@ def test_bundled_removes_the_bundled_gupkg_of_old_versions_and_a_plain_cleanup_k
     (cli_world.user / ".gupkg" / "gupkg-location").write_text("gupkg\\current\\App\r\n", encoding="utf-8")
     (cli_world.user / "gupkg" / "current" / "App").mkdir(parents=True)
     (cli_world.user / "gupkg" / "current" / "App" / "gupkg.cmd").write_text("@echo off\r\n", encoding="utf-8")
+    # Install 1.0.0 and give it a bundled gupkg.
     cli_world.publish("tool", "1.0.0", tables=SHIM)
     assert cli_world.cli("install", "tool").code == 0
     old =cli_world.user / "tool" / "1.0.0"
     (old / "gupkg").mkdir()
     (old / "gupkg" / "gupkg.cmd").write_text("@echo off\r\n", encoding="utf-8")
+    # Publish and install 2.0.0, which makes 1.0.0 an old version.
     cli_world.publish("tool", "2.0.0", tables=SHIM)
     assert cli_world.cli("update", "tool").code == 0
 
+    # Act and assert: a plain cleanup keeps the bundled gupkg.
     plain = cli_world.cli("cleanup", "tool")
     assert plain.code == 0 and (old / "gupkg" / "gupkg.cmd").is_file()
+    # Act and assert: ``cleanup --bundled`` removes it.
     bundled = cli_world.cli("cleanup", "tool", "--bundled")
 
     assert bundled.code == 0, bundled.err

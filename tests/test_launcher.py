@@ -25,7 +25,9 @@ from pathlib import Path
 
 import pytest
 
+# Directory that holds the shipped launcher files.
 SRC = Path(__file__).resolve().parents[1] / "src"
+# Prebuilt console shim used as the launcher executable under test.
 SHIM = SRC / "gupkg" / "shim" / "shim-console.static.exe"
 
 pytestmark = [pytest.mark.process, pytest.mark.skipif(os.name != "nt", reason="Windows batch launcher behavior")]
@@ -39,10 +41,12 @@ def _package(root: Path) -> tuple[Path, Path]:
     shutil.copy2(SRC / "gupkg" / "bootstrap.py", package / "bootstrap.py")
     log = root / "bundled.log"
     probe = root / "bundled_probe.py"
+    # A probe script stands in for the bootstrap and logs the arguments it receives.
     probe.write_text(
         f"import sys\nopen({log.as_posix()!r}, 'w', encoding='utf-8').write(repr(sys.argv[1:]))\n",
         encoding="utf-8",
     )
+    # Put the console shim where the bundled Python lives, configured to run the probe.
     python = package / "python" / "python.exe"
     shutil.copy2(SHIM, python)
     python.with_suffix(".config.toml").write_text(
@@ -85,6 +89,7 @@ def test_launch_runs_only_the_bundled_python_isolated_and_ignores_every_override
     package, log = _package(tmp_path)
     decoys, decoy_log = _decoy_python(tmp_path)
     (package / "gupkg.python").write_text(str(decoys / "python.cmd"), encoding="ascii")
+    # Point every override at decoy interpreters that must never run.
     env = os.environ.copy()
     env.update(
         GUPKG_PYTHON=str(decoys / "python.cmd"),
@@ -94,6 +99,7 @@ def test_launch_runs_only_the_bundled_python_isolated_and_ignores_every_override
     if marker:
         env["GUPKG_ELEVATED"] = marker
 
+    # Launch through the package and check that only the bundled Python ran.
     result = _run(package, "manager", "list", env=env)
 
     assert result.returncode == 0, result.stderr or result.stdout
@@ -110,11 +116,13 @@ def test_launch_without_the_bundled_python_stops_with_the_reinstall_message(tmp_
     package, log = _package(tmp_path)
     (package / "python" / "python.exe").unlink()
     decoys, decoy_log = _decoy_python(tmp_path)
+    # Offer decoy interpreters that must not be used instead of the missing one.
     env = os.environ.copy()
     env.update(GUPKG_PYTHON=str(decoys / "python.cmd"), PATH=f"{decoys};{env['PATH']}")
     if marker:
         env["GUPKG_ELEVATED"] = marker
 
+    # Launch the package whose bundled Python is gone.
     result = _run(package, "list", env=env)
 
     assert result.returncode == 1
@@ -195,7 +203,7 @@ def test_a_module_planted_in_the_package_parent_never_runs_before_the_elevated_c
 
 
 # ---------------------------------------------------------------------------
-# The arguments reach Python exactly as the caller passed them (issue 035, T18)
+# The arguments reach Python exactly as the caller passed them
 # ---------------------------------------------------------------------------
 
 # (id, the argument text as a person types it after the launcher name, the arguments Python must receive).
@@ -246,9 +254,11 @@ def _typed(launcher: Path, raw: str, root: Path, *, canary: Path) -> list[str]:
     env.update(VAR="EXPANDED", CANARY=str(canary))
     log = root / "bundled.log"
     log.unlink(missing_ok=True)
+    # Run the launcher through cmd with the raw argument text, as a user would type it.
     result = subprocess.run(
         f'"{os.environ["ComSpec"]}" /d /c ""{launcher}" {raw}"', cwd=str(root), env=env, capture_output=True, text=True, check=False,
     )
+    # Read back the arguments the bundled program received.
     assert result.returncode == 0, (result.stdout, result.stderr)
     arguments = ast.literal_eval(log.read_text(encoding="utf-8"))
     assert arguments[:4] == ["-I", "-s", "-B", "-S"] and arguments[4].endswith("bootstrap.py")
@@ -271,7 +281,7 @@ def test_gupkg_cmd_hands_python_exactly_the_arguments_it_was_given(tmp_path: Pat
 @pytest.mark.parametrize("entry", ["inner", "outer"])
 @pytest.mark.parametrize(("raw", "expected"), [case[1:] for case in HOSTILE], ids=[case[0] for case in HOSTILE])
 def test_gupkg_cmd_never_runs_what_a_quoted_argument_contains(tmp_path: Path, entry: str, raw: str, expected: list[str]) -> None:
-    """`& | > ^ ! "` and a `copy` command inside quotes arrive as text and no command runs (no canary file appears)."""
+    """`& | > ^ " !` and a `copy` command inside quotes arrive as text and no command runs (no canary file appears)."""
     root = _forwarding_layout(tmp_path)
     launcher = root / "gupkg" / "gupkg.cmd" if entry == "inner" else root / "gupkg.cmd"
     canary = tmp_path / "canary.txt"

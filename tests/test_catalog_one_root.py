@@ -1,4 +1,4 @@
-"""Cover that a catalog reads exactly one root and joins exactly one registry cache (issue 035 §4.3, §4.6, §4.7).
+"""Cover that a catalog reads exactly one root and joins exactly one registry cache.
 
 Behavior covered: a catalog of one root never lists, describes or resolves the package of another root, by name or by path
 (a path into the other root is refused with "not inside this scope's root"); a root whose registry cache was never
@@ -31,17 +31,20 @@ pytestmark = pytest.mark.unit
 
 def test_a_catalog_of_one_root_never_sees_the_package_of_the_other_root(system, tmp_path: Path) -> None:
     """Root A lists, describes and resolves only its own package; a path into root B is refused, by every spelling of the target."""
+    # Arrange: one catalog for each root, each root holding its own package.
     user_catalog, roots = make_catalog(system, tmp_path, mode="user")
     system_catalog, _ = make_catalog(system, tmp_path, mode="system")
     write_version(roots["user"] / "mine", "1.0")
     write_version(roots["system"] / "theirs", "1.0")
 
+    # Each catalog lists only its own package.
     assert [view.name for view in user_catalog.list().views] == ["mine"]
     assert [view.name for view in system_catalog.list().views] == ["theirs"]
     with pytest.raises(NotFound, match="package 'theirs' was not found"):
         user_catalog.describe("theirs")
     with pytest.raises(NotFound, match="package 'theirs' was not found"):
         user_catalog.resolve("theirs")
+    # A path into the other root is refused for every spelling of it.
     for path in (roots["system"] / "theirs", roots["system"] / "theirs" / "1.0", roots["system"] / "theirs" / "current"):
         with pytest.raises(NotFound, match="is not inside this scope's root") as refused:
             user_catalog.resolve(str(path))
@@ -91,15 +94,18 @@ def test_a_record_of_the_runs_own_mode_is_not_a_problem(system, tmp_path: Path) 
 
 def test_a_package_with_current_and_no_install_record_is_broken_and_left_alone(system, tmp_path: Path) -> None:
     """An old-layout folder (``current``, no record) is ``broken`` with the reinstall command; listing and describing change nothing."""
+    # Arrange: an old-layout package with ``current`` and no install record.
     catalog, roots = make_catalog(system, tmp_path, mode="user")
     package = roots["user"] / "foo"
     write_version(package, "1.0", populated=True)
     system.create_junction(package / "current", package / "1.0")
     before = tree_snapshot(roots["user"])
 
+    # Act: describe and list the package.
     view = catalog.describe("foo")
     listed = catalog.list().views
 
+    # Assert: it is broken with the reinstall hint and nothing on disk changed.
     assert view.status == "broken" and [item.status for item in listed] == ["broken"]
     assert view.broken_reasons == (
         "no install record (made by an older gupkg); reinstall with: gupkg install foo",

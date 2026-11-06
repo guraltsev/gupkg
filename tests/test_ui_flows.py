@@ -56,6 +56,7 @@ def test_an_update_of_three_packages_makes_one_plan_one_confirmation_and_one_cal
     questions: list[str] = []
     interaction = Interaction(confirm=lambda lines, question: questions.append(question) or True, interactive=True)
 
+    # Act: run the update flow with a confirmation that records its question.
     outcome, sink = run_flow(update(env, rows, interaction), env)
 
     assert questions == ["Update 3 packages?"]
@@ -114,6 +115,7 @@ def test_the_policy_decides_a_package_without_a_checksum_and_relays_only_where_n
     asked: list[str] = []
     interaction = Interaction(ask_checksum=lambda item: asked.append(item.target) or answer, interactive=interactive)
 
+    # Act: run the update flow under the policy.
     outcome, _ = run_flow(update(env, rows, interaction), env)
 
     (call,) = update_calls(fake)
@@ -135,6 +137,7 @@ def test_a_malformed_hash_and_an_http_url_are_refused_under_the_skip_policy(fake
     ]))
     schedule_run(fake, tmp_path, ["ok"])
 
+    # Act: update; the malformed hash and the plain HTTP address are refused by the policy.
     outcome, sink = run_flow(update(env, rows, Interaction()), env)
 
     (call,) = update_calls(fake)
@@ -202,11 +205,13 @@ def test_cancelling_during_the_first_call_starts_no_second_call_and_skips_its_ta
     rows = rows_for(tmp_path, "a", "b")
     fake.respond("update:plan", doc=plan_doc([plan_entry("a", "a"), plan_entry("b", "b")]))
     stopped = result("update", [entry("a"), entry("b", status="skipped", version=None, previous=None, code=5)])
+    # The double stops after package a once it sees the stop marker.
     fake.respond("update", doc=stopped, events={
         "dir": logs_of(tmp_path), "stop_after": 0, "result": stopped,
         "packages": [{"name": name, "path": str(tmp_path / "roots" / "user" / name), "records": []} for name in ("a", "b")],
     })
 
+    # A cancel request arrives while the first call is still running.
     async def scenario():
         """Run the update, cancel once package a has ended in the log, and return the outcome."""
         sink = ListSink()
@@ -216,6 +221,7 @@ def test_cancelling_during_the_first_call_starts_no_second_call_and_skips_its_ta
         session.request_cancel()
         return await task
 
+    # Act: run the scenario, which cancels after the first package.
     outcome = asyncio.run(scenario())
 
     assert [call["targets"] for call in update_calls(fake)] == [["a", "b"]] and fake.stop_events()[0]["saw_stop"]
@@ -235,6 +241,7 @@ def test_cleanup_ends_an_update_only_when_the_setting_asks_for_it(fake: FakeGupk
         schedule_run(double, base, ["a"])
         double.respond("cleanup", doc=result("cleanup", [entry("a", "cleanup", status="cleaned", version=None, previous=None)]))
 
+        # Act: update, which ends with a cleanup call only when the setting asks for it.
         run_flow(update(env, rows, Interaction()), env)
 
         cleanups = [call for call in double.calls() if call["key"] == "cleanup"]
@@ -281,6 +288,7 @@ def test_a_version_refused_for_its_missing_checksum_is_offered_once_and_rerun_wh
         fake.respond("check-updates", doc=doc, events={"dir": logs_of(tmp_path), "result": doc, "packages": [{"name": name, "path": str(tmp_path / "roots" / "user" / name), "records": []} for name in names]})
     asked: list[str] = []
 
+    # Act: check for updates; the refused version is offered once and rerun when approved.
     outcome, _ = run_flow(lambda session, sink: check_updates_all(env, rows, session=session, interaction=Interaction(ask_checksum=lambda item: asked.append(item.target) or True, interactive=True)), env)
 
     first_call, second_call = fake.calls()
@@ -296,6 +304,7 @@ def test_check_with_and_without_fix_is_one_call_for_every_package(fake: FakeGupk
     fake.respond("check", doc=doc, events={"dir": logs_of(tmp_path), "result": doc, "packages": [
         {"name": name, "path": str(tmp_path / "roots" / "user" / name), "records": []} for name in ("a", "c")]})
 
+    # Act: run the health check without and then with the fix option.
     run_flow(lambda session, sink: check_all(env, rows, session=session), env)
     plain_calls = fake.calls()
     run_flow(lambda session, sink: check_all(env, rows, session=session, fix=True), env)

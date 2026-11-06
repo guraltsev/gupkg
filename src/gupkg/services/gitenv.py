@@ -30,7 +30,9 @@ from pathlib import Path
 
 from ..system.port import Mode, System, safe_process_environment, trusted_path_entries
 
+# The Windows null device, used to point Git's configuration files and hooks at nothing.
 _NULL_DEVICE = "NUL"
+# ``-c`` settings pinned on every command so a repository's own configuration cannot enable hooks or helpers.
 _SETTINGS = (
     "core.hooksPath=" + _NULL_DEVICE,
     "core.fsmonitor=false",
@@ -48,11 +50,24 @@ class GitUnavailable(RuntimeError):
 def git_executable(system: System, mode: Mode) -> str:
     """Return what to run as ``git``: the bare name in user mode, a trusted full path in system mode.
 
+    Parameters
+    ----------
+    system : System
+        The machine boundary used to list the administrator-only ``PATH`` folders.
+    mode : Mode
+        The run's mode; only ``Mode.SYSTEM`` resolves a full path.
+
+    Returns
+    -------
+    str
+        ``"git"`` in user mode, otherwise the full path of the trusted ``git.exe``.
+
     Raises
     ------
     GitUnavailable
         If the run is in system mode and no admin-only folder of ``PATH`` holds ``git.exe``.
     """
+    # User mode trusts the ordinary lookup; system mode accepts only an admin-only folder.
     if mode is not Mode.SYSTEM:
         return "git"
     for folder in trusted_path_entries(system):
@@ -65,7 +80,28 @@ def git_executable(system: System, mode: Mode) -> str:
 
 
 def git_command(*arguments: str, system: System, mode: Mode) -> list[str]:
-    """Return ``git`` (resolved for a system-mode run) with the safety settings, then *arguments*."""
+    """Return ``git`` (resolved for a system-mode run) with the safety settings, then *arguments*.
+
+    Parameters
+    ----------
+    *arguments : str
+        The Git subcommand and its arguments.
+    system : System
+        The machine boundary, used to resolve ``git`` in system mode.
+    mode : Mode
+        The run's mode.
+
+    Returns
+    -------
+    list of str
+        The full argument list to pass to ``System.run``.
+
+    Raises
+    ------
+    GitUnavailable
+        If a system-mode run finds no trusted ``git.exe``.
+    """
+    # Pin the safety settings with ``-c`` ahead of the caller's arguments.
     command = [git_executable(system, mode)]
     for setting in _SETTINGS:
         command += ["-c", setting]
@@ -78,11 +114,28 @@ def git_environment(system: System, mode: Mode, temp: Path | None = None) -> dic
     An elevated run sees only admin-only folders on ``PATH``, values for the Windows folder, ``COMSPEC`` and ``PATHEXT`` that
     do not come from the process environment, and the temporary folder *temp* (the work folder, which is admin-only
     there) as ``TEMP`` and ``TMP`` when it is given.
+
+    Parameters
+    ----------
+    system : System
+        The machine boundary the base environment is read from.
+    mode : Mode
+        The run's mode.
+    temp : Path, optional
+        The temporary folder to expose as ``TEMP`` and ``TMP``.
+
+    Returns
+    -------
+    dict of str to str
+        The environment for the Git child process.
     """
+    # Start from the machine-level allow-list and add fixed settings that disable prompts, user
+    # configuration and non-network transports.
     environment = safe_process_environment({
         "GIT_CONFIG_GLOBAL": _NULL_DEVICE,
         "GIT_CONFIG_SYSTEM": _NULL_DEVICE,
         "GIT_CONFIG_NOSYSTEM": "1",
+        # Never prompt, and allow only network transports (no ``file`` or ``ext``).
         "GIT_TERMINAL_PROMPT": "0",
         "GIT_ALLOW_PROTOCOL": "https:http:ssh:git",
         "GIT_ASKPASS": "",

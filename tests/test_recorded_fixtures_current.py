@@ -1,4 +1,4 @@
-"""Cover that the recorded CLI documents under ``tests/fixtures`` are what the current CLI prints (issue 035 T13).
+"""Cover that the recorded CLI documents under ``tests/fixtures`` are what the current CLI prints.
 
 Behavior covered: the two recorders (``tests/fixtures/ui/record.py`` and ``tests/fixtures/cli_docs/record.py``) are run again into a temporary
 folder, with the real ``gupkg.cmd`` of this tree on a pretend machine (``--sandbox``, no network), and each ``.json`` document they write equals the committed one
@@ -18,7 +18,9 @@ from pathlib import Path
 
 import pytest
 
+# Directory that holds the recorded fixture sets.
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
+# Pattern of the timestamp stamped into every recording.
 STAMP = re.compile(r"\d{8}T\d{6}Z")
 
 pytestmark = [pytest.mark.skipif(os.name != "nt", reason="the launcher is a Windows cmd file"), pytest.mark.process]

@@ -3,10 +3,10 @@
 Behaviour covered: a deleted shim and a missing ``PATH`` entry are reported and ``--fix`` restores both; a changed shortcut and
 a lost environment value are drift too; a dangling ``current`` and a missing ``App`` are reported; unverified installs
 (skipped checksum, origin not verified) are listed and a recorded ``verified`` in a user-writable receipt is shown as a
-self-report, not proof; an elevated run does not read the user's
+self-report, not proof; an elevated run does not consult the user's
 environment; a package that is not installed is not unhealthy.
 
-Real: the engine, the catalog and real folders. Mocked: ``FakeSystem``. Out of scope: rendering (issue 029).
+Real: the engine, the catalog and real folders. Mocked: ``FakeSystem``. Out of scope: rendering.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ from tests.support.engine import World
 
 pytestmark = pytest.mark.unit
 
+# Tables that declare a shortcut, a shim, an environment variable and a PATH entry.
 FULL = (
     '[[shortcut]]\nname = "Tool"\ntarget = "$App\\\\app.exe"\n\n[[shim]]\nname = "tool"\ntarget = "$App\\\\app.exe"\n\n'
     '[[env]]\nname = "TOOL_HOME"\nvalue = "$App"\n\n[[path]]\nvalue = "$App"\n'
@@ -52,17 +53,21 @@ def test_a_healthy_install_has_no_problems(world_with_tool_installed: World) -> 
 
 def test_check_reports_a_deleted_shim_and_a_missing_path_entry_and_fix_restores_both(world_with_tool_installed: World) -> None:
     """Drift is reported for the shim and the PATH entry; --fix applies both again and the package is healthy."""
+    # Arrange: delete the shim and remove the PATH entry.
     shim = world_with_tool_installed.fake.scope_folders(Mode.USER).bin_dir / "tool.exe"
     package_dir = str(world_with_tool_installed.user / "tool" / "current" / "App")
     shim.unlink()
     world_with_tool_installed.fake.set_path(Mode.USER, [item for item in world_with_tool_installed.fake.get_path(Mode.USER) if item != package_dir])
 
+    # Act: check the package.
     result = world_with_tool_installed.one("check", "tool")
 
+    # Assert: both drifts are reported.
     assert not result.ok and kinds(result).count("drift") == 2
     messages = " ".join(item["message"] for item in result.details["problems"])
     assert "shim missing" in messages and "PATH entry missing" in messages
 
+    # Fix the drift and check again.
     fixed = world_with_tool_installed.one("check", "tool", fix=True)
 
     assert fixed.ok and len(fixed.details["fixed"]) == 2
@@ -146,18 +151,23 @@ def test_a_skipped_checksum_is_listed_as_unverified(world: World) -> None:
 
 def test_a_skipped_checksum_is_shown_in_the_verify_phase_of_the_run(world: World) -> None:
     """The run reports an unverified download as a warning inside its Verify phase, and the log carries it."""
+    # Arrange: a package published without a checksum.
     world.publish("tool", "1.0.0", hashed=False)
     events: list[object] = []
 
+    # A reporter that keeps every event.
     class Collect:
         """Keep every event."""
 
         def handle(self, event: object) -> None:
+            """Keep one event."""
             events.append(event)
 
+    # Act: install with the checksum skipped.
     with use_reporter(Collect()):
         assert world.one("install", "tool", skip=parse_skip_flag("")).ok
 
+    # Find the warnings that were shown while the Verify phase was running.
     inside = []
     current = None
     for event in events:
@@ -189,16 +199,19 @@ def test_a_changed_app_file_is_reported_whatever_the_receipt_claims(world_with_t
 
 def test_an_app_with_too_many_files_to_list_is_still_checked_by_its_digest(world: World) -> None:
     """Over the engine's max_recorded_files the receipt keeps the count and the digest only; a change is still reported."""
+    # Arrange: a limit of five recorded files and an app with six.
     world.engine.max_recorded_files = 5
     members = {f"lib/file{index:05d}.dat": f"{index}\n" for index in range(6)}
     world.publish("big", "1.0.0", members=members)
     assert world.one("install", "big").ok
     receipt = world.user / "big" / "1.0.0" / "App.info"
 
+    # Assert: the receipt omits the file list, keeps the count and stays small.
     section = read_receipt(world.user / "big", "1.0.0").data["app"]
     assert section["files_omitted"] is True and "files" not in section and section["count"] == 6
     assert receipt.stat().st_size < MAX_RECEIPT_BYTES and world.one("check", "big").status == "healthy"
 
+    # Change one file and check again.
     (world.user / "big" / "1.0.0" / "App" / "lib" / "file00007.dat").write_text("changed", encoding="utf-8")
     result = world.one("check", "big")
 

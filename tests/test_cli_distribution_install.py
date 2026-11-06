@@ -34,6 +34,7 @@ def snapshot(folder: Path) -> dict[str, str | None]:
 
 def test_installing_a_version_folder_of_a_root_uses_that_root_but_a_folder_without_dot_gupkg_above_it_is_copied(tmp_path: Path, cli_world: CliWorld) -> None:
     """Two levels above the version folder a `.gupkg` folder makes that folder the root (its settings apply); without one nothing is inferred."""
+    # Arrange: a root marked by ``.gupkg`` with its own settings, and a distribution inside it.
     games = tmp_path / "Games"
     (games / ".gupkg").mkdir(parents=True)
     (games / ".gupkg" / "settings.toml").write_text(
@@ -43,14 +44,18 @@ def test_installing_a_version_folder_of_a_root_uses_that_root_but_a_folder_witho
     shutil.move(str(source.parent), str(games / "demo"))
     cli_world.fake.add_url("https://example.org/tool-1.0.0.zip", zip_bytes({"app.exe": "demo 1.0.0"}))
 
+    # Act: install a version folder that sits in the root.
     inside = cli_world.cli("install", str(games / "demo" / "1.0.0"), "--yes", "--skip-checksum")
 
+    # Assert: the root of the folder is used and nothing is copied into the user root.
     assert inside.code == 0, inside.out + inside.err
     assert (games / "demo" / "current").exists() and not (cli_world.user / "demo").exists()
 
+    # Act again with a distribution outside any root.
     loose = cli_world.machine.distribution("loose", "1.0.0")
     copied = cli_world.cli("install", str(loose), "--yes", "--skip-checksum")
 
+    # Assert: it is copied into the user root.
     assert copied.code == 0, copied.out + copied.err
     assert (cli_world.user / "loose" / "current").exists()
 
@@ -58,17 +63,21 @@ def test_installing_a_version_folder_of_a_root_uses_that_root_but_a_folder_witho
 @pytest.mark.parametrize("mode", ["user", "system"])
 def test_installing_a_distribution_folder_writes_nothing_into_the_source(tmp_path: Path, mode: str) -> None:
     """Logs, lock and receipt go to the destination package; the source folder is byte-identical, and `gupkg logs` shows the run."""
+    # Arrange: a fake machine in the mode under test, and a distribution folder.
     world = CliWorld(tmp_path, elevated=mode == "system")
     source = world.machine.distribution("demo", "1.0.0")
     world.fake.add_url("https://example.org/tool-1.0.0.zip", zip_bytes({"app.exe": "demo 1.0.0"}))
     root = world.system_root if mode == "system" else world.user
     before = snapshot(source.parent.parent)
 
+    # Act: install the distribution.
     result = world.cli("install", str(source), "--yes", "--skip-checksum")
 
+    # Assert: the source folder is unchanged.
     assert result.code == 0, result.out + result.err
     assert snapshot(source.parent.parent) == before, "the download folder was changed"
     assert not (source.parent / ".gupkg").exists()
+    # Assert: the log, the receipt and the ``logs`` command belong to the destination package.
     destination = root / "demo"
     [package_log] = (destination / ".gupkg" / "logs").glob("*-install.log")
     receipt_file = next(destination.glob("*/App.info"))

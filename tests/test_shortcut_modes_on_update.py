@@ -1,4 +1,4 @@
-"""Cover the removal on update of a shortcut whose ``modes`` no longer include the run's mode (issue 035 T08, T13).
+"""Cover the removal on update of a shortcut whose ``modes`` no longer include the run's mode.
 
 Behavior covered: version 1.0.0 of a package has a shortcut for both modes and a second one for the system mode only; an install in user
 mode creates the first shortcut and not the second. Version 2.0.0 limits the first shortcut to ``["system"]``: ``update`` in user mode
@@ -17,6 +17,7 @@ import pytest
 
 pytestmark = pytest.mark.unit
 
+# Shim entry shared by the sample manifests.
 SHIM = '[[shim]]\nname = "tool"\ntarget = "$App\\\\app.exe"\n'
 
 
@@ -38,12 +39,14 @@ def test_an_update_removes_the_shortcut_whose_modes_no_longer_include_the_run_an
     assert installed.code == 0, installed.err
     assert len(names(cli_world)) == 1 and names(cli_world)[0].startswith("Both"), names(cli_world)
 
+    # Version 2 narrows the shortcut to system mode only.
     cli_world.publish("tool", "2.0.0", tables=SHIM + shortcut("Both", '["system"]'))
     narrowed = cli_world.cli("update", "tool", "--yes")
     assert narrowed.code == 0, narrowed.err
     assert names(cli_world) == [], names(cli_world)
     assert shim.exists()
 
+    # Version 3 widens it to user mode again, which restores the shortcut.
     cli_world.publish("tool", "3.0.0", tables=SHIM + shortcut("Both", '["user"]'))
     widened = cli_world.cli("update", "tool", "--yes")
     assert widened.code == 0, widened.err

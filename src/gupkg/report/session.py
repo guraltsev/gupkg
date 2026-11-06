@@ -65,6 +65,13 @@ class RunSession:
         Set false to keep a run out of the log files (used where no log may be written).
     clock : callable, optional
         Returns the current UTC time for the log files; tests inject a fixed one.
+
+    Methods
+    -------
+    bind
+        Tell the log writer which root (or package folder) this run acts on.
+    finish
+        Emit the closing summary, with the log paths appended and the result document attached.
     """
 
     def __init__(
@@ -112,12 +119,32 @@ class RunSession:
         return self
 
     def bind(self, base: Path | None, package_label: str | None = None) -> None:
-        """Tell the log writer which root (or package folder) this run acts on."""
+        """Tell the log writer which root (or package folder) this run acts on.
+
+        Parameters
+        ----------
+        base : Path or None
+            Root or package folder; ``None`` leaves the log unbound.
+        package_label : str, optional
+            Label of the package whose folder is bound.
+        """
         if self.log is not None and base is not None:
             self.log.bind(Path(base), package_label)
 
     def finish(self, summary: str, exit_code: int, result: dict[str, Any] | None = None) -> None:
-        """Emit the closing summary, with the log paths appended and the result document attached; later calls are ignored."""
+        """Emit the closing summary, with the log paths appended and the result document attached.
+
+        Later calls are ignored, so the summary is emitted once.
+
+        Parameters
+        ----------
+        summary : str
+            Result text shown to the user.
+        exit_code : int
+            Process exit code of the run.
+        result : dict, optional
+            Machine-readable result document attached to the final event.
+        """
         if self._finished:
             return
         self._finished = True

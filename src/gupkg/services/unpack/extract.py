@@ -1,9 +1,9 @@
 """Extract one archive into an empty folder, refusing anything unsafe before, while and after.
 
-Zip archives are read in process so that every member name, type, size and byte count is
+Zip archives are handled in process so that every member name, type, size and byte count is
 judged before and while it is written. Gzip, bzip2 and xz wrappers of a tarball are
 decompressed in process with a byte cap, so a bomb stops at the cap. Every other format goes
-through 7-Zip: the table of contents is read and judged first (``gupkg.services.unpack.sevenzip``),
+through 7-Zip: the table of contents is listed and judged first (``gupkg.services.unpack.sevenzip``),
 7-Zip unpacks into the folder while a watcher measures that folder and kills 7-Zip within one poll
 of a limit being crossed, and the finished tree is walked again for links and size. A tarball takes two
 passes: decompress to a tar, then unpack the tar (decision D39).
@@ -43,9 +43,13 @@ from ...system.port import System
 from ..safepath import UnsafePath, check_member_set, confine, is_reparse_point, safe_file_name
 from .sevenzip import Listing, SevenZip, SevenZipError
 
+# Size of the blocks used when copying and decompressing.
 _COPY_BLOCK = 1024 * 1024
+# Memory the xz decoder may use, so a hostile dictionary size fails before it is allocated.
 XZ_MEMORY_LIMIT = 256 * 1024 * 1024
+# Unix file-type bits of members that are not regular files or folders.
 _NOT_REGULAR = (0o020000, 0o060000, 0o010000, 0o140000)  # device, block, fifo, socket
+# Signature and opener of each compression wrapper that is decompressed in process.
 _DECOMPRESSORS = (
     (b"\x1f\x8b", gzip.open),
     (b"BZh", bz2.open),
@@ -69,6 +73,16 @@ class Limits:
         Most uncompressed bytes in total, nested archives included.
     max_file_bytes : int
         Most uncompressed bytes in one file.
+
+    Examples
+    --------
+    Basic usage:
+
+    >>> limits = Limits(max_entries=10)
+    >>> limits.max_entries
+    10
+    >>> limits.max_file_bytes // 1024 ** 3
+    4
     """
 
     max_entries: int = 200_000
@@ -82,6 +96,24 @@ class Budget:
 
     A fresh budget starts empty; each extraction charges what it wrote, and the next one may
     use only what is left, so a nested archive cannot start over with a full allowance.
+
+    Methods
+    -------
+    charge
+        Record *files* entries and *size* bytes as produced.
+
+    Attributes
+    ----------
+    limits : Limits
+        The allowance a whole artifact may use.
+    used_bytes : int
+        Bytes charged so far.
+    used_entries : int
+        Entries charged so far.
+    bytes_left : int
+        Return the bytes the next extraction may still write.
+    entries_left : int
+        Return the entries the next extraction may still create.
     """
 
     limits: Limits = field(default_factory=Limits)
@@ -99,7 +131,15 @@ class Budget:
         return max(self.limits.max_entries - self.used_entries, 0)
 
     def charge(self, files: int, size: int) -> None:
-        """Record *files* entries and *size* bytes as produced."""
+        """Record *files* entries and *size* bytes as produced.
+
+        Parameters
+        ----------
+        files : int
+            Number of entries the extraction created.
+        size : int
+            Number of bytes the extraction wrote.
+        """
         self.used_entries += files
         self.used_bytes += size
 
@@ -128,12 +168,15 @@ def extract_archive(system: System, archive: Path, kind: str, destination: Path,
     UnpackError
         If anything about the archive is unsafe, over a limit, or fails to extract.
     """
+    # A bare Limits starts a fresh budget; then dispatch on the kind, turning every low-level failure into UnpackError.
     if isinstance(budget, Limits):
         budget = Budget(budget)
+    # Zip is handled in process, tarballs in two passes, everything else by 7-Zip.
     try:
         if kind == "zip":
             _extract_zip(archive, destination, budget)
         else:
+            # Every other kind goes through 7-Zip; tarballs need their own two-pass handling.
             tool = SevenZip(system, seven_zip)
             if kind == "tar":
                 _extract_tar(tool, archive, destination, budget)
@@ -141,6 +184,7 @@ def extract_archive(system: System, archive: Path, kind: str, destination: Path,
                 _extract_with_seven_zip(tool, archive, destination, budget, kind)
     except (UnsafePath, SevenZipError, zipfile.BadZipFile, NotImplementedError, EOFError, zlib.error, lzma.LZMAError, OSError) as error:
         raise UnpackError(str(error)) from error
+    # Walk what was really written and charge it to the shared budget.
     files, size = check_tree(destination, budget.limits, budget)
     budget.charge(files, size)
 
@@ -148,14 +192,30 @@ def extract_archive(system: System, archive: Path, kind: str, destination: Path,
 def check_tree(root: Path, limits: Limits, budget: Budget | None = None) -> tuple[int, int]:
     """Walk *root* without following links; return ``(file count, byte count)``.
 
+    Parameters
+    ----------
+    root : Path
+        The extracted tree.
+    limits : Limits
+        The per-file and total bounds.
+    budget : Budget, optional
+        When given, its remaining allowance replaces the total bounds.
+
+    Returns
+    -------
+    tuple of int
+        The number of files and the total bytes.
+
     Raises
     ------
     UnpackError
         If any entry is a link, junction or special file, or a limit (the budget's, when given)
         is exceeded.
     """
+    # Work out how much the walk may find, then count every entry and byte.
     allowed_bytes = budget.bytes_left if budget is not None else limits.max_total_bytes
     allowed_entries = budget.entries_left if budget is not None else limits.max_entries
+    # Every entry counts toward the entry limit, and links or junctions are refused outright.
     files = total = entries = 0
     for current, folders, names in os.walk(root, followlinks=False):
         for name in [*folders, *names]:
@@ -165,6 +225,7 @@ def check_tree(root: Path, limits: Limits, budget: Budget | None = None) -> tupl
                 raise UnpackError(f"The archive produced a link or junction at {path.relative_to(root).as_posix()}")
             if entries > allowed_entries:
                 raise UnpackError(f"The archive has more than {limits.max_entries} entries")
+        # Files must be regular and within the size limits.
         for name in names:
             path = Path(current) / name
             status = os.lstat(path)
@@ -183,6 +244,15 @@ def decompress_capped(source: Path, destination: Path, limit: int) -> int:
     The xz decoder runs with a memory limit (``XZ_MEMORY_LIMIT``), so a file that asks for a huge
     dictionary fails before it allocates it. On any failure the partial output is deleted.
 
+    Parameters
+    ----------
+    source : Path
+        The compressed file.
+    destination : Path
+        The output file; it must not exist.
+    limit : int
+        The most bytes that may be written.
+
     Returns
     -------
     int
@@ -195,10 +265,12 @@ def decompress_capped(source: Path, destination: Path, limit: int) -> int:
         xz file needs more memory than allowed, the file is damaged, or it is not one of the
         three formats.
     """
+    # Check the signature, then stream the blocks to the output, stopping at the cap.
     with open(source, "rb") as handle:
         head = handle.read(8)
     if not any(head.startswith(signature) for signature, _opener in _DECOMPRESSORS):
         raise UnpackError(f"{source.name} is not a gzip, bzip2 or xz file")
+    # Create the output exclusively and stop as soon as the cap would be crossed.
     written = 0
     try:
         with open(destination, "xb") as writer:
@@ -207,6 +279,7 @@ def decompress_capped(source: Path, destination: Path, limit: int) -> int:
                 if written > limit:
                     raise UnpackError("The compressed file expands past the allowed size")
                 writer.write(block)
+    # Never leave partial output; decoder errors become UnpackError, everything else propagates.
     except BaseException as error:
         destination.unlink(missing_ok=True)
         if isinstance(error, (lzma.LZMAError, EOFError, zlib.error, gzip.BadGzipFile)):
@@ -223,29 +296,35 @@ def _xz_blocks(source: Path):
     must be the header of another valid stream, which the decoder checks.
     """
 
-    def fresh() -> lzma.LZMADecompressor:
-        """Return a decoder for one stream with the memory limit."""
+    # One decoder per stream, each with the memory limit.
+    def _fresh() -> lzma.LZMADecompressor:
+        """Return a decoder for one stream with the memory limit (internal to the stream loop)."""
         return lzma.LZMADecompressor(format=lzma.FORMAT_XZ, memlimit=XZ_MEMORY_LIMIT)
 
     with open(source, "rb") as reader:
-        decompressor = fresh()
+        decompressor = _fresh()
         pending = b""
         while True:
+            # At the end of a stream, skip zero padding (a multiple of four) and start the next stream.
             if decompressor.eof:
+                # Skip zero padding after the stream, reading more input as needed; the end of the file ends the generator.
                 rest, padding = decompressor.unused_data, 0
                 while True:
                     stripped = rest.lstrip(b"\0")
                     padding += len(rest) - len(stripped)
                     if stripped:
                         break
+                    # Only padding so far: read on, and finish cleanly at the end of the file.
                     rest = reader.read(_COPY_BLOCK)
                     if not rest:
                         if padding % 4:
                             raise EOFError("the xz stream padding is not a multiple of four bytes")
                         return
+                # Padding must be a multiple of four bytes; what follows must be another stream.
                 if padding % 4:
                     raise EOFError("the xz stream padding is not a multiple of four bytes")
-                decompressor, pending = fresh(), stripped
+                decompressor, pending = _fresh(), stripped
+            # Otherwise feed the decoder more input and hand out whatever it produces.
             elif decompressor.needs_input and not pending:
                 pending = reader.read(_COPY_BLOCK)
                 if not pending:
@@ -273,7 +352,15 @@ def _decompressed_blocks(source: Path, head: bytes):
 
 
 def _extract_zip(archive: Path, destination: Path, budget: Budget) -> None:
-    """Write every member of a zip archive below *destination*, judging each one first."""
+    """Write every member of a zip archive below *destination*, judging each one first.
+
+    Raises
+    ------
+    UnpackError
+        If the archive has too many or too large members, a link, a special file, encryption,
+        or a member that expands past its declared size.
+    """
+    # Judge the whole archive before writing: entry count, names and declared sizes.
     limits = budget.limits
     with zipfile.ZipFile(archive) as bundle:
         infos = bundle.infolist()
@@ -294,6 +381,7 @@ def _extract_zip(archive: Path, destination: Path, budget: Budget) -> None:
             if info.flag_bits & 0x1:
                 raise UnpackError("The archive is encrypted")
 
+        # Write the members in order, each confined to the destination.
         written = 0
         for info, name in zip(infos, names):
             target = confine(destination, name)
@@ -338,9 +426,12 @@ class _FolderWatch:
 
     def __call__(self) -> str | None:
         """Return the reason to stop 7-Zip, or ``None`` while the folder is within its limits."""
+        # Rate-limit the scan: do nothing until the back-off from the last scan has passed.
         now = time.monotonic()
         if now < self._next:
             return None
+
+        # Walk the folder without entering links, counting entries and bytes and checking each file.
         total = entries = 0
         pending = [self.root]
         while pending:
@@ -349,15 +440,18 @@ class _FolderWatch:
                 scanner = os.scandir(folder)
             except OSError:
                 continue
+            # Count entries and bytes of this folder; links are not entered and a huge file stops the scan.
             with scanner:
                 for entry in scanner:
                     entries += 1
                     path = Path(entry.path)
+                    # Links and junctions are neither entered nor counted; folders are queued for the walk.
                     if is_reparse_point(path):
                         continue
                     if entry.is_dir(follow_symlinks=False):
                         pending.append(path)
                         continue
+                    # A file larger than the per-file limit stops 7-Zip at once.
                     try:
                         size = entry.stat(follow_symlinks=False).st_size
                     except OSError:
@@ -367,6 +461,7 @@ class _FolderWatch:
                     total += size
             if total > self.max_bytes or entries > self.max_entries:
                 break
+        # Back off for four times this scan's duration, then report any limit that was crossed.
         self.largest = max(self.largest, total)
         self._next = time.monotonic() + 4 * (time.monotonic() - now)
         if total > self.max_bytes:
@@ -377,7 +472,13 @@ class _FolderWatch:
 
 
 def _unpack_watched(tool: SevenZip, archive: Path, destination: Path, budget: Budget, kind: str | None) -> None:
-    """Run 7-Zip into *destination* under a watcher that enforces the budget while it works."""
+    """Run 7-Zip into *destination* under a watcher that enforces the budget while it works.
+
+    Raises
+    ------
+    UnpackError
+        If 7-Zip fails or the watcher stops it.
+    """
     watch = _FolderWatch(destination, budget.bytes_left, budget.entries_left, budget.limits.max_file_bytes)
     try:
         tool.extract(archive, destination, kind, watch=watch)
@@ -390,12 +491,19 @@ def _judge(listing: Listing, budget: Budget) -> None:
 
     Sizes are what the archive claims, and some formats claim none: this is an early refusal,
     and the folder watcher is the real bound.
+
+    Raises
+    ------
+    UnpackError
+        If the listing breaks any of those rules.
     """
+    # Judge the names as a set first (unsafe or colliding names), then every entry on its own.
     limits, entries = budget.limits, listing.entries
     if len(entries) > budget.entries_left:
         raise UnpackError(f"The archive has {len(entries)} entries; at most {limits.max_entries} are allowed")
     check_member_set(entry.path for entry in entries)
     check_member_set((entry.path for entry in entries if not entry.is_dir), repeats=False)
+    # Per-entry rules: no encryption, no links, no file over the per-file limit.
     for entry in entries:
         if entry.encrypted:
             raise UnpackError("The archive is encrypted")
@@ -408,13 +516,21 @@ def _judge(listing: Listing, budget: Budget) -> None:
 
 
 def _extract_with_seven_zip(tool: SevenZip, archive: Path, destination: Path, budget: Budget, kind: str) -> None:
-    """Extract a 7z, self-extracting, NSIS or MSI file after judging its table of contents."""
+    """Extract a 7z, self-extracting, NSIS or MSI file after judging its table of contents.
+
+    Raises
+    ------
+    UnpackError
+        If 7-Zip reports another type than the declared kind, or the listing is refused.
+    """
+    # List the archive (NSIS needs its format named) and check 7-Zip agrees with the declared kind.
     forced = "Nsis" if kind == "nsis" else None
     listing = tool.listing(archive, forced)
     if kind == "7z" and listing.type != "7z":
         raise UnpackError(f"{archive.name} is not a 7z archive (7-Zip reads it as {listing.type})")
     if kind == "nsis" and listing.type.lower() != "nsis":
         raise UnpackError(f"{archive.name} is not an NSIS installer (7-Zip reads it as {listing.type})")
+    # Self-extractors listed as plain executables get a second listing with the 7z format named.
     if kind == "sfx" and listing.type == "PE":
         # 7-Zip reads some self-extractors (Git for Windows' PortableGit among them) as the executable they are; the archive appended
         # to the stub is found when the type is named. It is only listed and unpacked, never run.
@@ -422,12 +538,19 @@ def _extract_with_seven_zip(tool: SevenZip, archive: Path, destination: Path, bu
         listing = tool.listing(archive, forced)
         if listing.type != "7z":
             raise UnpackError(f"{archive.name} is an executable with no archive inside")
+    # Judge the listing, then extract under the folder watcher.
     _judge(listing, budget)
     _unpack_watched(tool, archive, destination, budget, forced)
 
 
 def _extract_tar(tool: SevenZip, archive: Path, destination: Path, budget: Budget) -> None:
-    """Unpack a tarball with two passes: decompress (capped, in process when possible), then unpack the tar."""
+    """Unpack a tarball with two passes: decompress (capped, in process when possible), then unpack the tar.
+
+    Raises
+    ------
+    UnpackError
+        If the wrapper holds more than one file, decompression fails, or a limit is crossed.
+    """
     first = tool.listing(archive)
 
     # A plain tar needs only the second pass; any compressed wrapper is removed first.
@@ -435,6 +558,7 @@ def _extract_tar(tool: SevenZip, archive: Path, destination: Path, budget: Budge
         _judge(first, budget)
         _unpack_watched(tool, archive, destination, budget, None)
         return
+    # A compressed wrapper must hold exactly one file; pass one writes it into a holding folder.
     wrapper = destination.parent / f".{destination.name}-pass1"
     wrapper.mkdir()
     try:
@@ -444,12 +568,15 @@ def _extract_tar(tool: SevenZip, archive: Path, destination: Path, budget: Budge
 
         # Pass one writes one file, never more than the budget allows: in process for the
         # formats Python reads, otherwise 7-Zip under the folder watcher.
+        # Name the intermediate file after the archive, giving ``.tgz``-style names a ``.tar`` suffix.
         name = archive.stem if archive.suffix.lower() in (".gz", ".bz2", ".xz", ".tgz", ".txz", ".tbz2") else archive.name + ".out"
         if archive.suffix.lower() in (".tgz", ".txz", ".tbz2"):
             name = archive.stem + ".tar"
+        # Pick the decompressor by signature: Python's for gzip, bzip2 and xz, 7-Zip for the rest.
         inner = wrapper / safe_file_name(name)
         with open(archive, "rb") as handle:
             head = handle.read(8)
+        # Decompress in process when possible; otherwise 7-Zip must produce exactly one file.
         if any(head.startswith(signature) for signature, _opener in _DECOMPRESSORS):
             decompress_capped(archive, inner, min(budget.bytes_left, budget.limits.max_file_bytes))
         else:
@@ -458,6 +585,7 @@ def _extract_tar(tool: SevenZip, archive: Path, destination: Path, budget: Budge
             if len(produced) != 1 or not produced[0].is_file() or is_reparse_point(produced[0]):
                 raise UnpackError("Decompressing the tarball did not produce exactly one file")
             inner = produced[0]
+        # The decompressed file is a tarball to unpack, or else the content itself.
         second = tool.listing(inner, "tar") if _looks_like_tar(inner) else None
         if second is None:
             # Not a tarball after all: the decompressed file is the content.

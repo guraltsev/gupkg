@@ -27,6 +27,7 @@ from tests.support.ui_screens import has, open_browser, run_app, screen_text, up
 
 pytestmark = pytest.mark.process
 
+# Terminal sizes that every screen is rendered at.
 SIZES = [pytest.param((80, 24), id="80x24"), pytest.param((200, 50), id="200x50")]
 
 
@@ -62,11 +63,13 @@ def test_every_screen_of_the_manager_has_a_hint_line_and_a_status_line(tmp_path:
     async def scenario(app, pilot) -> None:
         """Visit each screen and check the frame on it."""
         width = size[0]
+        # The browser, then the help screen.
         await open_browser(app, pilot)
         assert_frame(app, width), seen.append("browser")
         await pilot.press("question_mark")
         await wait_for(pilot, lambda: has(app, "Browser"), "help")
         assert_frame(app, width), seen.append("help")
+        # Close the help, open the package view and its log view.
         await pilot.press("escape")
         await pilot.press("enter")
         await wait_for(pilot, lambda: has(app, "Installed:"), "the package view")
@@ -75,14 +78,17 @@ def test_every_screen_of_the_manager_has_a_hint_line_and_a_status_line(tmp_path:
         await wait_for(pilot, lambda: has(app, "log of alpha"), "the log view")
         assert_frame(app, width), seen.append("log")
         await pilot.press("escape")
+        # The uninstall question, which is answered no.
         await pilot.press("x")
         await wait_for(pilot, lambda: has(app, "Uninstall"), "the uninstall question")
         assert_frame(app, width), seen.append("uninstall question")
         await pilot.press("n")
+        # The version picker.
         await pilot.press("s")
         await wait_for(pilot, lambda: has(app, "choose the version to activate"), "the version picker")
         assert_frame(app, width), seen.append("version picker")
         await pilot.press("escape")
+        # Update the package and follow the run to its end.
         await pilot.press("u")
         await wait_for(pilot, lambda: has(app, "Update 1 package"), "the plan confirmation")
         assert_frame(app, width), seen.append("plan confirmation")
@@ -107,17 +113,21 @@ def test_the_checksum_question_and_the_cancel_question_have_the_frame(tmp_path: 
     async def scenario(app, pilot) -> None:
         """Reach the checksum question, answer yes, then open the cancel question during the run."""
         await open_browser(app, pilot)
+        # Plan the update; the plan announces the checksum question.
         await pilot.press("u")
         await wait_for(pilot, lambda: has(app, "Update 1 package"), "the plan")
         assert has(app, "you will be asked")
+        # Answer yes to the plan, which raises the checksum question.
         await pilot.press("y")
         await wait_for(pilot, lambda: has(app, "without a checksum"), "the checksum question")
         assert_frame(app, size[0])
+        # Approve the checksum, then ask to cancel during the run.
         await pilot.press("y")
         await wait_for(pilot, lambda: isinstance(app.screen, RunScreen) and has(app, "Package alpha: updated"), "the run to wait after its first package")
         await pilot.press("escape")
         await wait_for(pilot, lambda: has(app, "Cancel after the current package?"), "the cancel question")
         assert_frame(app, size[0])
+        # Confirm the cancellation and wait for the run to end.
         await pilot.press("y")
         await wait_for(pilot, lambda: app.screen.outcome is not None if isinstance(app.screen, RunScreen) else False, "the run to end")
 
@@ -138,8 +148,10 @@ def test_the_package_program_has_the_frame_and_escape_leaves_it(tmp_path: Path, 
         await wait_for(pilot, lambda: app.return_code is not None, "the program to leave")
         codes.append(app.return_code)
 
+    # Act: run the package program.
     run_app(tmp_path, recorded_fake, scenario, size=size, program="tui")
 
+    # Assert: it left with code 0, having made only a read call.
     assert codes == [0]
     assert recorded_fake.read_calls() == ["info"] and recorded_fake.calls() == []
 
@@ -171,8 +183,10 @@ def test_the_browser_shows_the_scope_on_the_status_line_at_80x24_and_has_no_mode
         await wait_for(pilot, lambda: "registry main @ 4f2a9c1" in app.registry and has(app, "2 packages"), "the registry state")
         shown["rows"], shown["title"], shown["label"] = screen_text(app), app.sub_title, app.env.scope_label
 
+    # Act: show the browser and capture the rows.
     run_app(tmp_path, recorded_fake, scenario)
 
+    # Assert: the scope is on the status line and in the title, and there is no mode column.
     rows = shown["rows"]
     root = tmp_path / "roots" / "user"
     assert shown["label"] == f"user · {root}" and shown["title"] == f"user · {root}"
@@ -213,8 +227,10 @@ def test_the_a_key_lists_the_registry_packages_that_are_not_installed_and_a_seco
         await pilot.press("a")
         await wait_for(pilot, lambda: not has(app, "copyq"), "the available packages to be hidden")
 
+    # Act: open the available list, then hide it again.
     run_app(tmp_path, recorded_fake, scenario)
 
+    # Assert: the hint, the status line and the rows describe the available packages.
     hint, status, rows = seen["shown"]
     assert "a hide" in hint
     assert "3 available in the registry" in status and "2 packages" in status and status.startswith("user · ")
@@ -232,6 +248,7 @@ def test_the_a_key_marks_a_package_this_mode_cannot_install_and_the_status_line_
 
     async def scenario(app, pilot) -> None:
         """Press ``a`` (the table is alpha, beta, copyq, drv, graphviz), move onto drv and read the table and the status line."""
+        # Open the available list and move onto the system-only package.
         await open_browser(app, pilot)
         await pilot.press("a")
         await wait_for(pilot, lambda: has(app, "drv"), "the available package")
@@ -239,6 +256,7 @@ def test_the_a_key_marks_a_package_this_mode_cannot_install_and_the_status_line_
         await wait_for(pilot, lambda: has(app, "is system only"), "the restriction on the status line")
         seen["rows"], seen["status"] = screen_text(app), app.screen.status_text()
 
+    # Act: run the browser through the keys.
     run_app(tmp_path, recorded_fake, scenario)
 
     rows = seen["rows"]
@@ -259,17 +277,21 @@ def test_filter_selection_and_the_application_survive_opening_a_package_and_a_ru
         """Filter, open, update, come back."""
         await open_browser(app, pilot)
         identity.append(id(app))
+        # Type a filter that leaves only beta.
         await pilot.press("slash")
         for letter in "bet":
             await pilot.press(letter)
         await wait_for(pilot, lambda: not has(app, "alpha"), "the filter to apply")
+        # Open the package view of the filtered row.
         await pilot.press("enter")
         await pilot.press("enter")
         await wait_for(pilot, lambda: has(app, "Installed:"), "the package view")
+        # Update it and wait for the run to finish.
         await pilot.press("u")
         await wait_for(pilot, lambda: has(app, "Update 1 package"), "the plan")
         await pilot.press("y")
         await wait_for(pilot, lambda: isinstance(app.screen, RunScreen) and app.screen.outcome is not None, "the run to finish")
+        # Go back; the same application shows the browser again with the filter in place.
         await pilot.press("escape")
         await pilot.press("escape")
         await wait_for(pilot, lambda: has(app, "beta") and has(app, "installed"), "the browser to be back and reloaded")
@@ -322,8 +344,10 @@ def test_an_unreadable_registry_status_shows_a_message_in_the_status_line_at_80x
         await wait_for(pilot, lambda: "registry unreadable" in screen_text(app)[-1], "the message in the status line")
         seen["screen"], seen["problems"] = screen_text(app), list(app.problems)
 
+    # Act: show the browser while the registry status cannot be read.
     run_app(tmp_path, recorded_fake, scenario)
 
+    # Assert: the message is on the status line and the packages are still listed.
     screen = seen["screen"]
     print("\n".join(screen))
     assert "ERROR: registry unreadable: cache is locked" in screen[-1] and len(screen[-1]) <= 80
@@ -340,6 +364,7 @@ def test_no_read_of_the_manager_starts_the_cli(tmp_path: Path, recorded_fake: Fa
     monkeypatch.setattr(Client, "call", forbidden)
     recorded_fake.respond("list --available", doc=fixture_json("list_available.json", tmp_path, "cli_docs"))
 
+    # Open the browser, the available list and a package view; none may use the CLI client.
     async def scenario(app, pilot) -> None:
         """Load, press ``a``, open the first package."""
         await open_browser(app, pilot)
@@ -362,6 +387,7 @@ def test_the_run_view_puts_the_run_state_before_the_scope_at_80x24(tmp_path: Pat
         """Run an update and keep the browser's and the finished run view's status lines."""
         await open_browser(app, pilot)
         seen["browser"] = screen_text(app)[-1]
+        # Update the package and wait for the finished run view.
         await pilot.press("u")
         await wait_for(pilot, lambda: has(app, "Update 1 package"), "the plan")
         await pilot.press("y")
@@ -390,10 +416,12 @@ def test_the_run_view_shows_the_phases_in_order_and_the_verdict_last(tmp_path: P
     async def scenario(app, pilot) -> None:
         """Run an update and read the finished log."""
         await open_browser(app, pilot)
+        # Update the package and wait for the finished run view.
         await pilot.press("u")
         await wait_for(pilot, lambda: has(app, "Update 1 package"), "the plan")
         await pilot.press("y")
         await wait_for(pilot, lambda: isinstance(app.screen, RunScreen) and app.screen.outcome is not None, "the run to finish")
+        # Assert: the phases appear in order and the verdict is the last line.
         rows = content(app)
         headers = [row for row in rows if row.startswith("━━ ")]
         assert [row.split()[1] for row in headers] == ["Resolve", "Fetch", "Done"]
@@ -410,10 +438,12 @@ def test_a_2000_line_events_file_keeps_the_view_on_the_tail_and_the_keys_alive(t
     async def scenario(app, pilot) -> None:
         """Feed the file, check the tail, scroll back, open help."""
         await open_browser(app, pilot)
+        # Update the package and wait for the finished run view.
         await pilot.press("u")
         await wait_for(pilot, lambda: has(app, "Update 1 package"), "the plan")
         await pilot.press("y")
         await wait_for(pilot, lambda: isinstance(app.screen, RunScreen) and app.screen.outcome is not None, "the run to finish")
+        # The log follows the tail, can be scrolled back, and help still answers.
         log = app.screen.query_one("RunLog")
         await wait_for(pilot, lambda: has(app, "ok alpha 2.0.0") and log.scroll_y >= log.max_scroll_y - 1, "the view to reach the tail")
         await pilot.press("pageup")
@@ -432,10 +462,12 @@ def test_escape_during_a_run_asks_and_a_no_keeps_it_running(tmp_path: Path, reco
     async def scenario(app, pilot) -> None:
         """Press Escape while the double sleeps, answer no, wait for the end."""
         await open_browser(app, pilot)
+        # Update the package and wait for the run view.
         await pilot.press("u")
         await wait_for(pilot, lambda: has(app, "Update 1 package"), "the plan")
         await pilot.press("y")
         await wait_for(pilot, lambda: isinstance(app.screen, RunScreen), "the run view")
+        # Escape asks whether to cancel; answering no lets the run finish.
         await pilot.press("escape")
         await wait_for(pilot, lambda: has(app, "Cancel after the current package?"), "the question")
         await pilot.press("n")
@@ -456,17 +488,21 @@ def test_a_yes_to_the_cancel_question_asks_the_call_to_stop_after_the_current_pa
         "packages": [{"name": name, "path": str(tmp_path / "home" / "opt" / name), "records": []} for name in ("alpha", "beta")],
     })
 
+    # The double stops after the first package once it sees the stop marker.
     async def scenario(app, pilot) -> None:
         """Cancel after the first package has ended."""
         await open_browser(app, pilot)
+        # Update both packages and wait until the first has ended.
         await pilot.press("U")
         await wait_for(pilot, lambda: has(app, "Update 2 packages"), "the plan")
         await pilot.press("y")
         await wait_for(pilot, lambda: isinstance(app.screen, RunScreen) and has(app, "Package alpha: updated"), "package one to end")
+        # Escape, then confirm the cancellation.
         await pilot.press("escape")
         await wait_for(pilot, lambda: has(app, "Cancel after the current package?"), "the question")
         await pilot.press("y")
         await wait_for(pilot, lambda: app.screen.outcome is not None if isinstance(app.screen, RunScreen) else False, "the run to end")
+        # Assert: the second package is reported skipped and the exit code is 5.
         text = "\n".join(screen_text(app))
         assert "- beta: skipped" in text and "Stopped after the current package at your request." in text
         assert app.screen.outcome.exit_code == 5
@@ -484,6 +520,7 @@ def test_dialogs_answer_only_to_explicit_keys(tmp_path: Path, recorded_fake: Fak
     async def scenario(app, pilot) -> None:
         """Try the keys in turn."""
         await open_browser(app, pilot)
+        # The uninstall question ignores Enter and closes on Escape.
         await pilot.press("x")
         await wait_for(pilot, lambda: has(app, "Uninstall alpha?"), "the question")
         await pilot.press("enter")
@@ -492,6 +529,7 @@ def test_dialogs_answer_only_to_explicit_keys(tmp_path: Path, recorded_fake: Fak
         await pilot.press("escape")
         await wait_for(pilot, lambda: not has(app, "Uninstall alpha?"), "the question to close")
         assert not [call for call in recorded_fake.calls() if call["key"] == "uninstall"]
+        # Asking again and answering y runs the uninstall.
         await pilot.press("x")
         await wait_for(pilot, lambda: has(app, "Uninstall alpha?"), "the question again")
         await pilot.press("y")
@@ -516,8 +554,10 @@ def test_a_registry_that_was_never_downloaded_is_announced_in_the_hint_line_and_
         rows = screen_text(app)
         seen["hint"], seen["status"], seen["full"] = rows[0], rows[-1], app.status_line()
 
+    # Act: show the browser of a root whose registry was never downloaded.
     run_app(tmp_path, recorded_fake, scenario)
 
+    # Assert: the hint line and the status line say that the registry is not downloaded.
     assert seen["hint"].strip().startswith("s DOWNLOAD THE REGISTRY") and "a avail" in seen["hint"]
     assert seen["status"].strip().startswith("user · C:\\…\\") and "2 packages" in seen["status"]
     assert "registry main: NOT DOWNLOADED, press s" in seen["full"]
@@ -553,6 +593,7 @@ def test_the_s_key_synchronises_the_registry_with_one_cli_call_and_no_package(tm
         await pilot.press("escape")
         await wait_for(pilot, lambda: has(app, "alpha") and not isinstance(app.screen, RunScreen), "the browser")
 
+    # Act: press s in the manager.
     run_app(tmp_path, recorded_fake, scenario)
 
     (call,) = [item for item in recorded_fake.calls() if item["key"] == "registry" and "sync" in item["argv"]]
@@ -568,6 +609,7 @@ def test_every_operation_is_one_cli_call_with_the_machine_options(tmp_path: Path
     async def scenario(app, pilot) -> None:
         """Run the three operations from the browser, leaving each run view."""
         await open_browser(app, pilot)
+        # Run the three operations in turn, answering the question where there is one.
         for keys, expected in (("c", None), ("i", "Install or repair alpha?"), ("h", None)):
             await pilot.press(keys)
             if expected:
@@ -579,6 +621,7 @@ def test_every_operation_is_one_cli_call_with_the_machine_options(tmp_path: Path
 
     run_app(tmp_path, recorded_fake, scenario)
 
+    # Assert: one call per operation, in order, each for the one package.
     operations = [call for call in recorded_fake.calls() if call["key"] in ("check-updates", "install", "check")]
     assert [call["key"] for call in operations] == ["check-updates", "install", "check"]
     assert all(call["targets"] == ["alpha"] for call in operations)
@@ -596,6 +639,7 @@ def test_the_package_program_runs_check_update_repair_uninstall_and_health_as_cl
     async def scenario(app, pilot) -> None:
         """Press each operation key, answer the dialog where there is one, and come back."""
         await wait_for(pilot, lambda: has(app, "Installed:"), "the package view")
+        # Press each operation key, answer the question where there is one, and come back.
         for key, question in (("c", None), ("r", "Install or repair alpha?"), ("x", "Uninstall alpha?"), ("h", None), ("u", "Update 1 package")):
             await pilot.press(key)
             if question:
@@ -608,6 +652,7 @@ def test_the_package_program_runs_check_update_repair_uninstall_and_health_as_cl
 
     run_app(tmp_path, recorded_fake, scenario, program="tui")
 
+    # Assert: one call per operation, each for the package.
     operations = [call for call in recorded_fake.calls() if call["key"] in ("check-updates", "install", "uninstall", "check", "update")]
     assert [call["key"] for call in operations] == ["check-updates", "install", "uninstall", "check", "update"]
     assert all(call["targets"] == ["alpha"] and "--no-input" in call["options"] for call in operations)
@@ -626,8 +671,10 @@ def test_cli_error_text_with_markup_is_shown_literally_everywhere(tmp_path: Path
     async def scenario(app, pilot) -> None:
         """Look at the toast of a failed log lookup, then the failed run's log."""
         await open_browser(app, pilot)
+        # The toast of a failed log lookup shows the text literally.
         await pilot.press("l")
         await wait_for(pilot, lambda: has(app, "[red]x"), "the toast with the literal text")
+        # The failed run's log shows the text literally too.
         await pilot.press("u")
         await wait_for(pilot, lambda: has(app, "Update 1 package"), "the plan")
         await pilot.press("y")
@@ -652,15 +699,18 @@ def test_ctrl_c_on_a_running_run_asks_the_cancel_question_and_never_quits(tmp_pa
     async def scenario(app, pilot) -> None:
         """Press Ctrl-C twice during the call, then answer no."""
         await open_browser(app, pilot)
+        # Update the package and wait for the call to start.
         await pilot.press("u")
         await wait_for(pilot, lambda: has(app, "Update 1 package"), "the plan")
         await pilot.press("y")
         await wait_for(pilot, lambda: isinstance(app.screen, RunScreen) and app.screen.session is not None and app.screen.session.running, "the call to be in flight")
+        # Ctrl-C asks the cancel question; a second Ctrl-C does not close it.
         await pilot.press("ctrl+c")
         await wait_for(pilot, lambda: has(app, "Cancel after the current package?"), "the cancel question")
         await pilot.press("ctrl+c")
         await pilot.pause()
         assert has(app, "Cancel after the current package?") and app.return_code is None
+        # Answering no lets the run finish.
         await pilot.press("n")
         await wait_for(pilot, lambda: isinstance(app.screen, RunScreen) and app.screen.outcome is not None, "the run to finish")
         assert app.screen.outcome.ok and app.return_code is None
@@ -679,8 +729,10 @@ def test_ctrl_c_over_a_question_asked_during_a_run_is_ignored(tmp_path: Path, re
     async def scenario(app, pilot) -> None:
         """Reach the follow-up question, press Ctrl-C, answer no."""
         await open_browser(app, pilot)
+        # A follow-up question appears inside the running batch.
         await pilot.press("c")
         await wait_for(pilot, lambda: has(app, "without a checksum"), "the follow-up question")
+        # Ctrl-C over the question does nothing; answering no continues.
         await pilot.press("ctrl+c")
         await pilot.pause()
         assert has(app, "without a checksum") and app.return_code is None
@@ -704,6 +756,7 @@ def test_ctrl_c_quits_when_nothing_is_running(tmp_path: Path, recorded_fake: Fak
         await pilot.press("ctrl+c")
         await wait_for(pilot, lambda: app.return_code == 1, "the program to quit")
 
+    # Act: go to the place and press Ctrl-C.
     run_app(tmp_path, recorded_fake, scenario)
 
     assert not [call for call in recorded_fake.calls() if call["key"] == "update"]
@@ -723,6 +776,7 @@ def test_ctrl_c_on_the_checksum_question_before_any_call_quits(tmp_path: Path, r
         await pilot.press("ctrl+c")
         await wait_for(pilot, lambda: app.return_code == 1, "the program to quit")
 
+    # Act: confirm the plan and press Ctrl-C on the checksum question.
     run_app(tmp_path, recorded_fake, scenario)
 
     assert not [call for call in recorded_fake.calls() if call["key"] == "update"]
@@ -738,7 +792,7 @@ def test_a_100000_record_run_keeps_the_keys_responsive_and_the_log_bounded(tmp_p
     latencies: list[float] = []
 
     async def scenario(app, pilot) -> None:
-        """Start the run and press ? while the follower is still reading, timing the answer."""
+        """Start the run and press the help key while the follower is still reading, timing the answer."""
         await open_browser(app, pilot)
         await pilot.press("u")
         await wait_for(pilot, lambda: has(app, "Update 1 package"), "the plan")
@@ -752,6 +806,7 @@ def test_a_100000_record_run_keeps_the_keys_responsive_and_the_log_bounded(tmp_p
             latencies.append(time.monotonic() - started)
             await pilot.press("escape")
             await wait_for(pilot, lambda: not has(app, "Browser"), "help to close")
+        # Wait for the run to finish; the log stays bounded.
         await wait_for(pilot, lambda: isinstance(app.screen, RunScreen) and app.screen.outcome is not None, "the run to finish", timeout=60)
         log = app.screen.query_one("RunLog")
         assert len(log.lines) <= MAX_LOG_LINES and has(app, "ok alpha 2.0.0")
@@ -767,6 +822,7 @@ def test_ingesting_100000_records_takes_bounded_time(tmp_path: Path) -> None:
     with open(path, "w", encoding="utf-8", newline="\n") as handle:
         for number in range(100_000):
             handle.write(json.dumps({"event": "subprocess_line", "cmd": "git", "line": f"line {number}"}) + "\n")
+    # Feed everything through the follower and the renderer, polling until the file is consumed.
     stream, renderer = EventStream(path), EventRenderer()
     started = time.monotonic()
     shown = 0
@@ -787,6 +843,7 @@ def test_with_colour_off_nothing_is_carried_by_colour_alone(tmp_path: Path, reco
         {"event": "phase_end", "phase": "Verify", "status": "failed", "elapsed": 0.5},
     ]
     update_run(recorded_fake, tmp_path, ("alpha",), records=records)
+    # The CLI double answers the update with a failed document.
     recorded_fake.scenario["update"][0]["doc"] = result("update", [entry("alpha", ok=False, status="failed", code=3, error={"code": "x", "message": "checksum differs"})])
     recorded_fake.scenario["update"][0]["events"]["result"] = recorded_fake.scenario["update"][0]["doc"]
     recorded_fake.respond("update", **recorded_fake.scenario["update"].pop(0))
@@ -795,10 +852,12 @@ def test_with_colour_off_nothing_is_carried_by_colour_alone(tmp_path: Path, reco
     async def scenario(app, pilot) -> None:
         """Run the failing update and read the screen and the log's own styles."""
         await open_browser(app, pilot)
+        # Run the failing update and wait for the finished run view.
         await pilot.press("u")
         await wait_for(pilot, lambda: has(app, "Update 1 package"), "the plan")
         await pilot.press("y")
         await wait_for(pilot, lambda: isinstance(app.screen, RunScreen) and app.screen.outcome is not None, "the run to finish")
+        # The failure is carried by words, not by colour alone.
         text = "\n".join(screen_text(app))
         for word in ("✗ Verify failed", "Warning: slow mirror", "Error: checksum differs", "Failed (exit code 3)", "x alpha: update failed"):
             assert word in text, word
@@ -836,6 +895,7 @@ def test_the_root_of_the_run_is_on_the_status_line_and_in_the_title_at_80x24(tmp
         await wait_for(pilot, lambda: has(app, "alpha"), "the first screen")
         seen["rows"], seen["title"] = screen_text(app), app.sub_title
 
+    # Act: start the program on the chosen root.
     run_app(tmp_path, recorded_fake, scenario, program=program, root=root)
 
     status = seen["rows"][-1].strip()

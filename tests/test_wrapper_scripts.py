@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+# Directory that holds the importable gupkg source packages.
 SRC_ROOT = Path(__file__).resolve().parents[1] / "src"
 
 pytestmark = [pytest.mark.process, pytest.mark.skipif(os.name != "nt", reason="Windows batch wrapper behavior")]
@@ -60,8 +61,10 @@ def test_a_missing_inner_launcher_exits_9009_and_nothing_on_path_or_in_the_curre
         for decoy in ("gupkg.cmd", "gupkg-tui.cmd", "gupkg-manager.cmd"):
             (folder / decoy).write_text(f'@echo off\r\necho ran> "{marker}"\r\n', encoding="ascii")
 
+    # Act: launch the wrapper whose inner launcher is missing.
     result = run(tmp_path / name, cwd=tmp_path / "cwd", path=str(decoys))
 
+    # Assert: exit code 9009, and neither decoy ran.
     assert result.returncode == 9009
     assert "incomplete" in result.stderr and not marker.exists()
     # The message says what the file is and what a person who copied it into a package folder needs instead.

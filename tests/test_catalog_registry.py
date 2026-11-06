@@ -27,6 +27,7 @@ from tests.support.scope import scope_of
 
 pytestmark = pytest.mark.unit
 
+# Address of the registry archive that the tests serve.
 SOURCE = "https://example.org/main.zip"
 
 
@@ -48,6 +49,7 @@ def sync(system, root: Path, archive: bytes, **options):
     return sync_registry(registry_cache_dir(root, "main"), scope_of(system), name="main", source=SOURCE, **options)
 
 
+# Registry files that are all valid: two versions and a tracker for ``foo``.
 GOOD = {
     "foo/1.0/pkg.toml": version_text("1.0"),
     "foo/1.1/pkg.toml": version_text("1.1"),
@@ -82,6 +84,7 @@ def test_syncing_the_same_archive_again_reports_current(system, tmp_path: Path) 
 
 def test_one_invalid_package_version_or_tracker_is_reported_and_skipped(system, tmp_path: Path) -> None:
     """Invalid entries are dropped one by one and listed as problems; the rest of the registry is published."""
+    # Arrange: the valid files plus broken, half-broken and linked entries.
     files = {
         **GOOD,
         "broken/1.0/pkg.toml": "format = 1\n[origin]\nurl = 'x'\n",
@@ -91,9 +94,11 @@ def test_one_invalid_package_version_or_tracker_is_reported_and_skipped(system, 
         "linked-seed/_bootstrap/pkg.toml": tracker_text(),
     }
 
+    # Act: sync the registry and load what was published.
     result = sync(system, tmp_path, registry_zip(files))
     snapshot = load_registry("main", registry_cache_dir(tmp_path, "main"), scope_of(system))
 
+    # Assert: invalid entries are skipped one by one and each skip is reported.
     assert result.ok
     assert sorted(snapshot.entries) == ["bar", "foo", "halfbad"]
     assert [version.name for version in snapshot.entry("halfbad").versions] == ["1.0"]

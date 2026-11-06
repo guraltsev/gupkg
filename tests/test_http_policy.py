@@ -23,6 +23,7 @@ from gupkg.system.port import Mode
 
 pytestmark = pytest.mark.unit
 
+# Address used by the policy tests.
 URL = "https://example.org/data"
 
 
@@ -105,6 +106,7 @@ def test_a_client_never_reads_the_process_environment_for_the_token(system: Fake
     assert "Authorization" not in system.request_log[0].headers
 
 
+# Spellings of a network share that a file address must not reach.
 UNC_SPELLINGS = [
     pytest.param("file:////server/share/tool.zip", id="four-slashes"),
     pytest.param("file://server/share/tool.zip", id="host-form"),

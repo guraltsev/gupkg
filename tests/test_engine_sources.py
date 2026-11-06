@@ -1,4 +1,4 @@
-"""Cover how ``App`` is populated and kept: downloaded, script-populated and shipped (design 4, decisions D27, D28, D41).
+"""Cover how ``App`` is populated and kept: downloaded, script-populated and shipped (design 4).
 
 Behaviour covered: a version directory with a ``[track]`` table or a ``track`` hook is rejected before any work; a recoverable
 ``App`` is disposable (deleting every ``App`` and repairing leaves the package installed and healthy with integration
@@ -8,7 +8,7 @@ or replaced, ``--purge`` asks first and names an unrecoverable ``App``, and ``ch
 package or the global setting opts out of the ``App`` fingerprint.
 
 Real: the engine, the catalog, real folders and zip archives. Mocked: ``FakeSystem`` (URL fixtures, process doubles that play
-the populate scripts). Out of scope: bundled installs (issue 033), the command line.
+the populate scripts). Out of scope: bundled installs, the command line.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ from tests.support.mode import tree_snapshot
 
 pytestmark = pytest.mark.unit
 
+# Tables that declare a shim and an environment variable.
 SHIM = '[[shim]]\nname = "tool"\ntarget = "$App\\\\app.exe"\n\n[[env]]\nname = "TOOL_HOME"\nvalue = "$App"\n'
 
 
@@ -84,6 +85,7 @@ def test_a_version_directory_with_update_discovery_is_rejected_before_any_work(w
 @pytest.mark.parametrize("shipped", [None, False, True], ids=["default", "shipped-false", "shipped-true-with-url"])
 def test_a_recoverable_app_is_disposable(world: World, shipped: bool | None, repair: str) -> None:
     """Deleting the App of every version and repairing leaves the package installed and healthy, integration unchanged."""
+    # Arrange: install and update the package, shipped or downloaded.
     if shipped:
         world.publish_shipped("tool", "1.0.0", download=True, tables=SHIM)
     else:
@@ -91,16 +93,20 @@ def test_a_recoverable_app_is_disposable(world: World, shipped: bool | None, rep
     assert world.one("install", "tool").ok
     world.publish("tool", "1.1.0", tables=SHIM, shipped=shipped)
     assert world.one("update", "tool").ok
+    # Delete the app of every version.
     package = world.user / "tool"
     for version in ("1.0.0", "1.1.0"):
         for item in sorted((package / version / "App").rglob("*"), reverse=True):
             item.unlink() if item.is_file() else item.rmdir()
         (package / version / "App").rmdir()
+    # Remember the machine, and check that the package is unhealthy.
     state = machine_state(world)
     assert world.one("check", "tool").status == "unhealthy"
 
+    # Act: repair it with ``install --refresh`` or ``check --fix``.
     result = world.one("install", "tool", refresh=True) if repair == "install-refresh" else world.one("check", "tool", fix=True)
 
+    # Assert: the app is back, current and the machine is as it was.
     assert result.ok, result.error
     assert (package / "1.1.0" / "App" / "app.exe").is_file() and current(world) == "1.1.0"
     assert world.one("check", "tool").status == "healthy" and machine_state(world) == state
@@ -155,6 +161,7 @@ def test_a_failing_populate_script_leaves_current_and_integration_unchanged(worl
 
 def test_a_script_populated_app_is_dropped_by_cleanup_only_while_its_inputs_exist(world: World) -> None:
     """cleanup rebuilds-safe: a non-current script App goes while its script exists, and stays when an input is gone."""
+    # Arrange: two versions, and the older one loses an input of its populate script.
     world.publish_script("tool", "1.0.0", tables=SHIM)
     world.one("install", "tool")
     world.publish_script("tool", "1.1.0", tables=SHIM)
@@ -162,10 +169,13 @@ def test_a_script_populated_app_is_dropped_by_cleanup_only_while_its_inputs_exis
     package = world.user / "tool"
     (package / "1.0.0" / "pkg.local" / "populate.cmd").unlink()
 
+    # Act: clean up, keeping nothing.
     kept = world.one("cleanup", "tool", keep=0)
 
+    # Assert: the app stays because it cannot be rebuilt.
     assert kept.ok and (package / "1.0.0" / "App").is_dir()
     assert {"version": "1.0.0", "why": "the populate script's inputs are gone"} in kept.details["kept"]
+    # Restore the input and clean up again.
     (package / "1.0.0" / "pkg.local" / "populate.cmd").write_text("rem restored\n", encoding="utf-8")
     dropped = world.one("cleanup", "tool", keep=0)
     assert dropped.details["apps"] == ["1.0.0"] and not (package / "1.0.0" / "App").exists()
@@ -221,14 +231,18 @@ def test_purge_of_an_unrecoverable_shipped_app_asks_and_names_it(world: World) -
 
 def test_a_shipped_app_with_a_url_is_never_replaced_but_recovered_when_missing(world: World) -> None:
     """--refresh leaves a modified shipped App alone; after the App is deleted by hand, repair recovers it from the download_url."""
+    # Arrange: an installed package whose shipped app has a download address, and an edited file.
     world.publish_shipped("tool", "1.0.0", download=True, tables=SHIM)
     world.one("install", "tool")
     app = world.user / "tool" / "1.0.0" / "App"
     (app / "app.exe").write_text("mine", encoding="utf-8")
 
+    # Act: refresh the install.
     kept = world.one("install", "tool", refresh=True)
 
+    # Assert: the edited app is never replaced.
     assert kept.ok and (app / "app.exe").read_text() == "mine"
+    # Delete the app, then install again to recover it.
     for item in sorted(app.rglob("*"), reverse=True):
         item.unlink()
     app.rmdir()
@@ -251,7 +265,7 @@ def test_a_shipped_app_without_a_url_cannot_be_recovered(world: World) -> None:
 
 @pytest.mark.parametrize("opt_out", ["package", "global", "none"])
 def test_check_reports_a_modified_app_file_unless_the_fingerprint_is_switched_off(world: World, opt_out: str) -> None:
-    """A changed file of a shipped App is reported; `record_manifest = false` (package) or the global switch silences it (D41)."""
+    """A changed file of a shipped App is reported; `record_manifest = false` (package) or the global switch silences it."""
     top = "record_manifest = false\n" if opt_out == "package" else ""
     if opt_out == "global":
         world.write_app_settings(tables="[install]\nrecord_manifest = false\n")

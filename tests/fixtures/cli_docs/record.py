@@ -15,8 +15,11 @@ import sys
 import tempfile
 from pathlib import Path
 
+# Directory of this recording script.
 HERE = Path(__file__).resolve().parent
+# Repository root, two levels above the fixtures directory.
 REPO = HERE.parents[2]
+# Launcher script that every recorded command runs through.
 LAUNCHER = REPO / "src" / "gupkg" / "gupkg.cmd"
 sys.path.insert(0, str(REPO))
 
@@ -36,6 +39,7 @@ def main() -> None:
     """Build the world, run the real CLI and save the documents."""
     work = Path(tempfile.mkdtemp(prefix="gupkg-doc-record-"))
     try:
+        # Create sample installed packages and a registry cache for the commands to work on.
         root = work / "home" / "opt"
         for name in ("alpha", "beta"):
             package(root, name, ("1.0.0", "2.0.0"))
@@ -43,6 +47,7 @@ def main() -> None:
         cache = build_registry(root, {"copyq": {"versions": ["1.0.0"]}, "drv": {"versions": ["1.0.0"]}, "graphviz": {"versions": ["1.0.0"]}})
         manifest = next(cache.rglob("pkgs/drv/1.0.0")) / "pkg.toml"
         manifest.write_text(manifest.read_text(encoding="utf-8").replace("format = 2\n", 'format = 2\nmodes = ["system"]\n', 1), encoding="utf-8")
+        # Write settings that confine the recorded commands to the temporary tree.
         (work / "temp").mkdir()
         settings = work / "settings.toml"
         settings.write_text(
@@ -50,9 +55,11 @@ def main() -> None:
             '[[registry]]\nname = "main"\nsource = "https://example.org/main.zip"\n',
             encoding="utf-8",
         )
+        # Environment and options shared by every recorded command.
         env = {**os.environ, "USERPROFILE": str(work / "home"), "APPDATA": str(work / "appdata"), "TEMP": str(work / "temp")}
         options = ["--root", str(root), "--settings", str(settings), "--sandbox", str(work / "sb")]
 
+        # Helpers that run the real CLI and save a recording with the temporary folder masked.
         def run(*args: str) -> str:
             """Run the real CLI and return standard output (the call may fail, with a document)."""
             done = subprocess.run([str(LAUNCHER), *options, *args], capture_output=True, text=True, env=env, encoding="utf-8", stdin=subprocess.DEVNULL, check=False)
@@ -64,12 +71,14 @@ def main() -> None:
                 text = text.replace(variant, "@ROOT@")
             (HERE / name).write_text(text, encoding="utf-8", newline="\n")
 
+        # Record the output of each command in turn.
         run("install", "alpha@1.0.0", "beta@1.0.0", "--yes", "--no-input")
         keep("list.json", run("list", "--json"))
         keep("list_names.json", run("list", "--names", "--json"))
         keep("list_available.json", run("list", "--available", "--json"))
         keep("info.json", run("info", "alpha", "--json"))
         keep("registry_status.json", run("registry", "status", "--json"))
+        # Record machine-readable plans and results of installs, including a failure.
         keep("check.json", run("check", "--json", "--no-input", "--", "alpha"))
         keep("install_plan.json", run("install", "--plan", "--json", "--no-input", "--", "copyq"))
         keep("install_result.json", run("install", "--yes", "--json", "--no-input", "--", "gamma@1.0.0"))

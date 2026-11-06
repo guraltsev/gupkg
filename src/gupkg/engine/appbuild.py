@@ -43,7 +43,6 @@ from ..services.populate import populate_app, populate_git, prepare_app, run_cus
 from ..services.safepath import remove_tree
 from ..services.unpack.gitsource import CommitMismatch
 from ..redact import redact_url
-from ..services.values import file_name_from_url
 from .context import MAX_RECORDED_FILES, Engine, require_trusted_tools, require_work_folder
 from .fingerprint import aggregate_digest, app_files
 from .installer import InstallerError, run_installer
@@ -60,6 +59,13 @@ class Populated:
 
     ``sections`` holds the keys to merge into the version's receipt (``source``, ``app``, ``inputs``) and
     ``checksum`` the record of a download or a git checkout (``None`` for a script).
+
+    Attributes
+    ----------
+    sections : Mapping[str, Any]
+        The keys to merge into the version's receipt.
+    checksum : ChecksumRecord | None
+        The checksum record of a download or git checkout, or ``None`` for a script.
     """
 
     sections: Mapping[str, Any]
@@ -144,14 +150,17 @@ def populate_version(
 
         # The three ways of filling App: the built-in download script, a git checkout, a custom script.
         if kind == "download":
+            # Download, verify and unpack (or run the vendor installer); the receipt keeps the credential-free URL.
             checksum, ran = _download_and_unpack(engine, client, manifest, paths, name, version, skip, allow_installer)
             sections["source"]["url"] = redact_url(source.download_url)
             if ran is not None:
                 sections["source"]["installer"] = ran
         elif kind == "git":
+            # A git source is checked out at its pinned commit; the receipt records the credential-free URL.
             checksum = _checkout(engine, client, manifest, paths, name, version, skip)
             sections["source"]["url"] = redact_url(source.download_url)
         else:
+            # A custom populate script fills the staged App itself, so the receipt records the script name.
             hook = HookContext(name, version, engine.system, engine.scope, client, paths)
             with phase("Unpack"):
                 emit(Step(f"Running the populate script {source.script}"))
@@ -219,16 +228,22 @@ def _download_and_unpack(
     with phase("Unpack"):
         # The cached file is hashed again right before it is used (it could have been replaced since).
         reverify(fetched)
+
+        # The hook context points at the verified download so unpack and prepare steps can find it.
         hook = HookContext(
             name, version, engine.system, engine.scope, client,
             HookPaths(paths.package_root, paths.version_root, paths.app, fetched.download.path, paths.work, paths.cache),
         )
+
+        # An ordinary archive or file is unpacked straight into the staged App.
         if source.installer is None:
             populate_app(
                 engine.system, manifest, fetched.download.path, paths.app, context=hook,
-                filename=file_name_from_url(fetched.download.final_url), seven_zip=engine.seven_zip_path(), limits=engine.limits,
+                filename=fetched.download.filename, seven_zip=engine.seven_zip_path(), limits=engine.limits,
             )
             return fetched.record, None
+
+        # A vendor installer runs only when the settings allow it; it then fills the staged App itself.
         if not allow_installer:
             raise InstallerError(f"{name} {version} {INSTALLER_LABEL}, and hooks.allow_vendor_installers is false")
         ran = run_installer(engine, fetched, source.installer.run, paths.app, paths.work, source.require, name, version)
@@ -249,6 +264,7 @@ def _checkout(
         if verification.skipped:
             emit(Warning(f"{source.download_url} pins no commit and is not verified: continuing because the call allowed it ({verification.decision})."))
     with phase("Unpack"):
+        # Clone and check out into the staged App; a commit that differs from the pin is reported as a checksum failure.
         hook = HookContext(name, version, engine.system, engine.scope, client, paths)
         try:
             report = populate_git(engine.scope, manifest, paths.app, context=hook, limits=engine.limits)
@@ -260,6 +276,8 @@ def _checkout(
 def _move_into_place(staged: Path, target: Path, work_root: Path, replace: bool, move: Callable[[Path, Path], None]) -> None:
     """Rename the finished *staged* folder to *target*; an old ``App`` is moved aside first and restored on failure."""
     old: Path | None = None
+
+    # An empty App folder is simply replaced; a populated one is set aside only when a refresh was requested.
     if os.path.lexists(target):
         if target.is_dir() and not any(target.iterdir()):
             target.rmdir()
@@ -268,6 +286,8 @@ def _move_into_place(staged: Path, target: Path, work_root: Path, replace: bool,
             move(target, old)
         else:
             raise AppBuildError(f"{target} already holds an App; use --refresh to rebuild it")
+
+    # The single rename that publishes the App; on failure the old App is put back before the error is raised.
     try:
         move(staged, target)
     except OSError as error:
@@ -281,6 +301,8 @@ def _move_into_place(staged: Path, target: Path, work_root: Path, replace: bool,
                     f"(it could not be put back: {restore_error})"
                 ) from error
         raise AppBuildError(f"The App cannot be moved into place at {target}: {error}") from error
+
+    # The replacement succeeded, so the previous App is no longer needed.
     if old is not None:
         remove_tree(old)
 
@@ -291,6 +313,18 @@ def app_section(files: Mapping[str, str] | None, limit: int = MAX_RECORDED_FILES
     An ``App`` of more than *limit* (``MAX_RECORDED_FILES``) files records the count and the digest but not the list (the receipt
     stays small enough to be read, see ``MAX_RECEIPT_BYTES``); ``check`` then still sees that something changed, though
     it cannot name the file.
+
+    Parameters
+    ----------
+    files : Mapping[str, str] or None
+        Relative path to SHA-256 for every file of the finished ``App``, or ``None`` when files are not recorded.
+    limit : int
+        The largest file count whose list is stored in the receipt.
+
+    Returns
+    -------
+    dict[str, Any]
+        The ``[app]`` section: ``recorded``, and when recorded ``count``, ``fingerprint`` and ``files`` or ``files_omitted``.
     """
     if files is None:
         return {"recorded": False}

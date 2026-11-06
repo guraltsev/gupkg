@@ -1,11 +1,11 @@
 """Cover what ``FakeSystem`` promises tests and ``gupkg --sandbox``.
 
-Behavior covered: the registry access log lists every registry read and write in order; shortcut records are ``.lnk.json``
+Behavior covered: the registry access log lists every registry reading and writing in order; shortcut records are ``.lnk.json``
 files that never leave the fake's temporary tree; URLs and programs that were not set up raise instead of reaching the machine;
 sandbox state persists in ``system.json``; ``gupkg --sandbox DIR install`` creates no registry value, shortcut or PATH change on
 the real machine, and a system-mode sandbox install follows the elevated flag in ``system.json``; the sandbox runs programs by
 identity, never by name; the helper functions that callers use to ask about elevation, admin-only folders and mandatory child
-processes. The registry rule of the engine (install, update and uninstall read nothing but ``PATH``) is in
+processes. The registry rule of the engine (install, update and uninstall consult nothing but ``PATH``) is in
 ``test_engine_batch.py``.
 
 Real: the command line, the engine, package trees and 7-Zip. Fake: the registry, shortcuts, elevation, URLs and processes. The
@@ -45,18 +45,20 @@ pytestmark = pytest.mark.unit
 
 
 # ---------------------------------------------------------------------------
-# The registry access log (D18, D38)
+# The registry access log
 # ---------------------------------------------------------------------------
 
 
 def test_registry_access_log_lists_each_read_write_and_delete_in_order(system: FakeSystem) -> None:
     """Every registry operation is logged once, in the order it happened, with the value written."""
+    # Act: touch the registry in a known order.
     system.set_env(Mode.USER, "TOOL_HOME", r"C:\Tools", True)
     system.get_path(Mode.USER)
     system.set_path(Mode.USER, [r"C:\Tools\bin"])
     system.delete_env(Mode.SYSTEM, "OLD_VALUE")
     system.get_env(Mode.USER, "tool_home")
 
+    # Assert: the log lists each access in that order.
     assert system.registry_log == [
         RegistryAccess("write", "user", "TOOL_HOME", r"C:\Tools"),
         RegistryAccess("read", "user", "Path"),
@@ -73,14 +75,17 @@ def test_registry_access_log_lists_each_read_write_and_delete_in_order(system: F
 
 def test_shortcut_records_are_lnk_json_files_inside_the_fake_tree(tmp_path: Path) -> None:
     """A shortcut becomes a visible ``.lnk.json`` record, and a path outside the fake's root is redirected below it."""
+    # Arrange: a fake machine, a shortcut inside it and one outside it.
     system = FakeSystem(tmp_path / "machine")
     inside = system.scope_folders(Mode.USER).shortcut_root / "Group" / "Tool.lnk"
     outside = tmp_path / "elsewhere" / "Other.lnk"
     spec = ShortcutSpec(r"C:\Tools\tool.exe", "--go", r"C:\Tools", r"C:\Tools\tool.ico,2", "A tool")
 
+    # Act: write both shortcuts.
     system.write_shortcut(inside, spec)
     system.write_shortcut(outside, ShortcutSpec(r"C:\Other.exe"))
 
+    # Assert: only the one inside the tree is stored, and as a JSON record.
     record = json.loads(inside.with_name("Tool.lnk.json").read_text(encoding="utf-8"))
     assert record["spec"]["arguments"] == "--go" and record["path"] == str(inside)
     assert not outside.parent.exists()
@@ -90,6 +95,7 @@ def test_shortcut_records_are_lnk_json_files_inside_the_fake_tree(tmp_path: Path
 
 def test_urls_and_programs_that_were_not_set_up_raise_instead_of_reaching_the_machine(tmp_path: Path) -> None:
     """An unknown URL or program raises ``UnexpectedCall`` (an ``OSError``); registered doubles run and stream their lines."""
+    # Arrange: a fake machine with one known address and one scripted program.
     seen: list[str] = []
     system = FakeSystem(
         tmp_path / "machine",
@@ -97,14 +103,17 @@ def test_urls_and_programs_that_were_not_set_up_raise_instead_of_reaching_the_ma
         processes={"tool": lambda call: ProcessResult(4, "line one\nline two\n", "warn\n")},
     )
 
+    # Unregistered addresses and programs raise.
     with pytest.raises(UnexpectedCall):
         system.fetch("https://example.invalid/unknown", None, tmp_path / "never")
     with pytest.raises(UnexpectedCall):
         system.fetch_text("https://example.invalid/unknown")
     with pytest.raises(UnexpectedCall):
         system.run(["unlisted.exe", "--flag"])
+    # A scripted program answers with its lines and status.
     result = system.run([r"C:\Anywhere\Tool.exe"], on_line=seen.append)
 
+    # Assert: nothing was fetched, and the calls were logged.
     assert not (tmp_path / "never").exists()
     assert (result.returncode, seen) == (4, ["line one", "line two", "warn"])
     assert system.fetch_text("https://example.invalid/known") == "ok"
@@ -113,6 +122,7 @@ def test_urls_and_programs_that_were_not_set_up_raise_instead_of_reaching_the_ma
 
 def test_a_url_fixture_can_fail_or_be_computed_per_request(tmp_path: Path) -> None:
     """A fixture may be an exception to raise, or a function of the URL and headers, so a test can stage outages and changes."""
+    # Arrange: a failing address and one computed from the request headers.
     calls: list[dict[str, str]] = []
     system = FakeSystem(
         tmp_path / "machine",
@@ -122,6 +132,7 @@ def test_a_url_fixture_can_fail_or_be_computed_per_request(tmp_path: Path) -> No
         },
     )
 
+    # The failing address raises, and the computed one sees the headers.
     with pytest.raises(OSError, match="connection reset"):
         system.fetch_text("https://example.invalid/down")
     assert system.fetch_text("https://example.invalid/echo", {"X-Who": "gupkg"}) == "hello gupkg"
@@ -148,6 +159,7 @@ def test_a_real_seven_zip_runs_even_though_other_programs_do_not(tmp_path: Path)
 
 def test_sandbox_state_persists_in_system_json_across_runs(tmp_path: Path) -> None:
     """Registry values, their log, broadcasts survive in ``system.json`` and are read by the next run."""
+    # Arrange: a sandbox over a delegate, with some changes made in it.
     sandbox = tmp_path / "sandbox"
     sandbox.mkdir()
     first = FakeSystem.sandbox(sandbox, FakeSystem(tmp_path / "delegate"))
@@ -155,8 +167,10 @@ def test_sandbox_state_persists_in_system_json_across_runs(tmp_path: Path) -> No
     first.set_path(Mode.USER, [r"C:\a", r"C:\b"])
     first.broadcast_environment_change()
 
+    # Act: open a second sandbox over the same folder.
     second = FakeSystem.sandbox(sandbox, FakeSystem(tmp_path / "delegate"))
 
+    # Assert: the second sandbox starts from the first one's state.
     assert second.registry_log == first.registry_log
     assert second.env_values(Mode.USER)["TOOL_HOME"].value == "home"
     assert second.broadcasts == 1
@@ -166,18 +180,22 @@ def test_sandbox_state_persists_in_system_json_across_runs(tmp_path: Path) -> No
 
 def real_machine_trap() -> WindowsSystem:
     """Return a real-system stand-in that fails on every machine-integration call."""
+    # A machine class whose integration points fail the test when they are called.
     class Trap(WindowsSystem):
         """Fail on any call that would change or read the real machine's integration points."""
 
+    # Make every integration point of the trap fail.
     for name in (
         "get_env", "set_env", "delete_env", "get_path", "set_path", "broadcast_environment_change",
         "write_shortcut", "read_shortcut", "delete_shortcut", "is_elevated",
         "scope_folders",
     ):
         def trapped(self, *args, _name=name, **kwargs):
+            """Fail the test, naming the integration point that was reached."""
             raise AssertionError(f"the sandbox reached the real machine through {_name}")
 
         setattr(Trap, name, trapped)
+    # Arm the trap and prove that it is armed.
     trap = Trap()
     with pytest.raises(AssertionError, match="reached the real machine"):
         trap.get_path(Mode.USER)  # the trap is armed
@@ -186,9 +204,11 @@ def real_machine_trap() -> WindowsSystem:
 
 def package_with_every_effect(machine: Machine) -> Path:
     """Write a distribution folder ``Tool 1.0.0`` that ships its App and declares a shortcut, an environment value, a PATH entry and a shim."""
+    # Write a shipped app in a download folder.
     version = machine.base / "downloads" / "tool" / "1.0.0"
     (version / "App").mkdir(parents=True)
     (version / "App" / "tool.exe").write_text("tool", encoding="utf-8")
+    # Its manifest declares a shortcut, a variable, a PATH entry and a shim.
     (version / "pkg.toml").write_text(
         "format = 2\n[source]\nshipped = true\n\n"
         '[[shortcut]]\nname = "Tool"\ntarget = "$App\\\\tool.exe"\n\n'
@@ -214,12 +234,15 @@ def test_sandbox_install_leaves_the_real_machine_alone_and_records_what_it_would
     The real Windows implementation is swapped for one that fails on every registry, shortcut, broadcast or
     elevation call, so reaching the machine would fail the run.
     """
+    # Arrange: a package with every kind of effect, and a sandbox folder.
     machine = Machine(tmp_path)
     version = package_with_every_effect(machine)
     sandbox = tmp_path / "sandbox"
 
+    # Act: install the package in the sandbox.
     code = sandboxed(machine, sandbox, "install", str(version))
 
+    # Assert: the real machine was not touched, and the sandbox state records what would have happened.
     captured = capsys.readouterr()
     state = json.loads((sandbox / "system.json").read_text(encoding="utf-8"))
     app = str(machine.user_root / "tool" / "current" / "App")
@@ -227,6 +250,7 @@ def test_sandbox_install_leaves_the_real_machine_alone_and_records_what_it_would
     assert state["env"]["user"]["TOOL_HOME"]["value"] == app
     assert app in state["env"]["user"]["Path"]["value"]
     assert {entry["name"] for entry in state["registry_log"] if entry["operation"] == "read"} == {"Path"}
+    # Each shortcut is recorded as a file of the sandbox, and the shim is in its bin folder.
     shortcut_records = list(sandbox.rglob("*.lnk.json"))
     assert [record.name for record in shortcut_records] == ["Tool.lnk.json"]
     assert json.loads(shortcut_records[0].read_text(encoding="utf-8"))["spec"]["target_path"] == app + "\\tool.exe"
@@ -240,18 +264,22 @@ def test_sandbox_install_follows_the_elevated_flag_in_system_json(
 
     Elevation in the sandbox is the flag in ``system.json``, never the real token.
     """
+    # Arrange: a package with every kind of effect, and an empty sandbox.
     machine = Machine(tmp_path)
     version = package_with_every_effect(machine)
     sandbox = tmp_path / "sandbox"
     sandbox.mkdir()
 
+    # Act: install as an ordinary user.
     normal = sandboxed(machine, sandbox, "install", str(version), "--yes")
     assert normal == 0, capsys.readouterr()
     assert not (machine.system_root / "tool").exists() and (machine.user_root / "tool" / "current").exists()
 
+    # Elevate the sandbox in its state file, then install again.
     (sandbox / "system.json").write_text('{"elevated": true}\n', encoding="utf-8")
     code = sandboxed(machine, sandbox, "install", str(version), "--yes")
 
+    # Assert: the second install used the system root and the system variables.
     state = json.loads((sandbox / "system.json").read_text(encoding="utf-8"))
     assert code == 0, capsys.readouterr()
     assert "TOOL_HOME" in state["env"]["system"] and (machine.system_root / "tool" / "current").exists()
@@ -261,6 +289,7 @@ def test_sandbox_install_follows_the_elevated_flag_in_system_json(
 @pytest.mark.process
 def test_a_program_outside_the_allow_list_raises_in_a_sandbox_run(tmp_path: Path) -> None:
     """In sandbox mode only git and 7-Zip may run; any other program, such as a package script, raises ``UnexpectedCall``."""
+    # Arrange: a sandbox over the real machine, and a script that would leave a marker.
     sandbox = tmp_path / "sandbox"
     sandbox.mkdir()
     system = FakeSystem.sandbox(sandbox, WindowsSystem())
@@ -268,11 +297,13 @@ def test_a_program_outside_the_allow_list_raises_in_a_sandbox_run(tmp_path: Path
     script = tmp_path / "script.cmd"
     script.write_text(f'@echo off\r\necho x> "{marker}"\r\n', encoding="ascii")
 
+    # Act and assert: a script and a command outside the allow list raise.
     with pytest.raises(UnexpectedCall):
         system.run([str(script)])
     with pytest.raises(UnexpectedCall):
         system.run(["cmd", "/c", f"echo x> {marker}"])
 
+    # Assert: the marker was never made, and the allowed programs still run.
     assert not marker.exists()
     assert system.run(["git", "--version"]).returncode == 0
     if os.name == "nt":

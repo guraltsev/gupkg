@@ -24,12 +24,23 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+# Largest amount of a hook's text that is scanned, which bounds the cost of every pattern.
 MAX_SCAN_BYTES = 400_000
 
 
 @dataclass(frozen=True)
 class Hint:
-    """One known service pattern found in one hook file."""
+    """One known service pattern found in one hook file.
+
+    Attributes
+    ----------
+    file : str
+        The hook file the pattern was found in.
+    service : str
+        The service the pattern belongs to.
+    suggestion : str
+        The service setting that replaces the hook code.
+    """
 
     file: str
     service: str
@@ -41,8 +52,11 @@ class Hint:
 _NETWORK = re.compile(
     r"urllib\.request|url" + "open" + r"|urlretrieve|requests\.|http\.client|fetch_text|fetch_json|resolve_redirects"
 )
+# A GitHub release API address, capturing ``owner/name``.
 _GITHUB = re.compile(r"api\.github\.com/repos/(?P<repo>[\w.\-]+/[\w.\-]+)/releases")
+# A GitLab release API address, capturing the project path.
 _GITLAB = re.compile(r"gitlab\.com/api/v4/projects/(?P<project>[\w.\-%]+)/releases")
+# Any http(s) address, used to fill ``<url>`` placeholders in a suggestion.
 _URL = re.compile(r"https?://[^\s\"'<>)]+")
 
 # (applies to, pattern, service, suggestion). ``applies to`` is "discovery" for a file that reads
@@ -86,6 +100,20 @@ def scan_text(text: str, file_name: str = "") -> list[Hint]:
         The Python source of a hook module (at most ``MAX_SCAN_BYTES`` characters are read).
     file_name : str
         The name to put on each hint.
+
+    Returns
+    -------
+    list of Hint
+        The matching hints, version-discovery hint first, then in pattern order.
+
+    Examples
+    --------
+    Basic usage:
+
+    >>> scan_text('import zipfile\\nzipfile.ZipFile(p).extractall(d)\\n', 'unpack.py')
+    [Hint(file='unpack.py', service='unpack: zip', suggestion='[source] kind = "zip" (inferred), strip, subdir, [[source.extract]]')]
+    >>> scan_text('x = 1\\n')
+    []
     """
     text = text[:MAX_SCAN_BYTES]
     is_discovery = _NETWORK.search(text) is not None
@@ -101,11 +129,13 @@ def scan_text(text: str, file_name: str = "") -> list[Hint]:
         elif gitlab:
             hints.append(Hint(file_name, "track: gitlab",
                               f'[track] provider = "gitlab", project = "{gitlab.group("project").replace("%2F", "/")}", asset_pattern = "<regex>"'))
+    # Apply the remaining patterns in order, skipping discovery patterns once a provider has matched.
     for scope, pattern, service, suggestion in _PATTERNS:
         if scope == "discovery" and (not is_discovery or any(h.service.startswith("track:") for h in hints)):
             continue
         if not re.search(pattern, text):
             continue
+        # Fill the suggestion with the first non-GitHub-API address in the text, when there is one.
         filled = suggestion
         if "<url>" in suggestion:
             found = next((u for u in _URL.findall(text) if "api.github.com" not in u), None)
@@ -118,11 +148,22 @@ def scan_directory(directory: Path) -> list[Hint]:
     """Return the service hints for every Python file below ``<directory>/pkg.local``.
 
     Unreadable files are skipped. Hints come in file order, then pattern order.
+
+    Parameters
+    ----------
+    directory : Path
+        The version directory whose ``pkg.local`` is scanned.
+
+    Returns
+    -------
+    list of Hint
+        The hints for all scanned files; empty when there is no ``pkg.local``.
     """
     found: list[Hint] = []
     local = Path(directory) / "pkg.local"
     if not local.is_dir():
         return found
+    # Scan each Python file, reading at most the scan limit and skipping unreadable ones.
     for module in sorted(local.rglob("*.py")):
         try:
             with open(module, "rb") as handle:

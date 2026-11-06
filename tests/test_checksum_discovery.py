@@ -2,7 +2,7 @@
 
 Discovery runs through the real client over ``FakeSystem`` URL fixtures. It only *finds* a
 digest and names its provenance; verifying a download and the missing-checksum policy belong
-to issue 027 and are out of scope here.
+to the download checks and are out of scope here.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from gupkg.system.fake import FakeHttp, FakeSystem
 pytestmark = pytest.mark.unit
 
 HEX_A, HEX_B = "a1" * 32, "b2" * 32
+# The values a tracker's checksum source expands its templates with.
 VALUES = {"version": "1.2", "download_url": "https://example.org/dl/tool-1.2.zip", "page_url": "https://example.org/page"}
 
 

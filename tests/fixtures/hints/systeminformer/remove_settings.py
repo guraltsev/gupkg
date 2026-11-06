@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 
+# Version of the update-check module interface that this script implements.
 PKG_MODULE_API = 1
 
 

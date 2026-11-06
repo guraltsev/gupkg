@@ -33,10 +33,15 @@ from .http import HttpClient, HttpError, decode_body
 from .regexrun import RegexRunner
 from .values import TrackError, absolute_url, compile_runtime, expand
 
+# A bare 64-digit hexadecimal token (a SHA-256), not part of a longer run.
 _HEX = re.compile(r"(?<![0-9A-Fa-f])[0-9A-Fa-f]{64}(?![0-9A-Fa-f])")
+# A GNU sums line: ``<digest>  <name>`` (optionally ``*`` before the name).
 _GNU_LINE = re.compile(r"^\s*(?P<digest>[0-9A-Fa-f]{64})\s+[ *]?(?P<name>\S.*?)\s*$")
+# A BSD sums line: ``SHA256 (<name>) = <digest>``.
 _BSD_LINE = re.compile(r"^\s*SHA256\s*\((?P<name>.+)\)\s*=\s*(?P<digest>[0-9A-Fa-f]{64})\s*$", re.IGNORECASE)
+# Any two-field line, used only to detect a listed name with a malformed digest.
 _LOOSE_LINE = re.compile(r"^\s*(?P<digest>\S+)\s+[ *]?(?P<name>\S.*?)\s*$")
+# Upper bound on lines examined in a sums file, so a hostile page cannot stall the scan.
 _MAX_LINES = 200_000
 
 
@@ -49,6 +54,13 @@ class ChecksumAbsent(ChecksumDiscoveryError):
 
     Only an absence can be waived by ``[source.checksum] optional = true``; a source that holds
     something wrong (a malformed digest line) is a plain ``ChecksumDiscoveryError`` and always stops.
+
+    Parameters
+    ----------
+    message : str
+        What is missing.
+    kind : str
+        ``not listed``, ``not found`` or ``fetch failed``.
     """
 
     def __init__(self, message: str, kind: str) -> None:
@@ -70,6 +82,8 @@ def discover_checksum(
     values : mapping
         ``version``, the provider's captures, and ``download_url`` (the address that will be
         downloaded). ``page_url`` is needed for ``page_match``.
+    regex : RegexRunner, optional
+        The bounded regex runner for JSON paths and page patterns; one is made when omitted.
 
     Returns
     -------
@@ -81,9 +95,12 @@ def discover_checksum(
     ChecksumDiscoveryError
         If the source cannot be read or does not contain a usable digest.
     """
+    # Locate the digest by whichever source kind the tracker configured; each branch
+    # records where the digest came from for the error message.
     runner = regex or RegexRunner(client.system)
     try:
         if checksum.sidecar is not None:
+            # A sidecar file next to the download: find the entry for its name, or its only digest.
             url = absolute_url(expand(checksum.sidecar, values))
             text = _text(client, url)
             wanted = _basename(values.get("download_url", ""))
@@ -92,22 +109,26 @@ def discover_checksum(
         elif checksum.sums_file is not None:
             url = absolute_url(expand(checksum.sums_file, values))
             text = _text(client, url)
+            # A named entry in a sums file; a listed entry with a malformed digest is refused.
             entry = expand(checksum.entry or "", values)
             digest = find_digest(text, entry)
             if digest is None and _malformed_entry(text, entry):
                 raise ChecksumDiscoveryError(f"{url} lists {entry!r} with something that is not a SHA-256: refused, not skipped")
             where = f"{url} (entry {entry!r})"
         elif checksum.json is not None:
+            # A JSON document: select string nodes by path and take the first hexadecimal one.
             url = absolute_url(expand(checksum.json, values))
             document = client.json(url)
             nodes = parse_path(expand(checksum.path or "", values)).values(document, runner.fullmatches)
             digest = next((_clean(str(node)) for node in nodes if isinstance(node, str) and _HEX.search(_clean(node))), None)
             where = url
         else:
+            # A page: scan it with the tracker's pattern for a capture holding a digest.
             page = values.get("page_url")
             if not page:
                 raise ChecksumDiscoveryError("page_match needs a provider that reads a page; this one has none")
             text = _text(client, page)
+            # Take the first match whose named or first capture is a 64-digit hexadecimal digest.
             pattern = compile_runtime(checksum.page_match or "", values)
             found = runner.finditer(pattern, text, limit=100, what=page)
             digest = None
@@ -118,6 +139,7 @@ def discover_checksum(
                     digest = candidate.strip()
                     break
             where = page
+    # Classify failures: absences may be waived by ``optional``, malformed sources never.
     except ChecksumDiscoveryError:
         raise
     except HttpError as error:
@@ -127,6 +149,7 @@ def discover_checksum(
         raise ChecksumAbsent(f"Could not discover the checksum: {error}", "fetch failed") from error
     except (JsonPathError, PatternError) as error:
         raise ChecksumDiscoveryError(f"Could not discover the checksum: {error}") from error
+    # No source produced a digest: report an absence that ``optional`` may waive.
     if digest is None:
         raise ChecksumAbsent(f"{where} does not contain a SHA-256 for this download", "not listed")
     return DiscoveredChecksum(digest.lower(), "vendor-sums")
@@ -138,9 +161,37 @@ def find_digest(text: str, name: str | None) -> str | None:
     Both ``<digest>  <name>`` (also with ``*`` before the name) and ``SHA256 (<name>) =
     <digest>`` lines are read. Names compare exactly after dropping a leading ``./`` and
     turning ``\\`` into ``/``. With no *name*, a text holding exactly one digest returns it.
+
+    Parameters
+    ----------
+    text : str
+        The sums-file text.
+    name : str or None
+        The file name to look up, or ``None`` to accept a text with a single digest.
+
+    Returns
+    -------
+    str or None
+        The lower-case digest, or ``None`` when none is listed for *name*.
+
+    Examples
+    --------
+    Basic usage:
+
+    >>> d = 'a' * 64
+    >>> find_digest(d + '  app.zip\\n' + 'b' * 64 + ' *other.zip\\n', 'app.zip')[:8]
+    'aaaaaaaa'
+    >>> find_digest('b' * 64 + ' *other.zip', 'other.zip')[:8]
+    'bbbbbbbb'
+
+    Edge cases:
+
+    >>> print(find_digest(d + '  app.zip', 'missing.zip'))
+    None
     """
     if name is None:
         return _only_digest(text)
+    # Scan line by line, bounded, for an exact normalized name match.
     wanted = _normal(name)
     for count, line in enumerate(text.splitlines()):
         if count > _MAX_LINES:

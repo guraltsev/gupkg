@@ -25,12 +25,15 @@ from tests.support.engine import World, pkg_text
 
 pytestmark = pytest.mark.unit
 
+# The ``modes`` key that makes a package portable.
 PORTABLE_TOP = 'modes = ["portable"]\n'
+# The ``[portable]`` table that persists files and plants markers.
 PERSIST = """
 [portable]
 persist = ["Data", "settings.ini"]
 markers = ["portable.marker", { path = "conf/local.xml", content = "<local/>" }]
 """
+# The files of the vendor's portable archive.
 MEMBERS = {
     "app.exe": "app", "settings.ini": "vendor default settings\n", "Data/state.txt": "vendor default state\n",
     "portable": "marker of the vendor\n", "sub/legacy.cfg": "legacy",
@@ -80,19 +83,24 @@ def test_portable_state_survives_update_and_switch_back_and_forth(world: World) 
 
 def test_a_portable_package_keeps_its_config_across_an_update_in_user_mode(world: World) -> None:
     """``modes = ["portable"]`` with ``persist = ["config"]``: ``data\\config`` survives an update from 1.0 to 1.1 in the user root."""
+    # Arrange: a portable package with a persisted config folder.
     tables = '[portable]\npersist = ["config"]\n'
     members = {"app.exe": "app", "config/settings.ini": "vendor default\n"}
     world.publish("tool", "1.0", mode="user", members=members, top=PORTABLE_TOP, tables=tables)
 
+    # Act: install it.
     first = world.one("install", "tool")
 
+    # Assert: the install went to the user root, and the user then edits the config.
     assert first.ok and first.mode == "user", first.error
     package = world.user / "tool"
     (package / "1.0" / "App" / "config" / "settings.ini").write_text("changed by the user\n", encoding="utf-8")
     world.publish("tool", "1.1", mode="user", members=members, top=PORTABLE_TOP, tables=tables)
 
+    # Act: update to a version with the same files.
     assert world.one("update", "tool").ok
 
+    # Assert: the user's config survived in the data folder and in the new version.
     assert (package / "data" / "config" / "settings.ini").read_text() == "changed by the user\n"
     assert (package / "1.1" / "App" / "config" / "settings.ini").read_text() == "changed by the user\n"
     assert not (world.system_root / "tool").exists()
@@ -209,6 +217,7 @@ def test_uninstall_is_never_refused_by_the_modes_of_the_package(tmp_path: Path, 
 
 def test_integrate_none_touches_no_registry_start_menu_or_path(world: World) -> None:
     """A user root with integrate = "none": shims go to <root>\\bin and nothing else of the machine changes."""
+    # Arrange: a setting that turns integration off, and a package that declares every kind of integration.
     world.write_app_settings(tables="[integration]\nintegrate = 'none'\n")
     tables = (
         '[[shortcut]]\nname = "Tool"\ntarget = "$App\\\\app.exe"\n\n[[shim]]\nname = "tool"\ntarget = "$App\\\\app.exe"\n\n'
@@ -217,8 +226,10 @@ def test_integrate_none_touches_no_registry_start_menu_or_path(world: World) -> 
     world.publish("tool", "1.0.0", mode="user", tables=tables)
     world.fake.registry_log.clear()
 
+    # Act: install the package.
     result = world.one("install", "tool")
 
+    # Assert: the program is installed and nothing outside the root was touched.
     assert result.ok, result.error
     assert (world.user / "bin" / "tool.exe").is_file() and (world.user / "bin" / "tool.config.toml").is_file()
     assert world.fake.registry_log == [] and world.fake.broadcasts == 0 and world.fake.shortcuts() == {}

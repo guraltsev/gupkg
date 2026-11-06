@@ -27,6 +27,7 @@ from tests.support.reporters import Collector
 
 pytestmark = pytest.mark.unit
 
+# Fixed clock value that makes log names predictable.
 FIXED_TIME = datetime(2026, 10, 22, 10, 15, 0, tzinfo=timezone.utc)
 
 
@@ -37,6 +38,7 @@ def _world(tmp_path: Path, name: str = "Example", **options) -> CliWorld:
     return world
 
 
+# Environment entry that the sample manifests declare.
 ENV = '[[env]]\nname = "EXAMPLE_READY"\nvalue = "yes"\n'
 
 
@@ -70,6 +72,7 @@ def test_log_files_are_named_by_utc_time_command_and_package(tmp_path: Path) -> 
             pass
         session.finish("done", 0)
 
+    # Assert: the log files are named by UTC time, command and package.
     assert [p.name for p in _run_files(root, ".log")] == ["20261022T101500Z-install-firefox.log"]
     assert [p.name for p in _run_files(root, ".jsonl")] == ["20261022T101500Z-install-firefox.jsonl"]
     assert [p.name for p in _run_files(root / "firefox", ".log")] == ["20261022T101500Z-install.log"]
@@ -100,6 +103,7 @@ def test_header_and_footer_record_the_run_and_its_exit_code(tmp_path: Path) -> N
     with session:
         session.finish("install: changed", 3)
 
+    # Assert: the header and footer carry the run's settings and exit code.
     text = _run_files(tmp_path, ".log")[0].read_text(encoding="utf-8").splitlines()
     assert text[:7] == [
         "# gupkg 1.2.3", "# command: install", "# argv: --scope user install x", "# mode: user",
@@ -150,6 +154,7 @@ def test_retention_keeps_the_newest_runs_and_drops_aged_ones_when_a_run_starts(t
     (logs / "notes.txt").write_text("keep me", encoding="utf-8")
     (logs / "events.jsonl").write_text("caller file", encoding="utf-8")
 
+    # Act: a new run starts with a smaller retention limit.
     session = RunSession(
         command="check", argv=[], mode="user", elevated=False, version="1.0.0", reporters=[],
         fallback_base=tmp_path, clock=lambda: FIXED_TIME, keep_runs=4, keep_days=10000,
@@ -157,6 +162,7 @@ def test_retention_keeps_the_newest_runs_and_drops_aged_ones_when_a_run_starts(t
     with session:
         session.finish("done", 0)
 
+    # Assert: only the newest runs remain, and the caller's own files are untouched.
     runs = sorted({p.stem for p in logs.glob("2*")})
     assert len(runs) == 4
     assert runs[-1] == "20261022T101500Z-check"
@@ -189,8 +195,10 @@ def test_a_log_failure_in_the_middle_of_a_run_is_one_warning_not_a_failed_run(
     from gupkg.report import logfile
     from gupkg.report.events import emit
 
+    # Switch that makes the writes of the wrapped log file fail.
     disk_full = {"armed": False}
 
+    # A log file wrapper whose writes fail once the switch is set.
     class Disk:
         """Wrap a real log file; writes fail once the disk is "full"."""
 
@@ -198,13 +206,16 @@ def test_a_log_failure_in_the_middle_of_a_run_is_one_warning_not_a_failed_run(
             self.handle = handle
 
         def write(self, text):
+            """Write *text*, failing with a full-disk error once the disk is marked full."""
             if disk_full["armed"]:
                 raise OSError(28, "No space left on device")
             return self.handle.write(text)
 
+        # Delegate every other attribute to the wrapped file.
         def __getattr__(self, name):
             return getattr(self.handle, name)
 
+    # Open every log through the wrapper and collect the reported events.
     monkeypatch.setattr(logfile, "open", lambda *args, **kwargs: Disk(builtins.open(*args, **kwargs)), raising=False)
     collector = Collector()
     session = RunSession(
@@ -212,6 +223,7 @@ def test_a_log_failure_in_the_middle_of_a_run_is_one_warning_not_a_failed_run(
         clock=lambda: FIXED_TIME,
     )
 
+    # Run a session in which the disk fills up after the first event.
     with session:
         session.bind(tmp_path)
         emit(Step("before"))
@@ -220,6 +232,7 @@ def test_a_log_failure_in_the_middle_of_a_run_is_one_warning_not_a_failed_run(
         emit(Step("after two"))
         session.finish("done", 0)
 
+    # Assert: one warning, every event delivered, and the log holds what was written before the failure.
     warnings = [e for e in collector.events if isinstance(e, Warning)]
     assert len(warnings) == 1 and "No space left on device" in warnings[0].text
     assert [e.text for e in collector.events if isinstance(e, Step)] == ["before", "after one", "after two"]
@@ -299,8 +312,10 @@ def test_a_junction_planted_as_the_log_directory_cannot_redirect_the_writes(tmp_
     (world.user / "Example" / ".gupkg").mkdir(parents=True)
     world.fake.create_junction(world.user / "Example" / ".gupkg" / "logs", outside)
 
+    # Act: install while the log directory is a junction to another place.
     result = world.cli("install", "Example", "--events-file", "events.jsonl")
 
+    # Assert: nothing was written outside, and one warning was reported.
     output = result.out + result.err
     assert result.code == 0
     assert list(outside.iterdir()) == []
@@ -334,11 +349,13 @@ def test_an_install_leaves_package_logs_a_linking_run_log_and_nothing_in_appdata
     world = _world(tmp_path, tables=ENV)
     appdata, programdata = Path(world.env["APPDATA"]), Path(world.env["ProgramData"])
 
+    # Act: install a package.
     result = world.cli("install", "Example")
 
     output = result.out + result.err
     root = world.user
     assert result.code == 0, output
+    # One package log, its events and one run log exist.
     [package_log] = _run_files(root / "Example", ".log")
     [package_events] = _run_files(root / "Example", ".jsonl")
     [run_log] = _run_files(root, ".log")
@@ -402,6 +419,7 @@ def test_a_failing_git_clone_shows_gits_error_lines_in_the_unpack_phase_of_conso
         return ProcessResult(128, "", "Cloning into 'App.new'...\nfatal: unable to access 'https://example.invalid/x.git/': Could not resolve host\n")
 
     cli_world.fake.processes["git"] = git
+    # A version folder whose manifest downloads from a Git address.
     folder = cli_world.user / "Example" / "1.0.0"
     folder.mkdir(parents=True)
     folder.joinpath("pkg.toml").write_text(
@@ -409,6 +427,7 @@ def test_a_failing_git_clone_shows_gits_error_lines_in_the_unpack_phase_of_conso
         encoding="utf-8",
     )
 
+    # Act: install the package whose clone fails.
     result = cli_world.cli("install", "Example")
 
     output = result.out + result.err
@@ -476,12 +495,15 @@ def test_a_call_with_several_packages_logs_each_one_and_links_them_from_the_run_
         cli_world.publish(name, "2.0.0")
     user = cli_world.user
 
+    # Act: update both packages in one call.
     result = cli_world.cli("update", "alpha", "beta", "--yes")
 
+    # Assert: the run log links both package logs.
     output = result.out + result.err
     assert result.code == 0, output
     [run_log] = _run_files(user, ".log")[-1:]
     run_text = run_log.read_text(encoding="utf-8")
+    # Check the log of each package.
     for name in ("alpha", "beta"):
         package_log = _run_files(user / name, ".log")[-1]
         package_text = package_log.read_text(encoding="utf-8")
@@ -540,13 +562,16 @@ def test_an_events_file_name_that_is_a_symbolic_link_is_not_followed(
     victim = _victim(tmp_path)
 
     def plant(logs: Path) -> None:
+        """Plant a symbolic link to the victim file where the event log will be created."""
         try:
             os.symlink(victim, logs / "events.jsonl")
         except OSError:
             pytest.skip("this account may not create symbolic links")
 
+    # Act: install with an events file whose name is already a symbolic link.
     logs, result = _run_install_with_events_file(tmp_path, plant)
 
+    # Assert: the install succeeded and the link target was not written.
     assert result.code == 0
     assert victim.read_text(encoding="utf-8") == "precious"
     assert "WARNING: Cannot write the log of package Example" in (result.out + result.err)
@@ -564,6 +589,7 @@ def test_a_link_planted_between_the_check_and_the_creation_is_not_followed(
     real_lexists = os.path.lexists
 
     def racing_lexists(path) -> bool:
+        """Report the event log as free, then create it as a link to the victim before the caller can."""
         free = not real_lexists(path)
         if Path(path).name == "events.jsonl" and free:
             os.link(victim, path)       # the attacker wins the race here
@@ -586,15 +612,18 @@ def test_an_events_file_that_gains_a_second_name_while_being_created_is_refused(
 
     from gupkg.report import logfile
 
+    # Names of the second links that the faked open creates.
     created: list[Path] = []
 
     def linking_open(path, mode="r", *args, **kwargs):
+        """Open *path* and, when the event log is created, give it a second hard-link name."""
         handle = builtins.open(path, mode, *args, **kwargs)
         if Path(path).name == "events.jsonl" and mode == "x":
             created.append(tmp_path / f"second-name-{len(created)}.txt")
             os.link(path, created[-1])
         return handle
 
+    # Act: install with that open in place.
     monkeypatch.setattr(logfile, "open", linking_open, raising=False)
     logs, result = _run_install_with_events_file(tmp_path, lambda logs: None)
 
@@ -624,6 +653,7 @@ def test_latest_log_is_published_without_writing_through_planted_names(tmp_path:
     logs.mkdir(parents=True)
     os.link(victim, logs / "latest.log.tmp")
     os.link(victim, logs / "latest.log")
+    # Run a session over the planted names.
     session = RunSession(
         command="check", argv=[], mode="user", elevated=False, version="1.0.0", reporters=[],
         fallback_base=tmp_path, clock=lambda: FIXED_TIME,
@@ -679,6 +709,7 @@ def test_the_age_limit_alone_removes_old_runs_while_the_count_would_keep_them(tm
         fallback_base=tmp_path, clock=lambda: FIXED_TIME, keep_runs=50, keep_days=90,
     )
 
+    # Act: run a session, which prunes old runs.
     with session:
         session.finish("done", 0)
 
@@ -700,6 +731,7 @@ def test_pruning_leaves_symbolic_links_named_like_old_runs_alone(tmp_path: Path)
         os.symlink(victim, link)
     except OSError:
         pytest.skip("this account may not create symbolic links")
+    # Act: run a session, which prunes the expired runs.
     session = RunSession(
         command="check", argv=[], mode="user", elevated=False, version="1.0.0", reporters=[],
         fallback_base=tmp_path, clock=lambda: FIXED_TIME,
@@ -723,11 +755,13 @@ def test_pruning_never_touches_what_a_junction_or_hard_link_named_like_an_old_ru
     (outside / "keep.txt").write_text("keep", encoding="utf-8")
     logs = _logs(tmp_path)
     logs.mkdir(parents=True)
+    # Expired names that are a junction and a hard link.
     expired = FIXED_TIME - timedelta(days=500)
     junction = logs / f"{expired:%Y%m%dT%H%M%SZ}-install.log"
     linked = logs / f"{expired - timedelta(days=1):%Y%m%dT%H%M%SZ}-install.jsonl"
     system.create_junction(junction, outside)
     os.link(victim, linked)
+    # Act: run a session, which prunes the expired names.
     session = RunSession(
         command="check", argv=[], mode="user", elevated=False, version="1.0.0", reporters=[],
         fallback_base=tmp_path, clock=lambda: FIXED_TIME,
@@ -756,6 +790,7 @@ def test_old_fixed_temporary_names_for_latest_log_are_never_written(
         os.link(victim, logs / name)
     else:
         (logs / name).write_text("precious", encoding="utf-8")
+    # Act: run a session while the old fixed temporary name exists.
     session = RunSession(
         command="check", argv=[], mode="user", elevated=False, version="1.0.0", reporters=[],
         fallback_base=tmp_path, clock=lambda: FIXED_TIME,
@@ -774,15 +809,18 @@ def test_the_cli_keeps_warnings_and_errors_on_standard_error_and_json_mode_moves
     world = _world(tmp_path, tables=ENV)
     world.fake.failures["broadcast_environment_change"] = OSError("broadcast refused")
 
+    # A warning goes to standard error and the success to standard output.
     plain = world.cli("install", "Example")
     assert plain.code == 0
     assert "WARNING: " in plain.err and "could not be broadcast" in plain.err and "WARNING" not in plain.out
     assert "==> Done" in plain.out and "ok Example 1.0.0" in plain.out
 
+    # An error also goes to standard error.
     failed = world.cli("install", "no-such-package")
     assert failed.code == 2
     assert "ERROR:" in failed.err and "ERROR:" not in failed.out
 
+    # JSON mode moves everything to standard error.
     world.fake.failures["broadcast_environment_change"] = OSError("broadcast refused")
     world.publish("Second", "1.0.0", tables=ENV.replace("EXAMPLE_READY", "SECOND_READY"))
     machine = world.cli("install", "Second", "--json")

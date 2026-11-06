@@ -1,7 +1,7 @@
 """Detect elevated runs and verify that the code they import is admin-only.
 
 This module is the one place outside ``system/windows.py`` that uses ``ctypes``:
-it reads the process token and access-control lists. It must stay
+it queries the process token and access-control lists. It must stay
 self-contained (no ``gupkg`` imports) because ``bootstrap.py`` loads it by file
 path before the package, and so before any other code, is importable; the trust
 check therefore cannot be shadowed by anything in the package directory.
@@ -22,7 +22,7 @@ that names the directory, the offending principal, and a repair command.
 
 Implementation Approach
 -----------------------
-The Windows security descriptor is read through ``GetNamedSecurityInfoW`` and
+The Windows security descriptor is obtained through ``GetNamedSecurityInfoW`` and
 decoded in Python, so the policy (which principals may write, which rights count
 as writing) is plain data that can be tested with synthetic descriptors. Only
 allow entries that apply to the directory itself are considered; every ancestor
@@ -51,7 +51,17 @@ class UntrustedLocationError(RuntimeError):
 
 @dataclass(frozen=True)
 class AccessEntry:
-    """Describe one allow entry of a directory's access-control list."""
+    """Describe one allow entry of a directory's access-control list.
+
+    Attributes
+    ----------
+    sid : str
+        The security identifier the entry applies to.
+    mask : int
+        The access mask that is allowed.
+    inherit_only : bool
+        Whether it applies only to children.
+    """
 
     sid: str
     mask: int
@@ -60,7 +70,17 @@ class AccessEntry:
 
 @dataclass(frozen=True)
 class DirectorySecurity:
-    """Carry the owner and allow entries of one directory's security descriptor."""
+    """Carry the owner and allow entries of one directory's security descriptor.
+
+    Attributes
+    ----------
+    owner : str
+        The owner's security identifier.
+    entries : tuple[AccessEntry, ...]
+        The allow entries.
+    has_dacl : bool
+        Whether the directory has an access-control list.
+    """
 
     owner: str
     entries: tuple[AccessEntry, ...]
@@ -91,42 +111,16 @@ _WRITE_RIGHTS = 0x2 | 0x4 | 0x10 | 0x40 | 0x100 | 0x10000 | 0x40000 | 0x80000 | 
 # Smaller set that suffices to rename or replace a directory from above it.
 _REPLACE_RIGHTS = 0x40 | 0x10000 | 0x40000 | 0x80000 | 0x10000000
 
+# ACE flag marking an entry that applies only to children, not to the directory itself.
 _ACE_INHERIT_ONLY = 0x08
-_ACCESS_ALLOWED_TYPES = {0, 9}  # plain and callback allow entries; both put the SID at offset 8
+
+# Plain and callback allow entries; both put the SID at offset 8.
+_ACCESS_ALLOWED_TYPES = {0, 9}
 
 
 # ---------------------------------------------------------------------------
 # Elevation detection
 # ---------------------------------------------------------------------------
-
-
-def _admin_signal() -> bool:
-    """Return ``IsUserAnAdmin()`` as a bool (raises when the call is unavailable)."""
-    return bool(ctypes.windll.shell32.IsUserAnAdmin())
-
-
-def _token_elevation_signal() -> bool:
-    """Return the ``TokenElevation`` flag of the process token (raises on any failure)."""
-    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
-    advapi32.OpenProcessToken.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
-    advapi32.GetTokenInformation.argtypes = [
-        wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD),
-    ]
-    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-    token = wintypes.HANDLE()
-    if not advapi32.OpenProcessToken(kernel32.GetCurrentProcess(), 0x8, ctypes.byref(token)):  # TOKEN_QUERY
-        raise OSError(ctypes.get_last_error(), "OpenProcessToken failed")
-    try:
-        elevation = wintypes.DWORD()
-        size = wintypes.DWORD()
-        # TokenElevation = 20
-        if not advapi32.GetTokenInformation(token, 20, ctypes.byref(elevation), ctypes.sizeof(elevation), ctypes.byref(size)):
-            raise OSError(ctypes.get_last_error(), "GetTokenInformation failed")
-        return bool(elevation.value)
-    finally:
-        kernel32.CloseHandle(token)
 
 
 def is_elevated() -> bool:
@@ -163,6 +157,38 @@ def elevated_mode() -> bool:
     return os.environ.get("GUPKG_ELEVATED") == "1" or is_elevated()
 
 
+# --- elevation signals ---
+
+
+def _admin_signal() -> bool:
+    """Return ``IsUserAnAdmin()`` as a bool (raises when the call is unavailable)."""
+    return bool(ctypes.windll.shell32.IsUserAnAdmin())
+
+
+def _token_elevation_signal() -> bool:
+    """Return the ``TokenElevation`` flag of the process token (raises on any failure)."""
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    advapi32.OpenProcessToken.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
+    advapi32.GetTokenInformation.argtypes = [
+        wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD),
+    ]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    token = wintypes.HANDLE()
+    if not advapi32.OpenProcessToken(kernel32.GetCurrentProcess(), 0x8, ctypes.byref(token)):  # TOKEN_QUERY
+        raise OSError(ctypes.get_last_error(), "OpenProcessToken failed")
+    try:
+        elevation = wintypes.DWORD()
+        size = wintypes.DWORD()
+        # TokenElevation = 20
+        if not advapi32.GetTokenInformation(token, 20, ctypes.byref(elevation), ctypes.sizeof(elevation), ctypes.byref(size)):
+            raise OSError(ctypes.get_last_error(), "GetTokenInformation failed")
+        return bool(elevation.value)
+    finally:
+        kernel32.CloseHandle(token)
+
+
 # ---------------------------------------------------------------------------
 # Trust policy
 # ---------------------------------------------------------------------------
@@ -174,9 +200,22 @@ def bundled_runtime_paths(package_directory: Path) -> list[Path]:
     ``enforce_bundled_runtime`` checks it at start of an elevated process. It holds the package folder and its parent,
     the bundled runtime folder, its ``Lib\\site-packages``, ``python.exe``, the ``python*._pth`` search-path file, the
     ``python*.dll`` libraries and ``bootstrap.py``. Entries that do not exist are listed too (the caller skips them).
+
+    Parameters
+    ----------
+    package_directory : Path
+        Directory of the ``gupkg`` package whose bundled layout is described.
+
+    Returns
+    -------
+    list of Path
+        Trusted folders and files, existing or not.
     """
     package = Path(package_directory)
     runtime = package / "python"
+
+    # The glob entries pick up whichever versioned search-path files and DLLs
+    # the bundled runtime ships.
     return [
         package, package.parent, runtime, runtime / "Lib" / "site-packages", runtime / "python.exe",
         *sorted(runtime.glob("python*._pth")), *sorted(runtime.glob("python*.dll")), package / "bootstrap.py",
@@ -216,6 +255,7 @@ def enforce_bundled_runtime(package_directory: Path, elevated: bool = False) -> 
             "Start gupkg through gupkg.cmd or gupkg.exe; it runs only on its bundled Python "
             f"({expected}, started with -I and -S), not {sys.executable}."
         )
+    # Non-elevated runs only need the interpreter check above.
     if not elevated:
         return
 
@@ -305,10 +345,14 @@ def find_untrusted_principal(security: DirectorySecurity, rights: int, where: st
         Human-readable reason, or ``None`` when only trusted principals qualify.
     """
     place = f"its parent {where}" if where else "it"
+
+    # A missing DACL grants everyone access; a non-admin owner can rewrite the DACL.
     if not security.has_dacl:
         return f"{place} has no access-control list, so everyone can modify it"
     if security.owner not in TRUSTED_SIDS:
         return f"{place} is owned by {_principal_name(security.owner)}, who can change its permissions"
+
+    # Any untrusted allow entry that applies here and carries a modifying right.
     for entry in security.entries:
         if entry.inherit_only or entry.sid in TRUSTED_SIDS:
             continue
@@ -323,7 +367,22 @@ def _principal_name(sid: str) -> str:
 
 
 def untrusted_message(directory: Path, problem: str) -> str:
-    """Build the failure message, including an icacls command that fixes the common case."""
+    """Build the failure message, including an icacls command that fixes the common case.
+
+    Parameters
+    ----------
+    directory : Path
+        Resolved directory that failed the trust check.
+    problem : str
+        Reason returned by ``untrusted_reason``.
+
+    Returns
+    -------
+    str
+        Message naming the directory, the reason, and a repair command.
+    """
+    # The repair resets owner and ACL to administrators and SYSTEM, with
+    # read-and-execute for Users.
     fix = (
         f'icacls "{directory}" /inheritance:r /setowner *S-1-5-32-544 '
         "/grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F *S-1-5-32-545:(OI)(CI)RX"
@@ -361,6 +420,7 @@ def read_directory_security(path: Path) -> DirectorySecurity:
     """
     if os.name != "nt":
         raise OSError("access-control lists can only be read on Windows")
+    # Declare exact signatures so 64-bit pointers are not truncated.
     advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     pointer = ctypes.c_void_p
@@ -370,6 +430,7 @@ def read_directory_security(path: Path) -> DirectorySecurity:
         ctypes.POINTER(pointer), ctypes.POINTER(pointer),
     ]
     advapi32.GetNamedSecurityInfoW.restype = wintypes.DWORD
+    # Length queries and LocalFree take and return plain pointers.
     advapi32.GetSecurityDescriptorLength.argtypes = [pointer]
     advapi32.GetSecurityDescriptorLength.restype = wintypes.DWORD
     advapi32.GetLengthSid.argtypes = [pointer]
@@ -387,6 +448,8 @@ def read_directory_security(path: Path) -> DirectorySecurity:
     if status != 0:
         raise OSError(status, f"GetNamedSecurityInfoW failed for {path}")
     try:
+        # Copy the owner SID out of the system-owned buffer; a null DACL means
+        # no access control at all.
         owner_sid = _sid_text(ctypes.string_at(owner, advapi32.GetLengthSid(owner)))
         if not dacl.value:
             return DirectorySecurity(owner_sid, (), has_dacl=False)
@@ -418,6 +481,7 @@ def parse_acl(data: bytes) -> tuple[AccessEntry, ...]:
         If the structure is truncated or inconsistent.
     """
     try:
+        # Walk the entries in order; each header gives its type, flags and size.
         count = struct.unpack_from("<H", data, 4)[0]
         offset = 8
         entries = []
@@ -425,6 +489,7 @@ def parse_acl(data: bytes) -> tuple[AccessEntry, ...]:
             ace_type, flags, size = struct.unpack_from("<BBH", data, offset)
             if size < 8:
                 raise ValueError("entry too small")
+            # Keep allow entries; skip known deny/audit types; refuse unknown ones.
             if ace_type in _ACCESS_ALLOWED_TYPES:
                 mask = struct.unpack_from("<I", data, offset + 4)[0]
                 sid = _sid_text(data[offset + 8 : offset + size])

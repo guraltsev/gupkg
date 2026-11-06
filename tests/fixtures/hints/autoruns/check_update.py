@@ -21,10 +21,14 @@ from email.utils import parsedate_to_datetime
 from typing import Any
 
 
+# Version of the update-check module interface that this script implements.
 PKG_MODULE_API = 1
 
+# Address that publishes the current release information.
 _URL = "https://download.sysinternals.com/files/Autoruns.zip"
+# File name of the candidate archive.
 _FILE_NAME = "Autoruns.zip"
+# Request headers sent with each lookup.
 _HEADERS = {"User-Agent": "gupkg-update-check/1"}
 
 
@@ -48,6 +52,7 @@ def check_update(context: dict[str, Any]) -> dict[str, str] | None:
         The download cannot be reached or reports no modification date.
     """
     request = urllib.request.Request(_URL, method="HEAD", headers=_HEADERS)
+    # Ask the publisher when the file last changed; that date is the only version information.
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             modified = response.headers.get("Last-Modified")
@@ -57,6 +62,7 @@ def check_update(context: dict[str, Any]) -> dict[str, str] | None:
         raise RuntimeError("Sysinternals Autoruns download reports no Last-Modified date")
     version = parsedate_to_datetime(modified).strftime("%Y%m%d")
 
+    # Report no candidate when this version is installed and healthy.
     current = context.get("current", {})
     if current.get("version") == version and current.get("appReady", True):
         return None

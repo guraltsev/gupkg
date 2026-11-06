@@ -2,7 +2,7 @@
 
 Behaviour covered: ``build_environment`` on an elevated machine with the gupkg installed in an admin-only root succeeds and its scope is the system's, on that root;
 on a normal machine the scope is the user's; an elevated run from a tree that standard users can change is refused with ``StartupError`` (exit code 2) and the
-message of the scope; ``scope_label`` is ``system · <root>`` or ``user · <root>``; ``checksum_policy`` is read from the run's own layers.
+message of the scope; ``scope_label`` is ``system · <root>`` or ``user · <root>``; ``checksum_policy`` is taken from the run's own layers.
 
 Real: ``gupkg_ui.startup`` and ``gupkg.scope.build_scope`` on files below pytest's temporary folder. Fake: ``FakeSystem`` answers the elevation and admin-only questions.
 Out of scope: the screens that show the label (``test_ui_screens.py``) and the command lines (``test_manager_cli.py``).
@@ -154,12 +154,15 @@ def test_a_given_root_that_is_missing_or_not_a_folder_stops_at_startup_and_nothi
     chosen = tmp_path / "chosen"
     if kind == "file":
         chosen.write_text("x", encoding="utf-8")
+    # An installed machine whose settings are in place.
     machine = Machine(tmp_path, installed=True)
     machine.write_app_settings()
     argv = ["--root", str(chosen)] + (["alpha"] if module == "gupkg_tui.cli" else [])
 
+    # Act: start the program with a root that cannot be used.
     code = importlib.import_module(module).main(argv, location=machine.location, system=machine.fake, env=machine.env, command=("gupkg",))
 
+    # Assert: it refuses with exit code 2 and creates nothing.
     expected = f"--root {chosen} is not a folder" if kind == "file" else f"--root {chosen} does not exist (create the folder first)"
     assert code == 2 and capsys.readouterr().err.strip().endswith(expected)
     assert chosen.is_file() if kind == "file" else not chosen.exists()
@@ -180,6 +183,7 @@ def test_through_gupkg_a_missing_root_is_reported_by_the_program_and_nothing_is_
     tree.mkdir()
     (tree / f"gupkg-{word}.cmd").write_text("@echo off\r\n", encoding="ascii")
     system = FakeSystem(tmp_path / "forward", processes={f"gupkg-{word}.cmd": lambda call: ProcessResult(0)})
+    # Act: gupkg forwards to the program with the given root.
     cli.main(["--root", str(chosen), word, *(["alpha"] if word == "tui" else [])], system=system, env={}, location=RunningGupkg("source", tree / "gupkg", (tree,)))
     forwarded = system.foreground_log[0][1:]
     machine = Machine(tmp_path, installed=True)

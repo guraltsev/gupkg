@@ -11,7 +11,7 @@ Usage and API
 (``download`` and ``record``) or raises ``ChecksumMissing``, ``ChecksumMismatch`` or
 ``ChecksumInvalid`` (all ``ChecksumError``: exit code 3, a stable ``code``) or ``HttpError``.
 ``skip`` is the decision of ``--skip-checksum`` (``gupkg.model.checksum.parse_skip_flag``), never a
-setting: this module takes no settings and reads no environment, so a ``[manager]`` value
+setting: this module takes no settings and consults no environment, so a ``[manager]`` value
 cannot reach it. ``reverify(fetched)`` hashes the cached file again and must be called right
 before the file is unpacked or copied.
 
@@ -21,7 +21,7 @@ A missing hash with no usable skip stops the run before the client is called, so
 is never started. When the skip applies, the client is told to require ``https://`` for the
 address and every redirect hop, and the final address is judged again on its parsed form. The
 client computes the SHA-256 of the bytes it wrote to the cache; this module compares that digest
-(and not a digest it read from anywhere else) with the expected one, and records it as
+(and not a digest taken from anywhere else) with the expected one, and records it as
 ``observed_sha256``. The cache entry is renamed into place only after the client verified it;
 ``reverify`` closes the gap between that moment and the use of the file. The skip is shown as a
 warning event, which the engine reports in the Verify phase, and an elevated run shows it too.
@@ -50,15 +50,18 @@ from .unpack.gitsource import CommitMismatch, checkout_commit
 
 @dataclass(frozen=True)
 class FetchedArtifact:
-    """A downloaded artifact and the checksum facts for its receipt."""
+    """A downloaded artifact and the checksum facts for its receipt.
+
+    Attributes
+    ----------
+    download : Download
+        The downloaded file.
+    record : ChecksumRecord
+        The checksum facts for the receipt.
+    """
 
     download: Download
     record: ChecksumRecord
-
-
-def _warn_skipped(url: str, decision: str, what: str) -> None:
-    """Show that this download proceeds without verification."""
-    emit(Warning(f"{what} has no checksum and is not verified: continuing because the call allowed it ({decision})."))
 
 
 def fetch_artifact(
@@ -88,6 +91,11 @@ def fetch_artifact(
     headers, label : optional
         Passed to the client.
 
+    Returns
+    -------
+    FetchedArtifact
+        The downloaded file and the checksum record for the receipt.
+
     Raises
     ------
     ChecksumMissing
@@ -99,10 +107,12 @@ def fetch_artifact(
     HttpError
         The download itself failed, or a hop was not https during a skipped download.
     """
+    # Apply the missing-checksum policy before any byte is requested.
     verification = check_before_download(url, expected_sha256, skip)
     name = label or url.rsplit("/", 1)[-1].split("?", 1)[0] or "the download"
     if verification.skipped:
         _warn_skipped(url, verification.decision, name)
+    # Download under the declared hash; a hash mismatch is never skippable.
     try:
         download = client.download(
             url, expected_sha256=verification.expected, headers=headers, label=label, require_https=verification.skipped
@@ -113,6 +123,7 @@ def fetch_artifact(
             f"A mismatch is never skipped. {error}",
             url, expected=verification.expected,
         ) from error
+    # Build the receipt record from the hash actually observed on the bytes.
     record = verify_observed(
         verification, download.sha256, url=url, final_url=download.final_url, size=download.size, sha256_from=sha256_from
     )
@@ -127,17 +138,24 @@ def reverify(fetched: FetchedArtifact) -> None:
     Call it immediately before the artifact is unpacked or copied: it closes the gap between
     the download's verification and the use of the file.
 
+    Parameters
+    ----------
+    fetched : FetchedArtifact
+        The artifact returned by ``fetch_artifact``.
+
     Raises
     ------
     ChecksumMismatch
         If the file changed, or vanished, after it was verified.
     """
+    # Hash the cached file again; a vanished file counts as a failed verification.
     observed = fetched.record.observed_sha256 or ""
     try:
         digest, size = file_digest(fetched.download.path)
     except OSError as error:
         raise ChecksumMismatch(f"The verified file {fetched.download.path} cannot be read again: {error}",
                                fetched.record.url) from error
+    # Require the same digest and size that were verified at download time.
     if not hashes_equal(digest, observed) or size != fetched.download.size:
         raise ChecksumMismatch(
             f"{fetched.download.path.name} changed after it was verified (SHA-256 {digest}, verified {observed}).",
@@ -153,6 +171,30 @@ def fetch_git(
     The rule runs before ``git`` is started: a pinned *commit* is the anchor, a source with only
     a *ref* is refused unless *skip* applies (https only). The commit that was checked out is
     recorded, and must equal a pinned one.
+
+    Parameters
+    ----------
+    system : System
+        The system port used to run ``git``.
+    mode : Mode
+        The install mode the checkout runs under.
+    url : str
+        The repository address.
+    ref : str or None
+        The branch or tag to check out, when no commit is pinned.
+    commit : str or None
+        The pinned commit that anchors the source, or ``None``.
+    destination : Path
+        Where the working tree is created.
+    work : Path
+        Scratch directory for the checkout.
+    skip : str or None
+        The decision of ``--skip-checksum`` for this call, or ``None``.
+
+    Returns
+    -------
+    ChecksumRecord
+        The receipt record naming the commit that was checked out.
 
     Raises
     ------
@@ -171,3 +213,11 @@ def fetch_git(
     except CommitMismatch as error:
         raise ChecksumMismatch(str(error), url, expected=error.expected, observed=error.observed) from error
     return git_record(verification, resolved, url=url)
+
+
+# --- supporting helpers ---
+
+
+def _warn_skipped(url: str, decision: str, what: str) -> None:
+    """Show that this download proceeds without verification."""
+    emit(Warning(f"{what} has no checksum and is not verified: continuing because the call allowed it ({decision})."))

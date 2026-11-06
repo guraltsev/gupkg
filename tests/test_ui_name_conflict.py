@@ -19,6 +19,7 @@ import pytest
 
 pytestmark = pytest.mark.process
 
+# Message shown for the sample name conflict.
 MESSAGE = (
     "alpha cannot be installed: it would provide the shim 'tool.exe' (C:\\Users\\me\\opt\\bin\\tool.exe), which the installed "
     "package 'beta' already provides. Uninstall 'beta' first, or use a package definition with a different name."
@@ -31,12 +32,14 @@ def test_the_run_screen_shows_the_name_conflict_refusal(tmp_path: Path, recorded
         {"event": "phase_start", "phase": "Resolve"}, {"event": "error", "text": MESSAGE},
         {"event": "phase_end", "phase": "Resolve", "status": "failed", "elapsed": 0.1},
     ])
+    # The update fails with the refusal, and the fake CLI answers with that document.
     failing = result("update", [entry("alpha", ok=False, status="failed", code=2, error={"code": "name-conflict", "message": MESSAGE})])
     recorded_fake.scenario["update"][0]["doc"] = failing
     recorded_fake.scenario["update"][0]["events"]["result"] = failing
     recorded_fake.respond("update", **recorded_fake.scenario["update"].pop(0))
     shown: list[list[str]] = []
 
+    # Act: drive the screens and keep what they show.
     async def scenario(app, pilot) -> None:
         """Run the refused update and keep what the screen shows."""
         await open_browser(app, pilot)
@@ -46,8 +49,10 @@ def test_the_run_screen_shows_the_name_conflict_refusal(tmp_path: Path, recorded
         await wait_for(pilot, lambda: isinstance(app.screen, RunScreen) and app.screen.outcome is not None, "the run to finish")
         shown.append(screen_text(app))
 
+    # Act: run the app through the scenario.
     run_app(tmp_path, recorded_fake, scenario, size=(80, 24))
 
+    # Assert: the refusal and its advice are shown on the failed run screen.
     text = " ".join(" ".join(shown[0]).split())
     assert "alpha cannot be installed: it would provide the shim 'tool.exe'" in text
     assert "which the installed package 'beta' already provides. Uninstall 'beta' first" in text

@@ -1,4 +1,4 @@
-"""Cover the reports of a failed step (issue 035, item 9): what happened, what state the package is in, and the command that fixes it.
+"""Cover the reports of a failed step: what happened, what state the package is in, and the command that fixes it.
 
 Behaviour covered: ``uninstall --purge`` with a file that another program holds open names the file, says the package is already
 uninstalled and its folder left, and gives the command to run again (which then succeeds); an ``update`` that fails after ``current``
@@ -27,6 +27,7 @@ from tests.support.engine import World
 
 pytestmark = pytest.mark.unit
 
+# Table that declares the shim of the test package.
 SHIM = '[[shim]]\nname = "tool"\ntarget = "$App\\\\app.exe"\n'
 
 windows_only = pytest.mark.skipif(sys.platform != "win32", reason="holds a file open with no sharing (Windows file locking)")
@@ -38,14 +39,17 @@ def held_open(path: Path) -> Iterator[None]:
     import ctypes
     from ctypes import wintypes
 
+    # Open the file through the Windows API with no sharing.
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel.CreateFileW.restype = wintypes.HANDLE
     kernel.CreateFileW.argtypes = [
         wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE,
     ]
+    # Create the handle and refuse when the file cannot be held.
     handle = kernel.CreateFileW(str(path), 0x80000000, 0, None, 3, 0x80, None)
     if handle in (None, wintypes.HANDLE(-1).value):
         raise OSError(ctypes.get_last_error(), "cannot hold the file open", str(path))
+    # Hold the file until the block ends.
     try:
         yield
     finally:
@@ -72,13 +76,16 @@ def shim_file(world: World) -> Path:
 @windows_only
 def test_a_purge_that_meets_a_file_in_use_says_what_is_left_and_the_command_to_run_again(world_with_shipped_tool: World) -> None:
     """The failure names the file as in use, says the package is uninstalled and its folder remains, names the command; the retry works."""
+    # Arrange: an installed package and a file of its app that a program holds open.
     package = world_with_shipped_tool.user / "tool"
     locked = package / "1.0.0" / "App" / "app.exe"
     world_with_shipped_tool.engine.yes = True
 
+    # Act: purge while the file is in use.
     with held_open(locked):
         failed = world_with_shipped_tool.one("uninstall", "tool", purge=True)
 
+    # Assert: the failure names the file, says what is left and gives the command to run again.
     assert not failed.ok and failed.exit_code == 3
     message = failed.error["message"]
     assert f"{locked} is in use by another program" in message
@@ -86,6 +93,7 @@ def test_a_purge_that_meets_a_file_in_use_says_what_is_left_and_the_command_to_r
     assert "close the program, then run `gupkg uninstall tool --purge` again" in message
     assert package.is_dir() and not (package / "current").exists()
 
+    # Act again once the program is closed.
     retry = world_with_shipped_tool.one("uninstall", "tool", purge=True)
 
     assert retry.ok and retry.status == "purged" and not package.exists()
@@ -126,9 +134,11 @@ def test_a_failure_before_current_moves_keeps_its_own_message(world_with_shipped
 
 def test_check_reports_a_package_whose_current_is_missing_and_check_fix_changes_nothing(world_with_shipped_tool: World) -> None:
     """A package with a version and a shim but no `current` is a problem of that package, with the command that fixes it."""
+    # Arrange: an installed package whose ``current`` folder is gone.
     package = world_with_shipped_tool.user / "tool"
     os.rmdir(package / "current")
 
+    # Check with and without ``--fix``: both report the problem and neither changes anything.
     for fix in (False, True):
         result = world_with_shipped_tool.one("check", "tool", fix=fix)
 
@@ -141,6 +151,7 @@ def test_check_reports_a_package_whose_current_is_missing_and_check_fix_changes_
         assert "`gupkg install tool`" in message
         assert shim_file(world_with_shipped_tool).is_file() and not (package / "current").exists()
 
+    # Reinstalling repairs it.
     assert world_with_shipped_tool.one("install", "tool").ok
     assert world_with_shipped_tool.one("check", "tool").status == "healthy"
 

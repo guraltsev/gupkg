@@ -43,13 +43,31 @@ class PackageRow(ListRow):
     ----------
     target_text : str, optional
         A target to use instead of the name, such as a folder the person named.
+    target : str
+        The target the CLI understands for this row.
+
+    Methods
+    -------
+    of
+        Build the UI row of a ``ListRow``.
     """
 
     target_text: str | None = None
 
     @classmethod
     def of(cls, row: ListRow) -> PackageRow:
-        """Return the UI row of *row*, its warnings cleaned for display (they come from packages and the network)."""
+        """Return the UI row of *row*, its warnings cleaned for display (they come from packages and the network).
+
+        Parameters
+        ----------
+        row : ListRow
+            The typed row of the CLI's list document.
+
+        Returns
+        -------
+        PackageRow
+            The same row with every warning passed through ``literal``.
+        """
         return cls(
             row.name, row.status, row.version, row.newest_known, row.path, row.following, tuple(literal(text) for text in row.warnings),
             row.restriction, row.restriction_reason, row.problems,
@@ -107,17 +125,26 @@ def read_plan(document: object, targets: Sequence[str]) -> list[PlannedTarget]:
     targets : sequence of str
         The targets that were planned.
 
+    Returns
+    -------
+    list of PlannedTarget
+        One entry per requested target, in the order requested.
+
     Raises
     ------
     gupkg.report.documents.DocumentError
         If the document cannot be read (nothing is then planned).
     """
+    # Parse the document with the one strict reader, then answer for every requested target in the order it was asked.
     by_target = {item.target: item for item in read_plan_document(document).items}
     planned: list[PlannedTarget] = []
     for target in targets:
+        # A target the plan does not mention failed: nothing is assumed about it.
         if target not in by_target:
             planned.append(PlannedTarget(target, "failed", code="no-plan", message="the plan has no entry for this target", exit_code=4))
             continue
+
+        # A plan means ready; an ``up-to-date`` result means nothing to do.
         item = by_target[target]
         if item.plan is not None:
             plan = item.plan
@@ -131,6 +158,8 @@ def read_plan(document: object, targets: Sequence[str]) -> list[PlannedTarget]:
             result = item.result
             error = result.error if result is not None else None
             package = result.package if result is not None else None
+
+            # An invalid checksum keeps a checksum plan so that no policy can skip it; every other failure carries only its code and message.
             if error is not None and error.code == INVALID_CHECKSUM_CODE:
                 planned.append(PlannedTarget(
                     target, "failed", package, checksum=ChecksumPlan(INVALID, "", "", False), code=INVALID_CHECKSUM_CODE,
@@ -141,7 +170,10 @@ def read_plan(document: object, targets: Sequence[str]) -> list[PlannedTarget]:
                     target, "failed", package, code=(error.code if error is not None else None) or "failed",
                     message=(error.message if error is not None else None) or "the plan failed", exit_code=item.exit_code or 3,
                 ))
+
+    # Every requested target now has exactly one entry, in the order requested.
     return planned
+
 
 async def decide_targets(
     planned: Sequence[PlannedTarget],

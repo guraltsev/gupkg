@@ -45,7 +45,9 @@ from .tomlio import dumps_tables
 
 # The time stored for every ZIP entry, so that an export is reproducible byte for byte.
 _ZIP_TIME = (2020, 1, 1, 0, 0, 0)
+# The characters and length a package name may use.
 _PACKAGE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+# The shape of the ``owner/repo`` part of a ``github:owner/repo`` tracker.
 _GITHUB_REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 
 
@@ -55,7 +57,17 @@ class AuthoringError(ValueError):
 
 @dataclass(frozen=True)
 class ExportResult:
-    """The ZIP ``export_distribution`` wrote: where, its SHA-256 and how many entries it holds."""
+    """The ZIP ``export_distribution`` wrote: where, its SHA-256 and how many entries it holds.
+
+    Attributes
+    ----------
+    path : Path
+        The ZIP file that was written.
+    sha256 : str
+        The SHA-256 of the ZIP file.
+    entries : int
+        The number of entries in the ZIP file.
+    """
 
     path: Path
     sha256: str
@@ -82,11 +94,17 @@ def new_package(parent: Path, name: str, version: str | None = None, track: str 
         ``github:owner/repo``: write a tracker that follows the releases of that repository. Without *version* and
         *track* a tracker with placeholders is written.
 
+    Returns
+    -------
+    list of Path
+        The files written, in the order they were written.
+
     Raises
     ------
     AuthoringError
         If the name, version or repository is not valid, or a file to write already exists.
     """
+    # Validate the name, version and tracker repository before deciding any file.
     if not _PACKAGE_NAME.fullmatch(name) or not is_version_name(name):
         raise AuthoringError(f"'{name}' cannot be a package name: use letters, digits, '.', '_' and '-'")
     if version is not None and not is_version_name(version):
@@ -108,6 +126,8 @@ def new_package(parent: Path, name: str, version: str | None = None, track: str 
     if track is not None or version is None:
         files[package / TRACKER_DIR_NAME / MANIFEST_NAME] = _tracker_starter(name, repository)
         files[package / TRACKER_DIR_NAME / TRACKER_LAUNCHER] = launcher_text("check-updates").encode("ascii")
+
+    # Refuse to overwrite anything, and refuse to write through a link.
     for path in files:
         if os.path.lexists(path):
             raise AuthoringError(f"{path} exists; gupkg never overwrites a package definition")
@@ -128,18 +148,21 @@ def new_package(parent: Path, name: str, version: str | None = None, track: str 
 
 def _tracker_starter(name: str, repository: str) -> str:
     """Return the text of a starter tracker that follows the GitHub releases of *repository*."""
+    # The starter is one literal ``pkg.toml``; the commented lines show the user what else can be added.
     return (
         "format = 2\n"
         f'description = "{name}"\n'
         f'project_url = "https://github.com/{repository}"\n'
         "\n"
         "# `gupkg check-updates` runs this tracker and writes each new version as a pinned directory.\n"
+        # The [track] table names the provider and the release asset to follow.
         "[track]\n"
         'provider = "github"\n'
         f'repo = "{repository}"\n'
         "# The release asset to download; ${version} is the version the tracker found.\n"
         f'asset = "{name}-${{version}}-win64.zip"\n'
         "\n"
+        # The tracker's downloads come from the asset URL the provider found.
         "[source]\n"
         'download_url = "${asset_url}"\n'
         "\n"
@@ -152,10 +175,12 @@ def _tracker_starter(name: str, repository: str) -> str:
 
 def _version_starter(name: str, version: str) -> str:
     """Return the text of a starter pinned version directory for *name* *version*."""
+    # The starter is one literal ``pkg.toml``; the missing checksum is left for the user to fill in.
     return (
         "format = 2\n"
         f'description = "{name} {version}"\n'
         "\n"
+        # A placeholder download URL, to be replaced by the real one.
         "[source]\n"
         f'download_url = "https://example.org/{name}-{version}.zip"\n'
         "# gupkg refuses a download without a checksum: add the SHA-256 of the file once you have checked it.\n"
@@ -175,7 +200,23 @@ def _version_starter(name: str, version: str) -> str:
 
 @dataclass(frozen=True)
 class AdoptResult:
-    """The ``pkg.toml`` that ``adopt_version`` wrote, the shortcuts it kept and the shortcut files it skipped (file, reason)."""
+    """The ``pkg.toml`` that ``adopt_version`` wrote, the shortcuts it kept and the shortcut files it skipped (file, reason).
+
+    Attributes
+    ----------
+    path : Path
+        The ``pkg.toml`` that was written.
+    shortcuts : tuple[str, ...]
+        The names of the shortcuts the manifest keeps.
+    skipped : tuple[tuple[str, str], ...]
+        ``(file, reason)`` pairs for the shortcut files that were not adopted.
+    launchers : tuple[str, ...]
+        The launcher files that were found next to the application.
+    searched : tuple[Path, ...]
+        The folders that were searched for shortcut files.
+    read_from : Mapping[str, Path]
+        Where each adopted piece of information was read from, by name.
+    """
 
     path: Path
     shortcuts: tuple[str, ...]
@@ -266,6 +307,8 @@ def adopt_version(
     skipped: list[tuple[str, str]] = []
     read_from: dict[str, Path] = {}
     started: dict[tuple[str, str], str] = {}
+
+    # Classify every link in order, so the first link of a program wins and later duplicates are reported.
     for base, link in links:
         absorbed = _absorb_shortcut(link, read_shortcut, app, env, prefix)
         # Links that start the same program with the same arguments are one shortcut (an installer's link in both menus,
@@ -274,14 +317,20 @@ def adopt_version(
             program = (absorbed[0]["target"].lower(), absorbed[0].get("arguments", ""))
             if program in started:
                 absorbed = f"it starts the same program as shortcut {started[program]}"
+
+        # A string is a reason to skip; links that cannot be read or lie outside App are silent in a Start Menu search.
         if isinstance(absorbed, str):
             if not searched or not absorbed.startswith(("cannot be read", "its target is outside App")):
                 skipped.append((str(link) if searched else str(link.relative_to(base)), absorbed))
             continue
+
+        # Keep the row, and remember which other App folder (if any) the link was read from.
         started[program] = absorbed[0]["name"]
         rows.append(absorbed[0])
         if absorbed[1] is not None:
             read_from[absorbed[0]["name"]] = absorbed[1]
+
+    # A shortcuts folder with no usable link is an error; two links with one name cannot both become shortcuts.
     if not rows and not searched:
         reasons = "; ".join(f"{name}: {reason}" for name, reason in skipped) or "no .lnk files"
         raise AuthoringError(f"no usable shortcut in {folder} ({reasons})")
@@ -323,10 +372,13 @@ def add_launchers(version_dir: Path, *, replace: bool = True) -> list[str]:
     AuthoringError
         If the directory is not a valid version directory, or a launcher in it is a link.
     """
+    # Refuse a directory that is not a valid version before writing into it.
     version_dir = Path(os.path.abspath(version_dir))
     report = check_directory(version_dir)
     if not report.ok:
         raise AuthoringError(f"{version_dir} is not a valid version directory: " + "; ".join(report.errors))
+
+    # Write each launcher that is missing (or all of them when replacing), never through a link.
     names = []
     for name in VERSION_LAUNCHERS:
         target = version_dir / name
@@ -347,6 +399,19 @@ def _absorb_shortcut(
     A link is kept only when it starts a program that exists inside *app*; unreadable links, links outside *app*, links to
     files that are not programs and uninstallers are reasons. A kept link comes with the other App folder of the package
     (``current`` or another version) its target was read from, or ``None``.
+
+    Parameters
+    ----------
+    link : Path
+        The ``.lnk`` file.
+    read_shortcut : callable
+        Returns the ``ShortcutSpec`` of a ``.lnk`` path.
+    app : Path
+        The ``App`` folder of the version being adopted.
+    env : mapping
+        The environment used to expand ``%VAR%`` in the link's paths.
+    prefix : str
+        A folder put before the shortcut name.
     """
     # A link that cannot be read is reported, not fatal: the other links of the folder may still be good.
     try:
@@ -359,6 +424,8 @@ def _absorb_shortcut(
     if located is None:
         return f"its target is outside App ({spec.target_path})"
     target, other_app = located
+
+    # Keep only programs that exist and are not uninstallers.
     program = os.path.basename(target).lower()
     if not program.endswith((".exe", ".bat", ".cmd")):
         return f"its target is not a program ({program})"
@@ -458,11 +525,24 @@ def export_distribution(version_dir: Path, output: Path) -> ExportResult:
     directory must pass ``gupkg pkg check`` and contain no link. A launcher the folder lacks (``install.cmd`` and ``manage.cmd``,
     and ``check-updates.cmd`` in the tracker) is added to the ZIP from the templates, so every distribution carries them.
 
+    Parameters
+    ----------
+    version_dir : Path
+        The version directory ``<root>\\<name>\\<version>`` to export.
+    output : Path
+        The ZIP file to create; it must not exist.
+
+    Returns
+    -------
+    ExportResult
+        The ZIP's path, its SHA-256 and the number of entries.
+
     Raises
     ------
     AuthoringError
         If the directory is not a valid version directory, holds a link, or *output* exists.
     """
+    # Refuse an invalid version directory or an existing output before reading the tree.
     version_dir = Path(version_dir).resolve()
     report = check_directory(version_dir)
     if not report.ok:
@@ -477,10 +557,13 @@ def export_distribution(version_dir: Path, output: Path) -> ExportResult:
     for folder, prefix in ((version_dir, f"{name}/{version}"), *(((tracker, f"{name}/{TRACKER_DIR_NAME}"),) if tracker.is_dir() else ())):
         for current, folders, files in os.walk(folder):
             here = Path(current)
+            # A link anywhere in the tree refuses the export; bytecode folders are pruned from the walk.
             for item in [*folders, *files]:
                 if is_reparse_point(here / item):
                     raise AuthoringError(f"{here / item} is a link; a distribution never holds links")
             folders[:] = sorted(item for item in folders if item != "__pycache__")
+
+            # Record each file with its archive name, in sorted order.
             for item in sorted(files):
                 if item.endswith(".pyc"):
                     continue
@@ -502,6 +585,7 @@ def export_distribution(version_dir: Path, output: Path) -> ExportResult:
     output.parent.mkdir(parents=True, exist_ok=True)
     partial = output.with_name(output.name + ".partial")
     with zipfile.ZipFile(partial, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        # A fixed timestamp and mode on every entry make the same tree give the same bytes.
         for source, arcname in entries:
             info = zipfile.ZipInfo(arcname, _ZIP_TIME)
             info.compress_type = zipfile.ZIP_DEFLATED
@@ -512,6 +596,8 @@ def export_distribution(version_dir: Path, output: Path) -> ExportResult:
             with open(source, "rb") as handle, archive.open(info, "w") as sink:
                 shutil.copyfileobj(handle, sink)
     os.replace(partial, output)
+
+    # The digest is computed from the file as written, not from the entries.
     digest = hashlib.sha256()
     with open(output, "rb") as handle:
         for block in iter(lambda: handle.read(1 << 20), b""):
@@ -530,11 +616,24 @@ def bundle_gupkg(version_dir: Path, source: Path) -> int:
     The caller has verified *source* against its ``MANIFEST.sha256``. Links are refused in both places, bytecode and the
     per-install ``gupkg-config.toml`` are left out, and an existing ``gupkg`` folder is never replaced.
 
+    Parameters
+    ----------
+    version_dir : Path
+        A valid version directory that receives the ``gupkg`` folder and its launchers.
+    source : Path
+        The verified gupkg tree to copy.
+
+    Returns
+    -------
+    int
+        The number of files copied.
+
     Raises
     ------
     AuthoringError
         If *version_dir* is not a valid version directory, already has a ``gupkg`` folder, or *source* holds a link.
     """
+    # Refuse an invalid version directory or an existing bundle before copying anything.
     version_dir, source = Path(version_dir).resolve(), Path(source).resolve()
     report = check_directory(version_dir)
     if not report.ok:
@@ -549,10 +648,13 @@ def bundle_gupkg(version_dir: Path, source: Path) -> int:
     try:
         for current, folders, files in os.walk(source):
             here = Path(current)
+            # A link anywhere in the source refuses the bundle; bytecode folders are pruned from the walk.
             for item in [*folders, *files]:
                 if is_reparse_point(here / item):
                     raise AuthoringError(f"{here / item} is a link; a bundle never holds links")
             folders[:] = [item for item in folders if item != "__pycache__"]
+
+            # Mirror the folder, then copy its files except bytecode and per-install state.
             relative = here.relative_to(source)
             (work / relative).mkdir(parents=True, exist_ok=True)
             for item in files:

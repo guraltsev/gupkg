@@ -9,7 +9,7 @@ reports; it never repairs. ``gupkg.engine.lifecycle.check`` repairs with ``--fix
 
 Usage and API
 -------------
-Call ``diagnose(system, view, mode=..., record_manifest=...)``; the ``Diagnosis`` lists problems (what
+Call ``diagnose(system, view, mode=..., record_manifest=..., owners=...)``; the ``Diagnosis`` lists problems (what
 makes the package unhealthy), notes (what is only worth knowing) and the keys of drifted effects, which the repair plan
 applies again.
 
@@ -40,14 +40,35 @@ from .receipts import read_receipt, receipt_checksum
 
 @dataclass(frozen=True)
 class Problem:
-    """One finding: its ``kind`` (``current``, ``app-missing``, ``drift``, ``app-modified``, ``registry-fingerprint``...), text and whether ``--fix`` can repair it."""
+    """One finding: its ``kind`` (``current``, ``app-missing``, ``drift``, ``app-modified``, ``registry-fingerprint``...), text and whether ``--fix`` can repair it.
+
+    Methods
+    -------
+    to_data
+        Return the JSON-ready finding.
+
+    Attributes
+    ----------
+    kind : str
+        The kind of finding, such as ``current`` or ``drift``.
+    message : str
+        The readable text of the finding.
+    fixable : bool
+        Whether ``--fix`` can repair it.
+    """
 
     kind: str
     message: str
     fixable: bool = False
 
     def to_data(self) -> dict[str, object]:
-        """Return the JSON-ready finding."""
+        """Return the JSON-ready finding.
+
+        Returns
+        -------
+        dict[str, object]
+            The ``kind``, ``message`` and ``fixable`` fields.
+        """
         return {"kind": self.kind, "message": self.message, "fixable": self.fixable}
 
 
@@ -165,6 +186,142 @@ def diagnose(
     return Diagnosis(True, tuple(problems), tuple(notes), frozenset(drifted))
 
 
+def install_notes(view: PackageView) -> tuple[list[Problem], dict | None]:
+    """Return the notes about how the active version of *view* was verified, and its receipt data (``None`` without one).
+
+    This is what ``list --details`` and ``info`` show: a skipped checksum, an origin that was not verified, and, in user
+    mode, the reminder that a stored ``verified`` is the install's own report and not proof.
+
+    Parameters
+    ----------
+    view : PackageView
+        The package whose active version is described.
+
+    Returns
+    -------
+    tuple[list[Problem], dict or None]
+        The notes, and the receipt data as stored (``None`` without a usable receipt).
+    """
+    # Without an installed version there is nothing to describe.
+    if view.local is None or view.installed is None:
+        return [], None
+    # An unreadable receipt is itself the note; a missing one yields none.
+    receipt = read_receipt(view.local.path, view.installed.version)
+    if receipt.problem:
+        return [Problem("receipt", receipt.problem)], None
+    if receipt.data is None:
+        return [], None
+    return _receipt_notes(receipt.data, view), dict(receipt.data)
+
+
+def _receipt_notes(data: dict, view: PackageView) -> list[Problem]:
+    """Return the notes of a receipt: skipped checksums, an origin that was not verified, a self-reported ``verified``."""
+    # A damaged checksum record makes the install count as unverified.
+    notes: list[Problem] = []
+    record = receipt_checksum(data)
+    if "checksum" in data and record is None:
+        return [Problem("receipt", "the receipt's checksum record is not valid; the install is treated as unverified")]
+    if record is None:
+        return notes
+    # Either the checksum was skipped, or note whether the registry fingerprint left App uncovered.
+    note = unverified_note(record.decision)
+    if note is not None:
+        notes.append(Problem("unverified", note))
+    else:
+        # A registry fingerprint of version 1 ignores App, which deserves its own note.
+        origin = data.get("origin")
+        if record.decision == "registry-fingerprint" and isinstance(origin, dict) and origin.get("app_covered") is False:
+            notes.append(Problem(
+                "verified-partly",
+                "verified (App not covered): the shipped App is not covered by the registry fingerprint (version 1 of the "
+                "fingerprint ignores App); its files are compared only with the install-time record",
+            ))
+    # In user mode the receipt is editable, so its own "verified" is not proof.
+    mode = view.record.mode if view.record is not None else None
+    if note is None and mode == "user":
+        notes.append(Problem(
+            "self-reported",
+            f"recorded as {record.decision} in the receipt; in {mode} mode the receipt can be edited by the user, so this is "
+            "the install's own report, not proof",
+        ))
+    return notes
+
+
+def _app_problems(data: dict, view: PackageView, state, manifest) -> list[Problem]:
+    """Compare the files of the active ``App`` with the fingerprint recorded at install time (decision D41)."""
+    # Nothing to compare when no App fingerprint was recorded at install time.
+    app_record = data.get("app")
+    if not isinstance(app_record, dict) or not app_record.get("recorded"):
+        return []
+
+    # Files that the package persists legitimately change, so they are not compared.
+    skip: tuple[str, ...] = ()
+    if manifest is not None and manifest.portable is not None:
+        skip = manifest.portable.persist
+    # Large Apps record only one digest and take the separate path.
+    app = Path(view.installed.path) / "App"
+    if not isinstance(app_record.get("files"), dict):
+        return _large_app_problems(app_record, app, view, skip)
+
+    # Diff the files on disk against the recorded hashes.
+    try:
+        modified, missing, extra = diff_app(app, {str(k): str(v) for k, v in app_record["files"].items()}, skip)
+    except OSError as error:
+        return [Problem("app-unreadable", f"The App of {view.installed.version} cannot be read: {error}")]
+    # Report each kind of difference, naming at most ten files.
+    found = []
+    for kind, names, text in (("modified", modified, "changed"), ("missing", missing, "deleted"), ("extra", extra, "added")):
+        if names:
+            shown = ", ".join(names[:10]) + (f" and {len(names) - 10} more" if len(names) > 10 else "")
+            found.append(Problem(f"app-{kind}", f"files of the App were {text} since the install: {shown}"))
+    return found
+
+
+def _large_app_problems(app_record: dict, app: Path, view: PackageView, skip: Sequence[str]) -> list[Problem]:
+    """Compare an ``App`` whose file list was not recorded (too many files) by its one digest; the files cannot be named."""
+    # Only a record that deliberately omitted its file list can be compared by digest.
+    fingerprint = app_record.get("fingerprint")
+    if not app_record.get("files_omitted") or not isinstance(fingerprint, str):
+        return []
+
+    # Persisted data changes the digest legitimately, so the comparison is skipped.
+    if skip:
+        return [Problem("receipt", f"the App of {view.installed.version} has too many files to list and persists data, so it is not compared")]
+    # Recompute the one digest of the App and compare.
+    try:
+        found = aggregate_digest(app_files(app))
+    except OSError as error:
+        return [Problem("app-unreadable", f"The App of {view.installed.version} cannot be read: {error}")]
+    if found == fingerprint.lower():
+        return []
+    return [Problem("app-modified", f"the App of {view.installed.version} differs from its install fingerprint (too many files to name which)")]
+
+
+def _registry_problems(view: PackageView, version: str, directory: Path, manifest) -> list[Problem]:
+    """Compare the version directory with the fingerprint the followed registry publishes (decision D29)."""
+    # Only a followed registry that publishes a fingerprint for this version can be compared.
+    if view.registry is None:
+        return []
+    published = view.registry.version(version)
+    if published is None or published.fingerprint is None:
+        return []
+
+    # Verify the version directory against the published fingerprint.
+    try:
+        problems = verify_directory(directory, published.fingerprint.lower(), published.path)
+    except OSError as error:
+        return [Problem("registry-fingerprint", f"The fingerprint of {directory} cannot be computed: {error}")]
+    if not problems:
+        return []
+    return [Problem(
+        "registry-fingerprint",
+        f"{view.name} {version} does not match the fingerprint of registry {view.registry.registry}: " + "; ".join(problems[:21]),
+    )]
+
+
+# --- supporting helpers ---
+
+
 def _current_missing_text(view: PackageView) -> str:
     """Say that a package with version directories and recorded integration has no ``current``, and how to activate a version again.
 
@@ -181,106 +338,3 @@ def _current_missing_text(view: PackageView) -> str:
         f"{view.name} has versions {versions} but no active version (`current` is missing) and {left}. "
         f"Run `gupkg install {view.name}` to activate a version again."
     )
-
-
-def install_notes(view: PackageView) -> tuple[list[Problem], dict | None]:
-    """Return the notes about how the active version of *view* was verified, and its receipt data (``None`` without one).
-
-    This is what ``list --details`` and ``info`` show: a skipped checksum, an origin that was not verified, and, in user
-    mode, the reminder that a stored ``verified`` is the install's own report and not proof.
-    """
-    if view.local is None or view.installed is None:
-        return [], None
-    receipt = read_receipt(view.local.path, view.installed.version)
-    if receipt.problem:
-        return [Problem("receipt", receipt.problem)], None
-    if receipt.data is None:
-        return [], None
-    return _receipt_notes(receipt.data, view), dict(receipt.data)
-
-
-def _receipt_notes(data: dict, view: PackageView) -> list[Problem]:
-    """Return the notes of a receipt: skipped checksums, an origin that was not verified, a self-reported ``verified``."""
-    notes: list[Problem] = []
-    record = receipt_checksum(data)
-    if "checksum" in data and record is None:
-        return [Problem("receipt", "the receipt's checksum record is not valid; the install is treated as unverified")]
-    if record is None:
-        return notes
-    note = unverified_note(record.decision)
-    if note is not None:
-        notes.append(Problem("unverified", note))
-    else:
-        origin = data.get("origin")
-        if record.decision == "registry-fingerprint" and isinstance(origin, dict) and origin.get("app_covered") is False:
-            notes.append(Problem(
-                "verified-partly",
-                "verified (App not covered): the shipped App is not covered by the registry fingerprint (version 1 of the "
-                "fingerprint ignores App); its files are compared only with the install-time record",
-            ))
-    mode = view.record.mode if view.record is not None else None
-    if note is None and mode == "user":
-        notes.append(Problem(
-            "self-reported",
-            f"recorded as {record.decision} in the receipt; in {mode} mode the receipt can be edited by the user, so this is "
-            "the install's own report, not proof",
-        ))
-    return notes
-
-
-def _app_problems(data: dict, view: PackageView, state, manifest) -> list[Problem]:
-    """Compare the files of the active ``App`` with the fingerprint recorded at install time (decision D41)."""
-    app_record = data.get("app")
-    if not isinstance(app_record, dict) or not app_record.get("recorded"):
-        return []
-    skip: tuple[str, ...] = ()
-    if manifest is not None and manifest.portable is not None:
-        skip = manifest.portable.persist
-    app = Path(view.installed.path) / "App"
-    if not isinstance(app_record.get("files"), dict):
-        return _large_app_problems(app_record, app, view, skip)
-    try:
-        modified, missing, extra = diff_app(app, {str(k): str(v) for k, v in app_record["files"].items()}, skip)
-    except OSError as error:
-        return [Problem("app-unreadable", f"The App of {view.installed.version} cannot be read: {error}")]
-    found = []
-    for kind, names, text in (("modified", modified, "changed"), ("missing", missing, "deleted"), ("extra", extra, "added")):
-        if names:
-            shown = ", ".join(names[:10]) + (f" and {len(names) - 10} more" if len(names) > 10 else "")
-            found.append(Problem(f"app-{kind}", f"files of the App were {text} since the install: {shown}"))
-    return found
-
-
-def _large_app_problems(app_record: dict, app: Path, view: PackageView, skip: Sequence[str]) -> list[Problem]:
-    """Compare an ``App`` whose file list was not recorded (too many files) by its one digest; the files cannot be named."""
-    fingerprint = app_record.get("fingerprint")
-    if not app_record.get("files_omitted") or not isinstance(fingerprint, str):
-        return []
-    if skip:
-        return [Problem("receipt", f"the App of {view.installed.version} has too many files to list and persists data, so it is not compared")]
-    try:
-        found = aggregate_digest(app_files(app))
-    except OSError as error:
-        return [Problem("app-unreadable", f"The App of {view.installed.version} cannot be read: {error}")]
-    if found == fingerprint.lower():
-        return []
-    return [Problem("app-modified", f"the App of {view.installed.version} differs from its install fingerprint (too many files to name which)")]
-
-
-def _registry_problems(view: PackageView, version: str, directory: Path, manifest) -> list[Problem]:
-    """Compare the version directory with the fingerprint the followed registry publishes (decision D29)."""
-    if view.registry is None:
-        return []
-    published = view.registry.version(version)
-    if published is None or published.fingerprint is None:
-        return []
-    try:
-        problems = verify_directory(directory, published.fingerprint.lower(), published.path)
-    except OSError as error:
-        return [Problem("registry-fingerprint", f"The fingerprint of {directory} cannot be computed: {error}")]
-    if not problems:
-        return []
-    return [Problem(
-        "registry-fingerprint",
-        f"{view.name} {version} does not match the fingerprint of registry {view.registry.registry}: " + "; ".join(problems[:21]),
-    )]

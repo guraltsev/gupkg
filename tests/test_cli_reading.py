@@ -26,6 +26,7 @@ from tests.support.engine import pkg_text
 
 pytestmark = pytest.mark.unit
 
+# Table that declares the shim of the test package.
 FULL = '[[shim]]\nname = "tool"\ntarget = "$App\\\\app.exe"\n'
 
 

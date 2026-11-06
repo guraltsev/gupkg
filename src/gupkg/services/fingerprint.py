@@ -3,7 +3,7 @@
 A fingerprint is one SHA-256 over the files of a version directory. The registry tool writes it
 into ``_registry.toml`` under ``[fingerprints]``; gupkg computes it again for a distribution folder
 that is installed without a download, and again in ``check``. The same function serves all three,
-so the algorithm below is the contract.
+so the algorithm described here is the contract.
 
 Usage and API
 -------------
@@ -14,8 +14,10 @@ Usage and API
 directory matches). Every function raises ``FingerprintError`` for a tree that cannot be hashed
 safely: a link, a junction, a special file or an unusable name.
 
-The algorithm (version 1)
--------------------------
+Implementation Approach
+-----------------------
+The algorithm is versioned (version 1).
+
 1. The files covered are every regular file below the directory, except the top-level entries
    ``App`` and ``gupkg`` (the unpacked payload and a bundled gupkg are not part of a pinned version;
    letter case is ignored for those two names). Nothing else is skipped: ``pkg.toml``, ``pkg.local``,
@@ -52,13 +54,21 @@ from pathlib import Path
 
 from .safepath import UnsafePath, check_member_name, is_reparse_point
 
+# Version of the fingerprint algorithm, written into the hashed header.
 FINGERPRINT_ALGORITHM = 1
+# Text hashed before the file lines, so a future algorithm version cannot collide with this one.
 HEADER = f"gupkg-fingerprint-{FINGERPRINT_ALGORITHM}\n"
+# Case-folded top-level names that are payload or bundled tooling, not part of a pinned version.
 EXCLUDED_TOP_LEVEL = frozenset({"app", "app.info", "gupkg"})
+# Read size when hashing a file.
 _CHUNK = 1024 * 1024
+# Limits that refuse a hostile or mistaken tree: file count.
 MAX_FILES = 10_000
+# Limit on the number of directories.
 MAX_DIRECTORIES = 2_000
+# Limit on directory nesting depth.
 MAX_DEPTH = 32
+# Limit on the combined size of all covered files.
 MAX_TOTAL_BYTES = 512 * 1024 * 1024
 
 
@@ -66,77 +76,39 @@ class FingerprintError(ValueError):
     """Report a tree that cannot be fingerprinted: a link, a special file or an unusable name."""
 
 
-def _file_sha256(path: Path) -> tuple[str, int]:
-    """Return the SHA-256 and the size of the file at *path*, read in chunks."""
-    digest = hashlib.sha256()
-    size = 0
-    with open(path, "rb") as stream:
-        while chunk := stream.read(_CHUNK):
-            digest.update(chunk)
-            size += len(chunk)
-    return digest.hexdigest(), size
-
-
-def _entries(directory: Path) -> dict[str, tuple[str, int]]:
-    """Return ``{relative path: (sha256, size)}`` for every covered file below *directory*."""
-    root = Path(directory)
-    if not root.is_dir() or is_reparse_point(root):
-        raise FingerprintError(f"{root} is not a plain directory")
-    found: dict[str, tuple[str, int]] = {}
-    seen: dict[str, str] = {}
-    total = 0
-    stack = [(root, 0)]
-    directories = 0
-    while stack:
-        folder, depth = stack.pop()
-        try:
-            children = sorted(os.scandir(folder), key=lambda entry: entry.name)
-        except OSError as error:
-            raise FingerprintError(f"cannot read {folder}: {error}") from error
-        for child in children:
-            path = Path(child.path)
-            relative = path.relative_to(root).as_posix()
-            if folder == root and child.name.casefold() in EXCLUDED_TOP_LEVEL:
-                continue
-            if is_reparse_point(path):
-                raise FingerprintError(f"{relative} is a link or junction; a fingerprint is never computed over one")
-            try:
-                check_member_name(relative)
-                relative.encode("utf-8")
-            except (UnsafePath, UnicodeEncodeError) as error:
-                raise FingerprintError(f"{relative}: {error}") from error
-            mode = os.lstat(path).st_mode
-            if stat.S_ISDIR(mode):
-                directories += 1
-                if directories > MAX_DIRECTORIES or depth + 1 > MAX_DEPTH:
-                    raise FingerprintError(
-                        f"more than {MAX_DIRECTORIES} directories or deeper than {MAX_DEPTH} levels; not a version directory"
-                    )
-                stack.append((path, depth + 1))
-            elif stat.S_ISREG(mode):
-                if seen.setdefault(relative.casefold(), relative) != relative:
-                    raise FingerprintError(f"{relative} and {seen[relative.casefold()]} differ only in letter case")
-                if len(found) >= MAX_FILES:
-                    raise FingerprintError(f"more than {MAX_FILES} files; not a version directory")
-                total += os.lstat(path).st_size
-                if total > MAX_TOTAL_BYTES:
-                    raise FingerprintError(f"more than {MAX_TOTAL_BYTES} bytes; not a version directory")
-                try:
-                    found[relative] = _file_sha256(path)
-                except OSError as error:
-                    raise FingerprintError(f"cannot read {relative}: {error}") from error
-            else:
-                raise FingerprintError(f"{relative} is not a regular file")
-    return found
-
-
 def file_digests(directory: Path) -> dict[str, str]:
-    """Return ``{relative path: sha256}`` for the files the fingerprint of *directory* covers."""
+    """Return ``{relative path: sha256}`` for the files the fingerprint of *directory* covers.
+
+    Parameters
+    ----------
+    directory : Path
+        The version directory.
+
+    Returns
+    -------
+    dict of str to str
+        Each covered file's ``/``-separated relative path mapped to its lower-case SHA-256.
+
+    Raises
+    ------
+    FingerprintError
+        If the tree cannot be hashed safely.
+    """
     return {name: digest for name, (digest, _size) in _entries(directory).items()}
 
 
 def fingerprint_directory(directory: Path) -> str:
     """Return the fingerprint of *directory* (algorithm version 1, described in the module docstring).
+
+    Parameters
+    ----------
+    directory : Path
+        The version directory.
+
+    Returns
+    -------
+    str
+        The 64-digit lower-case hexadecimal fingerprint.
 
     Raises
     ------
@@ -150,7 +122,32 @@ def fingerprint_directory(directory: Path) -> str:
 
 
 def differing_files(expected: Mapping[str, str], actual: Mapping[str, str]) -> list[str]:
-    """Name the files that differ between two ``file_digests`` results (changed, missing or extra)."""
+    """Name the files that differ between two ``file_digests`` results (changed, missing or extra).
+
+    Parameters
+    ----------
+    expected : Mapping of str to str
+        The digests of the reference copy.
+    actual : Mapping of str to str
+        The digests of the copy being checked.
+
+    Returns
+    -------
+    list of str
+        One ``name (missing|extra|changed)`` entry per differing file, sorted by name.
+
+    Examples
+    --------
+    Basic usage:
+
+    >>> differing_files({'a': '1', 'b': '2', 'c': '3'}, {'a': '1', 'b': '9', 'd': '4'})
+    ['b (changed)', 'c (missing)', 'd (extra)']
+
+    Edge cases:
+
+    >>> differing_files({'a': '1'}, {'a': '1'})
+    []
+    """
     names = sorted(set(expected) | set(actual))
     result: list[str] = []
     for name in names:
@@ -182,12 +179,14 @@ def verify_directory(directory: Path, expected: str, reference: Path | None = No
         Empty when the fingerprint matches; otherwise the problems, never an exception for a
         mismatch. A tree that cannot be hashed is reported as a problem too (fail closed).
     """
+    # Reject a malformed published fingerprint before hashing anything.
     if len(expected) != 64 or any(ch not in "0123456789abcdef" for ch in expected):
         return [f"the published fingerprint {expected!r} is not a SHA-256 in lower-case hexadecimal"]
     try:
         actual = fingerprint_directory(directory)
     except FingerprintError as error:
         return [f"cannot compute the fingerprint: {error}"]
+    # On a mismatch, name the differing files when the registry's own copy is at hand.
     if actual == expected:
         return []
     problems = [f"the fingerprint is {actual}, the registry publishes {expected}"]
@@ -197,3 +196,80 @@ def verify_directory(directory: Path, expected: str, reference: Path | None = No
         except FingerprintError as error:
             problems.append(f"cannot compare with the registry copy: {error}")
     return problems
+
+
+# --- supporting helpers ---
+
+
+def _file_sha256(path: Path) -> tuple[str, int]:
+    """Return the SHA-256 and the size of the file at *path*, read in chunks."""
+    digest = hashlib.sha256()
+    size = 0
+    with open(path, "rb") as stream:
+        while chunk := stream.read(_CHUNK):
+            digest.update(chunk)
+            size += len(chunk)
+    return digest.hexdigest(), size
+
+
+def _entries(directory: Path) -> dict[str, tuple[str, int]]:
+    """Return ``{relative path: (sha256, size)}`` for every covered file below *directory*."""
+    # Require a plain directory root, then walk it iteratively under the size limits.
+    root = Path(directory)
+    if not root.is_dir() or is_reparse_point(root):
+        raise FingerprintError(f"{root} is not a plain directory")
+    # Walk state: results, case-folded names seen, running byte total, directory count.
+    found: dict[str, tuple[str, int]] = {}
+    seen: dict[str, str] = {}
+    total = 0
+    stack = [(root, 0)]
+    directories = 0
+    while stack:
+        folder, depth = stack.pop()
+        # List the folder in a stable order so errors are reproducible.
+        try:
+            children = sorted(os.scandir(folder), key=lambda entry: entry.name)
+        except OSError as error:
+            raise FingerprintError(f"cannot read {folder}: {error}") from error
+        # Vet each child (excluded names, links, unusable names) before hashing or descending.
+        for child in children:
+            path = Path(child.path)
+            relative = path.relative_to(root).as_posix()
+            if folder == root and child.name.casefold() in EXCLUDED_TOP_LEVEL:
+                continue
+            # Refuse links and junctions rather than skipping or following them.
+            if is_reparse_point(path):
+                raise FingerprintError(f"{relative} is a link or junction; a fingerprint is never computed over one")
+            # Refuse names that cannot be extracted or encoded identically everywhere.
+            try:
+                check_member_name(relative)
+                relative.encode("utf-8")
+            except (UnsafePath, UnicodeEncodeError) as error:
+                raise FingerprintError(f"{relative}: {error}") from error
+            # Directories are queued within limits; regular files are hashed; anything else is refused.
+            mode = os.lstat(path).st_mode
+            if stat.S_ISDIR(mode):
+                # Count the directory against the limits before descending into it.
+                directories += 1
+                if directories > MAX_DIRECTORIES or depth + 1 > MAX_DEPTH:
+                    raise FingerprintError(
+                        f"more than {MAX_DIRECTORIES} directories or deeper than {MAX_DEPTH} levels; not a version directory"
+                    )
+                stack.append((path, depth + 1))
+            elif stat.S_ISREG(mode):
+                # Reject case-only duplicates, then enforce the file-count and byte limits.
+                if seen.setdefault(relative.casefold(), relative) != relative:
+                    raise FingerprintError(f"{relative} and {seen[relative.casefold()]} differ only in letter case")
+                if len(found) >= MAX_FILES:
+                    raise FingerprintError(f"more than {MAX_FILES} files; not a version directory")
+                total += os.lstat(path).st_size
+                if total > MAX_TOTAL_BYTES:
+                    raise FingerprintError(f"more than {MAX_TOTAL_BYTES} bytes; not a version directory")
+                # Hash the file's bytes exactly as stored.
+                try:
+                    found[relative] = _file_sha256(path)
+                except OSError as error:
+                    raise FingerprintError(f"cannot read {relative}: {error}") from error
+            else:
+                raise FingerprintError(f"{relative} is not a regular file")
+    return found

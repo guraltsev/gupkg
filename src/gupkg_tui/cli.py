@@ -31,6 +31,7 @@ from gupkg_ui.startup import StartupError, add_root_options, build_environment
 
 from .app import TuiApp
 
+# Program name used in messages and as the parser's ``prog``.
 PROGRAM = "gupkg-tui"
 
 
@@ -55,7 +56,13 @@ def main(
         Where this gupkg lives, the machine boundary, the environment and the program standing for ``gupkg`` (tests pass doubles).
     stdin, stdout, stderr : TextIO, optional
         The standard streams; the process's by default.
+
+    Returns
+    -------
+    int
+        0 after a normal close, 2 for a usage or configuration problem.
     """
+    # Choose the streams and build the parser; a parser exit becomes a return code.
     out, err, source = stdout or sys.stdout, stderr or sys.stderr, stdin or sys.stdin
     configure_streams(out, err)
     parser = argparse.ArgumentParser(prog=PROGRAM, description="Show one gupkg package and act on it.")
@@ -73,15 +80,18 @@ def main(
     except ClientError as error:
         print(f"{PROGRAM}: error: {error}", file=err)
         return 2
+    # Build the run's environment (sibling gupkg, scope, settings).
     try:
         environment = build_environment(args, location=location, system=system, env=env, command=command)
     except StartupError as error:
         print(f"{PROGRAM}: error: {error}", file=err)
         return error.code
+    # The package view is interactive; scripts are pointed at ``gupkg info``.
     if not (getattr(source, "isatty", lambda: False)() and getattr(out, "isatty", lambda: False)()):
         print(f"{PROGRAM}: error: the package view needs a terminal; use `gupkg info {args.target}` in scripts", file=err)
         return 2
 
+    # Run the application, then print the last run's summary when the settings ask for it.
     app = TuiApp(environment, target)
     app.run()
     if environment.settings.keep_screen and app.last_outcome is not None:

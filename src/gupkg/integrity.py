@@ -37,6 +37,7 @@ MANIFEST_RELATIVE_PATH = "gupkg/MANIFEST.sha256"
 # The folder of a version directory that holds the bundled tree; manifest entries start with it.
 TREE_FOLDER = "gupkg"
 
+# One manifest line: a lower-case SHA-256, two spaces, then a path without edge whitespace.
 _LINE = re.compile(r"^(?P<digest>[0-9a-f]{64})  (?P<path>\S(?:.*\S)?)$")
 
 
@@ -50,6 +51,24 @@ class IntegrityReport:
 
     ``manifest_found`` is ``False`` when the manifest itself is absent; the
     other lists are then empty because there is nothing to compare with.
+
+    Methods
+    -------
+    problems
+        Return one human line per difference, in a stable order.
+
+    Attributes
+    ----------
+    manifest_found : bool
+        Whether the manifest file exists.
+    modified : tuple[str, ...]
+        The files whose content differs from the manifest.
+    missing : tuple[str, ...]
+        The files the manifest lists that are absent.
+    extra : tuple[str, ...]
+        The files on disk that the manifest does not list.
+    ok : bool
+        Return whether the directory matches its manifest exactly.
     """
 
     manifest_found: bool
@@ -63,7 +82,13 @@ class IntegrityReport:
         return self.manifest_found and not (self.modified or self.missing or self.extra)
 
     def problems(self) -> list[str]:
-        """Return one human line per difference, in a stable order."""
+        """Return one human line per difference, in a stable order.
+
+    Returns
+    -------
+    list[str]
+        Lines prefixed ``modified:``, ``missing:`` or ``extra:``, or one line when the manifest is absent.
+    """
         if not self.manifest_found:
             return [f"{MANIFEST_RELATIVE_PATH} is missing"]
         return (
@@ -115,6 +140,7 @@ def verify_tree(tree: Path, manifest_path: Path) -> IntegrityReport:
     ManifestError
         If the manifest exists but cannot be parsed.
     """
+    # Without a manifest there is nothing to compare with.
     manifest_path, tree = Path(manifest_path), Path(tree)
     if not manifest_path.is_file():
         return IntegrityReport(manifest_found=False)
@@ -131,6 +157,7 @@ def verify_tree(tree: Path, manifest_path: Path) -> IntegrityReport:
                 continue
             actual[prefix + relative] = Path(current) / name
 
+    # Classify every path as modified, missing or extra relative to the manifest.
     modified = sorted(
         path for path, digest in expected.items() if path in actual and _sha256(actual[path]) != digest
     )
@@ -141,6 +168,16 @@ def verify_tree(tree: Path, manifest_path: Path) -> IntegrityReport:
 
 def read_manifest(path: Path) -> dict[str, str]:
     """Parse a manifest into ``{relative path: sha256}``.
+
+    Parameters
+    ----------
+    path : Path
+        The ``MANIFEST.sha256`` file.
+
+    Returns
+    -------
+    dict[str, str]
+        Each manifest path mapped to its expected SHA-256 digest.
 
     Raises
     ------
@@ -163,6 +200,7 @@ def read_manifest(path: Path) -> dict[str, str]:
         relative = match["path"]
         if relative in entries:
             raise ManifestError(f"{path}, line {number}: duplicate path {relative!r}")
+        # Refuse absolute, drive, backslash and parent-directory paths.
         parts = relative.split("/")
         if relative.startswith("/") or ":" in relative or "\\" in relative or ".." in parts or "" in parts:
             raise ManifestError(f"{path}, line {number}: unsafe path {relative!r}")

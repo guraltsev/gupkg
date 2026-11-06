@@ -37,20 +37,80 @@ MAX_LINE_CHARS = 2000
 MAX_DETAIL_LINES = 10000
 # Width of the filled part of a progress bar.
 BAR_WIDTH = 20
-# Style of a phase mark by the status the phase ended with: (mark, style).
-_PHASE_END = {"ok": ("✓", "bold green"), "failed": ("✗", "bold red")}
-# Mark and style of a step by its kind.
-_STEP = {"ok": ("✓ ", "green"), "add": ("+ ", "green"), "remove": ("− ", "red")}
+
+
+# ---------------------------------------------------------------------------
+# Text that is safe to show
+# ---------------------------------------------------------------------------
 
 
 def literal(value: Any, *, limit: int = MAX_LINE_CHARS) -> str:
-    """Return *value* as text that is safe to show: no escape sequences, control characters or bidirectional overrides, cut at *limit*."""
+    """Return *value* as text that is safe to show.
+
+    Parameters
+    ----------
+    value : object
+        Any value; a non-string is converted with ``str``.
+    limit : int
+        The longest result in characters; a longer text is cut and ends with an ellipsis.
+
+    Returns
+    -------
+    str
+        The text without escape sequences, control characters or bidirectional overrides.
+
+    Examples
+    --------
+    Basic usage:
+
+    >>> literal('plain text')
+    'plain text'
+    >>> literal(42)
+    '42'
+    >>> literal('\\x1b[31mred\\x1b[0m')
+    'red'
+
+    Edge cases:
+
+    >>> literal('abcdefghij', limit=5)
+    'abcd…'
+    """
     text = clean_line(value if isinstance(value, str) else str(value))
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
 def format_bytes(value: Any) -> str:
-    """Render a byte count compactly, for example ``74.0 MiB``; anything that is not a count is ``?``."""
+    """Render a byte count compactly, for example ``74.0 MiB``.
+
+    Parameters
+    ----------
+    value : object
+        A byte count (an untrusted event field).
+
+    Returns
+    -------
+    str
+        The count with a binary unit, or ``?`` when *value* is not a non-negative number.
+
+    Examples
+    --------
+    Basic usage:
+
+    >>> format_bytes(512)
+    '512 B'
+    >>> format_bytes(5 * 1024 * 1024)
+    '5.0 MiB'
+
+    Edge cases:
+
+    >>> format_bytes(-1)
+    '?'
+    >>> format_bytes('lots')
+    '?'
+    >>> format_bytes(True)
+    '?'
+    """
+    # Reject anything that is not a plain non-negative number, then pick the largest unit that keeps the amount below 1024.
     if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
         return "?"
     if value < 1024:
@@ -63,18 +123,49 @@ def format_bytes(value: Any) -> str:
     return f"{amount / 1024:.1f} TiB"
 
 
-def _count(value: Any) -> int | None:
-    """Return *value* as a non-negative integer, or ``None`` when it is not one (an event field is untrusted)."""
-    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
-
-
 def progress_line(task: Any, done: Any, total: Any, unit: Any) -> str:
-    """Render one transfer as ``task  [#####-----]  done / total`` with percentage, in text that is safe to show."""
+    """Render one transfer as ``task  [#####-----]  done / total`` with percentage, in text that is safe to show.
+
+    Parameters
+    ----------
+    task : object
+        The name of the transfer.
+    done : object
+        Units transferred so far (an untrusted event field).
+    total : object
+        Units expected, or a falsy value when unknown.
+    unit : object
+        ``"B"`` for bytes, otherwise a short unit name.
+
+    Returns
+    -------
+    str
+        One line; without a usable *done* it says that progress is unknown, without a *total* it shows only what was received.
+
+    Examples
+    --------
+    Basic usage:
+
+    >>> progress_line('download', 1024, 4096, 'B')
+    'download  [█████░░░░░░░░░░░░░░░]  1.0 KiB / 4.0 KiB  25%'
+    >>> progress_line('download', 2048, None, 'B')
+    'download: 2.0 KiB received'
+
+    Edge cases:
+
+    >>> progress_line('download', None, 10, 'B')
+    'download: progress unknown'
+    >>> progress_line('files', 3, 12, 'files')
+    'files  [█████░░░░░░░░░░░░░░░]  3 files / 12 files  25%'
+    """
+    # Choose how amounts are written and clean every untrusted field before it is formatted.
     show = format_bytes if unit == "B" else (lambda number: f"{number} {literal(unit, limit=12)}")
     done_n, total_n = _count(done), _count(total)
     label = literal(task, limit=80)
     if done_n is None:
         return f"{label}: progress unknown"
+
+    # With a known total, draw the bar and the percentage.
     if not total_n:
         return f"{label}: {show(done_n)} received"
     share = min(done_n / total_n, 1.0)
@@ -82,13 +173,98 @@ def progress_line(task: Any, done: Any, total: Any, unit: Any) -> str:
     return f"{label}  [{'█' * filled}{'░' * (BAR_WIDTH - filled)}]  {show(done_n)} / {show(total_n)}  {share * 100:.0f}%"
 
 
-_KEPT_STYLES = frozenset({"bold", "dim", "italic", "underline", "reverse"})
-
-
 def monochrome(line: Text) -> Text:
-    """Return *line* without any colour: only emphasis (bold, dim, italic, underline) is kept, so the words and marks carry every meaning."""
-    kept = " ".join(word for word in str(line.style).split() if word in _KEPT_STYLES)
+    """Return *line* without any colour, so the words and marks carry every meaning.
+
+    Parameters
+    ----------
+    line : Text
+        A styled line.
+
+    Returns
+    -------
+    Text
+        The same text with only emphasis (bold, dim, italic, underline, reverse) kept.
+    """
+    # Only emphasis survives; any colour word of the style is dropped.
+    kept_styles = frozenset({"bold", "dim", "italic", "underline", "reverse"})
+    kept = " ".join(word for word in str(line.style).split() if word in kept_styles)
     return Text(line.plain, style=kept)
+
+
+def summarize_entries(entries: Sequence[Mapping[str, Any]]) -> list[str]:
+    """Return one summary line per result entry (``ok name 1.2: updated (was 1.1)``), naming every failure and skipped target.
+
+    Parameters
+    ----------
+    entries : sequence of mapping
+        The per-target entries of result documents (``package``, ``ok``, ``status``, ``version``, ``previous``, ``error``).
+
+    Returns
+    -------
+    list of str
+        Text that is safe to show, followed by a count of the failed targets when there are any.
+    """
+    lines: list[str] = []
+    failed: list[str] = []
+
+    # One line per entry: failures are named with their reason, refusals and skips with their message, the rest with their version change.
+    for entry in entries:
+        name = literal(entry.get("package", "?"), limit=120)
+        status = literal(entry.get("status", "?"), limit=60)
+        error = entry.get("error") if isinstance(entry.get("error"), Mapping) else {}
+        if entry.get("ok") is not True:
+            failed.append(name)
+            reason = literal(error.get("message", status), limit=500)
+            lines.append(f"x {name}: {literal(entry.get('operation', 'operation'), limit=30)} failed: {reason}")
+        elif status in ("skipped", "cancelled", "refused"):
+            lines.append(f"- {name}: {status}" + (f" ({literal(error.get('message'), limit=300)})" if error.get("message") else ""))
+        # A target that worked: say what it is now and what it was before, when that differs.
+        else:
+            version = f" {literal(entry['version'], limit=60)}" if entry.get("version") else ""
+            previous = entry.get("previous")
+            was = f" (was {literal(previous, limit=60)})" if previous and previous != entry.get("version") else ""
+            lines.append(f"ok {name}{version}: {status}{was}")
+
+    # Close with the count of the failures so they are not missed in a long list.
+    if failed:
+        lines.append(f"{len(failed)} of {len(entries)} failed: {', '.join(failed)}")
+    return lines
+
+
+def verdict_lines(exit_code: int, summary: Sequence[str], *, plain: bool = False, colour: bool = True) -> list[Text]:
+    """Return the header and the indented summary that end a log: ``━━ Done`` or ``━━ Failed (exit code N)`` come last.
+
+    Parameters
+    ----------
+    exit_code : int
+        The combined exit code of the run; zero is success.
+    summary : sequence of str
+        The summary lines to show under the header (already safe text).
+    plain : bool, default=False
+        Use the ``==>`` header of redirected console output instead of the heavy rule.
+    colour : bool, default=True
+        ``False`` keeps only emphasis, no colour.
+
+    Returns
+    -------
+    list of Text
+        The header followed by the indented summary lines.
+    """
+    # The header says the outcome in words, and ``plain`` swaps the heavy rule for the ``==>`` form of redirected output.
+    ok = exit_code == 0
+    title = "Done" if ok else f"Failed (exit code {exit_code})"
+    header = f"==> {title}" if plain else f"━━ {title} " + "━" * max(3, 60 - len(title))
+    lines = [Text(header, style="bold green" if ok else "bold red"), *(Text(f"    {line}") for line in summary)]
+    return lines if colour else [monochrome(line) for line in lines]
+
+
+# --- supporting helpers ---
+
+
+def _count(value: Any) -> int | None:
+    """Return *value* as a non-negative integer, or ``None`` when it is not one (an event field is untrusted)."""
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
 
 
 class EventRenderer:
@@ -103,6 +279,15 @@ class EventRenderer:
     ----------
     detail_omitted : int
         The number of detail lines that were counted but not shown.
+
+    Methods
+    -------
+    feed
+        Return the lines that a batch of records adds.
+    progress_text
+        Return the live text of the transfer that runs now.
+    finish
+        Return the closing note about omitted lines.
     """
 
     def __init__(self, colour: bool = True) -> None:
@@ -113,7 +298,19 @@ class EventRenderer:
         self.detail_omitted = 0
 
     def feed(self, records: Iterable[Mapping[str, Any]]) -> list[Text]:
-        """Return the lines that *records* add; a record of an unknown kind adds nothing (a newer gupkg may add kinds)."""
+        """Return the lines that *records* add; a record of an unknown kind adds nothing (a newer gupkg may add kinds).
+
+        Parameters
+        ----------
+        records : iterable of mapping
+            The event records, in order.
+
+        Returns
+        -------
+        list of Text
+            The styled lines, without colour when the renderer was made with ``colour=False``.
+        """
+        # Dispatch every record to the handler of its kind; unknown kinds are ignored.
         lines: list[Text] = []
         for record in records:
             handler = getattr(self, f"_on_{record.get('event')}", None) if isinstance(record.get("event"), str) else None
@@ -122,14 +319,26 @@ class EventRenderer:
         return lines if self._colour else [monochrome(line) for line in lines]
 
     def progress_text(self) -> str | None:
-        """Return the live text of the transfer that runs now (the latest started one), or ``None``."""
+        """Return the live text of the transfer that runs now (the latest started one).
+
+        Returns
+        -------
+        str or None
+            One progress line, or ``None`` when no transfer is running.
+        """
         if not self._progress:
             return None
         task = next(reversed(self._progress))
         return progress_line(task, *self._progress[task][1:])
 
     def finish(self) -> list[Text]:
-        """Return the closing note about omitted lines (empty when nothing was left out)."""
+        """Return the closing note about omitted lines.
+
+        Returns
+        -------
+        list of Text
+            One dim note that names the count, or an empty list when nothing was left out.
+        """
         if not self.detail_omitted:
             return []
         note = f"    … {self.detail_omitted} more detail lines are in the log, not shown here"
@@ -167,7 +376,9 @@ class EventRenderer:
     def _on_phase_end(self, record: Mapping[str, Any]) -> list[Text]:
         """Show how the phase ended: a check, a cross or a dash, with the word and the elapsed time."""
         status = record.get("status") if isinstance(record.get("status"), str) else "?"
-        mark, style = _PHASE_END.get(status, ("–", "dim"))
+        # Style of a phase mark by the status the phase ended with: (mark, style).
+        phase_end = {"ok": ("✓", "bold green"), "failed": ("✗", "bold red")}
+        mark, style = phase_end.get(status, ("–", "dim"))
         phase = literal(record.get("phase", "?"), limit=60)
         label = phase if status == "ok" else f"{phase} {literal(status, limit=20)}"
         elapsed = record.get("elapsed")
@@ -178,7 +389,9 @@ class EventRenderer:
         """Show a detail line with its mark (a check, a plus or a minus), counting it instead when too many were shown."""
         if not self._room():
             return []
-        mark, style = _STEP.get(record.get("kind"), ("", "dim"))
+        # Mark and style of a step by its kind.
+        step_marks = {"ok": ("✓ ", "green"), "add": ("+ ", "green"), "remove": ("− ", "red")}
+        mark, style = step_marks.get(record.get("kind"), ("", "dim"))
         parts = literal(record.get("text", ""), limit=MAX_LINE_CHARS * 5).splitlines() or [""]
         return [Text(f"    {mark if index == 0 else ''}{literal(part)}", style=style) for index, part in enumerate(parts[:50])]
 
@@ -193,6 +406,8 @@ class EventRenderer:
         task = literal(record.get("task", "?"), limit=80)
         done, total, unit = record.get("done"), record.get("total"), record.get("unit", "B")
         total_n, done_n = _count(total), _count(done)
+
+        # A completed transfer leaves one lasting line and is forgotten; an unfinished one only updates the live state.
         if total_n and done_n is not None and done_n >= total_n:
             self._progress.pop(task, None)
             return [Text(f"    ✓ {progress_line(task, done, total, unit)}", style="green")]
@@ -239,59 +454,3 @@ class EventRenderer:
 # ---------------------------------------------------------------------------
 # The ending of a log
 # ---------------------------------------------------------------------------
-
-
-def summarize_entries(entries: Sequence[Mapping[str, Any]]) -> list[str]:
-    """Return one summary line per result entry (``ok name 1.2: updated (was 1.1)``), naming every failure and skipped target.
-
-    Parameters
-    ----------
-    entries : sequence of mapping
-        The per-target entries of result documents (``package``, ``ok``, ``status``, ``version``, ``previous``, ``error``).
-
-    Returns
-    -------
-    list of str
-        Text that is safe to show, followed by a count of the failed targets when there are any.
-    """
-    lines: list[str] = []
-    failed: list[str] = []
-    for entry in entries:
-        name = literal(entry.get("package", "?"), limit=120)
-        status = literal(entry.get("status", "?"), limit=60)
-        error = entry.get("error") if isinstance(entry.get("error"), Mapping) else {}
-        if entry.get("ok") is not True:
-            failed.append(name)
-            reason = literal(error.get("message", status), limit=500)
-            lines.append(f"x {name}: {literal(entry.get('operation', 'operation'), limit=30)} failed: {reason}")
-        elif status in ("skipped", "cancelled", "refused"):
-            lines.append(f"- {name}: {status}" + (f" ({literal(error.get('message'), limit=300)})" if error.get("message") else ""))
-        else:
-            version = f" {literal(entry['version'], limit=60)}" if entry.get("version") else ""
-            previous = entry.get("previous")
-            was = f" (was {literal(previous, limit=60)})" if previous and previous != entry.get("version") else ""
-            lines.append(f"ok {name}{version}: {status}{was}")
-    if failed:
-        lines.append(f"{len(failed)} of {len(entries)} failed: {', '.join(failed)}")
-    return lines
-
-
-def verdict_lines(exit_code: int, summary: Sequence[str], *, plain: bool = False, colour: bool = True) -> list[Text]:
-    """Return the header and the indented summary that end a log: ``━━ Done`` or ``━━ Failed (exit code N)`` come last.
-
-    Parameters
-    ----------
-    exit_code : int
-        The combined exit code of the run; zero is success.
-    summary : sequence of str
-        The summary lines to show under the header (already safe text).
-    plain : bool, default=False
-        Use the ``==>`` header of redirected console output instead of the heavy rule.
-    colour : bool, default=True
-        ``False`` keeps only emphasis, no colour.
-    """
-    ok = exit_code == 0
-    title = "Done" if ok else f"Failed (exit code {exit_code})"
-    header = f"==> {title}" if plain else f"━━ {title} " + "━" * max(3, 60 - len(title))
-    lines = [Text(header, style="bold green" if ok else "bold red"), *(Text(f"    {line}") for line in summary)]
-    return lines if colour else [monochrome(line) for line in lines]

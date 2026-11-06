@@ -66,6 +66,7 @@ def test_cancelling_a_call_ends_the_whole_process_tree(stub: GrandchildStub) -> 
             await task
         return pid
 
+    # Act: run the scenario; the whole process tree must disappear.
     assert gone(asyncio.run(scenario()))
 
 
@@ -83,6 +84,7 @@ def test_an_abandoned_call_is_first_asked_to_stop_and_given_time(stub: Grandchil
             await task
         return pid
 
+    # Time how long the cancelled call takes to end.
     started = time.monotonic()
     pid = asyncio.run(scenario())
 
@@ -116,6 +118,7 @@ def test_a_call_that_ignores_the_cancel_request_is_killed_after_the_force_time(s
         stop.request()
         return await task
 
+    # Act: stop the call while the child ignores the request.
     outcome = asyncio.run(scenario())
 
     assert not outcome.ok and any("stopped by force" in problem for problem in outcome.problems)
@@ -155,6 +158,7 @@ def test_a_success_without_run_end_is_not_believed_but_a_failure_document_is_kep
     fake.respond("registry", doc={"api": 2, "command": "registry list", "ok": True, "exit_code": 0, "registries": []})
     listing = asyncio.run(fake.client().query(("registry", "list")))
 
+    # Assert: a success without an events file is rejected, and a failure document is kept.
     assert not claimed.ok and "no events file was written" in claimed.problems[0] and "exit code 0" in claimed.problems[0]
     assert failed.problems == () and failed.warnings and [item["package"] for item in failed.entries()] == ["p"] and not failed.ok
     assert listing["registries"] == []

@@ -25,7 +25,9 @@ from tests.support.catalog import write_version
 
 pytestmark = pytest.mark.unit
 
+# Version names that real packages use.
 REAL = ["1.2.3", "2024.10.1", "v1.2", "1.0.0-rc.1", "20261022-101500-ab12cd3", "0.17.0.local.1", "bootstrap2", "10.02", "3.31-1", "2.26", "1" + "0" * 127, "v1.0b2", "2024-10-22_rc"]
+# Hostile version names that must be refused.
 HOSTILE = [
     "CON", "con", "Con.txt", "con.tar.gz", "PRN", "AUX", "aux", "NUL", "nul.txt", "CONIN$", "conout$", "COM1", "com9", "COM1.txt", "LPT1", "lpt9.x",
     "COM¹", "LPT²", "LPT³.txt", "con .txt", "a‮b", "⁦x", "a\x00b", "a\x1fb", "a\x7fb", "a\x85b", "a​b", "a‏b",
@@ -54,6 +56,7 @@ def test_hostile_names_are_refused(name: str) -> None:
     assert not is_version_name(name)
 
 
+# Tracker text shared by the sample manifests.
 TRACKER = (
     'format = 2\ndescription = "d"\nmodes = ["system", "user"]\n[track]\nprovider = "page"\n'
     'check_url = "https://example.org/dl"\nmatch = \'release-(?P<version>[\\w.%~$\\-]+)\\.zip\'\n'
@@ -73,8 +76,10 @@ def test_a_hostile_version_on_a_vendor_page_writes_nothing(tmp_path: Path, versi
     system = FakeSystem(tmp_path / "machine")
     system.urls["https://example.org/dl"] = FakeHttp(f"<a>release-{version}.zip</a>")
 
+    # Act: update the registry whose vendor page lists a hostile version.
     outcome = update_registry(root, system, sandbox=tmp_path / "sandbox", names=["tool"], environ={}).outcomes[0]
 
+    # Assert: the update failed and nothing was written or downloaded.
     assert outcome.status == "failed" and "cannot name a version directory" in outcome.message
     assert sorted(p.relative_to(root).as_posix() for p in root.rglob("*")) == before
     assert "fingerprints" not in read_registry_file(root) or not read_registry_file(root)["fingerprints"]

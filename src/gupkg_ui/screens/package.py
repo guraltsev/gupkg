@@ -12,8 +12,8 @@ With ``root=True`` (``gupkg-tui``) Escape and ``q`` leave the program; otherwise
 
 Implementation Approach
 -----------------------
-The text is built as ``rich.text.Text`` from cleaned fields, so a package name or description with brackets or escape sequences is shown literally. The read happens in a
-worker; a failed read is shown as an error line in the view and the operations that need nothing from it (install) stay available.
+The text is built as ``rich.text.Text`` from cleaned fields, so a package name or description with brackets or escape sequences is shown literally. Loading happens in a
+worker; a failed load is shown as an error line in the view and the operations that need nothing from it (install) stay available.
 """
 
 from __future__ import annotations
@@ -39,7 +39,19 @@ from .versions import VersionPicker
 
 
 def info_lines(info: InfoRow) -> list[Text]:
-    """Return the lines of the package view for *info*: identity first, then problems, versions, registry, tracker, link, data, receipt and log."""
+    """Return the lines of the package view for *info*: identity first, then problems, versions, registry, tracker, link, data, receipt and log.
+
+    Parameters
+    ----------
+    info : InfoRow
+        What ``gupkg info`` reported for the package.
+
+    Returns
+    -------
+    list of Text
+        One styled line per item, ready to be joined for display.
+    """
+    # The identity and the active version lead the view.
     row = info.row
     installed = literal(row.version) if row.version else "not installed"
     newer = f" → {literal(row.newest_known)}" if row.newest_known and row.newest_known != row.version else ""
@@ -67,6 +79,8 @@ def info_lines(info: InfoRow) -> list[Text]:
         extra = f"  {literal(version.label)}" if version.label else ""
         problem = f"  PROBLEM: {literal('; '.join(version.problems))}" if version.problems else ""
         lines.append(Text(f"  {name:<14} {literal(version.status, limit=40)}{mark}{extra}{problem}"))
+
+    # What the registry and the tracker say about the package, and where it is linked from.
     lines.append(Text(f"Registry versions: {literal(', '.join(info.registry_versions)) or 'none'}" + (f"   following: {literal(row.following)}" if row.following else "")))
     if info.tracker is None:
         lines.append(Text("Tracker: none"))
@@ -98,6 +112,52 @@ class PackageScreen(PackageActions, FrameScreen):
         The inventory row the view was opened from (shown at once, before the details arrive).
     root : bool, default=False
         Whether this is the program's first screen: Escape then quits the program.
+
+    Methods
+    -------
+    key_hints
+        Return the keys of the package view.
+    status_text
+        Return the package's status and the program's status line.
+    compose_body
+        Yield the scrolling text of the view.
+    on_mount
+        Focus the view and read the package.
+    reload
+        Read the package again (in a worker, in-process) and show it.
+    action_check_updates
+        Check for updates of this package.
+    action_update
+        Update this package.
+    action_repair
+        Install or repair this package.
+    action_uninstall
+        Uninstall this package.
+    action_purge
+        Uninstall this package and delete its folder and data.
+    action_health
+        Run the health check on this package.
+    action_health_fix
+        Run the health check and repair what it finds.
+    action_switch
+        Choose another local version and activate it.
+    action_logs
+        Show the package's log.
+    action_reload
+        Read the package again.
+    action_help
+        Show the keys of the program.
+    action_back
+        Escape: return to the screen below, or leave the program when this is its first screen.
+    action_quit
+        Leave the program.
+
+    Attributes
+    ----------
+    BINDINGS : list of Binding
+        The keys of the screen, as ``key`` (label): ``escape`` (Back), ``q`` (Quit), ``question_mark`` (Help), ``c`` (Check for
+        updates), ``u`` (Update), ``r`` (Repair), ``s`` (Switch version), ``x`` (Uninstall), ``X`` (Purge), ``h`` (Health check),
+        ``H`` (Check and fix), ``l`` (Logs), ``g`` (Reload).
     """
 
     DEFAULT_CSS = "PackageScreen #info { padding: 0 1; }"
@@ -120,12 +180,24 @@ class PackageScreen(PackageActions, FrameScreen):
     # -- frame ---------------------------------------------------------------------
 
     def key_hints(self) -> str:
-        """Return the keys of the package view."""
+        """Return the keys of the package view.
+
+        Returns
+        -------
+        str
+            The text of the top line.
+        """
         leave = "Esc quit" if self._root else "Esc back"
         return f"{leave}  c check  u update  r repair  s switch  x uninstall  l logs  ? help"
 
     def status_text(self) -> str:
-        """Return the package's status and the program's status line."""
+        """Return the package's status and the program's status line.
+
+        Returns
+        -------
+        str
+            The text of the bottom line.
+        """
         row = self.info.row if self.info is not None else self._row
         own = f"{literal(row.name)} {literal(row.status)}" if row is not None else literal(self._target, limit=120)
         return str(getattr(self.app, "status_line", lambda own="": own)(own))
@@ -148,6 +220,7 @@ class PackageScreen(PackageActions, FrameScreen):
 
     async def _read(self) -> None:
         """Read what ``gupkg info <target> --json`` knows and show the package, or the reason it cannot be shown (the full text goes to the application's problems)."""
+        # Read the package; a failure is kept for display and reported to the application.
         try:
             info = await self.app.env.source.info(self._target)
             self._error = None
@@ -156,6 +229,8 @@ class PackageScreen(PackageActions, FrameScreen):
             report = getattr(self.app, "report_problem", None)
             if report is not None:
                 report(f"package {literal(self._target, limit=60)} unreadable", error)
+
+        # Keep the last good details, refresh the row the operations use, and build the lines to show.
         self.info = info if info is not None else self.info
         if info is not None:
             self._row = replace(PackageRow.of(info.row), target_text=self._target if Path(self._target).is_absolute() else None)
@@ -216,20 +291,24 @@ class PackageScreen(PackageActions, FrameScreen):
 
     def action_switch(self) -> None:
         """Choose another local version and activate it."""
+        # Switching needs the details and a row; say so when they have not arrived.
         if self.info is None or self._row is None:
             self.notify("The package is not known yet.", severity="warning", markup=False)
             return
+
+        # Offer only the other local versions, and say when there are none.
         others = [item.name for item in self.info.versions if item.name != self.info.row.version]
         if not others:
             self.notify("There is no other version to switch to.", severity="warning", markup=False)
             return
 
-        def chosen(version: str | None) -> None:
+        # Switch as soon as the picker returns a version.
+        def _chosen(version: str | None) -> None:
             """Switch once a version was picked."""
             if version is not None and self._row is not None:
                 self.start_switch(self._row, version)
 
-        self.app.push_screen(VersionPicker(self.info.row.name, others), chosen)
+        self.app.push_screen(VersionPicker(self.info.row.name, others), _chosen)
 
     def action_logs(self) -> None:
         """Show the package's log."""

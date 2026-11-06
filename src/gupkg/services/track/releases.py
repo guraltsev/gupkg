@@ -1,6 +1,6 @@
 """Discover a version from the releases of a GitHub repository or a GitLab project.
 
-Both providers read a release list through the shared client, normalise it to one shape
+Both providers fetch a release list through the shared client, normalise it to one shape
 (a tag, assets with a name, an address and optionally a SHA-256, a prerelease flag),
 derive the version from the tag or from an asset name, require the asset the package
 needs, and return the newest matching release. A digest the host publishes for the asset
@@ -44,15 +44,29 @@ from .common import (
     valid_version,
 )
 
+# Base address of the GitHub REST API.
 GITHUB_API = "https://api.github.com"
+# Headers that select the GitHub JSON media type and a stable API version.
 _GITHUB_HEADERS = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
+# A host-published digest of the form ``sha256:<64 hex digits>``.
 _DIGEST = re.compile(r"sha256:([0-9A-Fa-f]{64})")
+# Default tag shape: an optional leading ``v`` followed by the version.
 _DEFAULT_TAG = re.compile(r"[vV]?(?P<version>.+)")
 
 
 @dataclass(frozen=True)
 class Asset:
-    """One downloadable file of a release."""
+    """One downloadable file of a release.
+
+    Attributes
+    ----------
+    name : str
+        The file name.
+    url : str
+        Where the file is downloaded from.
+    sha256 : str or None
+        The digest the host publishes, when it publishes one.
+    """
 
     name: str
     url: str
@@ -61,7 +75,19 @@ class Asset:
 
 @dataclass(frozen=True)
 class Release:
-    """One release in the shape both hosts are normalised to."""
+    """One release in the shape both hosts are normalised to.
+
+    Attributes
+    ----------
+    tag : str
+        The release tag.
+    assets : tuple of Asset
+        The downloadable files.
+    url : str
+        The release page; empty when unknown.
+    prerelease : bool
+        Whether the host marks the release as a prerelease.
+    """
 
     tag: str
     assets: tuple[Asset, ...]
@@ -69,30 +95,27 @@ class Release:
     prerelease: bool = False
 
 
-@dataclass(frozen=True)
-class _Options:
-    """The selection rules shared by the two providers."""
-
-    asset: str | None
-    asset_pattern: str | None
-    version_from: str
-    tag_pattern: re.Pattern[str] | None
-    tag_prefix: str | None
-    version: str
-    link_name: str | None = None
-    prerelease: bool = False
-    extra: Mapping[str, Any] = field(default_factory=dict)
-    regex: "_Matches | None" = None
-
-
 def track_github(spec: GithubSpec, env: TrackEnvironment) -> TrackResult:
     """Find the newest matching GitHub release of ``spec.repo``.
+
+    Parameters
+    ----------
+    spec : GithubSpec
+        The validated ``github`` provider specification.
+    env : TrackEnvironment
+        The boundary, shared HTTP client and regex runner.
+
+    Returns
+    -------
+    TrackResult
+        The version, the release and asset captures, and any digest GitHub published.
 
     Raises
     ------
     TrackError
         If the API cannot be read, or no release has a usable version and the requested asset.
     """
+    # Fetch either the single latest release or up to a hundred releases, as the spec asks.
     base = f"{GITHUB_API}/repos/{spec.repo}/releases"
     try:
         if spec.release == "latest":
@@ -103,6 +126,7 @@ def track_github(spec: GithubSpec, env: TrackEnvironment) -> TrackResult:
             rows = data if isinstance(data, list) else []
     except HttpError as error:
         raise TrackError(f"Could not read the releases of {spec.repo}: {error}") from error
+    # Normalise the rows and pick the best release under the shared selection rules.
     releases = [release for release in (_github_release(row) for row in rows) if release is not None]
     options = _Options(spec.asset, spec.asset_pattern, spec.version_from, spec.tag_pattern, spec.tag_prefix,
                        spec.version, prerelease=spec.prerelease, regex=_Matches(env.regex))
@@ -111,6 +135,18 @@ def track_github(spec: GithubSpec, env: TrackEnvironment) -> TrackResult:
 
 def track_gitlab(spec: GitlabSpec, env: TrackEnvironment) -> TrackResult:
     """Find the newest matching GitLab release of ``spec.project``.
+
+    Parameters
+    ----------
+    spec : GitlabSpec
+        The validated ``gitlab`` provider specification.
+    env : TrackEnvironment
+        The boundary, shared HTTP client and regex runner.
+
+    Returns
+    -------
+    TrackResult
+        The version and the release and asset captures.
 
     Raises
     ------
@@ -129,15 +165,35 @@ def track_gitlab(spec: GitlabSpec, env: TrackEnvironment) -> TrackResult:
     return _checked_best(releases, options, f"GitLab project {spec.project}", strict=False)
 
 
+# --- supporting helpers ---
+
+
+@dataclass(frozen=True)
+class _Options:
+    """The selection rules shared by the two providers."""
+
+    asset: str | None
+    asset_pattern: str | None
+    version_from: str
+    tag_pattern: re.Pattern[str] | None
+    tag_prefix: str | None
+    version: str
+    link_name: str | None = None
+    prerelease: bool = False
+    extra: Mapping[str, Any] = field(default_factory=dict)
+    regex: "_Matches | None" = None
+
+
 # ---------------------------------------------------------------------------
 # Normalising the hosts' JSON
 # ---------------------------------------------------------------------------
 
 
 def _github_release(row: Any) -> Release | None:
-    """Return a ``Release`` from one GitHub release object, or ``None`` for a draft or a malformed row."""
+    """Return a ``Release`` from one GitHub release object, or ``None`` for a draft or a malformed row (internal normaliser)."""
     if not isinstance(row, dict) or row.get("draft") is True or not isinstance(row.get("tag_name"), str):
         return None
+    # Keep only well-formed, fully uploaded assets, with the host digest when it published one.
     assets: list[Asset] = []
     for item in row.get("assets") if isinstance(row.get("assets"), list) else []:
         if not isinstance(item, dict) or not isinstance(item.get("name"), str):
@@ -151,14 +207,16 @@ def _github_release(row: Any) -> Release | None:
 
 
 def _gitlab_release(row: Any) -> Release | None:
-    """Return a ``Release`` from one GitLab release object, or ``None`` when malformed."""
+    """Return a ``Release`` from one GitLab release object, or ``None`` when malformed (internal normaliser)."""
     if not isinstance(row, dict) or not isinstance(row.get("tag_name"), str):
         return None
     links = (row.get("assets") or {}).get("links") if isinstance(row.get("assets"), dict) else None
+    # Keep only well-formed links; a digest may be given under either of two keys.
     assets: list[Asset] = []
     for item in links if isinstance(links, list) else []:
         if not isinstance(item, dict) or not isinstance(item.get("name"), str):
             continue
+        # Prefer the direct asset address and take the digest from whichever key carries one.
         address = item.get("direct_asset_url") or item.get("url")
         if isinstance(address, str):
             digest = next((str(item[key]) for key in ("sha256", "digest") if item.get(key)), "")
@@ -188,7 +246,23 @@ class _Matches:
         self._known: dict[tuple[str, int, str], Any] = {}
 
     def many(self, pattern: re.Pattern[str], texts: list[str], what: str) -> list[Any]:
-        """Return, for every text, the match of *pattern* against the whole of it or ``None``."""
+        """Return, for every text, the match of *pattern* against the whole of it or ``None``.
+
+        Parameters
+        ----------
+        pattern : re.Pattern
+            The compiled pattern.
+        texts : list of str
+            The texts to match; those not seen before go to the worker in one call.
+        what : str
+            Field named in error messages.
+
+        Returns
+        -------
+        list
+            One match object or ``None`` per text, in order.
+        """
+        # Ask the worker only for the texts it has not answered yet, then answer from the cache.
         missing = [text for text in dict.fromkeys(texts) if (pattern.pattern, pattern.flags, text) not in self._known]
         if missing:
             for text, found in zip(missing, self._runner.fullmatch_many(pattern, missing, what=what)):
@@ -196,15 +270,32 @@ class _Matches:
         return [self._known[(pattern.pattern, pattern.flags, text)] for text in texts]
 
     def one(self, pattern: re.Pattern[str], text: str, what: str) -> Any:
-        """Return the match of *pattern* against the whole of *text*, or ``None``."""
+        """Return the match of *pattern* against the whole of *text*, or ``None``.
+
+        Parameters
+        ----------
+        pattern : re.Pattern
+            The compiled pattern.
+        text : str
+            The text to match.
+        what : str
+            Field named in error messages.
+
+        Returns
+        -------
+        object
+            The match object, or ``None``.
+        """
         return self.many(pattern, [text], what)[0]
 
 
 def _prime(options: _Options, releases: list[Release]) -> None:
     """Match every tag, and every asset name when the asset pattern is the same for all releases, in one call each."""
+    # Prerelease tags only count when prereleases are allowed.
     considered = [release for release in releases if options.prerelease or not release.prerelease]
     if options.tag_pattern is not None and considered:
         options.regex.many(options.tag_pattern, [release.tag for release in considered], "the release tags")
+    # The asset pattern is shared across releases unless it refers to per-release captures.
     uses_pattern = options.asset_pattern is not None and (
         options.version_from == "asset" or (options.asset is None and options.link_name is None)
     )
@@ -229,23 +320,27 @@ def _best(releases: list[Release], options: _Options, where: str, *, strict: boo
     With *strict* a release that does not satisfy them is an error naming the reason
     (the single "latest" release must be usable); otherwise it is skipped.
     """
+    # Evaluate every release; a release that fails is skipped and its reason kept for the error.
     results: list[tuple[str, TrackResult]] = []
     reasons: list[str] = []
     for release in releases:
         if release.prerelease and not options.prerelease:
             reasons.append(f"{release.tag}: prerelease")
             continue
+        # A release that cannot yield a version or asset is skipped, with its reason recorded.
         try:
             result = _from_release(release, options)
         except TrackError as error:
             reasons.append(f"{release.tag}: {error}")
             continue
         results.append((result.version, result))
+    # Nothing usable is an error that names why; strict mode demands exactly one usable release.
     if not results:
         detail = f" ({'; '.join(reasons[:3])})" if reasons else ""
         raise TrackError(f"{where} has no release with a usable version{' and the requested asset' if options.asset or options.asset_pattern or options.link_name else ''}{detail}")
     if strict and len(results) != 1:
         raise TrackError(f"{where} has more than one latest release")
+    # Keep the newest version; on a tie the earlier release stays.
     best = results[0]
     for other in results[1:]:
         if compare_versions(other[0], best[0]) > 0:
@@ -254,7 +349,7 @@ def _best(releases: list[Release], options: _Options, where: str, *, strict: boo
 
 
 def _from_release(release: Release, options: _Options) -> TrackResult:
-    """Derive the version, pick the asset and build the result for one release."""
+    """Derive the version, pick the asset and build the result for one release (internal selection step)."""
     captures: dict[str, str] = {"tag": release.tag, "release_url": release.url}
     groups = _tag_groups(release.tag, options)
     captures.update(groups)
@@ -270,6 +365,7 @@ def _from_release(release: Release, options: _Options) -> TrackResult:
             raise TrackError(f"expected one asset matching {options.asset_pattern!r}, found {len(found)}")
         asset, match = found[0]
         captures.update({key: value for key, value in match.groupdict().items() if value is not None})
+    # Expand and validate the version template now that the tag (and maybe asset) captures exist.
     version_text = expand(options.version, {**captures, "version": captures.get("version", groups.get("version", ""))})
     version = valid_version(version_text)
     captures["version"] = version
@@ -280,6 +376,7 @@ def _from_release(release: Release, options: _Options) -> TrackResult:
             wanted = expand(options.asset or options.link_name or "", captures)
             found = [item for item in release.assets if item.name == wanted]
         else:
+            # A pattern may match several assets; every match contributes captures, and exactly one must match.
             pattern = compile_runtime(options.asset_pattern or "", captures)
             verdicts = options.regex.many(pattern, [item.name for item in release.assets], f"the assets of release {release.tag}")
             matches = list(zip(release.assets, verdicts))
@@ -291,6 +388,7 @@ def _from_release(release: Release, options: _Options) -> TrackResult:
             raise TrackError(f"expected exactly one matching asset, found {len(found)}")
         asset = found[0]
 
+    # Report the chosen asset, and the host digest as the discovered checksum when there is one.
     checksum = None
     if asset is not None:
         captures["asset_name"] = asset.name
@@ -308,15 +406,18 @@ def _tag_groups(tag: str, options: _Options) -> dict[str, str]:
     TrackError
         If the tag does not fit ``tag_prefix`` or ``tag_pattern``.
     """
+    # A tag pattern wins; then a literal prefix; then (unless the asset names the version) the default ``v``-optional tag.
     if options.tag_pattern is not None:
         match = options.regex.one(options.tag_pattern, tag, f"the tag {tag[:60]!r}")
         if match is None:
             raise TrackError(f"the tag {tag!r} does not match tag_pattern")
         return {key: value for key, value in match.groupdict().items() if value is not None}
+    # A literal prefix is stripped; a tag that lacks it is rejected.
     if options.tag_prefix is not None:
         if not tag.startswith(options.tag_prefix):
             raise TrackError(f"the tag {tag!r} does not start with {options.tag_prefix!r}")
         return {"version": tag[len(options.tag_prefix):]}
+    # The version comes from the asset name, or else from the default ``v``-optional tag shape.
     if options.version_from == "asset":
         return {}
     match = _DEFAULT_TAG.fullmatch(tag)

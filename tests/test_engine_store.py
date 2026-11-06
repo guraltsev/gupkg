@@ -199,19 +199,24 @@ def test_portable_hand_over_never_writes_through_a_link_in_the_path(tmp_path: Pa
 
 def test_portable_first_population_moves_the_vendor_default_into_data_and_state_wins_later(tmp_path: Path, system: FakeSystem) -> None:
     """The first hand-over migrates what the vendor shipped; a later App gets the saved state in place of its own defaults."""
+    # Arrange: a first population with the vendor's default files.
     data = tmp_path / "data"
     first = tmp_path / "1" / "App"
     write(first / "settings.ini", "vendor")
     write(first / "Data" / "state.txt", "vendor state")
 
+    # Act: hand the vendor files over to the data folder.
     hand_over(system, first, data, ["settings.ini", "Data"])
+    # The user changes a setting, and the app hands it back.
     write(first / "settings.ini", "user")
     hand_back(system, first, data, ["settings.ini", "Data"])
+    # A second version comes with other vendor defaults.
     second = tmp_path / "2" / "App"
     write(second / "settings.ini", "vendor 2")
     write(second / "Data" / "state.txt", "vendor 2 state")
     hand_over(system, second, data, ["settings.ini", "Data"])
 
+    # Assert: the saved state wins over the vendor's defaults.
     assert (data / "settings.ini").read_text() == "user" and (second / "settings.ini").read_text() == "user"
     assert (second / "Data" / "state.txt").read_text() == "vendor state" and system.is_link(second / "Data")
 
@@ -219,6 +224,7 @@ def test_portable_first_population_moves_the_vendor_default_into_data_and_state_
 @pytest.mark.parametrize("which", ["receipt", "install-record", "toml", "track-state"])
 def test_a_write_that_fails_at_the_replace_leaves_the_old_file_intact_and_no_temporary_file(tmp_path: Path, which: str) -> None:
     """Writes are atomic: while another handle holds the old file the replace fails (Windows refuses it), the old bytes stay and no temp file is left."""
+    # Arrange: the writers of four kinds of persisted file.
     package = tmp_path / "tool"
     writers = {
         "receipt": (package / "1.0.0" / "App.info", lambda: update_receipt(package, "1.0.0", {"source": {"kind": "download"}, "new": 1})),
@@ -226,21 +232,25 @@ def test_a_write_that_fails_at_the_replace_leaves_the_old_file_intact_and_no_tem
         "toml": (package / "x.toml", lambda: write_toml(package / "x.toml", {"a": 2})),
         "track-state": (package / ".gupkg" / "state" / "track.toml", lambda: write_track_state(package, {"found": "9.9"})),
     }
+    # Pick the writer of the case and an existing target.
     target, write = writers[which]
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text('schema = 1\nold = "yes"\n', encoding="utf-8")
     before = target.read_bytes()
 
+    # Hold the target open, so that the replace fails.
     with open(target, "rb"):
         with pytest.raises(OSError):
             write()
 
+    # Assert: the old file is intact and no temporary file remains.
     assert target.read_bytes() == before
     assert [item.name for item in target.parent.iterdir()] == [target.name]
 
 
 def test_a_persisted_folder_the_application_replaced_is_merged_into_data_and_nothing_is_lost(tmp_path: Path, system: FakeSystem) -> None:
     """The app swapped its junction for a real folder: newer files win, files only data has stay, and the next hand-over loses nothing."""
+    # Arrange: saved data, and an app that replaced the persisted folder.
     data, app = tmp_path / "data", tmp_path / "1" / "App"
     write(data / "Data" / "old.txt", "saved old")
     write(data / "Data" / "only-in-data.txt", "keep me")
@@ -249,17 +259,20 @@ def test_a_persisted_folder_the_application_replaced_is_merged_into_data_and_not
     write(app / "Data" / "sub" / "deep.txt", "deep")
     write(app / "Data" / "shared.txt", "app shared")
     write(app / "Data" / "old.txt", "app edit")
+    # Give the files the timestamps that decide which copy is newer.
     stamp = time.time()
     os.utime(data / "Data" / "old.txt", (stamp - 1000, stamp - 1000))
     os.utime(data / "Data" / "shared.txt", (stamp, stamp))
     os.utime(app / "Data" / "shared.txt", (stamp - 500, stamp - 500))  # older than data's copy: data keeps its own
     os.utime(app / "Data" / "old.txt", (stamp - 10, stamp - 10))  # newer than data's copy: the app's wins
 
+    # Act: hand the folder back, then hand it over to a second version.
     saved = hand_back(system, app, data, ["Data"])
     second = tmp_path / "2" / "App"
     write(second / "Data" / "vendor.txt", "vendor default")
     hand_over(system, second, data, ["Data"])
 
+    # Assert: newer files are merged and nothing is lost.
     assert saved == ["Data (3 newer files merged)"]
     assert (data / "Data" / "only-in-data.txt").read_text() == "keep me" and (data / "Data" / "shared.txt").read_text() == "saved shared"
     assert (data / "Data" / "old.txt").read_text() == "app edit" and (data / "Data" / "sub" / "deep.txt").read_text() == "deep"

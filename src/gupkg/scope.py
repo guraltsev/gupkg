@@ -33,6 +33,7 @@ from .selfmgmt.location import RunningGupkg
 from .settingsload import LayerReport, load_mode_settings, read_root_layers, read_text_file, resolve_root
 from .system.port import Mode, System, is_elevated_run
 
+# Refusal text shared by every check that finds an elevated gupkg running from a tree users can change.
 NOT_ADMIN_ONLY_REFUSAL = (
     "an elevated gupkg must be installed in an admin-only root; run the system gupkg. On a machine where every process is "
     "elevated (UAC off, a CI runner) gupkg has only system mode, so it must be the admin-only system gupkg there too"
@@ -40,13 +41,38 @@ NOT_ADMIN_ONLY_REFUSAL = (
 
 
 def process_mode(system: System) -> Mode:
-    """Return the mode of this process: ``Mode.SYSTEM`` when its token is elevated, else ``Mode.USER`` (the only place that asks)."""
+    """Return the mode of this process, which is the only place that asks whether it is elevated.
+
+    Parameters
+    ----------
+    system : System
+        The machine boundary that reports elevation.
+
+    Returns
+    -------
+    Mode
+        ``Mode.SYSTEM`` when the token is elevated, else ``Mode.USER``.
+    """
     return Mode.SYSTEM if is_elevated_run(system) else Mode.USER
 
 
 def default_folders(system: System, mode: Mode) -> DefaultFolders | None:
     """Return the machine's own default Start Menu ``opt`` folder and ``bin`` folder for *mode*, or ``None``.
 
+    Parameters
+    ----------
+    system : System
+        The machine boundary that identifies the folders.
+    mode : Mode
+        The mode whose defaults are wanted.
+
+    Returns
+    -------
+    DefaultFolders or None
+        The defaults, or ``None`` when the machine does not identify them.
+
+    Notes
+    -----
     A mode whose folders the machine does not identify gives ``None``; the settings' ``%VAR%`` defaults then apply and
     fail with a message that names the missing variable.
     """
@@ -55,25 +81,6 @@ def default_folders(system: System, mode: Mode) -> DefaultFolders | None:
     except ValueError:
         return None
     return DefaultFolders(found.shortcut_root, found.bin_dir)
-
-
-def _require_admin_only_tree(location: RunningGupkg, system: System) -> None:
-    """Refuse an elevated run whose gupkg tree is not admin-only.
-
-    ``System.directory_untrusted_reason`` judges a folder and its ancestors, not what lies below it, so the entries an
-    elevated process loads first are named one by one: the version directory, the root, the package folder, its ``python``
-    runtime and the bundled ``site-packages``.
-    """
-    package = location.package_dir
-    folders = [folder for folder in (location.version_dir, location.root) if folder is not None] + [package]
-    folders += [folder for folder in (package / "python", package / "python" / "Lib" / "site-packages") if folder.exists()]
-    for folder in folders:
-        try:
-            reason = system.directory_untrusted_reason(folder)
-        except OSError as error:
-            reason = f"it could not be judged: {error}"
-        if reason is not None:
-            raise ModeRefused(f"{NOT_ADMIN_ONLY_REFUSAL} (this gupkg runs from {location.package_dir}; {folder} is not admin-only: {reason})")
 
 
 def build_scope_and_layers(
@@ -114,9 +121,12 @@ def build_scope_and_layers(
     gupkg.model.settings.SettingsError
         If a layer or ``--root`` is invalid, or ``--settings`` is given in system mode.
     """
+    # An elevated run judges its own tree before reading any settings.
     mode = process_mode(system)
     if mode is Mode.SYSTEM:
         _require_admin_only_tree(location, system)
+
+    # Read the settings layers that may name the root, then resolve the root through the mode's fallback chain.
     installed_root = location.root if location.kind == "installed" else None
     app_layer, cli_layer = read_root_layers(
         mode, app_dir=location.app_dir, settings_path=settings_path, system=system, read_text=read_text,
@@ -125,9 +135,12 @@ def build_scope_and_layers(
         mode, root_option=root_option, installed_root=installed_root, app_layer=app_layer, cli_layer=cli_layer,
         env=env, system=system,
     )
+
+    # Load the full settings that belong to the chosen root.
     loaded = load_mode_settings(
         mode, choice.path, app_dir=location.app_dir, settings_path=settings_path, system=system, env=env, read_text=read_text,
     )
+    # Freeze the result into the one Scope that every subsystem receives.
     scope = make_scope(mode, choice.path, choice.source, loaded.settings, env, defaults=default_folders(system, mode), system=system)
     return scope, loaded.layers
 
@@ -141,7 +154,63 @@ def build_scope(
     settings_path: Path | None = None,
     read_text: Callable[[Path], str | None] = read_text_file,
 ) -> Scope:
-    """Build the scope of this process: the mode of its token, its root and its settings (see ``build_scope_and_layers``)."""
+    """Build the scope of this process: the mode of its token, its root and its settings.
+
+    Parameters
+    ----------
+    system : System
+        The machine boundary: elevation, admin-only checks and the default folders.
+    env : mapping of str to str
+        The environment used to expand ``%NAME%`` in configured paths.
+    location : RunningGupkg
+        Where the running gupkg lives.
+    root_option : Path, optional
+        ``--root DIR``.
+    settings_path : Path, optional
+        ``--settings FILE``; refused in system mode.
+    read_text : callable, optional
+        Returns a file's text, or ``None`` when it does not exist.
+
+    Returns
+    -------
+    Scope
+        The frozen scope every subsystem receives.
+
+    Raises
+    ------
+    ModeRefused
+        If the process is elevated and the gupkg tree is not admin-only.
+    gupkg.model.settings.SettingsError
+        If a layer or ``--root`` is invalid, or ``--settings`` is given in system mode.
+
+    See Also
+    --------
+    build_scope_and_layers : <function> The same build, which also returns the settings layer reports.
+    """
     return build_scope_and_layers(
         system=system, env=env, location=location, root_option=root_option, settings_path=settings_path, read_text=read_text,
     )[0]
+
+
+# --- supporting helpers ---
+
+
+def _require_admin_only_tree(location: RunningGupkg, system: System) -> None:
+    """Refuse an elevated run whose gupkg tree is not admin-only.
+
+    ``System.directory_untrusted_reason`` judges a folder and its ancestors, not what lies below it, so the entries an
+    elevated process loads first are named one by one: the version directory, the root, the package folder, its ``python``
+    runtime and the bundled ``site-packages``.
+    """
+    # Name every entry an elevated process loads first, because the judge looks only at a folder and its ancestors.
+    package = location.package_dir
+    folders = [folder for folder in (location.version_dir, location.root) if folder is not None] + [package]
+    folders += [folder for folder in (package / "python", package / "python" / "Lib" / "site-packages") if folder.exists()]
+    # Refuse at the first folder that standard users could change (or that cannot be judged).
+    for folder in folders:
+        try:
+            reason = system.directory_untrusted_reason(folder)
+        except OSError as error:
+            reason = f"it could not be judged: {error}"
+        if reason is not None:
+            raise ModeRefused(f"{NOT_ADMIN_ONLY_REFUSAL} (this gupkg runs from {location.package_dir}; {folder} is not admin-only: {reason})")

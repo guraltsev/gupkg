@@ -22,10 +22,14 @@ import urllib.request
 from typing import Any
 
 
+# Version of the update-check module interface that this script implements.
 PKG_MODULE_API = 1
 
+# Address that publishes the current release information.
 _FEED = "https://sourceforge.net/projects/netiogui/rss?path=/"
+# Request headers sent with each lookup.
 _USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36"
+# Pattern that extracts the version (and file address, where captured) from the response.
 _ARCHIVE = re.compile(r"/(?P<name>netio-gui_v(?P<version>\d+(?:\.\d+)*)_portable\.zip)")
 
 
@@ -49,17 +53,20 @@ def check_update(context: dict[str, Any]) -> dict[str, str] | None:
         The feed cannot be read or lists no portable ZIP.
     """
     request = urllib.request.Request(_FEED, headers={"User-Agent": _USER_AGENT})
+    # Fetch the feed text.
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             text = response.read().decode("utf-8", errors="replace")
     except OSError as exc:
         raise RuntimeError(f"Could not read {_FEED}: {exc}") from exc
 
+    # Collect the portable archives by version and choose the highest version.
     names = {m.group("version"): m.group("name") for m in _ARCHIVE.finditer(text)}
     if not names:
         raise RuntimeError("The NetIO-GUI feed lists no portable ZIP")
     version = max(names, key=lambda v: tuple(int(p) for p in v.split(".")))
 
+    # Report no candidate when this version is installed and healthy.
     current = context.get("current", {})
     if current.get("version") == version and current.get("appReady", True):
         return None

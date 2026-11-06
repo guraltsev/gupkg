@@ -39,6 +39,7 @@ def test_find_7z_uses_each_supported_system_fallback(
     system_path = Path(r"C:\Tools") / f"{system_name}.exe"
 
     def which(command_name: str) -> str | None:
+        """Find the system command only under the requested name."""
         return str(system_path) if command_name == system_name else None
 
     with mock.patch.object(extractors.Path, "is_file", return_value=False):

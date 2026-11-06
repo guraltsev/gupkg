@@ -2,14 +2,14 @@
 
 A batch is a list of ``Step`` objects, each one ``gupkg`` call (usually one call that carries every target). ``BatchSession.run`` starts them one after another,
 follows each call's events file, hands the styled lines to a ``Sink`` while the call runs, and returns a ``BatchOutcome`` with one result
-entry per target. The outcome fails closed: a call that could not be started, whose result cannot be read, whose events file lacks
+entry per target. The outcome fails closed: a call that could not be started, whose result is unreadable, whose events file lacks
 ``run_end`` or that returns no entry for a target makes that target a failed one, never an ``ok`` one. Cancelling (decision D37) asks
 the running call to stop after its current package through the stop marker and starts no further call; the targets that never ran are
 reported as skipped.
 
 Usage and API
 -------------
-Build ``BatchSession(client, sink)``, call ``await session.run(steps, extra_entries=...)`` and read the ``BatchOutcome``;
+Build ``BatchSession(client, sink)``, call ``await session.run(steps, extra_entries=...)`` and inspect the ``BatchOutcome``;
 ``session.request_cancel()`` may be called from the UI while ``run`` is awaited. ``Sink`` is the three-method protocol that a
 screen or the console implements. ``exit_code_of(entries, problems)`` is the one place that turns results into the combined exit code
 (the highest code of a failure; a refused target is 3, a skipped or declined one 5).
@@ -37,16 +37,44 @@ EXIT_OK, EXIT_USAGE, EXIT_FAILED, EXIT_INTERNAL, EXIT_INPUT = 0, 2, 3, 4, 5
 
 
 class Sink(Protocol):
-    """Receive what a running batch shows: styled lines, the live progress text and a one-line status."""
+    """Receive what a running batch shows: styled lines, the live progress text and a one-line status.
+
+    Methods
+    -------
+    lines
+        Append lasting lines to the log.
+    progress
+        Show (or, with ``None``, clear) the live progress line.
+    status
+        Show the one-line run state.
+    """
 
     def lines(self, lines: Sequence[Text]) -> None:
-        """Append lasting lines to the log."""
+        """Append lasting lines to the log.
+
+        Parameters
+        ----------
+        lines : sequence of Text
+            The styled lines to append.
+        """
 
     def progress(self, text: str | None) -> None:
-        """Show (or, with ``None``, clear) the live progress line."""
+        """Show (or, with ``None``, clear) the live progress line.
+
+        Parameters
+        ----------
+        text : str or None
+            The progress text, or ``None`` to clear it.
+        """
 
     def status(self, text: str) -> None:
-        """Show the one-line run state."""
+        """Show the one-line run state.
+
+        Parameters
+        ----------
+        text : str
+            The state, such as ``Running: update``.
+        """
 
 
 @dataclass(frozen=True)
@@ -91,6 +119,11 @@ class FollowUp:
 class BatchOutcome:
     """What a batch did, combined over all its calls.
 
+    Methods
+    -------
+    logs
+        Return the log files the entries name, without repeats.
+
     Attributes
     ----------
     entries : list of dict
@@ -104,6 +137,8 @@ class BatchOutcome:
         Whether the person asked to stop.
     calls : list of CallResult
         The calls that were made, in order.
+    ok : bool
+        Whether everything ran and succeeded.
     """
 
     entries: list[dict[str, Any]] = field(default_factory=list)
@@ -118,7 +153,13 @@ class BatchOutcome:
         return self.exit_code == EXIT_OK
 
     def logs(self) -> list[str]:
-        """Return the log files the entries name, without repeats."""
+        """Return the log files the entries name, without repeats.
+
+        Returns
+        -------
+        list of str
+            The log paths, in the order the entries first name them.
+        """
         seen: dict[str, None] = {}
         for entry in self.entries:
             if isinstance(entry.get("log"), str):
@@ -127,7 +168,28 @@ class BatchOutcome:
 
 
 def synthetic_entry(package: str, operation: str, status: str, code: int, message: str, *, ok: bool = False) -> dict[str, Any]:
-    """Return a result entry for a target the UI itself decided (``refused``, ``skipped``, ``failed`` with no result)."""
+    """Return a result entry for a target the UI itself decided (``refused``, ``skipped``, ``failed`` with no result).
+
+    Parameters
+    ----------
+    package : str
+        The target's qualified name.
+    operation : str
+        The operation that was meant to run.
+    status : str
+        The status word, also used as the error code.
+    code : int
+        The exit code of the entry.
+    message : str
+        The reason shown to the person.
+    ok : bool
+        Whether the entry counts as a success (a skip after a cancel does).
+
+    Returns
+    -------
+    dict
+        An entry in the shape of the CLI's ``results``.
+    """
     return {
         "package": package, "operation": operation, "ok": ok, "status": status, "version": None, "previous": None,
         "exit_code": code, "receipt": None, "log": None, "warnings": [],
@@ -140,8 +202,35 @@ def exit_code_of(entries: Sequence[dict[str, Any]], problems: Sequence[str] = ()
 
     A skipped entry (stopped after a cancel) counts as 5, a refused one as 3 (the policy would not run it), and any problem that
     makes a result untrustworthy as at least 3.
+
+    Parameters
+    ----------
+    entries : sequence of dict
+        The result entries of the batch.
+    problems : sequence of str
+        Reasons a call cannot be trusted; any one makes the code at least 3.
+
+    Returns
+    -------
+    int
+        The combined exit code.
+
+    Examples
+    --------
+    Basic usage:
+
+    >>> exit_code_of([])
+    0
+
+    Edge cases:
+
+    >>> exit_code_of([], ['could not read the registry'])
+    3
     """
+    # Any untrustworthy call already counts as a failure before the entries are judged.
     codes: list[int] = [EXIT_FAILED] if problems else []
+
+    # Each entry contributes its own failure code, or the code for a skip or a refusal.
     for entry in entries:
         status = entry.get("status")
         if entry.get("ok") is not True:
@@ -167,6 +256,13 @@ class BatchSession:
         The only folder where a stop marker may be created (the ``TEMP`` of the client's environment by default).
     colour : bool, default=True
         Whether the output may be coloured (see ``EventRenderer``).
+
+    Methods
+    -------
+    request_cancel
+        Stop after the package that is running: ask the running call, and start no further one.
+    run
+        Run *steps* in order and write the verdict and summary at the end of the log.
     """
 
     def __init__(self, client: Client, sink: Sink, *, temp_dir: Path | None = None, colour: bool = True) -> None:
@@ -179,7 +275,13 @@ class BatchSession:
         self.running = False
 
     def request_cancel(self) -> str:
-        """Stop after the package that is running: ask the running call, and start no further one; return what was done in words."""
+        """Stop after the package that is running: ask the running call, and start no further one.
+
+        Returns
+        -------
+        str
+            What was done, in words for the screen.
+        """
         self.cancelled = True
         self._sink.status("Cancelling after the current package…")
         return self._stop.request() if self._stop is not None else "No call is running; the remaining calls will not start."
@@ -254,23 +356,26 @@ class BatchSession:
 
     async def _run_step(self, step: Step, renderer: EventRenderer, outcome: BatchOutcome) -> None:
         """Run one call, stream its events to the sink and add its trusted entries (or its failures) to *outcome*."""
+        # Announce the call and arm a fresh stop marker so a cancel request can reach this call only.
         self._sink.lines([Text(f"▶ {literal(step.label, limit=200)}", style="bold")])
         self._sink.status(f"Running: {literal(step.label, limit=100)}")
         self._stop = StopRequest(self._temp_dir)
 
+        # The two callbacks below keep the sink current while the call runs: records refresh the display, silence is reported.
         running = f"Running: {literal(step.label, limit=100)}"
 
-        def show(records: list[dict[str, Any]]) -> None:
+        def _show(records: list[dict[str, Any]]) -> None:
             """Hand a batch of records to the display and refresh the live progress (and clear a "still running" note)."""
             self._sink.lines(renderer.feed(records))
             self._sink.progress(renderer.progress_text())
             self._sink.status(running)
 
-        def quiet(seconds: float) -> None:
+        def _quiet(seconds: float) -> None:
             """Say that the call is still running although it has written nothing for a while (nothing is killed)."""
             self._sink.status(f"{running}: still running, no output for {int(seconds)} s")
 
-        result = await self._client.call(step.args, events_dir=step.events_dir, on_records=show, stop=self._stop, on_idle=quiet)
+        # Run the call, streaming records to the sink; the stop marker is dropped as soon as it returns.
+        result = await self._client.call(step.args, events_dir=step.events_dir, on_records=_show, stop=self._stop, on_idle=_quiet)
         self._stop = None
         outcome.calls.append(result)
         operation = step.args[0] if step.args else "operation"
@@ -294,6 +399,7 @@ class BatchSession:
             f"gupkg returned no result for it (exit code {result.exit_code})"
         )
         code = result.exit_code if type(result.exit_code) is int and result.exit_code else EXIT_INTERNAL
+        # A target the call did not answer for is a failure, never a silent success.
         for target in step.targets:
             if target not in answered:
                 outcome.entries.append(synthetic_entry(target, operation, "failed", code, reason))

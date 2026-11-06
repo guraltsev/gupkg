@@ -4,7 +4,7 @@ Every launcher is a finished, plain ``cmd`` file kept in the ``templates`` folde
 source tree, ``<tree>\\templates`` in a release) and copied byte for byte by whichever gupkg runs the operation (``check-updates``,
 ``pkg new``, ``pkg launchers``, ``pkg adopt``, ``pkg bundle``, ``pkg export``, and the registry tool all call this module). A
 launcher lives at ``<root>\\<name>\\<version>\\`` (or ``<root>\\<name>\\_check_updates\\``) and finds a gupkg by its own position,
-in this order: the gupkg bundled in its folder, the folder named by the first line of ``<root>\\.gupkg\\gupkg-location`` (read as
+in this order: the gupkg bundled in its folder, the folder named by the first line of ``<root>\\.gupkg\\gupkg-location`` (loaded as
 data, never executed), then the first ``gupkg.cmd`` or ``gupkg.exe`` on ``PATH``; with none of them it exits 9009 with the way to
 get gupkg. Exit code 6, which a gupkg returns for a package it cannot handle, moves on to the next step. The registry, AppData,
 ProgramData and the current directory are never searched. An elevated launcher first checks, with System32's PowerShell, that
@@ -39,6 +39,7 @@ LAUNCHERS = {**VERSION_LAUNCHERS, TRACKER_LAUNCHER: "check-updates"}
 # The folder of the finished launchers: beside the ``gupkg`` package in the source tree and in a release tree.
 TEMPLATES_DIR = Path(__file__).resolve().parents[2] / "templates"
 
+# Inverse of LAUNCHERS: the launcher file that runs each gupkg command.
 _FILE_OF_COMMAND = {command: name for name, command in LAUNCHERS.items()}
 
 

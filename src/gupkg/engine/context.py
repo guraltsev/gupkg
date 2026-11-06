@@ -88,6 +88,22 @@ class Engine:
         injects a failing one to exercise the restore of the previous ``App``.
     max_recorded_files : int
         The largest ``App`` whose files are listed one by one in a receipt (larger ones record the count and one digest).
+
+    Methods
+    -------
+    now
+        The current UTC time, through the injected clock.
+    seven_zip_path
+        The 7-Zip executable to use, or ``None``.
+    http_client
+        The shared HTTP client for a scope, with an admin-only cache in an elevated run.
+
+    Attributes
+    ----------
+    version : str
+        The running gupkg's version.
+    effect_env : Mapping[str, str]
+        The environment that ``${NAME}`` references in package declarations resolve against.
     """
 
     system: System
@@ -110,7 +126,13 @@ class Engine:
     max_recorded_files: int = MAX_RECORDED_FILES
 
     def now(self) -> datetime:
-        """Return the current UTC time."""
+        """Return the current UTC time.
+
+        Returns
+        -------
+        datetime
+            The injected clock's value, or the system's UTC time when no clock was given.
+        """
         return self.clock() if self.clock is not None else datetime.now(timezone.utc)
 
     @property
@@ -130,7 +152,13 @@ class Engine:
         return {name: value for name, value in self.env.items() if name.casefold() in MACHINE_VARIABLES}
 
     def seven_zip_path(self) -> Path | None:
-        """Return the 7-Zip executable to use, or ``None`` when none is found (an archive then fails with its own message)."""
+        """Return the 7-Zip executable to use, or ``None`` when none is found (an archive then fails with its own message).
+
+        Returns
+        -------
+        Path or None
+            The configured executable, else the bundled one, else ``None``.
+        """
         if self.seven_zip is not None:
             return self.seven_zip
         try:
@@ -144,14 +172,29 @@ class Engine:
         In an elevated run the cache folder must be admin-only (it is created first, then judged), so a
         standard user cannot plant a file that is later unpacked.
 
+        Parameters
+        ----------
+        context : Scope
+            The scope whose data folder holds the cache.
+        headers : Mapping[str, str], optional
+            Extra request headers declared by the package's ``[source]``.
+
+        Returns
+        -------
+        HttpClient
+            A client that caches downloads in the scope's cache folder.
+
         Raises
         ------
         gupkg.selfmgmt.elevation.UntrustedLocationError
             If the run is elevated and the cache folder can be changed by standard users.
         """
+        # Create the cache first so there is a folder to judge, then refuse it if standard users can change it.
         cache = context.data_dir / "cache"
         cache.mkdir(parents=True, exist_ok=True)
         context.require_trusted(cache, "the download cache")
+
+        # Build the client; a retry count is passed only when the engine overrides the default.
         options = {} if self.retries is None else {"retries": self.retries}
         return HttpClient(
             self.system, headers=dict(headers or {}), cache_dir=cache, env=github_environment(context.mode, self.env),
@@ -165,6 +208,13 @@ def require_trusted_tools(engine: Engine, *tools: Path | None) -> None:
     An elevated gupkg runs no code that a standard user can modify (decision D19): the interpreter that starts the regex
     worker, the worker script and 7-Zip must all lie in admin-only folders. A normal run is not restricted.
 
+    Parameters
+    ----------
+    engine : Engine
+        Supplies the scope that judges the folders.
+    *tools : Path or None
+        Executables or scripts about to be started; ``None`` entries (a tool that was not found) are skipped.
+
     Raises
     ------
     gupkg.selfmgmt.elevation.UntrustedLocationError
@@ -176,7 +226,13 @@ def require_trusted_tools(engine: Engine, *tools: Path | None) -> None:
 
 
 def tracker_tools() -> tuple[Path, ...]:
-    """Return the files an elevated ``check-updates`` starts: the running interpreter and the regex worker script."""
+    """Return the files an elevated ``check-updates`` starts: the running interpreter and the regex worker script.
+
+    Returns
+    -------
+    tuple[Path, ...]
+        The interpreter and the regex worker script.
+    """
     return Path(sys.executable), Path(__file__).resolve().parents[1] / "system" / "regex_worker.py"
 
 
@@ -185,6 +241,16 @@ def stop_marker(path: Path) -> Callable[[], bool]:
 
     The marker is data a user-writable program may create: it is only ever read for its existence, and the
     only thing it can do is make the run stop after the package that is running, so it is safe in an elevated run.
+
+    Parameters
+    ----------
+    path : Path
+        The marker file whose existence requests the stop.
+
+    Returns
+    -------
+    Callable[[], bool]
+        A callable that is true once *path* exists.
 
     Notes
     -----
@@ -198,6 +264,18 @@ def stop_marker(path: Path) -> Callable[[], bool]:
 
 def require_work_folder(engine: Engine, folder: Path) -> Path:
     """Create *folder* and, in an elevated run, require it to be admin-only; return it.
+
+    Parameters
+    ----------
+    engine : Engine
+        Supplies the scope that judges the folder.
+    folder : Path
+        The work folder to create.
+
+    Returns
+    -------
+    Path
+        *folder*, which exists and is trusted.
 
     Raises
     ------

@@ -37,14 +37,18 @@ from tests.support.track import VENDORS, environment, parse_tracker
 
 pytestmark = pytest.mark.process
 
+# Directory of this test module.
 HERE = Path(__file__).resolve().parent
+# Seconds a regex search may run before it is stopped.
 DEADLINE = 0.8
+# Source file of the worker process that runs the searches.
 WORKER_SOURCE = HERE.parent / "src" / "gupkg" / "system" / "regex_worker.py"
 # A process start is slow on some machines (antivirus, the venv launcher) and spikes to seconds; the
 # deadline counts from the worker's first line, so tests allow the start on top of deadline plus one second.
 START_ALLOWANCE = 3.0
 
 
+# Sample page texts that the runner and the local scan must match identically.
 BODIES = [
     '<a href="https://vendor.example/files/tool_1002.zip" class="dl">  Local</a> <a href="/files/tool_854.zip">old</a>',
     "tool-1.10-x64.zip tool-1.9-arm64.zip tool-1.9.sig tool-2.0.zip.sig\n",
@@ -94,15 +98,18 @@ def test_a_search_a_fullmatch_and_a_batch_agree_with_re(system: FakeSystem) -> N
     compiled = re.compile(r"(?P<name>tool)-(?P<version>\d+(?:\.\d+)*)\.zip")
     runner = RegexRunner(system)
 
+    # Single matches agree with the standard library.
     assert shape(runner.search(compiled, "get tool-1.2.zip now")) == shape(compiled.search("get tool-1.2.zip now"))
     assert runner.search(compiled, "nothing here") is None
     assert shape(runner.fullmatch(compiled, "tool-3.zip")) == shape(compiled.fullmatch("tool-3.zip"))
     assert runner.fullmatch(compiled, "xtool-3.zip") is None
+    # Batch operations agree with it too, element by element.
     names = ["tool-1.zip", "other.zip", "tool-2.5.zip", "tool-1.zip.sig"]
     assert [m and shape(m) for m in runner.fullmatch_many(compiled, names)] == [
         (shape(compiled.fullmatch(name)) if compiled.fullmatch(name) else None) for name in names
     ]
     assert runner.fullmatches(compiled, names) == [True, False, True, False]
+    # Empty batches give empty results.
     assert runner.fullmatch_many(compiled, []) == [] and runner.finditer_many(compiled, []) == []
 
 
@@ -246,10 +253,12 @@ def test_no_worker_process_is_left_after_the_hostile_corpus(system: FakeSystem, 
     copy = tmp_path / unique
     shutil.copyfile(WORKER_SOURCE, copy)
     monkeypatch.setattr("gupkg.system.windows._REGEX_WORKER", copy)
+    # A catastrophic-backtracking request, and the places where the run's lines and outcome are noted.
     hostile = json.dumps({"op": "search", "pattern": "(a+)+$", "flags": 32, "texts": ["a" * 40 + "!"], "limit": 1, "cap": 100})
     lines: list[str] = []
     outcome: list[BaseException] = []
 
+    # Run the hostile request in a worker and record how it ends.
     def hang() -> None:
         """Run a worker that never finishes and note how it ends."""
         try:
@@ -306,6 +315,7 @@ def double_answering(stdout: str, returncode: int = 0, stderr: str = "") -> Fake
     return FakeSystem(Path("."), processes={"regex-worker": lambda call: ProcessResult(returncode, stdout, stderr)})
 
 
+# Well-formed worker reply used as the baseline for corrupted replies.
 GOOD = {"ok": True, "names": {}, "results": [[[0, 1, ["x"]]]]}
 
 
@@ -369,8 +379,10 @@ def test_the_request_the_parent_sends_is_ascii_json_with_the_pattern_flags_and_p
 
     system = FakeSystem(tmp_path / "machine", processes={"regex-worker": spy})
 
+    # Act: ask for matches of a non-ASCII pattern in a long text.
     RegexRunner(system).finditer(re.compile(r"café", re.IGNORECASE), "a" * 5000 + " é", limit=3)
 
+    # Check the request that the worker received.
     request = json.loads(seen[0])
     assert seen[0].isascii() and request["op"] == "finditer" and request["limit"] == 3
     assert request["flags"] & re.IGNORECASE and request["pattern"] == "café"
@@ -497,6 +509,7 @@ def test_a_boolean_group_number_in_the_names_is_rejected(tmp_path: Path) -> None
         RegexRunner(system).finditer(re.compile(r"(?P<a>x)"), "x")
 
 
+# Sample package manifest that tracks GitHub releases with tag and asset patterns.
 RELEASES_TOML = """
 format = 2
 description = "x"
@@ -519,10 +532,12 @@ def test_a_release_run_needs_two_worker_calls_not_two_per_release_and_finds_the_
     base = "https://github.com/o/r/releases"
     rows = [
         {
+            # One release for each number.
             "tag_name": f"v1.{number}",
             "draft": False,
             "prerelease": False,
             "html_url": f"{base}/tag/v1.{number}",
+            # Each release carries its archive and a signature file.
             "assets": [
                 {"name": f"tool-1.{number}.zip", "state": "uploaded", "browser_download_url": f"{base}/download/v1.{number}/tool-1.{number}.zip"},
                 {"name": f"tool-1.{number}.zip.sig", "state": "uploaded", "browser_download_url": f"{base}/download/v1.{number}/tool-1.{number}.zip.sig"},
@@ -530,6 +545,7 @@ def test_a_release_run_needs_two_worker_calls_not_two_per_release_and_finds_the_
         }
         for number in range(30)
     ]
+    # Serve the releases from the API address and parse the tracker manifest.
     system.urls["https://api.github.com/repos/o/r/releases?per_page=100"] = FakeHttp(json.dumps(rows), 200, {"Content-Type": "application/json"})
     manifest = parse_manifest(RELEASES_TOML, ManifestKind.TRACKER)
 

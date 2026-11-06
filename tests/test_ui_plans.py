@@ -1,4 +1,4 @@
-"""Cover how the UI programs read plans and apply the ``[manager] checksum_missing`` policy to each planned target.
+"""Cover how the UI programs load plans and apply the ``[manager] checksum_missing`` policy to each planned target.
 
 Behaviour covered: the policy matrix of design 9.1 (ask, refuse, skip, each interactive and not, for a missing hash, a malformed hash and a plain ``http://`` URL), asked at most
 once per package and never for a package that needs no question; a malformed declared hash (the ``invalid-checksum`` error of the plan) is never asked and never relayed; a

@@ -1,4 +1,4 @@
-"""Cover issue 035 acceptance item 1: a run never considers the other root, even when that root is poisoned.
+"""Cover that a run never considers the other root, even when that root is poisoned.
 
 Behavior covered: with the other mode's root holding a ``settings.toml`` that is not TOML, a ``state.toml`` of junk, a package whose
 populate script would write a marker file and a registry cache of another revision, the commands ``list``, ``check``, ``install``,
@@ -40,7 +40,7 @@ class Touches:
 
     def __init__(self, folder: Path, monkeypatch: pytest.MonkeyPatch, *, program_root: Path | None = None) -> None:
         self.folder = str(folder).lower()
-        # A user run judges the root its own gupkg program is installed in (is it admin-only?) to pick its root (issue 035 Q11): that
+        # A user run judges the root its own gupkg program is installed in (is it admin-only?) to pick its root: that
         # folder itself, and nothing below it, may be looked at. Its existence and access list are not data of the system mode.
         self.program_root = os.path.normcase(os.path.normpath(program_root)) if program_root is not None else None
         self.paths: list[str] = []
@@ -61,16 +61,19 @@ class Touches:
                 where = [f"{Path(f.filename).name}:{f.lineno}" for f in traceback.extract_stack()[-8:-2]]
                 self.paths.append(f"{text} <- {where}")
 
+        # Wrap a filesystem function so that each call is noted.
         def watch(owner: object, name: str) -> None:
             """Replace ``owner.name`` by a function that notes its first argument and calls the original."""
             original = getattr(owner, name)
 
             def watched(first, *args, **kwargs):
+                """Note the first argument of the call and delegate to the original function."""
                 note(first)
                 return original(first, *args, **kwargs)
 
             monkeypatch.setattr(owner, name, watched)
 
+        # Watch every function through which a program can look at the filesystem.
         for owner, name in (
             (builtins, "open"), (io, "open"), (os, "scandir"), (os, "listdir"), (os, "stat"), (os, "lstat"),
             (os.path, "exists"), (os.path, "isdir"), (os.path, "isfile"), (os.path, "islink"),
@@ -89,11 +92,13 @@ def poison(world: CliWorld, mode: str) -> tuple[Path, Path]:
     (root / ".gupkg" / "state.toml").write_text("\x00junk = = =\n[[[\n", encoding="utf-8")
     world.publish_script("poison", "1.0.0", mode=mode)
 
+    # A populate script that proves, by writing a marker, that the other root's hook ran.
     def hook(call: ProcessCall) -> ProcessResult:
         """Play the poisoned populate script: it writes the marker."""
         marker.write_text("the hook of the other root ran", encoding="utf-8")
         return ProcessResult(0, "", "")
 
+    # Register the script and a package in the other root's registry.
     world.fake.processes["populate.cmd"] = hook
     world.registry({"poisonpkg": {"versions": {"9.9.9": {"app.exe": "x"}}}}, mode=mode, revision="b" * 40)
     return root, marker
@@ -111,12 +116,14 @@ def test_a_run_never_considers_the_poisoned_root_of_the_other_mode(tmp_path: Pat
     touches = Touches(other_root, monkeypatch, program_root=world.location.root)
     outputs: list[str] = []
 
+    # Helper that runs one command and keeps its output.
     def run(*argv: str) -> None:
         """Run one command; it must exit 0 and its output joins *outputs*."""
         result = world.cli(*argv)
         assert result.code == 0, (argv, result.out, result.err)
         outputs.append(result.out + result.err)
 
+    # Run every command that could consult a root: registry, install, update, check and cleanup.
     run("registry", "remove", "main")
     run("registry", "add", "main", SOURCE)
     run("registry", "sync")
@@ -127,6 +134,7 @@ def test_a_run_never_considers_the_poisoned_root_of_the_other_mode(tmp_path: Pat
     run("check")
     run("cleanup", "--yes")
 
+    # The run's own listing holds the run's package and none of the poison package.
     document = world.cli("list", "--json").document()
     assert document["mode"] == own and Path(document["root"]) == world.root(own)
     assert [item["name"] for item in document["packages"]].count("poison") == 0
@@ -137,6 +145,7 @@ def test_a_run_never_considers_the_poisoned_root_of_the_other_mode(tmp_path: Pat
     environment = UiEnvironment(fake.client(), settings, world.location, world.fake, world.env, None)
     shown: list[str] = []
 
+    # Open the manager browser and wait until it lists the run's own package.
     async def scenario() -> None:
         """Open the browser and wait until it lists the run's own package."""
         app = ManagerApp(environment)
@@ -144,6 +153,7 @@ def test_a_run_never_considers_the_poisoned_root_of_the_other_mode(tmp_path: Pat
             await wait_for(pilot, lambda: any("tool" in row for row in screen_text(app)), "the browser to list the run's package")
             shown.extend(screen_text(app))
 
+    # Act: drive the browser.
     asyncio.run(scenario())
 
     text = "\n".join(outputs + shown).lower()

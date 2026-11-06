@@ -18,6 +18,7 @@ import pytest
 
 pytestmark = pytest.mark.unit
 
+# Sample data with nested tables.
 DATA = {
     "modes": ["system", "user"],
     "shim": [{"name": "emacs", "target": "$App/bin/emacs.exe"}, {"name": "runemacs", "target": "$App/bin/runemacs.exe", "type": "gui"}],

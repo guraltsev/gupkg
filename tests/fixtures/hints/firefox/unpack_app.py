@@ -27,6 +27,7 @@ from typing import Any
 from gupkg.extractors import find_7z
 
 
+# Version of the update-check module interface that this script implements.
 PKG_MODULE_API = 1
 
 
@@ -50,12 +51,14 @@ def unpack_app(context: dict[str, Any]) -> None:
     stage_app = Path(paths["stageApp"])
 
     # Extract beside App so a failure leaves nothing behind in the final tree.
+    # Extract only the application core into a scratch folder, then move it into place.
     scratch = stage_app.with_name(stage_app.name + ".extract")
     scratch.mkdir(parents=True)
     try:
         command = [str(find_7z()), "x", "-y", f"-o{scratch}", str(artifact), "core"]
         subprocess.run(command, check=True)
         core = scratch / "core"
+        # Verify the executable is present before the staged application is accepted.
         if not (core / "firefox.exe").is_file():
             raise RuntimeError("Firefox installer does not contain core/firefox.exe")
         core.rename(stage_app)

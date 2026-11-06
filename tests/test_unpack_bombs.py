@@ -29,7 +29,9 @@ from tests.support.archive import make_zip
 
 pytestmark = pytest.mark.unit
 
+# One mebibyte in bytes.
 MIB = 1024 * 1024
+# Small extraction limits that the bombs exceed.
 SMALL = Limits(max_total_bytes=MIB, max_file_bytes=MIB)
 
 
@@ -72,11 +74,13 @@ def test_a_gzip_with_a_lying_length_trailer_is_stopped_while_it_expands(tmp_path
     written: list[int | None] = []
     real = Path.unlink
 
+    # Spy on deletions, to see how large the partial output was when it was removed.
     def spy(self: Path, *args, **kwargs):
         """Record the size of the partial output at the moment it is deleted."""
         written.append(self.stat().st_size if self.exists() else None)
         return real(self, *args, **kwargs)
 
+    # Act: expanding the gzip stops early and removes the partial output.
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(Path, "unlink", spy)
         with pytest.raises(UnpackError, match="expands past"):
@@ -112,6 +116,7 @@ def test_a_seven_zip_that_writes_past_the_limit_is_killed_and_cleaned_up(tmp_pat
     archive = tmp_path / "x.7z"
     archive.write_bytes(b"7z\xbc\xaf\x27\x1c" + bytes(50))
 
+    # Act: unpacking is stopped and the partial output removed.
     with pytest.raises(UnpackError, match="was stopped"):
         unpack_artifact(system, archive, stage / "App", UnpackPlan(), limits=SMALL)
 

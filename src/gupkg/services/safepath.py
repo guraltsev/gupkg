@@ -41,9 +41,13 @@ RESERVED_DEVICE_NAMES = frozenset(
     | {f"lpt{number}" for number in range(1, 10)}
 )
 
+# Longest single path segment accepted, in characters.
 _MAX_SEGMENT = 255
+# Longest whole member name accepted, in characters.
 _MAX_PATH_TEXT = 1024
+# The Windows file attribute flag that marks links and junctions.
 _FILE_ATTRIBUTE_REPARSE_POINT = 0x400
+# Characters Windows refuses in a file name (and control characters and separators).
 _FORBIDDEN_IN_FILE_NAME = re.compile(r'[<>:"|?*\x00-\x1f\\/]')
 
 
@@ -72,6 +76,32 @@ def check_member_name(name: str) -> str:
         If the name is empty, absolute, has a drive or ``:``, a ``..`` segment, a
         control character, a Windows device name, a segment ending in a dot or space,
         or is longer than the supported limits.
+
+    Examples
+    --------
+    Basic usage:
+
+    >>> check_member_name('bin\\\\tool.exe')
+    'bin/tool.exe'
+    >>> check_member_name('docs/')
+    'docs'
+    >>> check_member_name('./a//b')
+    'a/b'
+
+    Edge cases:
+
+    >>> check_member_name('../evil')
+    Traceback (most recent call last):
+        ...
+    gupkg.services.safepath.UnsafePath: unsafe member name '../evil': it leaves the destination
+    >>> check_member_name('C:/evil')
+    Traceback (most recent call last):
+        ...
+    gupkg.services.safepath.UnsafePath: unsafe member name 'C:/evil': a drive letter or stream marker ':' is not allowed
+    >>> check_member_name('NUL.txt')
+    Traceback (most recent call last):
+        ...
+    gupkg.services.safepath.UnsafePath: unsafe member name 'NUL.txt': it uses the reserved device name 'NUL.txt'
     """
     # Reject what no member name may contain before looking at its structure.
     if not name or any(ord(character) < 32 for character in name):
@@ -89,11 +119,13 @@ def check_member_name(name: str) -> str:
     segments = [segment for segment in normal.split("/") if segment not in ("", ".")]
     if not segments:
         raise UnsafePath(f"unsafe member name {name!r}: it names no file")
+    # Each rule below refuses one way a segment can escape, alias another file or be rewritten.
     for segment in segments:
         if segment == "..":
             raise UnsafePath(f"unsafe member name {name!r}: it leaves the destination")
         if segment.endswith((".", " ")):
             raise UnsafePath(f"unsafe member name {name!r}: a segment ends in a dot or space")
+        # Device names are reserved whatever the extension (``nul.txt`` is ``nul``); also bound the length.
         if segment.split(".")[0].rstrip().casefold() in RESERVED_DEVICE_NAMES:
             raise UnsafePath(f"unsafe member name {name!r}: it uses the reserved device name {segment!r}")
         if len(segment) > _MAX_SEGMENT:
@@ -125,12 +157,14 @@ def check_member_set(names: Iterable[str], repeats: bool = True) -> list[str]:
         If any name is unsafe, two different names fold to the same path on a
         case-insensitive file system, or (with ``repeats=False``) a name repeats.
     """
+    # Normalise each name and compare case-folded keys, which is how Windows aliases names.
     seen: dict[str, str] = {}
     result: list[str] = []
     for raw in names:
         normal = check_member_name(raw)
         key = normal.casefold()
         previous = seen.get(key)
+        # Different spellings of one folded name collide; an identical repeat is allowed only on request.
         if previous is not None and previous != normal:
             raise UnsafePath(f"unsafe archive: {previous!r} and {normal!r} are the same name on Windows")
         if previous is not None and not repeats:
@@ -141,7 +175,18 @@ def check_member_set(names: Iterable[str], repeats: bool = True) -> list[str]:
 
 
 def is_reparse_point(path: Path) -> bool:
-    """Return whether *path* is a symbolic link, junction or other reparse point (it is not followed)."""
+    """Return whether *path* is a symbolic link, junction or other reparse point (it is not followed).
+
+    Parameters
+    ----------
+    path : Path
+        The path to examine; a missing path is not a reparse point.
+
+    Returns
+    -------
+    bool
+        ``True`` when *path* itself is a link, junction or other reparse point.
+    """
     try:
         status = os.lstat(path)
     except OSError:
@@ -203,6 +248,24 @@ def safe_file_name(name: str, default: str = "download") -> str:
     str
         A single file name without separators, ``:`` or other characters Windows
         refuses, never a reserved device name, never ending in a dot or space.
+
+    Examples
+    --------
+    Basic usage:
+
+    >>> safe_file_name('dir/app-1.0.zip')
+    'app-1.0.zip'
+    >>> safe_file_name('a:b?.txt')
+    'a_b_.txt'
+
+    Edge cases:
+
+    >>> safe_file_name('')
+    'download'
+    >>> safe_file_name('CON')
+    '_CON'
+    >>> safe_file_name('..', 'fallback')
+    'fallback'
     """
     last = re.split(r"[\\/]", name)[-1]
     cleaned = _FORBIDDEN_IN_FILE_NAME.sub("_", last).strip().rstrip(". ")
@@ -218,7 +281,13 @@ def remove_tree(path: Path) -> None:
 
     A link or junction is removed itself and its target is left alone. Read-only
     files are made writable first. A missing path is not an error.
+
+    Parameters
+    ----------
+    path : Path
+        The file, folder or link to delete.
     """
+    # A link is removed itself, never its target.
     target = Path(path)
     if is_reparse_point(target):
         try:
@@ -226,6 +295,7 @@ def remove_tree(path: Path) -> None:
         except OSError:
             os.unlink(target)
         return
+    # A missing path is done; a plain file only needs its read-only flag cleared.
     if not target.exists():
         return
     if target.is_file():
@@ -233,8 +303,10 @@ def remove_tree(path: Path) -> None:
         target.unlink()
         return
 
-    def clear_and_retry(function, failed, _error) -> None:
-        """Make the failing entry writable and try the removal once more."""
+    # Error handler for ``shutil.rmtree`` that copes with read-only entries and links.
+    def _clear_and_retry(function, failed, _error) -> None:
+        """Make the failing entry writable and retry the removal ``function`` once."""
+        # A link met on the way is removed itself; anything else is made writable and retried.
         if is_reparse_point(Path(failed)):
             try:
                 os.rmdir(failed)
@@ -246,4 +318,4 @@ def remove_tree(path: Path) -> None:
 
     # ``shutil.rmtree`` does not recurse into junctions on Windows; the handler
     # covers read-only entries and links met on the way.
-    shutil.rmtree(target, onexc=clear_and_retry)
+    shutil.rmtree(target, onexc=_clear_and_retry)

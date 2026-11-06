@@ -1,4 +1,4 @@
-"""Cover the fingerprint of a pinned version directory (design 9.2, decision D29).
+"""Cover the fingerprint of a pinned version directory (design 9.2).
 
 Behavior covered: the documented algorithm gives the documented value for a known tree and does
 not depend on creation order or timestamps; any change of content (one byte, a line ending), name
@@ -10,7 +10,7 @@ is verified against the fingerprint ``_registry.toml`` publishes (and refused
 after one file changes), which is what installing a distribution folder will rely on.
 Real: files in ``tmp_path``, ``hashlib``, real junctions through ``FakeSystem``, a registry of one package
 written for the test, the catalog's registry reader. Out of scope: the install engine that will call
-``verify_directory`` (issue 028) and the command line (issue 029).
+``verify_directory`` and the command line.
 """
 
 from __future__ import annotations
@@ -34,6 +34,7 @@ from gupkg.system.fake import FakeSystem
 
 pytestmark = pytest.mark.unit
 
+# A small tree that has a hook, a launcher and an empty file.
 TREE = {"pkg.toml": b"format = 2\n", "pkg.local/hook.py": b"x = 1\n", "install.cmd": b"@echo off\r\n", "empty.txt": b""}
 
 
@@ -219,14 +220,17 @@ def _registry_tree(tmp_path: Path) -> Path:
 
 def test_a_tree_with_too_many_files_or_bytes_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A hostile directory cannot make the check run for ever: past the file or byte limit it is refused, at the limit it is accepted."""
+    # Limit the tree to three files.
     monkeypatch.setattr("gupkg.services.fingerprint.MAX_FILES", 3)
     folder = build(tmp_path / "v", {"a": b"1", "b": b"2", "c": b"3"})
     assert fingerprint_directory(folder)
 
+    # One more file exceeds the limit.
     (folder / "d").write_bytes(b"4")
     with pytest.raises(FingerprintError, match="more than 3 files"):
         fingerprint_directory(folder)
 
+    # Limit the bytes.
     monkeypatch.setattr("gupkg.services.fingerprint.MAX_FILES", 10)
     monkeypatch.setattr("gupkg.services.fingerprint.MAX_TOTAL_BYTES", 4)
     assert fingerprint_directory(folder)
@@ -237,15 +241,18 @@ def test_a_tree_with_too_many_files_or_bytes_is_refused(tmp_path: Path, monkeypa
 
 def test_a_tree_with_too_many_directories_or_levels_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Many empty directories or a very deep chain are refused as well; at the limit the tree is accepted."""
+    # Limit the tree to three directories.
     monkeypatch.setattr("gupkg.services.fingerprint.MAX_DIRECTORIES", 3)
     wide = build(tmp_path / "wide", {"f": b"1"})
     for name in ("a", "b", "c"):
         (wide / name).mkdir()
     assert fingerprint_directory(wide)
+    # One more directory exceeds the limit.
     (wide / "d").mkdir()
     with pytest.raises(FingerprintError, match="more than 3 directories"):
         fingerprint_directory(wide)
 
+    # Limit the depth to three levels.
     monkeypatch.setattr("gupkg.services.fingerprint.MAX_DIRECTORIES", 100)
     monkeypatch.setattr("gupkg.services.fingerprint.MAX_DEPTH", 3)
     deep = build(tmp_path / "deep", {"a/b/c/f": b"1"})

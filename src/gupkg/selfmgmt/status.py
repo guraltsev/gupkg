@@ -37,6 +37,13 @@ from .location import RunningGupkg
 class SelfStatus:
     """What ``gupkg self status`` found about the running gupkg.
 
+    Methods
+    -------
+    problems
+        Return one line per finding that makes the status not ok.
+    to_data
+        Return the JSON-ready description (``integrity`` lists modified, missing and extra files).
+
     Attributes
     ----------
     version : str
@@ -71,7 +78,14 @@ class SelfStatus:
     current_problem: str | None = None
 
     def problems(self) -> list[str]:
-        """Return one line per finding that makes the status not ok."""
+        """Return one line per finding that makes the status not ok.
+
+        Returns
+        -------
+        list of str
+            Human-readable findings; empty when the status is ok.
+        """
+        # Collect findings in the order a repair would address them.
         found: list[str] = []
         if self.current_problem:
             found.append(self.current_problem)
@@ -89,7 +103,14 @@ class SelfStatus:
         return not self.problems()
 
     def to_data(self) -> dict[str, Any]:
-        """Return the JSON-ready description (``integrity`` lists modified, missing and extra files)."""
+        """Return the JSON-ready description (``integrity`` lists modified, missing and extra files).
+
+        Returns
+        -------
+        dict
+            Plain data for ``--json`` output.
+        """
+        # Flatten the integrity report into plain lists.
         integrity = None
         if self.integrity is not None:
             integrity = {
@@ -97,6 +118,8 @@ class SelfStatus:
                 "modified": list(self.integrity.modified), "missing": list(self.integrity.missing),
                 "extra": list(self.integrity.extra),
             }
+
+        # Assemble the public record, including the derived problem list.
         return {
             "version": self.version, "kind": self.kind, "location": self.location, "version_root": self.version_root,
             "interpreter": self.interpreter, "interpreter_bundled": self.interpreter_bundled, "integrity": integrity,
@@ -105,10 +128,21 @@ class SelfStatus:
 
 
 def self_status(location: RunningGupkg) -> SelfStatus:
-    """Return the status of the gupkg described by *location*, reading only its own files and the process state.
+    """Return the status of the gupkg described by *location*, consulting only its own files and the process state.
 
     The manifest of a source checkout does not exist, so its integrity is reported as not applicable.
+
+    Parameters
+    ----------
+    location : RunningGupkg
+        The gupkg to inspect, from ``locate_running_gupkg``.
+
+    Returns
+    -------
+    SelfStatus
+        Interpreter, integrity and activation findings.
     """
+    # The interpreter must be the isolated bundled one, started with -I and -S.
     package_dir = location.package_dir
     expected = package_dir / "python" / "python.exe"
     bundled = (
@@ -124,6 +158,7 @@ def self_status(location: RunningGupkg) -> SelfStatus:
         ),
         None,
     )
+    # Compare the files with the release manifest; a source checkout has none.
     integrity: IntegrityReport | None = None
     problem: str | None = None
     notes: list[str] = []
@@ -149,6 +184,8 @@ def self_status(location: RunningGupkg) -> SelfStatus:
                 f"the gupkg package {package_root} has no active version (`current` is missing). Run `gupkg install gupkg` "
                 "to activate its newest version; if gupkg does not start, install it again with gupkg-bootstrap.cmd"
             )
+
+    # Bundle every finding into the immutable status record.
     return SelfStatus(
         __version__, location.kind, str(package_dir), str(version_root) if version_root else None, sys.executable, bundled,
         integrity, problem, tuple(notes), current_problem,

@@ -171,18 +171,21 @@ def execute_install(engine: Engine, run: ExecutionInput) -> PackageResult:
     populated: Populated | None = None
     populate = plan.populate
     if populate is not None and populate.needed:
+        # Build the App now; any failure here leaves nothing outside the version directory and the work folder.
         populated = populate_version(
             engine, context, package_path, version_dir, manifest, name=plan.package, version=version,
             skip=run.request.skip, record_manifest=_records_manifest(manifest, run.settings), replace=run.request.refresh,
             allow_installer=bool(run.settings["hooks.allow_vendor_installers"]),
         )
     else:
+        # The App is already in place, so the four population phases are reported as skipped.
         for name in ("Fetch", "Verify", "Unpack", "Prepare"):
             emit_skipped(name)
 
     # Fetching and unpacking take time: a file that no package owns may have appeared since the plan checked the disk. Look again
     # before anything is activated, so a refusal leaves ``current`` and the integration as they were.
     if not run.request.download_only:
+        # The files granted by ``--overwrite`` are carried in ``run`` so the integrate step can report them as replaced.
         run = replace(run, replacing=_recheck_unowned(engine, run, [item.effect for item in plan.effects if item.action in ("add", "update")], (
             f" {plan.package} {version} was unpacked but not activated: `current`, the shims, shortcuts and the install record are unchanged."
         )))
@@ -203,6 +206,8 @@ def execute_install(engine: Engine, run: ExecutionInput) -> PackageResult:
         receipt = _write_receipt(engine, run, populated, origin)
         if failures:
             finishing.fail()
+
+    # Collect every warning of the run, then build the result: a failed one names the effects that were not applied.
     warnings = [*run.warnings, *([broadcast_warning] if broadcast_warning else [])]
     if failures:
         return PackageResult(
@@ -211,6 +216,8 @@ def execute_install(engine: Engine, run: ExecutionInput) -> PackageResult:
              + ". The ones that were applied are recorded; run `gupkg check --fix` or install again."},
             str(receipt), engine.log_path(package_path), tuple(warnings), {"applied": _describe(applied), "failed": failures},
         )
+
+    # Success: the result carries the origin of the version directory and whether an App was built.
     return PackageResult(
         plan.package, plan.operation, True, _status(plan), version, plan.previous, context.mode, 0, None,
         str(receipt), engine.log_path(package_path), tuple(warnings),
@@ -247,8 +254,11 @@ def _after_switch(run: ExecutionInput, activated: bool, step: str) -> Iterator[N
     try:
         yield
     except OSError as error:
+        # Before ``current`` moved nothing has changed, so the error passes through unchanged.
         if not activated:
             raise
+
+        # After the switch, build a message that states the real state and how to return to the old version.
         plan = run.plan
         old = plan.previous if plan.previous and plan.previous.casefold() != (plan.version or "").casefold() else None
         back = (
@@ -262,7 +272,13 @@ def _after_switch(run: ExecutionInput, activated: bool, step: str) -> Iterator[N
 
 
 def emit_skipped(name: str) -> None:
-    """Report a phase that did not run: a start event and an end event with the status ``skipped``."""
+    """Report a phase that did not run: a start event and an end event with the status ``skipped``.
+
+    Parameters
+    ----------
+    name : str
+        The phase name (``Fetch``, ``Verify``, ``Unpack``, ``Prepare``...).
+    """
     with phase(name) as skipped:
         skipped.skip()
 
@@ -304,9 +320,13 @@ def _copy_in(engine: Engine, run: ExecutionInput) -> _Origin:
     plan, context = run.plan, run.context
     copy = plan.copy_in
     origin = _Origin()
+
+    # Nothing to copy: the version directory is already in the root.
     if copy is None and run.precopied is None:
         return origin
     version_dir = plan.package_path / (plan.version or "")
+
+    # A distribution folder is copied (or was copied already by an elevated caller); a divergent existing copy is refused.
     if run.precopied is not None or copy.origin == "distribution":
         source = run.distribution if run.precopied is not None else copy.source
         outcome = run.precopied or copy_distribution(source, context.root, required=context)
@@ -315,6 +335,8 @@ def _copy_in(engine: Engine, run: ExecutionInput) -> _Origin:
                 f"{outcome.destination} exists and differs from {source}; it was left alone. Install the local copy "
                 f"with `gupkg install {plan.package}@{plan.version}`, or remove it first."
             )
+
+        # Report the copy, then prove that the copy is the planned manifest and matches the registry's fingerprint.
         origin = _Origin("distribution", str(source), outcome.source_marked)
         emit(Step(f"Copied {outcome.files} files into {outcome.destination}"
                   + (" (the source carried the Mark of the Web; the copies do not)" if outcome.source_marked else ""), "add"))
@@ -322,6 +344,8 @@ def _copy_in(engine: Engine, run: ExecutionInput) -> _Origin:
         _require_same_manifest(run, version_dir, created=created)
         _verify_distribution(run, version_dir, origin, created=created)
         return origin
+
+    # A registry version is copied by the staged, never-overwriting copy and verified the same way.
     if copy.origin == "registry":
         created = not os.path.lexists(version_dir)
         copy_registry_version(engine, run.context, plan.package_path, copy.source, plan.version or "")
@@ -343,12 +367,15 @@ def _require_same_manifest(run: ExecutionInput, version_dir: Path, *, created: b
     The plan was made from the source folder; the copy is what gets installed, so it is read again and compared.
     A copy that this run created is removed when it differs.
     """
+    # Read the copy back; an unreadable or invalid manifest counts as different from the plan.
     try:
         copied = parse_manifest((version_dir / MANIFEST_NAME).read_text(encoding="utf-8-sig"))
     except (OSError, UnicodeDecodeError, ValueError) as error:
         copied, problem = None, str(error)
     else:
         problem = "it is not the pkg.toml that was planned"
+
+    # A different manifest is refused; a copy this run created is removed so nothing half-installed remains.
     if copied != run.chosen.manifest:
         if created:
             remove_tree(version_dir)
@@ -362,16 +389,20 @@ def _verify_distribution(run: ExecutionInput, version_dir: Path, origin: _Origin
     A match labels it ``registry-fingerprint``; no published fingerprint labels it ``origin-not-verified``; a mismatch
     refuses the install, naming the files that differ, and removes the copy this run created.
     """
-    manifest = run.chosen.manifest
+    # Without a published fingerprint the copy cannot be verified, and the label says so.
     if run.registry_fingerprint is None:
         origin.record = ChecksumRecord(ORIGIN_NOT_VERIFIED)
         return
+
+    # Compare the copy with the fingerprint; a match labels the origin.
     problems = verify_directory(version_dir, run.registry_fingerprint.lower(), run.registry_path)
     if not problems:
         origin.record = ChecksumRecord(REGISTRY_FINGERPRINT, registry=run.registry_name)
         emit(Step(f"Verified against registry {run.registry_name}: the fingerprint matches", "ok"))
         _note_uncovered_app(run, origin)
         return
+
+    # A mismatch refuses the install and removes the copy this run created.
     if created:
         remove_tree(version_dir)
         prune_empty_package(run.plan.package_path)
@@ -394,8 +425,11 @@ def _label_local(engine: Engine, run: ExecutionInput, version_dir: Path, origin:
 
     A mismatch here is the user's own edit of a local version, so it is reported, not refused (the local copy wins, design 5.3).
     """
+    # Without a published fingerprint there is nothing to compare with.
     if run.registry_fingerprint is None:
         return origin
+
+    # A match (allowing the launchers check-updates adds) vouches for the copy; a difference is only reported.
     expected = run.registry_fingerprint.lower()
     if not verify_directory(version_dir, expected) or _differs_only_by_launchers(version_dir, run.registry_path):
         origin.record = ChecksumRecord(REGISTRY_FINGERPRINT, registry=run.registry_name)
@@ -426,6 +460,19 @@ def _differs_only_by_launchers(version_dir: Path, registry_copy: Path | None) ->
 def copy_registry_version(engine: Engine, context: Scope, package_path: Path, source: Path, version: str) -> Path:
     """Copy one pinned version of a registry into ``<package>\\<version>``, never overwriting.
 
+    Parameters
+    ----------
+    engine : Engine
+        Supplies the work-folder trust check.
+    context : Scope
+        The resolved install mode (unused by the copy itself).
+    package_path : Path
+        The package root.
+    source : Path
+        The registry's version folder.
+    version : str
+        The version directory name to create.
+
     Returns
     -------
     Path
@@ -438,9 +485,12 @@ def copy_registry_version(engine: Engine, context: Scope, package_path: Path, so
     DistributionRefused
         If the registry's folder contains a link.
     """
+    # An existing directory of that name wins; it is never overwritten.
     destination = package_path / version
     if os.path.lexists(destination):
         return destination
+
+    # Stage the copy in the package's work folder, refuse links, and publish it with one rename.
     package_path.mkdir(parents=True, exist_ok=True)
     work = require_work_folder(engine, package_path / DATA_DIR_NAME / "work") / scratch_name("copy")
     try:
@@ -460,7 +510,15 @@ def carry_forward(view: PackageView, target: Path) -> None:
     bundled install carries the package's own copy (design 5.3 rule 1, 21.4, decision D32), whichever gupkg runs the
     operation. The launchers are not copied: every gupkg writes them from the template. A folder that *target* already
     has is left alone.
+
+    Parameters
+    ----------
+    view : PackageView
+        The package whose active (else newest valid) version provides the ``gupkg`` folder.
+    target : Path
+        The new version directory that receives the copy.
     """
+    # Prefer the active version as the source, else the newest valid one.
     source: Path | None = None
     if view.installed is not None:
         source = view.installed.path
@@ -468,6 +526,8 @@ def carry_forward(view: PackageView, target: Path) -> None:
         source = view.local.valid_versions[-1].path
     if source is None or canonical_path(source) == canonical_path(target):
         return
+
+    # Copy the folder without following links, and never over one that is already there.
     item = source / "gupkg"
     if os.path.lexists(item) and not is_reparse_point(item) and item.is_dir() and not os.path.lexists(target / "gupkg"):
         shutil.copytree(item, target / "gupkg", symlinks=True)
@@ -478,6 +538,29 @@ def sync_registry_tracker(engine: Engine, view: PackageView, package_path: Path,
 
     ``keep`` and ``none`` do nothing. A refresh replaces the unedited local copy: the old folder is moved aside first and
     restored if the new one cannot be put in place.
+
+    Parameters
+    ----------
+    engine : Engine
+        Supplies the work-folder trust check.
+    view : PackageView
+        The package (unused by the copy itself).
+    package_path : Path
+        The package root.
+    sync : TrackerSync
+        What to do with the registry's tracker (``copy``, ``refresh``, ``keep`` or ``none``).
+
+    Returns
+    -------
+    str or None
+        The content hash of the new tracker folder, or ``None`` when nothing was copied.
+
+    Raises
+    ------
+    DistributionRefused
+        If the registry's tracker contains a link.
+    OSError
+        If the new folder cannot be put in place (the old one is restored).
     """
     if sync.action not in ("copy", "refresh") or sync.registry_tracker is None:
         return None
@@ -485,20 +568,26 @@ def sync_registry_tracker(engine: Engine, view: PackageView, package_path: Path,
     package_path.mkdir(parents=True, exist_ok=True)
     work = require_work_folder(engine, package_path / DATA_DIR_NAME / "work") / scratch_name("tracker")
     try:
+        # Stage a link-free copy of the registry's tracker away from the package.
         staged = work / "_check_updates"
         shutil.copytree(sync.registry_tracker.path, staged, symlinks=True)
         _refuse_links(staged)
+
+        # Move the old tracker aside, put the new one in place, and restore the old one if that fails.
         old = work / "old"
         if os.path.lexists(destination):
             os.replace(destination, old)
         try:
             os.replace(staged, destination)
         except OSError:
+            # Put the old tracker back so the package never ends up without one.
             if old.exists():
                 os.replace(old, destination)
             raise
     finally:
         remove_tree(work)
+
+    # Report the sync and return the hash that the install record keeps for the tracker.
     emit(Step(f"{'Refreshed' if sync.action == 'refresh' else 'Copied'} the registry's tracker into the package", "add"))
     return tree_hash(destination)
 
@@ -512,7 +601,14 @@ def _refuse_links(folder: Path) -> None:
 
 
 def prune_empty_package(package_path: Path) -> None:
-    """Remove a package root that this run created and that holds nothing but empty gupkg folders."""
+    """Remove a package root that this run created and that holds nothing but empty gupkg folders.
+
+    Parameters
+    ----------
+    package_path : Path
+        The package root to remove when it holds only empty folders.
+    """
+    # Empty the data folder bottom-up first, so the package root itself can then be removed if it is empty.
     try:
         data = package_path / DATA_DIR_NAME
         if data.is_dir() and not is_reparse_point(data):
@@ -521,6 +617,8 @@ def prune_empty_package(package_path: Path) -> None:
                     item.rmdir()
             if not any(data.iterdir()):
                 data.rmdir()
+
+        # Remove the package root only when nothing at all is left in it.
         if not any(package_path.iterdir()):
             package_path.rmdir()
     except OSError:
@@ -535,13 +633,18 @@ def prune_empty_package(package_path: Path) -> None:
 def _activate(engine: Engine, run: ExecutionInput, version_dir: Path) -> bool:
     """Hand the portable data over and switch ``current`` to *version_dir*; return whether ``current`` moved."""
     plan, context = run.plan, run.context
+
+    # A plan that does not move ``current`` only reports the phase as skipped.
     if next(item for item in plan.phases if item.name == "Activate").skipped:
         emit_skipped("Activate")
         return False
     with phase("Activate"):
+        # A portable package's persisted state is handed over before ``current`` moves.
         system, package_path = engine.system, plan.package_path
         if run.chosen.manifest.portable is not None:
             _hand_over_data(engine, run, version_dir)
+
+        # Switch the junction; if that fails after the old one was removed, put the previous version back.
         emit(Step(f"current -> {plan.version}", "add"))
         current = package_path / "current"
         try:
@@ -562,13 +665,19 @@ def _hand_over_data(engine: Engine, run: ExecutionInput, version_dir: Path) -> N
     """Save the outgoing version's persisted state into ``data`` and link it into the incoming ``App`` (design 6.3)."""
     plan = run.plan
     data = plan.package_path / "data"
+
+    # The shared ``data`` folder must be a real folder, never a link that would redirect the state elsewhere.
     if is_reparse_point(data):
         raise DistributionRefused(f"{data} is a link; refusing to keep portable state through it")
+
+    # Save the outgoing version's persisted items into ``data``.
     previous = run.view.local.version(plan.previous) if run.view.local and plan.previous else None
     if previous is not None and previous.manifest is not None and previous.manifest.portable and previous.populated:
         saved = hand_back(engine.system, previous.path / "App", data, previous.manifest.portable.persist)
         for item in saved:
             emit(Step(f"saved {item} to data\\", "info"))
+
+    # Link the saved items into the incoming App.
     wanted = run.chosen.manifest.portable.persist if run.chosen.manifest.portable else ()
     if wanted:
         data.mkdir(parents=True, exist_ok=True)
@@ -583,15 +692,20 @@ def _integrate(engine: Engine, run: ExecutionInput) -> tuple[list[Effect], list[
     stops the others, and a failed removal stays in the record so that the next run retries it.
     """
     plan = run.plan
+
+    # With every effect already right there is nothing to apply; the record stays as planned.
     if not any(item.action != "keep" for item in plan.effects):
         emit_skipped("Integrate")
         return [item.effect for item in plan.effects], [], None
+
+    # Names of files that ``--overwrite`` lets this run replace, so each replacement can be reported when it is written.
     effect_ctx = effect_context(run.context, plan.package_path, engine.effect_env)
     replacing = {name_key("shortcut" if item.kind == OVERWRITE_SHORTCUTS else "file", item.path) for item in run.replacing}
     applied: list[Effect] = []
     failures: list[str] = []
     changed_environment = False
     with phase("Integrate") as integrating:
+        # Apply new and changed effects first; one failing effect never stops the others.
         for item in (item for item in plan.effects if item.action != "remove"):
             if item.action == "keep":
                 applied.append(item.effect)
@@ -604,17 +718,22 @@ def _integrate(engine: Engine, run: ExecutionInput) -> tuple[list[Effect], list[
                 replacing.update(name_key("shortcut" if found.kind == OVERWRITE_SHORTCUTS else "file", found.path) for found in granted)
                 result = apply_effect(engine.system, item.effect, effect_ctx, item.previous)
             except (OSError, ValueError) as error:
+                # A failed effect is reported; the previous version of it, if any, stays in the record.
                 failures.append(f"{_label(item.effect)}: {error}")
                 if item.previous is not None:
                     applied.append(item.previous)
                 emit(Warning(failures[-1]))
                 continue
+
+            # Record the applied effect and report it; a file written over an unowned one is named as replaced.
             applied.append(result)
             changed_environment = changed_environment or changes_environment(result)
             emit(Step(f"{'+' if item.action == 'add' else '~'} {_label(result)}", "add"))
             for path in (item.effect.fields.get("path"), item.effect.fields.get("config")):
                 if path and name_key("shortcut" if item.effect.kind == "shortcut" else "file", str(path)) in replacing:
                     emit(Step(f"replaced {path} (no installed package owned it)", "info"))
+
+        # Remove stale effects afterwards; a failed removal stays in the record so the next run retries it.
         for item in (item for item in plan.effects if item.action == "remove"):
             try:
                 removed = remove_effect(engine.system, item.effect, effect_ctx)
@@ -676,11 +795,15 @@ def _write_receipt(
         existing = read_receipt(plan.package_path, plan.version or "").data or {}
         if "app" not in existing:
             sections["app"] = app_section(app_files(app), engine.max_recorded_files)
+
+    # The checksum facts come from the population, else from the verification of the copied version.
     checksum = populated.checksum if populated is not None and populated.checksum is not None else origin.record
     if checksum is not None:
         sections["checksum"] = checksum.to_data()
     elif populated is not None:
         sections.pop("checksum", None)
+
+    # Where the version directory came from is recorded only when it was not simply local.
     if origin.kind != "local" or origin.source_marked is not None or origin.app_covered is not None:
         sections["origin"] = {
             "kind": origin.kind,
@@ -716,6 +839,11 @@ def execute_uninstall(engine: Engine, run: ExecutionInput) -> PackageResult:
     -------
     PackageResult
         ``uninstalled`` or ``purged``; a failed result with the code ``integrate-failed`` when an effect could not be removed.
+
+    Raises
+    ------
+    OSError
+        If ``--purge`` cannot delete the package root; the message says what is already done and how to finish.
     """
     plan, context = run.plan, run.context
     package_path = plan.package_path
@@ -730,6 +858,7 @@ def execute_uninstall(engine: Engine, run: ExecutionInput) -> PackageResult:
         emit_skipped("Integrate")
     else:
         with phase("Integrate") as integrating:
+            # Remove every recorded effect; a failure is kept in the record and never stops the others.
             for item in plan.effects:
                 try:
                     removed = remove_effect(engine.system, item.effect, effect_ctx)
@@ -745,6 +874,8 @@ def execute_uninstall(engine: Engine, run: ExecutionInput) -> PackageResult:
                     continue
                 changed_environment = changed_environment or (removed and changes_environment(item.effect))
                 emit(Step(f"- {_label(item.effect)}" + ("" if removed else "  (left in place)"), "remove"))
+
+            # One broadcast for the whole change of the environment.
             if changed_environment:
                 try:
                     engine.system.broadcast_environment_change()
@@ -765,9 +896,12 @@ def execute_uninstall(engine: Engine, run: ExecutionInput) -> PackageResult:
 
     # Finish: the record keeps the mode and link; a purge deletes the package root.
     with phase("Finish"):
+        # A confirmed purge deletes the package root; its log is released first so the file can go too.
         if run.request.purge and not failures:
             emit(Step(f"Deleting {package_path} (including data\\)", "remove"))
             release_package_log(package_path)
+
+            # A folder that cannot be deleted gets a message that says what is done and how to finish.
             try:
                 remove_tree(package_path)
             except OSError as error:
@@ -776,8 +910,12 @@ def execute_uninstall(engine: Engine, run: ExecutionInput) -> PackageResult:
                 plan.package, "uninstall", True, "purged", plan.previous, plan.previous, context.mode, 0, None, None,
                 engine.log_path(package_path), tuple(run.warnings), {"purged": str(package_path)},
             )
+
+        # Without a purge the record keeps the mode and link, and lists only the effects that could not be removed.
         base = run.view.record or InstallRecord(context.mode, run.view.link)
         write_install_record(package_path, InstallRecord(base.mode or context.mode, base.link, tuple(remaining)))
+
+    # Build the result: a failed one tells the user the leftovers stay recorded.
     if failures:
         return PackageResult(
             plan.package, "uninstall", False, "failed", plan.previous, plan.previous, context.mode, 3,
@@ -785,6 +923,8 @@ def execute_uninstall(engine: Engine, run: ExecutionInput) -> PackageResult:
              + ". They stay in the install record; run the command again."},
             None, engine.log_path(package_path), tuple(run.warnings), {"failed": failures},
         )
+
+    # Success: the version directories stay and are listed as kept.
     return PackageResult(
         plan.package, "uninstall", True, "uninstalled", plan.previous, plan.previous, context.mode, 0, None, None,
         engine.log_path(package_path), tuple(run.warnings), {"kept_versions": [item.name for item in run.view.local.versions]},
@@ -832,22 +972,30 @@ def execute_cleanup(engine: Engine, package_path: Path, plan: CleanupPlan, gupkg
         ``cleaned`` with the lists of what was removed in ``details``.
     """
     removed: dict[str, list[str]] = {"apps": [], "receipts": [], "work": [], "bundled": []}
+
+    # Remove the App folders the plan names, each only if it lies inside the package root.
     for version in plan.drop_apps:
         target = package_path / version / "App"
         if is_inside(target, package_path):
             remove_tree(target)
             removed["apps"].append(version)
             emit(Step(f"removed the App of {version}", "remove"))
+
+    # Remove the receipts of versions whose App is gone.
     for version in plan.drop_receipts:
         (package_path / DATA_DIR_NAME / "receipts" / f"{version}.toml").unlink(missing_ok=True)
         removed["receipts"].append(version)
         emit(Step(f"removed the receipt of {version}", "remove"))
+
+    # Remove leftover work entries, never the work folder itself nor anything outside it.
     work = package_path / DATA_DIR_NAME / "work"
     for name in plan.drop_work:
         entry = work / name
         if is_inside(entry, work) and canonical_path(entry) != canonical_path(work):
             remove_tree(entry)
             removed["work"].append(name)
+
+    # Bundled gupkg copies go only when a launcher of this root would find another gupkg, and never from gupkg itself.
     if plan.drop_bundled and plan.package.casefold() == "gupkg":
         emit(Step("kept the bundled gupkg of gupkg itself: it is the populate script's input", "info"))
     elif plan.drop_bundled and not gupkg_found:
@@ -855,6 +1003,8 @@ def execute_cleanup(engine: Engine, package_path: Path, plan: CleanupPlan, gupkg
             "kept the bundled gupkg copies: no launcher of this root would find another gupkg (no usable gupkg-location in "
             "the root's data folder, and no gupkg on PATH); install gupkg into this root first"
         ))
+
+    # With another gupkg available, the bundled copies named by the plan are removed.
     if gupkg_found and plan.package.casefold() != "gupkg":
         for version in plan.drop_bundled:
             bundled = package_path / version / "gupkg"
@@ -862,6 +1012,8 @@ def execute_cleanup(engine: Engine, package_path: Path, plan: CleanupPlan, gupkg
                 remove_tree(bundled)
                 removed["bundled"].append(version)
                 emit(Step(f"removed the bundled gupkg of {version}", "remove"))
+
+    # Report what was removed and what was kept.
     return PackageResult(
         plan.package, "cleanup", True, "cleaned", None, None, None, 0, None, None, engine.log_path(package_path), (),
         {**removed, "kept": [{"version": version, "why": why} for version, why in plan.kept_apps],

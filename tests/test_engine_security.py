@@ -2,7 +2,7 @@
 
 Behaviour covered: an elevated install refuses a cache or work folder that standard users can change before anything is
 fetched; an elevated ``check-updates`` refuses an interpreter or regex worker in an untrusted folder before launching any
-process; package code (a populate script, hooks) from an untrusted folder is never started; an elevated run does not read a
+process; package code (a populate script, hooks) from an untrusted folder is never started; an elevated run does not consult a
 system root that is not admin-only; a hostile install record cannot make uninstall touch anything outside the mode's folders
 and does not block the uninstall; a ``.gupkg`` folder that is a junction elsewhere is never written through; ``git`` is found
 only in admin-only folders of ``PATH`` when elevated; a sandbox that has no double for a program says the package needs a real
@@ -31,7 +31,9 @@ from gupkg.scope import process_mode
 
 pytestmark = pytest.mark.unit
 
+# Table that declares an environment variable pointing at ``App``.
 ENV = '[[env]]\nname = "TOOL_HOME"\nvalue = "$App"\n'
+# Tables that declare a shim and an environment variable.
 SHIM = '[[shim]]\nname = "tool"\ntarget = "$App\\\\app.exe"\n' + ENV
 
 
@@ -125,18 +127,22 @@ def test_an_elevated_run_does_not_read_a_system_root_that_users_can_change(tmp_p
 
 def test_a_hostile_install_record_cannot_steer_uninstall_outside_the_modes_folders(tmp_path: Path, world: World) -> None:
     """A record that names a shim in System32 and a real one: the real one is removed, the hostile one is ignored and dropped."""
+    # Arrange: an installed package and a file outside its folders.
     world.publish("tool", "1.0.0", tables=SHIM)
     assert world.one("install", "tool").ok
     package = world.user / "tool"
     victim = tmp_path / "victim" / "important.exe"
     victim.parent.mkdir()
     victim.write_text("keep me", encoding="utf-8")
+    # Add a hostile effect that names the outside file to the install record.
     record = read_install_record(package).record
     hostile = Effect("shim", {"path": str(victim), "config": str(victim) + ".toml"})
     write_install_record(package, InstallRecord(record.mode, record.link, (*record.effects, hostile)))
 
+    # Act: uninstall the package.
     result = world.one("uninstall", "tool")
 
+    # Assert: the outside file is untouched, a warning names the ignored effect and the record is cleared.
     assert result.ok and victim.read_text() == "keep me"
     assert any("Ignored a recorded effect" in warning for warning in result.warnings)
     assert read_install_record(package).record.effects == ()
@@ -242,19 +248,24 @@ def test_the_trusted_path_keeps_only_existing_absolute_local_admin_only_folders_
 
 def test_an_elevated_child_gets_no_comspec_pathext_or_windows_folder_from_the_process_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A planted COMSPEC, PATHEXT, SYSTEMROOT, WINDIR, TEMP or PROGRAMDATA does not reach an elevated git or installer child."""
+    # Arrange: a Windows folder, and a folder of an untrusted user.
     windows = tmp_path / "Windows"
     (windows / "System32").mkdir(parents=True)
     evil = tmp_path / "users" / "evil"
     evil.mkdir(parents=True)
+    # Hostile values in the process environment.
     for name, value in (("COMSPEC", str(evil / "cmd.exe")), ("PATHEXT", ".EVIL"), ("SYSTEMROOT", str(windows)), ("WINDIR", str(evil)),
                         ("TEMP", str(evil)), ("TMP", str(evil)), ("PROGRAMDATA", str(evil))):
         monkeypatch.setenv(name, value)
     monkeypatch.setenv("PATH", str(windows))
+    # An elevated machine that distrusts the untrusted folder.
     system = FakeSystem(tmp_path / "machine", elevated=True, untrusted_dirs={evil})
     work = tmp_path / "work"
 
+    # Act: build the environment of a git child.
     env = git_environment(system, process_mode(system), work)
 
+    # Assert: the child gets the system's values, not the process's.
     assert env["COMSPEC"] == str(windows / "System32" / "cmd.exe") and env["SYSTEMROOT"] == env["WINDIR"] == str(windows)
     assert env["PATHEXT"] == ".COM;.EXE;.BAT;.CMD" and env["TEMP"] == env["TMP"] == str(work) and "PROGRAMDATA" not in env
     assert str(evil) not in " ".join(env.values())

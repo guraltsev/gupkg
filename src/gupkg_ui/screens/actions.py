@@ -6,7 +6,7 @@ update are separate operations (D11, D23). When the run screen closes, the scree
 
 Usage and API
 -------------
-Mix ``PackageActions`` into a screen that has ``self.app`` as a ``UiApp`` and implements ``reload()`` (re-read what the screen shows after a run). Call
+Mix ``PackageActions`` into a screen that has ``self.app`` as a ``UiApp`` and implements ``reload()`` (to refresh what the screen shows after a run). Call
 ``start_check_updates(rows)``, ``start_update(rows)``, ``start_repair(rows)``, ``start_uninstall(rows, purge=...)``, ``start_check(rows, fix=...)`` and
 ``start_switch(row, version)`` and ``start_registry_sync()``; each one runs in a worker so the interface stays responsive.
 
@@ -30,14 +30,28 @@ from ..session import BatchOutcome, BatchSession, Sink, Step
 from .modals import ConfirmScreen
 
 
-def _names(rows: Sequence[PackageRow]) -> str:
-    """Return the names of *rows* for a title or a question (a long list is shortened)."""
-    names = [literal(row.name, limit=60) for row in rows]
-    return ", ".join(names[:3]) + (f" and {len(names) - 3} more" if len(names) > 3 else "")
-
-
 class PackageActions:
-    """The shared actions of the package list and the package view (needs ``run_worker``, ``app`` and ``reload``)."""
+    """The shared actions of the package list and the package view (needs ``run_worker``, ``app`` and ``reload``).
+
+    Methods
+    -------
+    reload
+        Re-read what the screen shows (called after a run).
+    start_check_updates
+        Check *rows* for updates: new versions are written and populated, nothing is activated.
+    start_update
+        Plan, confirm once and update *rows*.
+    start_repair
+        Repair *rows* (``gupkg install`` re-applies the integration and rebuilds a missing App).
+    start_uninstall
+        Uninstall *rows*; with *purge* also delete their folders and data (asked more strongly).
+    start_registry_sync
+        Download the registries (``gupkg registry sync``): the packages they list can then be found and installed.
+    start_check
+        Run the health check on *rows*; with *fix* it also repairs them (asked first).
+    start_switch
+        Activate another local *version* of *row* (the way back).
+    """
 
     def reload(self) -> None:  # pragma: no cover - overridden
         """Re-read what the screen shows (called after a run)."""
@@ -62,49 +76,77 @@ class PackageActions:
     # -- the operations ------------------------------------------------------------
 
     def start_check_updates(self, rows: Sequence[PackageRow]) -> None:
-        """Check *rows* for updates: new versions are written and populated, nothing is activated."""
+        """Check *rows* for updates: new versions are written and populated, nothing is activated.
+
+        Parameters
+        ----------
+        rows : sequence of PackageRow
+            The packages to check.
+        """
         env = self.app.env
 
-        async def job(session: BatchSession, sink: Sink, interaction: Interaction) -> BatchOutcome:
+        async def _job(session: BatchSession, sink: Sink, interaction: Interaction) -> BatchOutcome:
             """Run ``check-updates`` for the rows."""
             return await run_check_updates(env, rows, session=session, interaction=interaction)
 
-        self._start(f"Check for updates: {_names(rows)}", job)
+        self._start(f"Check for updates: {_names(rows)}", _job)
 
     def start_update(self, rows: Sequence[PackageRow]) -> None:
-        """Plan, confirm once and update *rows*."""
+        """Plan, confirm once and update *rows*.
+
+        Parameters
+        ----------
+        rows : sequence of PackageRow
+            The packages to update.
+        """
         env = self.app.env
 
-        async def job(session: BatchSession, sink: Sink, interaction: Interaction) -> BatchOutcome:
+        async def _job(session: BatchSession, sink: Sink, interaction: Interaction) -> BatchOutcome:
             """Run the planned update."""
             return await run_update(env, rows, session=session, sink=sink, interaction=interaction)
 
-        self._start(f"Update: {_names(rows)}", job)
+        self._start(f"Update: {_names(rows)}", _job)
 
     def start_repair(self, rows: Sequence[PackageRow]) -> None:
-        """Repair *rows* (``gupkg install`` re-applies the integration and rebuilds a missing App)."""
+        """Repair *rows* (``gupkg install`` re-applies the integration and rebuilds a missing App).
+
+        Parameters
+        ----------
+        rows : sequence of PackageRow
+            The packages to repair; the person is asked once, naming them.
+        """
         env = self.app.env
 
-        async def job(session: BatchSession, sink: Sink, interaction: Interaction) -> BatchOutcome:
+        async def _job(session: BatchSession, sink: Sink, interaction: Interaction) -> BatchOutcome:
             """Run ``install`` for the rows."""
             return await run_operation(env, "install", rows, session=session, options=["--yes"])
 
-        async def before() -> bool:
+        async def _before() -> bool:
             """Ask once, naming the packages."""
             return await self._confirm(f"Install or repair {_names(rows)}?", [Text("The active version is installed again; shortcuts, shims and PATH entries are re-applied.")])
 
-        self._start(f"Install: {_names(rows)}", job, before=before)
+        self._start(f"Install: {_names(rows)}", _job, before=_before)
 
     def start_uninstall(self, rows: Sequence[PackageRow], *, purge: bool = False) -> None:
-        """Uninstall *rows*; with *purge* also delete their folders and data (asked more strongly)."""
+        """Uninstall *rows*; with *purge* also delete their folders and data (asked more strongly).
+
+        Parameters
+        ----------
+        rows : sequence of PackageRow
+            The packages to uninstall.
+        purge : bool, default=False
+            Whether to also delete the package folders, versions and data.
+        """
         env = self.app.env
 
-        async def job(session: BatchSession, sink: Sink, interaction: Interaction) -> BatchOutcome:
+        async def _job(session: BatchSession, sink: Sink, interaction: Interaction) -> BatchOutcome:
             """Run ``uninstall`` for the rows."""
+            # ``--yes`` carries the confirmation already given in the dialog.
             return await run_operation(env, "uninstall", rows, session=session, options=["--yes", *(["--purge"] if purge else [])])
 
-        async def before() -> bool:
+        async def _before() -> bool:
             """Ask once, saying what stays and what is deleted."""
+            # A purge is irreversible, so it gets its own, stronger question.
             if purge:
                 return await self._confirm(f"Delete {_names(rows)} and ALL its data?", [
                     Text("The package folder, every version, the App and the data folder are deleted. This cannot be undone."),
@@ -113,43 +155,68 @@ class PackageActions:
                 Text("Shortcuts, shims and PATH entries are removed. The package folder and its versions stay, so it can be installed again."),
             ])
 
-        self._start(f"{'Purge' if purge else 'Uninstall'}: {_names(rows)}", job, before=before)
+        self._start(f"{'Purge' if purge else 'Uninstall'}: {_names(rows)}", _job, before=_before)
 
     def start_registry_sync(self) -> None:
         """Download the registries (``gupkg registry sync``): the packages they list can then be found and installed."""
         env = self.app.env
 
-        async def job(session: BatchSession, sink: Sink, interaction: Interaction) -> BatchOutcome:
+        async def _job(session: BatchSession, sink: Sink, interaction: Interaction) -> BatchOutcome:
             """Run ``registry sync`` for the default root; it names no package."""
             logs = env.settings.root / ".gupkg" / "logs"
             return await session.run([Step("registry sync", ("registry", "sync"), (), logs)])
 
-        self._start("Synchronise the registry", job)
+        self._start("Synchronise the registry", _job)
 
     def start_check(self, rows: Sequence[PackageRow], *, fix: bool = False) -> None:
-        """Run the health check on *rows*; with *fix* it also repairs them (asked first)."""
+        """Run the health check on *rows*; with *fix* it also repairs them (asked first).
+
+        Parameters
+        ----------
+        rows : sequence of PackageRow
+            The packages to check.
+        fix : bool, default=False
+            Whether to also repair the drift the check finds.
+        """
         env = self.app.env
 
-        async def job(session: BatchSession, sink: Sink, interaction: Interaction) -> BatchOutcome:
+        async def _job(session: BatchSession, sink: Sink, interaction: Interaction) -> BatchOutcome:
             """Run ``check`` for the rows."""
             return await run_operation(env, "check", rows, session=session, options=["--fix", "--yes"] if fix else [])
 
-        async def before() -> bool:
+        async def _before() -> bool:
             """Ask once before anything is changed."""
             return await self._confirm(f"Repair {_names(rows)} where the check finds drift?", [Text("Missing integration is re-applied and a missing App is rebuilt.")])
 
-        self._start(f"Check{' and fix' if fix else ''}: {_names(rows)}", job, before=before if fix else None)
+        self._start(f"Check{' and fix' if fix else ''}: {_names(rows)}", _job, before=_before if fix else None)
 
     def start_switch(self, row: PackageRow, version: str) -> None:
-        """Activate another local *version* of *row* (the way back)."""
+        """Activate another local *version* of *row* (the way back).
+
+        Parameters
+        ----------
+        row : PackageRow
+            The package to switch.
+        version : str
+            The local version to activate.
+        """
         env = self.app.env
 
-        async def job(session: BatchSession, sink: Sink, interaction: Interaction) -> BatchOutcome:
+        async def _job(session: BatchSession, sink: Sink, interaction: Interaction) -> BatchOutcome:
             """Run ``switch`` for the row."""
             return await run_operation(env, "switch", [row], session=session, options=["--yes"], trailing=[version])
 
-        async def before() -> bool:
+        async def _before() -> bool:
             """Ask once, naming the version."""
             return await self._confirm(f"Switch {_names([row])} to {literal(version, limit=60)}?", [Text("The version is activated; the integration follows it.")])
 
-        self._start(f"Switch: {_names([row])} to {literal(version, limit=60)}", job, before=before)
+        self._start(f"Switch: {_names([row])} to {literal(version, limit=60)}", _job, before=_before)
+
+
+# --- supporting helpers ---
+
+
+def _names(rows: Sequence[PackageRow]) -> str:
+    """Return the names of *rows* for a title or a question (a long list is shortened)."""
+    names = [literal(row.name, limit=60) for row in rows]
+    return ", ".join(names[:3]) + (f" and {len(names) - 3} more" if len(names) > 3 else "")

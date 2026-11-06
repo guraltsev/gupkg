@@ -37,7 +37,9 @@ from ..report.events import Step, emit
 from .hooks import HookContext, HookError, call_prepare, load_hook
 from .safepath import UnsafePath, check_member_name, confine, is_reparse_point, remove_tree
 
+# Largest number of glob matches accepted for one pattern, so a wild pattern cannot exhaust memory.
 _MAX_MATCHES = 100_000
+# Characters that make a pattern a glob rather than a literal path.
 _GLOB_CHARACTERS = "*?["
 
 
@@ -64,15 +66,19 @@ def run_prepare(steps: Sequence[PrepareStep], app: Path, context: HookContext | 
         If a path is unsafe, a glob does not match exactly one item where one is needed, a
         destination exists, or a hook fails.
     """
+    # Require an existing staged folder, then dispatch each step on its type; any failure is
+    # reported with the step's description.
     root = Path(app)
     if not root.is_dir():
         raise PrepareError(f"{root} is not a folder")
     for step in steps:
+        # Dispatch on the step's type; an unsafe path, I/O error or failing hook becomes a PrepareError.
         try:
             if isinstance(step, PrepareRemove):
                 _remove(root, step)
             elif isinstance(step, PrepareRename):
                 _rename(root, step)
+            # Copy and write create files; module hands control to the package's own hook.
             elif isinstance(step, PrepareCopy):
                 _copy(root, step)
             elif isinstance(step, PrepareWrite):
@@ -169,6 +175,7 @@ def _matches(root: Path, pattern: str) -> list[Path]:
     for character in _GLOB_CHARACTERS + "]":
         plain = plain.replace(character, "x")
     check_member_name(plain)
+    # A glob is expanded under the escaped root; a literal path is confined and checked for existence.
     if any(character in pattern for character in _GLOB_CHARACTERS):
         found = sorted(glob.glob(os.path.join(glob.escape(str(root)), pattern.replace("/", os.sep)), recursive=True))
         if len(found) > _MAX_MATCHES:
@@ -177,6 +184,7 @@ def _matches(root: Path, pattern: str) -> list[Path]:
     else:
         candidate = confine(root, pattern, allow_link_leaf=True)
         paths = [candidate] if os.path.lexists(candidate) else []
+    # Whatever matched must still lie inside the staged tree.
     for path in paths:
         if not _inside(path, root):
             raise UnsafePath(f"{pattern!r} reaches outside App")

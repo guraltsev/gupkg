@@ -36,11 +36,17 @@ from gupkg.integrity import verify_version_directory
 
 pytestmark = pytest.mark.release
 
+# Repository root.
 REPO = Path(__file__).resolve().parents[1]
+# Bundled runtime directory.
 RUNTIME = REPO / "src" / "gupkg" / "python"
+# Site-packages directory of the bundled runtime.
 SITE_PACKAGES = RUNTIME / "Lib" / "site-packages"
+# Directory of the shipped gupkg sources.
 SOURCE = REPO / "src" / "gupkg"
+# Dependency lock file that pins the bundled packages.
 LOCK = REPO / "tools" / "gupkg-deps.lock"
+# Placeholder commit identifier used in the builds.
 COMMIT = "b" * 40
 
 
@@ -62,9 +68,11 @@ def make_wheel(folder: Path, name: str, files: dict[str, str], *, script: str | 
     entries = dict(files)
     entries[f"{dist_info}/METADATA"] = f"Metadata-Version: 2.1\nName: {name}\nVersion: 1.0\n"
     entries[f"{dist_info}/WHEEL"] = "Wheel-Version: 1.0\nGenerator: test\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
+    # Optional console script entry point, and the record of every entry.
     if script:
         entries[f"{dist_info}/entry_points.txt"] = f"[console_scripts]\n{script} = {name}:main\n"
     entries[f"{dist_info}/RECORD"] = "".join(f"{path},,\n" for path in [*entries, f"{dist_info}/RECORD"])
+    # Write the wheel archive and return the lock line that pins it.
     wheel = folder / f"{name}-1.0-py3-none-any.whl"
     with zipfile.ZipFile(wheel, "w") as archive:
         for path, text in entries.items():
@@ -79,11 +87,13 @@ def build(tmp_path: Path, build_python: str, runtime_zip_factory, lock_text: str
     lock = tmp_path / "gupkg-deps.lock"
     lock.write_text(lock_text, encoding="utf-8")
     output = tmp_path / "out.zip"
+    # Build the bundle offline from the stand-in runtime and the lock.
     build_standalone.build_bundle(
         source=SOURCE,
         manifest=SOURCE.parent / "pkg.toml",
         runtime_zip=runtime,
         runtime_sha256=digest,
+        # The output, commit and dependency inputs of the build.
         output=output,
         commit=COMMIT,
         deps_lock=lock,
@@ -183,12 +193,15 @@ def test_the_build_installs_stand_in_wheels_without_pip_and_the_probe_imports_th
     lock = make_wheel(wheels, "fakedep", {"fakedep/__init__.py": "VALUE = 1\n"}, script="fakecmd")
     lock += make_wheel(wheels, "fakesingle", {"fakesingle.py": "VALUE = 2\n"})
 
+    # Act: build the bundle from the stand-in wheels.
     output = build(tmp_path, build_python, runtime_zip_factory, lock, find_links=wheels)
 
+    # Collect the shipped names and unpack the bundle.
     with zipfile.ZipFile(output) as archive:
         names = archive.namelist()
         archive.extractall(tmp_path / "unpacked")
     site_packages = "gupkg/gupkg/python/Lib/site-packages/"
+    # The dependency files are shipped without pip, caches or script launchers.
     assert any(name.endswith(site_packages + "fakedep/__init__.py") for name in names)
     assert any(name.endswith(site_packages + "fakesingle.py") for name in names)
     assert not any(re.search(r"site-packages/(pip|setuptools|_distutils_hack|bin/)", name) for name in names)
@@ -274,6 +287,7 @@ def test_tidy_removes_script_launchers_and_their_record_entries(tmp_path: Path) 
         encoding="utf-8",
     )
 
+    # Act: tidy the site-packages tree.
     fetch_runtime.tidy_site_packages(tmp_path)
 
     assert not (tmp_path / "bin").exists()
@@ -293,6 +307,7 @@ def test_install_command_uses_the_build_machines_pip_and_requires_hashes(tmp_pat
     assert command[command.index("--platform") + 1] == "win_amd64"
 
 
+# Files shipped in the standalone bundle.
 SHIPPED = (
     *sorted((REPO / "src" / "gupkg").glob("*.py")),
     *sorted((REPO / "src" / "pkg.local").glob("*.py")),
@@ -301,6 +316,7 @@ SHIPPED = (
     REPO / "gupkg-bootstrap.ps1",
     REPO / "gupkg-bootstrap.cmd",
 )
+# Pattern that detects a run-time use of pip.
 PIP_USE = re.compile(r"-m\s+pip\b|\bimport\s+pip\b|\bfrom\s+pip\b|get-pip|pip\s+install", re.IGNORECASE)
 
 
@@ -331,12 +347,14 @@ def test_import_names_ignore_top_level_record_entries_that_are_not_code(tmp_path
     (site / "single.py").write_text("", encoding="utf-8")
     (site / "native.cp312-win_amd64.pyd").write_bytes(b"")
     (site / "LICENSE").write_text("text", encoding="utf-8")
+    # A RECORD that lists code and non-code top-level entries.
     info = site / "dep-1.0.dist-info"
     info.mkdir()
     (info / "RECORD").write_text(
         "pkg/__init__.py,,\nemptydir/x.txt,,\nsingle.py,,\nnative.cp312-win_amd64.pyd,,\nLICENSE,,\ndep-1.0.dist-info/RECORD,,\n",
         encoding="utf-8",
     )
+    # Act: derive the import names from the lock and the installed files.
     lock = tmp_path / "lock"
     lock.write_text(f"dep==1.0 --hash=sha256:{'a' * 64}\n", encoding="utf-8")
 

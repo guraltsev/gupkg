@@ -5,7 +5,7 @@ The rules are in ``_docs/tests_hygiene.md`` section 6; the debt from before the 
 repository root with ``/`` separators, and ``test`` is empty for a rule about the whole module.
 
 ``H1`` no import of another test module or of ``tests._temp``.
-``H2`` no import of a private name from the product, and no read of ``<product module>._name``.
+``H2`` no import of a private name from the product, and no access to ``<product module>._name``.
 ``H3`` no issue, decision, task, review or old-version reference in a permanent test's name or docstring.
 ``H4`` every parametrised case has an explicit ``id``.
 ``H5`` every permanent test module and test function has a docstring that starts with a one-sentence summary.
@@ -14,13 +14,24 @@ repository root with ``/`` separators, and ``test`` is empty for a rule about th
 ``H8`` every test has exactly one tier (``unit``, ``process`` or ``release``).
 ``H9`` while a ``unit`` test runs, starting a process, sleeping and opening a socket fail the test.
 
-The files of H1 to H6 are read with ``ast`` and never imported. H8 reads the markers of the collected tests. H9 is checked
+The files of H1 to H6 are parsed with ``ast`` and never imported. H8 reads the markers of the collected tests. H9 is checked
 while the test runs, so a violation is found only by running the unit tier; the baseline lists the ``unit`` tests that still
 break it, and such a test passes while it does.
 
 A test's tier is the one on the nearest node that has a tier mark: the test itself (including a mark of a parameter set),
 then its class, then its module. So a module that declares ``pytestmark = pytest.mark.unit`` can send one test to another
 tier with ``@pytest.mark.process``; the farther mark then no longer counts when ``-m`` selects tests.
+
+Usage and API
+-------------
+The plugin is enabled by ``tests/conftest.py``. ``check`` returns the failure text for a set of modules, ``scan_module``,
+``scan_temp`` and ``scan_conditional`` return the violations of one kind of target, and ``tier_of`` gives the tier of a test.
+
+Implementation Approach
+-----------------------
+Static rules parse each module into a syntax tree without importing it, the folder rules inspect the READMEs, and the
+runtime rule patches the forbidden actions for the duration of each ``unit`` test; violations are compared with the
+baseline so that only new ones fail.
 """
 
 from __future__ import annotations
@@ -41,10 +52,14 @@ from unittest import mock
 
 import pytest
 
+# Name of the file that lists the known violations.
 BASELINE_NAME = "hygiene_baseline.txt"
+# The three tiers a test may belong to.
 TIERS = ("unit", "process", "release")
+# Longest sleep, in seconds, that a unit test may still make.
 SLEEP_ALLOWED = 0.01
 
+# Top-level packages of the product, whose private names a test must not use.
 PRODUCT_PACKAGES = frozenset({"gupkg", "gupkg_ui", "gupkg_tui", "gupkg_manager", "gupkg_registry"})
 
 # What each rule is, and where the policy explains it.
@@ -60,6 +75,7 @@ RULES = {
     "H9": ("a unit test starts a process, sleeps or opens a socket", "_docs/tests.md section 5"),
 }
 
+# Patterns that mark a reference to an issue, decision, task, review or old version.
 _HISTORY = (
     r"issue ?#?\d+",
     r"\bD\d{2}\b",
@@ -71,15 +87,35 @@ _HISTORY = (
 )
 # Names are matched without case, with ``_`` read as a space: ``test_issue_99_fix`` says "issue 99".
 _HISTORY_IN_NAME = re.compile("|".join(_HISTORY), re.IGNORECASE)
+# The same patterns for docstring text, where only the word-like ones ignore case.
 _HISTORY_IN_TEXT = re.compile("|".join(f"(?i:{p})" if p.startswith(("issue", "round", "reviewer")) else p for p in _HISTORY))
 
+# Methods that ``NamedTuple`` classes expose under a leading underscore as public API.
 _NAMEDTUPLE_API = frozenset({"_asdict", "_replace", "_fields", "_make", "_field_defaults"})
+# Abbreviations whose full stop does not end a sentence.
 _ABBREVIATIONS = re.compile(r"\b(?:e\.g|i\.e|etc|vs|cf|approx)\.", re.IGNORECASE)
 
 
 @dataclass(frozen=True, order=True)
 class Violation:
-    """One broken rule: where it is, and what exactly is wrong."""
+    """One broken rule: where it is, and what exactly is wrong.
+
+    Methods
+    -------
+    describe
+        Returns the line shown to a person.
+
+    Attributes
+    ----------
+    rule : str
+        Rule identifier, such as ``H1``.
+    file : str
+        Path of the file, relative to the repository.
+    test : str
+        Name of the test, empty for a file-level violation.
+    detail : str
+        What exactly is wrong.
+    """
 
     rule: str
     file: str
@@ -92,7 +128,13 @@ class Violation:
         return f"{self.rule}|{self.file}|{self.test}"
 
     def describe(self) -> str:
-        """A line for a person: rule, file, test, what is wrong and where the policy is."""
+        """A line for a person: rule, file, test, what is wrong and where the policy is.
+
+        Returns
+        -------
+        str
+            The violation with its rule, location and policy.
+        """
         where = f"{self.file}::{self.test}" if self.test else self.file
         what, policy = RULES[self.rule]
         detail = f" ({self.detail})" if self.detail else ""
@@ -104,6 +146,7 @@ class Violation:
 # ---------------------------------------------------------------------------
 
 def _relative(path: Path, root: Path) -> str:
+    """Return the path relative to *root* with ``/`` separators, or the plain path when it lies outside *root*."""
     try:
         return path.resolve().relative_to(root.resolve()).as_posix()
     except ValueError:
@@ -123,6 +166,7 @@ def _dotted(node: ast.AST) -> str | None:
 
 
 def _is_private(name: str) -> bool:
+    """Say whether *name* is private (it starts with ``_`` and is not a dunder)."""
     return name.startswith("_") and not (name.startswith("__") and name.endswith("__"))
 
 
@@ -150,11 +194,14 @@ def _import_targets(node: ast.stmt):
 
 
 def _h1(tree: ast.Module, file: str, test_stems: frozenset[str]) -> list[Violation]:
+    """Return the H1 violation for a module that imports another test module or a temporary folder."""
+    # Collect the offending imports of the module, stopping at the first one per statement.
     found: list[str] = []
     for node in ast.walk(tree):
         if not isinstance(node, (ast.Import, ast.ImportFrom)):
             continue
         relative = isinstance(node, ast.ImportFrom) and node.level > 0
+        # Judge each name the statement imports.
         for parts in _import_targets(node):
             if not parts:
                 continue
@@ -162,6 +209,7 @@ def _h1(tree: ast.Module, file: str, test_stems: frozenset[str]) -> list[Violati
             if local and any(part in test_stems or part in ("_temp", "_conditional") for part in parts):
                 found.append(".".join(parts))
                 break
+    # Report all offending imports in one violation.
     if found:
         return [Violation("H1", file, "", "imports " + ", ".join(sorted(set(found))))]
     return []
@@ -186,37 +234,46 @@ def _product_aliases(tree: ast.Module) -> set[str]:
 
 
 def _private_target(text: str) -> bool:
+    """Say whether a dotted name reaches a private attribute below a product package."""
     parts = text.split(".")
     return parts[0] in PRODUCT_PACKAGES and any(_is_private(part) for part in parts[1:])
 
 
 def _h2(tree: ast.Module, file: str) -> list[Violation]:
+    """Return the H2 violation for a module that uses a private name of the product."""
+    # Collect private names used through imports, attributes and ``getattr``-like calls.
     found: set[str] = set()
     aliases = _product_aliases(tree) | PRODUCT_PACKAGES
     for node in ast.walk(tree):
+        # Importing a private name from a product module is a violation.
         if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
             if node.module.split(".")[0] in PRODUCT_PACKAGES:
                 found.update(f"{node.module}.{a.name}" for a in node.names if _is_private(a.name))
+        # So is reading an underscore attribute through a product alias.
         elif isinstance(node, ast.Attribute) and _is_private(node.attr) and node.attr not in _NAMEDTUPLE_API:
             base = _dotted(node.value)
             if base is not None and base.split(".")[0] in aliases:
                 found.add(f"{base}.{node.attr}")
+        # Calls such as ``setattr`` and ``patch`` name private attributes as strings.
         elif isinstance(node, ast.Call) and node.args:
             callee = (_dotted(node.func) or "").split(".")[-1]
             first = node.args[0]
             if callee in {"setattr", "getattr", "delattr", "patch", "object"}:
                 if isinstance(first, ast.Constant) and isinstance(first.value, str) and _private_target(first.value):
                     found.add(first.value)
+                # The attribute may also be the second argument, as in ``patch.object(module, "_name")``.
                 elif len(node.args) > 1 and isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, str):
                     base = _dotted(first)
                     if base and base.split(".")[0] in aliases and _is_private(node.args[1].value):
                         found.add(f"{base}.{node.args[1].value}")
+    # Report all private names in one violation.
     if found:
         return [Violation("H2", file, "", "uses " + ", ".join(sorted(found)))]
     return []
 
 
 def _h3(tree: ast.Module, file: str) -> list[Violation]:
+    """Return the H3 violations of the tests whose name or docstring mentions history."""
     found = []
     for name, node in _tests_of(tree):
         words = name.split("::")[-1].replace("_", " ")
@@ -228,6 +285,7 @@ def _h3(tree: ast.Module, file: str) -> list[Violation]:
 
 
 def _is_param_with_id(node: ast.AST) -> bool:
+    """Say whether *node* is a ``pytest.param(...)`` call that has an ``id``."""
     if isinstance(node, ast.Starred):
         return False
     return (
@@ -239,6 +297,7 @@ def _is_param_with_id(node: ast.AST) -> bool:
 
 def _values_have_ids(node: ast.AST, env: dict[str, ast.AST], depth: int = 0) -> bool:
     """Say whether every value in a parametrisation is a ``pytest.param(..., id=...)``."""
+    # Stop at a bounded depth so that self-referencing data cannot loop.
     if depth > 5:
         return False
     if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
@@ -246,6 +305,7 @@ def _values_have_ids(node: ast.AST, env: dict[str, ast.AST], depth: int = 0) -> 
             _values_have_ids(item.value, env, depth + 1) if isinstance(item, ast.Starred) else _is_param_with_id(item)
             for item in node.elts
         )
+    # Comprehensions and sums of lists are judged by their parts; names by what they are bound to.
     if isinstance(node, (ast.ListComp, ast.GeneratorExp, ast.SetComp)):
         return _is_param_with_id(node.elt)
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
@@ -256,6 +316,8 @@ def _values_have_ids(node: ast.AST, env: dict[str, ast.AST], depth: int = 0) -> 
 
 
 def _parametrisation_without_ids(call: ast.Call, env: dict[str, ast.AST]) -> bool:
+    """Say whether a ``parametrize`` or ``fixture(params=...)`` call lacks ids for its cases."""
+    # Find the values of the parametrisation, which are absent for other decorators.
     callee = _dotted(call.func) or ""
     last = callee.split(".")[-1]
     if last == "parametrize":
@@ -266,12 +328,15 @@ def _parametrisation_without_ids(call: ast.Call, env: dict[str, ast.AST]) -> boo
             return False
     else:
         return False
+    # An explicit ``ids=`` argument covers every case.
     if any(keyword.arg == "ids" for keyword in call.keywords):
         return False
     return values is None or not _values_have_ids(values, env)
 
 
 def _h4(tree: ast.Module, file: str) -> list[Violation]:
+    """Return the H4 violations of the parametrised tests, classes and ``pytestmark`` of a module."""
+    # Module-level assignments, so a parameter list kept in a constant can be inspected.
     env = {
         target.id: node.value
         for node in tree.body
@@ -281,19 +346,25 @@ def _h4(tree: ast.Module, file: str) -> list[Violation]:
     }
 
     def decorators(node: ast.AST):
+        """Return the decorators of *node* that are calls."""
         return [d for d in getattr(node, "decorator_list", []) if isinstance(d, ast.Call)]
 
+    # Look at the module-level ``pytestmark``, class decorators and function decorators.
     found = []
     for node in tree.body:
+        # A parametrised ``pytestmark`` applies to every test of the module.
         if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "pytestmark" for t in node.targets):
             calls = [n for n in ast.walk(node.value) if isinstance(n, ast.Call)]
             if any(_parametrisation_without_ids(call, env) for call in calls):
                 found.append(Violation("H4", file, "", "pytestmark parametrisation without ids"))
+        # A parametrised class applies to its methods.
         if isinstance(node, ast.ClassDef) and any(_parametrisation_without_ids(d, env) for d in decorators(node)):
             found.append(Violation("H4", file, node.name, "parametrisation without ids"))
+        # Functions and methods of the node can carry their own parametrisation.
         scopes = [node] if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) else []
         if isinstance(node, ast.ClassDef):
             scopes = [m for m in node.body if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))]
+        # Report each function whose parametrisation lacks ids.
         for function in scopes:
             if any(_parametrisation_without_ids(d, env) for d in decorators(function)):
                 prefix = f"{node.name}::" if isinstance(node, ast.ClassDef) else ""
@@ -316,6 +387,7 @@ def _summary_problem(doc: str | None) -> str | None:
 
 
 def _h5(tree: ast.Module, file: str) -> list[Violation]:
+    """Return the H5 violations of a module and its tests whose docstring does not open with one sentence."""
     found = []
     problem = _summary_problem(ast.get_docstring(tree))
     if problem:
@@ -333,7 +405,22 @@ def _test_stems(root: Path) -> frozenset[str]:
 
 
 def scan_module(path: Path, root: Path, test_stems: frozenset[str] | None = None) -> list[Violation]:
-    """Return the violations of H1 to H5 in one permanent test module."""
+    """Return the violations of H1 to H5 in one permanent test module.
+
+    Parameters
+    ----------
+    path : Path
+        Test module to scan.
+    root : Path
+        Repository root.
+    test_stems : frozenset[str] | None, optional
+        Names of the test modules; read from *root* when ``None``.
+
+    Returns
+    -------
+    list[Violation]
+        The violations found.
+    """
     stems = _test_stems(root) if test_stems is None else test_stems
     file = _relative(path, root)
     tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
@@ -344,11 +431,23 @@ def scan_module(path: Path, root: Path, test_stems: frozenset[str] | None = None
 # Temporary folders, rule H6
 # ---------------------------------------------------------------------------
 
+# Entries a temporary folder's README must have.
 _README_KEYS = ("ref", "kind", "purpose", "fate")
 
 
 def temp_folders(root: Path) -> list[Path]:
-    """Return the ``tests/_temp/<ref>/`` folders."""
+    """Return the ``tests/_temp/<ref>/`` folders.
+
+    Parameters
+    ----------
+    root : Path
+        Repository root.
+
+    Returns
+    -------
+    list[Path]
+        The temporary test folders, in name order.
+    """
     base = root / "tests" / "_temp"
     if not base.is_dir():
         return []
@@ -356,12 +455,25 @@ def temp_folders(root: Path) -> list[Path]:
 
 
 def parse_readme(folder: Path) -> dict[str, str] | None:
-    """Return the ``ref``, ``kind``, ``purpose`` and ``fate`` entries of a folder's README, or ``None`` if it has none."""
+    """Return the ``ref``, ``kind``, ``purpose`` and ``fate`` entries of a folder's README, or ``None`` if it has none.
+
+    Parameters
+    ----------
+    folder : Path
+        Folder whose ``README.md`` is read.
+
+    Returns
+    -------
+    dict[str, str] | None
+        The entries found, or ``None`` when there is no README.
+    """
+    # Collect the ``key: value`` entries, with continuation lines joined to the key above them.
     readme = folder / "README.md"
     if not readme.is_file():
         return None
     entries: dict[str, list[str]] = {}
     current = None
+    # Each line either starts a known entry or continues the previous one.
     for line in readme.read_text(encoding="utf-8").splitlines():
         match = re.match(r"^\s*(?:[-*]\s*)?\**(ref|kind|purpose|fate|until|expires)\**\s*:\**\s*(.*)$", line, re.IGNORECASE)
         if match:
@@ -373,7 +485,18 @@ def parse_readme(folder: Path) -> dict[str, str] | None:
 
 
 def readme_kind(folder: Path) -> str | None:
-    """Return a folder's ``kind`` (``guard`` or ``report``), or ``None`` if the README does not say."""
+    """Return a folder's ``kind`` (``guard`` or ``report``), or ``None`` if the README does not say.
+
+    Parameters
+    ----------
+    folder : Path
+        Folder whose ``README.md`` is read.
+
+    Returns
+    -------
+    str | None
+        ``guard``, ``report`` or ``None``.
+    """
     entries = parse_readme(folder)
     kind = (entries or {}).get("kind", "").strip("` ").lower()
     return kind or None
@@ -381,16 +504,19 @@ def readme_kind(folder: Path) -> str | None:
 
 def _ref_state(root: Path, folder_name: str, ref: str) -> str | None:
     """Return why a reference is not open, or ``None`` if it is."""
+    # A reference is open only when it names an existing file of the right issue or job.
     ref_path = root / ref.strip("` ")
     if not ref.strip("` ") or not ref_path.is_file():
         return f"ref {ref!r} is not a file; the issue or job is closed or the path is wrong"
     issue = re.fullmatch(r"issue(\d+)", folder_name)
     job = re.fullmatch(r"job(\d+)", folder_name)
+    # An issue is closed when its file moved to ``_issues/_closed``.
     if issue:
         if not ref_path.name.startswith(f"issue{issue.group(1)}-") and ref_path.stem != f"issue{issue.group(1)}":
             return f"ref {ref!r} is not the file of {folder_name}"
         if "_closed" in ref_path.parts:
             return f"{folder_name} is closed (its file is in _issues/_closed)"
+    # A job is closed when its file moved to ``_complete`` or its progress file says so.
     elif job:
         number = job.group(1)
         if not ref_path.name.startswith(f"{number}-"):
@@ -400,13 +526,26 @@ def _ref_state(root: Path, folder_name: str, ref: str) -> str | None:
         for progress in ref_path.parent.glob(f"{number}-*-progress.md"):
             if re.search(r"^Status:\s*Closed", progress.read_text(encoding="utf-8"), re.MULTILINE):
                 return f"{folder_name} is closed (its progress file says Status: Closed)"
+    # A folder named after neither an issue nor a job cannot have an open reference.
     else:
         return "the folder is not named issueNNN or jobNN"
     return None
 
 
 def scan_temp(root: Path) -> list[Violation]:
-    """Return the violations of H6 in every ``tests/_temp/<ref>/`` folder."""
+    """Return the violations of H6 in every ``tests/_temp/<ref>/`` folder.
+
+    Parameters
+    ----------
+    root : Path
+        Repository root.
+
+    Returns
+    -------
+    list[Violation]
+        The violations found.
+    """
+    # Check every temporary folder in turn, reporting the first problem of each.
     found = []
     for folder in temp_folders(root):
         file = _relative(folder, root)
@@ -414,6 +553,7 @@ def scan_temp(root: Path) -> list[Violation]:
         if entries is None:
             found.append(Violation("H6", file, "", "no README.md"))
             continue
+        # The README must have every required entry.
         missing = [key for key in _README_KEYS if not entries.get(key)]
         if missing:
             found.append(Violation("H6", file, "", "README lacks " + ", ".join(missing)))
@@ -421,12 +561,14 @@ def scan_temp(root: Path) -> list[Violation]:
         if entries["kind"].strip("` ").lower() not in {"guard", "report"}:
             found.append(Violation("H6", file, "", "kind must be guard or report"))
             continue
+        # The reference must name an open issue or job.
         why = _ref_state(root, folder.name, entries["ref"])
         if why:
             found.append(Violation("H6", file, "", why))
     return found
 
 
+# Entries a conditional folder's README must have.
 _CONDITIONAL_KEYS = ("until", "expires", "purpose")
 
 
@@ -436,10 +578,24 @@ def scan_conditional(root: Path, today: date) -> list[Violation]:
     A folder needs a README with ``until`` (the condition that ends the tests), ``expires`` (a ``YYYY-MM-DD`` date by which the
     condition is checked again) and ``purpose``. A date before *today* fails the session until someone confirms the condition
     and moves the date, or removes the tests.
+
+    Parameters
+    ----------
+    root : Path
+        Repository root.
+    today : date
+        Date against which expiry is judged.
+
+    Returns
+    -------
+    list[Violation]
+        The violations found.
     """
+    # Without a conditional folder there is nothing to check.
     base = root / "tests" / "_conditional"
     if not base.is_dir():
         return []
+    # Check every conditional folder in turn, reporting the first problem of each.
     found = []
     for folder in sorted(p for p in base.iterdir() if p.is_dir() and p.name != "__pycache__"):
         file = _relative(folder, root)
@@ -447,10 +603,12 @@ def scan_conditional(root: Path, today: date) -> list[Violation]:
         if entries is None:
             found.append(Violation("H7", file, "", "no README.md"))
             continue
+        # The README must have every required entry.
         missing = [key for key in _CONDITIONAL_KEYS if not entries.get(key)]
         if missing:
             found.append(Violation("H7", file, "", "README lacks " + ", ".join(missing)))
             continue
+        # The expiry date must be valid and not in the past.
         try:
             expires = date.fromisoformat(entries["expires"].strip("` "))
         except ValueError:
@@ -466,7 +624,18 @@ def scan_conditional(root: Path, today: date) -> list[Violation]:
 # ---------------------------------------------------------------------------
 
 def load_baseline(path: Path) -> set[str]:
-    """Return the violation keys listed in a baseline file (none if the file does not exist)."""
+    """Return the violation keys listed in a baseline file (none if the file does not exist).
+
+    Parameters
+    ----------
+    path : Path
+        Baseline file.
+
+    Returns
+    -------
+    set[str]
+        The violation keys it lists.
+    """
     if not path.is_file():
         return set()
     lines = (line.strip() for line in path.read_text(encoding="utf-8").splitlines())
@@ -488,17 +657,40 @@ def check(
     files that were checked, and of files that no longer exist, can be stale, so a run of one file does not report the
     rest of the baseline. An H9 line is found stale while its test runs, not here, so only a missing file makes it stale
     here.
+
+    Parameters
+    ----------
+    root : Path
+        Repository root.
+    modules : list[Path]
+        Test modules to check.
+    baseline : Path | None, optional
+        Baseline file; the repository's own when ``None``.
+    today : date | None, optional
+        Date for expiry; today when ``None``.
+    tier_violations : list[Violation] | None, optional
+        Tier violations already found by the caller.
+
+    Returns
+    -------
+    str | None
+        The failure text, or ``None`` when every violation is baselined.
     """
+    # Load the known violations and index the checked modules by their relative path.
     baseline_path = baseline or root / "tests" / BASELINE_NAME
     listed = load_baseline(baseline_path)
     files = {_relative(path, root): path for path in modules}
+
+    # Gather the violations of the temporary and conditional folders, the tiers and the checked modules.
     violations = scan_temp(root) + scan_conditional(root, today or date.today())
     violations.extend(tier_violations or [])
     stems = _test_stems(root)
     for path in sorted(files.values()):
         violations.extend(scan_module(path, root, stems))
+    # A violation not listed in the baseline is new.
     present = {v.key for v in violations}
     new = [v for v in sorted(violations) if v.key not in listed]
+    # A baseline line is stale when its violation is gone and its file was checked or no longer exists.
     stale = []
     for line in sorted(listed - present):
         rule, _, rest = line.partition("|")
@@ -509,10 +701,12 @@ def check(
             stale.append(line)
     if not new and not stale:
         return None
+    # Compose the failure text: new violations first, then the stale baseline lines.
     parts = []
     if new:
         parts.append(f"Test hygiene: {len(new)} new violation(s). Fix the test; never add a line to {BASELINE_NAME}.")
         parts.extend(v.describe() for v in new)
+    # Add the stale baseline lines, which tell the person what to delete.
     if stale:
         parts.append(
             f"Test hygiene: {len(stale)} baseline line(s) no longer match a violation. "
@@ -536,7 +730,18 @@ def _tier_node(item: pytest.Item):
 
 
 def tier_of(item: pytest.Item) -> str | None:
-    """Return the one tier of *item*, or ``None`` when it has none or more than one."""
+    """Return the one tier of *item*, or ``None`` when it has none or more than one.
+
+    Parameters
+    ----------
+    item : pytest.Item
+        A collected test.
+
+    Returns
+    -------
+    str | None
+        The tier name, or ``None``.
+    """
     _, names = _tier_node(item)
     return names[0] if len(set(names)) == 1 else None
 
@@ -552,11 +757,25 @@ def tier_problems(items: list[pytest.Item], root: Path) -> list[Violation]:
 
     A test whose nearest tier mark is on the test or its class keeps the module's tier mark out of ``-m``, so
     ``-m unit`` does not select a ``process`` test of a ``unit`` module.
+
+    Parameters
+    ----------
+    items : list[pytest.Item]
+        Collected tests.
+    root : Path
+        Repository root.
+
+    Returns
+    -------
+    list[Violation]
+        The violations found.
     """
+    # Find the tier of every test, reporting tests with none or with several.
     found: dict[str, Violation] = {}
     for item in items:
         node, names = _tier_node(item)
         file = _relative(item.path, root)
+        # A test with no tier mark at all is a violation.
         if node is None:
             found.setdefault(f"{file}::{_test_name(item)}", Violation("H8", file, _test_name(item), "no tier mark"))
             continue
@@ -564,6 +783,7 @@ def tier_problems(items: list[pytest.Item], root: Path) -> list[Violation]:
             detail = "marked " + " and ".join(sorted(set(names)))
             found.setdefault(f"{file}::{_test_name(item)}", Violation("H8", file, _test_name(item), detail))
             continue
+        # Hide the marks of farther nodes from ``-m`` when a nearer node overrides them.
         parents = list(item.iter_parents())
         overridden = {
             id(parent)
@@ -580,6 +800,7 @@ def _hide_tier_marks(item: pytest.Item, hidden_nodes: set[int]) -> None:
     original = item.iter_markers_with_node
 
     def iter_markers_with_node(name: str | None = None):
+        """Yield the markers of the item without those from the hidden nodes."""
         for node, mark in original(name):
             if mark.name in TIERS and id(node) in hidden_nodes:
                 continue
@@ -588,6 +809,7 @@ def _hide_tier_marks(item: pytest.Item, hidden_nodes: set[int]) -> None:
     item.iter_markers_with_node = iter_markers_with_node
 
 
+# What each blocked action is called in the failure message of rule H9.
 _H9_ACTIONS = {
     "process": "starts a process",
     "system": "starts a process (os.system)",
@@ -605,6 +827,20 @@ class UnitGuard:
     installed, and ``asyncio.sleep``, are not seen (asyncio and Textual poll with it, so guarding it would fail the UI
     tests). The one ``connect`` that ``socket.socketpair`` makes inside the process stays allowed: the asyncio event loop
     needs it and it reaches no other program.
+
+    Parameters
+    ----------
+    test : str
+        Name of the test the guard protects.
+    only_note : bool
+        Whether blocked actions are only noted instead of failing the test.
+
+    Methods
+    -------
+    message
+        Returns the failure text for an action.
+    surface
+        Fails the test when a blocked action was hidden.
     """
 
     def __init__(self, test: str, only_note: bool) -> None:
@@ -616,11 +852,15 @@ class UnitGuard:
         self._stack = contextlib.ExitStack()
 
     def _blocked(self, kind: str, original):
+        """Wrap *original* so that it fails the test, or only notes the call, when the unit tier forbids it."""
         def blocked(*args, **kwargs):
+            """Call *original* when the action is harmless, otherwise record it and fail or note it."""
+            # Harmless calls and calls inside ``socketpair`` pass through to the original.
             if kind == "sleep" and args and isinstance(args[0], (int, float)) and args[0] <= SLEEP_ALLOWED:
                 return original(*args, **kwargs)
             if kind == "connect" and self._inside_socketpair():
                 return original(*args, **kwargs)
+            # Record the blocked action, then note it for a baselined test or fail the test.
             self.seen.append(kind)
             if self.only_note:
                 return original(*args, **kwargs)
@@ -632,11 +872,23 @@ class UnitGuard:
 
     @staticmethod
     def _inside_socketpair() -> bool:
+        """Say whether the caller of the blocked ``connect`` is ``socket.socketpair`` inside the process."""
         caller = sys._getframe(2)
         return caller.f_code.co_name in {"socketpair", "_fallback_socketpair"} and caller.f_globals.get("__name__") == "socket"
 
     def message(self, kind: str) -> str:
-        """Return the failure text: the rule, the test, what it did, the tier and where the policy is."""
+        """Return the failure text: the rule, the test, what it did, the tier and where the policy is.
+
+        Parameters
+        ----------
+        kind : str
+            Kind of blocked action.
+
+        Returns
+        -------
+        str
+            The failure text.
+        """
         what = _H9_ACTIONS[kind]
         return (
             f"H9 {self.test}: this test is in the unit tier and {what}. A unit test touches only its own process "
@@ -645,6 +897,7 @@ class UnitGuard:
         )
 
     def __enter__(self) -> "UnitGuard":
+        # List the actions to block: processes, sockets and sleeps.
         patches = [
             (subprocess.Popen, "__init__", "process"),
             (os, "system", "system"),
@@ -653,6 +906,7 @@ class UnitGuard:
             (socket.socket, "connect_ex", "connect"),
             (time, "sleep", "sleep"),
         ]
+        # Replace each action by a blocking wrapper for as long as the guard is active.
         for target, attribute, kind in patches:
             original = getattr(target, attribute)
             self._stack.enter_context(mock.patch.object(target, attribute, self._blocked(kind, original)))
@@ -666,6 +920,16 @@ class UnitGuard:
 
         The blocked action may have been raised in a thread or inside an asyncio task, where the exception is lost, so
         the test would otherwise pass, or fail later with a timeout that hides the cause.
+
+        Parameters
+        ----------
+        error : BaseException | None
+            The error raised by the test, if any.
+
+        Raises
+        ------
+        BaseException
+            The first blocked-action failure, when it was lost in a thread or task.
         """
         if self.failures and error is not self.failures[0] and not self._surfaced:
             self._surfaced = True
@@ -678,7 +942,9 @@ class UnitGuard:
 # The pytest plugin
 # ---------------------------------------------------------------------------
 
+# Stash slot holding the unit guard of a test.
 _GUARD = pytest.StashKey[UnitGuard | None]()
+# Stash slot remembering that the body of a test passed.
 _CALL_PASSED = pytest.StashKey[bool]()
 _baselines: dict[Path, set[str]] = {}
 
@@ -698,10 +964,12 @@ def _guard_of(item: pytest.Item) -> UnitGuard | None:
 
 
 def _guarded_phase(item: pytest.Item):
+    # Without a guard (the test is not in the unit tier) the phase runs as it is.
     """Run one phase of *item* under its guard, if it has one."""
     guard = _guard_of(item)
     if guard is None:
         return (yield)
+    # Run the phase under the guard and surface a failure that was raised where it was lost.
     try:
         with guard:
             result = yield
@@ -714,22 +982,59 @@ def _guarded_phase(item: pytest.Item):
 
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_setup(item: pytest.Item):
-    """Run the setup of a ``unit`` test under the guard of rule H9."""
+    """Run the setup of a ``unit`` test under the guard of rule H9.
+
+    Parameters
+    ----------
+    item : pytest.Item
+        The test being set up.
+
+    Returns
+    -------
+    object
+        The outcome of the wrapped phase.
+    """
     return (yield from _guarded_phase(item))
 
 
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_call(item: pytest.Item):
-    """Run a ``unit`` test under the guard of rule H9."""
+    """Run a ``unit`` test under the guard of rule H9.
+
+    Parameters
+    ----------
+    item : pytest.Item
+        The test being run.
+
+    Returns
+    -------
+    object
+        The outcome of the wrapped phase.
+    """
     return (yield from _guarded_phase(item))
 
 
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None):
-    """Run the teardown of a ``unit`` test under the guard of rule H9, and fail a baseline line that no longer matches."""
+    """Run the teardown of a ``unit`` test under the guard of rule H9, and fail a baseline line that no longer matches.
+
+    Parameters
+    ----------
+    item : pytest.Item
+        The test being torn down.
+    nextitem : pytest.Item | None
+        The test that follows, if any.
+
+    Returns
+    -------
+    object
+        The outcome of the wrapped phase.
+    """
+    # Run the teardown under the guard first.
     result = yield from _guarded_phase(item)
     guard = item.stash.get(_GUARD, None)
     if guard is not None and guard.only_note and not guard.seen and item.stash.get(_CALL_PASSED, False):
+        # A baselined test that no longer does the forbidden action leaves a stale line in the baseline.
         root = item.config.rootpath
         line = f"H9|{_relative(item.path, root)}|{_test_name(item)}"
         pytest.fail(
@@ -742,7 +1047,20 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None):
 
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo):
-    """Remember that the test body passed, so a stale H9 baseline line can be told from a test that stopped early."""
+    """Remember that the test body passed, so a stale H9 baseline line can be told from a test that stopped early.
+
+    Parameters
+    ----------
+    item : pytest.Item
+        The test being reported.
+    call : pytest.CallInfo
+        The phase's call information.
+
+    Returns
+    -------
+    object
+        The report.
+    """
     report = yield
     if report.when == "call":
         item.stash[_CALL_PASSED] = report.passed
@@ -750,6 +1068,7 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo):
 
 
 def _named_on_command_line(config: pytest.Config, folder: Path) -> bool:
+    """Say whether a command-line argument names *folder* or a path below it."""
     for arg in config.invocation_params.args:
         text = str(arg)
         if text.startswith("-"):
@@ -761,7 +1080,20 @@ def _named_on_command_line(config: pytest.Config, folder: Path) -> bool:
 
 
 def pytest_ignore_collect(collection_path: Path, config: pytest.Config):
-    """Leave a ``kind: report`` temporary folder out of the run unless a command-line argument names it."""
+    """Leave a ``kind: report`` temporary folder out of the run unless a command-line argument names it.
+
+    Parameters
+    ----------
+    collection_path : Path
+        Path pytest is about to collect.
+    config : pytest.Config
+        The pytest configuration.
+
+    Returns
+    -------
+    object
+        ``True`` to skip the path, else ``None``.
+    """
     root = config.rootpath
     base = (root / "tests" / "_temp").resolve()
     path = collection_path.resolve()
@@ -775,7 +1107,22 @@ def pytest_ignore_collect(collection_path: Path, config: pytest.Config):
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(session: pytest.Session, config: pytest.Config, items: list[pytest.Item]) -> None:
-    """Fail the session when a test file or a temporary folder breaks a rule that the baseline does not list."""
+    """Fail the session when a test file or a temporary folder breaks a rule that the baseline does not list.
+
+    Parameters
+    ----------
+    session : pytest.Session
+        The pytest session.
+    config : pytest.Config
+        The pytest configuration.
+    items : list[pytest.Item]
+        The collected tests.
+
+    Raises
+    ------
+    pytest.UsageError
+        When a rule is broken that the baseline does not list.
+    """
     root = config.rootpath
     temp = (root / "tests" / "_temp").resolve()
     modules = sorted({item.path for item in items if temp not in item.path.resolve().parents})

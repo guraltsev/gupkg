@@ -38,7 +38,9 @@ from tests.support.engine import BASE_URL, World, pkg_text
 
 pytestmark = pytest.mark.unit
 
+# The installer arguments that ask for a silent install into the stage.
 RUN = '[source.installer]\nrun = ["/VERYSILENT", "/DIR=$Stage", "/NOICONS"]\n'
+# File name of the vendor installer.
 SETUP = "gimp-setup-1.0.0.exe"
 
 
@@ -119,21 +121,27 @@ def test_the_installer_gets_a_scrubbed_environment_and_no_input(world: World, mo
 
 def test_the_label_is_in_the_plan_the_events_and_the_receipt(world: World) -> None:
     """`runs vendor installer` shows in --plan data, in the run's Unpack phase and as a warning that names the risk."""
+    # Arrange: publish a version that runs a vendor installer.
     publish_installer(world)
 
+    # Act: plan the install, then run it while keeping the events.
     plans = lifecycle.plan(world.engine, [Request("install", "gimp")])
     data = plans[0].to_data()
     events: list[object] = []
 
+    # A reporter that keeps every event.
     class Collect:
         """Keep every event."""
 
         def handle(self, event: object) -> None:
+            """Keep one event."""
             events.append(event)
 
+    # Run the install.
     with use_reporter(Collect()):
         assert world.one("install", "gimp").ok
 
+    # Assert: the label is in the plan, in the events and in the receipt.
     assert data["populate"]["label"] == "runs vendor installer" and data["populate"]["installer"][0] == "/VERYSILENT"
     unpack = next(phase for phase in data["phases"] if phase["name"] == "Unpack")
     assert unpack["steps"] == ["runs vendor installer: /VERYSILENT /DIR=$Stage /NOICONS"]
@@ -174,9 +182,11 @@ def test_a_failing_or_timed_out_installer_leaves_nothing(world: World, double: I
 
 def test_an_installer_that_leaves_a_link_in_the_app_is_refused(world: World) -> None:
     """A junction or symlink in the staged App could point anywhere; the whole App is refused."""
+    # Arrange: a folder outside the app.
     outside = world.base / "elsewhere"
     outside.mkdir()
 
+    # An installer that leaves a junction behind in the stage.
     class Linker(InstallerDouble):
         """Create a link next to the files."""
 
@@ -186,10 +196,13 @@ def test_an_installer_that_leaves_a_link_in_the_app_is_refused(world: World) -> 
             world.fake.create_junction(stage / "link", outside)
             return result
 
+    # Publish an installer that leaves such a junction.
     publish_installer(world, double=Linker())
 
+    # Act: install it.
     result = world.one("install", "gimp")
 
+    # Assert: the install is refused and the junction target is untouched.
     assert not result.ok and "link" in result.error["message"] and not (world.user / "gimp" / "1.0.0" / "App").exists()
     assert outside.is_dir()
 
@@ -239,20 +252,25 @@ def test_check_updates_runs_the_installer_into_the_new_version_when_allowed(worl
 
 def test_check_updates_with_the_setting_false_writes_the_version_without_its_app(world: World) -> None:
     """check-updates never runs the installer when it is forbidden; it warns and leaves the version unpopulated."""
+    # Arrange: a tracked package, and a setting that forbids vendor installers.
     double = tracked(world)
     world.write_app_settings(tables="[hooks]\nallow_vendor_installers = false\n")
     texts: list[str] = []
 
+    # A reporter that keeps the warnings.
     class Collect:
         """Keep the warnings."""
 
         def handle(self, event: object) -> None:
+            """Keep the text of one warning."""
             if isinstance(event, Warning):
                 texts.append(event.text)
 
+    # Act: check for updates.
     with use_reporter(Collect()):
         result = world.one("check-updates", "gimp")
 
+    # Assert: the version is written without its app, the installer never ran and the setting is named.
     package = world.user / "gimp"
     assert result.ok and double.calls == [] and (package / "1.1.0" / "pkg.toml").is_file() and not (package / "1.1.0" / "App").exists()
     assert any("allow_vendor_installers" in text for text in texts)
@@ -436,7 +454,7 @@ def test_a_verified_download_still_runs(tmp_path: Path, decision: str) -> None:
 
 @pytest.mark.parametrize("elevated", [False, True], ids=["user", "elevated"])
 def test_an_unpinned_installer_is_refused_before_any_download_even_with_skip_checksum(tmp_path: Path, elevated: bool) -> None:
-    """The plan refuses a version that pins no sha256; --skip-checksum is for archives only. Nothing is fetched or run."""
+    """The plan refuses a version that pins no sha256, because --skip-checksum is for archives only, and nothing is fetched or run."""
     world = World(tmp_path, elevated=elevated)
     mode = "system" if elevated else "user"
     double = publish_installer(world, pinned=False, mode=mode)

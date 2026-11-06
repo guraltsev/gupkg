@@ -1,4 +1,4 @@
-"""Cover the ``[[shortcut]]`` keys ``run_as_admin`` and ``modes`` (issue 035, T08).
+"""Cover the ``[[shortcut]]`` keys ``run_as_admin`` and ``modes``.
 
 Behaviour covered: both keys are validated; ``run_as_admin`` reaches the recorded effect, the system port and the
 drift check; a shortcut is created only in its ``modes``; gupkg's own ``src/pkg.toml`` gives the system scope the
@@ -23,7 +23,9 @@ from gupkg.system.windows import WindowsSystem
 
 pytestmark = pytest.mark.unit
 
+# Source table shared by the sample manifests.
 SOURCE = '[source]\ndownload_url = "https://x.test/a.zip"\n'
+# Shortcut entry shared by the sample manifests.
 SHORTCUT = '[[shortcut]]\nname = "T"\ntarget = "a.exe"\n'
 
 
@@ -65,12 +67,15 @@ def test_run_as_admin_reaches_the_recorded_effect_and_the_machine(tmp_path: Path
     body = SHORTCUT.replace('"T"', '"A"') + "run_as_admin = true\n" + SHORTCUT.replace('"T"', '"B"')
     effects, _ = desired_effects(parse_manifest("format = 2\n" + SOURCE + body), ctx)
 
+    # Act: apply both shortcut effects on the fake machine.
     admin, plain = (apply_effect(system, effect, ctx) for effect in effects)
 
+    # Assert: the flag is recorded for the administrator shortcut only, and read back from the machine.
     admin_path = Path(str(admin.fields["path"]))
     assert admin.fields["run_as_admin"] is True and "run_as_admin" not in plain.fields
     assert system.read_shortcut(admin_path).run_as_admin is True
     assert system.read_shortcut(Path(str(plain.fields["path"]))).run_as_admin is False
+    # Verification passes, then notices when the flag is switched off behind its back.
     assert [item for item in verify_each(system, [admin, plain], mode=Mode.USER) if item[1]] == []
     system.write_shortcut(admin_path, replace(system.read_shortcut(admin_path), run_as_admin=False))
     assert [item[1] for item in verify_each(system, [admin], mode=Mode.USER)] == [
@@ -92,6 +97,7 @@ def test_gupkgs_own_package_has_the_administrator_shortcut_in_system_mode_only(t
     """The real `src/pkg.toml` creates "gupkg manager" in both modes and "gupkg manager (administrator)", with the flag, in system mode only."""
     manifest = parse_manifest((Path(__file__).resolve().parents[1] / "src" / "pkg.toml").read_text(encoding="utf-8"), ManifestKind.TRACKER)
 
+    # Collect, for each mode, the shortcuts that the manifest yields with their administrator flag.
     found = {
         mode: {
             Path(str(e.fields["path"])).stem: e.fields.get("run_as_admin", False)
@@ -100,6 +106,7 @@ def test_gupkgs_own_package_has_the_administrator_shortcut_in_system_mode_only(t
         for mode in ("system", "user")
     }
 
+    # Only system mode has the administrator shortcut.
     assert found == {
         "system": {"gupkg manager": False, "gupkg manager (administrator)": True},
         "user": {"gupkg manager": False},

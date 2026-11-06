@@ -1,6 +1,6 @@
 """Cover the real transport against a hostile loopback server: dripped headers, cut-short bodies, encodings.
 
-A thread on 127.0.0.1 answers like a misbehaving server. Covers the total deadline while the *headers*
+A background server on 127.0.0.1 answers like a misbehaving server. Covers the total deadline while the *headers*
 arrive (an idle socket timeout alone never fires when a line arrives every tenth of a second), the
 protocol errors of ``http.client`` becoming ordinary ``OSError`` and ``HttpError``, a body that ends before
 its ``Content-Length``, and a ``Content-Encoding`` that gupkg refuses to decompress. Nothing leaves the
@@ -41,6 +41,7 @@ class Hostile(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802 - the name is the HTTP method
         """Answer GET according to the path."""
+        # Each path scripts a different hostile answer.
         try:
             if self.path == "/header-drip":
                 self.send(b"HTTP/1.0 200 OK\r\n")
@@ -51,11 +52,13 @@ class Hostile(BaseHTTPRequestHandler):
                 self.send(b"HTTP/1.0 200 OK\r\n" + b"".join(f"X-{i}: v\r\n".encode() for i in range(150)) + b"\r\nbody")
             elif self.path == "/short":
                 self.send(b"HTTP/1.0 200 OK\r\nContent-Length: 5000\r\n\r\n0123456789")
+            # Answers that lie about their length or encoding.
             elif self.path == "/gzip":
                 body = gzip.compress(b"hello hello hello")
                 self.send(b"HTTP/1.0 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: %d\r\n\r\n" % len(body) + body)
             elif self.path == "/exact":
                 self.send(b"HTTP/1.0 200 OK\r\nContent-Length: 5\r\n\r\nhello")
+            # Answers that are cut short or promise a body they do not have.
             elif self.path == "/cut-headers":
                 self.send(b"HTTP/1.0 200 OK\r\nContent-Length: 5\r\nX-Half: val")
             elif self.path == "/not-modified":

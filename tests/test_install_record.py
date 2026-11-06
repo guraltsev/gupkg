@@ -1,12 +1,12 @@
 """Cover the install record ``<package>\\.gupkg\\package.toml`` .
 
-Behavior covered: a record written and read back keeps its mode, its link (registry, name, revision, tracker hash),
+Behavior covered: a record written and loaded back keeps its mode, its link (registry, name, revision, tracker hash),
 the ``unlinked`` opt-out and its effects (including "adopted" ones); a package with no record reads as no record;
 every kind of invalid record is reported with its problems and never raises out of the reader; the record is neither
-read nor written through a linked ``.gupkg`` folder; ``state.toml`` root entries need an absolute path and a known mode.
+loaded nor written through a linked ``.gupkg`` folder; ``state.toml`` root entries need an absolute path and a known mode.
 
 Real: files under pytest's temporary folder and junctions through ``FakeSystem`` (real links); the TOML writer of
-``gupkg.tomlio``. Mocked: nothing. Out of scope: which effects exist and applying them (issue 028).
+``gupkg.tomlio``. Mocked: nothing. Out of scope: which effects exist and applying them.
 """
 
 from __future__ import annotations
@@ -20,11 +20,13 @@ from gupkg.model.state import Effect, InstallRecord, Link, RecordError, parse_in
 
 pytestmark = pytest.mark.unit
 
+# A well-formed digest.
 SHA = "0123456789abcdef" * 4
 
 
 def test_record_round_trips_mode_link_and_effects(tmp_path: Path) -> None:
     """Writing a full record and reading it again returns the same record."""
+    # Arrange: a record with a link and three kinds of effect.
     record = InstallRecord(
         mode="user",
         link=Link(registry="main", name="bar", revision="a" * 40, tracker_sha256=SHA),
@@ -35,9 +37,11 @@ def test_record_round_trips_mode_link_and_effects(tmp_path: Path) -> None:
         ),
     )
 
+    # Act: write the record and read it back.
     written = write_install_record(tmp_path / "foo", record)
     read = read_install_record(tmp_path / "foo")
 
+    # Assert: the record is stored in the package's own folder and read back equal.
     assert written == record_path(tmp_path / "foo") == tmp_path / "foo" / ".gupkg" / "package.toml"
     assert read.problem is None and read.record == record
 

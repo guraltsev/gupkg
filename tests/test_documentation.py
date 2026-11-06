@@ -20,9 +20,13 @@ from tests.support.cli import CliWorld
 
 pytestmark = pytest.mark.unit
 
+# Root of this checkout.
 ROOT = Path(__file__).resolve().parents[1]
+# Every document whose links and commands are checked.
 DOCUMENTS = [ROOT / "README.md", *sorted((ROOT / "_docs").glob("*.md")), ROOT / "src" / "gupkg" / "README.md", ROOT / "tests" / "manual_smoke.md"]
+# A Markdown link, whose target is group 1 and which is not an image.
 LINK = re.compile(r"(?<!!)\[[^\]]*\]\(([^)\s]+)\)")
+# The opening and closing line of a fenced code block.
 FENCE = re.compile(r"^```")
 
 

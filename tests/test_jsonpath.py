@@ -12,6 +12,7 @@ from gupkg.model.jsonpath import MAX_NODES, JsonPathError, Node, condition_holds
 
 pytestmark = pytest.mark.unit
 
+# Sample document that the path queries run against.
 DOCUMENT = {
     "latest": "1.5.0",
     "releases": [

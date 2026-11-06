@@ -1,4 +1,4 @@
-"""Cover the three command shims that the gupkg package installs (`gupkg`, `gupkg-tui`, `gupkg-manager`, issue 035 T18b).
+"""Cover the three command shims that the gupkg package installs (`gupkg`, `gupkg-tui`, `gupkg-manager`).
 
 Behavior covered: the shims declared in `src/pkg.toml` start the bundled `python.exe` with the fixed flags and hand it every
 argument exactly as the caller typed it (a `.cmd` target would be run as `cmd /c "<target>" "a" "b"`, which breaks any
@@ -31,8 +31,11 @@ from gupkg.model.state import Effect
 from gupkg.system.fake import FakeSystem
 from gupkg.system.port import Mode
 
+# Root of this checkout.
 REPO = Path(__file__).resolve().parents[1]
+# The source folder, which holds the shim launchers and the bundled runtime.
 SRC = REPO / "src"
+# The launchers and the arguments each one forwards to the bootstrap.
 SHIMS = {"gupkg": [], "gupkg-tui": ["--gupkg-program=tui"], "gupkg-manager": ["--gupkg-program=manager"]}
 
 pytestmark = [pytest.mark.process, pytest.mark.skipif(os.name != "nt", reason="the shims are Windows launchers")]
@@ -58,12 +61,14 @@ def installed(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Path]:
     Returns the `bin` folder with the three shims written by the real effect code, and the folder of the tree. The stub
     `bootstrap.py` prints the arguments it received as JSON and exits with 7, so the arguments and the exit code are observable.
     """
+    # Build an installed tree with the real runtime and a bootstrap that prints its arguments.
     base = tmp_path_factory.mktemp("installed")
     context, effects = _shim_effects(base)
     version = context.package_path / "1.0"
     app = version / "App"
     shutil.copytree(SRC / "gupkg" / "python", app / "gupkg" / "python")
     (app / "gupkg" / "bootstrap.py").write_text("import json, sys\nprint(json.dumps(sys.argv[1:]))\nsys.exit(7)\n", encoding="utf-8")
+    # Link ``current`` and apply every shim effect.
     _link(context.package_path / "current", version)
     system = FakeSystem(base / "machine")
     for effect in effects.values():
@@ -150,6 +155,7 @@ def test_a_shim_without_its_bundled_python_fails_with_the_missing_path_and_a_non
 
 def test_an_update_replaces_the_cmd_shims_of_a_1_1_1_install_and_leaves_no_drift(tmp_path: Path) -> None:
     """A record that still holds the 1.1.1 shims (target `$App\\gupkg.cmd`) is planned for update, and applying it writes the python configuration."""
+    # Arrange: the effects of a 1.1.1 install, which used ``.cmd`` shims.
     context, desired = _shim_effects(tmp_path)
     app = context.package_path / "current" / "App"
     system = FakeSystem(tmp_path / "machine")
@@ -160,10 +166,12 @@ def test_an_update_replaces_the_cmd_shims_of_a_1_1_1_install_and_leaves_no_drift
         old.append(apply_effect(system, Effect("shim", fields), context))
     assert [row for row in verify_each(system, old, mode=Mode.USER) if row[1] or row[2]] == []
 
+    # Act: diff the old effects against the desired ones and apply the updates.
     plan = diff_effects(old, list(desired.values()))
     assert [item.action for item in plan] == ["update"] * 3
     applied = [apply_effect(system, item.effect, context) for item in plan]
 
+    # Assert: the new shims use the interpreter and nothing drifts.
     for effect in applied:
         config = tomllib.loads(Path(str(effect.fields["config"])).read_text(encoding="utf-8"))
         assert config["target"].endswith("python.exe")
@@ -175,20 +183,24 @@ def test_applying_a_shim_effect_while_that_shim_is_running_still_rewrites_its_co
 
     A copy of the installed shims keeps `gupkg.exe` busy with a real child that sleeps, then the effect is applied again.
     """
+    # Arrange: a copy of the installed shims, with a configuration that targets this interpreter.
     context, effects = _shim_effects(tmp_path)
     shutil.copytree(installed[0], context.bin_dir)
     config = context.bin_dir / "gupkg.config.toml"
     config.write_text(f'target = "{sys.executable.replace(chr(92), chr(92) * 2)}"\nforward_arguments = true\n', encoding="utf-8")
+    # Start a program through the launcher, so that it is running.
     busy = subprocess.Popen([str(context.bin_dir / "gupkg.exe"), "-c", "import time; time.sleep(30)"])
     try:
         time.sleep(1)
         assert busy.poll() is None
 
+        # Act: apply the effect while the launcher runs.
         apply_effect(FakeSystem(tmp_path / "machine"), effects["gupkg"], context)
     finally:
         busy.kill()
         busy.wait()
 
+    # Assert: the configuration was rewritten.
     assert tomllib.loads(config.read_text(encoding="utf-8"))["target"].endswith("python.exe")
 
 
@@ -198,6 +210,7 @@ def test_a_running_shim_whose_launcher_differs_is_replaced_and_the_old_launcher_
     The running launcher is a different build (the static launcher stands in for an older one). Applying the effect puts this
     gupkg's launcher in place while the old one still runs; the next apply, after it exited, deletes the moved-aside file.
     """
+    # Arrange: a copy of the installed shims where the launcher differs from the bundled one.
     context, effects = _shim_effects(tmp_path)
     shutil.copytree(installed[0], context.bin_dir)
     launcher = context.bin_dir / "gupkg.exe"
@@ -206,11 +219,13 @@ def test_a_running_shim_whose_launcher_differs_is_replaced_and_the_old_launcher_
     config = context.bin_dir / "gupkg.config.toml"
     config.write_text(f'target = "{sys.executable.replace(chr(92), chr(92) * 2)}"\nforward_arguments = true\n', encoding="utf-8")
     system = FakeSystem(tmp_path / "machine")
+    # Keep a program running through the launcher.
     busy = subprocess.Popen([str(launcher), "-c", "import time; time.sleep(30)"])
     try:
         time.sleep(1)
         assert busy.poll() is None
 
+        # Applying the effect leaves the running launcher in place and sets the old one aside.
         apply_effect(system, effects["gupkg"], context)
 
         assert launcher.read_bytes() == bundled and busy.poll() is None
@@ -219,6 +234,7 @@ def test_a_running_shim_whose_launcher_differs_is_replaced_and_the_old_launcher_
         busy.wait()
     assert [path.name for path in context.bin_dir.glob("*.old")] != []
 
+    # Apply again once the program has ended.
     apply_effect(system, effects["gupkg"], context)
 
     assert [path.name for path in context.bin_dir.glob("*.old")] == []
@@ -227,17 +243,21 @@ def test_a_running_shim_whose_launcher_differs_is_replaced_and_the_old_launcher_
 
 def test_a_launcher_moved_aside_is_put_back_when_the_new_one_cannot_be_written(installed: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """If the write after the move fails too, the old launcher is back under its name: the command never disappears from `bin`."""
+    # Arrange: an installed shim whose launcher is an older one.
     context, effects = _shim_effects(tmp_path)
     shutil.copytree(installed[0], context.bin_dir)
     launcher = context.bin_dir / "gupkg.exe"
     old = b"an older launcher"
     launcher.write_bytes(old)
 
+    # Fail the write of the launcher like a running program, then like a full disk.
     def refuse(path: Path, content: bytes) -> None:
         """Fail like a running .exe, then like a full disk."""
         raise PermissionError(13, "Access is denied") if path.suffix == ".exe" else OSError(28, "No space left on device")
 
+    # Install the failing write.
     monkeypatch.setattr("gupkg.engine.effects.write_bytes_atomic", refuse)
+    # Act and assert: the apply fails and the launcher is put back.
     with pytest.raises(PermissionError):
         apply_effect(FakeSystem(tmp_path / "machine"), effects["gupkg"], context)
 

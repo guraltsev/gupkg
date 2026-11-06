@@ -93,6 +93,24 @@ def populate_git(
 ) -> UnpackReport:
     """Check out a ``git`` source into *destination* and run ``manifest.prepare``.
 
+    Parameters
+    ----------
+    scope : Scope
+        The run's scope; its system boundary and mode run ``git``.
+    manifest : Manifest
+        A pinned version's manifest whose source is a ``git`` source.
+    destination : Path
+        The ``App`` folder to create; it must not exist.
+    context : HookContext, optional
+        Needed only when a ``[[prepare]]`` step is a ``module``.
+    limits : Limits
+        Bounds on the checked-out size.
+
+    Returns
+    -------
+    UnpackReport
+        What the checkout produced.
+
     Raises
     ------
     UnpackError
@@ -100,6 +118,7 @@ def populate_git(
     PrepareError
         If a prepare step fails; the destination is removed.
     """
+    # Check out the pinned commit (or ref), then apply the declarative prepare steps.
     source = manifest.source
     git = source.git
     report = unpack_git(
@@ -134,10 +153,12 @@ def run_custom_populate(context: HookContext, script: str, timeout: float | None
         If the script is missing, outside the version directory or behind a link, or exits
         with a non-zero status.
     """
+    # A Python script is a hook module; its ``populate(ctx)`` receives the context object.
     root = context.paths.version_root
     if script.lower().endswith(".py"):
         call_populate(load_hook(root, script, context.scope, forbid_track=True), context)
         return
+    # Any other script must exist inside the version directory and, in system mode, be admin-only.
     require_trusted_code(context.scope, root)
     try:
         path = confine(root, script)
@@ -146,6 +167,7 @@ def run_custom_populate(context: HookContext, script: str, timeout: float | None
     if not path.is_file():
         raise HookError(f"{script} does not exist")
     require_trusted_code(context.scope, root, path)
+    # Start the script with the context as JSON on standard input and report its output lines.
     command = [str(path)]
     result = context.system.run(
         command, cwd=root, input_text=context.to_json(), on_line=subprocess_lines(command), timeout=timeout
@@ -155,7 +177,24 @@ def run_custom_populate(context: HookContext, script: str, timeout: float | None
 
 
 def prepare_app(manifest: Manifest, app: Path, context: HookContext | None = None) -> None:
-    """Run the ``[[prepare]]`` steps of *manifest* on *app*, deleting *app* if a step fails."""
+    """Run the ``[[prepare]]`` steps of *manifest* on *app*, deleting *app* if a step fails.
+
+    Parameters
+    ----------
+    manifest : Manifest
+        The manifest whose ``prepare`` steps run.
+    app : Path
+        The staged ``App`` folder.
+    context : HookContext, optional
+        Needed only when a step is a ``module``.
+
+    Raises
+    ------
+    PrepareError
+        If a step fails; *app* has been removed first. Any other exception is re-raised
+        unchanged after the same cleanup.
+    """
+    # Remove the half-prepared tree on any failure, so the destination exists only on success.
     try:
         run_prepare(manifest.prepare, app, context)
     except Exception:

@@ -25,10 +25,12 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 
+# Version of the update-check module interface that this script implements.
 PKG_MODULE_API = 1
 
 # Tools Volta shims on Windows, per the Volta installer documentation.
 _SHIMMED_TOOLS = ("node", "npm", "npx", "pnpm", "yarn")
+# Files that must be present for the unpacked application to be usable.
 _REQUIRED_FILES = ("volta.exe", "volta-shim.exe")
 
 
@@ -48,10 +50,12 @@ def unpack_app(context: dict[str, Any]) -> None:
         The downloaded artifact is not a valid ZIP file.
     """
     paths = context["paths"]
+    # Locate the downloaded archive and create the staging folder.
     artifact = Path(paths["artifact"])
     stage_app = Path(paths["stageApp"])
     stage_app.mkdir(parents=True, exist_ok=True)
 
+    # Extract every file flat into the staging folder, refusing unsafe member paths.
     with zipfile.ZipFile(artifact) as archive:
         for member in archive.infolist():
             relative_path = PurePosixPath(member.filename.replace("\\", "/"))

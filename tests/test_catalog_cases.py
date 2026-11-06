@@ -9,7 +9,7 @@ is one labelled case.
 
 Real: package roots, real ``current`` junctions (through ``FakeSystem``, whose links are real),
 registry caches in the layout a sync publishes, and the catalog code. Mocked: nothing.
-Out of scope: executing installs (issue 028), running trackers and the network.
+Out of scope: executing installs, running trackers and the network.
 """
 
 from __future__ import annotations
@@ -84,6 +84,7 @@ def broken_dangling(ctx: Ctx) -> None:
     shutil.rmtree(ctx.foo / "1.0")
 
 
+# The rows of the state table, by name.
 CASES = {
     "R-registry-only": Case(
         lambda c: c.registry(foo={"versions": ["1.0", "1.1"], "tracker": "r"}),
@@ -195,6 +196,7 @@ def test_each_row_of_the_state_table_gives_its_status_candidates_and_refusals(ca
     listing = catalog.list(ListFilter(include_available=True))
     [view] = [item for item in listing.views if item.name == "foo"]
 
+    # Assert: the view and the candidates agree with the table row.
     assert view.status == case.status
     assert view.following == case.following
     assert view.note == case.note

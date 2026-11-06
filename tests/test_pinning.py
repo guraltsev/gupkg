@@ -8,7 +8,7 @@ written only by `pin_hash`; and nothing else (observing a hash during a skipped 
 into `pkg.toml`.
 
 Real: the pinning module, the manifest parser as the proof of the edit, and real files in a temporary
-folder. Mocked: the downloads (a `FakeSystem` URL fixture). Out of scope: the `gupkg pkg pin` command line (issue 029).
+folder. Mocked: the downloads (a `FakeSystem` URL fixture). Out of scope: the `gupkg pkg pin` command line.
 """
 
 from __future__ import annotations
@@ -27,10 +27,14 @@ from gupkg.system.fake import FakeHttp, FakeSystem
 
 pytestmark = pytest.mark.unit
 
+# Download address of the sample package.
 URL = "https://example.org/tool-1.0.zip"
+# Payload served for the sample download.
 BODY = b"payload bytes " * 100
+# Digest that the payload actually has.
 OBSERVED = hashlib.sha256(BODY).hexdigest()
 
+# Sample manifest without a pinned digest.
 UNPINNED = f"""\
 format = 2
 description = "A tool"  # keep this comment

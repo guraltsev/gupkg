@@ -2,7 +2,7 @@
 
 This is a build tool for the development tree; it is never shipped and gupkg
 never runs it. It is the only place that knows where the embeddable CPython
-comes from: the URL and the SHA-256 below. Everything else (the release build,
+comes from: it pins the URL and the SHA-256 of the archive. Everything else (the release build,
 the committed runtime in ``src/gupkg/python``) obtains the interpreter here.
 
 Usage and API
@@ -35,11 +35,14 @@ import zipfile
 from pathlib import Path
 from typing import Callable
 
+# Repository root, anchor of the default destination and cache folders.
 ROOT = Path(__file__).resolve().parents[1]
 
 # The embeddable CPython that every gupkg release ships, and its pinned digest.
 PYTHON_VERSION = "3.12.10"
+# Official download address of that archive.
 PYTHON_URL = f"https://www.python.org/ftp/python/{PYTHON_VERSION}/python-{PYTHON_VERSION}-embed-amd64.zip"
+# SHA-256 the downloaded archive must have before it is used.
 PYTHON_SHA256 = "4acbed6dd1c744b0376e3b1cf57ce906f9dc9e95e68824584c8099a63025a3c3"
 
 # The hash-pinned wheels installed into the runtime's site-packages.
@@ -47,7 +50,24 @@ DEFAULT_LOCK = Path(__file__).resolve().parent / "gupkg-deps.lock"
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Provision a runtime directory from the pinned CPython and the dependency lock."""
+    """Provision a runtime directory from the pinned CPython and the dependency lock.
+
+    Parameters
+    ----------
+    argv : list of str, optional
+        Command-line arguments; ``sys.argv[1:]`` when omitted.
+
+    Returns
+    -------
+    int
+        ``0`` once the runtime is ready.
+
+    Raises
+    ------
+    SystemExit
+        If the destination is not empty and ``--force`` was not given.
+    """
+    # Describe the command line from the module summary.
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--destination", type=Path, default=ROOT / "src" / "gupkg" / "python")
     parser.add_argument("--cache", type=Path, default=ROOT / "dist" / "cache")
@@ -96,7 +116,13 @@ def download_runtime_archive(
     ------
     SystemExit
         If the archive does not match *sha256*; the bad file is deleted.
+
+    Returns
+    -------
+    Path
+        The cached archive, whose digest equals *sha256*.
     """
+    # Work in the cache folder, named after the archive.
     cache.mkdir(parents=True, exist_ok=True)
     archive = cache / Path(url).name
 
@@ -113,7 +139,18 @@ def download_runtime_archive(
 
 
 def write_pth(runtime: Path) -> None:
-    """Write the runtime's ``._pth`` so it imports from its own ``Lib/site-packages``."""
+    """Write the runtime's ``._pth`` so it imports from its own ``Lib/site-packages``.
+
+    Parameters
+    ----------
+    runtime : Path
+        Extracted embeddable runtime folder.
+
+    Raises
+    ------
+    SystemExit
+        If the folder does not hold exactly one ``python*._pth``.
+    """
     # The embeddable archive names its search-path file after the interpreter version.
     pth_files = sorted(runtime.glob("python*._pth"))
     if len(pth_files) != 1:
@@ -131,7 +168,23 @@ FORBIDDEN_PREFIXES = ("pip", "setuptools", "_distutils_hack", "ensurepip")
 
 
 def runtime_tag(runtime: Path) -> str:
-    """Return the interpreter tag (for example ``312``) from the runtime's single ``python*._pth``."""
+    """Return the interpreter tag (for example ``312``) from the runtime's single ``python*._pth``.
+
+    Parameters
+    ----------
+    runtime : Path
+        Extracted embeddable runtime folder.
+
+    Returns
+    -------
+    str
+        The tag, for example ``"312"``.
+
+    Raises
+    ------
+    SystemExit
+        If the folder does not hold exactly one ``python*._pth``.
+    """
     pth_files = sorted(runtime.glob("python*._pth"))
     if len(pth_files) != 1:
         raise SystemExit(f"Need exactly one python*._pth in {runtime}, found {len(pth_files)}")
@@ -139,7 +192,18 @@ def runtime_tag(runtime: Path) -> str:
 
 
 def locked_names(lock: Path) -> list[str]:
-    """Return the distribution names of a lock file's ``name==version`` lines."""
+    """Return the distribution names of a lock file's ``name==version`` lines.
+
+    Parameters
+    ----------
+    lock : Path
+        Lock file to read.
+
+    Returns
+    -------
+    list of str
+        Names in file order; comments and blank lines are skipped.
+    """
     names = []
     for line in lock.read_text(encoding="utf-8").replace("\\\n", " ").splitlines():
         line = line.strip()
@@ -153,7 +217,19 @@ def installer_entries(runtime: Path) -> list[str]:
 
     Looks at ``Lib/site-packages`` and ``Lib`` (package directories, ``*.dist-info``
     folders and single-file modules) and at ``python*.zip``, which holds the standard library.
+
+    Parameters
+    ----------
+    runtime : Path
+        Extracted embeddable runtime folder.
+
+    Returns
+    -------
+    list of str
+        Offending paths relative to *runtime*, or ``name.zip/entry`` for entries
+        inside the standard-library archive.
     """
+    # Entries of the on-disk library folders whose name is a forbidden installer.
     found = []
     for folder in (runtime / "Lib" / "site-packages", runtime / "Lib"):
         if folder.is_dir():
@@ -161,6 +237,7 @@ def installer_entries(runtime: Path) -> list[str]:
                 stem = entry.name.casefold().split("-", 1)[0].removesuffix(".py").removesuffix(".dist")
                 if stem in FORBIDDEN_PREFIXES:
                     found.append(entry.relative_to(runtime).as_posix())
+    # Top-level names inside the standard-library ZIP get the same check.
     for archive_path in sorted(runtime.glob("python*.zip")):
         try:
             with zipfile.ZipFile(archive_path) as archive:
@@ -176,6 +253,11 @@ def tidy_site_packages(site_packages: Path) -> None:
 
     The ``bin`` folder of console-script launchers goes, and so do the ``RECORD``
     entries of every ``*.dist-info`` that point at it (or outside the folder).
+
+    Parameters
+    ----------
+    site_packages : Path
+        ``Lib/site-packages`` folder that ``pip --target`` filled.
     """
     shutil.rmtree(site_packages / "bin", ignore_errors=True)
     for record in site_packages.glob("*.dist-info/RECORD"):
@@ -196,13 +278,33 @@ def wheel_install_command(
     dependency resolution, targeted at the bundled interpreter's version rather than
     the interpreter running this script. *find_links* replaces the package index with
     a local folder of wheels (offline builds); hashes are still required.
+
+    Parameters
+    ----------
+    site_packages : Path
+        Target folder for the wheels.
+    lock : Path
+        Hash-pinned requirements file.
+    tag : str
+        Interpreter tag of the bundled runtime, for example ``"312"``.
+    python : str, optional
+        Interpreter whose pip runs; defaults to the running one.
+    find_links : Path, optional
+        Local wheel folder used instead of the package index.
+
+    Returns
+    -------
+    list of str
+        The command line, ready for ``subprocess.run``.
     """
+    # Wheels only, hashes required, no dependency resolution, targeted at the bundled interpreter.
     command = [
         python or sys.executable, "-I", "-B", "-m", "pip", "install", "--isolated", "--disable-pip-version-check",
         "--no-input", "--target", str(site_packages), "--no-compile", "--require-hashes", "--only-binary=:all:",
         "--no-deps", "--upgrade", "--platform", "win_amd64", "--implementation", "cp",
         "--python-version", f"{tag[0]}.{tag[1:]}", "--abi", f"cp{tag}", "-r", str(lock),
     ]
+    # Offline builds replace the package index with a local wheel folder.
     if find_links is not None:
         command[command.index("-r") : command.index("-r")] = ["--no-index", "--find-links", str(find_links)]
     return command
@@ -230,6 +332,7 @@ def install_locked_dependencies(
         If the lock is missing or lists pip, pip fails (for example, a hash
         mismatch), or the installed tree contains an installer (see ``installer_entries``).
     """
+    # Refuse a missing lock or one that would put an installer in the bundle.
     tag = runtime_tag(runtime)
     if not lock.is_file():
         raise SystemExit(f"No lock file at {lock}")
@@ -237,6 +340,7 @@ def install_locked_dependencies(
     if banned:
         raise SystemExit(f"{lock.name} lists {', '.join(banned)}; the bundle must not contain pip or setuptools")
 
+    # Install with the build machine's pip, then drop what ``--target`` leaves behind.
     site_packages = runtime / "Lib" / "site-packages"
     if subprocess.run(wheel_install_command(site_packages, lock, tag, python, find_links), check=False).returncode != 0:
         raise SystemExit("Installing the locked dependencies into the runtime failed")

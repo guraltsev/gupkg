@@ -31,8 +31,10 @@ from gupkg.model.manifest import (
 
 pytestmark = pytest.mark.unit
 
+# Valid SHA-256 digest used in the sample manifests.
 SHA = "ab" * 32
 
+# Sample manifest with a pinned download.
 PINNED = """\
 format = 2
 description = "Fast text search"
@@ -61,6 +63,7 @@ name = "rg"
 target = "$App\\\\rg.exe"
 """ % SHA
 
+# Sample tracker manifest for the Firefox package.
 FIREFOX_TRACKER = """\
 format = 2
 description = "Mozilla Firefox web browser"
@@ -115,6 +118,7 @@ def test_pinned_version_example_parses_into_typed_data() -> None:
     assert manifest.source.sha256 == SHA
     assert manifest.source.sha256_from == "github-digest"
     assert manifest.source.strip == 1
+    # The source, shortcuts, environment, paths and shims keep their typed values.
     assert manifest.source.download_url.endswith("pc-windows-msvc.zip")
     assert [(s.name, s.target) for s in manifest.shortcuts] == [("Ripgrep", "$App\\rg.exe")]
     assert [(e.name, e.value) for e in manifest.envs] == [("RIPGREP_HOME", "$App")]
@@ -143,9 +147,8 @@ def test_manifest_written_back_to_toml_parses_to_the_same_manifest() -> None:
         assert parse_manifest(manifest_to_toml(original), kind) == original
 
 
-def test_every_section_of_a_full_manifest_round_trips() -> None:
-    """Prepare steps, shims with content and nested archives survive a write and read."""
-    text = """\
+# A manifest that uses every section: prepare steps, shims with content and nested archives.
+FULL_MANIFEST = """\
 format = 2
 description = "Everything"
 modes = ["system", "user"]
@@ -196,6 +199,11 @@ working_dir = "$App"
 name = "tool2"
 content = "@echo off"
 """
+
+
+def test_every_section_of_a_full_manifest_round_trips() -> None:
+    """Prepare steps, shims with content and nested archives survive a write and read."""
+    text = FULL_MANIFEST
     original = parse_manifest(text)
 
     assert original.record_manifest is False
@@ -448,9 +456,11 @@ def test_checksum_optional_round_trips_and_must_be_a_boolean() -> None:
     )
     manifest = parse_manifest(base + "optional = true\n", ManifestKind.TRACKER)
 
+    # The flag is kept when set and left out of the rendered text when unset.
     assert manifest.source.checksum.optional is True
     assert tomllib.loads(manifest_to_toml(manifest))["source"]["checksum"]["optional"] is True
     assert "optional" not in tomllib.loads(manifest_to_toml(parse_manifest(base, ManifestKind.TRACKER)))["source"]["checksum"]
+    # Anything but a boolean is refused.
     with pytest.raises(ManifestError, match="true or false"):
         parse_manifest(base + 'optional = "yes"\n', ManifestKind.TRACKER)
 
@@ -699,6 +709,7 @@ def test_malformed_templates_are_rejected_in_a_tracker(template: str) -> None:
 def test_track_providers_and_their_location_keys_are_checked() -> None:
     """`[track]` needs a known provider and the location key that provider takes; other keys are refused."""
     def track(body: str) -> str:
+        """Return a tracker manifest whose ``[track]`` table holds *body*."""
         return f"format = 2\n[track]\n{body}\n"
 
     assert parse_manifest(track('provider = "github"\nrepo = "cli/cli"\nasset = "gh.zip"'), ManifestKind.TRACKER)
@@ -735,7 +746,7 @@ def test_render_pinned_gives_a_concrete_url_and_no_track() -> None:
     assert pinned.source.download_url == (
         "https://archive.mozilla.org/pub/firefox/releases/128.0.3/win64/en-US/Firefox%20Setup%20128.0.3.exe"
     )
-    assert pinned.source.checksum is None and "checksum" not in manifest_to_toml(pinned)  # tracker-only: dropped (D10)
+    assert pinned.source.checksum is None and "checksum" not in manifest_to_toml(pinned)  # tracker-only: dropped
     assert "[track]" not in manifest_to_toml(pinned) and "${" not in manifest_to_toml(pinned)
     # The output is an ordinary version manifest.
     assert parse_manifest(manifest_to_toml(pinned)) == pinned
@@ -784,6 +795,7 @@ def test_render_pinned_refuses_unusable_input() -> None:
         ManifestKind.TRACKER,
     )
 
+    # Each unusable input is refused with a manifest error.
     with pytest.raises(ManifestError):
         render_pinned(parse_manifest(PINNED), TrackResult("1.0"))
     with pytest.raises(ManifestError):
@@ -858,6 +870,7 @@ def test_shim_and_shortcut_names_are_capped_at_255(table: str) -> None:
         parse_manifest(head + f'[[{table}]]\nname = "{"a" * 256}"\n{target}')
 
 
+# Minimal manifest header that the append cases extend.
 HEAD = 'format = 2\n[source]\ndownload_url = "https://x.test/a.zip"\n'
 
 

@@ -26,6 +26,7 @@ import pytest
 
 pytestmark = pytest.mark.release
 
+# Root of this checkout, handed to the registry's tests as ``GUPKG_REPO``.
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -46,20 +47,24 @@ def working_tree(checkout: Path) -> str:
 
 def test_the_registrys_own_tests_pass_against_this_checkout(tmp_path: Path) -> None:
     """Every test of the registry's committed `HEAD` passes with `GUPKG_REPO` set to this checkout, and leaves its clone clean."""
+    # Find a registry checkout that is a git repository, or skip.
     registry = find_registry()
     if registry is None:
         pytest.skip("no gupkg-registry folder found: set GUPKG_REGISTRY_REPO, or put it in the checkout or in a folder above it")
     if not (registry / ".git").exists():
         pytest.skip(f"{registry} is not a git checkout: the test runs on a clone of its committed HEAD")
+    # Clone the registry's committed HEAD, so uncommitted work cannot decide the result.
     clone = tmp_path / "registry"
     subprocess.run(["git", "clone", "--quiet", "--no-hardlinks", str(registry), str(clone)], check=True, timeout=300)
     environment = {**os.environ, "GUPKG_REPO": str(ROOT), "GUPKG_NO_PAUSE": "1", "PYTHONDONTWRITEBYTECODE": "1"}
 
+    # Act: run the registry's own test suite against this checkout.
     done = subprocess.run(
         ["cmd", "/c", str(clone / "_scripts" / "test.cmd"), "-p", "no:cacheprovider"],
         capture_output=True, text=True, env=environment, check=False, timeout=1800,
     )
 
+    # Assert: the suite passed and the clone is still clean.
     summary = re.findall(r"\d+ (?:passed|failed|error|errors|skipped)[^\n]*", done.stdout)
     print(f"registry {registry}: {summary[-1] if summary else 'no summary line'}")
     assert done.returncode == 0, done.stdout[-3000:] + done.stderr[-1000:]

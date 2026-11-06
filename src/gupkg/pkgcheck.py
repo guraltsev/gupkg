@@ -45,7 +45,25 @@ from .services.hooks import PKG_MODULE_API
 
 @dataclass(frozen=True)
 class CheckReport:
-    """The result of checking one directory."""
+    """Report the result of checking one directory.
+
+    Attributes
+    ----------
+    path : Path
+        The directory that was checked.
+    kind : ManifestKind or None
+        Whether it was checked as a version or as a tracker.
+    manifest : Manifest or None
+        The parsed ``pkg.toml``, when it could be parsed.
+    errors : tuple[str, ...]
+        Problems that make the directory unusable.
+    warnings : tuple[str, ...]
+        Problems that do not block use.
+    app_kind : str or None
+        The kind of ``App`` the manifest describes (versions only).
+    ok : bool
+        Whether there are no errors.
+    """
 
     path: Path
     kind: ManifestKind | None
@@ -58,6 +76,83 @@ class CheckReport:
     def ok(self) -> bool:
         """Return whether the directory has no errors."""
         return not self.errors
+
+
+def check_directory(path: Path, *, package: str | None = None) -> CheckReport:
+    """Validate a version directory or a ``_check_updates`` directory.
+
+    Parameters
+    ----------
+    path : Path
+        The directory that holds ``pkg.toml``.
+    package : str, optional
+        The name of the package the directory belongs to, when it is checked somewhere else than its final place (a staging
+        folder); by default the name of the folder above *path*.
+
+    Returns
+    -------
+    CheckReport
+        Every problem found. An unreadable or invalid ``pkg.toml`` stops the check
+        after its own errors, because the other checks depend on the manifest.
+    """
+    # Decide how to check the directory from its name, and refuse what is not a directory.
+    path = Path(path)
+    kind = ManifestKind.TRACKER if path.name == TRACKER_DIR_NAME else ManifestKind.VERSION
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    if not path.is_dir():
+        return CheckReport(path, kind, errors=(f"{path} is not a directory",))
+    if kind is ManifestKind.VERSION and not is_version_name(path.name):
+        errors.append(
+            f"'{path.name}' cannot be a version directory: the name is reserved or not a safe folder name"
+        )
+
+    # Read and parse the manifest; the other checks depend on it, so a failure ends the check here.
+    manifest_path = path / MANIFEST_NAME
+    try:
+        text = manifest_path.read_text(encoding="utf-8-sig")
+    except OSError as exc:
+        return CheckReport(path, kind, errors=(*errors, f"Cannot read {manifest_path}: {exc}"))
+    try:
+        manifest = parse_manifest(text, kind)
+    except ManifestError as exc:
+        return CheckReport(path, kind, errors=(*errors, *exc.problems))
+
+    # The files the manifest names must exist and must stay inside this directory.
+    named = list(manifest.referenced_hooks())
+    if manifest.track is not None and manifest.track.provider == "module":
+        named.append(str(manifest.track.options["module"]))
+    for name in named:
+        target = path / name
+        if not target.is_file():
+            errors.append(f"{name} is named in pkg.toml but does not exist")
+        elif not _inside(target, path):
+            errors.append(f"{name} resolves to a place outside this directory")
+
+    # Hooks must be API 2 modules; a hook that matches a built-in service gets a hint.
+    errors.extend(_hook_api_errors(path, named))
+    for hint in scan_directory(path):
+        warnings.append(f"{hint.file} looks like the built-in service '{hint.service}'; replace it with: {hint.suggestion}")
+
+    # A tracker's [source] may refer only to values its provider produces.
+    if kind is ManifestKind.TRACKER:
+        errors.extend(_capture_errors(manifest))
+
+    # A version must not discover updates, and must have (or be able to recover) its App.
+    if kind is ManifestKind.VERSION:
+        errors.extend(_track_hook_errors(path))
+        app_error = _app_error(path, manifest)
+        if app_error is not None:
+            errors.append(app_error)
+        elif manifest.source.shipped and manifest.source.populate != "none" and not _has_content(path / "App"):
+            warnings.append("App is missing; it will be recovered from its source")
+
+    # Assemble the report from everything gathered above.
+    return CheckReport(
+        path, kind, manifest, tuple(errors), tuple(warnings),
+        app_kind=manifest.source.app_kind if kind is ManifestKind.VERSION else None,
+    )
 
 
 def defines_track(source: str) -> bool:
@@ -89,6 +184,11 @@ def defines_track(source: str) -> bool:
     return finder.found
 
 
+# ---------------------------------------------------------------------------
+# Module-level ``track`` detection
+# ---------------------------------------------------------------------------
+
+
 class _TrackBinding(ast.NodeVisitor):
     """Find any statement or expression that binds the module-level name ``track``.
 
@@ -99,6 +199,7 @@ class _TrackBinding(ast.NodeVisitor):
     """
 
     def __init__(self) -> None:
+        """Start with no binding found."""
         self.found = False
 
     def _name(self, name: str | None) -> None:
@@ -107,12 +208,24 @@ class _TrackBinding(ast.NodeVisitor):
             self.found = True
 
     def visit_Name(self, node: ast.Name) -> None:
-        """Count a store or delete of ``track``."""
+        """Count a store or delete of ``track``.
+
+        Parameters
+        ----------
+        node : ast.Name
+            The node being visited.
+        """
         if isinstance(node.ctx, (ast.Store, ast.Del)):
             self._name(node.id)
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
-        """A bare annotation does not bind; one with a value does."""
+        """A bare annotation does not bind; one with a value does.
+
+        Parameters
+        ----------
+        node : ast.AnnAssign
+            The node being visited.
+        """
         if node.value is not None:
             self.visit(node.target)
             self.visit(node.value)
@@ -128,128 +241,115 @@ class _TrackBinding(ast.NodeVisitor):
     visit_AsyncFunctionDef = _function
 
     def visit_Lambda(self, node: ast.Lambda) -> None:
-        """Visit the defaults of a lambda; its body is its own scope."""
+        """Visit the defaults of a lambda; its body is its own scope.
+
+        Parameters
+        ----------
+        node : ast.Lambda
+            The node being visited.
+        """
         for expression in (*node.args.defaults, *(item for item in node.args.kw_defaults if item)):
             self.visit(expression)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
-        """Count the name and visit decorators, bases and keywords; the body is a class scope."""
+        """Count the name and visit decorators, bases and keywords; the body is a class scope.
+
+        Parameters
+        ----------
+        node : ast.ClassDef
+            The node being visited.
+        """
         self._name(node.name)
         for expression in (*node.decorator_list, *node.bases, *(item.value for item in node.keywords)):
             self.visit(expression)
 
     def visit_comprehension(self, node: ast.comprehension) -> None:
-        """A comprehension's loop variable is local to it; what it iterates and tests can still bind (walrus)."""
+        """A comprehension's loop variable is local to it; what it iterates and tests can still bind (walrus).
+
+        Parameters
+        ----------
+        node : ast.comprehension
+            The node being visited.
+        """
         self.visit(node.iter)
         for condition in node.ifs:
             self.visit(condition)
 
     def visit_Import(self, node: ast.Import) -> None:
-        """Count ``import track`` and ``import x as track``."""
+        """Count ``import track`` and ``import x as track``.
+
+        Parameters
+        ----------
+        node : ast.Import
+            The node being visited.
+        """
         for alias in node.names:
             self._name((alias.asname or alias.name).split(".")[0])
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-        """Count ``from x import track`` and ``from x import y as track``."""
+        """Count ``from x import track`` and ``from x import y as track``.
+
+        Parameters
+        ----------
+        node : ast.ImportFrom
+            The node being visited.
+        """
         for alias in node.names:
             self._name(alias.asname or alias.name)
 
     def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
-        """Count ``except E as track``."""
+        """Count ``except E as track``.
+
+        Parameters
+        ----------
+        node : ast.ExceptHandler
+            The node being visited.
+        """
         self._name(node.name)
         self.generic_visit(node)
 
     def visit_MatchAs(self, node: ast.MatchAs) -> None:
-        """Count a ``match`` capture pattern."""
+        """Count a ``match`` capture pattern.
+
+        Parameters
+        ----------
+        node : ast.MatchAs
+            The node being visited.
+        """
         self._name(node.name)
         self.generic_visit(node)
 
     def visit_MatchStar(self, node: ast.MatchStar) -> None:
-        """Count a ``match`` star capture."""
+        """Count a ``match`` star capture.
+
+        Parameters
+        ----------
+        node : ast.MatchStar
+            The node being visited.
+        """
         self._name(node.name)
 
     def visit_MatchMapping(self, node: ast.MatchMapping) -> None:
-        """Count the ``**rest`` capture of a mapping pattern."""
+        """Count the ``**rest`` capture of a mapping pattern.
+
+        Parameters
+        ----------
+        node : ast.MatchMapping
+            The node being visited.
+        """
         self._name(node.rest)
         self.generic_visit(node)
+
+
+# ---------------------------------------------------------------------------
+# Directory checks
+# ---------------------------------------------------------------------------
 
 
 def _inside(path: Path, root: Path) -> bool:
     """Return whether the real *path* lies inside the real *root*."""
     real_path, real_root = os.path.realpath(path), os.path.realpath(root)
     return os.path.normcase(real_path).startswith(os.path.normcase(real_root).rstrip("\\/") + os.sep)
-
-
-def check_directory(path: Path, *, package: str | None = None) -> CheckReport:
-    """Validate a version directory or a ``_check_updates`` directory.
-
-    Parameters
-    ----------
-    path : Path
-        The directory that holds ``pkg.toml``.
-    package : str, optional
-        The name of the package the directory belongs to, when it is checked somewhere else than its final place (a staging
-        folder); by default the name of the folder above *path*.
-
-    Returns
-    -------
-    CheckReport
-        Every problem found. An unreadable or invalid ``pkg.toml`` stops the check
-        after its own errors, because the other checks depend on the manifest.
-    """
-    path = Path(path)
-    kind = ManifestKind.TRACKER if path.name == TRACKER_DIR_NAME else ManifestKind.VERSION
-    errors: list[str] = []
-    warnings: list[str] = []
-
-    if not path.is_dir():
-        return CheckReport(path, kind, errors=(f"{path} is not a directory",))
-    if kind is ManifestKind.VERSION and not is_version_name(path.name):
-        errors.append(
-            f"'{path.name}' cannot be a version directory: the name is reserved or not a safe folder name"
-        )
-    manifest_path = path / MANIFEST_NAME
-    try:
-        text = manifest_path.read_text(encoding="utf-8-sig")
-    except OSError as exc:
-        return CheckReport(path, kind, errors=(*errors, f"Cannot read {manifest_path}: {exc}"))
-    try:
-        manifest = parse_manifest(text, kind)
-    except ManifestError as exc:
-        return CheckReport(path, kind, errors=(*errors, *exc.problems))
-
-    # The files the manifest names must exist and must stay inside this directory.
-    named = list(manifest.referenced_hooks())
-    if manifest.track is not None and manifest.track.provider == "module":
-        named.append(str(manifest.track.options["module"]))
-    for name in named:
-        target = path / name
-        if not target.is_file():
-            errors.append(f"{name} is named in pkg.toml but does not exist")
-        elif not _inside(target, path):
-            errors.append(f"{name} resolves to a place outside this directory")
-
-    # Hooks must be API 2 modules; a hook that matches a built-in service gets a hint.
-    errors.extend(_hook_api_errors(path, named))
-    for hint in scan_directory(path):
-        warnings.append(f"{hint.file} looks like the built-in service '{hint.service}'; replace it with: {hint.suggestion}")
-
-    # A tracker's [source] may refer only to values its provider produces.
-    if kind is ManifestKind.TRACKER:
-        errors.extend(_capture_errors(manifest))
-
-    if kind is ManifestKind.VERSION:
-        errors.extend(_track_hook_errors(path))
-        app_error = _app_error(path, manifest)
-        if app_error is not None:
-            errors.append(app_error)
-        elif manifest.source.shipped and manifest.source.populate != "none" and not _has_content(path / "App"):
-            warnings.append("App is missing; it will be recovered from its source")
-
-    return CheckReport(
-        path, kind, manifest, tuple(errors), tuple(warnings),
-        app_kind=manifest.source.app_kind if kind is ManifestKind.VERSION else None,
-    )
 
 
 def _declared_api(source: str) -> object:
@@ -268,11 +368,13 @@ def _declared_api(source: str) -> object:
 
 def _hook_api_errors(path: Path, named: list[str]) -> list[str]:
     """Return an error for every named hook that does not declare ``PKG_MODULE_API = 2``."""
+    # Inspect each distinct Python hook once, comparing its declared API with the supported one.
     errors: list[str] = []
     for name in dict.fromkeys(named):
         target = path / name
         if not target.is_file() or not name.lower().endswith(".py"):
             continue
+        # An unparseable hook cannot be shown to declare the API, so it is an error.
         try:
             declared = _declared_api(target.read_text(encoding="utf-8-sig"))
         except (SyntaxError, ValueError, OSError) as exc:
@@ -285,6 +387,7 @@ def _hook_api_errors(path: Path, named: list[str]) -> list[str]:
 
 def _capture_errors(manifest: Manifest) -> list[str]:
     """Return an error for every ``${name}`` in ``[source]`` that the tracker's provider never produces."""
+    # Only a tracker whose provider has a known set of captures can be checked.
     track = manifest.track
     if track is None:
         return []
@@ -294,19 +397,25 @@ def _capture_errors(manifest: Manifest) -> list[str]:
         )
     except TrackSpecError:
         return []
+
+    # A provider that cannot list its captures leaves nothing to check.
     known = provider_captures(spec)
     if known is None:
         return []
+    # Walk every string in the [source] data (nested tables and lists included) for ``${name}`` references.
     errors: list[str] = []
     source = manifest_to_data(manifest).get("source", {})
     stack: list[object] = [source]
     while stack:
         item = stack.pop()
+
+        # A string may refer to captures; containers are searched further.
         if isinstance(item, str):
             try:
                 names = {reference.name for reference in references(item)}
             except TemplateError:
                 continue
+            # Report every capture the provider never produces, once per name.
             for name in sorted(names - known):
                 errors.append(
                     f"[source] refers to ${{{name}}}, which the '{track.provider}' provider does not produce; "
@@ -344,6 +453,7 @@ def _track_hook_errors(path: Path) -> list[str]:
     local = path / LOCAL_DIR
     if not local.is_dir():
         return []
+    # Parse every module under pkg.local; one that cannot be parsed fails closed.
     errors: list[str] = []
     for module in sorted(local.rglob("*.py")):
         relative = module.relative_to(path).as_posix()
@@ -352,6 +462,8 @@ def _track_hook_errors(path: Path) -> list[str]:
         except (SyntaxError, ValueError, OSError) as exc:
             errors.append(f"{relative} cannot be checked for a track hook ({exc}); update discovery lives only in {TRACKER_DIR_NAME}")
             continue
+
+        # Report the module that defines ``track`` in a version directory.
         if defines:
             errors.append(
                 f"{relative} defines track: a version directory has no update discovery; "

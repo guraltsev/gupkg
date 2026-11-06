@@ -28,34 +28,35 @@ from .layout import REGISTRY_FILE
 from .update import Outcome
 
 
-def _usable_ref_name(name: str, what: str) -> bool:
-    """Return whether *name* passes the rules of ``git check-ref-format`` (and is no option, and for a branch no ``refs/`` name)."""
-    if not name or name.startswith(("-", "/", ".")) or name.endswith(("/", ".", ".lock")):
-        return False
-    if ".." in name or "@{" in name or "//" in name or name == "@" or "\\" in name:
-        return False
-    if any(ord(ch) < 33 or ord(ch) == 127 or ch in "~^:?*[" for ch in name):
-        return False
-    if any(part.startswith(".") or part.endswith(".lock") for part in name.split("/")):
-        return False
-    return not (what == "branch" and name.startswith("refs/"))
-
-
 class PublishError(RuntimeError):
     """Report a ``git`` command that failed while committing or pushing."""
 
 
 def commit_message(outcomes: Sequence[Outcome]) -> str:
-    """Return the commit message for the written *outcomes* (added or pinned versions)."""
+    """Return the commit message for the written *outcomes* (added or pinned versions).
+
+    Parameters
+    ----------
+    outcomes : Sequence of Outcome
+        Results of a run; only added or pinned ones are named.
+
+    Returns
+    -------
+    str
+        The message, listing hashes the tool computed and unversioned download addresses.
+    """
+    # Headline naming every written version.
     written = [o for o in outcomes if o.status in ("added", "pinned")]
     names = ", ".join(f"{o.package} {o.version}" for o in written)
     lines = [f"Registry tool: {names}", ""]
+    # Say which hashes were computed by the tool and which were vendor-verified.
     computed = [o for o in written if o.review]
     if computed:
         lines.append("Hashes computed by the registry tool (the vendor publishes none); review before relying on them:")
         lines.extend(f"- {o.package} {o.version} (sha256_from = \"registry\")" for o in computed)
     else:
         lines.append("Every hash was verified against a checksum the vendor publishes.")
+    # Warn about download addresses that stop verifying when the vendor replaces the file.
     unversioned = [o for o in written if o.unversioned]
     if unversioned:
         lines.append("")
@@ -93,6 +94,7 @@ def commit_and_push(
         If there is nothing to commit, a computed hash is not allowed, a remote or branch name is
         unsafe, or ``git add``, ``commit`` or ``push`` exits non-zero.
     """
+    # Refuse to publish nothing, or computed hashes without explicit permission.
     root = Path(root)
     written = [o for o in outcomes if o.status in ("added", "pinned") and o.path is not None]
     if not written:
@@ -103,9 +105,11 @@ def commit_and_push(
             "refusing to publish hashes the registry tool computed itself (trust on first use): "
             + ", ".join(computed) + ". Review them and commit by hand, or run again with --allow-computed."
         )
+    # Reject remote and branch names git would treat as options or refs.
     for name, what in ((remote, "remote"), (branch, "branch")):
         if name is not None and not _usable_ref_name(name, what):
             raise PublishError(f"{name!r} is not a usable {what} name")
+    # Build the exact paths and the three git steps; only this run's paths are committed.
     paths = [f":(literal){o.path.relative_to(root).as_posix()}" for o in written] + [f":(literal){REGISTRY_FILE}"]
     push = ["git", "push"]
     if remote or branch:
@@ -115,7 +119,24 @@ def commit_and_push(
         ["git", "commit", "-m", commit_message(outcomes), "--", *paths],
         push,
     ]
+    # Run the steps in order and stop at the first failure.
     for command in steps:
         result = system.run(command, cwd=root)
         if result.returncode != 0:
             raise PublishError(f"'{' '.join(command[:2])}' failed with status {result.returncode}: {result.stderr.strip() or result.stdout.strip()}")
+
+
+# --- supporting helpers ---
+
+
+def _usable_ref_name(name: str, what: str) -> bool:
+    """Return whether *name* passes the rules of ``git check-ref-format`` (and is no option, and for a branch no ``refs/`` name)."""
+    if not name or name.startswith(("-", "/", ".")) or name.endswith(("/", ".", ".lock")):
+        return False
+    if ".." in name or "@{" in name or "//" in name or name == "@" or "\\" in name:
+        return False
+    if any(ord(ch) < 33 or ord(ch) == 127 or ch in "~^:?*[" for ch in name):
+        return False
+    if any(part.startswith(".") or part.endswith(".lock") for part in name.split("/")):
+        return False
+    return not (what == "branch" and name.startswith("refs/"))

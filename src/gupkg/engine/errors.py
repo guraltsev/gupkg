@@ -121,13 +121,42 @@ def failure(package: str, operation: str, error: BaseException, **fields: Any) -
     """Return the ``PackageResult`` of a target whose operation raised *error*.
 
     Extra keyword arguments (``version``, ``mode``, ``warnings``, ``log``...) are copied into the result.
+
+    Parameters
+    ----------
+    package : str
+        The package name the result is for.
+    operation : str
+        The operation that failed (``install``, ``update``...).
+    error : BaseException
+        The exception the operation raised.
+    **fields : Any
+        Further ``PackageResult`` fields to set.
+
+    Returns
+    -------
+    PackageResult
+        A failed result carrying the exit code and error mapping from ``describe``.
     """
     exit_code, data = describe(error)
     return PackageResult(package, operation, False, "failed", exit_code=exit_code, error=data, **fields)
 
 
 def with_details(result: PackageResult, details: Mapping[str, Any]) -> PackageResult:
-    """Return *result* with *details* merged into its details."""
+    """Return *result* with *details* merged into its details.
+
+    Parameters
+    ----------
+    result : PackageResult
+        The result to copy.
+    details : Mapping[str, Any]
+        Entries that are added to (and override) the result's details.
+
+    Returns
+    -------
+    PackageResult
+        A new result identical to *result* except for the merged details.
+    """
     return PackageResult(
         result.package, result.operation, result.ok, result.status, result.version, result.previous, result.mode,
         result.exit_code, result.error, result.receipt, result.log, result.warnings, {**result.details, **details},

@@ -1,10 +1,10 @@
-"""Cover the schema 4 settings file, the root fallback chain and the layers of one run (issue 035, D48, D50).
+"""Cover the schema 4 settings file, the root fallback chain and the layers of one run.
 
 Behavior covered: each mode finds its root by a fixed chain of fallbacks (4 rows in system mode, 5 in user mode) and reports
 the source of the root it chose; every effective value reports the layer it came from; later layers override earlier
 ones; ``[roots]`` is refused in a root's own ``settings.toml``; ``--settings`` is refused in system mode; a system-mode run
 refuses a settings file in a folder that is not admin-only; a user run never reads anything under the system root; a
-``schema = 3`` file is refused with the migration message; nothing is ever read from AppData or ProgramData; invalid files
+``schema = 3`` file is refused with the migration message; nothing is ever loaded from AppData or ProgramData; invalid files
 are reported with every problem and a hint.
 
 Real: ``gupkg.settingsload.resolve_root``, ``load_mode_settings`` and the model, on settings files written under pytest's
@@ -36,6 +36,7 @@ class World:
         self.system = base / "sys"
         self.user = base / "home" / "opt"
         self.app = base / "app"
+        # Environment variables that decide where the profile folders are.
         self.env = {
             "USERPROFILE": str(base / "home"),
             "APPDATA": str(base / "appdata"),
@@ -98,7 +99,7 @@ def sources(loaded) -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
-# The root fallback chain (issue 035 section 4.1, D48)
+# The root fallback chain
 # ---------------------------------------------------------------------------
 
 
@@ -424,6 +425,7 @@ def test_a_folder_that_cannot_be_judged_stops_a_system_run_with_a_settings_error
         """A machine whose permission check fails."""
 
         def directory_untrusted_reason(self, path):
+            """Fail as if access to the folder were denied."""
             raise PermissionError("access denied")
 
     with pytest.raises(SettingsError, match="could not be judged admin-only: access denied"):
@@ -438,6 +440,7 @@ def test_a_user_run_does_not_ask_whether_folders_are_admin_only(settings_world: 
         """A machine whose permission check fails."""
 
         def directory_untrusted_reason(self, path):
+            """Fail as if access to the folder were denied."""
             raise PermissionError("access denied")
 
     assert settings_world.load(system=Unjudgeable(settings_world.base / "fake2")).settings["ui.color"] == "never"
@@ -451,7 +454,9 @@ def test_unreadable_and_undecodable_files_are_errors_not_skipped_layers(settings
     with pytest.raises(SettingsError, match="cannot read the root settings"):
         load_mode_settings("user", settings_world.user, app_dir=None, settings_path=None, system=settings_world.fake(), env=settings_world.env)
 
+    # Make the folder-trust check fail as if access were denied.
     def broken(path: Path) -> str | None:
+        """Fail as if access to the folder were denied."""
         raise PermissionError("denied")
 
     with pytest.raises(SettingsError, match="cannot read the app settings"):

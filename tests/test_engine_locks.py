@@ -1,7 +1,7 @@
 """Cover the per-package lock: a second run is refused, a stale lock is reclaimed, cleanup leaves a run in flight alone.
 
 Behaviour covered: an install, update, uninstall or ``check --fix`` of a package held by a living run fails with exit
-status 3 naming the holder and changes nothing, and the holder's lock stays; ``check`` and ``list`` read only and take none;
+status 3 naming the holder and changes nothing, and the holder's lock stays; ``check`` and ``list`` only observe and take none;
 a lock whose process is gone, one older than a day and an unreadable old one are reclaimed; an unreadable brand-new one and
 one of another host with a living-looking age are respected; ``cleanup`` of a package the user NAMES that is locked fails
 with ``package-busy`` (exit 3), while a root-wide sweep (``sweep=True``) leaves it alone as ``locked`` without failing, and
@@ -10,7 +10,7 @@ and a cancel, and a first install that fails leaves no package folder behind; an
 that is not admin-only.
 
 Real: the engine, the lock files and real folders. Mocked: ``FakeSystem`` (process liveness, elevation, untrusted folders).
-Out of scope: the command-line wording (issue 029).
+Out of scope: the command-line wording.
 """
 
 from __future__ import annotations
@@ -31,7 +31,9 @@ from tests.support.engine import World
 
 pytestmark = pytest.mark.unit
 
+# Table that declares an environment variable pointing at ``App``.
 ENV_ONLY = '[[env]]\nname = "TOOL_HOME"\nvalue = "$App"\n'
+# Process id of a live process that holds a lock.
 OTHER_PID = 424242
 
 
@@ -181,17 +183,21 @@ def test_cleanup_of_a_locked_package_removes_nothing(world_with_tool_update: Wor
 
 def test_the_lock_is_released_after_a_failure_an_exception_and_a_cancel(world_with_tool_update: World, tmp_path: Path) -> None:
     """No path leaves the lock behind: a refused download, an exception inside the block, and a cancelled batch."""
+    # Arrange: an installed package with a tracker.
     package = world_with_tool_update.user / "tool"
+    # A refused install leaves no lock.
     world_with_tool_update.publish("other", "1.0.0", hashed=False)
     refused = world_with_tool_update.one("install", "other")
     assert not refused.ok and not lock_path(world_with_tool_update.user / "other").exists()
 
+    # An exception inside the lock releases it.
     with pytest.raises(RuntimeError):
         with package_lock(world_with_tool_update.fake, package, "install", world_with_tool_update.engine.now, scope=world_with_tool_update.engine.scope):
             assert lock_path(package).is_file()
             raise RuntimeError("boom")
     assert not lock_path(package).exists()
 
+    # A cancel between two packages releases every lock.
     world_with_tool_update.publish("one", "1.0.0")
     world_with_tool_update.publish("two", "1.0.0")
     marker = tmp_path / "stop"
@@ -199,12 +205,15 @@ def test_the_lock_is_released_after_a_failure_an_exception_and_a_cancel(world_wi
     calls = []
     original = world_with_tool_update.engine.cancel
 
+    # The cancel is requested as the second package begins.
     def cancel_after_first() -> bool:
+        """Request the cancel while the second package begins."""
         calls.append(1)
         if len(calls) == 2:
             marker.write_text("", encoding="utf-8")
         return original()
 
+    # Run the batch: the second package is skipped and no lock is left.
     world_with_tool_update.engine.cancel = cancel_after_first
     batch = world_with_tool_update.run("install", "one", "two")
     assert [item.status for item in batch.results][1] == "skipped"
@@ -227,7 +236,7 @@ def test_a_package_folder_made_for_the_lock_is_removed_when_nothing_came_to_live
 
 
 def test_a_refused_first_install_from_a_distribution_leaves_no_lock_behind(world_with_tool_update: World) -> None:
-    """A distribution install that the checksum rules refuse (D46) releases its lock, in a package that did not exist."""
+    """A distribution install that the checksum rules refuse releases its lock, in a package that did not exist."""
     world_with_tool_update.publish("fresh", "1.0.0", hashed=False, root=world_with_tool_update.base / "downloads")
 
     result = world_with_tool_update.one("install", str(world_with_tool_update.base / "downloads" / "fresh" / "1.0.0"))
@@ -276,14 +285,18 @@ def test_an_elevated_install_locks_inside_the_system_package_and_never_writes_th
     elevated_world.publish("tool", "1.0.0", mode="system", tables=ENV_ONLY)
     seen: list[Path] = []
 
+    # The executor asks for the time while the lock is held, so the lock files can be seen there.
     def clock():
+        """Record the lock files that exist when the executor starts, then return the time."""
         seen.extend(elevated_world.base.rglob("package.lock"))
         return datetime.now(timezone.utc)
 
     elevated_world.engine.clock = clock
 
+    # Act: install the package as an administrator.
     result = elevated_world.one("install", "tool")
 
+    # Assert: the lock lived below the system package, and the user's root was not touched.
     assert result.ok and seen and {item.parent.parent.parent for item in seen} == {elevated_world.system_root / "tool"}
     assert not any("tool" in item.name for item in elevated_world.user.rglob("*"))
     assert not lock_path(elevated_world.system_root / "tool").exists()
@@ -296,6 +309,7 @@ def test_racing_runs_never_hold_the_lock_together(world_with_tool_update: World,
     Repeated, because the first version of the release gave up when a racing reader held the file open (Windows refuses
     to delete it then) and left a lock that a living process held for ever.
     """
+    # Arrange: the counters for the race.
     package = world_with_tool_update.user / "tool"
     inside = [0]
     most = [0]
@@ -303,7 +317,9 @@ def test_racing_runs_never_hold_the_lock_together(world_with_tool_update: World,
     refused = [0]
 
     def run() -> None:
+        """Take the lock briefly, or count the refusal."""
         try:
+            # Hold the lock briefly while counting how many runs hold it at once.
             with package_lock(world_with_tool_update.fake, package, "install", world_with_tool_update.engine.now, scope=world_with_tool_update.engine.scope):
                 with guard:
                     inside[0] += 1
@@ -311,14 +327,17 @@ def test_racing_runs_never_hold_the_lock_together(world_with_tool_update: World,
                 time.sleep(0.02)
                 with guard:
                     inside[0] -= 1
+        # A busy package is refused.
         except PackageBusy:
             with guard:
                 refused[0] += 1
 
+    # Start sixteen runs that race for the lock.
     threads = [threading.Thread(target=run) for _ in range(16)]
     for thread in threads:
         thread.start()
     for thread in threads:
         thread.join()
 
+    # Assert: never two holders at once, some runs were refused and the lock is gone.
     assert most[0] == 1 and refused[0] >= 1 and not lock_path(package).exists()

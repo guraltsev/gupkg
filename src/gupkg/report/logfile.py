@@ -13,7 +13,7 @@ Usage and API
 -------------
 Build ``RunLog(...)`` with the run's facts and install it next to the console
 reporter. Call ``bind(base)`` once the root (or package) the run acts on is
-known; events reported earlier are held and written then. Read ``summary_lines()``
+known; events reported earlier are held and written then. Use ``summary_lines()``
 for the log paths to print in the closing summary and call ``close()`` at the
 end. ``validate_log_file_name`` checks the name given to ``--events-file``;
 ``running_gupkg_logs_base`` finds where a package-less run of the running gupkg
@@ -61,7 +61,37 @@ def validate_log_file_name(name: str) -> str:
     streams (``:``), spaces and every wildcard. Windows device names (``CON``,
     ``NUL``, ``COM1`` ... also with an extension), trailing dots and names that
     would collide with the text logs (``*.log``) are refused too.
+
+    Parameters
+    ----------
+    name : str
+        The candidate file name.
+
+    Returns
+    -------
+    str
+        *name*, unchanged, when it is acceptable.
+
+    Raises
+    ------
+    ValueError
+        When *name* is not a plain, allowed file name.
+
+    Examples
+    --------
+    Basic usage:
+
+    >>> validate_log_file_name('run-1.jsonl')
+    'run-1.jsonl'
+
+    Edge cases:
+
+    >>> validate_log_file_name('../x.jsonl')
+    Traceback (most recent call last):
+        ...
+    ValueError: Invalid events file name '../x.jsonl': use a plain file name of letters, digits and ._+- (no folders, no path)
     """
+    # Shape: a plain ASCII name that cannot be a path.
     if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,99}", name):
         raise ValueError(
             f"Invalid events file name {name!r}: use a plain file name of letters, digits and ._+- "
@@ -97,7 +127,13 @@ def running_gupkg_logs_base(package_directory: Path | None = None) -> Path | Non
     ----------
     package_directory : Path, optional
         Directory of the running ``gupkg`` Python package; defaults to this one.
+
+    Returns
+    -------
+    Path or None
+        The folder whose ``.gupkg\\logs`` receives the logs, or ``None`` for an unsupported layout.
     """
+    # Locate the folders above the package that identify the installed layout.
     package_dir = Path(package_directory or Path(__file__).resolve().parents[1]).resolve()
     tree = package_dir.parent
     version_dir = tree.parent
@@ -110,6 +146,72 @@ def running_gupkg_logs_base(package_directory: Path | None = None) -> Path | Non
     if tree.name.lower() == "gupkg" and (version_dir / "pkg.toml").is_file():
         return version_dir.parent
     return None
+
+
+def list_run_logs(package_or_root: Path) -> list[Path]:
+    """Return the text logs of the runs kept in ``<package_or_root>\\.gupkg\\logs``, newest first.
+
+    ``latest.log`` (a copy of the newest) and files that are not run logs are left out; a log folder that is
+    a link is never followed. This is what ``gupkg logs <target>`` lists.
+
+    Parameters
+    ----------
+    package_or_root : Path
+        A package folder or a root.
+
+    Returns
+    -------
+    list of Path
+        The run log files, newest first.
+    """
+    # A log folder that is a link or missing yields no logs.
+    folder = Path(package_or_root) / ".gupkg" / "logs"
+    if _is_reparse_or_link(folder) or not folder.is_dir():
+        return []
+    found = [
+        item for item in folder.iterdir()
+        if item.suffix.lower() == ".log" and _RUN_FILE.match(item.name) and item.is_file() and not _is_reparse_or_link(item)
+    ]
+    return sorted(found, key=lambda item: item.name, reverse=True)
+
+
+def prune_logs(directory: Path, keep_runs: int, keep_days: int, now: datetime) -> None:
+    """Delete the oldest runs in *directory* so that at most ``keep_runs - 1`` remain, and any older than ``keep_days``.
+
+    One run is a ``.log`` and its ``.jsonl`` sharing a name. The directory is
+    pruned before a run adds its own files, which makes ``keep_runs`` the
+    count after the run. Only files that match the run-file name pattern are
+    touched, and links are never followed.
+
+    Parameters
+    ----------
+    directory : Path
+        The log directory.
+    keep_runs : int
+        Number of runs that remain after the next run adds its own.
+    keep_days : int
+        Age limit in days.
+    now : datetime
+        The current time.
+    """
+    # Group the files of each run by name stem, ignoring everything else.
+    runs: dict[str, list[Path]] = {}
+    for item in directory.iterdir():
+        match = _RUN_FILE.match(item.name)
+        if match and not _is_reparse_or_link(item) and item.is_file():
+            runs.setdefault(item.stem, []).append(item)
+
+    # Newest first by timestamp name; keep the allowed number and drop the aged ones.
+    ordered = sorted(runs, reverse=True)
+    cutoff = now.astimezone(timezone.utc) - timedelta(days=max(keep_days, 0))
+    for index, stem in enumerate(ordered):
+        stamp = datetime.strptime(stem[:16], "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+        if index >= max(keep_runs - 1, 0) or stamp < cutoff:
+            for item in runs[stem]:
+                item.unlink(missing_ok=True)
+
+
+# --- supporting helpers ---
 
 
 def _slug(text: str) -> str:
@@ -145,52 +247,13 @@ class LogUnavailable(OSError):
 _RUN_FILE = re.compile(r"^(\d{8}T\d{6}Z)-.+\.(log|jsonl)$", re.IGNORECASE)
 
 
-def list_run_logs(package_or_root: Path) -> list[Path]:
-    """Return the text logs of the runs kept in ``<package_or_root>\\.gupkg\\logs``, newest first.
-
-    ``latest.log`` (a copy of the newest) and files that are not run logs are left out; a log folder that is
-    a link is never followed. This is what ``gupkg logs <target>`` lists.
-    """
-    folder = Path(package_or_root) / ".gupkg" / "logs"
-    if _is_reparse_or_link(folder) or not folder.is_dir():
-        return []
-    found = [
-        item for item in folder.iterdir()
-        if item.suffix.lower() == ".log" and _RUN_FILE.match(item.name) and item.is_file() and not _is_reparse_or_link(item)
-    ]
-    return sorted(found, key=lambda item: item.name, reverse=True)
-
-
-def prune_logs(directory: Path, keep_runs: int, keep_days: int, now: datetime) -> None:
-    """Delete the oldest runs in *directory* so that at most ``keep_runs - 1`` remain, and any older than ``keep_days``.
-
-    One run is a ``.log`` and its ``.jsonl`` sharing a name. The directory is
-    pruned before a run adds its own files, which makes ``keep_runs`` the
-    count after the run. Only files that match the run-file name pattern are
-    touched, and links are never followed.
-    """
-    runs: dict[str, list[Path]] = {}
-    for item in directory.iterdir():
-        match = _RUN_FILE.match(item.name)
-        if match and not _is_reparse_or_link(item) and item.is_file():
-            runs.setdefault(item.stem, []).append(item)
-
-    # Newest first by timestamp name; keep the allowed number and drop the aged ones.
-    ordered = sorted(runs, reverse=True)
-    cutoff = now.astimezone(timezone.utc) - timedelta(days=max(keep_days, 0))
-    for index, stem in enumerate(ordered):
-        stamp = datetime.strptime(stem[:16], "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
-        if index >= max(keep_runs - 1, 0) or stamp < cutoff:
-            for item in runs[stem]:
-                item.unlink(missing_ok=True)
-
-
 class _Sink:
     """Own one log directory: a text log, a JSONL log and an optional events file."""
 
     def __init__(
         self, base: Path, stem: str, *, events_name: str | None, keep_runs: int, keep_days: int, now: datetime,
     ) -> None:
+        # Per-sink state: a text formatter and the open files.
         self.formatter = PlainFormatter()
         self.directory = base / ".gupkg" / "logs"
         self._files: list[Any] = []
@@ -203,6 +266,7 @@ class _Sink:
         real_logs = Path(os.path.realpath(self.directory))
         if not real_logs.is_relative_to(real_base):
             raise LogUnavailable(f"{self.directory} resolves outside {base}")
+        # Create the directory, prune old runs and open the files; undo on failure.
         try:
             self.directory.mkdir(parents=True, exist_ok=True)
             prune_logs(self.directory, keep_runs, keep_days, now)
@@ -215,6 +279,7 @@ class _Sink:
 
     def _open_pair(self, stem: str) -> None:
         """Create the ``.log`` and ``.jsonl`` files exclusively, adding a counter on a name clash."""
+        # Try numbered names until both files can be created exclusively.
         for attempt in range(1, 1000):
             name = stem if attempt == 1 else f"{stem}-{attempt}"
             text_path, json_path = self.directory / f"{name}.log", self.directory / f"{name}.jsonl"
@@ -222,12 +287,14 @@ class _Sink:
                 text = open(text_path, "x", encoding="utf-8", errors="backslashreplace", newline="\n")
             except FileExistsError:
                 continue
+            # The pair is all or nothing: drop the text file if the JSON file cannot be made.
             try:
                 events = open(json_path, "x", encoding="utf-8", errors="backslashreplace", newline="\n")
             except FileExistsError:
                 text.close()
                 text_path.unlink(missing_ok=True)
                 continue
+            # Both files exist: adopt them as this sink's files.
             self.text, self.text_path, self.json_path = text, text_path, json_path
             self._files += [text, events]
             self._json_files.append(events)
@@ -262,12 +329,24 @@ class _Sink:
             raise refusal
 
     def write_line(self, text: str) -> None:
-        """Append one text line and flush."""
+        """Append one text line and flush.
+
+        Parameters
+        ----------
+        text : str
+            The line, without a newline.
+        """
         self.text.write(text + "\n")
         self.text.flush()
 
     def write_record(self, record: dict[str, Any]) -> None:
-        """Append one JSON line to every JSON file and flush."""
+        """Append one JSON line to every JSON file and flush.
+
+        Parameters
+        ----------
+        record : dict
+            The JSON-ready record.
+        """
         line = json.dumps(record, ensure_ascii=False, default=str) + "\n"
         for handle in self._json_files:
             handle.write(line)
@@ -319,6 +398,28 @@ class RunLog:
         The text ``<mode> root <path> (<source>)`` of the run's scope, written into every log header.
     clock : callable, optional
         Returns the current UTC time; tests inject a fixed one.
+
+    Methods
+    -------
+    bind
+        Open the run log once the root the run acts on is known.
+    handle
+        Route one event to the log it belongs to.
+    release_package
+        Close a package's log files before its folder is deleted.
+    close
+        Close every log file.
+    summary_lines
+        Return the log paths for the closing summary.
+    package_log
+        Return the text log of one package.
+    paths
+        Return all text logs written.
+
+    Raises
+    ------
+    ValueError
+        When *events_name* is not a valid plain file name.
     """
 
     def __init__(
@@ -332,14 +433,17 @@ class RunLog:
         scope: str = "",
         clock: Callable[[], datetime] | None = None,
     ) -> None:
+        # Run facts and the validated events-file name.
         self._command = command
         self._scope = scope
         self._warn = warn
         self._events_name = validate_log_file_name(events_name) if events_name is not None else None
         self._keep_runs, self._keep_days = keep_runs, keep_days
+        # Time source and locking, then the mutable routing state of the run.
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._started = self._clock()
         self._lock = threading.RLock()
+        # Routing state: the run log, the package logs and the log events go to now.
         self._run_start: RunStart | None = None
         self._run_sink: _Sink | None = None
         self._run_failed = False
@@ -356,10 +460,20 @@ class RunLog:
         """Open the run log below *base* (a root, or a package for package-less bundled runs).
 
         Events reported before this call are written now. Calling it again has no effect.
+
+        Parameters
+        ----------
+        base : Path
+            The root or package folder that owns the run log.
+        package_label : str, optional
+            Package name added to the log file name.
         """
         with self._lock:
+            # Bind once; a failed or closed log stays that way.
             if self._run_sink is not None or self._run_failed or self._closed:
                 return
+
+            # Open the run log; a failure disables it with one warning.
             stem = f"{_utc_stamp(self._started)}-{_slug(self._command)}" + (f"-{_slug(package_label)}" if package_label else "")
             try:
                 self._run_sink = self._open_sink(Path(base), stem, record_start=False)
@@ -368,6 +482,7 @@ class RunLog:
                 self._pending.clear()
                 self._warn(f"Cannot write the run log: {exc}")
                 return
+            # Write what was held back while the root was unknown.
             queued, self._pending = self._pending, []
             for kind, payload, moment in queued:
                 self._write(self._run_sink, kind, payload, moment)
@@ -382,6 +497,7 @@ class RunLog:
             base, stem, events_name=self._events_name,
             keep_runs=self._keep_runs, keep_days=self._keep_days, now=self._started,
         )
+        # Write the header from the RunStart event, when it has been seen.
         start = self._run_start
         if start is not None:
             sink.write_line(f"# gupkg {start.version}")
@@ -390,6 +506,7 @@ class RunLog:
             sink.write_line(f"# mode: {start.mode}")
             if self._scope:
                 sink.write_line(f"# scope: {self._scope}")
+            # Elevation, settings and start time complete the header.
             sink.write_line(f"# elevated: {'yes' if start.elevated else 'no'}")
             sink.write_line(f"# settings layers: {', '.join(start.settings_layers) or '(none)'}")
             sink.write_line(f"# started: {self._started.astimezone(timezone.utc).isoformat()}")
@@ -400,16 +517,25 @@ class RunLog:
     # -- reporter ----------------------------------------------------------------
 
     def handle(self, event: Any) -> None:
-        """Route one event to the log location it belongs to."""
+        """Route one event to the log location it belongs to.
+
+        Parameters
+        ----------
+        event : object
+            Any report event.
+        """
         with self._lock:
             if self._closed:
                 return
             moment = self._clock()
             if isinstance(event, RunStart):
                 self._run_start = event
+
+            # Package boundaries switch the current log; the run end closes everything.
             if isinstance(event, PackageStart):
                 self._begin_package(event, moment)
                 return
+            # A package end is written to its own log and to the run log.
             if isinstance(event, PackageEnd):
                 sink = self._current
                 if sink is not None:
@@ -418,6 +544,7 @@ class RunLog:
                 self._in_package = False
                 self._to_run("event", event, moment)
                 return
+            # The run end writes the footers and closes everything.
             if isinstance(event, RunEnd):
                 self._end_run(event, moment)
                 return
@@ -440,6 +567,8 @@ class RunLog:
         package_root = event.view.get("root")
         if self._run_sink is None and package_root:
             self.bind(Path(str(package_root)), name if event.view.get("sole") else None)
+
+        # A package gets its log on first use, linked from the run log.
         if path not in self._packages:
             try:
                 sink = self._open_sink(
@@ -449,12 +578,15 @@ class RunLog:
                 self._packages[path] = None
                 self._warn(f"Cannot write the log of package {name}: {exc}")
             else:
+                # Remember the new log and link it from the run log.
                 self._packages[path] = sink
                 self._package_names[path] = name
                 self._to_run("link", {
                     "package": name, "log": str(sink.text_path), "events": str(sink.json_path),
                     "events_file": str(sink.directory / self._events_name) if self._events_name else None,
                 }, moment)
+
+        # The start event belongs to both the run log and the package log.
         self._current = self._packages[path]
         self._to_run("event", event, moment)
         if self._current is not None:
@@ -462,8 +594,11 @@ class RunLog:
 
     def _end_run(self, event: RunEnd, moment: datetime) -> None:
         """Write the footers, publish ``latest.log`` everywhere and close the files."""
+        # Close every log with its footer and publish ``latest.log``.
         self._to_run("event", event, moment)
         sinks = [s for s in [self._run_sink, *self._packages.values()] if s is not None]
+
+        # One failing log is reported and does not stop the others from finishing.
         for sink in sinks:
             try:
                 for line in sink.formatter.finish():
@@ -476,7 +611,13 @@ class RunLog:
         self.close()
 
     def release_package(self, path: str) -> None:
-        """Close the log files of the package folder *path* (it is about to be deleted); its later events go to the run log."""
+        """Close the log files of the package folder *path* (it is about to be deleted); its later events go to the run log.
+
+        Parameters
+        ----------
+        path : str
+            The package folder.
+        """
         with self._lock:
             sink = self._packages.get(path)
             if sink is None:
@@ -506,11 +647,13 @@ class RunLog:
 
     def _write(self, sink: _Sink, kind: str, payload: Any, moment: datetime) -> None:
         """Write one event or link to *sink*; a failing sink is switched off with one warning."""
+        # A link names a package log; anything else is an event in text and JSON form.
         try:
             if kind == "link":
                 sink.write_line(f"Package {payload['package']}: {payload['log']}")
                 sink.write_record({"event": "log_link", **payload, "ts": moment.astimezone(timezone.utc).isoformat()})
             else:
+                # Render the event as text (expanding diagnostics) and record it as JSON.
                 for line in sink.formatter.feed(payload):
                     sink.write_line(line)
                 if isinstance(payload, Diagnostic):
@@ -542,7 +685,13 @@ class RunLog:
     # -- results -------------------------------------------------------------------
 
     def summary_lines(self) -> list[str]:
-        """Return ``Log: <path>`` lines for the run log and every package log written."""
+        """Return ``Log: <path>`` lines for the run log and every package log written.
+
+        Returns
+        -------
+        list of str
+            One line per log written, run log first.
+        """
         with self._lock:
             lines = []
             if self._run_sink is not None:
@@ -556,13 +705,29 @@ class RunLog:
         """Return the text log of the package whose folder is *package_path* in this run, or ``None`` when it has none.
 
         The engine stores this path in the package's receipt (design 14.3).
+
+        Parameters
+        ----------
+        package_path : Path or str
+            The package folder.
+
+        Returns
+        -------
+        Path or None
+            The text log, or ``None``.
         """
         with self._lock:
             sink = self._packages.get(str(package_path))
             return sink.text_path if sink is not None else None
 
     def paths(self) -> list[Path]:
-        """Return the text logs written, run log first."""
+        """Return the text logs written, run log first.
+
+        Returns
+        -------
+        list of Path
+            The text log files.
+        """
         with self._lock:
             sinks = [self._run_sink, *self._packages.values()]
             return [s.text_path for s in sinks if s is not None]

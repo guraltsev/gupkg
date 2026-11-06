@@ -21,6 +21,7 @@ from gupkg.model.patterns import PatternError, compile_pattern
 
 pytestmark = pytest.mark.unit
 
+# Directory that holds the importable gupkg source packages.
 SOURCE = Path(__file__).resolve().parents[1] / "src"
 
 
@@ -77,6 +78,7 @@ def test_more_than_the_total_number_of_unbounded_repeats_is_refused() -> None:
         compile_pattern("".join(rf"k{index}\d+" for index in range(25)))
 
 
+# Patterns whose backtracking is bounded despite looking dangerous.
 BOUNDED_BLOWUPS = [
     pytest.param(r"(?:a?){28}a{28}b", id="optional-in-a-bounded-repeat"),
     pytest.param(r"(?:a|aa){1,60}b", id="overlapping-alternatives-bounded"),

@@ -18,7 +18,9 @@ from gupkg.services.hints import scan_directory, scan_text
 
 pytestmark = pytest.mark.unit
 
+# Directory of the recorded registry hint fixtures.
 REGISTRY = Path(__file__).resolve().parent / "fixtures" / "hints"
+# Every hint script found in the registry fixtures.
 HOOKS = sorted(REGISTRY.glob("*/*.py"))
 
 
@@ -65,7 +67,7 @@ def test_a_hint_for_a_github_hook_names_the_repository_it_reads() -> None:
 
 
 def test_the_vendor_installer_hook_has_no_hint_and_most_hooks_have_one() -> None:
-    """GIMP's installer-running unpack hook is not replaceable by a service (decision D39); every other committed hook is."""
+    """GIMP's installer-running unpack hook is not replaceable by a service; every other committed hook is."""
     hinted = [path for path in HOOKS if scan_text(path.read_text(encoding="utf-8-sig"), path.name)]
     unhinted = [path for path in HOOKS if path not in hinted]
 
@@ -93,6 +95,7 @@ def test_pkg_check_reports_a_matching_hook_as_a_warning_with_the_replacement(tmp
     source = (REGISTRY / "bulkcrapuninstaller" / "check_update.py").read_text(encoding="utf-8-sig")
     (tracker / "pkg.local" / "check_update.py").write_text("PKG_MODULE_API = 2\n" + source, encoding="utf-8")
 
+    # Act: check the tracker directory.
     report = check_directory(tracker)
 
     assert [error for error in report.errors if "PKG_MODULE_API" in error] == []

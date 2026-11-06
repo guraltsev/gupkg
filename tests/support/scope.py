@@ -16,7 +16,22 @@ from gupkg.system.port import Mode
 
 
 def scope_of(system, root: Path | str = "scope-root", *, mode: Mode | None = None) -> Scope:
-    """Return the scope of a process on *system*; *mode* overrides the mode of the token (rarely needed)."""
+    """Return the scope of a process on *system*; *mode* overrides the mode of the token (rarely needed).
+
+    Parameters
+    ----------
+    system : object
+        Fake machine the scope belongs to.
+    root : Path | str, optional
+        Root folder of the scope.
+    mode : Mode | None, optional
+        Mode that overrides the one of the process token.
+
+    Returns
+    -------
+    Scope
+        The scope.
+    """
     chosen = mode if mode is not None else process_mode(system)
     layer = Layer(LAYER_APP, {"schema": 4, "integration": {"integrate": "none"}})
     return make_scope(chosen, Path(root), "test", merge_layers([default_layer(chosen.value), layer]), {}, system=system)

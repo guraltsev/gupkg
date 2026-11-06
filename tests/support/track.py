@@ -4,6 +4,16 @@
 download address the tracker must find in them. ``environment`` builds the ``TrackEnvironment`` a provider runs in, with a
 client that never sleeps and ignores the process environment. Everything here is invented for the tests: no package of any
 real registry is copied.
+
+Usage and API
+-------------
+Index ``VENDORS`` by provider kind, call ``Vendor.serve`` to make a ``FakeSystem`` answer for it, and
+``environment`` to build the environment a provider runs in; ``parse_tracker`` parses a tracker's text.
+
+Implementation Approach
+-----------------------
+Each vendor carries its tracker text with markers for the optional header table, its invented answers, and the version
+and address the provider must find, so one table drives every provider test.
 """
 
 from __future__ import annotations
@@ -24,17 +34,46 @@ from tests.support.scope import scope_of
 
 # The User-Agent that a tracker with headers sends in place of gupkg's own.
 VENDOR_AGENT = "Vendor-Agent/1"
+# Digest that the GitHub and JSON vendors publish for their artifact.
 DIGEST = "9ce45e2deeb806d62a504075f992a4c5de66873173c2e403a49a3de9126fa5d3"
 
 
 def environment(system: FakeSystem, tmp_path: Path, *, directory: Path | None = None, package: str = "pkg") -> TrackEnvironment:
-    """Return a ``TrackEnvironment`` over *system* with a client that never sleeps and ignores the process environment."""
+    """Return a ``TrackEnvironment`` over *system* with a client that never sleeps and ignores the process environment.
+
+    Parameters
+    ----------
+    system : FakeSystem
+        Fake machine that serves the vendor's addresses.
+    tmp_path : Path
+        Temporary folder for the cache and the work folder.
+    directory : Path | None, optional
+        Package version folder the tracker runs for.
+    package : str, optional
+        Package name.
+
+    Returns
+    -------
+    TrackEnvironment
+        The tracker environment.
+    """
     client = HttpClient(system, env={}, sleep=lambda seconds: None, cache_dir=tmp_path / "cache")
     return TrackEnvironment(system, scope_of(system), client, work_dir=tmp_path / "work", directory=directory, package=package)
 
 
 def real_regex_worker(call: ProcessCall) -> ProcessResult:
-    """Run the real regex worker for *call* (for a double that changes only some of its answers, such as a deadline)."""
+    """Run the real regex worker for *call* (for a double that changes only some of its answers, such as a deadline).
+
+    Parameters
+    ----------
+    call : ProcessCall
+        The process call whose input is passed to the worker.
+
+    Returns
+    -------
+    ProcessResult
+        The worker's exit code and output.
+    """
     done = subprocess.run(
         [sys.executable, "-I", "-S", "-s", "-B", str(Path(regex_worker.__file__))],
         input=call.input_text, capture_output=True, text=True, check=False,
@@ -43,12 +82,34 @@ def real_regex_worker(call: ProcessCall) -> ProcessResult:
 
 
 def parse_tracker(text: str) -> Manifest:
-    """Parse the text of a tracker ``pkg.toml``."""
+    """Parse the text of a tracker ``pkg.toml``.
+
+    Parameters
+    ----------
+    text : str
+        Text of a tracker ``pkg.toml``.
+
+    Returns
+    -------
+    Manifest
+        The parsed manifest.
+    """
     return parse_manifest(text, ManifestKind.TRACKER)
 
 
 def json_response(document: object) -> FakeHttp:
-    """Return the answer of a server that sends *document* as JSON."""
+    """Return the answer of a server that sends *document* as JSON.
+
+    Parameters
+    ----------
+    document : object
+        Value sent as the JSON body.
+
+    Returns
+    -------
+    FakeHttp
+        A fake HTTP answer with status 200.
+    """
     return FakeHttp(json.dumps(document), 200, {"Content-Type": "application/json"})
 
 
@@ -59,6 +120,32 @@ class Vendor:
     ``tracker`` holds the marker ``@HEADERS@`` where a tracker puts its ``[track.headers]`` table, and ``@STEP@`` after
     the keys of each fetch step of a chain; ``tracker_text(headers=True)`` fills them in. ``uses_patterns`` tells whether
     the provider matches a regular expression, which runs in the regex worker process.
+
+    Methods
+    -------
+    tracker_text
+        Returns the tracker with its markers filled in.
+    serve
+        Registers the vendor's addresses on a fake machine.
+
+    Attributes
+    ----------
+    tracker : str
+        Tracker text with the ``@HEADERS@`` and ``@STEP@`` markers.
+    urls : dict[str, FakeHttp]
+        Responses served by the vendor, keyed by address.
+    version : str
+        Version the tracker must find.
+    download_url : str
+        Download address the tracker must find.
+    uses_patterns : bool
+        Whether the provider matches a regular expression in the regex worker.
+    sha256 : str | None
+        Digest the tracker must find, if any.
+    sha256_from : str | None
+        Where the digest comes from, if any.
+    sends_track_headers : bool
+        Whether the provider sends the ``[track.headers]`` table.
     """
 
     tracker: str
@@ -71,17 +158,40 @@ class Vendor:
     sends_track_headers: bool = True
 
     def tracker_text(self, *, headers: bool = False) -> str:
-        """Return the tracker, with a header table (a User-Agent of the vendor) when *headers* is true."""
+        """Return the tracker, with a header table (a User-Agent of the vendor) when *headers* is true.
+
+        Parameters
+        ----------
+        headers : bool, optional
+            Whether to fill in the header tables with the vendor's User-Agent.
+
+        Returns
+        -------
+        str
+            Text of the tracker.
+        """
         table = f'[track.headers]\nUser-Agent = "{VENDOR_AGENT}"\n' if headers else ""
         step = f'headers = {{ User-Agent = "{VENDOR_AGENT}" }}\n' if headers else ""
         return self.tracker.replace("@HEADERS@", table).replace("@STEP@", step)
 
     def serve(self, system: FakeSystem) -> FakeSystem:
-        """Make *system* answer the vendor's addresses; return it."""
+        """Make *system* answer the vendor's addresses; return it.
+
+        Parameters
+        ----------
+        system : FakeSystem
+            Fake machine that should answer the vendor's addresses.
+
+        Returns
+        -------
+        FakeSystem
+            *system*, for chaining.
+        """
         system.urls.update(self.urls)
         return system
 
 
+# Release page of the invented GitHub project.
 GITHUB = "https://github.com/vendor/tool/releases"
 
 
@@ -102,13 +212,22 @@ def _release(tag: str, *names: str, prerelease: bool = False, draft: bool = Fals
 
 
 def github_releases(*releases: dict[str, object]) -> dict[str, FakeHttp]:
-    """Return the answer of GitHub's list of releases of ``vendor/tool``."""
+    """Return the answer of GitHub's list of releases of ``vendor/tool``.
+
+    Returns
+    -------
+    dict[str, FakeHttp]
+        Map of the releases address of ``vendor/tool`` to its answer.
+    """
     return {"https://api.github.com/repos/vendor/tool/releases?per_page=100": json_response(list(releases))}
 
 
+# Address of the listing page used by the index vendor.
 LISTING = "https://vendor.example/releases/"
+# Address of the artifact that the page vendor points at.
 DOWNLOAD = "https://vendor.example/files/tool_1002.zip"
 
+# One tracker per provider kind, with the vendor answers it reads and what it must find.
 VENDORS: dict[str, Vendor] = {
     "github-latest": Vendor(
         'format = 2\n[track]\nprovider = "github"\nrepo = "vendor/tool"\nasset = "tool-${version}-windows.zip"\n'

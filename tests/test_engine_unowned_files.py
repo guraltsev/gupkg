@@ -42,6 +42,7 @@ def bin_dir(world: CliWorld) -> Path:
 def plant_file(name: str) -> Callable[[CliWorld], Path]:
     """Return a function that puts a hand-made file called *name* in ``bin`` and returns its path."""
     def plant(world: CliWorld) -> Path:
+        """Create the hand-made file in ``bin`` and return its path."""
         path = bin_dir(world) / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"made by hand")
@@ -52,6 +53,7 @@ def plant_file(name: str) -> Callable[[CliWorld], Path]:
 def plant_shortcut(name: str) -> Callable[[CliWorld], Path]:
     """Return a function that puts a hand-made shortcut called *name* in the Start Menu folder and returns its path."""
     def plant(world: CliWorld) -> Path:
+        """Create the hand-made shortcut and return its path."""
         path = world.fake.scope_folders(Mode.USER).shortcut_root / name
         world.fake.write_shortcut(path, ShortcutSpec(target_path="C:\\hand\\made.exe"))
         return path
@@ -105,16 +107,20 @@ def test_overwrite_replaces_the_file_says_so_and_makes_the_package_its_owner(
     cli_world: CliWorld, table: str, plant: Callable[[CliWorld], Path], kind: str
 ) -> None:
     """With the kind, the install succeeds, one ``replaced`` line is printed, and a second package with that name is a ``name-conflict``."""
+    # Arrange: a package, a hand-made file in its way, and a snapshot of its content.
     cli_world.publish("first", "1.0.0", tables=table)
     path = plant(cli_world)
     kept = content(path, cli_world)
 
+    # Act: install with the overwrite kind that lifts the refusal.
     done = cli_world.cli("install", "first", f"--overwrite={kind}")
 
+    # Assert: the file is replaced, one line says so and the content differs.
     assert done.code == 0, done.err
     lines = [line for line in (done.out + done.err).splitlines() if "replaced " in line]
     assert len(lines) == 1 and f"replaced {path} (no installed package owned it)".lower() in lines[0].lower(), lines
     assert content(path, cli_world) != kept
+    # Another package still cannot claim the same name once the first owns it.
     cli_world.publish("second", "1.0.0", tables=table)
     refused = cli_world.one("install", "second")
     assert not refused.ok and refused.error["code"] == "name-conflict"
@@ -122,15 +128,18 @@ def test_overwrite_replaces_the_file_says_so_and_makes_the_package_its_owner(
 
 def test_each_kind_lifts_only_its_own_refusal_and_the_message_names_the_exact_value(cli_world: CliWorld) -> None:
     """A shim and a shortcut are both in the way: one kind alone still refuses, naming the value that lifts both."""
+    # Arrange: a package that provides a shim and a shortcut, with hand-made files in the way.
     cli_world.publish("first", "1.0.0", tables=SHIM.format(name="tool") + SHORTCUT.format(name="Tool"))
     exe, link = plant_file("tool.exe")(cli_world), plant_shortcut("Tool.lnk")(cli_world)
     before = state(cli_world)
     both = f"{BIN},{SHORTCUTS}"
 
+    # Act: install with no overwrite, with only the shim kind and with only the shortcut kind.
     nothing = cli_world.one("install", "first")
     only_bin = cli_world.one("install", "first", overwrite=(BIN,))
     only_links = cli_world.one("install", "first", overwrite=(SHORTCUTS,))
 
+    # Assert: each refusal names exactly the files its kind does not cover, and the machine is unchanged.
     assert nothing.error["code"] == only_bin.error["code"] == only_links.error["code"] == "file-exists"
     assert f"'{exe}'" in nothing.error["message"] and f"'{link}'" in nothing.error["message"]
     assert nothing.error["message"].endswith(f"--overwrite={both} to replace them.")
@@ -140,6 +149,7 @@ def test_each_kind_lifts_only_its_own_refusal_and_the_message_names_the_exact_va
     assert only_links.error["message"].endswith(f"--overwrite={both} to replace it.")
     assert state(cli_world) == before
 
+    # Both kinds together install the package.
     assert cli_world.one("install", "first", overwrite=(BIN, SHORTCUTS)).ok
 
 
@@ -173,11 +183,14 @@ def test_overwrite_never_lifts_a_name_conflict_with_another_package(cli_world: C
 @pytest.mark.parametrize("kind", ["shim", "shortcut"])
 def test_a_file_that_holds_what_would_be_written_is_not_a_conflict(cli_world: CliWorld, kind: str) -> None:
     """A package whose record was lost installs again without the flag when the files are exactly what it would write."""
+    # Arrange: install the package and remember exactly what the install wrote.
     table = SHIM.format(name="tool") if kind == "shim" else SHORTCUT.format(name="Tool")
     cli_world.publish("first", "1.0.0", tables=table)
     assert cli_world.one("install", "first").ok
     files = {path: path.read_bytes() for path in bin_dir(cli_world).glob("tool*")}
     links = {path: cli_world.fake.read_shortcut(path) for path in cli_world.fake.shortcuts()}
+
+    # Uninstall it, then put back exactly the same files by hand.
     assert cli_world.one("uninstall", "first").ok
     for path, data in files.items():
         path.write_bytes(data)
@@ -185,8 +198,10 @@ def test_a_file_that_holds_what_would_be_written_is_not_a_conflict(cli_world: Cl
         cli_world.fake.write_shortcut(path, spec)
     assert files or links
 
+    # Act: install it again.
     result = cli_world.one("install", "first")
 
+    # Assert: identical files are not a conflict.
     assert result.ok, result.error
 
 
@@ -223,12 +238,16 @@ def appear_during(monkeypatch: pytest.MonkeyPatch, module: object, world: CliWor
 
     With *after* the file appears once that look has returned (so it saw nothing); otherwise just before it.
     """
+    # Remember the real search for unowned files.
     original, calls = module.find_unowned, []
 
+    # Replace the search by one that plants the file around the chosen look.
     def looking(*args, **kwargs):
+        """Plant the file before or after the *call*-th look, otherwise behave like the real search."""
         calls.append(1)
         if len(calls) != call:
             return original(*args, **kwargs)
+        # After the look the file appears once it has returned, so the look saw nothing.
         if after:
             found = original(*args, **kwargs)
             plant_file("tool.exe")(world)
@@ -236,6 +255,7 @@ def appear_during(monkeypatch: pytest.MonkeyPatch, module: object, world: CliWor
         plant_file("tool.exe")(world)
         return original(*args, **kwargs)
 
+    # Install the replacement search.
     monkeypatch.setattr(module, "find_unowned", looking)
 
 
@@ -300,6 +320,7 @@ def test_uninstall_cleanup_and_check_are_never_refused_by_an_unowned_file(cli_wo
 
 def test_check_fix_reports_the_unowned_file_and_the_flag_and_changes_nothing(cli_world: CliWorld) -> None:
     """The install record lost the shim; the file is the package's but no record says so: ``--fix`` names the command and stops."""
+    # Arrange: an installed package whose record lost its effects and whose app is gone, with a hand-made file in the way.
     cli_world.publish("first", "1.0.0", tables=SHIM.format(name="tool"))
     assert cli_world.one("install", "first").ok
     view = Catalog(cli_world.scope, cli_world.fake).describe("first")
@@ -310,8 +331,10 @@ def test_check_fix_reports_the_unowned_file_and_the_flag_and_changes_nothing(cli
         item.unlink()
     before = state(cli_world)
 
+    # Act: repair the package.
     result = cli_world.one("check", "first", fix=True)
 
+    # Assert: the repair is refused, names the file and the flag, and changes nothing.
     assert not result.ok and result.error["code"] == "file-exists"
     assert result.error["message"].startswith("first cannot be repaired: ")
     assert f"run `gupkg install first --overwrite={BIN}` to replace it." in result.error["message"]

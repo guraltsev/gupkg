@@ -3,7 +3,7 @@
 The command line needs three facts about the gupkg that is running it: the ``$App`` folder whose
 ``settings.toml`` is a settings layer, the version directory and root that an elevated run must be able to trust,
 and the folder that holds its sibling launchers (``gupkg-tui.cmd``, ``gupkg-manager.cmd``).
-Nothing is read from ``PATH``, the registry or the current directory: the location is derived from where the gupkg
+Nothing is taken from ``PATH``, the registry or the current directory: the location is derived from where the gupkg
 package itself was loaded from.
 
 Usage and API
@@ -29,6 +29,12 @@ from pathlib import Path
 class RunningGupkg:
     """Where a gupkg package runs from.
 
+    Methods
+    -------
+    launcher
+        Return the sibling launcher file called *name* in this gupkg tree, or ``None`` when the tree
+        has none.
+
     Attributes
     ----------
     kind : str
@@ -53,7 +59,18 @@ class RunningGupkg:
     app_dir: Path | None = None
 
     def launcher(self, name: str) -> Path | None:
-        """Return the sibling launcher file called *name* in this gupkg tree, or ``None`` when the tree has none."""
+        """Return the sibling launcher file called *name* in this gupkg tree, or ``None`` when the tree has none.
+
+        Parameters
+        ----------
+        name : str
+            File name of the launcher, such as ``gupkg-tui.cmd``.
+
+        Returns
+        -------
+        Path or None
+            First existing launcher in ``launcher_dirs`` order.
+        """
         for folder in self.launcher_dirs:
             candidate = folder / name
             if candidate.is_file():
@@ -62,7 +79,18 @@ class RunningGupkg:
 
 
 def locate_running_gupkg(package_dir: Path | None = None) -> RunningGupkg:
-    """Return the location of the gupkg whose Python package is in *package_dir* (the running one by default)."""
+    """Return the location of the gupkg whose Python package is in *package_dir* (the running one by default).
+
+    Parameters
+    ----------
+    package_dir : Path, optional
+        Folder of a ``gupkg`` package to describe; the running package when omitted.
+
+    Returns
+    -------
+    RunningGupkg
+        The kind of tree (``installed``, ``bundled`` or ``source``) and its folders.
+    """
     folder = Path(package_dir or Path(__file__).resolve().parents[1]).resolve()
     tree = folder.parent
     version_dir = tree.parent

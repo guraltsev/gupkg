@@ -54,6 +54,7 @@ from .releases import track_github, track_gitlab
 from .repository import track_git, track_module
 from .vendor import track_json, track_last_modified
 
+# Maps each validated provider specification type to the function that runs it.
 _RUNNERS = {
     GithubSpec: track_github, GitlabSpec: track_gitlab, PageSpec: track_page, IndexSpec: track_index,
     RedirectSpec: track_redirect, JsonSpec: track_json, LastModifiedSpec: track_last_modified,
@@ -64,7 +65,20 @@ __all__ = ["ChecksumDiscoveryError", "TrackEnvironment", "TrackError", "run_prov
 
 
 def run_provider(spec: TrackProviderSpec, env: TrackEnvironment) -> TrackResult:
-    """Run the provider that *spec* describes and return what it discovered."""
+    """Run the provider that *spec* describes and return what it discovered.
+
+    Parameters
+    ----------
+    spec : TrackProviderSpec
+        A validated provider specification (from ``parse_spec``).
+    env : TrackEnvironment
+        The boundary, shared HTTP client and folders the provider uses.
+
+    Returns
+    -------
+    TrackResult
+        The version and captures the provider found.
+    """
     return _RUNNERS[type(spec)](spec, env)
 
 
@@ -92,9 +106,11 @@ def run_tracker(manifest: Manifest, env: TrackEnvironment) -> TrackResult:
         If ``[source.checksum]`` is declared (and not ``optional = true``) but its source has no
         digest for the version.
     """
+    # Only a tracker manifest with a [track] table can be run.
     track = manifest.track
     if manifest.kind is not ManifestKind.TRACKER or track is None:
         raise TrackError("Only a tracker (_check_updates with a [track] table) can be run")
+    # Validate [track] into a provider specification; options also reach module hooks via env.extra.
     location = {"check_url": track.check_url, "repo": track.repo, "repo_url": track.repo_url}
     try:
         spec = parse_spec(track.provider, location, track.options)
@@ -126,7 +142,7 @@ def run_tracker(manifest: Manifest, env: TrackEnvironment) -> TrackResult:
 
 
 def _pattern_failure(error: BaseException) -> bool:
-    """Return whether a regular-expression failure (deadline, crashed worker) is anywhere in *error*'s cause chain."""
+    """Return whether a regular-expression failure (deadline, crashed worker) is in *error*'s cause chain (internal to the optional-checksum waiver)."""
     seen = 0
     while error is not None and seen < 10:
         if isinstance(error, PatternError):

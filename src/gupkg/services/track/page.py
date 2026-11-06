@@ -44,13 +44,28 @@ from .common import (
     versioned,
 )
 
+# Largest feed (in elements) that is parsed.
 _MAX_FEED_ELEMENTS = 200_000
+# A document type or entity declaration, which is refused to prevent entity-expansion attacks.
 _DOCTYPE = re.compile(r"<!\s*(DOCTYPE|ENTITY)", re.IGNORECASE)
+# Feed element names whose text and link attributes are scanned for versions.
 _FEED_TAGS = frozenset({"link", "guid", "title", "enclosure", "content", "id"})
 
 
 def track_page(spec: PageSpec, env: TrackEnvironment) -> TrackResult:
     """Find the version on one page with ``spec.match``.
+
+    Parameters
+    ----------
+    spec : PageSpec
+        The validated ``page`` provider specification.
+    env : TrackEnvironment
+        The boundary, shared HTTP client and regex runner.
+
+    Returns
+    -------
+    TrackResult
+        The version and captures of the chosen match.
 
     Raises
     ------
@@ -67,6 +82,18 @@ def track_page(spec: PageSpec, env: TrackEnvironment) -> TrackResult:
 def track_rss(spec: RssSpec, env: TrackEnvironment) -> TrackResult:
     """Find the version among the strings of an RSS or Atom feed with ``spec.match``.
 
+    Parameters
+    ----------
+    spec : RssSpec
+        The validated ``rss`` provider specification.
+    env : TrackEnvironment
+        The boundary, shared HTTP client and regex runner.
+
+    Returns
+    -------
+    TrackResult
+        The version and captures of the chosen match.
+
     Raises
     ------
     TrackError
@@ -80,25 +107,14 @@ def track_rss(spec: RssSpec, env: TrackEnvironment) -> TrackResult:
     return finish(captures, spec.version, spec.download, response.url)
 
 
+# Most matches of an ``each`` step that are tried against the later steps.
 MAX_EACH_CANDIDATES = 20
+# Most requests one chain walk may make.
 MAX_CHAIN_REQUESTS = 60
 
 
 class ChainBudgetExceeded(TrackError):
     """Report that a chain walk made more requests than ``MAX_CHAIN_REQUESTS``; never skipped, never retried."""
-
-
-class _Budget:
-    """Count the requests of one chain walk, so candidates of an ``each`` step cannot multiply without bound."""
-
-    def __init__(self) -> None:
-        self.used = 0
-
-    def spend(self, position: int) -> None:
-        """Count one request; raise ``ChainBudgetExceeded`` past the limit."""
-        self.used += 1
-        if self.used > MAX_CHAIN_REQUESTS:
-            raise ChainBudgetExceeded(f"The chain made more than {MAX_CHAIN_REQUESTS} requests (at step {position}); it is stopped")
 
 
 def track_chain(spec: ChainSpec, env: TrackEnvironment) -> TrackResult:
@@ -113,6 +129,18 @@ def track_chain(spec: ChainSpec, env: TrackEnvironment) -> TrackResult:
     the shared client, so its retries and deadlines apply. A regular-expression failure (a pattern that
     runs out of time) is never taken for "this candidate does not match": it stops the check.
 
+    Parameters
+    ----------
+    spec : ChainSpec
+        The validated ``chain`` provider specification.
+    env : TrackEnvironment
+        The boundary, shared HTTP client and regex runner.
+
+    Returns
+    -------
+    TrackResult
+        The version and the captures of the last step.
+
     Raises
     ------
     TrackError
@@ -125,12 +153,85 @@ def track_chain(spec: ChainSpec, env: TrackEnvironment) -> TrackResult:
     return finish(captures, spec.version, spec.download, last_url)
 
 
+def feed_strings(text: str) -> list[str]:
+    """Return the link, id, title and enclosure strings of an RSS or Atom document.
+
+    Parameters
+    ----------
+    text : str
+        The feed document.
+
+    Returns
+    -------
+    list of str
+        Element texts and ``url``/``href`` attributes of the feed's link-like elements.
+
+    Raises
+    ------
+    TrackError
+        If the document has a ``DOCTYPE`` or ``ENTITY`` declaration, is not well-formed
+        XML, or has more than 200000 elements.
+    """
+    # Refuse document type declarations before parsing, which removes entity-expansion attacks.
+    if _DOCTYPE.search(text):
+        raise TrackError("The feed has a document type declaration, which is refused")
+    try:
+        root = ElementTree.fromstring(text)
+    except ElementTree.ParseError as error:
+        raise TrackError(f"The feed is not well-formed XML: {error}") from error
+    # Collect the text and link attributes of the feed elements, bounded by the element cap.
+    strings: list[str] = []
+    for count, element in enumerate(root.iter()):
+        # Skip elements that cannot carry a link or version string.
+        if count > _MAX_FEED_ELEMENTS:
+            raise TrackError("The feed has too many elements")
+        name = element.tag.rsplit("}", 1)[-1] if isinstance(element.tag, str) else ""
+        if name not in _FEED_TAGS:
+            continue
+        # Keep the element text and any link-like attribute.
+        if element.text and element.text.strip():
+            strings.append(element.text.strip())
+        for attribute in ("url", "href"):
+            if element.attrib.get(attribute):
+                strings.append(element.attrib[attribute])
+    return strings
+
+
+# --- supporting helpers ---
+
+
+class _Budget:
+    """Count the requests of one chain walk, so candidates of an ``each`` step cannot multiply without bound."""
+
+    def __init__(self) -> None:
+        self.used = 0
+
+    def spend(self, position: int) -> None:
+        """Count one request and raise ``ChainBudgetExceeded`` past the limit.
+
+        Parameters
+        ----------
+        position : int
+            One-based number of the step making the request, for the message.
+
+        Raises
+        ------
+        ChainBudgetExceeded
+            If more than ``MAX_CHAIN_REQUESTS`` requests have been made.
+        """
+        self.used += 1
+        if self.used > MAX_CHAIN_REQUESTS:
+            raise ChainBudgetExceeded(f"The chain made more than {MAX_CHAIN_REQUESTS} requests (at step {position}); it is stopped")
+
+
 def _run_steps(
     spec: ChainSpec, env: TrackEnvironment, start: int, captures: Mapping[str, str], last_url: str | None,
     budget: "_Budget",
 ) -> tuple[Mapping[str, str], str | None]:
-    """Run the steps from index *start* and return the captures and the last address."""
+    """Run the steps from index *start* and return the captures and the last address (internal chain driver)."""
+    # Each step either contributes captures, is skipped (optional), or hands over to the ``each`` search.
     for index in range(start, len(spec.steps)):
+        # Fetch this step; an optional step that fails (except fatally) is skipped.
         step = spec.steps[index]
         position = index + 1
         try:
@@ -141,6 +242,7 @@ def _run_steps(
             raise
         if outcome is None:
             continue
+        # An ``each`` step branches over its matches; any other step keeps one match as the new captures.
         found, text_url = outcome
         if step.select == "each":
             return _try_each(spec, env, index, found, text_url, budget)
@@ -149,16 +251,19 @@ def _run_steps(
 
 
 def _fetch_step(env, step, position, captures, last_url, budget):
-    """Fetch one step and return ``(matches, response address)``, or ``None`` for a step with no ``match``."""
+    """Fetch one step and return ``(matches, response address)`` (internal chain step)."""
+    # Expand the step address from earlier captures and refuse anything but http(s).
     values = dict(captures)
     url = urllib.parse.urljoin(last_url or "", expand(step.url, values))
     if urllib.parse.urlsplit(url).scheme.lower() not in ("http", "https"):
         raise TrackError(f"Step {position} of the chain has the address {url[:100]!r}, which is not http or https")
 
+    # Count the request, then read it.
     budget.spend(position)
     # A step reads either the page body or one response header (shutter-encoder
     # takes the version from ``Content-Disposition``).
     if step.header is not None:
+        # Header mode: a HEAD request must succeed before the header value is used.
         try:
             response = env.http.head(url, step.headers)
         except OSError as error:
@@ -167,8 +272,10 @@ def _fetch_step(env, step, position, captures, last_url, budget):
             raise TrackError(f"Step {position}: {url} answered HTTP {response.status}")
         text = response.headers.get(step.header.lower(), "")
     else:
+        # The default is the page body, fetched with the shared client's limits.
         response = _read(env, url, step.headers)
         text = decode_body(response)
+    # A step without a pattern only passes the captures on; otherwise its matches become candidates.
     if step.match_text is None:
         return [(dict(captures), "")], response.url
     pattern = compile_runtime(step.match_text, values)
@@ -180,6 +287,7 @@ def _fetch_step(env, step, position, captures, last_url, budget):
 
 def _try_each(spec, env, index, found, address, budget):
     """Return the result of the first candidate of step *index* that the later steps accept."""
+    # Try distinct candidates in page order, up to the cap, until the later steps accept one.
     failures: list[str] = []
     seen: set[tuple[tuple[str, str], ...]] = set()
     tried = 0
@@ -190,6 +298,7 @@ def _try_each(spec, env, index, found, address, budget):
         seen.add(identity)
         if tried >= MAX_EACH_CANDIDATES:
             break
+        # Run the remaining steps with this candidate; non-fatal failures move on to the next one.
         tried += 1
         try:
             return _run_steps(spec, env, index + 1, dict(candidate), address, budget)
@@ -197,6 +306,7 @@ def _try_each(spec, env, index, found, address, budget):
             if _is_fatal(error):
                 raise
             failures.append(str(error)[:160])
+    # No candidate got through: summarise the first failures in the error.
     detail = "; ".join(failures[:3])
     raise TrackError(
         f"None of the {tried} candidates of step {index + 1} of the chain got through the later steps"
@@ -220,33 +330,3 @@ def _read(env: TrackEnvironment, url: str, headers: Mapping[str, str]):
         return env.http.get(url, headers)
     except OSError as error:
         raise TrackError(str(error)) from error
-
-
-def feed_strings(text: str) -> list[str]:
-    """Return the link, id, title and enclosure strings of an RSS or Atom document.
-
-    Raises
-    ------
-    TrackError
-        If the document has a ``DOCTYPE`` or ``ENTITY`` declaration, is not well-formed
-        XML, or has more than 200000 elements.
-    """
-    if _DOCTYPE.search(text):
-        raise TrackError("The feed has a document type declaration, which is refused")
-    try:
-        root = ElementTree.fromstring(text)
-    except ElementTree.ParseError as error:
-        raise TrackError(f"The feed is not well-formed XML: {error}") from error
-    strings: list[str] = []
-    for count, element in enumerate(root.iter()):
-        if count > _MAX_FEED_ELEMENTS:
-            raise TrackError("The feed has too many elements")
-        name = element.tag.rsplit("}", 1)[-1] if isinstance(element.tag, str) else ""
-        if name not in _FEED_TAGS:
-            continue
-        if element.text and element.text.strip():
-            strings.append(element.text.strip())
-        for attribute in ("url", "href"):
-            if element.attrib.get(attribute):
-                strings.append(element.attrib[attribute])
-    return strings

@@ -33,17 +33,20 @@ def make_game(world: CliWorld, games: Path, name: str = "Teardown", version: str
     The links are what an installer's Start Menu entry looked like: the game (with an icon and no working directory), an
     uninstaller, a link to a file outside App, and a link that sits in a sub folder as installers make them.
     """
+    # Lay out the unpacked game: a program, an uninstaller and an editor under ``App``.
     folder = games / name / version
     app = folder / "App"
     (app / "bin").mkdir(parents=True)
     for program in ("game.exe", "unins000.exe", "bin\\editor.exe"):
         (app / program).write_bytes(b"MZ")
+    # The links an installer leaves: the game, its uninstaller, a link outside ``App`` and a link in a sub folder.
     links = {
         "Game.lnk": ShortcutSpec(str(app / "game.exe"), arguments="-windowed", icon_location=f"{app / 'game.exe'},0", description="The game"),
         "Uninstall Game.lnk": ShortcutSpec(str(app / "unins000.exe"), working_directory=str(app)),
         "Docs\\Website.lnk": ShortcutSpec("C:\\Windows\\explorer.exe"),
         "Docs\\Editor.lnk": ShortcutSpec(str(app / "bin" / "editor.exe"), working_directory=str(app / "bin")),
     }
+    # Write each link as a file and as a shortcut record on the fake machine.
     for relative, spec in links.items():
         link = folder / "shortcuts" / relative
         link.parent.mkdir(parents=True, exist_ok=True)
@@ -57,10 +60,13 @@ def test_adopt_makes_a_package_of_the_unpacked_program_and_installs_it_in_place(
 
     The root is not given: it is two folders above the version directory, so the program is not copied anywhere.
     """
+    # Arrange: an unpacked game with its shortcuts folder.
     folder = make_game(cli_world, tmp_path / "Games")
 
+    # Act: adopt the folder, which installs it in place.
     result = cli_world.cli("pkg", "adopt", str(folder))
 
+    # Assert: the manifest lists the usable shortcuts with ``$App``-relative targets.
     assert result.code == 0, result.err
     manifest = read_toml(folder / "pkg.toml")
     rows = {row["name"]: row for row in manifest["shortcut"]}
@@ -71,8 +77,10 @@ def test_adopt_makes_a_package_of_the_unpacked_program_and_installs_it_in_place(
         "icon_location": "$App\\game.exe,0", "description": "The game",
     }
     assert rows["Editor"]["target"] == "$App\\bin\\editor.exe" and rows["Editor"]["working_dir"] == "$App\\bin"
+    # Uninstallers and links outside ``App`` are reported as skipped.
     assert "skipped Uninstall Game.lnk: it is an uninstaller" in result.out
     assert "skipped Docs\\Website.lnk: its target is outside App" in result.out
+    # Assert: the installed shortcuts point into the current version.
     installed = {path.name: spec for path, spec in cli_world.fake.shortcuts().items() if path.parent.name == "opt"}
     current = tmp_path / "Games" / "Teardown" / "current" / "App"
     assert {name: spec.target_path for name, spec in installed.items()} == {
@@ -101,20 +109,26 @@ def test_adopt_never_replaces_a_pkg_toml_without_force_and_keeps_the_old_one_wit
 
 def test_adopt_changes_nothing_when_the_root_is_elsewhere_or_no_link_is_usable(cli_world: CliWorld, tmp_path: Path) -> None:
     """A --root that is not the folder's root would copy the program, and a folder of only uninstallers has nothing to adopt: both exit 2."""
+    # Arrange: an unpacked game.
     folder = make_game(cli_world, tmp_path / "Games")
 
+    # Act: adopt with a root that is not the folder's root.
     elsewhere = cli_world.cli("--root", str(cli_world.user), "pkg", "adopt", str(folder))
 
+    # Assert: the command refuses and writes nothing.
     assert elsewhere.code == 2 and "would copy it" in elsewhere.err
     assert not (folder / "pkg.toml").exists()
 
+    # Arrange: a game whose only remaining link is the uninstaller.
     only_uninstaller = make_game(cli_world, tmp_path / "Other", name="Empty")
     for link in (only_uninstaller / "shortcuts").rglob("*.lnk"):
         if link.name != "Uninstall Game.lnk":
             link.unlink()
 
+    # Act: adopt the folder.
     unusable = cli_world.cli("pkg", "adopt", str(only_uninstaller))
 
+    # Assert: there is no usable shortcut and nothing is written.
     assert unusable.code == 2 and "no usable shortcut" in unusable.err
     assert not (only_uninstaller / "pkg.toml").exists()
 
@@ -127,11 +141,13 @@ def test_adopt_without_a_shortcuts_folder_takes_the_start_menu_links_into_app(cl
     both menus and gupkg's own link in `Start Menu\\opt` (into `current\\App`), the first found winning; the others are
     reported as skipped. When no link points into App the pkg.toml is written without shortcuts, and the output says so.
     """
+    # Arrange: a game without a shortcuts folder.
     folder = make_game(cli_world, tmp_path / "Games")
     shutil.rmtree(folder / "shortcuts")
     app = folder / "App"
     menus = [cli_world.fake.scope_folders(mode).shortcut_root.parent / "Programs" for mode in (Mode.USER, Mode.SYSTEM)]
     opt = cli_world.fake.scope_folders(Mode.USER).shortcut_root
+    # The links that the installer and gupkg leave in both Start Menu folders, some of them duplicates.
     links = {
         menus[0] / "Teardown" / "Game.lnk": ShortcutSpec(str(app / "game.exe"), description="The game"),
         menus[1] / "Teardown" / "Game.lnk": ShortcutSpec(str(app / "game.exe"), description="The game"),
@@ -141,22 +157,27 @@ def test_adopt_without_a_shortcuts_folder_takes_the_start_menu_links_into_app(cl
         opt / "Teardown.lnk": ShortcutSpec(str(folder.parent / "current" / "App" / "game.exe")),
         menus[1] / "Teardown" / "Editor (bin).lnk": ShortcutSpec(str(app / "bin" / "editor.exe"), description="Edit"),
     }
+    # Write each link as a file and as a shortcut record.
     for link, spec in links.items():
         link.parent.mkdir(parents=True, exist_ok=True)
         link.write_bytes(b"")
         cli_world.fake.write_shortcut(link, spec)
 
+    # Act: adopt, reading the Start Menu.
     found = cli_world.cli("pkg", "adopt", str(folder), "--no-install", "--json")
 
+    # Assert: one shortcut per program, found in the right folders.
     assert found.code == 0, found.err
     assert sorted(found.document()["shortcuts"]) == ["Editor", "Teardown"]
     assert found.document()["read_from"] == {"Editor": str(folder.parent / "current" / "App"), "Teardown": str(folder.parent / "current" / "App")}
+    # Duplicates and the uninstaller are reported as skipped.
     assert {(row["file"], row["reason"]) for row in found.document()["skipped"]} == {
         (str(menus[0] / "Teardown" / "Game.lnk"), "it starts the same program as shortcut Teardown"),
         (str(menus[1] / "Teardown" / "Editor (bin).lnk"), "it starts the same program as shortcut Editor"),
         (str(menus[1] / "Teardown" / "Game.lnk"), "it starts the same program as shortcut Teardown"),
         (str(menus[1] / "Teardown" / "Uninstall.lnk"), "it is an uninstaller"),
     }
+    # The manifest holds one shortcut for each program.
     rows = {row["name"]: row for row in read_toml(folder / "pkg.toml")["shortcut"]}
     assert rows["Teardown"] == {"name": "Teardown", "target": "$App\\game.exe", "working_dir": "$App"}
     assert rows["Editor"]["target"] == "$App\\bin\\editor.exe" and set(rows) == {"Editor", "Teardown"}
@@ -177,22 +198,27 @@ def test_adopt_takes_links_into_current_or_another_version_as_links_into_this_ve
     The target, the working directory and the icon all follow, and the output names each link that was read this way.
     A link into another package's App stays outside App.
     """
+    # Arrange: a game and links into its current version, an older version and another package.
     folder = make_game(cli_world, tmp_path / "Games")
     package = folder.parent
     (package / "v0.9" / "App").mkdir(parents=True)
+    # Links into this package are rewritten to this version's ``App``; a link into another package is skipped.
     links = {
         "Game.lnk": ShortcutSpec(str(package / "current" / "App" / "game.exe"), icon_location=f"{package / 'current' / 'App' / 'game.exe'},0"),
         "Docs\\Editor.lnk": ShortcutSpec(str(package / "v0.9" / "App" / "bin" / "editor.exe"), working_directory=str(package / "v0.9" / "App" / "bin")),
         "Docs\\Website.lnk": ShortcutSpec(str(tmp_path / "Games" / "Other" / "v1" / "App" / "game.exe")),
         "Old\\Teardown.lnk": ShortcutSpec(str(package / "v0.9" / "App" / "game.exe")),
     }
+    # Write each link as a file and as a shortcut record.
     for relative, spec in links.items():
         (folder / "shortcuts" / relative).parent.mkdir(parents=True, exist_ok=True)
         (folder / "shortcuts" / relative).write_bytes(b"")
         cli_world.fake.write_shortcut(folder / "shortcuts" / relative, spec)
 
+    # Act: adopt the folder.
     result = cli_world.cli("pkg", "adopt", str(folder), "--no-install")
 
+    # Assert: links into other versions of the package are read as this version's ``App``.
     assert result.code == 0, result.err
     rows = {row["name"]: row for row in read_toml(folder / "pkg.toml")["shortcut"]}
     assert rows["Game"]["target"] == "$App\\game.exe" and rows["Game"]["icon_location"] == "$App\\game.exe,0"
@@ -210,6 +236,7 @@ def test_adopt_recognises_app_when_the_link_spells_the_folder_differently(cli_wo
     """
     import ctypes
 
+    # Arrange: a link that spells the ``App`` folder with its 8.3 short name.
     folder = make_game(cli_world, tmp_path / "Games")
     buffer = ctypes.create_unicode_buffer(1024)
     ctypes.windll.kernel32.GetShortPathNameW(str(folder / "App"), buffer, 1024)
@@ -219,8 +246,10 @@ def test_adopt_recognises_app_when_the_link_spells_the_folder_differently(cli_wo
     link = folder / "shortcuts" / "Game.lnk"
     cli_world.fake.write_shortcut(link, ShortcutSpec(str(short_app / "game.exe"), working_directory=str(short_app)))
 
+    # Act: adopt the folder.
     result = cli_world.cli("pkg", "adopt", str(folder), "--no-install")
 
+    # Assert: the short spelling is recognised as ``App``.
     assert result.code == 0, result.err
     rows = {row["name"]: row for row in read_toml(folder / "pkg.toml")["shortcut"]}
     assert rows["Game"]["target"] == "$App\\game.exe" and rows["Game"]["working_dir"] == "$App"
@@ -232,15 +261,18 @@ def test_adopt_puts_no_prefix_on_shortcut_names_unless_the_roots_setting_or_the_
     The prefix is always relative to the root's Start Menu folder: a full path or a `..` is refused in the option and in the
     setting, and an empty `--prefix` means none even when the setting names one.
     """
+    # Arrange: an unpacked game.
     games = tmp_path / "Games"
     folder = make_game(cli_world, games)
 
+    # Adopt with the given options and return the names of the shortcuts written.
     def adopted(*options: str) -> list[str]:
         """Run `adopt --no-install --force` with *options* and return the names of the shortcuts it wrote."""
         result = cli_world.cli("pkg", "adopt", str(folder), "--no-install", "--force", "--json", *options)
         assert result.code == 0, result.err
         return result.document()["shortcuts"]
 
+    # Act and assert: no prefix by default, then the root's setting, then the option, and a non-relative prefix is refused.
     assert adopted() == ["Editor", "Game"]
     assert cli_world.cli("--root", str(games), "settings", "set", "adopt.shortcut_prefix", "Action\\Indie").code == 0
     assert adopted() == ["Action\\Indie\\Editor", "Action\\Indie\\Game"]

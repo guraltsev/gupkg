@@ -19,6 +19,7 @@ import pytest
 
 pytestmark = pytest.mark.process
 
+# Message shown for the sample unowned file.
 MESSAGE = (
     "alpha cannot be installed: 'C:\\Users\\me\\opt\\bin\\tool.exe' already exists and no installed package owns it. Move or "
     "delete that file, or run the command again with --overwrite=orphaned-bin-files to replace it."
@@ -31,12 +32,14 @@ def test_the_run_screen_shows_the_unowned_file_refusal(tmp_path: Path, recorded_
         {"event": "phase_start", "phase": "Resolve"}, {"event": "error", "text": MESSAGE},
         {"event": "phase_end", "phase": "Resolve", "status": "failed", "elapsed": 0.1},
     ])
+    # The update fails with the refusal, and the fake CLI answers with that document.
     failing = result("update", [entry("alpha", ok=False, status="failed", code=2, error={"code": "file-exists", "message": MESSAGE})])
     recorded_fake.scenario["update"][0]["doc"] = failing
     recorded_fake.scenario["update"][0]["events"]["result"] = failing
     recorded_fake.respond("update", **recorded_fake.scenario["update"].pop(0))
     shown: list[list[str]] = []
 
+    # Act: drive the screens and keep what they show.
     async def scenario(app, pilot) -> None:
         """Run the refused update and keep what the screen shows."""
         await open_browser(app, pilot)
@@ -46,8 +49,10 @@ def test_the_run_screen_shows_the_unowned_file_refusal(tmp_path: Path, recorded_
         await wait_for(pilot, lambda: isinstance(app.screen, RunScreen) and app.screen.outcome is not None, "the run to finish")
         shown.append(screen_text(app))
 
+    # Act: run the app through the scenario.
     run_app(tmp_path, recorded_fake, scenario, size=(80, 24))
 
+    # Assert: the refusal and its advice are shown on the failed run screen.
     text = " ".join(" ".join(shown[0]).split())
     assert "alpha cannot be installed: 'C:\\Users\\me\\opt\\bin\\tool.exe' already exists and no installed package owns it." in text
     assert "--overwrite=orphaned-bin-files" in text and "to replace it." in text

@@ -1,7 +1,7 @@
-"""Read the settings the UI programs act on: the ``[manager]`` policy and display options, ``[cleanup] auto`` and the root.
+"""Load the settings the UI programs act on: the ``[manager]`` policy and display options, ``[cleanup] auto`` and the root.
 
-The CLI ignores the ``[manager]`` table (design section 11), so the UI programs read the effective settings themselves, through the
-same layered loader the CLI uses (``--settings`` included). Reading is all they do with settings; changing one is
+The CLI ignores the ``[manager]`` table (design section 11), so the UI programs load the effective settings themselves, through the
+same layered loader the CLI uses (``--settings`` included). Loading is all they do with settings; changing one is
 ``gupkg settings set``.
 
 Usage and API
@@ -11,9 +11,9 @@ scope, ``keep_screen`` and ``cleanup_auto`` are the booleans, ``scope`` is the r
 
 Implementation Approach
 -----------------------
-The settings are those of the run's own scope (``gupkg.scope.build_scope``), read exactly as the CLI of the same gupkg reads them:
-the policy is read from the layers the run itself reads, so a setting a standard user can edit never reaches an administrator run (an
-elevated scope reads only admin-only files). ``WindowsSystem`` is imported only to *read* (whether the process is elevated and whether a
+The settings are those of the run's own scope (``gupkg.scope.build_scope``), loaded exactly as the CLI of the same gupkg loads them:
+the policy comes from the layers the run itself loads, so a setting a standard user can edit never reaches an administrator run (an
+elevated scope loads only admin-only files). ``WindowsSystem`` is imported only to *query* (whether the process is elevated and whether a
 folder is admin-only): the ``System`` protocol has no implementation apart from it and the sandbox's ``FakeSystem``.
 """
 
@@ -99,6 +99,11 @@ def load_ui_settings(
         Where this gupkg lives (for ``$App\\settings.toml`` and the installed system root); found by default.
     system : System, optional
         The machine boundary that judges folders; the real one by default.
+
+    Returns
+    -------
+    UiSettings
+        The settings, the run's scope and the environment used to expand the roots.
 
     Raises
     ------

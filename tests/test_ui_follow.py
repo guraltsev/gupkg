@@ -104,9 +104,11 @@ def test_the_recorded_run_of_the_real_cli_merges_in_reading_order(tmp_path: Path
         folder.mkdir(parents=True)
         (folder / "rec.jsonl").write_text(load_fixture(f"events_{name}.jsonl", tmp_path), encoding="utf-8")
 
+    # Follow the merged run and list its events with their names in reading order.
     stream = EventStream(logs / "rec.jsonl")
     kinds = [(item["event"], item.get("phase") or (item.get("view") or {}).get("name") or (item.get("result") or {}).get("name")) for item in stream.poll()]
 
+    # Assert: the run starts first, ends last, and the packages appear in order.
     assert kinds[0][0] == "run_start" and kinds[-1][0] == "run_end"
     assert [name for kind, name in kinds if kind == "package_start"] == ["alpha", "beta"]
     alpha_start, alpha_end = kinds.index(("package_start", "alpha")), kinds.index(("package_end", "alpha"))
@@ -151,6 +153,7 @@ def test_a_file_that_shrinks_or_is_replaced_is_read_again_from_its_start(tmp_pat
 
     path.write_text(json.dumps({"event": "step", "text": "x"}) + "\n", encoding="utf-8")
     shrunk = reader.read()
+    # Replaced: a new file takes the old name.
     replacement = tmp_path / "new.jsonl"
     write(replacement, {"event": "step", "text": "first"}, {"event": "step", "text": "second"}, {"event": "step", "text": "third"})
     path.unlink()
@@ -169,6 +172,7 @@ def test_one_huge_line_is_one_placeholder_with_its_size(tmp_path: Path, monkeypa
     path.write_bytes(b"x" * 100_000)
     reader = RecordReader(path)
 
+    # Helper that polls until the whole file was consumed.
     def drain() -> list:
         """Read until the whole file was consumed (a poll reads a bounded amount, so it takes several)."""
         found: list = []
@@ -176,6 +180,7 @@ def test_one_huge_line_is_one_placeholder_with_its_size(tmp_path: Path, monkeypa
             found += reader.read()
         return found + reader.read()
 
+    # Drain the file once, then append to it and drain again.
     first = drain()
     with open(path, "ab") as handle:
         handle.write(b"y" * 50_000 + b"\n" + json.dumps({"event": "step", "text": "after"}).encode() + b"\n")

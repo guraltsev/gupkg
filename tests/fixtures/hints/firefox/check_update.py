@@ -25,11 +25,16 @@ import urllib.request
 from typing import Any
 
 
+# Version of the update-check module interface that this script implements.
 PKG_MODULE_API = 1
 
+# Address that publishes the current release information.
 _VERSIONS_URL = "https://product-details.mozilla.org/1.0/firefox_versions.json"
+# Address that publishes the current release information.
 _RELEASES = "https://archive.mozilla.org/pub/firefox/releases/"
+# Pattern that extracts the version (and file address, where captured) from the response.
 _VERSION = re.compile(r"\d+(?:\.\d+)+")
+# Pattern matching one digest-and-file-name line of the published checksum list.
 _SHA256_LINE = re.compile(r"^(?P<digest>[0-9a-fA-F]{64})  (?P<name>.+)$", re.MULTILINE)
 
 
@@ -73,6 +78,7 @@ def check_update(context: dict[str, Any]) -> dict[str, str] | None:
         return None
 
     # The checksum file lists installers by their path inside the release folder.
+    # Locate the installer and look up its published SHA-256 digest.
     directory = f"{_RELEASES}{version}/"
     file_name = f"Firefox Setup {version}.exe"
     sums_name = f"win64/en-US/{file_name}"
@@ -82,6 +88,7 @@ def check_update(context: dict[str, Any]) -> dict[str, str] | None:
         None,
     )
 
+    # Build the candidate, including the digest when the list publishes one.
     candidate = {
         "candidateId": f"firefox:{version}",
         "version": version,

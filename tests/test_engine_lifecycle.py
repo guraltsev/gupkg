@@ -7,7 +7,7 @@ active and the machine unchanged, and that only the URLs written in ``pkg.toml``
 
 Real: the engine, the catalog, the planner, the executor, real folders and junctions below a temporary directory, real zip
 archives and the real HTTP client policy. Mocked: ``FakeSystem`` (registry, Start Menu, ``PATH``, URL fixtures).
-Out of scope: the command line (issue 029), the managers (issue 030), real Windows.
+Out of scope: the command line, the managers, real Windows.
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ from tests.support.engine import BASE_URL, World
 
 pytestmark = pytest.mark.unit
 
+# Tables that declare a shortcut, an environment variable, a PATH entry and a shim.
 FULL = """
 [[shortcut]]
 name = "Tool"
@@ -49,6 +50,7 @@ value = "$App"
 value = "$App"
 """
 
+# Table that declares an environment variable pointing at ``App``.
 ENV_ONLY = """
 [[env]]
 name = "TOOL_HOME"
@@ -122,14 +124,17 @@ def test_install_again_is_a_repair_that_downloads_nothing(world: World) -> None:
 
 def test_check_updates_prepares_a_version_and_activates_nothing(world: World) -> None:
     """check-updates writes the version directory, downloads and populates it, and leaves `current` and integration unchanged."""
+    # Arrange: an installed package with a tracker, and a snapshot of the machine.
     world.publish("tool", "1.0.0", tables=FULL)
     world.tracker("tool", tables=FULL)
     world.one("install", "tool")
     shortcuts, env, path = dict(world.fake.shortcuts()), dict(world.fake.env_values(Mode.USER)), user_path(world)
     world.announce("tool", "1.1.0")
 
+    # Act: check for updates.
     result = world.one("check-updates", "tool")
 
+    # Assert: the new version is prepared, nothing is activated and the machine is unchanged.
     package = world.user / "tool"
     assert result.ok and result.status == "new-version" and result.version == "1.1.0"
     assert (package / "1.1.0" / "pkg.toml").is_file() and (package / "1.1.0" / "App" / "app.exe").is_file()
@@ -156,17 +161,21 @@ def test_update_activates_a_prepared_version_without_downloading(world: World) -
 
 def test_check_updates_without_download_then_update_populates_and_activates(world: World) -> None:
     """check-updates --no-download writes only pkg.toml; update then downloads, populates and activates."""
+    # Arrange: an installed package with a tracker and a newer version at the vendor.
     world.publish("tool", "1.0.0", tables=FULL)
     world.tracker("tool", tables=FULL)
     world.one("install", "tool")
     world.announce("tool", "1.1.0")
     world.fake.fetch_log.clear()
 
+    # Act: check for updates without downloading.
     checked = world.one("check-updates", "tool", no_download=True)
 
+    # Assert: only ``pkg.toml`` was written and nothing was downloaded.
     package = world.user / "tool"
     assert checked.ok and checked.status == "new-version"
     assert not (package / "1.1.0" / "App").exists() and f"{BASE_URL}/tool-1.1.0.zip" not in world.fake.fetch_log
+    # Update then downloads, populates and activates the version.
     updated = world.one("update", "tool")
     assert updated.ok and current_version(package) == "1.1.0" and (package / "1.1.0" / "App" / "app.exe").is_file()
     assert world.fake.fetch_log.count(f"{BASE_URL}/tool-1.1.0.zip") == 1
@@ -219,14 +228,18 @@ def test_uninstall_removes_every_effect_and_keeps_the_version_directories(world:
 
 def test_uninstall_purge_needs_a_confirmation_and_then_deletes_the_package_root(world: World) -> None:
     """--purge deletes nothing without a confirmation (exit 5); once confirmed it deletes the root and unlinks nothing outside it."""
+    # Arrange: an installed package.
     world.publish("tool", "1.0.0", tables=FULL)
     world.one("install", "tool")
     package = world.user / "tool"
 
+    # Act: purge without confirming.
     refused = world.one("uninstall", "tool", purge=True)
 
+    # Assert: the purge is refused and the package is untouched.
     assert not refused.ok and refused.exit_code == 5 and (package / "1.0.0" / "App").is_dir()
     assert launchers(world) == ["tool.exe"]
+    # Confirm the purge and run it again.
     asked: list[str] = []
     world.engine.confirm = lambda question: asked.append(question) or True
     purged = world.one("uninstall", "tool", purge=True)
@@ -236,15 +249,19 @@ def test_uninstall_purge_needs_a_confirmation_and_then_deletes_the_package_root(
 
 def test_cleanup_drops_old_recoverable_apps_and_keeps_current_and_one_previous(world: World) -> None:
     """cleanup removes the App of older versions beyond --keep, never the current one, and keeps their pkg.toml."""
+    # Arrange: an installed package.
     world.publish("tool", "1.0.0", tables=ENV_ONLY)
     world.one("install", "tool")
+    # Update twice, so two older versions remain.
     for version in ("1.1.0", "1.2.0"):
         world.publish("tool", version, tables=ENV_ONLY)
         assert world.one("update", "tool").version == version
     package = world.user / "tool"
 
+    # Act: clean up the package.
     result = world.one("cleanup", "tool")
 
+    # Assert: the oldest app goes, the current and the previous stay.
     assert result.ok and result.details["apps"] == ["1.0.0"]
     assert not (package / "1.0.0" / "App").exists() and (package / "1.0.0" / "pkg.toml").is_file()
     assert (package / "1.1.0" / "App").is_dir() and (package / "1.2.0" / "App").is_dir()
@@ -253,11 +270,13 @@ def test_cleanup_drops_old_recoverable_apps_and_keeps_current_and_one_previous(w
 
 def test_cleanup_removes_leftover_work_folders_and_keeps_the_receipt_of_a_version_that_exists(world: World) -> None:
     """Anything old left in .gupkg\\work goes; the receipt (App.info) of a version that exists stays."""
+    # Arrange: a package with two versions, the first of which is installed.
     world.publish("tool", "1.0.0", tables=ENV_ONLY)
     world.one("install", "tool")
     world.publish("tool", "1.1.0", tables=ENV_ONLY)
     world.one("update", "tool")
     package = world.user / "tool"
+    # Remove the old version and leave a stale work folder.
     shutil.rmtree(package / "1.0.0")
     leftover = package / ".gupkg" / "work" / "populate-crashed"
     leftover.mkdir(parents=True)
@@ -265,8 +284,10 @@ def test_cleanup_removes_leftover_work_folders_and_keeps_the_receipt_of_a_versio
     old = leftover.stat().st_mtime - 3 * 24 * 3600
     os.utime(leftover, (old, old))
 
+    # Act: clean up the package.
     result = world.one("cleanup", "tool")
 
+    # Assert: the leftovers go and the receipt of the existing version stays.
     assert result.ok and result.details["receipts"] == [] and result.details["work"] == ["populate-crashed"]
     assert (package / "1.1.0" / "App.info").is_file()
     assert not leftover.exists()
@@ -274,22 +295,27 @@ def test_cleanup_removes_leftover_work_folders_and_keeps_the_receipt_of_a_versio
 
 def test_cleanup_root_prunes_logs_beyond_retention_and_registry_trees_that_are_not_active(world: World) -> None:
     """The root's logs and every package's keep `[logs] keep_runs` runs; only the active registry revision stays."""
+    # Arrange: a short log retention and an installed package.
     world.write_app_settings(tables="[logs]\nkeep_runs = 2\nkeep_days = 3650\n")
     world.publish("tool", "1.0.0", tables=ENV_ONLY)
     world.one("install", "tool")
     context = world.mode_context()
+    # Fill the root and the package with run logs of four days.
     for logs in (context.log_dir, world.user / "tool" / ".gupkg" / "logs"):
         logs.mkdir(parents=True, exist_ok=True)
         for day in (10, 11, 12, 13):
             for suffix in ("log", "jsonl"):
                 (logs / f"202610{day}T000000Z-install.{suffix}").write_text("x", encoding="utf-8")
+    # A registry cache with the active tree and a stale one.
     cache = world.registry({"tool": {"versions": {"1.0.0": {"app.exe": "x"}}}})
     (cache / "trees" / ("b" * 40)).mkdir()
     (cache / "trees" / ("b" * 40) / "leftover.txt").write_text("old", encoding="utf-8")
     settings = world.scope.settings
 
+    # Act: clean up the root.
     done = lifecycle.cleanup_root(world.engine, context, settings)
 
+    # Assert: only the newest logs and the active registry tree stay.
     assert sorted(item.name for item in context.log_dir.glob("*.log")) == ["20261012T000000Z-install.log", "20261013T000000Z-install.log"]
     assert sorted(item.name for item in (world.user / "tool" / ".gupkg" / "logs").glob("*.log")) == [
         "20261012T000000Z-install.log", "20261013T000000Z-install.log"]
@@ -354,17 +380,21 @@ def test_install_and_update_make_no_tracker_request(world: World) -> None:
 
 def test_a_failed_population_leaves_the_previous_version_and_the_machine_unchanged(world: World) -> None:
     """When the unpack fails after the download, `current`, the effects and the install record are exactly as before."""
+    # Arrange: an installed package and a newer version that cannot be populated.
     world.publish("tool", "1.0.0", tables=FULL)
     world.one("install", "tool")
     world.publish("tool", "1.1.0", tables=ENV_ONLY, source='require = ["missing.exe"]\n')
     package = world.user / "tool"
+    # Remember the state of the machine and of the install record.
     before = (
         dict(world.fake.shortcuts()), dict(world.fake.env_values(Mode.USER)), launchers(world), world.fake.broadcasts,
         (package / ".gupkg" / "package.toml").read_text(),
     )
 
+    # Act: update the package.
     result = world.one("update", "tool")
 
+    # Assert: the update fails and everything is as it was.
     assert not result.ok and result.exit_code == 3 and result.error["code"] == "unpack-failed"
     assert current_version(package) == "1.0.0" and not (package / "1.1.0" / "App").exists()
     assert before == (
@@ -376,6 +406,7 @@ def test_a_failed_population_leaves_the_previous_version_and_the_machine_unchang
 
 def test_a_download_only_update_prepares_the_version_and_changes_no_integration(world: World) -> None:
     """update --download-only populates the newest known version and stops: current, effects and install record are as before."""
+    # Arrange: an installed package and a newer version.
     world.publish("tool", "1.0.0", tables=FULL)
     world.one("install", "tool")
     world.publish("tool", "1.1.0", tables=ENV_ONLY)
@@ -383,11 +414,14 @@ def test_a_download_only_update_prepares_the_version_and_changes_no_integration(
     record = (package / ".gupkg" / "package.toml").read_text()
     shortcuts = dict(world.fake.shortcuts())
 
+    # Act: update with the download only.
     result = world.one("update", "tool", download_only=True)
 
+    # Assert: the version is prepared and nothing else changed.
     assert result.ok and result.status == "prepared" and current_version(package) == "1.0.0"
     assert (package / "1.1.0" / "App" / "app.exe").is_file() and (package / ".gupkg" / "package.toml").read_text() == record
     assert dict(world.fake.shortcuts()) == shortcuts
+    # A plain update then activates it.
     assert world.one("update", "tool").status == "updated"
 
 
@@ -419,11 +453,14 @@ def test_install_with_a_version_activates_that_version_of_an_installed_package(w
 
 def test_a_failed_effect_is_reported_and_recorded_truthfully_and_a_repeat_converges(world: World) -> None:
     """When the shortcut cannot be written the others are applied, the failure is named, the record lists only what exists, and install again completes it."""
+    # Arrange: a package whose shortcut cannot be written.
     world.publish("tool", "1.0.0", tables=FULL)
     world.fake.failures["write_shortcut"] = OSError("access denied")
 
+    # Act: install it.
     failed = world.one("install", "tool")
 
+    # Assert: the failure is reported and the other effects are recorded.
     package = world.user / "tool"
     assert not failed.ok and failed.exit_code == 3 and failed.error["code"] == "integrate-failed"
     assert "access denied" in failed.error["message"] and len(failed.details["failed"]) == 1
@@ -431,8 +468,10 @@ def test_a_failed_effect_is_reported_and_recorded_truthfully_and_a_repeat_conver
     assert sorted(effect.kind for effect in read_install_record(package).record.effects) == ["env", "path", "path", "shim"]
     assert current_version(package) == "1.0.0" and launchers(world) == ["tool.exe"] and world.fake.shortcuts() == {}
 
+    # Act again, with the failure gone.
     repeated = world.one("install", "tool")
 
+    # Assert: the install repairs the missing shortcut.
     assert repeated.ok and repeated.status == "repaired" and [path.stem for path in world.fake.shortcuts()] == ["Tool"]
 
 
@@ -489,13 +528,16 @@ class Collect:
 
 def test_an_install_reports_its_phases_in_order_and_skipped_ones_as_skipped(world: World) -> None:
     """The event stream has a start and an end for each phase of design 13.1, in order, inside one package scope."""
+    # Arrange: a published package.
     world.publish("tool", "1.0.0", tables=FULL)
     collected = Collect()
 
+    # Act: install it twice, keeping the events.
     with use_reporter(collected):
         world.one("install", "tool")
         world.one("install", "tool")
 
+    # Assert: the first install runs every phase and the second skips the unchanged ones.
     ends = [(event.phase, event.status) for event in collected.events if isinstance(event, PhaseEnd)]
     first, second = ends[:8], ends[8:]
     assert [name for name, _ in first] == list(INSTALL_PHASES) and {status for _, status in first} == {"ok"}
@@ -522,9 +564,11 @@ def test_a_failure_is_reported_as_an_error_event_and_the_package_scope_is_closed
 
 def test_every_result_and_plan_is_json_ready(world: World) -> None:
     """The result document of every operation, and the plan document, survive `json.dumps` (the machine interface of design 10.4)."""
+    # Arrange: a package with a tracker and a newer version.
     world.publish("tool", "1.0.0", tables=FULL)
     world.tracker("tool")
     world.announce("tool", "1.1.0")
+    # Run every operation and keep its document.
     documents = []
     for operation, options in (
         ("install", {}), ("check", {}), ("check-updates", {}), ("update", {}), ("cleanup", {"keep": 0}), ("switch", {"version": "1.0.0"}),
@@ -533,21 +577,26 @@ def test_every_result_and_plan_is_json_ready(world: World) -> None:
         batch = world.run(operation, "tool", **options)
         documents.append(batch.to_data())
         assert batch.summary()
+    # Plans are documents too.
     plans = lifecycle.plan(world.engine, [Request("install", "tool"), Request("update", "tool"), Request("cleanup", "tool")])
     documents += [item.to_data() for item in plans]
 
+    # Assert: every document survives a round trip through JSON.
     assert all(json.loads(json.dumps(document)) == document for document in documents)
 
 
 def test_the_typed_readers_accept_what_the_engine_makes(world: World) -> None:
     """``read_results`` and ``read_plan`` read the live documents of every operation, so the readers cannot drift from the writers."""
+    # Arrange: a package with a tracker and a newer version.
     world.publish("tool", "1.0.0", tables=FULL)
     world.tracker("tool")
     world.announce("tool", "1.1.0")
+    # Run every operation and read its document back.
     for operation, options in (
         ("install", {}), ("check", {}), ("check-updates", {}), ("update", {}), ("cleanup", {"keep": 0}), ("switch", {"version": "1.0.0"}),
         ("uninstall", {}),
     ):
+        # The typed reader accepts the document of the operation.
         batch = world.run(operation, "tool", **options)
         document = json.loads(json.dumps(result_document(operation, batch)))
 
@@ -555,12 +604,14 @@ def test_the_typed_readers_accept_what_the_engine_makes(world: World) -> None:
 
         assert (read.ok, read.exit_code) == (batch.ok, batch.exit_code), operation
         assert [(entry.package, entry.ok, entry.exit_code) for entry in read.results] == [(item.package, item.ok, item.exit_code) for item in batch.results], operation
+    # Plans are read back as well.
     requests = [Request("install", "tool"), Request("update", "tool"), Request("cleanup", "tool")]
     plans = lifecycle.plan(world.engine, requests)
     document = json.loads(json.dumps(plan_document("install", plans, ["tool"] * len(plans))))
 
     planned = read_plan(document)
 
+    # Assert: every plan became an entry.
     assert len(planned.items) == len(plans)
     assert all(item.plan is not None or item.result is not None for item in planned.items)
 
@@ -574,7 +625,7 @@ def test_requests_refuse_an_unknown_operation_and_a_negative_keep() -> None:
 
 
 def test_update_of_a_package_that_is_not_installed_is_refused(world: World) -> None:
-    """update never installs (decision D9): a local package with no `current` is refused with a hint."""
+    """update never installs: a local package with no `current` is refused with a hint."""
     world.publish("tool", "1.0.0", tables=ENV_ONLY)
 
     result = world.one("update", "tool")

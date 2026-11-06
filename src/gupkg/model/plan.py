@@ -9,8 +9,8 @@ entry points return, so front ends render them and never parse text.
 
 Usage and API
 -------------
-Build a ``Request`` per target, read ``InstallPlan`` fields or ``plan.to_data()``, and read
-``PackageResult`` and ``BatchResult`` for the outcome. ``effect_key(effect)`` names the identity
+Build a ``Request`` per target, inspect ``InstallPlan`` fields or ``plan.to_data()``, and
+consume ``PackageResult`` and ``BatchResult`` for the outcome. ``effect_key(effect)`` names the identity
 of an effect, so two effects with the same key but different fields are an update. ``EFFECT_KINDS``
 lists the kinds the install record carries.
 
@@ -51,43 +51,78 @@ from .checksum import ChecksumPlan
 from .manifest import INSTALLER_LABEL
 from .state import Effect
 
+# Every operation a ``Request`` may name.
 OPERATIONS = ("install", "update", "switch", "uninstall", "cleanup", "repair", "check-updates", "check", "link")
 
-# The phases of an install-like plan, in order (design 13.1), and those of ``check-updates``.
+# The phases of an install-like plan, in order (design 13.1).
 INSTALL_PHASES = ("Resolve", "Fetch", "Verify", "Unpack", "Prepare", "Activate", "Integrate", "Finish")
+# The phases of a ``check-updates`` plan, in order.
 CHECK_UPDATES_PHASES = ("Resolve", "Track", "Write", "Fetch", "Verify", "Unpack", "Prepare", "Finish")
 
 # The kinds of effect the install record carries and ``check`` verifies.
 EFFECT_KINDS = ("shortcut", "shim", "file", "env", "path")
 
 # Exit codes of design 10.1 that results carry.
-EXIT_OK = 0
-EXIT_USER = 2
-EXIT_FAILED = 3
-EXIT_INTERNAL = 4
+EXIT_OK = 0  # everything succeeded
+EXIT_USER = 2  # a user or configuration error
+EXIT_FAILED = 3  # the operation failed
+EXIT_INTERNAL = 4  # an internal error
 
 
+# Exit code when input was needed and declined (a skipped target).
 EXIT_INPUT = 5
+# Exit code when the package needs a newer gupkg than the one running.
 EXIT_NEWER_GUPKG = 6
 
 # What ``--overwrite=KINDS`` may replace: a file in ``bin`` or a Start Menu shortcut that no installed package owns.
-OVERWRITE_BIN_FILES = "orphaned-bin-files"
-OVERWRITE_SHORTCUTS = "orphaned-shortcuts"
+OVERWRITE_BIN_FILES = "orphaned-bin-files"  # an unowned file in the ``bin`` folder
+OVERWRITE_SHORTCUTS = "orphaned-shortcuts"  # an unowned Start Menu shortcut
+# Every kind ``--overwrite`` accepts.
 OVERWRITE_KINDS = (OVERWRITE_BIN_FILES, OVERWRITE_SHORTCUTS)
 
 
 def parse_overwrite(text: str) -> tuple[str, ...]:
     """Return the kinds named by the value of ``--overwrite`` (a comma-separated list).
 
+    Parameters
+    ----------
+    text : str
+        The value of ``--overwrite``.
+
+    Returns
+    -------
+    tuple of str
+        The kinds, in the order given.
+
     Raises
     ------
     ValueError
         If the value is empty, has an empty item, a duplicate or an unknown kind; the message lists the valid kinds.
+
+    Examples
+    --------
+    Basic usage:
+
+    >>> parse_overwrite("orphaned-bin-files, orphaned-shortcuts")
+    ('orphaned-bin-files', 'orphaned-shortcuts')
+
+    Edge cases:
+
+    >>> parse_overwrite("everything")
+    Traceback (most recent call last):
+        ...
+    ValueError: --overwrite does not know the kind 'everything'; the valid kinds are: orphaned-bin-files, orphaned-shortcuts
+    >>> parse_overwrite("orphaned-bin-files,orphaned-bin-files")
+    Traceback (most recent call last):
+        ...
+    ValueError: --overwrite names 'orphaned-bin-files' twice; the valid kinds are: orphaned-bin-files, orphaned-shortcuts
     """
+    # Refuse an empty value, then validate the items one by one.
     valid = ", ".join(OVERWRITE_KINDS)
     if not text.strip():
         raise ValueError(f"--overwrite needs the kinds of file to replace, a comma-separated list of: {valid}")
     kinds: list[str] = []
+    # Every item must be non-empty, known and unique so a typo is never ignored.
     for item in text.split(","):
         item = item.strip()
         if not item:
@@ -102,7 +137,7 @@ def parse_overwrite(text: str) -> tuple[str, ...]:
 
 @dataclass(frozen=True)
 class Request:
-    """One operation on one target.
+    """Describe one operation on one target.
 
     Attributes
     ----------
@@ -158,7 +193,13 @@ class Request:
     overwrite: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        """Refuse an operation the engine does not know."""
+        """Refuse an operation the engine does not know and a negative or non-integer ``keep``.
+
+        Raises
+        ------
+        ValueError
+            If the operation is unknown or ``keep`` is not a whole number of zero or more.
+        """
         if self.operation not in OPERATIONS:
             raise ValueError(f"unknown operation {self.operation!r}; expected one of {', '.join(OPERATIONS)}")
         if isinstance(self.keep, bool) or not isinstance(self.keep, int) or self.keep < 0:
@@ -170,7 +211,18 @@ def effect_key(effect: Effect) -> tuple[str, ...]:
 
     A shortcut, shim or content file is identified by its path (letter case ignored), an environment
     value by scope and name, a ``PATH`` entry by scope and normalised entry.
+
+    Parameters
+    ----------
+    effect : Effect
+        The effect to identify.
+
+    Returns
+    -------
+    tuple of str
+        The identity of the effect: its kind followed by the fields that name it.
     """
+    # Environment values and PATH entries are identified by scope and name; the rest by their path.
     fields = effect.fields
     if effect.kind in ("env",):
         return (effect.kind, str(fields.get("scope", "")), str(fields.get("name", "")).casefold())
@@ -180,7 +232,18 @@ def effect_key(effect: Effect) -> tuple[str, ...]:
 
 
 def normalize_entry(entry: str) -> str:
-    """Return a ``PATH`` entry in the form used to compare entries: normalised, no trailing separator, lower case."""
+    """Return a ``PATH`` entry in the form used to compare entries: normalised, no trailing separator, lower case.
+
+    Parameters
+    ----------
+    entry : str
+        A folder as it appears on ``PATH``.
+
+    Returns
+    -------
+    str
+        The comparison form of *entry*.
+    """
     return os.path.normcase(os.path.normpath(entry)).rstrip("\\/")
 
 
@@ -191,6 +254,20 @@ class PlannedEffect:
     ``action`` is ``add`` (not in the install record), ``update`` (in the record with other fields),
     ``keep`` (identical) or ``remove`` (in the record, no longer wanted). ``previous`` holds the
     recorded effect of an ``update`` or ``remove``.
+
+    Methods
+    -------
+    to_data
+        Return the JSON-ready description used by ``--plan --json``.
+
+    Attributes
+    ----------
+    action : str
+        ``add``, ``update``, ``keep`` or ``remove``.
+    effect : Effect
+        The effect the plan wants (or the removed one).
+    previous : Effect | None
+        The recorded effect of an ``update`` or ``remove``.
     """
 
     action: str
@@ -198,13 +275,27 @@ class PlannedEffect:
     previous: Effect | None = None
 
     def to_data(self) -> dict[str, Any]:
-        """Return the JSON-ready description used by ``--plan --json``."""
+        """Return the JSON-ready description used by ``--plan --json``.
+
+        Returns
+        -------
+        dict
+            The action, the effect kind and the effect's fields.
+        """
         return {"action": self.action, "kind": self.effect.kind, **{key: value for key, value in self.effect.fields.items()}}
 
 
 @dataclass(frozen=True)
 class PlanStep:
-    """One readable line of a phase; ``kind`` is ``info``, ``add``, ``remove`` or ``ok`` (the event step kinds)."""
+    """One readable line of a phase; ``kind`` is ``info``, ``add``, ``remove`` or ``ok`` (the event step kinds).
+
+    Attributes
+    ----------
+    text : str
+        The readable line.
+    kind : str
+        ``info``, ``add``, ``remove`` or ``ok``.
+    """
 
     text: str
     kind: str = "info"
@@ -212,7 +303,24 @@ class PlanStep:
 
 @dataclass(frozen=True)
 class Phase:
-    """One phase of a plan with its steps; a skipped phase says why."""
+    """One phase of a plan with its steps; a skipped phase says why.
+
+    Methods
+    -------
+    to_data
+        Return the JSON-ready description of the phase.
+
+    Attributes
+    ----------
+    name : str
+        The phase name.
+    steps : tuple[PlanStep, ...]
+        The readable steps.
+    skipped : bool
+        Whether the phase is skipped.
+    reason : str
+        Why it is skipped.
+    """
 
     name: str
     steps: tuple[PlanStep, ...] = ()
@@ -220,7 +328,13 @@ class Phase:
     reason: str = ""
 
     def to_data(self) -> dict[str, Any]:
-        """Return the JSON-ready description of the phase."""
+        """Return the JSON-ready description of the phase.
+
+        Returns
+        -------
+        dict
+            The name, the skipped flag, the redacted step texts and, when set, the reason.
+        """
         data: dict[str, Any] = {"name": self.name, "skipped": self.skipped, "steps": [redact_text(step.text) for step in self.steps]}
         if self.reason:
             data["reason"] = self.reason
@@ -230,6 +344,11 @@ class Phase:
 @dataclass(frozen=True)
 class PopulatePlan:
     """How the chosen version's ``App`` is obtained, and whether anything has to happen.
+
+    Methods
+    -------
+    to_data
+        Return the JSON-ready description of the population.
 
     Attributes
     ----------
@@ -261,11 +380,19 @@ class PopulatePlan:
     installer: tuple[str, ...] | None = None
 
     def to_data(self) -> dict[str, Any]:
-        """Return the JSON-ready description of the population."""
+        """Return the JSON-ready description of the population.
+
+        Returns
+        -------
+        dict
+            The kind, need and reason, plus the installer, URL, checksum and script when set.
+        """
+        # Always-present fields first, then the optional ones that are set.
         data: dict[str, Any] = {"kind": self.kind, "needed": self.needed, "reason": self.reason, "recoverable": self.recoverable}
         if self.installer is not None:
             data["label"] = INSTALLER_LABEL
             data["installer"] = list(self.installer)
+        # URLs are redacted so credentials never reach the plan output.
         if self.url is not None:
             data["url"] = redact_url(self.url)
         if self.checksum is not None:
@@ -281,6 +408,22 @@ class CopyIn:
 
     ``origin`` is ``registry`` (a pinned version of a followed registry), ``distribution`` (a folder
     outside every root, design 21.4) or ``tracker`` (the registry's tracker alone).
+
+    Methods
+    -------
+    to_data
+        Return the JSON-ready description of the copy.
+
+    Attributes
+    ----------
+    origin : str
+        ``registry``, ``distribution`` or ``tracker``.
+    source : Path
+        The folder that is copied.
+    registry : str | None
+        The registry the copy comes from, if any.
+    fingerprint : str | None
+        The fingerprint the registry publishes, if any.
     """
 
     origin: str
@@ -289,7 +432,13 @@ class CopyIn:
     fingerprint: str | None = None
 
     def to_data(self) -> dict[str, Any]:
-        """Return the JSON-ready description of the copy."""
+        """Return the JSON-ready description of the copy.
+
+        Returns
+        -------
+        dict
+            The origin, the source folder and, when set, the registry.
+        """
         data: dict[str, Any] = {"origin": self.origin, "source": str(self.source)}
         if self.registry is not None:
             data["registry"] = self.registry
@@ -299,6 +448,11 @@ class CopyIn:
 @dataclass(frozen=True)
 class InstallPlan:
     """What one operation on one package will do, before it does anything.
+
+    Methods
+    -------
+    to_data
+        Return the JSON-ready plan document of ``--plan --json`` (design 10.4).
 
     Attributes
     ----------
@@ -354,7 +508,13 @@ class InstallPlan:
         """Return the JSON-ready plan document of ``--plan --json`` (design 10.4).
 
         Per target: the chosen version, the mode, ``sha256: present | missing``, the source URL, and the effects to add or remove.
+
+        Returns
+        -------
+        dict
+            The plan document for the target.
         """
+        # The fields every plan carries; unchanged effects are left out.
         data: dict[str, Any] = {
             "operation": self.operation,
             "package": self.package,
@@ -362,10 +522,12 @@ class InstallPlan:
             "mode": self.mode,
             "version": self.version,
             "previous": self.previous,
+            # Only effects that change the machine are listed; the phases carry the readable steps.
             "effects": [item.to_data() for item in self.effects if item.action != "keep"],
             "phases": [item.to_data() for item in self.phases],
             "notes": [redact_text(note) for note in self.notes],
         }
+        # Add the population and surface its checksum and URL at the top level for the manager.
         if self.populate is not None:
             data["populate"] = self.populate.to_data()
             if self.populate.checksum is not None:
@@ -373,6 +535,7 @@ class InstallPlan:
                 data["url"] = redact_url(self.populate.checksum.url)
             elif self.populate.url is not None:
                 data["url"] = redact_url(self.populate.url)
+        # Optional parts last: the copy-in, the purge flag and the caller's extra fields.
         if self.copy_in is not None:
             data["copy_in"] = self.copy_in.to_data()
         if self.purge:
@@ -389,6 +552,13 @@ class InstallPlan:
 @dataclass(frozen=True)
 class PackageResult:
     """The typed outcome of one operation on one package.
+
+    Methods
+    -------
+    to_data
+        Return the per-target entry of the ``--json`` result document.
+    summary
+        Return one line that says what happened, for the closing summary.
 
     Attributes
     ----------
@@ -436,7 +606,13 @@ class PackageResult:
     details: Mapping[str, Any] = field(default_factory=dict)
 
     def to_data(self) -> dict[str, Any]:
-        """Return the per-target entry of the ``--json`` result document."""
+        """Return the per-target entry of the ``--json`` result document.
+
+        Returns
+        -------
+        dict
+            The result fields, with warnings redacted, plus the error and details when present.
+        """
         data: dict[str, Any] = {
             "package": self.package, "operation": self.operation, "ok": self.ok, "status": self.status,
             "version": self.version, "previous": self.previous, "mode": self.mode, "exit_code": self.exit_code,
@@ -449,7 +625,14 @@ class PackageResult:
         return data
 
     def summary(self) -> str:
-        """Return one line that says what happened, for the closing summary."""
+        """Return one line that says what happened, for the closing summary.
+
+        Returns
+        -------
+        str
+            A line starting with a status marker and the package name.
+        """
+        # Failures and non-installs get their own wording.
         if not self.ok:
             reason = (self.error or {}).get("message", self.status)
             return f"x {self.package}: {self.operation} failed: {reason}"
@@ -457,6 +640,7 @@ class PackageResult:
             return f"- {self.package}: skipped"
         if self.status == "locked":
             return f"- {self.package}: left alone, another gupkg run is changing it"
+        # A success names the version and, if it changed, the one it replaced.
         version = f" {self.version}" if self.version else ""
         was = f" (was {self.previous})" if self.previous and self.previous != self.version else ""
         return f"ok {self.package}{version}: {self.status}{was}"
@@ -464,7 +648,24 @@ class PackageResult:
 
 @dataclass(frozen=True)
 class BatchResult:
-    """The outcome of a call with several targets: one ``PackageResult`` per target."""
+    """The outcome of a call with several targets: one ``PackageResult`` per target.
+
+    Methods
+    -------
+    to_data
+        Return the ``--json`` result document of the call.
+    summary
+        Return the closing summary: one line per target, naming every failure.
+
+    Attributes
+    ----------
+    results : tuple[PackageResult, ...]
+        One result per target.
+    ok : bool
+        Return whether every target succeeded (a skipped one counts as not done).
+    exit_code : int
+        Return the call's exit code: zero when all succeeded, else the highest code of a failure.
+    """
 
     results: tuple[PackageResult, ...] = ()
 
@@ -482,15 +683,29 @@ class BatchResult:
         return EXIT_INPUT if any(item.status == "skipped" for item in self.results) else EXIT_OK
 
     def to_data(self) -> dict[str, Any]:
-        """Return the ``--json`` result document of the call."""
+        """Return the ``--json`` result document of the call.
+
+        Returns
+        -------
+        dict
+            The overall ``ok``, the exit code and one entry per target.
+        """
         return {"ok": self.ok, "exit_code": self.exit_code,
                 "results": [item.to_data() for item in self.results]}
 
     def summary(self) -> str:
-        """Return the closing summary: one line per target, naming every failure."""
+        """Return the closing summary: one line per target, naming every failure.
+
+        Returns
+        -------
+        str
+            The per-target lines followed by lines for failed, skipped and locked targets.
+        """
+        # One line per target, then a line for each group that needs attention.
         lines = [item.summary() for item in self.results]
         failed = [item.package for item in self.results if not item.ok]
         skipped = [item.package for item in self.results if item.status == "skipped"]
+        # Name every failed, skipped and locked target so none is lost in a long list.
         if failed:
             lines.append(f"{len(failed)} of {len(self.results)} failed: {', '.join(failed)}")
         locked = [item.package for item in self.results if item.status == "locked"]
@@ -502,7 +717,18 @@ class BatchResult:
 
 
 def split_effects(effects: Sequence[PlannedEffect]) -> dict[str, list[PlannedEffect]]:
-    """Group planned effects by their action."""
+    """Group planned effects by their action.
+
+    Parameters
+    ----------
+    effects : sequence of PlannedEffect
+        The effects of a plan.
+
+    Returns
+    -------
+    dict of str to list of PlannedEffect
+        The effects under ``add``, ``update``, ``keep`` and ``remove``, in their original order.
+    """
     groups: dict[str, list[PlannedEffect]] = {"add": [], "update": [], "keep": [], "remove": []}
     for item in effects:
         groups[item.action].append(item)

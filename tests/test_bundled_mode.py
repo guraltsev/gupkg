@@ -1,4 +1,4 @@
-"""Cover bundled mode and the root's `gupkg-location` in the engine (design 21; decisions D14, D15, D32, D43, D52).
+"""Cover bundled mode and the root's `gupkg-location` in the engine (design 21).
 
 Behaviour covered: installing the `gupkg` package writes `<root>\\.gupkg\\gupkg-location` (`gupkg\\current\\App`, relative to the
 root), records it in the install record as a `location_file` effect, reports it as drift when it is changed or removed, and
@@ -31,7 +31,9 @@ from tests.support.engine import World
 
 pytestmark = pytest.mark.unit
 
+# Tables that declare the gupkg shims of a package that ships its own gupkg.
 GUPKG_TABLES = '[[shim]]\nname = "gupkg"\ntarget = "$App\\\\gupkg.cmd"\n\n[[shim]]\nname = "gupkg-manager"\ntarget = "$App\\\\gupkg-manager.cmd"\n'
+# Table that declares a shim of the test package.
 SHIM = '[[shim]]\nname = "tool"\ntarget = "$App\\\\app.exe"\n'
 
 
@@ -143,11 +145,14 @@ def distribution_with_bundle(world: World, version: str = "1.0.0") -> Path:
 
 def test_a_bundled_install_leaves_no_gupkg_behind_and_touches_nothing_else(world: World) -> None:
     """Installing a distribution adds the program only: no gupkg package, gupkg-location, gupkg shim or PATH entry; one PATH read-modify-write."""
+    # Arrange: a distribution that bundles gupkg, and an empty registry log.
     folder = distribution_with_bundle(world)
     world.fake.registry_log.clear()
 
+    # Act: install the distribution.
     result = world.one("install", str(folder))
 
+    # Assert: only the program was added, and the PATH was read and written once.
     assert result.ok, result.error
     assert (world.user / "tool" / "1.0.0" / "gupkg" / "gupkg.cmd").is_file()
     assert sorted(item.name for item in world.user.iterdir() if item.name != "tool") == []
@@ -165,15 +170,18 @@ def test_a_bundled_install_leaves_no_gupkg_behind_and_touches_nothing_else(world
 
 def test_a_bundled_install_manages_itself_across_a_check_and_an_update(world: World) -> None:
     """check-updates carries the bundled gupkg into the new version; the old one keeps its own; switching back works."""
+    # Arrange: install the distribution and arrange a tracker that finds version 1.1.0.
     folder = distribution_with_bundle(world)
     tracker = world.tracker("tool", root=folder.parent.parent.parent / "downloads-tracker", tables=SHIM)
     assert world.one("install", str(folder)).ok
     shutil.copytree(tracker, world.user / "tool" / "_check_updates")
     world.announce("tool", "1.1.0")
 
+    # Act: check for updates, then update.
     assert world.one("check-updates", "tool").ok
     assert world.one("update", "tool").ok
 
+    # Assert: both versions keep their bundled gupkg and the new one is current.
     old, new = world.user / "tool" / "1.0.0", world.user / "tool" / "1.1.0"
     assert (new / "gupkg" / "gupkg.cmd").is_file() and (old / "gupkg" / "gupkg.cmd").is_file()
     assert (new / "install.cmd").read_bytes() == launcher_text("install").encode("ascii")
@@ -259,6 +267,7 @@ def test_cleanup_bundled_needs_a_gupkg_location_that_really_names_an_installed_g
 
 def test_launchers_find_a_gupkg_by_the_launchers_own_rules(tmp_path: Path) -> None:
     """Same refusals as the launcher: a location line with `& | < > ^`, a quoted PATH entry, and (system mode) an untrusted folder."""
+    # Arrange: a root whose location line points at an app folder with a launcher.
     root = tmp_path / "root"
     (root / ".gupkg").mkdir(parents=True)
     app = root / "app"
@@ -266,6 +275,7 @@ def test_launchers_find_a_gupkg_by_the_launchers_own_rules(tmp_path: Path) -> No
     (app / "gupkg.cmd").write_text("@echo off\r\n", encoding="ascii")
     location = root / ".gupkg" / "gupkg-location"
 
+    # Every shell metacharacter in the location line is refused.
     for char in "&|<>^":
         location.write_text(f"app{char}\r\n", encoding="ascii")
         assert not launchers_find_gupkg(root, None), char
@@ -274,6 +284,7 @@ def test_launchers_find_a_gupkg_by_the_launchers_own_rules(tmp_path: Path) -> No
     assert not launchers_find_gupkg(root, None, lambda folder: "Users can modify it")
     assert launchers_find_gupkg(root, None, lambda folder: None)
 
+    # An empty location line falls back to the PATH entry, which may not be quoted.
     location.write_text("\r\n", encoding="ascii")
     assert launchers_find_gupkg(root, str(app))
     assert not launchers_find_gupkg(root, f'"{app}"')
@@ -282,6 +293,7 @@ def test_launchers_find_a_gupkg_by_the_launchers_own_rules(tmp_path: Path) -> No
 
 def test_cleanup_bundled_in_system_mode_ignores_a_gupkg_that_standard_users_can_change(elevated_world: World) -> None:
     """An elevated launcher refuses a user-writable gupkg, so it would not find it: a user-writable PATH gupkg or location does not let bundled copies go."""
+    # Arrange: install a bundle, then put a gupkg that standard users can change on the PATH.
     assert elevated_world.one("install", str(distribution_with_bundle(elevated_world))).ok
     root = elevated_world.root("system")
     version = root / "tool" / "1.0.0"
@@ -291,11 +303,13 @@ def test_cleanup_bundled_in_system_mode_ignores_a_gupkg_that_standard_users_can_
     elevated_world.engine.env = {**elevated_world.engine.env, "PATH": str(elsewhere)}
     elevated_world.machine.fake.untrusted_dirs.add(elsewhere.resolve())
 
+    # Act: clean up the bundled copies while the PATH gupkg is untrusted.
     refused = elevated_world.one("cleanup", "tool", bundled=True)
 
     assert refused.ok and (version / "gupkg" / "gupkg.cmd").is_file() and refused.details["bundled"] == []
     elevated_world.machine.fake.untrusted_dirs.clear()
 
+    # Act again once the folder is trusted.
     allowed = elevated_world.one("cleanup", "tool", bundled=True)
 
     assert allowed.ok and allowed.details["bundled"] == ["1.0.0"] and not (version / "gupkg").exists()
@@ -332,21 +346,25 @@ def test_plain_cleanup_never_removes_a_bundled_copy(world: World) -> None:
 
 def test_a_populate_script_that_copies_a_shipped_folder_makes_app_recoverable(world: World) -> None:
     """After deleting every `App`, `install --refresh` runs the script again and the shipped folder is still where it was."""
+    # Arrange: a version whose populate script copies the shipped ``payload`` folder.
     world.publish_script("tool", "1.0.0", script="populate.cmd", tables=SHIM)
     folder = world.user / "tool" / "1.0.0"
     (folder / "payload").mkdir()
     (folder / "payload" / "app.exe").write_text("shipped\n", encoding="utf-8")
 
+    # The populate script copies the shipped folder and never moves it.
     def copy_the_folder(call):
         """Play a populate script that copies `payload` of the version directory into `App` (it never moves it)."""
         context = json.loads(call.input_text)
         shutil.copytree(Path(context["paths"]["version_root"]) / "payload", context["paths"]["app"], dirs_exist_ok=True)
         return ProcessResult(0, "copied\n")
 
+    # Install, then delete every ``App`` so it has to be rebuilt.
     world.fake.processes["populate.cmd"] = copy_the_folder
     assert world.one("install", "tool").ok
     shutil.rmtree(folder / "App")
 
+    # Act: refresh the install.
     result = world.one("install", "tool", refresh=True)
 
     assert result.ok and (folder / "App" / "app.exe").read_text(encoding="utf-8") == "shipped\n"

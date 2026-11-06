@@ -1,4 +1,4 @@
-"""Cover how one target resolves inside the scope of a run (design 6.2, 9.6, D31, D55, issue 035 D47).
+"""Cover how one target resolves inside the scope of a run (design 6.2, 9.6).
 
 Behavior covered: a name or a path inside the scope's root resolves to that root's package, in user mode for a normal
 process and in system mode for an elevated one, with no flag; a path outside the root is a distribution folder to copy in
@@ -162,7 +162,7 @@ def test_an_administrator_shell_may_name_a_folder_outside_the_root_to_copy_in(tm
 
 
 # ---------------------------------------------------------------------------
-# D31: what an elevated run trusts
+# What an elevated run trusts
 # ---------------------------------------------------------------------------
 
 
@@ -188,7 +188,7 @@ def test_an_elevated_run_refuses_a_user_writable_package_folder_in_the_system_ro
 
 
 def test_an_elevated_process_refuses_a_package_whose_install_record_says_user(tmp_path: Path) -> None:
-    """A package in the system root whose record says ``user`` is refused in an elevated run (D31)."""
+    """A package in the system root whose record says ``user`` is refused in an elevated run."""
     machine = Machine(tmp_path, elevated=True)
     machine.package(machine.system_root, "tool", record="user")
 
@@ -207,7 +207,7 @@ def test_an_elevated_process_does_not_trust_a_record_in_a_folder_users_can_modif
 
 
 def test_an_elevated_process_never_reads_the_user_settings_or_the_user_root(tmp_path: Path) -> None:
-    """The user layer is not loaded and the user root is not scanned when the process is elevated (design 9.4, D18)."""
+    """The user layer is not loaded and the user root is not scanned when the process is elevated (design 9.4)."""
     machine = Machine(tmp_path, elevated=True)
     user_settings = machine.user_root / ".gupkg" / "settings.toml"
     user_settings.parent.mkdir(parents=True)

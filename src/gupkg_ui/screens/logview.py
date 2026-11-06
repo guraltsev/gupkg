@@ -1,8 +1,8 @@
 """Show a package's log file in a scrollable view, reading only the end of a large file.
 
 The log is a plain text file that gupkg wrote; it is shown literally (escape sequences and control characters removed), never as markup, and only the last
-``TAIL_BYTES`` of it are read so a huge log neither freezes the view nor fills memory. The path must lie inside the package's own ``.gupkg\\logs`` folder, so
-a receipt that names some other file cannot make the view read it.
+``TAIL_BYTES`` of it are loaded so a huge log neither freezes the view nor fills memory. The path must lie inside the package's own ``.gupkg\\logs`` folder, so
+a receipt that names some other file cannot make the view open it.
 
 Usage and API
 -------------
@@ -10,7 +10,7 @@ Push ``LogScreen(path, package_dir, title)``; Escape or ``q`` returns to the scr
 
 Implementation Approach
 -----------------------
-The file is read in a worker thread (a blocking read never stalls the interface), cut into lines and written to an append-only log widget that keeps at most
+The file is loaded in a background worker (a blocking load never stalls the interface), cut into lines and written to an append-only log widget that keeps at most
 ``MAX_LINES`` lines.
 """
 
@@ -28,8 +28,9 @@ from textual.widgets import RichLog
 from ..render import literal
 from .frame import FrameScreen
 
-# The most bytes read from the end of a log, and the most lines shown.
+# The most bytes taken from the end of a log (2 MiB).
 TAIL_BYTES = 2 << 20
+# The most lines the log widget keeps and shows.
 MAX_LINES = 5000
 
 
@@ -42,8 +43,13 @@ def read_tail(path: Path, package_dir: Path | None) -> tuple[list[str], str | No
         The log file.
     package_dir : Path, optional
         The package whose ``.gupkg\\logs`` folder must contain *path*.
+
+    Returns
+    -------
+    tuple of (list of str, str or None)
+        The cleaned last lines and a note about them; no lines and the reason when the log cannot be shown.
     """
-    # The file must be a plain file inside the package's own log folder.
+    # Refuse a file outside the package's own log folder, then read only its end.
     try:
         resolved = Path(os.path.realpath(path))
         if package_dir is not None and not resolved.is_relative_to(Path(os.path.realpath(package_dir)) / ".gupkg" / "logs"):
@@ -54,6 +60,8 @@ def read_tail(path: Path, package_dir: Path | None) -> tuple[list[str], str | No
             data = handle.read(TAIL_BYTES)
     except OSError as error:
         return [], f"the log cannot be read: {literal(error)}"
+
+    # Clean every line and say when the start of a large file was left out.
     lines = data.decode("utf-8", errors="replace").splitlines()
     note = f"(only the last {TAIL_BYTES >> 20} MiB of {size >> 20 or 1} MiB is shown)" if size > TAIL_BYTES else None
     return [literal(line) for line in lines[-MAX_LINES:]], note
@@ -70,6 +78,26 @@ class LogScreen(FrameScreen):
         The package whose log folder must contain the file.
     title : str
         What the log belongs to, for the status line.
+
+    Methods
+    -------
+    key_hints
+        Return the keys of the log view.
+    status_text
+        Return what is shown: the title and the path or a note.
+    compose_body
+        Yield the log widget.
+    on_mount
+        Focus the log and load its end.
+    action_back
+        Return to the screen below.
+    action_bottom
+        Jump to the end of the log.
+
+    Attributes
+    ----------
+    BINDINGS : list of Binding
+        The keys of the screen, as ``key`` (label): ``escape`` (Back), ``q`` (Back), ``end`` (End).
     """
 
     BINDINGS = [Binding("escape", "back", "Back"), Binding("q", "back", "Back"), Binding("end", "bottom", "End")]
@@ -82,11 +110,23 @@ class LogScreen(FrameScreen):
         self._note = "loading"
 
     def key_hints(self) -> str:
-        """Return the keys of the log view."""
+        """Return the keys of the log view.
+
+        Returns
+        -------
+        str
+            The text of the top line.
+        """
         return "Esc back   ↑↓ PgUp PgDn Home End scroll"
 
     def status_text(self) -> str:
-        """Return what is shown: the title and the path or a note."""
+        """Return what is shown: the title and the path or a note.
+
+        Returns
+        -------
+        str
+            The text of the bottom line.
+        """
         return f"log of {self._title} · {literal(self._path or 'none yet', limit=300)} · {self._note}"
 
     def compose_body(self) -> ComposeResult:
@@ -100,6 +140,7 @@ class LogScreen(FrameScreen):
 
     async def _load(self) -> None:
         """Read the end of the log off the interface thread and show it."""
+        # Show a note when there is no log, otherwise load its end off the interface thread.
         log = self.query_one(RichLog)
         if not self._path:
             self._note = "no log has been written yet"
@@ -110,6 +151,8 @@ class LogScreen(FrameScreen):
             for line in lines or ([note] if note else []):
                 log.write(Text(line))
             log.scroll_end(animate=False)
+
+        # Refresh the status line, which now names the note or the line count.
         self.refresh_frame()
 
     def action_back(self) -> None:

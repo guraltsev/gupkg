@@ -18,8 +18,11 @@ import pytest
 
 pytestmark = pytest.mark.process
 
+# Repository root.
 ROOT = Path(__file__).resolve().parents[1]
+# Directory that holds the runtime files.
 RUNTIME_DIRECTORY = ROOT / "src"
+# Release version read from the runtime sources.
 RELEASE_VERSION = re.search(
     r'(?m)^__version__ = "([^"]+)"',
     (RUNTIME_DIRECTORY / "gupkg" / "_version.py").read_text(encoding="utf-8"),

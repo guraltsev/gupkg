@@ -33,7 +33,9 @@ from gupkg.pkgcheck import check_directory
 
 pytestmark = pytest.mark.release
 
+# Repository root.
 REPO = Path(__file__).resolve().parents[1]
+# Build script that produces the standalone bundle.
 BUILD = REPO / "tools" / "build_standalone.py"
 
 
@@ -106,6 +108,7 @@ def test_manifest_lists_every_file_of_the_tree_with_its_correct_digest(release_b
             if name.startswith(f"{prefix}gupkg/") and not name.endswith("/") and name != f"{prefix}gupkg/MANIFEST.sha256"
         }
 
+    # Compare the listed digests with the digests of the files themselves.
     listed = [tuple(line.split("  ", 1)) for line in manifest]
     assert [path for _, path in listed] == sorted(files)
     assert {path: digest for digest, path in listed} == files
@@ -120,11 +123,13 @@ def test_release_zip_is_named_for_the_version_and_records_its_commit(release_bun
         python_path = archive.read(f"{prefix}gupkg/python/python312._pth").decode("ascii")
         names = archive.namelist()
 
+    # Check the release note, the version file, the runtime path file and the entry list.
     assert release_note == f"gupkg {release_bundle.version}\ncommit {release_bundle.commit}\n"
     assert version_file == f"{release_bundle.version}\n"
     assert "Lib/site-packages" in python_path
     assert f"{prefix}gupkg/python/python.exe" in names
     assert not any(name.endswith(("gupkg-config.toml", "digest.txt")) for name in names)
+    # Check that the sidecar file records the digest of the ZIP.
     sidecar = release_bundle.zip.with_name(release_bundle.zip.name + ".sha256").read_text(encoding="ascii")
     assert sidecar.split()[0] == release_bundle.sha256
 
@@ -159,6 +164,7 @@ def test_build_stops_when_the_runtime_archive_does_not_match_the_pinned_digest(t
         archive.writestr("python312._pth", "python312.zip\n")
     output = tmp_path / "out.zip"
 
+    # Act: build with a digest that cannot match the runtime archive.
     result = subprocess.run(
         [sys.executable, str(BUILD), "--skip-deps", "--runtime", str(runtime), "--runtime-sha256", "0" * 64,
          "--commit", "a" * 40, "--output", str(output)],
@@ -166,6 +172,7 @@ def test_build_stops_when_the_runtime_archive_does_not_match_the_pinned_digest(t
         text=True,
     )
 
+    # Assert: the build fails, names the mismatch and leaves no output.
     assert result.returncode != 0
     assert "does not match" in result.stderr
     assert not output.exists()
@@ -182,6 +189,7 @@ def test_build_ships_no_bytecode_and_the_built_tree_verifies(tmp_path: Path, run
             "Lib/site-packages/stray.pyc": b"\0",
         },
     )
+    # Build the bundle from that runtime into a fresh output file.
     output = tmp_path / "out.zip"
 
     subprocess.run(
@@ -191,6 +199,7 @@ def test_build_ships_no_bytecode_and_the_built_tree_verifies(tmp_path: Path, run
         check=True, capture_output=True,
     )
 
+    # Assert: the unpacked tree ships no bytecode but still ships the sources.
     with zipfile.ZipFile(output) as archive:
         names = archive.namelist()
         archive.extractall(tmp_path / "unpacked")

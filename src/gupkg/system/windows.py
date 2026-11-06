@@ -66,6 +66,7 @@ from .port import (
     ShortcutSpec,
 )
 
+# Script run in the isolated child process that evaluates untrusted regular expressions.
 _REGEX_WORKER = Path(__file__).with_name("regex_worker.py")
 _WORKER_START_SECONDS = 30.0  # how long a regex worker may take to say it is up
 
@@ -81,6 +82,19 @@ class WindowsLinks:
     The class is shared by ``WindowsSystem`` and ``FakeSystem``: the files of a
     fake install are real files in a real temporary directory, so its links are
     real links too.
+
+    Methods
+    -------
+    create_junction
+        Create or replace one NTFS junction.
+    read_link
+        Return the normalized target of the link at *path*, or ``None`` when unreadable.
+    is_link
+        Return whether *path* is a junction (a symlink on other platforms).
+    remove_link
+        Remove the link at *path* without touching its target.
+    hardlink
+        Create *link* as another name for the existing file *existing*.
     """
 
     def create_junction(self, link: Path, target: Path) -> None:
@@ -123,7 +137,18 @@ class WindowsLinks:
             raise RuntimeError(f"Cannot create junction {link} -> {target}: {exc}") from exc
 
     def read_link(self, path: Path) -> Path | None:
-        """Return the normalized target of the link at *path*, or ``None`` when unreadable."""
+        """Return the normalized target of the link at *path*, or ``None`` when unreadable.
+
+        Parameters
+        ----------
+        path : Path
+            Link to read.
+
+        Returns
+        -------
+        Path or None
+            Absolute target without any extended-length prefix, or ``None`` when the link cannot be read.
+        """
         try:
             text = os.readlink(str(path))
         except (OSError, AttributeError):
@@ -133,7 +158,18 @@ class WindowsLinks:
         return Path(text).resolve()
 
     def is_link(self, path: Path) -> bool:
-        """Return whether *path* is a junction (a symlink on other platforms)."""
+        """Return whether *path* is a junction (a symlink on other platforms).
+
+        Parameters
+        ----------
+        path : Path
+            Path to test.
+
+        Returns
+        -------
+        bool
+            ``True`` for a junction (or symlink); ``False`` otherwise, including when the path cannot be inspected.
+        """
         try:
             if os.name == "nt":
                 return os.path.isjunction(str(path))
@@ -143,6 +179,11 @@ class WindowsLinks:
 
     def remove_link(self, path: Path) -> None:
         """Remove the link at *path* without touching its target.
+
+        Parameters
+        ----------
+        path : Path
+            Link to remove.
 
         Raises
         ------
@@ -154,7 +195,15 @@ class WindowsLinks:
         os.rmdir(str(path))
 
     def hardlink(self, link: Path, existing: Path) -> None:
-        """Create *link* as another name for the existing file *existing*."""
+        """Create *link* as another name for the existing file *existing*.
+
+        Parameters
+        ----------
+        link : Path
+            New name to create.
+        existing : Path
+            Existing file the new name refers to.
+        """
         os.link(str(existing), str(link))
 
 
@@ -167,6 +216,57 @@ class WindowsSystem(WindowsLinks):
         ``(registry hive, subkey)`` that holds the environment values of that
         scope. The defaults are ``HKCU\\Environment`` and the Session Manager
         ``Environment`` key of ``HKLM``.
+
+    Methods
+    -------
+    get_env
+        Return one stored environment value, or ``None`` when it is not a string value.
+    set_env
+        Store one environment value, creating its key when it does not exist.
+    delete_env
+        Remove one environment value; an absent value or key is not an error.
+    get_path
+        Return the non-empty ``PATH`` entries of *scope*; a missing value is an empty list.
+    set_path
+        Store *entries* as the expandable ``PATH`` of *scope*.
+    broadcast_environment_change
+        Notify Windows that environment values changed.
+    write_shortcut
+        Create or replace one ``.lnk`` file, creating its folder first.
+    read_shortcut
+        Read one ``.lnk`` file; the target is the raw stored text, ``%VAR%`` unexpanded.
+    delete_shortcut
+        Delete one ``.lnk`` file; an absent file is not an error.
+    is_elevated
+        Return whether this process may hold an elevated token; unreadable signals count as elevated.
+    scratch_directory
+        Create a private temporary folder, yield it, and delete it (and whatever is left in it) on exit.
+    process_id
+        Return the id of this process.
+    process_is_running
+        Return whether process *pid* is still running (``OpenProcess`` and its exit code); doubt counts as running.
+    directory_is_admin_only
+        Return whether only administrators can modify *path* and replace its parents.
+    directory_untrusted_reason
+        Return why *path* is not admin-only, or ``None``; unreadable permissions give a reason.
+    scope_folders
+        Resolve the default Start Menu ``opt`` folder and ``bin`` folder of one scope.
+    run
+        Run a child process to completion, streaming each output line to *on_line*.
+    run_foreground
+        Run a child on this console with inherited standard streams and return its exit status.
+    open_path
+        Open *path* with its associated program, as double-clicking it in Explorer would.
+    regex_worker
+        Run ``regex_worker.py`` on *request* in an isolated child with a hard deadline (see the port).
+    fetch
+        Download *url* to *dest* in 64 KiB chunks and return the byte count.
+    fetch_text
+        Return the UTF-8 text served at *url*.
+    http_request
+        Send one request without following redirects and return the response of any status.
+    http_download
+        Stream a 2xx response into *dest* (appending a 206 answer when asked); write nothing otherwise.
     """
 
     def __init__(
@@ -194,7 +294,20 @@ class WindowsSystem(WindowsLinks):
         raise ValueError(f"Environment scope must be user or system, not {scope.value}")
 
     def get_env(self, scope: Mode, name: str) -> EnvValue | None:
-        """Return one stored environment value, or ``None`` when it is not a string value."""
+        """Return one stored environment value, or ``None`` when it is not a string value.
+
+        Parameters
+        ----------
+        scope : Mode
+            ``Mode.USER`` or ``Mode.SYSTEM``.
+        name : str
+            Name of the value.
+
+        Returns
+        -------
+        EnvValue or None
+            The text and whether it is expandable, or ``None`` when the value is absent or not a string type.
+        """
         hive, subkey = self._environment_location(scope)
         try:
             with winreg.OpenKey(hive, subkey, 0, winreg.KEY_READ) as key:
@@ -206,14 +319,34 @@ class WindowsSystem(WindowsLinks):
         return EnvValue(str(value), kind == winreg.REG_EXPAND_SZ)
 
     def set_env(self, scope: Mode, name: str, value: str, expandable: bool) -> None:
-        """Store one environment value, creating its key when it does not exist."""
+        """Store one environment value, creating its key when it does not exist.
+
+        Parameters
+        ----------
+        scope : Mode
+            ``Mode.USER`` or ``Mode.SYSTEM``.
+        name : str
+            Name of the value.
+        value : str
+            Text to store.
+        expandable : bool
+            Store as ``REG_EXPAND_SZ`` (``%VAR%`` references expand) instead of ``REG_SZ``.
+        """
         hive, subkey = self._environment_location(scope)
         kind = winreg.REG_EXPAND_SZ if expandable else winreg.REG_SZ
         with winreg.CreateKeyEx(hive, subkey, 0, winreg.KEY_SET_VALUE) as key:
             winreg.SetValueEx(key, name, 0, kind, value)
 
     def delete_env(self, scope: Mode, name: str) -> None:
-        """Remove one environment value; an absent value or key is not an error."""
+        """Remove one environment value; an absent value or key is not an error.
+
+        Parameters
+        ----------
+        scope : Mode
+            ``Mode.USER`` or ``Mode.SYSTEM``.
+        name : str
+            Name of the value to remove.
+        """
         hive, subkey = self._environment_location(scope)
         try:
             with winreg.OpenKey(hive, subkey, 0, winreg.KEY_SET_VALUE) as key:
@@ -222,14 +355,33 @@ class WindowsSystem(WindowsLinks):
             return
 
     def get_path(self, scope: Mode) -> list[str]:
-        """Return the non-empty ``PATH`` entries of *scope*; a missing value is an empty list."""
+        """Return the non-empty ``PATH`` entries of *scope*; a missing value is an empty list.
+
+        Parameters
+        ----------
+        scope : Mode
+            ``Mode.USER`` or ``Mode.SYSTEM``.
+
+        Returns
+        -------
+        list of str
+            Stripped, non-empty entries in stored order.
+        """
         stored = self.get_env(scope, "Path")
         if stored is None:
             return []
         return [item.strip() for item in stored.value.split(";") if item.strip()]
 
     def set_path(self, scope: Mode, entries: Sequence[str]) -> None:
-        """Store *entries* as the expandable ``PATH`` of *scope*."""
+        """Store *entries* as the expandable ``PATH`` of *scope*.
+
+        Parameters
+        ----------
+        scope : Mode
+            ``Mode.USER`` or ``Mode.SYSTEM``.
+        entries : Sequence of str
+            Directories to join with semicolons.
+        """
         self.set_env(scope, "Path", ";".join(entries), True)
 
     def broadcast_environment_change(self) -> None:
@@ -240,11 +392,15 @@ class WindowsSystem(WindowsLinks):
         OSError
             If Windows does not accept the broadcast notification.
         """
+        # Win32 constants: broadcast to every top-level window, the setting-change
+        # message, and a flag that skips windows that stop responding.
         hwnd_broadcast = 0xFFFF
         wm_settingchange = 0x001A
         smto_abortifhung = 0x0002
 
+        # Declare the exact prototype so pointer-sized values are not truncated.
         send_message_timeout = ctypes.windll.user32.SendMessageTimeoutW
+        # Argument types in call order: window, message, wparam, lparam, flags, timeout, result.
         send_message_timeout.argtypes = [
             wintypes.HWND,
             wintypes.UINT,
@@ -265,6 +421,7 @@ class WindowsSystem(WindowsLinks):
         # c_void_p rather than casting directly to a non-pointer ctypes type.
         environment_name = ctypes.c_wchar_p("Environment")
         environment_lparam = ctypes.cast(environment_name, ctypes.c_void_p).value
+        # Broadcast with a per-window timeout, so a hung window cannot block the caller.
         ok = send_message_timeout(
             hwnd_broadcast,
             wm_settingchange,
@@ -274,6 +431,7 @@ class WindowsSystem(WindowsLinks):
             5000,
             ctypes.byref(result),
         )
+        # A zero result means no window accepted the broadcast.
         if not ok:
             raise OSError("SendMessageTimeoutW failed")
 
@@ -281,6 +439,13 @@ class WindowsSystem(WindowsLinks):
 
     def write_shortcut(self, path: Path, spec: ShortcutSpec) -> None:
         """Create or replace one ``.lnk`` file, creating its folder first.
+
+        Parameters
+        ----------
+        path : Path
+            ``.lnk`` file to write.
+        spec : ShortcutSpec
+            Target, arguments, working directory, icon, description and elevation flag to store.
 
         Raises
         ------
@@ -292,31 +457,83 @@ class WindowsSystem(WindowsLinks):
         _write_shortcut_file(path, spec)
 
     def read_shortcut(self, path: Path) -> ShortcutSpec:
-        """Read one ``.lnk`` file; the target is the raw stored text, ``%VAR%`` unexpanded."""
+        """Read one ``.lnk`` file; the target is the raw stored text, ``%VAR%`` unexpanded.
+
+        Parameters
+        ----------
+        path : Path
+            Existing ``.lnk`` file.
+
+        Returns
+        -------
+        ShortcutSpec
+            The stored fields.
+        """
         return _read_shortcut_file(Path(path))
 
     def delete_shortcut(self, path: Path) -> None:
-        """Delete one ``.lnk`` file; an absent file is not an error."""
+        """Delete one ``.lnk`` file; an absent file is not an error.
+
+        Parameters
+        ----------
+        path : Path
+            ``.lnk`` file to delete.
+        """
         Path(path).unlink(missing_ok=True)
 
     # -- privilege ---------------------------------------------------------
 
     def is_elevated(self) -> bool:
-        """Return whether this process may hold an elevated token; unreadable signals count as elevated."""
+        """Return whether this process may hold an elevated token; unreadable signals count as elevated.
+
+        Returns
+        -------
+        bool
+            ``True`` when elevated, or when the signals cannot be read.
+        """
         return elevation.is_elevated()
 
     @contextmanager
     def scratch_directory(self, prefix: str) -> Iterator[Path]:
-        """Create a private temporary folder, yield it, and delete it (and whatever is left in it) on exit."""
+        """Create a private temporary folder, yield it, and delete it (and whatever is left in it) on exit.
+
+        Parameters
+        ----------
+        prefix : str
+            Prefix of the folder name.
+
+        Yields
+        ------
+        Path
+            The new folder.
+        """
         with tempfile.TemporaryDirectory(prefix=prefix, ignore_cleanup_errors=True) as folder:
             yield Path(folder)
 
     def process_id(self) -> int:
-        """Return the id of this process."""
+        """Return the id of this process.
+
+        Returns
+        -------
+        int
+            Operating-system process id.
+        """
         return os.getpid()
 
     def process_is_running(self, pid: int) -> bool:
-        """Return whether process *pid* is still running (``OpenProcess`` and its exit code); doubt counts as running."""
+        """Return whether process *pid* is still running (``OpenProcess`` and its exit code); doubt counts as running.
+
+        Parameters
+        ----------
+        pid : int
+            Process id to test.
+
+        Returns
+        -------
+        bool
+            ``False`` only when the process is known to be gone.
+        """
+        # Without the Windows API, probe with signal 0, which sends nothing.
         if os.name != "nt":
             try:
                 os.kill(pid, 0)
@@ -325,6 +542,7 @@ class WindowsSystem(WindowsLinks):
             except OSError:
                 return True
             return True
+        # Declare the prototypes, then open the process with query-only rights.
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         kernel32.OpenProcess.restype = wintypes.HANDLE
         kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
@@ -334,6 +552,7 @@ class WindowsSystem(WindowsLinks):
         if not handle:
             # ERROR_INVALID_PARAMETER (87): no such process. Anything else (access denied) means it exists.
             return ctypes.get_last_error() != 87
+        # STILL_ACTIVE means running; a failed query counts as running.
         try:
             code = wintypes.DWORD()
             if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
@@ -343,11 +562,33 @@ class WindowsSystem(WindowsLinks):
             kernel32.CloseHandle(handle)
 
     def directory_is_admin_only(self, path: Path) -> bool:
-        """Return whether only administrators can modify *path* and replace its parents."""
+        """Return whether only administrators can modify *path* and replace its parents.
+
+        Parameters
+        ----------
+        path : Path
+            Directory to inspect.
+
+        Returns
+        -------
+        bool
+            ``True`` when no untrusted account can modify it.
+        """
         return self.directory_untrusted_reason(path) is None
 
     def directory_untrusted_reason(self, path: Path) -> str | None:
-        """Return why *path* is not admin-only, or ``None``; unreadable permissions give a reason."""
+        """Return why *path* is not admin-only, or ``None``; unreadable permissions give a reason.
+
+        Parameters
+        ----------
+        path : Path
+            Directory to inspect.
+
+        Returns
+        -------
+        str or None
+            A human-readable reason, or ``None`` when the directory is admin-only.
+        """
         return elevation.untrusted_reason(Path(path))
 
     # -- locations ---------------------------------------------------------
@@ -355,26 +596,40 @@ class WindowsSystem(WindowsLinks):
     def scope_folders(self, scope: Mode) -> ScopeFolders:
         """Resolve the default Start Menu ``opt`` folder and ``bin`` folder of one scope.
 
+        Parameters
+        ----------
+        scope : Mode
+            ``Mode.USER`` or ``Mode.SYSTEM``.
+
+        Returns
+        -------
+        ScopeFolders
+            The shortcut folder and the ``bin`` folder of that scope.
+
         Raises
         ------
         ValueError
             If a required environment variable such as ``APPDATA`` is missing.
         """
-        def env(name: str, purpose: str) -> str:
-            """Return a required environment variable or explain why it is needed."""
+        # Look up one required variable, naming its purpose when it is missing.
+        def _env(name: str, purpose: str) -> str:
+            """Return a required environment variable, or raise ``ValueError`` naming why it is needed."""
             value = os.environ.get(name)
             if not value:
                 raise ValueError(f"{name} is not set; cannot compute {purpose}.")
             return value
 
+        # User scope lives under the profile; machine scope under ProgramData and
+        # the system drive.
         start_menu = Path("Microsoft") / "Windows" / "Start Menu" / "opt"
         if scope == Mode.USER:
             return ScopeFolders(
-                Path(env("APPDATA", "User-scope shortcut directory")) / start_menu,
-                Path(env("USERPROFILE", "User-scope bin directory")) / "bin",
+                Path(_env("APPDATA", "User-scope shortcut directory")) / start_menu,
+                Path(_env("USERPROFILE", "User-scope bin directory")) / "bin",
             )
-        shortcut_root = Path(env("PROGRAMDATA", "Machine-scope shortcut directory")) / start_menu
-        system_drive = env("SYSTEMDRIVE", "Machine-scope bin directory")
+        # Machine scope: a bare drive such as ``C:`` is completed to ``C:\`` below.
+        shortcut_root = Path(_env("PROGRAMDATA", "Machine-scope shortcut directory")) / start_menu
+        system_drive = _env("SYSTEMDRIVE", "Machine-scope bin directory")
         if len(system_drive) == 2 and system_drive[0].isalpha() and system_drive[1] == ":":
             system_drive += "\\"
         return ScopeFolders(shortcut_root, Path(system_drive) / "bin")
@@ -394,17 +649,55 @@ class WindowsSystem(WindowsLinks):
     ) -> ProcessResult:
         """Run a child process to completion, streaming each output line to *on_line*.
 
+        Parameters
+        ----------
+        argv : Sequence of str
+            Program and arguments; a ``.ps1``, ``.cmd`` or ``.bat`` program runs through its interpreter.
+        cwd : Path, optional
+            Working directory of the child.
+        env : Mapping of str to str, optional
+            Complete environment of the child; the current one when omitted.
+        on_line : callable, optional
+            Called with each output line as it completes.
+        input_text : str, optional
+            Text written to the child's standard input.
+        timeout : float, optional
+            Seconds after which the child is killed.
+        watch : callable, optional
+            Polled while the child runs; a returned reason kills the child.
+
+        Returns
+        -------
+        ProcessResult
+            Exit status and the collected standard output and error.
+
         Raises
         ------
         OSError
-            If the program cannot be started; ``TimeoutError`` when *timeout*
-            seconds pass first (the process is killed); ``ProcessAborted`` when *watch*
-            returns a reason (the process is killed).
+            If the program cannot be started.
+        TimeoutError
+            If *timeout* seconds pass first; the process is killed.
+        ProcessAborted
+            If *watch* returns a reason; the process is killed.
         """
         return self._run(argv, cwd, env, on_line, input_text=input_text, timeout=timeout, watch=watch, kill_on_close=False)
 
     def run_foreground(self, argv: Sequence[str], cwd: Path | None = None, env: Mapping[str, str] | None = None) -> int:
         """Run a child on this console with inherited standard streams and return its exit status.
+
+        Parameters
+        ----------
+        argv : Sequence of str
+            Program and arguments, as for ``run``.
+        cwd : Path, optional
+            Working directory of the child.
+        env : Mapping of str to str, optional
+            Complete environment of the child; the current one when omitted.
+
+        Returns
+        -------
+        int
+            Exit status of the child.
 
         Raises
         ------
@@ -418,6 +711,11 @@ class WindowsSystem(WindowsLinks):
 
     def open_path(self, path: Path) -> None:
         """Open *path* with its associated program, as double-clicking it in Explorer would.
+
+        Parameters
+        ----------
+        path : Path
+            File to open.
 
         Raises
         ------
@@ -452,10 +750,12 @@ class WindowsSystem(WindowsLinks):
 
         # Read both streams on their own threads so a full pipe never blocks
         # the child, and report lines under one lock so callers see whole lines.
+        # Gather output on one lock per call, so callers see whole lines.
         lock = threading.Lock()
         collected: dict[str, list[str]] = {"stdout": [], "stderr": []}
 
-        def read(name: str, stream: Any) -> None:
+        # One reader per stream collects its lines and forwards them as they complete.
+        def _read(name: str, stream: Any) -> None:
             """Collect one stream line by line and forward each line."""
             for line, terminated, continued in _output_lines(stream):
                 with lock:
@@ -463,8 +763,9 @@ class WindowsSystem(WindowsLinks):
                     if on_line is not None:
                         on_line(line + (" [line continues]" if continued else ""))
 
+        # Start both readers before waiting, so neither pipe can fill up and stall the child.
         readers = [
-            threading.Thread(target=read, args=(name, stream), daemon=True)
+            threading.Thread(target=_read, args=(name, stream), daemon=True)
             for name, stream in (("stdout", process.stdout), ("stderr", process.stderr))
         ]
         for reader in readers:
@@ -479,9 +780,11 @@ class WindowsSystem(WindowsLinks):
             # that outlived its parent (``taskkill /T`` cannot find the children of a dead process).
             # A failure here is inside the try: the child is killed and the error reaches the caller.
             job = _ProcessJob.around(process, kill_on_close=kill_on_close)
+            # Encode the input with the console code page and send it from its own thread.
             if input_text is not None:
                 payload = input_text.encode(locale.getpreferredencoding(False), errors="replace")
 
+                # The feeder writes the whole payload, then closes the pipe so the child sees end of input.
                 def feed() -> None:
                     """Write the input and close the pipe; a child that is gone closes it for us."""
                     try:
@@ -498,6 +801,7 @@ class WindowsSystem(WindowsLinks):
                 slice_seconds = 0.2 if watch is not None else timeout
                 if timeout is not None and slice_seconds is not None:
                     slice_seconds = min(slice_seconds, max(timeout - (time.monotonic() - started), 0.0))
+                # Either the child exits, or the slice ends and the deadline and watcher are consulted.
                 try:
                     returncode = process.wait(timeout=slice_seconds)
                     break
@@ -518,6 +822,7 @@ class WindowsSystem(WindowsLinks):
             _kill_tree(process, job)
             process.wait()
             raise
+        # Always drain the readers and release the feeder and the job, whatever happened.
         finally:
             for reader in readers:
                 reader.join()
@@ -525,6 +830,7 @@ class WindowsSystem(WindowsLinks):
                 feeder.join(5)
             if job is not None:
                 job.close()
+        # Assemble the result from the lines the readers collected.
         return ProcessResult(returncode, "".join(collected["stdout"]), "".join(collected["stderr"]))
 
     def regex_worker(
@@ -536,35 +842,62 @@ class WindowsSystem(WindowsLinks):
     ) -> ProcessResult:
         """Run ``regex_worker.py`` on *request* in an isolated child with a hard deadline (see the port).
 
+        Parameters
+        ----------
+        request : str
+            Request text written to the worker's standard input.
+        timeout : float
+            Seconds the worker may run after it reports that it is up.
+        on_line : callable, optional
+            Called with each output line of the worker.
+
+        Returns
+        -------
+        ProcessResult
+            Exit status and output of the worker.
+
+        Raises
+        ------
+        WorkerDidNotStart
+            If the worker does not announce itself within its start limit.
+        TimeoutError
+            If the worker is still running after *timeout* seconds from its start.
+
+        Notes
+        -----
         The deadline counts from the moment the worker reports ``pid <n>`` (the interpreter and its
         imports are up), so a slow process start (antivirus, a cold disk) is not mistaken for a slow
         pattern; the start itself has its own generous limit. The watcher polls five times a second,
         so the kill happens within about 0.2 seconds of the deadline.
         """
+        # Start the worker with an isolated interpreter and a minimal environment.
         command = [sys.executable, "-I", "-s", "-B", "-S", str(_REGEX_WORKER)]
         environment = {"SystemRoot": os.environ.get("SystemRoot", r"C:\Windows")}
         began = time.monotonic()
         ready: list[float] = []
 
-        def heard(line: str) -> None:
+        # Watch the output for the worker's start-up line, which starts the deadline clock.
+        def _heard(line: str) -> None:
             """Note when the worker says it is up, and pass the line on."""
             if not ready and line.startswith("pid "):
                 ready.append(time.monotonic())
             if on_line is not None:
                 on_line(line)
 
-        def late() -> str | None:
+        # The watcher the runner polls: a reason to kill the worker, or ``None``.
+        def _late() -> str | None:
             """Return a reason once the worker has overrun its start limit or its deadline."""
             now = time.monotonic()
             if not ready:
                 return "start" if now - began > _WORKER_START_SECONDS else None
             return "deadline" if now - ready[0] > timeout else None
 
+        # Run in a scratch directory and translate the watcher's abort into the port's errors.
         with tempfile.TemporaryDirectory(prefix="gupkg-regex-", ignore_cleanup_errors=True) as folder:
             try:
                 return self._run(
-                    command, Path(folder), environment, heard,
-                    input_text=request, timeout=None, watch=late, kill_on_close=True,
+                    command, Path(folder), environment, _heard,
+                    input_text=request, timeout=None, watch=_late, kill_on_close=True,
                 )
             except ProcessAborted as error:
                 if str(error) == "start":
@@ -582,12 +915,33 @@ class WindowsSystem(WindowsLinks):
         *,
         timeout: float = 60,
     ) -> int:
-        """Download *url* to *dest* in 64 KiB chunks and return the byte count."""
+        """Download *url* to *dest* in 64 KiB chunks and return the byte count.
+
+        Parameters
+        ----------
+        url : str
+            Address to download.
+        headers : Mapping of str to str, optional
+            Extra request headers.
+        dest : Path
+            File to write.
+        on_progress : callable, optional
+            Called with ``(received, total)``; *total* is ``None`` when the size is unknown.
+        timeout : float, optional
+            Seconds a single network operation may take.
+
+        Returns
+        -------
+        int
+            Number of bytes written.
+        """
+        # Open the request and tell the caller the declared size before any byte is written.
         request = urllib.request.Request(url, headers=dict(headers or {}))
         with urllib.request.urlopen(request, timeout=timeout) as response:
             total = _content_length(response)
             if on_progress is not None:
                 on_progress(0, total)
+            # Stream to disk in 64 KiB chunks, reporting progress after each one.
             received = 0
             with open(dest, "wb") as handle:
                 while chunk := response.read(64 * 1024):
@@ -600,7 +954,22 @@ class WindowsSystem(WindowsLinks):
     def fetch_text(
         self, url: str, headers: Mapping[str, str] | None = None, *, timeout: float = 60
     ) -> str:
-        """Return the UTF-8 text served at *url*."""
+        """Return the UTF-8 text served at *url*.
+
+        Parameters
+        ----------
+        url : str
+            Address to read.
+        headers : Mapping of str to str, optional
+            Extra request headers.
+        timeout : float, optional
+            Seconds a single network operation may take.
+
+        Returns
+        -------
+        str
+            The decoded response body.
+        """
         request = urllib.request.Request(url, headers=dict(headers or {}))
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return response.read().decode("utf-8")
@@ -615,7 +984,39 @@ class WindowsSystem(WindowsLinks):
         max_bytes: int | None = None,
         total_timeout: float | None = None,
     ) -> HttpResponse:
-        """Send one request without following redirects and return the response of any status."""
+        """Send one request without following redirects and return the response of any status.
+
+        Parameters
+        ----------
+        url : str
+            Address to request; only ``http``, ``https`` and ``file`` are accepted.
+        headers : Mapping of str to str, optional
+            Extra request headers.
+        method : str, optional
+            HTTP method.
+        timeout : float, optional
+            Seconds a single network operation may take.
+        max_bytes : int, optional
+            Largest body accepted.
+        total_timeout : float, optional
+            Seconds the whole request may take.
+
+        Returns
+        -------
+        HttpResponse
+            Status, address, lower-case headers and body.
+
+        Raises
+        ------
+        OSError
+            If the scheme is refused, the transfer fails or is cut short, or the encoding is not identity.
+        TimeoutError
+            If *total_timeout* passes.
+        ResponseTooLarge
+            If the body exceeds *max_bytes*.
+        """
+        # Perform the request; failures after the total deadline, or protocol errors that are not
+        # OSError, are mapped to the port's error types below.
         deadline = _Deadline(total_timeout)
         try:
             with _open_without_redirects(url, headers, method, timeout, deadline) as response:
@@ -624,6 +1025,7 @@ class WindowsSystem(WindowsLinks):
                     _refuse_encoding(response_headers)
                 expected = _expected_length(response, method, status)
                 body = _read_limited(response, max_bytes, deadline, expected)
+        # Map protocol failures and deadline expiry to the port's error types.
         except http.client.HTTPException as error:
             raise _transport_error(deadline, error) from error
         except OSError as error:
@@ -646,7 +1048,39 @@ class WindowsSystem(WindowsLinks):
         on_headers: Callable[[int, Mapping[str, str]], None] | None = None,
         total_timeout: float | None = None,
     ) -> DownloadResponse:
-        """Stream a 2xx response into *dest* (appending a 206 answer when asked); write nothing otherwise."""
+        """Stream a 2xx response into *dest* (appending a 206 answer when asked); write nothing otherwise.
+
+        Parameters
+        ----------
+        url : str
+            Address to download; only ``http``, ``https`` and ``file`` are accepted.
+        headers : Mapping of str to str, optional
+            Extra request headers.
+        dest : Path
+            File to write.
+        on_progress : callable, optional
+            Called with ``(received, total)``; *total* is ``None`` when the size is unknown.
+        timeout : float, optional
+            Seconds a single network operation may take.
+        append : bool, optional
+            Continue *dest* when the server answers a range request with 206.
+        on_headers : callable, optional
+            Called with ``(status, headers)`` before any body byte is read.
+        total_timeout : float, optional
+            Seconds the whole transfer may take.
+
+        Returns
+        -------
+        DownloadResponse
+            Status, address, headers, bytes written and whether *dest* was continued.
+
+        Raises
+        ------
+        OSError
+            If the scheme is refused, the transfer fails or is cut short, or the encoding is not identity.
+        TimeoutError
+            If *total_timeout* passes.
+        """
         deadline = _Deadline(total_timeout)
         try:
             with _open_without_redirects(url, headers, "GET", timeout, deadline) as response:
@@ -665,6 +1099,7 @@ class WindowsSystem(WindowsLinks):
                 total = already + length if length is not None else None
                 if on_progress is not None:
                     on_progress(already, total)
+                # Write the body in chunks, reporting progress and honouring the total deadline between reads.
                 received = already
                 with open(dest, "ab" if resumed else "wb") as handle:
                     while chunk := _read_some(response):
@@ -674,8 +1109,10 @@ class WindowsSystem(WindowsLinks):
                             on_progress(received, total)
                         if deadline.expired():
                             raise TimeoutError(f"{url} took longer than {total_timeout} seconds in total")
+                # A body shorter than the declared length is a cut-short transfer, never data.
                 if length is not None and received - already != length:
                     raise OSError(f"{url} sent {received - already} of {length} bytes: the transfer was cut short")
+        # Map protocol failures and deadline expiry to the port's error types.
         except http.client.HTTPException as error:
             raise _transport_error(deadline, error) from error
         except OSError as error:
@@ -693,7 +1130,18 @@ class WindowsSystem(WindowsLinks):
 
 
 def enable_virtual_terminal(fileno: int) -> bool:
-    """Turn on ANSI processing for a Windows console handle; report success."""
+    """Turn on ANSI processing for a Windows console handle; report success.
+
+    Parameters
+    ----------
+    fileno : int
+        File descriptor of the console stream.
+
+    Returns
+    -------
+    bool
+        ``True`` when virtual-terminal processing is now enabled.
+    """
     import msvcrt
 
     try:
@@ -832,11 +1280,19 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
     """Hand a 3xx answer to the caller instead of following it."""
 
     def redirect_request(self, *args: Any, **kwargs: Any) -> None:
-        """Decline every redirect, so urllib reports the 3xx response itself."""
+        """Decline every redirect, so urllib reports the 3xx response itself.
+
+        Parameters
+        ----------
+        *args, **kwargs
+            Ignored; they are the arguments urllib passes.
+
+        Returns
+        -------
+        None
+            Always ``None``, which makes urllib return the 3xx answer instead of following it.
+        """
         return None
-
-
-_ALLOWED_SCHEMES = ("http", "https", "file")
 
 
 class _Deadline:
@@ -860,11 +1316,23 @@ class _Deadline:
             self._timer.start()
 
     def expired(self) -> bool:
-        """Return whether the limit has passed."""
+        """Return whether the limit has passed.
+
+        Returns
+        -------
+        bool
+            ``True`` once the limit has passed; always ``False`` when there is none.
+        """
         return self.expires is not None and time.monotonic() > self.expires
 
     def register(self, sock: socket.socket) -> None:
-        """Watch *sock*; if the limit already passed, shut it down at once."""
+        """Watch *sock*; if the limit already passed, shut it down at once.
+
+        Parameters
+        ----------
+        sock : socket.socket
+            Connection socket to shut down when the limit passes.
+        """
         self._sockets.append(sock)
         if self.hit:
             self._shutdown(sock)
@@ -902,7 +1370,18 @@ class _EofWatch:
         self.hit_eof = False
 
     def readline(self, *args: Any) -> bytes:
-        """Read a line and remember an end of file."""
+        """Read a line and remember an end of file.
+
+        Parameters
+        ----------
+        *args
+            Passed to the wrapped ``readline``.
+
+        Returns
+        -------
+        bytes
+            The line read; empty at end of file.
+        """
         line = self.inner.readline(*args)
         if not line:
             self.hit_eof = True
@@ -921,7 +1400,13 @@ class _StrictResponse(http.client.HTTPResponse):
     """
 
     def begin(self) -> None:
-        """Read the status line and headers; refuse a connection that closed before the blank line."""
+        """Read the status line and headers; refuse a connection that closed before the blank line.
+
+        Raises
+        ------
+        _CutHeaders
+            If the connection ended before the blank line that closes the headers.
+        """
         watch = _EofWatch(self.fp)
         self.fp = watch
         try:
@@ -957,7 +1442,18 @@ class _DeadlineHTTP(urllib.request.HTTPHandler):
         self._deadline = deadline
 
     def http_open(self, req: Any) -> Any:
-        """Open *req* on a watched connection."""
+        """Open *req* on a watched connection.
+
+        Parameters
+        ----------
+        req : urllib.request.Request
+            Request to open.
+
+        Returns
+        -------
+        http.client.HTTPResponse
+            The open response.
+        """
         return self.do_open(_timed(http.client.HTTPConnection, self._deadline), req)
 
 
@@ -970,7 +1466,18 @@ class _DeadlineHTTPS(urllib.request.HTTPSHandler):
         self._deadline = deadline
 
     def https_open(self, req: Any) -> Any:
-        """Open *req* on a watched connection."""
+        """Open *req* on a watched connection.
+
+        Parameters
+        ----------
+        req : urllib.request.Request
+            Request to open.
+
+        Returns
+        -------
+        http.client.HTTPResponse
+            The open response.
+        """
         return self.do_open(_timed(http.client.HTTPSConnection, self._deadline), req, context=self._context)
 
 
@@ -997,9 +1504,12 @@ def _open_without_redirects(url: str, headers: Mapping[str, str] | None, method:
     Only ``http``, ``https`` and ``file`` URLs are opened. HTTPS verification
     uses the system store with partial-chain support (``gupkg.tls``).
     """
+    # Refuse every scheme gupkg does not fetch before any network or file access.
+    allowed_schemes = ("http", "https", "file")
     scheme = urllib.parse.urlsplit(url).scheme.lower()
-    if scheme not in _ALLOWED_SCHEMES:
+    if scheme not in allowed_schemes:
         raise OSError(f"Only http, https and file URLs are fetched, not {url!r}")
+    # Build an opener that never follows redirects and registers every socket with the deadline.
     enable_partial_chain_verification()
     watched = deadline or _Deadline(None)
     opener = urllib.request.build_opener(_NoRedirect, _DeadlineHTTP(watched), _DeadlineHTTPS(watched))
@@ -1083,11 +1593,27 @@ class _ProcessJob:
     def around(cls, process: "subprocess.Popen[bytes]", *, kill_on_close: bool = False) -> "_ProcessJob | None":
         """Put *process* in a new job; ``None`` when Windows refuses (the caller falls back to ``taskkill``).
 
+        Parameters
+        ----------
+        process : subprocess.Popen
+            Child to place in the job.
+        kill_on_close : bool, optional
+            End every process of the job when its last handle closes.
+
+        Returns
+        -------
+        _ProcessJob or None
+            The job, or ``None`` when it could not be created, configured or joined.
+
+        Notes
+        -----
         With *kill_on_close* the job ends all its processes when its last handle closes. If that
         limit cannot be set the job is not used (``None``): the caller must not believe in a guarantee it lacks.
         """
+        # Job objects exist only on Windows.
         if os.name != "nt":
             return None
+        # Declare the prototypes of the few kernel calls used.
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         kernel32.CreateJobObjectW.restype = wintypes.HANDLE
         kernel32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
@@ -1097,9 +1623,11 @@ class _ProcessJob:
         kernel32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
         kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
         kernel32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD]
+        # Create the job, optionally making the close of its last handle kill its members.
         job = kernel32.CreateJobObjectW(None, None)
         if not job:
             return None
+        # With kill_on_close, closing the last handle must end every member; without that limit the job is not used.
         if kill_on_close:
             limits = _JobExtendedLimits()
             limits.BasicLimitInformation.LimitFlags = cls._KILL_ON_JOB_CLOSE
@@ -1108,6 +1636,7 @@ class _ProcessJob:
             ):
                 kernel32.CloseHandle(job)
                 return None
+        # Move the child into the job; on any failure release the job and give up.
         member = kernel32.OpenProcess(cls._PROCESS_SET_QUOTA | cls._PROCESS_TERMINATE, False, process.pid)
         assigned = bool(member) and bool(kernel32.AssignProcessToJobObject(job, member))
         if member:
@@ -1118,7 +1647,13 @@ class _ProcessJob:
         return cls(job, kernel32)
 
     def terminate(self) -> bool:
-        """End every process of the job; report whether Windows did it."""
+        """End every process of the job; report whether Windows did it.
+
+        Returns
+        -------
+        bool
+            ``True`` when Windows terminated the job.
+        """
         return bool(self._kernel32.TerminateJobObject(self._handle, 1))
 
     def close(self) -> None:
@@ -1131,9 +1666,11 @@ def _kill_tree(process: "subprocess.Popen[bytes]", job: "_ProcessJob | None" = N
 
     ``Popen.kill`` ends only the child, so a script that started a helper would leave it running.
     """
+    # Prefer the job object: it also reaches helpers whose parent has already exited.
     if job is not None and job.terminate():
         process.kill()
         return
+    # Otherwise ask ``taskkill`` for the tree, then kill the process itself in any case.
     try:
         subprocess.run(
             [os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "taskkill.exe"),
@@ -1161,10 +1698,12 @@ def _read_limited(response: Any, max_bytes: int | None, deadline: _Deadline | No
     """
     if max_bytes == 0:
         return b""
+    # Accumulate blocks, enforcing the size cap and the total deadline as they arrive.
     pieces: list[bytes] = []
     size = 0
     while True:
         block = _read_some(response)
+        # An empty block is the end of the body; check it against the declared length.
         if not block:
             if expected is not None and size != expected:
                 raise OSError(f"The response ended after {size} of {expected} bytes: the transfer was cut short")
@@ -1218,6 +1757,7 @@ def _make_junction(source: Path, target: Path, *, replace: bool = False) -> None
     OSError
         If the directory or the reparse point cannot be created.
     """
+    # Win32 constants for opening a directory as a reparse point and tagging it.
     generic_write = 0x40000000
     open_existing = 3
     file_share_all = 0x00000007
@@ -1226,9 +1766,11 @@ def _make_junction(source: Path, target: Path, *, replace: bool = False) -> None
     fsctl_set_reparse_point = 0x000900A4
     io_reparse_tag_mount_point = 0xA0000003
 
+    # Declare the prototypes of the kernel calls used.
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel32.CreateDirectoryW.argtypes = [wintypes.LPCWSTR, wintypes.LPVOID]
     kernel32.CreateDirectoryW.restype = wintypes.BOOL
+    # CreateFileW(path, access, share, security, disposition, flags, template).
     kernel32.CreateFileW.argtypes = [
         wintypes.LPCWSTR,
         wintypes.DWORD,
@@ -1239,6 +1781,7 @@ def _make_junction(source: Path, target: Path, *, replace: bool = False) -> None
         wintypes.HANDLE,
     ]
     kernel32.CreateFileW.restype = wintypes.HANDLE
+    # DeviceIoControl carries the reparse-point buffer to the file system.
     kernel32.DeviceIoControl.argtypes = [
         wintypes.HANDLE,
         wintypes.DWORD,
@@ -1249,6 +1792,7 @@ def _make_junction(source: Path, target: Path, *, replace: bool = False) -> None
         ctypes.POINTER(wintypes.DWORD),
         wintypes.LPVOID,
     ]
+    # Both calls report failure through their BOOL result.
     kernel32.DeviceIoControl.restype = wintypes.BOOL
     kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
     kernel32.CloseHandle.restype = wintypes.BOOL
@@ -1296,25 +1840,22 @@ def _make_junction(source: Path, target: Path, *, replace: bool = False) -> None
         file_flag_open_reparse_point | file_flag_backup_semantics,
         None,
     )
+    # A failed open leaves the empty directory behind; remove it before reporting.
     if handle == wintypes.HANDLE(-1).value or handle is None:
         error = ctypes.WinError(ctypes.get_last_error())
         os.rmdir(str(source))
         raise error
+    # Attach the reparse point and always close the handle.
     try:
         returned = wintypes.DWORD(0)
+        # FSCTL_SET_REPARSE_POINT turns the empty directory into a junction.
         ok = kernel32.DeviceIoControl(
-            handle,
-            fsctl_set_reparse_point,
-            buffer,
-            len(buffer),
-            None,
-            0,
-            ctypes.byref(returned),
-            None,
+            handle, fsctl_set_reparse_point, buffer, len(buffer), None, 0, ctypes.byref(returned), None,
         )
         error = None if ok else ctypes.WinError(ctypes.get_last_error())
     finally:
         kernel32.CloseHandle(handle)
+    # Remove the half-made junction directory when attaching failed.
     if error is not None:
         os.rmdir(str(source))
         raise error
@@ -1349,6 +1890,7 @@ def _write_shortcut_file(path: Path, link: ShortcutSpec) -> None:
             ),
             path,
         )
+        # Then each optional text field.
         setters = (
             ("SetArguments", link.arguments),
             ("SetWorkingDirectory", link.working_directory),
@@ -1400,9 +1942,11 @@ def _read_shortcut_file(path: Path) -> ShortcutSpec:
         load = _method(persist, _IPERSISTFILE_SLOTS["Load"], wintypes.LPCWSTR, wintypes.DWORD)
         _check(load(os.fspath(path), _STGM_READ), path)
 
-        def read_text(name: str, *extra: tuple[Any, Any]) -> str:
+        # Helper for the ``Get...`` methods that fill a text buffer.
+        def _read_text(name: str, *extra: tuple[Any, Any]) -> str:
             """Call one ``Get...(buffer, size, ...)`` method and return its text."""
             buffer = ctypes.create_unicode_buffer(_BUFFER_CHARS)
+            # Bind the vtable method with the buffer arguments, then call it.
             getter = _method(
                 shell_link,
                 _ISHELLLINK_SLOTS[name],
@@ -1414,10 +1958,10 @@ def _read_shortcut_file(path: Path) -> ShortcutSpec:
             return buffer.value
 
         # Read the text fields; the raw-path flag keeps %VAR% unexpanded.
-        target = read_text("GetPath", (ctypes.c_void_p, None), (wintypes.DWORD, _SLGP_RAWPATH))
-        arguments = read_text("GetArguments")
-        working_directory = read_text("GetWorkingDirectory")
-        description = read_text("GetDescription")
+        target = _read_text("GetPath", (ctypes.c_void_p, None), (wintypes.DWORD, _SLGP_RAWPATH))
+        arguments = _read_text("GetArguments")
+        working_directory = _read_text("GetWorkingDirectory")
+        description = _read_text("GetDescription")
 
         # The icon comes back as a path plus a separate index.
         icon_buffer = ctypes.create_unicode_buffer(_BUFFER_CHARS)
@@ -1429,6 +1973,7 @@ def _read_shortcut_file(path: Path) -> ShortcutSpec:
             ctypes.c_int,
             ctypes.POINTER(ctypes.c_int),
         )
+        # Query the icon path and index in one call.
         _check(get_icon(icon_buffer, _BUFFER_CHARS, ctypes.byref(icon_index)), path)
         icon = f"{icon_buffer.value},{icon_index.value}" if icon_buffer.value else ""
         run_as_admin = bool(_link_flags(shell_link, path) & _SLDF_RUNAS_USER)
@@ -1465,17 +2010,25 @@ _IPERSISTFILE_SLOTS = {"Load": 5, "Save": 6}
 # IShellLinkDataList vtable slots (IUnknown 0-2): 3 AddDataBlock, 4 CopyDataBlock, 5 RemoveDataBlock,
 #   6 GetFlags, 7 SetFlags
 _ISHELLLINKDATALIST_SLOTS = {"GetFlags": 6, "SetFlags": 7}
+# SLDF_RUNAS_USER: the shortcut asks for elevation (UAC) when opened.
 _SLDF_RUNAS_USER = 0x2000
 
+# IUnknown vtable slot of QueryInterface.
 _IUNKNOWN_QUERY_INTERFACE = 0
+# IUnknown vtable slot of Release.
 _IUNKNOWN_RELEASE = 2
 
+# CoInitializeEx apartment model: single-threaded apartment.
 _COINIT_APARTMENTTHREADED = 0x2
+# CoCreateInstance context: load the COM server inside this process.
 _CLSCTX_INPROC_SERVER = 0x1
 # HRESULTs are signed 32-bit values in ctypes.
 _RPC_E_CHANGED_MODE = ctypes.c_long(0x80010106).value
+# IPersistFile::Load access mode: read only.
 _STGM_READ = 0
+# IShellLink::GetPath flag: return the stored path without expanding %VAR%.
 _SLGP_RAWPATH = 0x4
+# Size, in characters, of the buffers that receive shortcut text fields.
 _BUFFER_CHARS = 32768
 
 
@@ -1519,8 +2072,10 @@ def _ole32() -> Any:
     ole32 = ctypes.WinDLL("ole32")
     ole32.CoInitializeEx.argtypes = [ctypes.c_void_p, wintypes.DWORD]
     ole32.CoInitializeEx.restype = ctypes.c_long
+    # CoUninitialize takes nothing and returns nothing.
     ole32.CoUninitialize.argtypes = []
     ole32.CoUninitialize.restype = None
+    # CoCreateInstance(clsid, outer, context, iid, out pointer).
     ole32.CoCreateInstance.argtypes = [
         ctypes.POINTER(_GUID),
         ctypes.c_void_p,
@@ -1583,6 +2138,7 @@ def _open_link(path: Path) -> Iterator[tuple[ctypes.c_void_p, ctypes.c_void_p]]:
             clsid = _guid("00021401-0000-0000-C000-000000000046")  # CLSID_ShortcutSpec
             iid_link = _guid("000214F9-0000-0000-C000-000000000046")  # IID_IShortcutSpecW
             iid_persist = _guid("0000010B-0000-0000-C000-000000000046")  # IID_IPersistFile
+            # Create the shell link object, then ask it for IPersistFile.
             _check(
                 ole32.CoCreateInstance(
                     ctypes.byref(clsid),
@@ -1593,12 +2149,14 @@ def _open_link(path: Path) -> Iterator[tuple[ctypes.c_void_p, ctypes.c_void_p]]:
                 ),
                 path,
             )
+            # Query the same object for its file-persistence interface.
             query = _method(
                 link,
                 _IUNKNOWN_QUERY_INTERFACE,
                 ctypes.POINTER(_GUID),
                 ctypes.POINTER(ctypes.c_void_p),
             )
+            # Ask for IPersistFile, then hand both interfaces to the caller.
             _check(query(ctypes.byref(iid_persist), ctypes.byref(persist)), path)
             yield link, persist
         finally:

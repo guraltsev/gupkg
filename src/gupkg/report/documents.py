@@ -1,9 +1,9 @@
-"""The typed shape of the documents ``gupkg ... --json`` writes (``"api": 2``), and the one reader that turns them back into typed rows.
+"""Define the typed shape of the documents the ``--json`` option of gupkg commands writes (``"api": 2``) and parse them back into typed rows.
 
 The CLI builds its ``list``, ``info`` and ``registry status`` documents from the dataclasses of this module (``ListRow``, ``InfoRow``,
-``RegistryRow`` and the documents that hold them), and the manager and any other program read the same documents with ``read_list``,
+``RegistryRow`` and the documents that hold them), and the manager and any other program consume the same documents with ``read_list``,
 ``read_info``, ``read_registry_status``, ``read_plan`` and ``read_results``. Writer and reader share the types, so they cannot drift, and
-a program that reads a document never parses it with rules of its own.
+a program that consumes a document never parses it with rules of its own.
 
 Usage and API
 -------------
@@ -17,7 +17,7 @@ Every reader raises ``DocumentError`` with a message that names the field (``pac
 Implementation Approach
 -----------------------
 A reader never trusts a type: text must be ``str``, flags ``bool``, counts ``int`` (a ``bool`` is not a count), a list must be a list of
-the right items, and a field the writer always writes must be there (a field that is ``null`` by design is read as ``None``). A document
+the right items, and a field the writer always writes must be there (a field that is ``null`` by design is treated as ``None``). A document
 whose ``ok`` is false and that carries no rows raises ``DocumentError`` with the CLI's own error message, so a failed call is never read
 as an empty inventory. Extra keys are ignored: a newer writer may add fields within one ``api``.
 """
@@ -39,6 +39,161 @@ class DocumentError(ValueError):
 # ---------------------------------------------------------------------------
 # Field readers
 # ---------------------------------------------------------------------------
+
+
+def read_list(document: Any) -> ListDocument:
+    """Return the typed ``list`` document, including its ``--available`` and ``--names`` forms.
+
+    Parameters
+    ----------
+    document : object
+        The parsed ``list --json`` document.
+
+    Returns
+    -------
+    ListDocument
+        The run's scope and its rows (or names).
+
+    Raises
+    ------
+    DocumentError
+        When the document is malformed or reports a failed call.
+    """
+    # Validate the envelope, and turn a failed call into its error message.
+    data = _head(document, "list")
+    if (error := _failed(data)) is not None:
+        raise error
+    mode, root = _text(data, "mode", ""), _text(data, "root", "")
+
+    # ``--names`` documents carry names only; otherwise read every package row.
+    if "names" in data and "packages" not in data:
+        return ListDocument(mode or "", root or "", names=_texts(data, "names", ""))
+    rows = tuple(ListRow.from_data(_object(item, f"packages[{index}]"), f"packages[{index}]") for index, item in enumerate(_list(data, "packages", "")))
+    return ListDocument(mode or "", root or "", rows, _texts(data, "warnings", ""))
+
+
+def read_info(document: Any) -> InfoDocument:
+    """Return the typed ``info`` document.
+
+    Parameters
+    ----------
+    document : object
+        The parsed ``info --json`` document.
+
+    Returns
+    -------
+    InfoDocument
+        The run's scope, the packages and the per-target errors.
+
+    Raises
+    ------
+    DocumentError
+        When the document is malformed, or holds no package and reports a failed call.
+    """
+    # Validate the envelope and read every package.
+    data = _head(document, "info")
+    rows = tuple(InfoRow.from_data(_object(item, f"packages[{index}]"), f"packages[{index}]") for index, item in enumerate(_list(data, "packages", "")))
+    # A document with no package and a failure is an error, never an empty inventory.
+    errors = _objects(data, "errors", "")
+    if not rows and (error := _failed(data)) is not None:
+        raise error
+    return InfoDocument(_text(data, "mode", "") or "", _text(data, "root", "") or "", rows, errors, data["ok"], data["exit_code"])
+
+
+def read_registry_status(document: Any) -> RegistryStatusDocument:
+    """Return the typed ``registry status`` document.
+
+    Parameters
+    ----------
+    document : object
+        The parsed ``registry status --json`` document.
+
+    Returns
+    -------
+    RegistryStatusDocument
+        The run's mode and one row per configured registry.
+
+    Raises
+    ------
+    DocumentError
+        When the document is malformed or reports a failed call.
+    """
+    # Validate the envelope, and turn a failed call into its error message.
+    data = _head(document, "registry status")
+    if (error := _failed(data)) is not None:
+        raise error
+
+    # Read one row per configured registry, with its index in messages.
+    rows = []
+    for index, item in enumerate(_objects(data, "registries", "")):
+        at = f"registries[{index}]"
+        rows.append(RegistryRow(
+            _text(item, "name", at) or "", _text(item, "source", at) or "", _text(item, "revision", at, null=True),
+            _text(item, "synchronized_at", at, null=True), _text(item, "last_failure", at, null=True), _text(item, "cache", at) or "",
+            _count(item, "packages", at), _texts(item, "problems", at),
+        ))
+    return RegistryStatusDocument(_text(data, "mode", "") or "", tuple(rows))
+
+
+def read_results(document: Any) -> ResultsDocument:
+    """Return the typed result document of a lifecycle call.
+
+    Parameters
+    ----------
+    document : object
+        The parsed ``--json`` document of an install, update or similar call.
+
+    Returns
+    -------
+    ResultsDocument
+        The call's outcome and one entry per target.
+
+    Raises
+    ------
+    DocumentError
+        When the document is malformed.
+    """
+    # Validate the envelope, then read one entry per target.
+    data = _head(document)
+    entries = tuple(ResultEntry.from_data(_object(item, f"results[{index}]"), f"results[{index}]") for index, item in enumerate(_list(data, "results", "")))
+    return ResultsDocument(data["ok"], data["exit_code"], entries, _texts(data, "warnings", ""))
+
+
+def read_plan(document: Any) -> PlanDocument:
+    """Return the typed ``--plan --json`` document.
+
+    Parameters
+    ----------
+    document : object
+        The parsed ``--plan --json`` document.
+
+    Returns
+    -------
+    PlanDocument
+        One item per target.
+
+    Raises
+    ------
+    DocumentError
+        When the document is malformed.
+    """
+    # Validate the envelope, then read one item per target.
+    data = _head(document)
+    items = []
+    for index, entry in enumerate(_objects(data, "plans", "")):
+        at = f"plans[{index}]"
+        ok = _flag(entry, "ok", at)
+        # A target either has a plan or a result that says why not.
+        plan = entry.get("plan")
+        if ok and plan is not None:
+            items.append(PlanItem(_text(entry, "target", at) or "", ok, _count(entry, "exit_code", at), plan=PlanData.from_data(_object(plan, f"{at}.plan"), f"{at}.plan")))
+            continue
+        result = ResultEntry.from_data(_object(_value(entry, "result", at), f"{at}.result"), f"{at}.result")
+        items.append(PlanItem(_text(entry, "target", at) or "", ok, _count(entry, "exit_code", at), result=result))
+    return PlanDocument(data["ok"], data["exit_code"], tuple(items))
+
+
+# --- supporting helpers ---
 
 
 def _kind(value: Any) -> str:
@@ -149,6 +304,13 @@ def _failed(data: Mapping[str, Any]) -> DocumentError | None:
 class ListRow:
     """One package of ``gupkg list --json`` (and the head of an ``info`` row).
 
+    Methods
+    -------
+    from_data
+        Build a row from its JSON object; every key the CLI writes must be there.
+    to_data
+        Return the row as the CLI writes it.
+
     Attributes
     ----------
     name, status : str
@@ -175,7 +337,25 @@ class ListRow:
 
     @classmethod
     def from_data(cls, data: Mapping[str, Any], where: str = "") -> ListRow:
-        """Read one row; every key the CLI writes must be there."""
+        """Build a row from its JSON object; every key the CLI writes must be there.
+
+        Parameters
+        ----------
+        data : mapping
+            The row's JSON object.
+        where : str, default=""
+            Path of the object inside the document, used in error messages.
+
+        Returns
+        -------
+        ListRow
+            The typed row.
+
+        Raises
+        ------
+        DocumentError
+            When a field is missing or has the wrong type.
+        """
         return cls(
             _text(data, "name", where) or "", _text(data, "status", where) or "", _text(data, "version", where, null=True),
             _text(data, "newest_known", where, null=True), _text(data, "path", where, null=True), _text(data, "following", where, null=True),
@@ -184,7 +364,13 @@ class ListRow:
         )
 
     def to_data(self) -> dict[str, Any]:
-        """Return the row as the CLI writes it."""
+        """Return the row as the CLI writes it.
+
+        Returns
+        -------
+        dict
+            The JSON-ready row.
+        """
         return {
             "name": self.name, "status": self.status, "version": self.version, "newest_known": self.newest_known, "path": self.path,
             "restriction": self.restriction, "restriction_reason": self.restriction_reason, "following": self.following,
@@ -195,6 +381,11 @@ class ListRow:
 @dataclass(frozen=True)
 class ListDocument:
     """The ``list --json`` document: the run's scope once, then the rows (or, for ``--names``, the names).
+
+    Methods
+    -------
+    to_data
+        Return the document as the CLI writes it.
 
     Attributes
     ----------
@@ -215,23 +406,22 @@ class ListDocument:
     names: tuple[str, ...] | None = None
 
     def to_data(self, command: str = "list") -> dict[str, Any]:
-        """Return the document as the CLI writes it."""
+        """Return the document as the CLI writes it.
+
+        Parameters
+        ----------
+        command : str, default="list"
+            The command name recorded in the envelope.
+
+        Returns
+        -------
+        dict
+            The JSON-ready document.
+        """
         head: dict[str, Any] = {"api": API_VERSION, "command": command, "ok": True, "exit_code": 0, "mode": self.mode, "root": self.root}
         if self.names is not None:
             return {**head, "names": list(self.names)}
         return {**head, "packages": [row.to_data() for row in self.rows], "warnings": list(self.warnings)}
-
-
-def read_list(document: Any) -> ListDocument:
-    """Return the typed ``list`` document (``--available`` and ``--names`` forms included); raise ``DocumentError`` when it cannot be read."""
-    data = _head(document, "list")
-    if (error := _failed(data)) is not None:
-        raise error
-    mode, root = _text(data, "mode", ""), _text(data, "root", "")
-    if "names" in data and "packages" not in data:
-        return ListDocument(mode or "", root or "", names=_texts(data, "names", ""))
-    rows = tuple(ListRow.from_data(_object(item, f"packages[{index}]"), f"packages[{index}]") for index, item in enumerate(_list(data, "packages", "")))
-    return ListDocument(mode or "", root or "", rows, _texts(data, "warnings", ""))
 
 
 # ---------------------------------------------------------------------------
@@ -241,7 +431,19 @@ def read_list(document: Any) -> ListDocument:
 
 @dataclass(frozen=True)
 class VersionRow:
-    """One version directory of a package: its name, status, problems and the label (``runs vendor installer``) when it has one."""
+    """One version directory of a package: its name, status, problems and the label (``runs vendor installer``) when it has one.
+
+    Attributes
+    ----------
+    name : str
+        The version directory name.
+    status : str
+        The derived status of the version.
+    problems : tuple of str
+        Why the version is broken; empty when it is sound.
+    label : str or None
+        The label such as ``runs vendor installer``, when the version has one.
+    """
 
     name: str
     status: str
@@ -251,7 +453,15 @@ class VersionRow:
 
 @dataclass(frozen=True)
 class TrackerRow:
-    """The local tracker: whether it is valid and what is wrong with it."""
+    """The local tracker: whether it is valid and what is wrong with it.
+
+    Attributes
+    ----------
+    valid : bool
+        Whether the tracker is valid.
+    problems : tuple of str
+        What is wrong with the tracker.
+    """
 
     valid: bool
     problems: tuple[str, ...] = ()
@@ -259,7 +469,17 @@ class TrackerRow:
 
 @dataclass(frozen=True)
 class LinkRow:
-    """The link to a registry entry: the registry, the entry's name and whether the package was unlinked on purpose."""
+    """The link to a registry entry: the registry, the entry's name and whether the package was unlinked on purpose.
+
+    Attributes
+    ----------
+    registry : str
+        The registry that holds the entry.
+    name : str
+        The registry entry's name.
+    unlinked : bool
+        Whether the package was unlinked from the entry on purpose.
+    """
 
     registry: str
     name: str
@@ -268,7 +488,15 @@ class LinkRow:
 
 @dataclass(frozen=True)
 class NoteRow:
-    """One thing verification or the receipt says (``unverified``, ``self-reported`` ...): its kind and message."""
+    """One thing verification or the receipt says (``unverified``, ``self-reported`` ...): its kind and message.
+
+    Attributes
+    ----------
+    kind : str
+        The kind of note, such as ``unverified`` or ``self-reported``.
+    message : str
+        The text of the note.
+    """
 
     kind: str
     message: str
@@ -277,6 +505,13 @@ class NoteRow:
 @dataclass(frozen=True)
 class InfoRow:
     """Everything ``gupkg info --json`` knows about one package.
+
+    Methods
+    -------
+    from_data
+        Build one ``info`` package from its JSON object.
+    to_data
+        Return the package as ``gupkg info --json`` writes it: the list row, then the details.
 
     Attributes
     ----------
@@ -324,9 +559,29 @@ class InfoRow:
 
     @classmethod
     def from_data(cls, data: Mapping[str, Any], where: str = "") -> InfoRow:
-        """Read one ``info`` package."""
+        """Build one ``info`` package from its JSON object.
+
+        Parameters
+        ----------
+        data : mapping
+            The package's JSON object.
+        where : str, default=""
+            Path of the object inside the document, used in error messages.
+
+        Returns
+        -------
+        InfoRow
+            The typed package.
+
+        Raises
+        ------
+        DocumentError
+            When a field is missing or has the wrong type.
+        """
+        # Nested objects and lists are read first, each with its own path for messages.
         tracker = _optional_object(data, "tracker", where)
         link = _optional_object(data, "link", where)
+        # Each version and note is read with its indexed path for messages.
         versions = tuple(
             VersionRow(
                 _text(item, "name", at) or "", _text(item, "status", at) or "", _texts(item, "problems", at), _text(item, "label", at, null=True),
@@ -337,6 +592,7 @@ class InfoRow:
             NoteRow(_text(item, "kind", at) or "", _text(item, "message", at) or "")
             for index, item in enumerate(_objects(data, "notes", where)) for at in (f"{_here(where, 'notes')}[{index}]",)
         )
+        # The row itself is the list head; the details follow in field order.
         at_tracker, at_link = _here(where, "tracker"), _here(where, "link")
         return cls(
             ListRow.from_data(data, where), versions, _texts(data, "registry_versions", where),
@@ -348,16 +604,25 @@ class InfoRow:
         )
 
     def to_data(self) -> dict[str, Any]:
-        """Return the package as ``gupkg info --json`` writes it: the list row, then the details."""
+        """Return the package as ``gupkg info --json`` writes it: the list row, then the details.
+
+        Returns
+        -------
+        dict
+            The JSON-ready package.
+        """
+        # Start from the list row, then add the details in the CLI's order.
         data = self.row.to_data()
         data["versions"] = [
             {"name": item.name, "status": item.status, "problems": list(item.problems), "label": item.label} for item in self.versions
         ]
+        # Optional objects are written as null when absent.
         data["registry_versions"] = list(self.registry_versions)
         data["tracker"] = None if self.tracker is None else {"valid": self.tracker.valid, "problems": list(self.tracker.problems)}
         data["link"] = None if self.link is None else {"registry": self.link.registry, "name": self.link.name, "unlinked": self.link.unlinked}
         data["not_followed"] = self.not_followed
         data["diverged"] = list(self.diverged)
+        # Verification facts and bookkeeping closing the document.
         data["notes"] = [{"kind": item.kind, "message": item.message} for item in self.notes]
         data["checksum"] = None if self.checksum is None else dict(self.checksum)
         data["self_reported"] = self.self_reported
@@ -370,6 +635,11 @@ class InfoRow:
 @dataclass(frozen=True)
 class InfoDocument:
     """The ``info --json`` document: the run's scope, the packages found and one error per target that could not be read.
+
+    Methods
+    -------
+    to_data
+        Return the document as the CLI writes it.
 
     Attributes
     ----------
@@ -391,21 +661,17 @@ class InfoDocument:
     exit_code: int = 0
 
     def to_data(self) -> dict[str, Any]:
-        """Return the document as the CLI writes it."""
+        """Return the document as the CLI writes it.
+
+        Returns
+        -------
+        dict
+            The JSON-ready document.
+        """
         return {
             "api": API_VERSION, "command": "info", "ok": self.ok, "exit_code": self.exit_code, "mode": self.mode, "root": self.root,
             "packages": [row.to_data() for row in self.rows], "errors": [dict(item) for item in self.errors],
         }
-
-
-def read_info(document: Any) -> InfoDocument:
-    """Return the typed ``info`` document; raise ``DocumentError`` when it cannot be read, or when it holds no package and says why."""
-    data = _head(document, "info")
-    rows = tuple(InfoRow.from_data(_object(item, f"packages[{index}]"), f"packages[{index}]") for index, item in enumerate(_list(data, "packages", "")))
-    errors = _objects(data, "errors", "")
-    if not rows and (error := _failed(data)) is not None:
-        raise error
-    return InfoDocument(_text(data, "mode", "") or "", _text(data, "root", "") or "", rows, errors, data["ok"], data["exit_code"])
 
 
 # ---------------------------------------------------------------------------
@@ -416,6 +682,11 @@ def read_info(document: Any) -> InfoDocument:
 @dataclass(frozen=True)
 class RegistryRow:
     """One configured registry as ``gupkg registry status`` reports it.
+
+    Methods
+    -------
+    to_data
+        Return the row as the CLI writes it.
 
     Attributes
     ----------
@@ -441,7 +712,13 @@ class RegistryRow:
     problems: tuple[str, ...] = ()
 
     def to_data(self) -> dict[str, Any]:
-        """Return the row as the CLI writes it."""
+        """Return the row as the CLI writes it.
+
+        Returns
+        -------
+        dict
+            The JSON-ready row.
+        """
         return {
             "name": self.name, "source": self.source, "revision": self.revision, "synchronized_at": self.synchronized_at,
             "last_failure": self.last_failure, "cache": self.cache, "packages": self.packages, "problems": list(self.problems),
@@ -450,33 +727,36 @@ class RegistryRow:
 
 @dataclass(frozen=True)
 class RegistryStatusDocument:
-    """The ``registry status --json`` document: the run's mode and one row per configured registry."""
+    """The ``registry status --json`` document: the run's mode and one row per configured registry.
+
+    Methods
+    -------
+    to_data
+        Return the document as the CLI writes it.
+
+    Attributes
+    ----------
+    mode : str
+        The mode of the run.
+    registries : tuple of RegistryRow
+        One row per configured registry.
+    """
 
     mode: str
     registries: tuple[RegistryRow, ...] = ()
 
     def to_data(self) -> dict[str, Any]:
-        """Return the document as the CLI writes it."""
+        """Return the document as the CLI writes it.
+
+        Returns
+        -------
+        dict
+            The JSON-ready document.
+        """
         return {
             "api": API_VERSION, "command": "registry status", "ok": True, "exit_code": 0, "mode": self.mode,
             "registries": [row.to_data() for row in self.registries],
         }
-
-
-def read_registry_status(document: Any) -> RegistryStatusDocument:
-    """Return the typed ``registry status`` document; raise ``DocumentError`` when it cannot be read."""
-    data = _head(document, "registry status")
-    if (error := _failed(data)) is not None:
-        raise error
-    rows = []
-    for index, item in enumerate(_objects(data, "registries", "")):
-        at = f"registries[{index}]"
-        rows.append(RegistryRow(
-            _text(item, "name", at) or "", _text(item, "source", at) or "", _text(item, "revision", at, null=True),
-            _text(item, "synchronized_at", at, null=True), _text(item, "last_failure", at, null=True), _text(item, "cache", at) or "",
-            _count(item, "packages", at), _texts(item, "problems", at),
-        ))
-    return RegistryStatusDocument(_text(data, "mode", "") or "", tuple(rows))
 
 
 # ---------------------------------------------------------------------------
@@ -486,7 +766,17 @@ def read_registry_status(document: Any) -> RegistryStatusDocument:
 
 @dataclass(frozen=True)
 class ErrorData:
-    """The structured error of a result: its stable ``code``, the ``message`` and the optional ``hint``."""
+    """The structured error of a result: its stable ``code``, the ``message`` and the optional ``hint``.
+
+    Attributes
+    ----------
+    code : str
+        The stable error code.
+    message : str
+        The error message.
+    hint : str or None
+        What to do about the error, when known.
+    """
 
     code: str
     message: str
@@ -496,6 +786,11 @@ class ErrorData:
 @dataclass(frozen=True)
 class ResultEntry:
     """The outcome of one operation on one package (one entry of ``results``, or of a plan that cannot be made).
+
+    Methods
+    -------
+    from_data
+        Build one result entry from its JSON object.
 
     Attributes
     ----------
@@ -531,13 +826,33 @@ class ResultEntry:
 
     @classmethod
     def from_data(cls, data: Mapping[str, Any], where: str = "") -> ResultEntry:
-        """Read one result entry."""
+        """Build one result entry from its JSON object.
+
+        Parameters
+        ----------
+        data : mapping
+            The entry's JSON object.
+        where : str, default=""
+            Path of the object inside the document, used in error messages.
+
+        Returns
+        -------
+        ResultEntry
+            The typed entry.
+
+        Raises
+        ------
+        DocumentError
+            When a field is missing or has the wrong type.
+        """
+        # The structured error is optional; its hint is optional inside it.
         error = data.get("error")
         at = _here(where, "error")
         error_data = None
         if error is not None:
             fields = _object(error, at)
             error_data = ErrorData(_text(fields, "code", at) or "", _text(fields, "message", at) or "", _text(fields, "hint", at, null=True) if "hint" in fields else None)
+        # Read the fixed fields, then the optional details object.
         details = data.get("details")
         return cls(
             _text(data, "package", where) or "", _text(data, "operation", where) or "", _flag(data, "ok", where), _text(data, "status", where) or "",
@@ -549,7 +864,19 @@ class ResultEntry:
 
 @dataclass(frozen=True)
 class ResultsDocument:
-    """The ``--json`` document of a lifecycle call: one ``ResultEntry`` per target, in order."""
+    """The ``--json`` document of a lifecycle call: one ``ResultEntry`` per target, in order.
+
+    Attributes
+    ----------
+    ok : bool
+        Whether every target succeeded.
+    exit_code : int
+        The exit code of the call.
+    results : tuple of ResultEntry
+        One entry per target, in order.
+    warnings : tuple of str
+        Problems that did not stop the work.
+    """
 
     ok: bool
     exit_code: int
@@ -557,16 +884,14 @@ class ResultsDocument:
     warnings: tuple[str, ...] = ()
 
 
-def read_results(document: Any) -> ResultsDocument:
-    """Return the typed result document of a lifecycle call; raise ``DocumentError`` when it cannot be read."""
-    data = _head(document)
-    entries = tuple(ResultEntry.from_data(_object(item, f"results[{index}]"), f"results[{index}]") for index, item in enumerate(_list(data, "results", "")))
-    return ResultsDocument(data["ok"], data["exit_code"], entries, _texts(data, "warnings", ""))
-
-
 @dataclass(frozen=True)
 class PlanData:
     """What a plan says it will do for one target.
+
+    Methods
+    -------
+    from_data
+        Build the plan of one target from its JSON object.
 
     Attributes
     ----------
@@ -595,12 +920,34 @@ class PlanData:
 
     @classmethod
     def from_data(cls, data: Mapping[str, Any], where: str = "") -> PlanData:
-        """Read the plan of one target; an unreadable checksum marker is an error (it never means ``present``)."""
+        """Build the plan of one target from its JSON object.
+
+        An unreadable checksum marker is an error; it never means ``present``.
+
+        Parameters
+        ----------
+        data : mapping
+            The plan's JSON object.
+        where : str, default=""
+            Path of the object inside the document, used in error messages.
+
+        Returns
+        -------
+        PlanData
+            The typed plan.
+
+        Raises
+        ------
+        DocumentError
+            When a field is missing, has the wrong type, or the checksum marker is unknown.
+        """
+        # Read the checksum marker of the populate step, when the plan has one.
         populate = data.get("populate")
         checksum = None
         if populate is not None:
             at = _here(where, "populate")
             fields = _object(populate, at)
+            # An unknown marker is rejected so it can never be mistaken for ``present``.
             raw = fields.get("checksum")
             if raw is not None:
                 at = _here(at, "checksum")
@@ -609,6 +956,7 @@ class PlanData:
                 if sha not in (PRESENT, MISSING, INVALID):
                     raise DocumentError(f"{_here(at, 'sha256')}: '{sha}' is not one of {PRESENT}, {MISSING}, {INVALID}")
                 checksum = ChecksumPlan(sha, _text(mark, "url", at) or "", _text(mark, "url_from", at) or "", _flag(mark, "skippable", at))
+        # Read the fixed fields; effects and phases are kept as written.
         return cls(
             _text(data, "operation", where) or "", _text(data, "package", where) or "", _text(data, "path", where) or "", _text(data, "mode", where) or "",
             _text(data, "version", where, null=True), _text(data, "previous", where, null=True), _texts(data, "notes", where), checksum,
@@ -643,24 +991,18 @@ class PlanItem:
 
 @dataclass(frozen=True)
 class PlanDocument:
-    """The ``--plan --json`` document: one ``PlanItem`` per target."""
+    """The ``--plan --json`` document: one ``PlanItem`` per target.
+
+    Attributes
+    ----------
+    ok : bool
+        Whether every target could be planned.
+    exit_code : int
+        The exit code of the call.
+    items : tuple of PlanItem
+        One item per target.
+    """
 
     ok: bool
     exit_code: int
     items: tuple[PlanItem, ...] = ()
-
-
-def read_plan(document: Any) -> PlanDocument:
-    """Return the typed ``--plan --json`` document; raise ``DocumentError`` when it cannot be read."""
-    data = _head(document)
-    items = []
-    for index, entry in enumerate(_objects(data, "plans", "")):
-        at = f"plans[{index}]"
-        ok = _flag(entry, "ok", at)
-        plan = entry.get("plan")
-        if ok and plan is not None:
-            items.append(PlanItem(_text(entry, "target", at) or "", ok, _count(entry, "exit_code", at), plan=PlanData.from_data(_object(plan, f"{at}.plan"), f"{at}.plan")))
-            continue
-        result = ResultEntry.from_data(_object(_value(entry, "result", at), f"{at}.result"), f"{at}.result")
-        items.append(PlanItem(_text(entry, "target", at) or "", ok, _count(entry, "exit_code", at), result=result))
-    return PlanDocument(data["ok"], data["exit_code"], tuple(items))

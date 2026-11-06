@@ -1,4 +1,4 @@
-"""Cover gupkg's own package: installing it from its distribution and updating it from a release (design 21.5, 21.6; D14, D27, D28).
+"""Cover gupkg's own package: installing it from its distribution and updating it from a release (design 21.5, 21.6).
 
 Behavior covered: installing the `gupkg` package runs its populate script, which copies the bundled tree into `App` after
 checking it against its `MANIFEST.sha256`, and writes the root's gupkg-location, the shims and the shortcut; `gupkg self check-updates`
@@ -32,9 +32,13 @@ from tests.support.engine import World
 
 pytestmark = pytest.mark.release
 
+# Directory that holds the importable gupkg source packages.
 SOURCE = Path(__file__).resolve().parents[1] / "src"
+# Placeholder commit identifier of the sample release.
 COMMIT = "c" * 40
+# Address of the published releases table.
 RELEASES_URL = "https://raw.githubusercontent.com/guraltsev/gupkg/main/RELEASES.md"
+# Major version of the gupkg that is running.
 RUNNING_MAJOR = int(__version__.split(".")[0])
 OLD, NEW = f"{RUNNING_MAJOR}.50.0", f"{RUNNING_MAJOR}.51.0"
 
@@ -177,12 +181,14 @@ def test_self_check_updates_fetches_verifies_and_populates_the_new_version_and_u
 
     checked = selfworld.check_updates()
 
+    # Assert: the new version was fetched, verified and populated beside the old one without a switch.
     new = selfworld.package / NEW
     assert checked.ok and checked.version == NEW, checked.error
     assert (new / "gupkg" / "MANIFEST.sha256").is_file() and (new / "App" / "gupkg" / "_version.py").is_file()
     assert (selfworld.package / "current").resolve() == (selfworld.package / OLD).resolve()
     assert not (new / "pkg.local" / "track.py").exists() and (new / "install.cmd").is_file()
 
+    # Act: update gupkg, which switches the current link to the new version.
     updated = selfworld.world.one("update", "gupkg")
 
     assert updated.ok, updated.error
@@ -222,6 +228,7 @@ def test_the_unpacked_tree_must_match_its_own_manifest_exactly(selfworld: SelfWo
         manifest["gupkg/extra_listed.py"] = b"listed but absent"
     else:
         files["gupkg/planted.py"] = b"planted"
+    # Publish a release whose tree disagrees with its manifest.
     selfworld.publish(NEW, zip_bytes=release_zip(NEW, files, manifest=manifest))
 
     result = selfworld.check_updates()

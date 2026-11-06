@@ -3,7 +3,7 @@
 Behavior covered: a process that is not elevated gets a user scope and an elevated one a system scope, with no flag
 anywhere (the ``GUPKG_ELEVATED`` marker of the launcher counts as elevated); the scope names its root, the source of the
 root, the machine folders of its mode and the effective settings; ``integrate = "none"`` is honoured in both modes; an
-elevated run whose gupkg tree can be changed by standard users is refused before anything is read from any root; a user
+elevated run whose gupkg tree can be changed by standard users is refused before anything is loaded from any root; a user
 run never reads anything under the system root, even when the app layer names both roots; the Resolve text names mode,
 root and source; ``check_supported`` compares a package's ``modes`` with the scope's mode and fills the command and the
 package name into the system-only hint.
@@ -126,6 +126,7 @@ def test_an_elevated_run_that_cannot_judge_its_gupkg_tree_is_refused(tmp_path: P
     machine.write_app_settings()
 
     def broken(path: Path) -> str | None:
+        """Fail as if access to the folder were denied."""
         raise PermissionError("denied")
 
     machine.fake.directory_untrusted_reason = broken  # type: ignore[method-assign]

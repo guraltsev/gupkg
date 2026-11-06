@@ -2,7 +2,7 @@
 
 The revised style guide (``_docs/tui_style_guide.md``) requires both lines on every screen: the top line lists the keys that work *now*, the bottom line
 says what is going on (counts, registry revision and age, the state of a run, the log path). Both are one line, never wrap, and clip with an ellipsis;
-the content that matters most comes first so that a narrow terminal loses only the tail. Nothing in the frame relies on colour, and all text that
+the content that matters most leads the line so that a narrow terminal loses only the tail. Nothing in the frame relies on colour, and all text that
 comes from packages, the network or logs is shown literally (never as markup).
 
 Usage and API
@@ -41,24 +41,58 @@ VerticalScroll, RichLog, DataTable, Input, OptionList { background: transparent;
 
 
 class KeyHintBar(Static):
-    """The one-line list of keys that work on the current screen."""
+    """The one-line list of keys that work on the current screen.
+
+    Parameters
+    ----------
+    text : str, optional
+        The initial hints; shown literally, never as markup.
+
+    Methods
+    -------
+    show
+        Replace the hints.
+    """
 
     def __init__(self, text: str = "") -> None:
         super().__init__(Text(literal(text, limit=400), no_wrap=True, overflow="ellipsis"), markup=False)
 
     def show(self, text: str) -> None:
-        """Replace the hints."""
+        """Replace the hints.
+
+        Parameters
+        ----------
+        text : str
+            The new hints; shown literally, never as markup.
+        """
         self.update(Text(literal(text, limit=400), no_wrap=True, overflow="ellipsis"))
 
 
 class StatusFooter(Static):
-    """The one-line status of the program: counts, registry revision and age, run state and the log path."""
+    """The one-line status of the program: counts, registry revision and age, run state and the log path.
+
+    Parameters
+    ----------
+    text : str, optional
+        The initial status; shown literally, never as markup.
+
+    Methods
+    -------
+    show
+        Replace the status.
+    """
 
     def __init__(self, text: str = "") -> None:
         super().__init__(Text(literal(text, limit=600), no_wrap=True, overflow="ellipsis"), markup=False)
 
     def show(self, text: str) -> None:
-        """Replace the status."""
+        """Replace the status.
+
+        Parameters
+        ----------
+        text : str
+            The new status; shown literally, never as markup.
+        """
         self.update(Text(literal(text, limit=600), no_wrap=True, overflow="ellipsis"))
 
 
@@ -66,11 +100,23 @@ class _Framed:
     """Behaviour shared by the two screen kinds: compose the frame around ``compose_body`` and refresh it."""
 
     def key_hints(self) -> str:  # pragma: no cover - overridden
-        """Return the text of the top line."""
+        """Return the text of the top line.
+
+        Returns
+        -------
+        str
+            The key hints for the screen as it is now.
+        """
         return ""
 
     def status_text(self) -> str:  # pragma: no cover - overridden
-        """Return the text of the bottom line."""
+        """Return the text of the bottom line.
+
+        Returns
+        -------
+        str
+            The status for the screen as it is now.
+        """
         return ""
 
     def compose_body(self) -> ComposeResult:  # pragma: no cover - overridden
@@ -85,6 +131,7 @@ class _Framed:
 
     def refresh_frame(self) -> None:
         """Show the current hints and status (call after anything that changes them)."""
+        # A screen that is not (or no longer) composed has no lines to refresh.
         try:
             hints, status = self.query_one(KeyHintBar), self.query_one(StatusFooter)
         except NoMatches:

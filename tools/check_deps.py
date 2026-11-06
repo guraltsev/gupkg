@@ -33,21 +33,35 @@ from typing import Callable
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from update_deps import DEFAULT_LOCK, read_lock  # noqa: E402  (a sibling script)
 
-_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+# A stable release is plain dotted numbers; pre-releases and local tags never match.
 _STABLE = re.compile(r"^[0-9]+(?:\.[0-9]+)*$")
-_MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Print the outdated pins of the lock and return the process status."""
+    """Print the outdated pins of the lock and return the process status.
+
+    Parameters
+    ----------
+    argv : list of str, optional
+        Command-line arguments; ``sys.argv[1:]`` when omitted.
+
+    Returns
+    -------
+    int
+        ``0`` when every pin is current, ``1`` when some pin can be updated,
+        ``2`` when PyPI could not be asked.
+    """
+    # Describe the command line from the module summary.
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--lock", type=Path, default=DEFAULT_LOCK)
     args = parser.parse_args(argv)
+    # An offline check is reported as status 2, never as "current".
     try:
         outdated = outdated_dependencies(args.lock)
     except RuntimeError as error:
         print(f"[check-deps] {error}", file=sys.stderr)
         return 2
+    # One line per outdated pin, or a single confirmation.
     for name, pinned, latest in outdated:
         print(f"{name} {pinned} is pinned; {latest} is available. Run: python tools/update_deps.py")
     if not outdated:
@@ -61,7 +75,7 @@ def outdated_dependencies(
     timeout: float = 10.0,
     fetch: Callable[[str, float], dict] | None = None,
 ) -> list[tuple[str, str, str]]:
-    """Return ``(name, pinned, newest)`` for every lock entry with a newer stable release.
+    """Return the lock entries that have a newer stable release on PyPI.
 
     Parameters
     ----------
@@ -73,11 +87,18 @@ def outdated_dependencies(
         Replacement for the network request: receives a distribution name and a
         timeout and returns the decoded PyPI JSON document. Used by tests.
 
+    Returns
+    -------
+    list of tuple of str
+        ``(name, pinned, newest)`` for each outdated entry, in case-insensitive
+        name order.
+
     Raises
     ------
     RuntimeError
         If PyPI cannot be asked for a distribution.
     """
+    # Compare every pin, in a stable order, with the newest stable release.
     ask = fetch or _fetch_pypi
     outdated = []
     for item in sorted(read_lock(lock), key=lambda entry: entry.name.casefold()):
@@ -92,15 +113,24 @@ def outdated_dependencies(
 
 
 def _fetch_pypi(name: str, timeout: float) -> dict:
-    """Download one distribution's PyPI JSON document over HTTPS."""
-    if not _NAME.match(name):
+    """Download one distribution's PyPI JSON document over HTTPS.
+
+    Raises
+    ------
+    ValueError
+        If *name* is not a plain distribution name or the response is too large.
+    """
+    # Only a plain distribution name may reach the request URL.
+    if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]*$", name):
         raise ValueError("unexpected distribution name")
+    # Cap the response size so a hostile server cannot exhaust memory.
+    max_response_bytes = 16 * 1024 * 1024
     request = urllib.request.Request(
         f"https://pypi.org/pypi/{name}/json", headers={"Accept": "application/json"}
     )
     with urllib.request.urlopen(request, timeout=timeout) as response:
-        body = response.read(_MAX_RESPONSE_BYTES + 1)
-    if len(body) > _MAX_RESPONSE_BYTES:
+        body = response.read(max_response_bytes + 1)
+    if len(body) > max_response_bytes:
         raise ValueError("response too large")
     return json.loads(body)
 
@@ -110,10 +140,13 @@ def _newest_stable(document: dict) -> str | None:
     best: tuple[int, ...] | None = None
     best_text: str | None = None
     for version, files in document.get("releases", {}).items():
+        # Skip pre-releases and malformed entries.
         if not (isinstance(version, str) and _STABLE.match(version) and isinstance(files, list)):
             continue
+        # A release whose every file is yanked does not count.
         if not any(isinstance(item, dict) and not item.get("yanked") for item in files):
             continue
+        # Keep the highest version seen so far.
         key = _key(version)
         if best is None or key > best:
             best, best_text = key, version

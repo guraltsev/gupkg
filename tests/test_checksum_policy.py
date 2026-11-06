@@ -44,8 +44,11 @@ from gupkg.redact import redact_url
 
 pytestmark = pytest.mark.unit
 
+# A well-formed digest.
 DIGEST = "ab" * 32
+# An https address.
 URL = "https://example.org/tool.zip"
+# A commit hash.
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
 
 
@@ -163,6 +166,7 @@ def test_an_unknown_skip_reason_is_refused_not_read_as_the_bare_flag(value: str)
         parse_skip_flag(value)
 
 
+# The gate table: declared hash, skip flag, address and the outcome of each row.
 GATE = [
     pytest.param(DIGEST, None, URL, VERIFIED, id="present-https-no-flag"),
     pytest.param(DIGEST, SKIPPED_CLI, URL, VERIFIED, id="present-https-flag-is-ignored"),
@@ -181,6 +185,7 @@ GATE = [
 @pytest.mark.parametrize(("expected", "skip", "url", "outcome"), GATE)
 def test_the_gate_applies_the_rows_of_the_policy_table(expected: str | None, skip: str | None, url: str, outcome: str) -> None:
     """Design 9.1: a hash is verified; with none, only an https address with the flag may go on."""
+    # A refused row raises, and only a skippable refusal tells how to continue.
     if outcome.startswith("refuse"):
         with pytest.raises(ChecksumMissing) as raised:
             check_before_download(url, expected, skip)
@@ -189,6 +194,7 @@ def test_the_gate_applies_the_rows_of_the_policy_table(expected: str | None, ski
         assert raised.value.to_data()["code"] == "checksum-missing" and raised.value.to_data()["url"] == redact_url(url)
         assert "good" not in raised.value.to_data()["url"] and "good" not in raised.value.to_data()["message"]
         return
+    # Every other row ends in a verification with the table's decision.
     verification = check_before_download(url, expected, skip)
     assert verification.decision == outcome
     assert (verification.expected is None) is (outcome != VERIFIED)
@@ -252,7 +258,7 @@ def test_every_decision_value_makes_a_record_and_round_trips(decision: str) -> N
 
 
 def test_the_decision_values_are_exactly_the_documented_ones() -> None:
-    """Design 9.2 lists six values; there is no `verified-by-bootstrap` (D29)."""
+    """Design 9.2 lists six values; there is no `verified-by-bootstrap`."""
     assert DECISIONS == (
         "verified", "skipped-cli", "skipped-setting", "user-approved", "registry-fingerprint", "origin-not-verified",
     )

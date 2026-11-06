@@ -26,6 +26,7 @@ class _Chunks:
         self._chunks = list(chunks)
 
     def read1(self, size: int = -1) -> bytes:
+        """Return the next scripted chunk, or empty bytes when none remain."""
         return self._chunks.pop(0) if self._chunks else b""
 
 
@@ -136,10 +137,12 @@ def test_a_real_child_with_a_huge_line_and_progress_redraws_is_streamed_in_order
         "sys.stdout.write('step 1\\rstep 2\\rstep 3\\n')\n"
         "sys.stdout.write('x' * 1_000_000 + '\\n')\n"
     )
+    # Act: run a real child, collecting every reported line.
     received: list[str] = []
 
     result = WindowsSystem().run([sys.executable, "-c", program], on_line=received.append)
 
+    # The progress redraws arrive in order, the huge line is cut, and the captured output is complete.
     assert result.returncode == 0
     assert received[:3] == ["step 1", "step 2", "step 3"]
     assert received[3].endswith(" [line continues]") and len(received) > 5

@@ -102,6 +102,7 @@ def test_source_headers_must_be_plain_text_and_need_a_download_url() -> None:
         parse_manifest('format = 2\n[source]\nshipped = true\n[source.headers]\nX = "a"\n')
 
 
+# A chain tracker with two fetch steps; ``@FIRST@`` and ``@EXTRA@`` mark where a test adds its own keys.
 CHAIN = (
     '[track]\nprovider = "chain"\ndownload = "${link}"\n'
     '[[track.fetch]]\nurl = "https://example.org/"\nselect = "@FIRST@"\nmatch = \'(?P<link>https://example.org/f/\\d+)\'\n'

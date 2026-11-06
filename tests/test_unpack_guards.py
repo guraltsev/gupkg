@@ -26,6 +26,7 @@ from tests.support.archive import make_zip
 
 pytestmark = pytest.mark.unit
 
+# One kibibyte in bytes.
 KIB = 1024
 
 
@@ -73,6 +74,7 @@ def test_the_watcher_is_quiet_within_the_limits(tmp_path: Path) -> None:
     assert _FolderWatch(tmp_path / "w", max_bytes=10 * KIB, max_entries=10, max_file=2 * KIB)() is None
 
 
+# Ten mebibytes in bytes.
 MIB_TEN = 10 * 1024 * 1024
 
 
@@ -195,6 +197,7 @@ def test_each_nested_archive_receives_the_budget_with_what_earlier_ones_used(
         seen.append((budget.used_bytes, budget.used_entries))
         return real(system_, archive, kind, destination, budget, seven_zip)
 
+    # Make every nested extraction report the budget it received.
     monkeypatch.setattr(unpack_module, "extract_archive", spy)
     plan = UnpackPlan(nested=(NestedArchive("one.zip", "a", False), NestedArchive("two.zip", "b", False)))
 

@@ -1,6 +1,6 @@
 """Create and edit one settings file (``gupkg settings init|set`` and ``gupkg registry add|remove``).
 
-The file of one layer is read as data, changed, validated against the schema together with the built-in defaults and only
+The file of one layer is loaded as data, changed, validated against the schema together with the built-in defaults and only
 then written back, so a command can never leave a file that the next run refuses. Comments of an existing file are not
 kept (the file is rewritten from its data): ``init`` writes a commented starting point, and ``set`` tells the user that
 comments are gone. Nothing is changed when the new data is not valid.
@@ -32,6 +32,202 @@ from .tomlio import read_toml, write_toml
 
 class SettingsEditError(ValueError):
     """Report a settings change that was refused, and why."""
+
+
+def init_settings(path: Path, layer: str, *, force: bool = False) -> dict[str, Any]:
+    """Write a new settings file holding ``schema = 4`` and the common settings as commented entries, and return its data.
+
+    Parameters
+    ----------
+    path : Path
+        The settings file of the layer.
+    layer : str
+        The layer's name, for messages.
+    force : bool, default=False
+        Replace an existing file.
+
+    Returns
+    -------
+    dict
+        The data of the new file, which holds only ``schema``.
+
+    Raises
+    ------
+    SettingsEditError
+        If the file exists and *force* is not set.
+    """
+    if path.exists() and not force:
+        raise SettingsEditError(f"{path} exists; use --force to replace it")
+    data: dict[str, Any] = {"schema": SCHEMA}
+    write_text_atomic(path, _template())
+    return data
+
+
+def parse_value(text: str) -> Any:
+    """Return the value that *text* spells: a TOML value when it is one, otherwise the text as a string.
+
+    Parameters
+    ----------
+    text : str
+        The value as the user typed it, such as ``true``, ``90`` or ``"auto"``.
+
+    Returns
+    -------
+    Any
+        The parsed TOML value, or *text* itself when it is not valid TOML.
+
+    Examples
+    --------
+    Basic usage:
+
+    >>> parse_value("true")
+    True
+    >>> parse_value("90")
+    90
+    >>> parse_value('"auto"')
+    'auto'
+
+    Edge cases:
+
+    >>> parse_value("auto")
+    'auto'
+    >>> parse_value("[1, 2]")
+    [1, 2]
+    """
+    # Let the TOML parser decide the type; a bare word is not TOML, so it stays a string.
+    try:
+        return tomllib.loads(f"value = {text}")["value"]
+    except tomllib.TOMLDecodeError:
+        return text
+
+
+def set_setting(path: Path, layer: str, key: str, text: str) -> dict[str, Any]:
+    """Set the dotted *key* of the file at *path* to the value *text* spells, and return the data written.
+
+    Parameters
+    ----------
+    path : Path
+        The settings file of the layer.
+    layer : str
+        The layer's name, for messages.
+    key : str
+        The dotted setting name, such as ``ui.color``.
+    text : str
+        The value as the user typed it; see ``parse_value``.
+
+    Returns
+    -------
+    dict
+        The data written to the file.
+
+    Raises
+    ------
+    SettingsEditError
+        If the key is unknown or the value is not valid for it (the schema's message), or the file cannot be read.
+    """
+    if key in ("schema", "registry"):
+        raise SettingsEditError(f"'{key}' cannot be set here; use `gupkg registry add|remove` for the registries")
+    # Load the file and make sure it names its schema before any key is added.
+    data = _read(path)
+    data.setdefault("schema", SCHEMA)
+
+    # Walk to the table that holds the key, creating tables on the way; a path through a non-table is refused.
+    parts = key.split(".")
+    table = data
+    for part in parts[:-1]:
+        child = table.setdefault(part, {})
+        if not isinstance(child, dict):
+            raise SettingsEditError(f"'{key}': '{part}' is not a table in {path}")
+        table = child
+    # Store the value, then write only if the schema accepts the merged result.
+    table[parts[-1]] = parse_value(text)
+    _validate(layer, data, path)
+    write_toml(path, data)
+    return data
+
+
+def add_registry(path: Path, layer: str, name: str, source: str, inherited: tuple[RegistryEntry, ...]) -> dict[str, Any]:
+    """Add the registry *name* with *source* to the file at *path*, and return the data written.
+
+    The ``[[registry]]`` array of a layer replaces the one below it as a whole, so a file that has none starts from the
+    registries *inherited* from the layers below.
+
+    Parameters
+    ----------
+    path : Path
+        The settings file of the layer.
+    layer : str
+        The layer's name, for messages.
+    name : str
+        The new registry's name; compared ignoring case.
+    source : str
+        The registry's source URL or path.
+    inherited : tuple of RegistryEntry
+        The registries of the layers below, used when the file has no ``[[registry]]`` array.
+
+    Returns
+    -------
+    dict
+        The data written to the file.
+
+    Raises
+    ------
+    SettingsEditError
+        If a registry of that name is already configured, or the result is not valid.
+    """
+    # Start from the file's own array, or from the inherited registries when it has none.
+    data = _read(path)
+    data.setdefault("schema", SCHEMA)
+    entries = list(data.get("registry", [{"name": item.name, "source": item.source} for item in inherited]))
+    if any(str(item.get("name", "")).casefold() == name.casefold() for item in entries):
+        raise SettingsEditError(f"registry '{name}' is already configured")
+    # Append the entry and write only if the schema accepts the result.
+    entries.append({"name": name, "source": source})
+    data["registry"] = entries
+    _validate(layer, data, path)
+    write_toml(path, data)
+    return data
+
+
+def remove_registry(path: Path, layer: str, name: str, inherited: tuple[RegistryEntry, ...]) -> dict[str, Any]:
+    """Remove the registry *name* from the file at *path*, and return the data written.
+
+    Parameters
+    ----------
+    path : Path
+        The settings file of the layer.
+    layer : str
+        The layer's name, for messages.
+    name : str
+        The registry's name; compared ignoring case.
+    inherited : tuple of RegistryEntry
+        The registries of the layers below, used when the file has no ``[[registry]]`` array.
+
+    Returns
+    -------
+    dict
+        The data written to the file.
+
+    Raises
+    ------
+    SettingsEditError
+        If no registry of that name is configured.
+    """
+    # Start from the file's own array, or from the inherited registries when it has none.
+    data = _read(path)
+    data.setdefault("schema", SCHEMA)
+    entries = list(data.get("registry", [{"name": item.name, "source": item.source} for item in inherited]))
+    # Drop every entry of that name; nothing dropped means the name was never configured.
+    kept = [item for item in entries if str(item.get("name", "")).casefold() != name.casefold()]
+    if len(kept) == len(entries):
+        raise SettingsEditError(f"registry '{name}' is not configured")
+    data["registry"] = kept
+    _validate(layer, data, path)
+    write_toml(path, data)
+    return data
+
+
+# --- supporting helpers ---
 
 
 def _read(path: Path) -> dict[str, Any]:
@@ -104,100 +300,3 @@ schema = {SCHEMA}
 # Allow packages to run the vendor's own installer as a step.
 # allow_vendor_installers = true
 """
-
-
-def init_settings(path: Path, layer: str, *, force: bool = False) -> dict[str, Any]:
-    """Write a new settings file holding ``schema = 4`` and the common settings as commented entries, and return its data.
-
-    Parameters
-    ----------
-    path : Path
-        The settings file of the layer.
-    layer : str
-        The layer's name, for messages.
-    force : bool, default=False
-        Replace an existing file.
-
-    Raises
-    ------
-    SettingsEditError
-        If the file exists and *force* is not set.
-    """
-    if path.exists() and not force:
-        raise SettingsEditError(f"{path} exists; use --force to replace it")
-    data: dict[str, Any] = {"schema": SCHEMA}
-    write_text_atomic(path, _template())
-    return data
-
-
-def parse_value(text: str) -> Any:
-    """Return the value that *text* spells: a TOML value when it is one, otherwise the text as a string."""
-    try:
-        return tomllib.loads(f"value = {text}")["value"]
-    except tomllib.TOMLDecodeError:
-        return text
-
-
-def set_setting(path: Path, layer: str, key: str, text: str) -> dict[str, Any]:
-    """Set the dotted *key* of the file at *path* to the value *text* spells, and return the data written.
-
-    Raises
-    ------
-    SettingsEditError
-        If the key is unknown or the value is not valid for it (the schema's message), or the file cannot be read.
-    """
-    if key in ("schema", "registry"):
-        raise SettingsEditError(f"'{key}' cannot be set here; use `gupkg registry add|remove` for the registries")
-    data = _read(path)
-    data.setdefault("schema", SCHEMA)
-
-    # Walk to the table that holds the key, creating tables on the way; a path through a non-table is refused.
-    parts = key.split(".")
-    table = data
-    for part in parts[:-1]:
-        child = table.setdefault(part, {})
-        if not isinstance(child, dict):
-            raise SettingsEditError(f"'{key}': '{part}' is not a table in {path}")
-        table = child
-    table[parts[-1]] = parse_value(text)
-    _validate(layer, data, path)
-    write_toml(path, data)
-    return data
-
-
-def add_registry(path: Path, layer: str, name: str, source: str, inherited: tuple[RegistryEntry, ...]) -> dict[str, Any]:
-    """Add the registry *name* with *source* to the file at *path*, and return the data written.
-
-    The ``[[registry]]`` array of a layer replaces the one below it as a whole, so a file that has none starts from the
-    registries *inherited* from the layers below.
-    """
-    data = _read(path)
-    data.setdefault("schema", SCHEMA)
-    entries = list(data.get("registry", [{"name": item.name, "source": item.source} for item in inherited]))
-    if any(str(item.get("name", "")).casefold() == name.casefold() for item in entries):
-        raise SettingsEditError(f"registry '{name}' is already configured")
-    entries.append({"name": name, "source": source})
-    data["registry"] = entries
-    _validate(layer, data, path)
-    write_toml(path, data)
-    return data
-
-
-def remove_registry(path: Path, layer: str, name: str, inherited: tuple[RegistryEntry, ...]) -> dict[str, Any]:
-    """Remove the registry *name* from the file at *path*, and return the data written.
-
-    Raises
-    ------
-    SettingsEditError
-        If no registry of that name is configured.
-    """
-    data = _read(path)
-    data.setdefault("schema", SCHEMA)
-    entries = list(data.get("registry", [{"name": item.name, "source": item.source} for item in inherited]))
-    kept = [item for item in entries if str(item.get("name", "")).casefold() != name.casefold()]
-    if len(kept) == len(entries):
-        raise SettingsEditError(f"registry '{name}' is not configured")
-    data["registry"] = kept
-    _validate(layer, data, path)
-    write_toml(path, data)
-    return data

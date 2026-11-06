@@ -3,7 +3,7 @@
 Behavior covered: for ``system`` and ``user`` the scope takes root, bin, Start Menu and environment target from ``[roots]``
 and ``[integration]`` (the built-in values and non-default ones from a settings layer); a bin or Start Menu folder that no
 layer set follows the machine's own default folder; ``integrate = "none"`` keeps shims in ``<root>\\bin``, touches neither
-the Start Menu nor the environment and offers the ``PATH`` line, in user mode and in system mode; the log folders follow D26;
+the Start Menu nor the environment and offers the ``PATH`` line, in user mode and in system mode;
 a package name cannot leave the root; the scope is frozen.
 
 Real: ``make_scope`` and ``build_scope`` on settings files below pytest's temporary folder. Fake: ``FakeSystem`` for the
@@ -24,6 +24,7 @@ from tests.support.mode import Machine
 
 pytestmark = pytest.mark.unit
 
+# Environment of a sample user, used to compute the scope paths.
 ENV = {"USERPROFILE": "C:\\Users\\pat", "APPDATA": "C:\\Users\\pat\\AppData\\Roaming", "ProgramData": "C:\\ProgramData"}
 
 
@@ -106,7 +107,7 @@ def test_user_integrate_none_touches_no_start_menu_or_environment_and_offers_the
 
 
 def test_system_integrate_none_is_honoured_too(tmp_path: Path) -> None:
-    """``integrate`` is a property of a scope (issue 035 section 4.2): the system mode no longer forces ``full``."""
+    """``integrate`` is a property of a scope: the system mode no longer forces ``full``."""
     machine = Machine(tmp_path, elevated=True)
     machine.write_app_settings(tables="[integration]\nintegrate = 'none'\n")
 

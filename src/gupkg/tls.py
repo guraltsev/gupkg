@@ -24,17 +24,28 @@ import ssl
 
 
 def enable_partial_chain_verification() -> None:
-    """Add the partial-chain flag to every default HTTPS context created afterwards."""
+    """Add the partial-chain flag to every default HTTPS context created afterwards.
+
+    The call is idempotent, and does nothing on an interpreter that does not know the flag.
+
+    Returns
+    -------
+    None
+        The default HTTPS context factory of ``ssl`` is replaced as a side effect.
+    """
+    # Do nothing when the interpreter lacks the flag or the factory is already wrapped.
     flag = getattr(ssl, "VERIFY_X509_PARTIAL_CHAIN", None)
     factory = ssl._create_default_https_context
     if flag is None or getattr(factory, "_gupkg_partial_chain", False):
         return
 
-    def create_context(*args, **kwargs) -> ssl.SSLContext:
+    # Wrap the factory so that every context it creates also carries the flag.
+    def _create_context(*args, **kwargs) -> ssl.SSLContext:
         """Create the usual default context with partial-chain verification enabled."""
         context = factory(*args, **kwargs)
         context.verify_flags |= flag
         return context
 
-    create_context._gupkg_partial_chain = True  # type: ignore[attr-defined]
-    ssl._create_default_https_context = create_context
+    # Mark the wrapper so that a second call does not wrap it again, then install it.
+    _create_context._gupkg_partial_chain = True  # type: ignore[attr-defined]
+    ssl._create_default_https_context = _create_context

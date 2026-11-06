@@ -18,7 +18,9 @@ from pathlib import Path
 
 import pytest
 
+# The real Windows launcher that the tests start.
 LAUNCHER = Path(__file__).resolve().parents[1] / "src" / "gupkg" / "gupkg.cmd"
+# Package names that the console code page cannot encode, one for each kind of script.
 NAMES = {"cyrillic": "жук", "cjk": "漢字パッケージ", "emoji": "tool-\U0001F600", "cp1252-only": "café"}
 
 pytestmark = [pytest.mark.process, pytest.mark.skipif(os.name != "nt", reason="runs the Windows launcher")]
@@ -49,6 +51,7 @@ def _gupkg(root: Path, *arguments: str, stdout) -> subprocess.CompletedProcess:
 @pytest.mark.parametrize("sink", ["file", "pipe"])
 def test_the_json_document_survives_a_redirect_with_any_package_name(root: Path, sink: str) -> None:
     """Redirected ``--json`` is exit 0, pure ASCII, and parses back to the real names (Cyrillic, CJK, emoji, cp1252-only)."""
+    # Arrange and act: list the packages as JSON into a file or through a pipe, as a script would capture it.
     target = root / "out.json"
     if sink == "file":
         with target.open("wb") as handle:
@@ -58,6 +61,7 @@ def test_the_json_document_survives_a_redirect_with_any_package_name(root: Path,
         finished = _gupkg(root, "list", "--json", stdout=subprocess.PIPE)
         raw = finished.stdout
 
+    # Assert: the launcher succeeded and the document is plain ASCII with every name.
     assert finished.returncode == 0, finished.stderr.decode("utf-8", "replace")
     assert raw.isascii()
     assert {row["name"] for row in json.loads(raw)["packages"]} == set(NAMES.values())
@@ -66,6 +70,7 @@ def test_the_json_document_survives_a_redirect_with_any_package_name(root: Path,
 @pytest.mark.parametrize("sink", ["file", "pipe"])
 def test_the_plain_listing_is_utf8_when_redirected(root: Path, sink: str) -> None:
     """Redirected plain output is UTF-8, so a name that the ANSI code page cannot hold is neither lost nor an exit code 4."""
+    # Arrange and act: list the packages as plain text into a file or through a pipe.
     target = root / "out.txt"
     if sink == "file":
         with target.open("wb") as handle:
@@ -75,6 +80,7 @@ def test_the_plain_listing_is_utf8_when_redirected(root: Path, sink: str) -> Non
         finished = _gupkg(root, "list", stdout=subprocess.PIPE)
         raw = finished.stdout
 
+    # Assert: the launcher succeeded and the text is UTF-8 with every name.
     assert finished.returncode == 0, finished.stderr.decode("utf-8", "replace")
     text = raw.decode("utf-8")
     assert all(name in text for name in NAMES.values())

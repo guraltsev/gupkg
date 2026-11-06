@@ -31,6 +31,7 @@ from gupkg.hooklib import HookError, safe_extract, fetch_text
 from gupkg.integrity import ManifestError, verify_tree
 from .releases import RELEASES_URL, asset_url, parse_releases
 
+# Version of the hook API this script is written against.
 PKG_MODULE_API = 2
 
 

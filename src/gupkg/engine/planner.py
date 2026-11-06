@@ -51,6 +51,7 @@ from ..model.scope import Scope, check_supported
 from ..model.state import Candidate, Effect, PackageView, VersionState
 from ..model.version import compare_versions
 
+# Process exit status that reports a request which cannot be planned.
 EXIT_PLAN = 2
 
 
@@ -61,7 +62,17 @@ class PlanError(ValueError):
 
 
 class NameConflict(PlanError):
-    """Refuse a package that would provide a name another installed package already provides; the stable code is ``name-conflict``."""
+    """Refuse a package that would provide a name another installed package already provides; the stable code is ``name-conflict``.
+
+    Parameters
+    ----------
+    message : str
+        The readable message.
+    name : str
+        The name that two packages claim.
+    packages : 'Sequence[str]'
+        The packages that claim the name.
+    """
 
     error_code = "name-conflict"
 
@@ -78,7 +89,21 @@ _NAME_WORDS = {"shim": "shim", "file": "wrapper", "shortcut": "shortcut", "env":
 
 @dataclass(frozen=True)
 class ProvidedName:
-    """One name that an effect provides: its comparison ``key``, its words for a message and where it lives."""
+    """One name that an effect provides: its comparison ``key``, its words for a message and where it lives.
+
+    Attributes
+    ----------
+    key : tuple[str, str]
+        The comparison key of the name.
+    word : str
+        The word that describes the name in a message, such as ``shim``.
+    name : str
+        The name as written.
+    where : str
+        Where the name lives (a path or a registry key).
+    primary : tuple[str, str] | None
+        For a shim's configuration file, the key of the shim itself.
+    """
 
     key: tuple[str, str]
     word: str
@@ -92,18 +117,31 @@ def provided_names(effects: Sequence[Effect]) -> dict[tuple[str, str], ProvidedN
 
     A shim and a wrapper file share one namespace, the path in ``bin``; a shortcut is its ``.lnk`` path; an environment
     variable is its scope and name. ``path`` effects and everything else provide no name.
+
+    Parameters
+    ----------
+    effects : sequence of Effect
+        The effects of an install record or of a desired install.
+
+    Returns
+    -------
+    dict
+        Each comparison key mapped to the ``ProvidedName`` it identifies.
     """
+    # Walk the effects, ignoring those (such as ``path``) that provide no name.
     found: dict[tuple[str, str], ProvidedName] = {}
     for effect in effects:
         word = _NAME_WORDS.get(effect.kind)
         if word is None:
             continue
+        # An environment variable is named by its scope and name.
         fields = effect.fields
         if effect.kind == "env":
             scope, name = str(fields.get("scope", "")), str(fields.get("name", ""))
             key = ("env", f"{scope}:{name}".casefold())
             found.setdefault(key, ProvidedName(key, word, name, f"{scope} environment"))
             continue
+        # A shim, wrapper or shortcut is named by its path.
         path = str(fields.get("path", ""))
         group = "shortcut" if effect.kind == "shortcut" else "file"
         key = (group, os.path.normcase(os.path.normpath(path)).casefold())
@@ -123,6 +161,21 @@ class NameIndex:
 
     ``owners(exclude)`` is the read-only view the checks use: the first package (by name, letter case ignored) that provides a
     name and is not *exclude*. Replacing or dropping one package costs only that package's names, so a batch never rescans.
+
+    Parameters
+    ----------
+    installed : Mapping[str, Sequence[Effect]] | None
+        A map from package name to the effects of its install record.
+
+    Methods
+    -------
+    set
+        Record that *package* provides the names of *effects* (replacing what it provided before).
+    drop
+        Forget the names of *package* (it was uninstalled or has no record).
+    owners
+        Return the owners of every name for a package named *exclude*, which never owns a name
+        against itself.
     """
 
     def __init__(self, installed: Mapping[str, Sequence[Effect]] | None = None) -> None:
@@ -133,7 +186,15 @@ class NameIndex:
             self.set(package, effects)
 
     def set(self, package: str, effects: Sequence[Effect]) -> None:
-        """Record that *package* provides the names of *effects* (replacing what it provided before)."""
+        """Record that *package* provides the names of *effects* (replacing what it provided before).
+
+        Parameters
+        ----------
+        package : str
+            The package name.
+        effects : sequence of Effect
+            The effects of its install record.
+        """
         self.drop(package)
         keys = tuple(provided_names(effects))
         self._keys[package] = keys
@@ -143,7 +204,13 @@ class NameIndex:
             owners.sort(key=str.casefold)
 
     def drop(self, package: str) -> None:
-        """Forget the names of *package* (it was uninstalled or has no record)."""
+        """Forget the names of *package* (it was uninstalled or has no record).
+
+        Parameters
+        ----------
+        package : str
+            The package name; an unknown package is ignored.
+        """
         for key in self._keys.pop(package, ()):
             owners = self._by_key[key]
             owners.remove(package)
@@ -151,7 +218,18 @@ class NameIndex:
                 del self._by_key[key]
 
     def owners(self, exclude: str) -> "_Owners":
-        """Return the owners of every name for a package named *exclude*, which never owns a name against itself."""
+        """Return the owners of every name for a package named *exclude*, which never owns a name against itself.
+
+        Parameters
+        ----------
+        exclude : str
+            The package name to leave out (letter case ignored).
+
+        Returns
+        -------
+        Mapping
+            A read-only map from a name key to the first other package that provides it.
+        """
         return _Owners(self._by_key, exclude.casefold())
 
 
@@ -181,7 +259,19 @@ class _Owners(Mapping):
 def name_owners(installed: Mapping[str, Sequence[Effect]], *, exclude: str) -> dict[tuple[str, str], str]:
     """Return which installed package provides each name: the recorded effects of every package but *exclude* (letter case ignored).
 
-    *installed* maps a package name to the effects of its install record; the first package (by name) that claims a name owns it.
+    The first package (by name) that claims a name owns it.
+
+    Parameters
+    ----------
+    installed : Mapping
+        Maps a package name to the effects of its install record.
+    exclude : str
+        The package name to leave out.
+
+    Returns
+    -------
+    dict
+        Each name key mapped to its owning package.
     """
     return dict(NameIndex(installed).owners(exclude))
 
@@ -198,6 +288,15 @@ def _refusal(package: str, other: str, item: ProvidedName) -> NameConflict:
 def check_names(package: str, desired: Sequence[Effect], owners: Mapping[tuple[str, str], str]) -> None:
     """Refuse *desired* when it provides a name that an installed package listed in *owners* provides.
 
+    Parameters
+    ----------
+    package : str
+        The package that would be installed.
+    desired : sequence of Effect
+        The effects it would apply.
+    owners : Mapping
+        Which other installed package provides each name key (``name_owners``).
+
     Raises
     ------
     NameConflict
@@ -212,9 +311,19 @@ def check_names(package: str, desired: Sequence[Effect], owners: Mapping[tuple[s
 def check_names_between(wanted: Mapping[str, Sequence[Effect]]) -> dict[str, NameConflict]:
     """Find the packages of one command that provide the same name; return the refusal of each package involved.
 
-    *wanted* maps a package name to the effects its operation would apply. The refusal names both packages of the first
-    clash found for each.
+    The refusal names both packages of the first clash found for each.
+
+    Parameters
+    ----------
+    wanted : Mapping
+        Maps a package name to the effects its operation would apply.
+
+    Returns
+    -------
+    dict
+        Maps each package that clashes to its ``NameConflict``; empty when there is no clash.
     """
+    # The first package to claim a name keeps it; a later claim by another package is a clash for both.
     claimed: dict[tuple[str, str], str] = {}
     refused: dict[str, NameConflict] = {}
     for package, effects in wanted.items():
@@ -222,6 +331,7 @@ def check_names_between(wanted: Mapping[str, Sequence[Effect]]) -> dict[str, Nam
             other = claimed.setdefault(key, package)
             if other.casefold() == package.casefold():
                 continue
+            # Two different packages claim the name: both are refused with the same message.
             error = NameConflict(
                 f"{other} and {package} both provide the {item.word} '{item.name}' ({item.where}). Install one of them, or "
                 "give one of them a package definition with a different name.",
@@ -233,13 +343,36 @@ def check_names_between(wanted: Mapping[str, Sequence[Effect]]) -> dict[str, Nam
 
 
 def name_key(group: str, path: str) -> tuple[str, str]:
-    """Return the comparison key of a path in ``bin`` (*group* ``file``) or of a shortcut (``shortcut``), letter case ignored."""
+    """Return the comparison key of a path in ``bin`` (*group* ``file``) or of a shortcut (``shortcut``), letter case ignored.
+
+    Parameters
+    ----------
+    group : str
+        ``file`` for a path in ``bin`` or ``shortcut`` for a Start Menu shortcut.
+    path : str
+        The path to compare.
+
+    Returns
+    -------
+    tuple of str
+        The group and the normalized, case-folded path.
+    """
     return group, os.path.normcase(os.path.normpath(path)).casefold()
 
 
 @dataclass(frozen=True)
 class UnownedFile:
-    """A file or shortcut that a plan would write over and that no installed package owns; ``kind`` is an ``--overwrite`` kind."""
+    """A file or shortcut that a plan would write over and that no installed package owns; ``kind`` is an ``--overwrite`` kind.
+
+    Attributes
+    ----------
+    path : str
+        The file or shortcut that would be overwritten.
+    kind : str
+        The ``--overwrite`` kind of the file.
+    reason : str
+        Why no installed package owns it.
+    """
 
     path: str
     kind: str
@@ -247,7 +380,17 @@ class UnownedFile:
 
 
 class FileExists(PlanError):
-    """Refuse a package that would write over a file no installed package owns; the stable code is ``file-exists``."""
+    """Refuse a package that would write over a file no installed package owns; the stable code is ``file-exists``.
+
+    Parameters
+    ----------
+    message : str
+        The readable message.
+    paths : 'Sequence[str]'
+        The files that would be overwritten.
+    overwrite : str
+        The ``--overwrite`` value that would lift the refusal.
+    """
 
     error_code = "file-exists"
 
@@ -264,23 +407,45 @@ def check_unowned(
     """Refuse *found* unless ``--overwrite`` (*allowed*, a list of kinds) lifts it; return the files that will be replaced.
 
     Each kind lifts only its own files. The message names the exact ``--overwrite`` value that would lift the refusal: the
-    kinds already allowed and the kinds still needed. *command*, when given, is the command to run instead of "the command
-    again" (``check --fix`` changes nothing and names the command that overwrites). *verb* is the word of "cannot be ...", and
-    *state* is a sentence appended to say what state the package is in when the refusal comes after work has started.
+    kinds already allowed and the kinds still needed.
+
+    Parameters
+    ----------
+    package : str
+        The package that would write the files.
+    found : sequence of UnownedFile
+        The files no installed package owns.
+    allowed : sequence of str
+        The ``--overwrite`` kinds the user already allowed.
+    command : str, optional
+        The command to run instead of "the command again" (``check --fix`` changes nothing and names the command that
+        overwrites).
+    verb : str
+        The word of "cannot be ...".
+    state : str
+        A sentence appended to say what state the package is in when the refusal comes after work has started.
+
+    Returns
+    -------
+    tuple of UnownedFile
+        The files that will be replaced.
 
     Raises
     ------
     FileExists
         Listing every refused path (five at most), nothing has been changed.
     """
+    # Every file whose kind is not allowed is refused, with the overwrite value that would lift the refusal.
     refused = [item for item in found if item.kind not in allowed]
     if refused:
         needed = [kind for kind in OVERWRITE_KINDS if kind in allowed or any(item.kind == kind for item in refused)]
+        # Build the message pieces: the overwrite value, the shown paths and the reasons.
         value = ",".join(needed)
         many = len(refused) > 1
         shown = ", ".join(f"'{item.path}'" for item in refused[:5]) + (f" and {len(refused) - 5} more" if len(refused) > 5 else "")
         way = f"`{command}{value}`" if command else f"the command again with --overwrite={value}"
         why = "".join(f" '{item.path}': {item.reason}." for item in refused[:5] if item.reason)
+        # Refuse, naming the files, the reasons and the command that would lift the refusal.
         raise FileExists(
             f"{package} cannot be {verb}: {shown} already exist{'' if many else 's'} and no installed package owns "
             f"{'them' if many else 'it'}.{why} Move or delete {'those files' if many else 'that file'}, or run {way} to replace "
@@ -291,7 +456,17 @@ def check_unowned(
 
 
 class InvalidVersion(PlanError):
-    """Report that a version directory is not valid; a malformed declared hash has the stable code ``invalid-checksum``."""
+    """Report that a version directory is not valid; a malformed declared hash has the stable code ``invalid-checksum``.
+
+    Parameters
+    ----------
+    message : str
+        The readable message.
+    version : str
+        The version directory that is not valid.
+    problems : 'Sequence[str]'
+        The problems found in it.
+    """
 
     def __init__(self, message: str, *, version: str, problems: "Sequence[str]") -> None:
         """Build the message; *version* and *problems* decide the error code."""
@@ -328,6 +503,17 @@ class CleanupFacts:
     ``inputs_present`` says per version whether the recorded inputs of a script-populated ``App`` still exist, and
     ``bundled`` names the versions whose directory holds a bundled ``gupkg`` folder. ``work`` lists only the entries old
     enough to remove.
+
+    Attributes
+    ----------
+    receipts : tuple[str, ...]
+        The versions that have a receipt.
+    work : tuple[str, ...]
+        The entries of the work folder that are old enough to remove.
+    inputs_present : Mapping[str, bool]
+        Per version, whether the recorded inputs of a script-populated ``App`` still exist.
+    bundled : tuple[str, ...]
+        The versions whose directory holds a bundled gupkg folder.
     """
 
     receipts: tuple[str, ...] = ()
@@ -338,7 +524,30 @@ class CleanupFacts:
 
 @dataclass(frozen=True)
 class CleanupPlan:
-    """What ``cleanup`` removes from one package: ``App`` folders, receipts and work entries, and what it keeps."""
+    """What ``cleanup`` removes from one package: ``App`` folders, receipts and work entries, and what it keeps.
+
+    Methods
+    -------
+    to_data
+        Return the JSON-ready description of the cleanup.
+
+    Attributes
+    ----------
+    package : str
+        The package name.
+    drop_apps : tuple[str, ...]
+        The versions whose ``App`` folder is removed.
+    kept_apps : tuple[tuple[str, str], ...]
+        ``(version, reason)`` pairs for the ``App`` folders that stay.
+    drop_receipts : tuple[str, ...]
+        The versions whose receipt is removed.
+    drop_work : tuple[str, ...]
+        The work entries that are removed.
+    drop_bundled : tuple[str, ...]
+        The versions whose bundled gupkg folder is removed.
+    empty : bool
+        Return whether there is nothing to remove.
+    """
 
     package: str
     drop_apps: tuple[str, ...] = ()
@@ -353,7 +562,13 @@ class CleanupPlan:
         return not (self.drop_apps or self.drop_receipts or self.drop_work or self.drop_bundled)
 
     def to_data(self) -> dict[str, object]:
-        """Return the JSON-ready description of the cleanup."""
+        """Return the JSON-ready description of the cleanup.
+
+        Returns
+        -------
+        dict[str, object]
+            The package, the dropped and kept ``App`` folders, receipts, work entries and bundled copies.
+        """
         return {
             "package": self.package, "drop_apps": list(self.drop_apps),
             "kept_apps": [{"version": version, "why": why} for version, why in self.kept_apps],
@@ -427,6 +642,7 @@ def plan_install(
     NameConflict
         If the version would provide a shim, wrapper, shortcut or environment variable that another installed package provides.
     """
+    # Refuse a mode the manifest does not support and, unless only downloading, a clash of names.
     manifest = chosen.manifest
     version = chosen.candidate.version
     check_supported(
@@ -435,6 +651,7 @@ def plan_install(
     )
     if owners and not request.download_only:
         check_names(view.name, desired, owners)
+    # Gather the starting facts: where the package lives, what is installed and what the record holds.
     path = package_path or view.path or context.package_dir(view.name)
     previous = view.installed.version if view.installed is not None else None
     record_effects = view.record.effects if view.record is not None else ()
@@ -457,6 +674,7 @@ def plan_install(
             if item.action == "keep" and (rewrite_all or effect_key(item.effect) in drifted) else item
             for item in effects
         )
+    # Activate when nothing is installed, the version changes or ``current`` is not valid.
     activating = previous is None or previous.casefold() != version.casefold() or (
         view.local is not None and view.local.current.status != "valid"
     )
@@ -465,6 +683,7 @@ def plan_install(
     if request.download_only:
         effects, activating = (), False
 
+    # Assemble the readable phases and the plan record.
     phases = _install_phases(request, view, context, chosen, populate, copy_in, effects, activating, previous, notes)
     return InstallPlan(
         request.operation, view.name, Path(path), context.root, context.mode, version, previous, populate, copy_in,
@@ -483,17 +702,39 @@ def plan_populate(
     never replaced. A missing ``App`` is rebuilt from the ``download_url`` or the populate script, whatever
     ``shipped`` says; with neither there is no way to recover it.
 
+    Parameters
+    ----------
+    manifest : Manifest
+        The manifest of the chosen version.
+    state : VersionState or None
+        The local version directory, when the version is on disk.
+    refresh : bool
+        Whether ``--refresh`` asks to rebuild a rebuildable ``App``.
+    url_from : str
+        Where the download URL comes from, reported in the checksum plan.
+    copy_in : bool
+        Whether the version directory is being copied into the package root.
+    allow_installer : bool
+        Whether a vendor installer may be planned.
+
+    Returns
+    -------
+    PopulatePlan
+        How ``App`` is obtained, or why nothing has to happen.
+
     Raises
     ------
     PlanError
         With ``App is missing and no way to recover it.`` when nothing can populate a missing ``App``.
     """
+    # Classify how the App comes about, and what is already there.
     source = manifest.source
     kind = "script" if source.populate == "script" else "shipped" if source.populate == "none" else (
         "git" if source.kind == "git" else "download"
     )
     populated = bool(state is not None and state.populated)
     recoverable = source.recoverable
+    # Plan the checksum rules when there is a download to verify.
     checksum = None
     if source.download_url is not None:
         git = source.git
@@ -515,13 +756,21 @@ def plan_populate(
 def _populate_plan(
     kind: str, needed: bool, why: str, source: Source, checksum: ChecksumPlan | None, recoverable: bool, allow_installer: bool
 ) -> PopulatePlan:
-    """Build a ``PopulatePlan``; a vendor installer that has to run is refused when the setting forbids it."""
+    """Build a ``PopulatePlan``; a vendor installer that has to run is refused when the setting forbids it.
+
+    Raises
+    ------
+    PlanError
+        If a vendor installer must run but the setting forbids it or no sha256 is pinned.
+    """
+    # A vendor installer is code from the vendor: it needs the setting and a pinned checksum.
     installer = source.installer.run if source.installer is not None and kind == "download" else None
     if installer is not None and needed and not allow_installer:
         raise PlanError(
             f"This version {INSTALLER_LABEL} ([source.installer]), and the setting hooks.allow_vendor_installers is false; "
             "nothing was installed."
         )
+    # An installer that must run needs a pinned sha256 as well.
     if installer is not None and needed and (checksum is None or checksum.sha256 != "present"):
         raise PlanError(
             f"This version {INSTALLER_LABEL} ([source.installer]) and pins no sha256. A vendor installer runs only from a "
@@ -548,9 +797,11 @@ def diff_effects(recorded: Sequence[Effect], desired: Sequence[Effect]) -> tuple
         identical one (the recorded effect is kept, so facts such as ``added`` survive) and ``remove`` for a
         recorded effect that is no longer wanted. Removals come last.
     """
+    # Compare by identity: new, changed and identical desired effects first, then recorded effects no longer wanted.
     before = {effect_key(item): item for item in recorded}
     wanted: dict[tuple[str, ...], Effect] = {}
     result: list[PlannedEffect] = []
+    # Classify each desired effect against the record.
     for item in desired:
         key = effect_key(item)
         wanted[key] = item
@@ -561,6 +812,7 @@ def diff_effects(recorded: Sequence[Effect], desired: Sequence[Effect]) -> tuple
             result.append(PlannedEffect("keep", old))
         else:
             result.append(PlannedEffect("update", item, old))
+    # Recorded effects that are no longer wanted come last, as removals.
     for key, old in before.items():
         if key not in wanted:
             result.append(PlannedEffect("remove", old, old))
@@ -601,6 +853,7 @@ def _install_phases(
     notes: Sequence[str],
 ) -> tuple[Phase, ...]:
     """Build the phases of an install-like plan, each with its readable steps."""
+    # The Resolve phase says what is being moved, where from, in which scope, and any notes.
     version = chosen.candidate.version
     where = {"local": "local version directory", "registry": f"registry {chosen.candidate.registry}"}.get(
         chosen.candidate.source, chosen.candidate.source
@@ -612,6 +865,7 @@ def _install_phases(
         resolve.append(PlanStep(f"copy {copy_in.source} into the package root (from {origin})"))
     resolve.extend(PlanStep(text) for text in notes)
 
+    # Decide which phases have work, and fill the steps of each.
     fetching = populate.needed and populate.kind == "download"
     verifying = populate.needed and populate.kind in ("download", "git")
     building = populate.needed
@@ -622,6 +876,7 @@ def _install_phases(
         steps["Fetch"].append(PlanStep(f"download {populate.url}"))
     if verifying:
         steps["Verify"].append(PlanStep(f"checksum: {populate.checksum.sha256 if populate.checksum else 'n/a'}"))
+    # Building the App covers unpacking or running the populate source, then preparing it.
     if building:
         verb = {"script": f"run the populate script {populate.script}", "download": "unpack the download",
                 "git": "check out the repository", "shipped": "recover the App"}[populate.kind]
@@ -629,6 +884,7 @@ def _install_phases(
             verb = f"{INSTALLER_LABEL}: {' '.join(populate.installer)}"
         steps["Unpack"].append(PlanStep(verb))
         steps["Prepare"].append(PlanStep("run the prepare steps, rename the finished App into place"))
+    # Activation hands over persisted data, then moves ``current``.
     if activating:
         if chosen.manifest.portable and chosen.manifest.portable.persist:
             steps["Activate"].append(PlanStep(f"hand over persisted data: {', '.join(chosen.manifest.portable.persist)}"))
@@ -636,6 +892,7 @@ def _install_phases(
     steps["Integrate"] = [_effect_line(item) for item in effects if item.action != "keep"]
     steps["Finish"] = [PlanStep("write the receipt and the install record")]
 
+    # A phase without work is shown as skipped, with the reason.
     skipped_why = {
         "Fetch": (skip or "nothing is downloaded") if not fetching else "",
         "Verify": (skip or "nothing is downloaded") if not verifying else "",
@@ -646,6 +903,7 @@ def _install_phases(
         "Integrate": ("download only: nothing is integrated" if request.download_only else "no effect changes")
         if not steps["Integrate"] else "",
     }
+    # One phase per name, in the fixed order.
     return tuple(
         Phase(name, tuple(steps[name]), bool(skipped_why.get(name)), skipped_why.get(name, "")) for name in INSTALL_PHASES
     )
@@ -663,11 +921,26 @@ def plan_uninstall(request: Request, view: PackageView, context: Scope) -> Insta
     ``local`` again. ``extra`` names what ``--purge`` would delete and which ``App`` folders cannot be rebuilt,
     which is what the confirmation shows.
 
+    Parameters
+    ----------
+    request : Request
+        The request (``purge`` also deletes the package root).
+    view : PackageView
+        The package as it is now.
+    context : Scope
+        The scope of the run.
+
+    Returns
+    -------
+    InstallPlan
+        The uninstall plan.
+
     Raises
     ------
     PlanError
         If there is no package on disk.
     """
+    # An uninstall needs a package on disk; every recorded effect is removed.
     if view.local is None or view.path is None:
         raise PlanError(f"'{view.name}' is not installed")
     effects = tuple(PlannedEffect("remove", item, item) for item in (view.record.effects if view.record else ()))
@@ -681,17 +954,20 @@ def plan_uninstall(request: Request, view: PackageView, context: Scope) -> Insta
     extra: dict[str, object] = {}
     if request.purge:
         extra = {"purge": {"package_root": str(view.path), "data": str(view.path / "data"), "unrecoverable_apps": unrecoverable}}
+    # Describe each phase of the uninstall.
     steps = [
         PlanStep(f"{view.name}: uninstall"),
         PlanStep(context.describe()),
         *([PlanStep("--purge: delete the whole package root including data\\", "remove")] if request.purge else []),
     ]
+    # The four phases of an uninstall; Integrate and Activate are skipped when there is nothing to undo.
     phases = (
         Phase("Resolve", tuple(steps)),
         Phase("Integrate", tuple(_effect_line(item) for item in effects), not effects, "no effect is recorded" if not effects else ""),
         Phase("Activate", (PlanStep("remove current", "remove"),), previous is None, "not installed" if previous is None else ""),
         Phase("Finish", (PlanStep("delete the package root" if request.purge else "write the install record"),)),
     )
+    # The uninstall plan has no populate or copy-in part.
     return InstallPlan(
         "uninstall", view.name, view.path, context.root, context.mode, previous, previous, None, None, effects, phases,
         (), request.purge, extra,
@@ -712,16 +988,33 @@ def plan_cleanup(request: Request, view: PackageView, facts: CleanupFacts) -> Cl
     ``App`` of a script-populated version whose inputs are gone (it could not be rebuilt). Also drops receipts of versions that no longer
     exist and everything in ``.gupkg\\work``. ``--bundled`` drops bundled gupkg copies of version directories.
 
+    Parameters
+    ----------
+    request : Request
+        The request (``keep`` and ``bundled``).
+    view : PackageView
+        The package as it is now.
+    facts : CleanupFacts
+        What only the disk can say: receipts, work entries, script inputs and bundled copies.
+
+    Returns
+    -------
+    CleanupPlan
+        What to remove and what is kept, with the reasons.
+
     Raises
     ------
     PlanError
         If there is no package on disk.
     """
+    # Cleaning needs a package root.
     if view.local is None:
         raise PlanError(f"'{view.name}' has no package root to clean")
+    # Sort every populated version into "kept, with a reason" or "candidate for dropping".
     current = view.installed.version if view.installed is not None else None
     kept: list[tuple[str, str]] = []
     candidates: list[VersionState] = []
+    # Only populated Apps are in question; each is kept for a stated reason or becomes a candidate.
     for state in view.local.versions:
         if not state.populated:
             continue
@@ -730,12 +1023,14 @@ def plan_cleanup(request: Request, view: PackageView, facts: CleanupFacts) -> Cl
             kept.append((state.name, "current"))
         elif source is None:
             kept.append((state.name, "invalid version: kept"))
+        # An App that cannot be rebuilt (shipped, not recoverable, or script inputs gone) must never be dropped.
         elif source.shipped:
             kept.append((state.name, "shipped App is never dropped"))
         elif not source.recoverable:
             kept.append((state.name, "cannot be rebuilt"))
         elif source.populate == "script" and not facts.inputs_present.get(state.name, False):
             kept.append((state.name, "the populate script's inputs are gone"))
+        # A version newer than current is an update that check-updates prepared.
         elif current is not None and compare_versions(state.name, current) > 0:
             kept.append((state.name, "newer than current (an update is ready)"))
         else:
@@ -745,6 +1040,7 @@ def plan_cleanup(request: Request, view: PackageView, facts: CleanupFacts) -> Cl
     candidates.sort(key=cmp_to_key(lambda left, right: compare_versions(right.name, left.name)))
     for state in candidates[: request.keep]:
         kept.append((state.name, f"one of the {request.keep} newest older versions"))
+    # Receipts of vanished versions and bundled copies of existing ones are dropped too.
     drop = tuple(state.name for state in candidates[request.keep:])
     existing = {state.name.casefold() for state in view.local.versions}
     receipts = tuple(item for item in facts.receipts if item.casefold() not in existing)
@@ -781,23 +1077,28 @@ def plan_check_updates(
     InstallPlan
         The plan, with the phases of the check-updates table. It never activates and never integrates.
     """
+    # Fill the steps of each check-updates phase; the populate phases appear only when downloading.
     steps: dict[str, list[PlanStep]] = {name: [] for name in CHECK_UPDATES_PHASES}
     steps["Resolve"] = [PlanStep(f"{view.name}: check for updates"), PlanStep(context.describe())]
     if tracker_action in ("copy", "refresh"):
         steps["Resolve"].append(PlanStep(f"{tracker_action} the registry's tracker into the package root"))
+    # The tracker runs and a pinned version directory is written, with or without a download.
     steps["Track"] = [PlanStep("run the tracker's [track] provider; compare with the known versions")]
     steps["Write"] = [PlanStep("render the pinned pkg.toml and write the version directory")]
+    # Populating the new version adds the fetch, verify, unpack and prepare steps.
     if download:
         steps["Fetch"] = [PlanStep("download the new version")]
         steps["Verify"] = [PlanStep("checksum rules of design 9.1")]
         steps["Unpack"] = [PlanStep("unpack into a staged App")]
         steps["Prepare"] = [PlanStep("prepare and rename into place; nothing is activated")]
     steps["Finish"] = [PlanStep("record the result in .gupkg\\state\\track.toml")]
+    # Phases that need a download are shown as skipped under ``--no-download``.
     off = {"Fetch", "Verify", "Unpack", "Prepare"} if not download else set()
     phases = tuple(
         Phase(name, tuple(steps[name]), name in off, ("--no-download" if name in off else ""))
         for name in CHECK_UPDATES_PHASES
     )
+    # The plan never activates or integrates, so those parts of the record are empty.
     path = view.path or context.package_dir(view.name)
     return InstallPlan(
         "check-updates", view.name, Path(path), context.root, context.mode, None,
