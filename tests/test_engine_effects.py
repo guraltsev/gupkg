@@ -304,17 +304,23 @@ def test_a_dynamic_shim_gets_its_libraries_in_exe_shim_lib_and_none_loose_in_bin
 
 
 def test_a_searched_shim_writes_its_bare_target_and_others_write_no_search_keys(tmp_path: Path) -> None:
-    """A `search_path` shim's configuration keeps the program name and both search keys; a plain shim's text has neither, so
-    the configuration of a shim installed before the option existed still matches its recorded hash."""
-    searched = '[[shim]]\nname = "s"\ntarget = "python"\nsearch_path = true\nskip_app_execution_aliases = true\n'
+    """A searched shim writes its program name, search keys and expanded preferred targets; a plain shim writes none of them.
+
+    The preferred targets expand below `current`, so they follow the active version. A plain shim's text is unchanged, so
+    the configuration of a shim installed before these options existed still matches its recorded hash."""
+    searched = (
+        '[[shim]]\nname = "s"\ntarget = "python"\nprefer_targets = ["$App\\\\.venv\\\\Scripts\\\\python.exe"]\n'
+        'search_path = true\nskip_app_execution_aliases = true\n'
+    )
     effects = {Path(str(item.fields["path"])).stem: item for item in desired_effects(manifest(SHIM + searched), context(tmp_path))[0] if item.kind == "shim"}
 
     searched_config = tomllib.loads(shim_config_text(effects["s"].fields))
     plain_text = shim_config_text(effects["t"].fields)
 
     assert (searched_config["target"], searched_config["search_path"], searched_config["skip_app_execution_aliases"]) == ("python", True, True)
-    assert "search_path" not in plain_text and "skip_app_execution_aliases" not in plain_text
-    assert "search_path" not in effects["t"].fields
+    assert searched_config["prefer_targets"] == [str(tmp_path / "opt" / "tool" / "current" / "App" / ".venv" / "Scripts" / "python.exe")]
+    assert not any(key in plain_text for key in ("search_path", "skip_app_execution_aliases", "prefer_targets"))
+    assert not any(key in effects["t"].fields for key in ("search_path", "prefer_targets"))
 
 
 def test_a_static_shim_needs_no_library_folder(tmp_path: Path, system: FakeSystem) -> None:

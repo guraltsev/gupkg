@@ -548,9 +548,14 @@ module = "pkg.local/fix.py"                                 # escape hatch (hook
   `<name>.config.toml` in the mode's `bin` folder and starts the target directly, without a shell. With
   `search_path = true` the target is a bare program name, such as `"python"`, that the shim looks up on the caller's
   `PATH` each time it starts (`.com`, `.exe`, `.bat`, `.cmd`; never the current folder, never the shim itself);
-  `skip_app_execution_aliases = true` also passes over WindowsApps aliases. A program that needs one specific
-  interpreter should name it by path instead, since `PATH` differs between callers. A `.bat` or `.cmd` target runs
-  through `cmd.exe` with every argument passed as text. For shell behaviour
+  `skip_app_execution_aliases = true` also passes over WindowsApps aliases. `prefer_targets` lists paths tried first;
+  the first that exists runs. A Python tool uses it to prefer its own venv when one has been made and fall back to the
+  `python` on `PATH` (where an activated venv comes first): `prefer_targets = ["$App\\.venv\\Scripts\\python.exe"]`,
+  `target = "python"`, `search_path = true`. gupkg never creates the venv or installs dependencies: in system mode the
+  administrator makes `$App\.venv` with a system-wide Python, in user mode the user does, and a missing or broken venv or
+  dependency is an error of the tool when it runs. The venv is inside `App`, so it is per version (an update needs a
+  new one) and such a package sets `record_manifest = false`, or `check` reports the venv's files as extra. A `.bat` or
+  `.cmd` target runs through `cmd.exe` with every argument passed as text. For shell behaviour
   write a content shim instead, `content = "@echo off\r\n..."` with a name such as `tool.cmd`; `content` cannot be combined
   with the other shim options. Names may not be device names, streams or end in a dot or space.
 - **Names belong to one package.** A shim, wrapper, shortcut or environment variable that another installed package of the

@@ -307,8 +307,8 @@ _SHORTCUT_KEYS = ("name", "target", "arguments", "working_dir", "icon_location",
 _SHORTCUT_TEXT_KEYS = ("arguments", "working_dir", "icon_location", "description")
 # The keys of a ``[[shim]]`` row.
 _SHIM_KEYS = (
-    "name", "target", "type", "arguments", "forward_args", "elevate", "working_dir", "search_path", "skip_app_execution_aliases",
-    "content",
+    "name", "target", "type", "arguments", "forward_args", "elevate", "working_dir", "prefer_targets", "search_path",
+    "skip_app_execution_aliases", "content",
 )
 # The step names of a ``[[prepare]]`` row; each row names exactly one.
 _PREPARE_KEYS = ("remove", "rename", "copy", "write", "module")
@@ -890,6 +890,8 @@ class Shim:
         The working folder, or ``None``.
     content : str | None
         The text of the command file, for a shim that writes one.
+    prefer_targets : tuple[str, ...]
+        Paths the launcher tries before *target*; the first existing file runs (a package's own venv interpreter).
     search_path : bool
         Whether the launcher finds *target* on the caller's ``PATH`` each time it starts.
     skip_app_execution_aliases : bool
@@ -904,6 +906,7 @@ class Shim:
     elevate: bool = False
     working_dir: str | None = None
     content: str | None = None
+    prefer_targets: tuple[str, ...] = ()
     search_path: bool = False
     skip_app_execution_aliases: bool = False
 
@@ -2109,7 +2112,10 @@ def _parse_shims(collector: _Collector, raw: Any) -> tuple[Shim, ...]:
         forward_args = collector.boolean(row, "forward_args", where)
         elevate = collector.boolean(row, "elevate", where)
         working_dir = collector.string(row, "working_dir", where)
-        for key, text in (("target", target), ("working_dir", working_dir), *(("arguments", a) for a in arguments)):
+        prefer_targets = collector.strings(row, "prefer_targets", where)
+        for key, text in (
+            ("target", target), ("working_dir", working_dir), *(("arguments", a) for a in arguments), *(("prefer_targets", p) for p in prefer_targets),
+        ):
             if text:
                 _check_variables(collector, text, f"{where}.{key}")
         # A searched target is a bare program name the launcher finds on PATH when it starts, so it has no folder,
@@ -2126,7 +2132,7 @@ def _parse_shims(collector: _Collector, raw: Any) -> tuple[Shim, ...]:
                 name=name, target=target, type=shim_type or "console", arguments=arguments,
                 forward_args=True if forward_args is None else forward_args,
                 elevate=bool(elevate), working_dir=working_dir,
-                search_path=search_path, skip_app_execution_aliases=skip_aliases,
+                prefer_targets=prefer_targets, search_path=search_path, skip_app_execution_aliases=skip_aliases,
             ))
     # Shim names are unique ignoring case, as Windows treats file names.
     folded = [row.name.casefold() for row in rows]
@@ -2250,7 +2256,7 @@ def _shim_to_data(shim: Shim) -> dict[str, Any]:
         "name": shim.name, "target": shim.target, "type": shim.type if shim.type != "console" else None,
         "arguments": list(shim.arguments), "forward_args": None if shim.forward_args else False,
         "elevate": True if shim.elevate else None, "working_dir": shim.working_dir,
-        "search_path": True if shim.search_path else None,
+        "prefer_targets": list(shim.prefer_targets), "search_path": True if shim.search_path else None,
         "skip_app_execution_aliases": True if shim.skip_app_execution_aliases else None,
     })
 

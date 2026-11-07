@@ -207,7 +207,10 @@ def desired_effects(manifest: Manifest, context: EffectContext) -> tuple[tuple[E
             "forward_args": shim.forward_args,
             "elevate": shim.elevate,
             "working_dir": _expand(shim.working_dir or "", values, context.env, f"{label} working_dir"),
-            # The PATH search is recorded only when asked for, so records written before it existed still match.
+            # The preferred targets and the PATH search are recorded only when declared, so records written before they
+            # existed still match.
+            **({"prefer_targets": [_expand(item, values, context.env, f"{label} prefer_targets") for item in shim.prefer_targets]}
+               if shim.prefer_targets else {}),
             **({"search_path": True} if shim.search_path else {}),
             **({"skip_app_execution_aliases": True} if shim.skip_app_execution_aliases else {}),
         }
@@ -329,7 +332,7 @@ def shim_config_text(fields: Mapping[str, Any]) -> str:
     ----------
     fields : Mapping[str, Any]
         The fields of a ``shim`` effect (``target``, ``arguments``, ``forward_args``, ``elevate``, ``working_dir``,
-        ``search_path``, ``skip_app_execution_aliases``).
+        ``prefer_targets``, ``search_path``, ``skip_app_execution_aliases``).
 
     Returns
     -------
@@ -344,6 +347,8 @@ def shim_config_text(fields: Mapping[str, Any]) -> str:
     }
 
     # Optional keys appear only when the effect sets them, so the text stays minimal and stable.
+    if fields.get("prefer_targets"):
+        config["prefer_targets"] = list(fields["prefer_targets"])
     for key in ("search_path", "skip_app_execution_aliases"):
         if fields.get(key):
             config[key] = True

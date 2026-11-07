@@ -202,6 +202,7 @@ content = "@echo off"
 [[shim]]
 name = "tool3"
 target = "python"
+prefer_targets = ["$App\\\\.venv\\\\Scripts\\\\python.exe"]
 search_path = true
 skip_app_execution_aliases = true
 """

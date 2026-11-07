@@ -155,12 +155,16 @@ def test_a_shim_without_its_bundled_python_fails_with_the_missing_path_and_a_non
 
 
 def test_a_search_path_shim_starts_the_program_of_that_name_on_the_callers_path(tmp_path: Path) -> None:
-    """A package shim with `target = "python"` and `search_path = true` starts whichever `python` the caller's `PATH` names first,
-    with its fixed and forwarded arguments, and fails naming the searched folders when `PATH` has none."""
+    """A package shim runs its preferred venv interpreter when it exists, and otherwise the `python` on the caller's `PATH`.
+
+    With `target = "python"` and `search_path = true` it starts whichever `python` `PATH` names first, with its fixed and
+    forwarded arguments, and fails naming the searched folders when `PATH` has none. Once the package's preferred
+    `$App\\.venv\\Scripts\\python.exe` exists, that one runs instead, whatever `PATH` says."""
     # Arrange: write the shim with the real effect code; the bundled Python stands in for the program on PATH.
     manifest = parse_manifest(
         'format = 2\n[source]\ndownload_url = "https://x.test/a.zip"\n\n'
-        '[[shim]]\nname = "py-here"\ntarget = "python"\nsearch_path = true\narguments = ["-I", "-c", "import sys; print(sys.executable, sys.argv[1:])"]\n',
+        '[[shim]]\nname = "py-here"\ntarget = "python"\nsearch_path = true\nprefer_targets = ["$App\\\\.venv\\\\Scripts\\\\python.exe"]\n'
+        'arguments = ["-I", "-c", "import sys; print(sys.executable, sys.argv[1:])"]\n',
         ManifestKind.VERSION,
     )
     context = EffectContext(tmp_path / "opt" / "tool", "user", tmp_path / "bin", None, None, {})
@@ -175,6 +179,13 @@ def test_a_search_path_shim_starts_the_program_of_that_name_on_the_callers_path(
     assert found.returncode == 0, found.stderr
     assert found.stdout.decode().strip() == f"{python_folder / 'python.exe'} ['two words']"
     assert missing.returncode == 1 and b"was not found on PATH" in missing.stderr and str(tmp_path / "empty").encode() in missing.stderr
+
+    # Once the package's venv interpreter exists (a copy of the bundled Python stands in for it), it wins over PATH.
+    venv_scripts = context.package_path / "current" / "App" / ".venv" / "Scripts"
+    shutil.copytree(python_folder, venv_scripts)
+    preferred = _run(tmp_path / "bin", "py-here", "x", {"PATH": f"{tmp_path / 'empty'};{python_folder}"})
+    assert preferred.returncode == 0, preferred.stderr
+    assert preferred.stdout.decode().strip() == f"{venv_scripts / 'python.exe'} ['x']"
 
 
 def test_an_update_replaces_the_cmd_shims_of_a_1_1_1_install_and_leaves_no_drift(tmp_path: Path) -> None:

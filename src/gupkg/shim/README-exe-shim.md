@@ -170,6 +170,30 @@ needs one specific interpreter or its own dependencies should name that
 interpreter by path instead, because `PATH` is the caller's and differs
 between a terminal, an editor and a scheduled task.
 
+### Prefer a program when it exists
+
+`prefer_targets` lists paths tried before `target`; the first one that exists
+as a file runs, and otherwise `target` applies as configured. This suits a
+tool that runs from its own virtual environment when one has been created, and
+from the `python` on `PATH` (an activated venv comes first there) when not:
+
+```toml
+prefer_targets = ["C:\\opt\\tool\\.venv\\Scripts\\python.exe"]
+target = "python"
+search_path = true
+
+[[argument]]
+value = "-m"
+
+[[argument]]
+value = "tool"
+```
+
+Entries expand `%NAME%` and resolve relative to the configuration file, like
+`target`. A missing entry is not an error; if the fallback fails too, the
+message lists the preferred paths. Whether the chosen interpreter has the
+tool's dependencies is the tool's concern at run time, not the launcher's.
+
 ### Start a batch file
 
 A `.bat` or `.cmd` target, found on `PATH` or named by path, runs through the
@@ -188,6 +212,7 @@ launcher fail before starting the target.
 target = "%LOCALAPPDATA%\\Programs\\Example\\tool.exe"
 forward_arguments = true # Defaults to true.
 elevate = false           # Defaults to false.
+prefer_targets = ["venv\\python.exe"] # Tried before target; the first existing file wins.
 search_path = false       # Defaults to false; true finds a bare target name on PATH.
 skip_app_execution_aliases = false # Defaults to false; requires search_path = true.
 target_dir_as_working_dir = false # Defaults to false.
