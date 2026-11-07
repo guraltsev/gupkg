@@ -207,6 +207,9 @@ def desired_effects(manifest: Manifest, context: EffectContext) -> tuple[tuple[E
             "forward_args": shim.forward_args,
             "elevate": shim.elevate,
             "working_dir": _expand(shim.working_dir or "", values, context.env, f"{label} working_dir"),
+            # The PATH search is recorded only when asked for, so records written before it existed still match.
+            **({"search_path": True} if shim.search_path else {}),
+            **({"skip_app_execution_aliases": True} if shim.skip_app_execution_aliases else {}),
         }
 
         # The hash of the config text lets verification detect an edited configuration.
@@ -325,7 +328,8 @@ def shim_config_text(fields: Mapping[str, Any]) -> str:
     Parameters
     ----------
     fields : Mapping[str, Any]
-        The fields of a ``shim`` effect (``target``, ``arguments``, ``forward_args``, ``elevate``, ``working_dir``).
+        The fields of a ``shim`` effect (``target``, ``arguments``, ``forward_args``, ``elevate``, ``working_dir``,
+        ``search_path``, ``skip_app_execution_aliases``).
 
     Returns
     -------
@@ -340,6 +344,9 @@ def shim_config_text(fields: Mapping[str, Any]) -> str:
     }
 
     # Optional keys appear only when the effect sets them, so the text stays minimal and stable.
+    for key in ("search_path", "skip_app_execution_aliases"):
+        if fields.get(key):
+            config[key] = True
     if fields.get("working_dir"):
         config["working_dir"] = fields["working_dir"]
     arguments = list(fields.get("arguments") or ())

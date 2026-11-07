@@ -7,7 +7,9 @@ with predictable arguments, environment changes, working directory, and exit
 code handling. By default, the target keeps the caller's current working
 directory; the launcher's directory and the target's directory are not used
 implicitly. It does not invoke a shell, so it avoids shell-specific quoting
-and command-injection behavior.
+and command-injection behavior; a batch-file target is the one exception, run
+through `cmd.exe` with every argument quoted as text (see
+[Start a batch file](#start-a-batch-file)).
 
 For example, `gs.exe` reads `gs.config.toml`. It can launch Git with fixed
 arguments, append arguments supplied by the caller, and return Git's exit code.
@@ -24,7 +26,11 @@ For a `gs` command installed in `C:\Bin`:
 
 ```bat
 copy shim-console.exe C:\Bin\gs.exe
+xcopy /e /i exe-shim-lib C:\Bin\exe-shim-lib
 ```
+
+The `exe-shim-lib` copy is needed only once per directory, and only for the
+dynamic launchers; the `.static.exe` launchers need no extra files.
 
 Create `C:\Bin\gs.config.toml`:
 
@@ -70,7 +76,7 @@ Build output contains two launchers with identical TOML configuration behavior:
 
 | Launcher | Use it for | Behavior |
 | --- | --- | --- |
-| `shim-console.exe` | Command-line and terminal tools | Attaches to the calling console. The target inherits terminal behavior, including Ctrl+C handling. |
+| `shim-console.exe` | Command-line and terminal tools | Attaches to the calling console. The target inherits terminal behavior, including Ctrl+C handling. Started without a console, it starts the target without one and with the caller's standard handles. |
 | `shim-gui.exe` | Desktop applications opened from Explorer, shortcuts, or file associations | Uses the Windows GUI subsystem, so it does not create a console window when launched outside a terminal. |
 
 Use the console launcher for console targets. A GUI launcher can start a
@@ -134,6 +140,46 @@ elevate = true
 Windows shows the UAC prompt. If elevation is declined or fails, the launcher
 returns a non-zero exit code and does not start the target unelevated.
 
+### Find the target on PATH
+
+Set `search_path = true` to start whichever program of that name the child's
+`PATH` provides, like typing the name at a prompt:
+
+```toml
+target = "python"
+search_path = true
+```
+
+The target must then be a bare file name. Without an extension the launcher
+tries `.com`, `.exe`, `.bat` and `.cmd`, in that order, in each `PATH` folder
+in turn; with one of those extensions it looks for exactly that name. The
+search uses the `PATH` the target will receive, after `path_prepend` and
+`[environment]`. It differs from a prompt in three ways that keep it
+predictable: the current directory is never searched, relative `PATH` entries
+are skipped, and the launcher never finds itself, so `python.exe` can be a
+shim for `python` further down `PATH`. If nothing matches, the launcher fails
+and lists the folders it searched.
+
+App execution aliases, such as the `python.exe` in
+`%LOCALAPPDATA%\Microsoft\WindowsApps`, count as matches. Set
+`skip_app_execution_aliases = true` to pass over them, for example when a
+WindowsApps alias would open the Microsoft Store instead of a real program.
+
+Searching suits programs that any installed version can serve. A program that
+needs one specific interpreter or its own dependencies should name that
+interpreter by path instead, because `PATH` is the caller's and differs
+between a terminal, an editor and a scheduled task.
+
+### Start a batch file
+
+A `.bat` or `.cmd` target, found on `PATH` or named by path, runs through the
+system's `cmd.exe /d /v:off /s /c`. Every argument is quoted so that cmd treats
+`&`, `|`, `<`, `>`, `^`, `!`, quotes and `%NAME%` as text: a batch file that
+forwards `%*` to a program passes each argument on unchanged. Inside the batch
+file, `%1` holds the argument with its quotes, and any quote within it doubled.
+An argument containing a line break cannot be passed through cmd and makes the
+launcher fail before starting the target.
+
 ## Configuration reference
 
 `target` is required. All other settings are optional:
@@ -142,6 +188,8 @@ returns a non-zero exit code and does not start the target unelevated.
 target = "%LOCALAPPDATA%\\Programs\\Example\\tool.exe"
 forward_arguments = true # Defaults to true.
 elevate = false           # Defaults to false.
+search_path = false       # Defaults to false; true finds a bare target name on PATH.
+skip_app_execution_aliases = false # Defaults to false; requires search_path = true.
 target_dir_as_working_dir = false # Defaults to false.
 working_dir = "project"
 remove_environment = ["VIRTUAL_ENV"]
@@ -163,7 +211,8 @@ target. Configuration files must be valid UTF-8.
 
 When `working_dir` is omitted, the target inherits the launcher's current
 working directory. Set `target_dir_as_working_dir = true` to instead use the
-directory containing the resolved `target`. `working_dir` and
+directory containing the resolved `target` (for `search_path`, the folder
+where it was found). `working_dir` and
 `target_dir_as_working_dir` may not be used together.
 
 ## Build
@@ -241,6 +290,12 @@ launches run the target in a Windows job object, so child processes are
 terminated when the launcher is terminated. Console launchers suppress the
 launcher's default Ctrl+C handling so the target can receive console control
 events.
+
+A console launcher started without any console (for example with
+`DETACHED_PROCESS`, as some editors and agents start their shells) starts the
+target detached as well and passes it its own standard input, output and error.
+Otherwise Windows would give a console target a new visible console window,
+and the target's output would go to that window instead of the caller's pipes.
 
 ## License
 

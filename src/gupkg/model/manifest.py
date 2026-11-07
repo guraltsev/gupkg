@@ -306,7 +306,10 @@ _SHORTCUT_KEYS = ("name", "target", "arguments", "working_dir", "icon_location",
 # The text-valued optional keys of a ``[[shortcut]]`` row.
 _SHORTCUT_TEXT_KEYS = ("arguments", "working_dir", "icon_location", "description")
 # The keys of a ``[[shim]]`` row.
-_SHIM_KEYS = ("name", "target", "type", "arguments", "forward_args", "elevate", "working_dir", "content")
+_SHIM_KEYS = (
+    "name", "target", "type", "arguments", "forward_args", "elevate", "working_dir", "search_path", "skip_app_execution_aliases",
+    "content",
+)
 # The step names of a ``[[prepare]]`` row; each row names exactly one.
 _PREPARE_KEYS = ("remove", "rename", "copy", "write", "module")
 
@@ -874,7 +877,7 @@ class Shim:
     name : str
         The command name.
     target : str
-        The file the command starts.
+        The file the command starts, or with *search_path* a bare program name.
     type : str
         The kind of command the shim is.
     arguments : tuple[str, ...]
@@ -887,6 +890,10 @@ class Shim:
         The working folder, or ``None``.
     content : str | None
         The text of the command file, for a shim that writes one.
+    search_path : bool
+        Whether the launcher finds *target* on the caller's ``PATH`` each time it starts.
+    skip_app_execution_aliases : bool
+        Whether that search passes over app execution aliases (``WindowsApps`` stubs).
     """
 
     name: str
@@ -897,6 +904,8 @@ class Shim:
     elevate: bool = False
     working_dir: str | None = None
     content: str | None = None
+    search_path: bool = False
+    skip_app_execution_aliases: bool = False
 
 
 @dataclass(frozen=True)
@@ -2083,7 +2092,7 @@ def _parse_shims(collector: _Collector, raw: Any) -> tuple[Shim, ...]:
         content = collector.string(row, "content", where, empty=True)
         target = collector.string(row, "target", where)
         if content is not None:
-            if any(key in row for key in ("target", "type", "arguments", "forward_args", "elevate", "working_dir")):
+            if any(key in row for key in _SHIM_KEYS if key not in ("name", "content")):
                 collector.error(where, "content cannot be combined with shim options")
             if name is not None:
                 rows.append(Shim(name=name, content=content))
@@ -2103,12 +2112,21 @@ def _parse_shims(collector: _Collector, raw: Any) -> tuple[Shim, ...]:
         for key, text in (("target", target), ("working_dir", working_dir), *(("arguments", a) for a in arguments)):
             if text:
                 _check_variables(collector, text, f"{where}.{key}")
+        # A searched target is a bare program name the launcher finds on PATH when it starts, so it has no folder,
+        # drive, path variable or wildcard; skipping aliases is a refinement of that search.
+        search_path = bool(collector.boolean(row, "search_path", where))
+        skip_aliases = bool(collector.boolean(row, "skip_app_execution_aliases", where))
+        if search_path and target and (re.search(r'[\\/:*?"<>|$]', target) or target in (".", "..")):
+            collector.error(f"{where}.target", f"{target!r} must be a bare program name with search_path, such as 'python'")
+        if skip_aliases and not search_path:
+            collector.error(f"{where}.skip_app_execution_aliases", "requires search_path = true")
         # Keep the shim only when it has both a valid name and a target; ``forward_args`` defaults to true.
         if name is not None and target is not None:
             rows.append(Shim(
                 name=name, target=target, type=shim_type or "console", arguments=arguments,
                 forward_args=True if forward_args is None else forward_args,
                 elevate=bool(elevate), working_dir=working_dir,
+                search_path=search_path, skip_app_execution_aliases=skip_aliases,
             ))
     # Shim names are unique ignoring case, as Windows treats file names.
     folded = [row.name.casefold() for row in rows]
@@ -2232,6 +2250,8 @@ def _shim_to_data(shim: Shim) -> dict[str, Any]:
         "name": shim.name, "target": shim.target, "type": shim.type if shim.type != "console" else None,
         "arguments": list(shim.arguments), "forward_args": None if shim.forward_args else False,
         "elevate": True if shim.elevate else None, "working_dir": shim.working_dir,
+        "search_path": True if shim.search_path else None,
+        "skip_app_execution_aliases": True if shim.skip_app_execution_aliases else None,
     })
 
 

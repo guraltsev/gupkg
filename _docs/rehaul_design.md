@@ -1796,7 +1796,8 @@ These readings settle what sections 13.1 to 13.3 leave open. They are what `gupk
 **Effects and the install record.** An effect is one of six kinds, each with the fields that
 apply, remove and verify it: `shortcut` (`path`, `target`, `arguments`, `working_dir`,
 `icon_location`, `description`, and `run_as_admin` when true), `shim` (`path`, `config`, `type`, `linkage`, `target`,
-`arguments`, `forward_args`, `elevate`, `working_dir`, `config_sha256`), `file` (a content
+`arguments`, `forward_args`, `elevate`, `working_dir`, `config_sha256`, and `search_path` and
+`skip_app_execution_aliases` when true), `file` (a content
 wrapper: `path`, `content`, `sha256`), `env` (`scope`, `name`, `value`) and `path` (`scope`,
 `entry`, `added`, `shared`) and `location_file` (`path`, `content`: the root's `gupkg-location`, which only the `gupkg` package declares; its one line is stored relative to the root, `gupkg\current\App`, so the file stays right when the root moves). `$App`, `$VersionRoot` and the other variables expand against
 `<package>\current`, so a link or shim keeps working when `current` moves. An effect is

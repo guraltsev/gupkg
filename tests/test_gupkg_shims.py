@@ -3,7 +3,8 @@
 Behavior covered: the shims declared in `src/pkg.toml` start the bundled `python.exe` with the fixed flags and hand it every
 argument exactly as the caller typed it (a `.cmd` target would be run as `cmd /c "<target>" "a" "b"`, which breaks any
 argument with `=`, `,`, `;`, `&`, `|`, `%`, `^` or an empty or quoted value); an update replaces the configuration of an
-install that still has the 1.1.1 `.cmd` shims, also while the running shim is the one being updated.
+install that still has the 1.1.1 `.cmd` shims, also while the running shim is the one being updated. A package shim with
+`search_path = true` is written so that the bundled launcher starts the program of that name from the caller's `PATH`.
 
 Real: the bundled `shim-console.exe`, the bundled `python.exe`, the real `src/pkg.toml`, the effect code.
 Mocked: `FakeSystem` (registry, shortcuts); the gupkg `bootstrap.py` is a stub that prints its arguments.
@@ -151,6 +152,29 @@ def test_a_shim_without_its_bundled_python_fails_with_the_missing_path_and_a_non
     result = _run(folder, "gupkg", "--version")
 
     assert result.returncode == 1 and b"no-python.exe" in result.stdout + result.stderr
+
+
+def test_a_search_path_shim_starts_the_program_of_that_name_on_the_callers_path(tmp_path: Path) -> None:
+    """A package shim with `target = "python"` and `search_path = true` starts whichever `python` the caller's `PATH` names first,
+    with its fixed and forwarded arguments, and fails naming the searched folders when `PATH` has none."""
+    # Arrange: write the shim with the real effect code; the bundled Python stands in for the program on PATH.
+    manifest = parse_manifest(
+        'format = 2\n[source]\ndownload_url = "https://x.test/a.zip"\n\n'
+        '[[shim]]\nname = "py-here"\ntarget = "python"\nsearch_path = true\narguments = ["-I", "-c", "import sys; print(sys.executable, sys.argv[1:])"]\n',
+        ManifestKind.VERSION,
+    )
+    context = EffectContext(tmp_path / "opt" / "tool", "user", tmp_path / "bin", None, None, {})
+    [effect] = [item for item in desired_effects(manifest, context)[0] if item.kind == "shim"]
+    apply_effect(FakeSystem(tmp_path / "machine"), effect, context)
+    python_folder = SRC / "gupkg" / "python"
+    (tmp_path / "empty").mkdir()
+
+    found = _run(tmp_path / "bin", "py-here", '"two words"', {"PATH": f"{tmp_path / 'empty'};{python_folder}"})
+    missing = _run(tmp_path / "bin", "py-here", "", {"PATH": str(tmp_path / "empty")})
+
+    assert found.returncode == 0, found.stderr
+    assert found.stdout.decode().strip() == f"{python_folder / 'python.exe'} ['two words']"
+    assert missing.returncode == 1 and b"was not found on PATH" in missing.stderr and str(tmp_path / "empty").encode() in missing.stderr
 
 
 def test_an_update_replaces_the_cmd_shims_of_a_1_1_1_install_and_leaves_no_drift(tmp_path: Path) -> None:

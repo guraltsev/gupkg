@@ -198,6 +198,12 @@ working_dir = "$App"
 [[shim]]
 name = "tool2"
 content = "@echo off"
+
+[[shim]]
+name = "tool3"
+target = "python"
+search_path = true
+skip_app_execution_aliases = true
 """
 
 
@@ -856,6 +862,33 @@ def test_an_env_name_of_128_characters_is_allowed() -> None:
     text = f'format = 2\n[source]\ndownload_url = "https://x.test/a.zip"\n\n[[env]]\nname = "{name}"\nvalue = "x"\n'
 
     assert parse_manifest(text).envs[0].name == name
+
+
+def test_a_shim_with_search_path_keeps_its_bare_program_name() -> None:
+    """`search_path = true` makes the target a program name found on PATH when the shim starts; aliases are accepted unless skipped."""
+    text = 'format = 2\n[source]\ndownload_url = "https://x.test/a.zip"\n\n[[shim]]\nname = "lt"\ntarget = "python"\nsearch_path = true\n'
+
+    [shim] = parse_manifest(text).shims
+
+    assert (shim.target, shim.search_path, shim.skip_app_execution_aliases) == ("python", True, False)
+
+
+@pytest.mark.parametrize(
+    ("row", "where"),
+    [
+        pytest.param('target = "$App\\\\python.exe"\nsearch_path = true\n', "shim\\[0\\].target", id="path-variable-or-folder"),
+        pytest.param('target = "C:python"\nsearch_path = true\n', "shim\\[0\\].target", id="drive"),
+        pytest.param('target = "py*"\nsearch_path = true\n', "shim\\[0\\].target", id="wildcard"),
+        pytest.param('target = "C:\\\\a.exe"\nskip_app_execution_aliases = true\n', "requires search_path", id="skip-without-search"),
+        pytest.param('content = "@echo off"\nsearch_path = true\n', "content cannot be combined", id="content-shim"),
+    ],
+)
+def test_a_searched_shim_needs_a_bare_program_name(row: str, where: str) -> None:
+    """The launcher searches PATH for a file name only: a folder, drive, `$` variable or wildcard is refused, and so is a skip without a search."""
+    text = f'format = 2\n[source]\ndownload_url = "https://x.test/a.zip"\n\n[[shim]]\nname = "t"\n{row}'
+
+    with pytest.raises(ManifestError, match=where):
+        parse_manifest(text)
 
 
 @pytest.mark.parametrize("table", ["shim", "shortcut"])

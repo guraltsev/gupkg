@@ -12,6 +12,7 @@ Real: the effect code and real folders. Mocked: ``FakeSystem`` (registry, shortc
 
 from __future__ import annotations
 
+import tomllib
 from dataclasses import replace
 from pathlib import Path
 
@@ -23,6 +24,7 @@ from gupkg.engine.effects import (
     apply_effect,
     desired_effects,
     remove_effect,
+    shim_config_text,
     shortcut_differences,
     verify_each,
 )
@@ -299,6 +301,20 @@ def test_a_dynamic_shim_gets_its_libraries_in_exe_shim_lib_and_none_loose_in_bin
     assert {item.name for item in library.iterdir()} >= {"libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll", "exe-shim-lib.manifest"}
     assert not list((tmp_path / "bin").glob("*.dll"))
     assert (tmp_path / "bin" / "LICENSE-exe-shim-MIT.txt").is_file()
+
+
+def test_a_searched_shim_writes_its_bare_target_and_others_write_no_search_keys(tmp_path: Path) -> None:
+    """A `search_path` shim's configuration keeps the program name and both search keys; a plain shim's text has neither, so
+    the configuration of a shim installed before the option existed still matches its recorded hash."""
+    searched = '[[shim]]\nname = "s"\ntarget = "python"\nsearch_path = true\nskip_app_execution_aliases = true\n'
+    effects = {Path(str(item.fields["path"])).stem: item for item in desired_effects(manifest(SHIM + searched), context(tmp_path))[0] if item.kind == "shim"}
+
+    searched_config = tomllib.loads(shim_config_text(effects["s"].fields))
+    plain_text = shim_config_text(effects["t"].fields)
+
+    assert (searched_config["target"], searched_config["search_path"], searched_config["skip_app_execution_aliases"]) == ("python", True, True)
+    assert "search_path" not in plain_text and "skip_app_execution_aliases" not in plain_text
+    assert "search_path" not in effects["t"].fields
 
 
 def test_a_static_shim_needs_no_library_folder(tmp_path: Path, system: FakeSystem) -> None:

@@ -545,7 +545,12 @@ module = "pkg.local/fix.py"                                 # escape hatch (hook
   `gupkg pkg check` rejects the file. Prefer a `[[shim]]` to a `PATH` entry.
 - **`[[shim]]`**: `name` and `target`, with `type = "console"` (default) or `"gui"`, `arguments` (fixed, before the caller's),
   `forward_args = true` (default), `elevate = false` and `working_dir`. The shim is `<name>.exe` with a
-  `<name>.config.toml` in the mode's `bin` folder and starts the target directly, without a shell. For shell behaviour
+  `<name>.config.toml` in the mode's `bin` folder and starts the target directly, without a shell. With
+  `search_path = true` the target is a bare program name, such as `"python"`, that the shim looks up on the caller's
+  `PATH` each time it starts (`.com`, `.exe`, `.bat`, `.cmd`; never the current folder, never the shim itself);
+  `skip_app_execution_aliases = true` also passes over WindowsApps aliases. A program that needs one specific
+  interpreter should name it by path instead, since `PATH` differs between callers. A `.bat` or `.cmd` target runs
+  through `cmd.exe` with every argument passed as text. For shell behaviour
   write a content shim instead, `content = "@echo off\r\n..."` with a name such as `tool.cmd`; `content` cannot be combined
   with the other shim options. Names may not be device names, streams or end in a dot or space.
 - **Names belong to one package.** A shim, wrapper, shortcut or environment variable that another installed package of the
