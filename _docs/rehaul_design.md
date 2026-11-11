@@ -2192,7 +2192,7 @@ gupkg-registry/
   `.gitattributes`, launchers CRLF, everything else LF), and links, junctions and special
   files are refused rather than followed or skipped.
 - **The registry tool** is `gupkg_registry` in the gupkg repository (`python -m gupkg_registry`
-  `update`, `pin`, `validate`; the registry's `_scripts\registry-tool.cmd` runs it). It is a
+  `update`, `pin`, `validate`; the registry's `_scripts\gupkg-registry.cmd` runs it). It is a
   maintainer tool, separate from core and not shipped in the release bundle. It writes the
   `sha256` and `sha256_from` (`"registry"` for a hash it computed itself, over `https://` only,
   flagged `[REVIEW]` in its output and in the `--auto-push` commit message), the support files
@@ -2201,7 +2201,7 @@ gupkg-registry/
   folder and discards the staged `App`. A package is its unit of failure. Without `--auto-push`
   it starts no `git` process.
 - **`unpinned`** (`_registry.toml`): `"name/version"` entries for legacy versions that still have no
-  hash. Validation tolerates exactly those and nothing else; `registry-tool pin name/version`
+  hash. Validation tolerates exactly those and nothing else; `gupkg-registry pin name/version`
   hashes one and removes the entry. It exists for the one pre-1.0 version (`qbittorrent/5.2.3`).
 - **Unversioned download addresses** (`unversioned` in `_registry.toml`, a list of package names). Where the
   vendor serves every release at one address (Sysinternals' `Autoruns.zip`, ffmpeg's

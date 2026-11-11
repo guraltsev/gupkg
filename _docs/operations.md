@@ -176,14 +176,14 @@ A registry package install is verified against its **fingerprint** (`_registry.t
 ### The registry tool
 
 The registry (a separate repository) is kept current by `gupkg_registry`, a maintainer tool that is not part of the release
-bundle (`python -m gupkg_registry`, or `_scripts\registry-tool.cmd` in the registry):
+bundle (`python -m gupkg_registry`, or `_scripts\gupkg-registry.cmd` in the registry):
 
 ```bat
-_scripts\registry-tool.cmd update [PACKAGE...]   :: run trackers, write new pinned versions with sha256 and fingerprint
-_scripts\registry-tool.cmd update --auto-push    :: also commit and push (a hash the tool computed itself needs --allow-computed)
-_scripts\registry-tool.cmd pin NAME/VERSION      :: give a version without a hash its first one
-_scripts\registry-tool.cmd launchers             :: rewrite install.cmd, manage.cmd and check-updates.cmd
-_scripts\registry-tool.cmd validate              :: what CI runs: every tracker and version, fingerprints, launchers
+_scripts\gupkg-registry.cmd update [PACKAGE...]   :: run trackers, write new pinned versions with sha256 and fingerprint
+_scripts\gupkg-registry.cmd update --auto-push    :: also commit and push (a hash the tool computed itself needs --allow-computed)
+_scripts\gupkg-registry.cmd pin NAME/VERSION      :: give a version without a hash its first one
+_scripts\gupkg-registry.cmd launchers             :: rewrite install.cmd, manage.cmd and check-updates.cmd
+_scripts\gupkg-registry.cmd validate              :: what CI runs: every tracker and version, fingerprints, launchers
 ```
 
 Without `--auto-push` the tool writes the new directories and starts no `git` process; the maintainer reviews and pushes. A hash the

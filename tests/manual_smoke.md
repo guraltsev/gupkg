@@ -315,16 +315,16 @@ responses, fingerprints). The agents had no network, so these steps are the owne
 repository `gupkg-registry`; its README repeats the commands.
 
 1. **First population of the registry (needs the network).** In a checkout of `gupkg-registry` (branch merged), run
-   `_scripts\registry-tool.cmd update --sandbox C:\temp\registry-sandbox`. Each package prints `added`, `current` or `failed`.
+   `_scripts\gupkg-registry.cmd update --sandbox C:\temp\registry-sandbox`. Each package prints `added`, `current` or `failed`.
    Fix failing trackers (the pattern or the vendor page changed) and run `update <name>` again. Review every new
    `<name>\<version>\` directory, especially each one marked `[REVIEW]` (`sha256_from = "registry"`: the vendor publishes no
    checksum, so the hash is the tool's own over an `https://` download: confirm it against the vendor's page or a second
    download), then `_scripts\validate.cmd`, commit and push. Why manual: needs the vendors' sites; invented hashes must never
    be committed.
-2. **Hash the legacy version.** Run `_scripts\registry-tool.cmd pin qbittorrent/5.2.3`; confirm `unpinned` disappears from
+2. **Hash the legacy version.** Run `_scripts\gupkg-registry.cmd pin qbittorrent/5.2.3`; confirm `unpinned` disappears from
    `_registry.toml` and `validate` stays green. Why manual: needs SourceForge.
 3. **`--auto-push` on a scratch remote.** Clone the registry into a scratch folder with a bare repository as `origin`, run
-   `registry-tool update <name> --auto-push` for a package with a new version and check the last commit (only the new
+   `gupkg-registry update <name> --auto-push` for a package with a new version and check the last commit (only the new
    directory and `_registry.toml`) and that the bare repository has it. Why manual: needs a real source-control client and
    credentials; the tests only record the commands.
 4. **Every package installs under the strict default.** On a clean Windows runner (or VM), with the registry synced, run
@@ -347,7 +347,7 @@ repository `gupkg-registry`; its README repeats the commands.
    (no code that runs `[source.installer]` existed when this was written) and that `require = ["bin/gimp-3.exe"]` is judged
    after the installer ran, not before. Why manual: real installer.
 9. **Git trackers over SSH.** latex-toolkit and overleaf-sync use `git@github.com:...` addresses (as in 0.17). The git service
-   runs with a scrubbed environment, so check that `registry-tool update latex-toolkit` can reach them from the maintainer's
+   runs with a scrubbed environment, so check that `gupkg-registry update latex-toolkit` can reach them from the maintainer's
    machine, or switch them to `https://` if the repositories are public. Why manual: depends on your SSH setup.
 10. **CI.** Push the registry branch and confirm the `validate` workflow is green on `windows-latest` (it checks out
     `guraltsev/gupkg`, so the gupkg code of this branch must be on that repository's `main` first, or run it by hand with
@@ -359,11 +359,11 @@ repository `gupkg-registry`; its README repeats the commands.
 12. **GitHub digests.** For every package whose tracker uses the `github` provider (about 30), confirm the release assets really
     carry a `digest` (the registry tool's output shows `github-digest` rather than `[REVIEW]`). A package whose releases carry
     none gets a registry-computed hash instead: decide whether to accept it. Why manual: needs the live API.
-13. **The shutter-encoder page.** Run `registry-tool update shutter-encoder` and check which of the page's links was kept (the
+13. **The shutter-encoder page.** Run `gupkg-registry update shutter-encoder` and check which of the page's links was kept (the
     Windows 64-bit file) and how many HEAD requests it took. Why manual: the real page decides.
 14. **Windows device-name versions.** Windows cannot create a folder named `CON` through normal calls, so the tests only
     cover the rule. Check on a real machine that a registry holding a folder named `con` or `Nul.txt` fails
-    `registry-tool validate` with a clear message (create it with `mkdir \\?\C:\path\con`), and that nothing in gupkg lists it as a
+    `gupkg-registry validate` with a clear message (create it with `mkdir \\?\C:\path\con`), and that nothing in gupkg lists it as a
     version. Why manual: needs the real Win32 namespace.
 
 
