@@ -167,8 +167,28 @@ def test_settings_init_writes_commented_entries_that_are_valid_once_switched_on(
     assert shown.code == 0, shown.err
     rows = {row["key"]: row for row in shown.document()["settings"]}
     switched = {key for key, row in rows.items() if row["layer"] == "root"}
-    assert {"adopt.shortcut_prefix", "integration.start_menu", "install.record_manifest", "logs.keep_runs"} <= switched
+    assert switched == {key for key in defaults if not key.startswith(("roots.", "registry"))}
     assert all(rows[key]["value"] == defaults[key] for key in switched)
+
+
+def test_settings_set_and_registry_edits_keep_the_comments_and_layout_of_the_file(cli_world: CliWorld) -> None:
+    """`settings set` and `registry add|remove` change only their own lines: the template's and the user's comments stay."""
+    path = cli_world.user / ".gupkg" / "settings.toml"
+    assert cli_world.cli("settings", "init").code == 0
+    template = path.read_text(encoding="utf-8")
+
+    # A value set in the template switches on its commented entry; an edit of a value keeps the comment after it.
+    assert cli_world.cli("settings", "set", "logs.keep_runs", "20").code == 0
+    path.write_text(path.read_text(encoding="utf-8").replace("keep_runs = 20", "keep_runs = 20  # mine"), encoding="utf-8")
+    assert cli_world.cli("settings", "set", "logs.keep_runs", "30").code == 0
+    assert cli_world.cli("registry", "add", "extra", "https://example.org/registry.zip").code == 0
+    assert cli_world.cli("registry", "remove", "extra").code == 0
+
+    # Every line of the template is still there, in order; the entry and its table header are the only differences.
+    text, _, registries = path.read_text(encoding="utf-8").partition("\n[[registry]]")
+    expected = template.replace("# [logs]", "[logs]").replace("# keep_runs = 50", "keep_runs = 30  # mine")
+    assert text.rstrip() == expected.rstrip() and 'name = "main"' in registries and "extra" not in registries
+    assert read_toml(path)["logs"] == {"keep_runs": 30}
 
 
 def test_the_toml_reader_accepts_a_utf8_bom_and_settings_set_edits_such_a_file(cli_world: CliWorld, tmp_path: Path) -> None:

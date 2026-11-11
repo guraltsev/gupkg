@@ -167,6 +167,47 @@ _SCHEMA: dict[str, Any] = {
 # The top-level keys a settings file may hold.
 _TOP_LEVEL = ("schema", "registry", *_SCHEMA)
 
+# One explanation per setting, written into the file that ``gupkg settings init`` creates. Keep it beside ``_SCHEMA``:
+# a setting without an entry here (or an entry without a setting) stops gupkg from importing, so the template can
+# never lag behind the schema.
+_DOCS: dict[str, str] = {
+    "roots.system": "The system root, where an administrator's installs go. Only $App\\settings.toml and --root may set it.",
+    "roots.user": "The user root, where a normal user's installs go. Only $App\\settings.toml and --root may set it.",
+    "integration.start_menu": (
+        "Where the root's shortcuts go: the base Start Menu folder. The `name` of a shortcut in pkg.toml is relative to it\n"
+        "(a games root: \"%APPDATA%\\\\Microsoft\\\\Windows\\\\Start Menu\\\\Games\")."
+    ),
+    "integration.bin": "Folder that holds the command shims of the root's programs (put it on PATH).",
+    "integration.integrate": (
+        "\"full\" or \"none\". \"none\": touch neither the registry (PATH, environment) nor the Start Menu,\n"
+        "e.g. for a root on a stick."
+    ),
+    "adopt.shortcut_prefix": (
+        "Folder put before the shortcut names that `gupkg pkg adopt` writes, relative to the Start Menu folder above\n"
+        "(never a full path). Empty means none. `gupkg pkg adopt --prefix FOLDER` overrides it for one call."
+    ),
+    "check_updates.sources": (
+        "Where `check-updates` looks for new versions in this root: \"registry\", \"upstream\" (each package's tracker)\n"
+        "or \"both\". `--check-registry` and `--check-upstream` override it for one call."
+    ),
+    "install.record_manifest": (
+        "Record a fingerprint of every file of App after an install, so `gupkg check` can notice changes. Turn it off for\n"
+        "very large programs such as games; a package can also say `record_manifest = false` in its pkg.toml."
+    ),
+    "manager.checksum_missing": (
+        "What to do with a download that has no checksum: \"ask\", \"refuse\" or \"skip\".\n"
+        "Schedules treat \"ask\" as \"refuse\"."
+    ),
+    "manager.keep_screen": "Keep the manager's screen open after a command finishes.",
+    "cleanup.auto": "true: `gupkg-manager update --all` removes old Apps, receipts and logs afterwards.",
+    "logs.keep_runs": "How many runs are kept.",
+    "logs.keep_days": "How many days of runs are kept.",
+    "ui.color": "Colour in the terminal: \"auto\", \"always\" or \"never\".",
+    "hooks.allow_vendor_installers": "Allow packages to run the vendor's own installer as a step.",
+}
+# Settings that a root's own settings file may not hold (``validate_layer`` refuses them), so its template leaves them out.
+_NOT_IN_ROOT_FILE = ("roots",)
+
 
 @dataclass(frozen=True)
 class RegistryEntry:
@@ -289,6 +330,34 @@ def _flat_keys(tree: Mapping[str, Any] = _SCHEMA, prefix: str = "") -> list[str]
         else:
             keys.append(f"{prefix}{name}")
     return keys
+
+
+if set(_DOCS) != set(_flat_keys()):  # pragma: no cover - guards a mistake made while editing the schema
+    raise RuntimeError(f"settings without text, or text without a setting: {sorted(set(_DOCS) ^ set(_flat_keys()))}")
+
+
+def documented_defaults(mode: str, *, root_file: bool = True) -> list[tuple[str, str, Any, str]]:
+    """List every setting as ``(table, key, default, explanation)`` in schema order, for generating a settings file.
+
+    Parameters
+    ----------
+    mode : str
+        ``system`` or ``user``; the defaults of the ``[integration]`` folders differ.
+    root_file : bool, default=True
+        Leave out the settings that a root's own settings file may not hold (``[roots]``).
+
+    Returns
+    -------
+    list of tuple
+        ``(table, key, default, explanation)`` for each setting.
+    """
+    defaults = default_layer(mode).data
+    rows = []
+    for table, keys in _SCHEMA.items():
+        if root_file and table in _NOT_IN_ROOT_FILE:
+            continue
+        rows.extend((table, key, defaults[table][key], _DOCS[f"{table}.{key}"]) for key in keys)
+    return rows
 
 
 def _hint(key: str, allowed: Sequence[str]) -> str:

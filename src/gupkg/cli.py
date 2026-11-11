@@ -839,14 +839,14 @@ def _cmd_settings(run: _Run) -> int:
     layer, path = _layer_file(run.scope)
     try:
         if action == "init":
-            settingsedit.init_settings(path, layer, force=args.force)
+            settingsedit.init_settings(path, layer, str(run.scope.mode), force=args.force)
         else:
             settingsedit.set_setting(path, layer, args.key, args.value)
     except settingsedit.SettingsEditError as error:
         return _fail(run, f"settings {action}", SettingsError(str(error)))
 
-    # Say what was written and that comments are not kept.
-    _human(run, f"{action}: {path}" + ("" if action == "init" else f" ({args.key} set; comments in the file are not kept)"))
+    # Say what was written.
+    _human(run, f"{action}: {path}" + ("" if action == "init" else f" ({args.key} set)"))
     _document(run, results.envelope(f"settings {action}", ok=True, exit_code=EXIT_OK, file=str(path), layer=layer))
     return EXIT_OK
 
